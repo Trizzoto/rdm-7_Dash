@@ -141,6 +141,11 @@ twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 // Forward declarations for filter building and reconfiguration
 #include "ui/screens/ui_Screen3.h"
 
+// Forward references to CAN task symbols defined later/in other units
+extern TaskHandle_t canTaskHandle;
+extern volatile bool can_task_should_stop;
+extern void can_receive_task(void *pvParameter);
+
 static void build_twai_filter_from_configs(twai_filter_config_t *out_filter)
 {
     // Collect all relevant standard 11-bit IDs from configs
@@ -165,7 +170,7 @@ static void build_twai_filter_from_configs(twai_filter_config_t *out_filter)
 
     // Default to accept all if no IDs are configured
     if (count == 0) {
-        *out_filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+        *out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
         return;
     }
 
