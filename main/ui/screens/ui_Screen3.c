@@ -2648,6 +2648,46 @@ void update_panel_ui(void *param)
     free(update);
 }
 
+// Immediate (no-alloc, no-async) panel update
+static void update_panel_ui_immediate(uint8_t i, const char *value_str, double final_value)
+{
+    if (i >= 8) return;
+    if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]) && lv_obj_get_screen(ui_Value[i]) != NULL) {
+        lv_label_set_text(ui_Value[i], value_str);
+    }
+    if (menu_panel_value_labels[i] && lv_obj_is_valid(menu_panel_value_labels[i]) &&
+        ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+        lv_label_set_text(menu_panel_value_labels[i], value_str);
+    }
+    if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
+        ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+        if (strcmp(value_str, "---") == 0) {
+            lv_obj_set_style_border_color(menu_panel_boxes[i], lv_color_hex(0x2e2f2e), LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else if (values_config[i].warning_high_enabled && final_value > values_config[i].warning_high_threshold) {
+            lv_obj_set_style_border_color(menu_panel_boxes[i], values_config[i].warning_high_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else if (values_config[i].warning_low_enabled && final_value < values_config[i].warning_low_threshold) {
+            lv_obj_set_style_border_color(menu_panel_boxes[i], values_config[i].warning_low_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_obj_set_style_border_color(menu_panel_boxes[i], lv_color_hex(0x2e2f2e), LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        lv_obj_set_style_border_width(menu_panel_boxes[i], 3, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_opa(menu_panel_boxes[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) && lv_obj_get_screen(ui_Box[i]) != NULL) {
+        if (strcmp(value_str, "---") == 0) {
+            lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e), LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else if (values_config[i].warning_high_enabled && final_value > values_config[i].warning_high_threshold) {
+            lv_obj_set_style_border_color(ui_Box[i], values_config[i].warning_high_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else if (values_config[i].warning_low_enabled && final_value < values_config[i].warning_low_threshold) {
+            lv_obj_set_style_border_color(ui_Box[i], values_config[i].warning_low_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e), LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        lv_obj_set_style_border_width(ui_Box[i], 3, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_border_opa(ui_Box[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
 // Asynchronous callback for updating a bar's display and color
 void update_bar_ui(void *param)
 {
@@ -2686,6 +2726,30 @@ void update_bar_ui(void *param)
     free(upd);
 }
 
+// Immediate (no-alloc, no-async) bar update
+static void update_bar_ui_immediate(int bar_index, int32_t bar_value, double final_value, int config_index)
+{
+    lv_obj_t *bar_obj = (bar_index == 0) ? ui_Bar_1 : ui_Bar_2;
+    if (bar_obj == NULL || !lv_obj_is_valid(bar_obj) || lv_obj_get_screen(bar_obj) == NULL) {
+        return;
+    }
+    lv_bar_set_value(bar_obj, bar_value, LV_ANIM_OFF);
+    lv_color_t new_color;
+    if (final_value < values_config[config_index].bar_low) {
+        new_color = values_config[config_index].bar_low_color;
+    } else if (final_value > values_config[config_index].bar_high) {
+        new_color = values_config[config_index].bar_high_color;
+    } else {
+        new_color = values_config[config_index].bar_in_range_color;
+    }
+    lv_obj_set_style_bg_color(bar_obj, new_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_t *menu_bar = menu_bar_objects[bar_index];
+    if (menu_bar && lv_obj_is_valid(menu_bar) && ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+        lv_bar_set_value(menu_bar, bar_value, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(menu_bar, new_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    }
+}
+
 // Asynchronous callback for updating the RPM UI (label and gauge)
 void update_rpm_ui(void *param)
 {
@@ -2709,6 +2773,20 @@ void update_rpm_ui(void *param)
     free(r_upd);
 }
 
+// Immediate RPM update
+static void update_rpm_ui_immediate(const char *rpm_str, int rpm_value)
+{
+    if ((ui_RPM_Value == NULL || lv_obj_get_screen(ui_RPM_Value) == NULL) ||
+        (rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL)) {
+        return;
+    }
+    lv_label_set_text(ui_RPM_Value, rpm_str);
+    set_rpm_value(rpm_value);
+    if (!limiter_demo_active) {
+        update_menu_rpm_value_text(rpm_value);
+    }
+}
+
 // Asynchronous callback for updating the Speed label
 void update_speed_ui(void *param)
 {
@@ -2730,6 +2808,18 @@ void update_speed_ui(void *param)
     free(s_upd);
 }
 
+// Immediate speed update
+static void update_speed_ui_immediate(const char *speed_str)
+{
+    if (ui_Speed_Value == NULL || lv_obj_get_screen(ui_Speed_Value) == NULL) {
+        return;
+    }
+    lv_label_set_text(ui_Speed_Value, speed_str);
+    if (menu_speed_value_label && lv_obj_is_valid(menu_speed_value_label) && ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+        lv_label_set_text(menu_speed_value_label, speed_str);
+    }
+}
+
 // Asynchronous callback for updating the Gear label
 void update_gear_ui(void *param)
 {
@@ -2749,6 +2839,18 @@ void update_gear_ui(void *param)
     }
     
     free(g_upd);
+}
+
+// Immediate gear update
+static void update_gear_ui_immediate(const char *gear_str)
+{
+    if (ui_GEAR_Value == NULL || lv_obj_get_screen(ui_GEAR_Value) == NULL) {
+        return;
+    }
+    lv_label_set_text(ui_GEAR_Value, gear_str);
+    if (menu_gear_value_label && lv_obj_is_valid(menu_gear_value_label) && ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+        lv_label_set_text(menu_gear_value_label, gear_str);
+    }
 }
 
 // Asynchronous callback for updating a warning indicator
@@ -2777,6 +2879,47 @@ void update_warning_ui(void *param)
             lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
+
+// Immediate warning update
+static void update_warning_ui_immediate(uint8_t warning_idx)
+{
+    if (warning_idx >= 8) return;
+    if (warning_circles[warning_idx] == NULL || lv_obj_get_screen(warning_circles[warning_idx]) == NULL) {
+        return;
+    }
+    lv_color_t new_color = warning_configs[warning_idx].current_state ?
+        warning_configs[warning_idx].active_color : lv_color_hex(0x292C29);
+    lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (warning_labels[warning_idx] && lv_obj_is_valid(warning_labels[warning_idx])) {
+        if (warning_configs[warning_idx].current_state) {
+            lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+// Immediate indicator update
+static void update_indicator_ui_immediate(uint8_t indicator_idx)
+{
+    if (indicator_idx >= 2) return;
+    bool current_state = indicator_configs[indicator_idx].current_state;
+    lv_obj_t* indicator_obj = (indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+    if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
+        if (current_state) {
+            if (indicator_configs[indicator_idx].animation_enabled) {
+                lv_obj_set_style_opa(indicator_obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+                indicator_animation_state = false;
+                if (indicator_animation_timer) { lv_timer_resume(indicator_animation_timer); }
+            } else {
+                lv_obj_set_style_opa(indicator_obj, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+        } else {
+            lv_obj_set_style_opa(indicator_obj, 50, LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+    }
+    update_config_preview(indicator_idx);
 }
 
 // Function to update the config preview 
@@ -3058,8 +3201,7 @@ void process_can_message(const twai_message_t *message)
                 }
             }
             previous_bit_states[i] = current_bit_state;
-            uint8_t *w_idx = malloc(sizeof(uint8_t));
-            if (w_idx) { *w_idx = i; lv_async_call(update_warning_ui, w_idx); }
+            update_warning_ui_immediate((uint8_t)i);
         }
 
         // Indicators
@@ -3082,8 +3224,7 @@ void process_can_message(const twai_message_t *message)
                 }
             }
             previous_indicator_bit_states[i] = current_bit_state;
-            uint8_t *ind_idx = malloc(sizeof(uint8_t));
-            if (ind_idx) { *ind_idx = i; lv_async_call(update_indicator_ui, ind_idx); }
+            update_indicator_ui_immediate((uint8_t)i);
         }
 
         // Values
@@ -3109,8 +3250,7 @@ void process_can_message(const twai_message_t *message)
                         }
                         if (strcmp(new_value_str, previous_values[i]) != 0) {
                             strcpy(previous_values[i], new_value_str);
-                            panel_update_t *p_upd = malloc(sizeof(panel_update_t));
-                            if (p_upd) { p_upd->panel_index = i; strcpy(p_upd->value_str, new_value_str); p_upd->final_value = final_value; lv_async_call(update_panel_ui, p_upd); }
+                            update_panel_ui_immediate((uint8_t)i, new_value_str, final_value);
                         }
                     } else {
                         if (current_time - last_panel_updates[i] >= 25) {
@@ -3122,8 +3262,7 @@ void process_can_message(const twai_message_t *message)
                             }
                             if (strcmp(new_value_str, previous_values[i]) != 0) {
                                 strcpy(previous_values[i], new_value_str);
-                                panel_update_t *p_upd = malloc(sizeof(panel_update_t));
-                                if (p_upd) { p_upd->panel_index = i; strcpy(p_upd->value_str, new_value_str); p_upd->final_value = final_value; lv_async_call(update_panel_ui, p_upd); }
+                                update_panel_ui_immediate((uint8_t)i, new_value_str, final_value);
                             }
                             last_panel_updates[i] = current_time;
                         }
@@ -3147,8 +3286,7 @@ void process_can_message(const twai_message_t *message)
                                 int32_t bar_value = (int32_t)final_value;
                                 if (bar_value < values_config[i].bar_min) bar_value = values_config[i].bar_min;
                                 else if (bar_value > values_config[i].bar_max) bar_value = values_config[i].bar_max;
-                                bar_update_t *b_upd = malloc(sizeof(bar_update_t));
-                                if (b_upd) { b_upd->bar_index = bar_index; b_upd->bar_value = bar_value; b_upd->final_value = final_value; b_upd->config_index = i; lv_async_call(update_bar_ui, b_upd); }
+                                update_bar_ui_immediate(bar_index, bar_value, final_value, i);
                             }
                         }
                         if (value_id != BAR2_VALUE_ID) { last_bar_updates[bar_index] = current_time; }
@@ -3167,8 +3305,7 @@ void process_can_message(const twai_message_t *message)
                     if (strcmp(rpm_str, previous_values[i]) != 0 || rpm_value != last_rpm_value) {
                         strcpy(previous_values[i], rpm_str);
                         last_rpm_value = rpm_value;
-                        rpm_update_t *r_upd = malloc(sizeof(rpm_update_t));
-                        if (r_upd) { strcpy(r_upd->rpm_str, rpm_str); r_upd->rpm_value = gauge_rpm_value; lv_async_call(update_rpm_ui, r_upd); }
+                        update_rpm_ui_immediate(rpm_str, gauge_rpm_value);
                     }
                 } else if (value_id == SPEED_VALUE_ID) {
                     if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) { continue; }
@@ -3178,8 +3315,7 @@ void process_can_message(const twai_message_t *message)
                     snprintf(speed_str, sizeof(speed_str), "%.0f", speed_value);
                     if (strcmp(speed_str, previous_values[i]) != 0) {
                         strcpy(previous_values[i], speed_str);
-                        speed_update_t *s_upd = malloc(sizeof(speed_update_t));
-                        if (s_upd) { strcpy(s_upd->speed_str, speed_str); lv_async_call(update_speed_ui, s_upd); }
+                        update_speed_ui_immediate(speed_str);
                     }
                 } else if (value_id == GEAR_VALUE_ID) {
                     last_gear_can_received = current_time;
@@ -3219,8 +3355,7 @@ void process_can_message(const twai_message_t *message)
                     }
                     if (strcmp(gear_str, previous_values[i]) != 0) {
                         strcpy(previous_values[i], gear_str);
-                        gear_update_t *g_upd = malloc(sizeof(gear_update_t));
-                        if (g_upd) { strcpy(g_upd->gear_str, gear_str); lv_async_call(update_gear_ui, g_upd); }
+                        update_gear_ui_immediate(gear_str);
                     }
                 }
             }
