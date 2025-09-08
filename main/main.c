@@ -138,6 +138,90 @@ twai_timing_config_t g_t_config = TWAI_TIMING_CONFIG_500KBITS();
 twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(20,19, TWAI_MODE_NORMAL);
 twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
+// Forward declarations for filter building and reconfiguration
+#include "ui/screens/ui_Screen3.h"
+
+static void build_twai_filter_from_configs(twai_filter_config_t *out_filter)
+{
+    // Collect all relevant standard 11-bit IDs from configs
+    uint32_t ids[8 + 2 + 13];
+    int count = 0;
+
+    for (int i = 0; i < 8; i++) {
+        if (warning_configs[i].can_id != 0) {
+            ids[count++] = (warning_configs[i].can_id & 0x7FF);
+        }
+    }
+    for (int i = 0; i < 2; i++) {
+        if (indicator_configs[i].can_id != 0) {
+            ids[count++] = (indicator_configs[i].can_id & 0x7FF);
+        }
+    }
+    for (int i = 0; i < 13; i++) {
+        if (values_config[i].enabled && values_config[i].can_id != 0) {
+            ids[count++] = (values_config[i].can_id & 0x7FF);
+        }
+    }
+
+    // Default to accept all if no IDs are configured
+    if (count == 0) {
+        *out_filter = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+        return;
+    }
+
+    // Compute common pattern across all IDs to derive a mask-based filter
+    uint32_t ref = ids[0] & 0x7FF;
+    uint32_t varying = 0;
+    for (int i = 1; i < count; i++) {
+        varying |= (ref ^ (ids[i] & 0x7FF));
+    }
+    uint32_t compare_bits = (~varying) & 0x7FF; // bits that are equal across all IDs
+    uint32_t code_bits = ref & compare_bits;
+
+    // In TWAI, mask bit 1 = don't care, 0 = compare. Place ID in MSBs (bits 31..21)
+    uint32_t acceptance_code = (code_bits << 21);
+    uint32_t acceptance_mask = 0xFFFFFFFF; // start with don't care everywhere
+    acceptance_mask &= ~(compare_bits << 21); // set 0 where we compare
+
+    out_filter->acceptance_code = acceptance_code;
+    out_filter->acceptance_mask = acceptance_mask;
+    out_filter->single_filter = true; // single filter mode for standard IDs
+}
+
+void reconfigure_can_filter(void)
+{
+    // Stop CAN task
+    if (canTaskHandle != NULL) {
+        can_task_should_stop = true;
+        for (int i = 0; i < 200; i++) {
+            if (eTaskGetState(canTaskHandle) == eDeleted) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (eTaskGetState(canTaskHandle) != eDeleted) {
+            vTaskDelete(canTaskHandle);
+        }
+        canTaskHandle = NULL;
+    }
+
+    // Rebuild filter from current configuration
+    build_twai_filter_from_configs(&f_config);
+
+    // Restart TWAI driver with new filter
+    twai_stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    twai_driver_uninstall();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK) {
+        twai_start();
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // Recreate CAN receive task
+    xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 7, &canTaskHandle, 0);
+}
+
 // PWM configuration for GPIO16
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
@@ -384,6 +468,9 @@ void can_init() {
             ESP_LOGI(TAG, "CAN bitrate set to default 500 kbps");
             break;
     }
+
+    // Build filter based on current configuration
+    build_twai_filter_from_configs(&f_config);
 
     // Install the CAN driver
     if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK) {

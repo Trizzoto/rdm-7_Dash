@@ -20,6 +20,9 @@
 #include "fuel_input.h"
 #include "nvs_flash.h"    // Add NVS support for timezone settings
 
+// Reconfigure CAN acceptance filter after saving monitored IDs
+extern void reconfigure_can_filter(void);
+
 // Constants
 #define EXAMPLE_MAX_CHAR_SIZE 64
 
@@ -254,6 +257,8 @@ void close_menu_event_cb(lv_event_t * e) {
     
     // Call save function (this already has its own mutex handling)
     save_values_config_to_nvs();
+    // Rebuild and apply TWAI acceptance filter based on new configuration
+    reconfigure_can_filter();
     
     uint32_t save_duration = (esp_timer_get_time() / 1000) - save_start_time;
     ESP_LOGI("menu_screen", "Save operation took %lu ms", save_duration);
