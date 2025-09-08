@@ -474,7 +474,8 @@ void can_init() {
             break;
     }
 
-    // Build filter based on current configuration
+    // Build dispatch and filter based on current configuration
+    rebuild_can_dispatch();
     build_twai_filter_from_configs(&f_config);
 
     // Install the CAN driver

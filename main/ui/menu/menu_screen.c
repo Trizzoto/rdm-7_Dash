@@ -257,7 +257,8 @@ void close_menu_event_cb(lv_event_t * e) {
     
     // Call save function (this already has its own mutex handling)
     save_values_config_to_nvs();
-    // Rebuild and apply TWAI acceptance filter based on new configuration
+    // Rebuild fast dispatch and apply TWAI acceptance filter based on new configuration
+    rebuild_can_dispatch();
     reconfigure_can_filter();
     
     uint32_t save_duration = (esp_timer_get_time() / 1000) - save_start_time;

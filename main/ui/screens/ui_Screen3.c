@@ -2935,6 +2935,71 @@ static int64_t extract_bits(const uint8_t *data, uint8_t bit_offset, uint8_t bit
     return (int64_t)value;
 }
 
+// ---------- Stage 2: O(1) dispatch mapping from CAN ID to affected indices ----------
+typedef struct {
+    uint32_t can_id;
+    uint8_t num_warning;
+    uint8_t warning_indices[8];
+    uint8_t num_indicator;
+    uint8_t indicator_indices[2];
+    uint8_t num_values;
+    uint8_t value_indices[13];
+} can_dispatch_entry_t;
+
+static can_dispatch_entry_t can_dispatch_entries[32];
+static int can_dispatch_count = 0;
+static int16_t can_id_to_dispatch_index[2048]; // -1 if none
+
+static int get_or_add_dispatch_entry(uint32_t can_id)
+{
+    uint32_t sid = can_id & 0x7FF;
+    if (sid < 2048) {
+        int16_t idx = can_id_to_dispatch_index[sid];
+        if (idx >= 0) return idx;
+    }
+    if (can_dispatch_count >= (int)(sizeof(can_dispatch_entries)/sizeof(can_dispatch_entries[0]))) {
+        return -1;
+    }
+    int idx = can_dispatch_count++;
+    can_dispatch_entries[idx].can_id = sid;
+    can_dispatch_entries[idx].num_warning = 0;
+    can_dispatch_entries[idx].num_indicator = 0;
+    can_dispatch_entries[idx].num_values = 0;
+    if (sid < 2048) can_id_to_dispatch_index[sid] = (int16_t)idx;
+    return idx;
+}
+
+void rebuild_can_dispatch(void)
+{
+    for (int i = 0; i < 2048; i++) can_id_to_dispatch_index[i] = -1;
+    can_dispatch_count = 0;
+
+    for (int i = 0; i < 8; i++) {
+        if (warning_configs[i].can_id != 0) {
+            int idx = get_or_add_dispatch_entry(warning_configs[i].can_id);
+            if (idx >= 0 && can_dispatch_entries[idx].num_warning < 8) {
+                can_dispatch_entries[idx].warning_indices[can_dispatch_entries[idx].num_warning++] = (uint8_t)i;
+            }
+        }
+    }
+    for (int i = 0; i < 2; i++) {
+        if (indicator_configs[i].can_id != 0) {
+            int idx = get_or_add_dispatch_entry(indicator_configs[i].can_id);
+            if (idx >= 0 && can_dispatch_entries[idx].num_indicator < 2) {
+                can_dispatch_entries[idx].indicator_indices[can_dispatch_entries[idx].num_indicator++] = (uint8_t)i;
+            }
+        }
+    }
+    for (int i = 0; i < 13; i++) {
+        if (values_config[i].enabled && values_config[i].can_id != 0) {
+            int idx = get_or_add_dispatch_entry(values_config[i].can_id);
+            if (idx >= 0 && can_dispatch_entries[idx].num_values < 13) {
+                can_dispatch_entries[idx].value_indices[can_dispatch_entries[idx].num_values++] = (uint8_t)i;
+            }
+        }
+    }
+}
+
 void process_can_message(const twai_message_t *message)
 {
     static uint64_t last_panel_updates[8] = {0};
@@ -2959,6 +3024,208 @@ void process_can_message(const twai_message_t *message)
         for (int i = 0; i < 2; i++) {
             previous_bar_values[i] = -999; // Use impossible values to force bar updates
         }
+    }
+
+    // Fast-dispatch path using prebuilt mapping; fallback to linear scans if not found
+    int16_t didx = (received_id <= 0x7FF) ? can_id_to_dispatch_index[received_id] : -1;
+    if (didx >= 0) {
+        // Precompute 64-bit data value once for bit-extraction consumers
+        uint64_t data_value = 0;
+        for (int j = 0; j < message->data_length_code && j < 8; j++) {
+            data_value |= (uint64_t)message->data[j] << (j * 8);
+        }
+
+        // Warnings
+        for (uint8_t wi = 0; wi < can_dispatch_entries[didx].num_warning; wi++) {
+            int i = can_dispatch_entries[didx].warning_indices[wi];
+            bool current_bit_state = (data_value >> warning_configs[i].bit_position) & 0x01;
+            if (warning_configs[i].is_momentary) {
+                if (current_bit_state != warning_configs[i].current_state) {
+                    warning_configs[i].current_state = current_bit_state;
+                    if (current_bit_state) {
+                        last_signal_times[i] = current_time;
+                    }
+                }
+            } else {
+                if (previous_bit_states[i] && !current_bit_state) {
+                    if (!toggle_debounce[i]) {
+                        toggle_debounce[i] = true;
+                        toggle_start_time[i] = current_time;
+                        warning_configs[i].current_state = !warning_configs[i].current_state;
+                    }
+                } else if (!current_bit_state) {
+                    toggle_debounce[i] = false;
+                }
+            }
+            previous_bit_states[i] = current_bit_state;
+            uint8_t *w_idx = malloc(sizeof(uint8_t));
+            if (w_idx) { *w_idx = i; lv_async_call(update_warning_ui, w_idx); }
+        }
+
+        // Indicators
+        for (uint8_t ii = 0; ii < can_dispatch_entries[didx].num_indicator; ii++) {
+            int i = can_dispatch_entries[didx].indicator_indices[ii];
+            bool current_bit_state = (data_value >> indicator_configs[i].bit_position) & 0x01;
+            if (indicator_configs[i].is_momentary) {
+                if (current_bit_state != indicator_configs[i].current_state) {
+                    indicator_configs[i].current_state = current_bit_state;
+                }
+            } else {
+                if (previous_indicator_bit_states[i] && !current_bit_state) {
+                    if (!indicator_toggle_debounce[i]) {
+                        indicator_toggle_debounce[i] = true;
+                        indicator_toggle_start_time[i] = current_time;
+                        indicator_configs[i].current_state = !indicator_configs[i].current_state;
+                    }
+                } else if (!current_bit_state) {
+                    indicator_toggle_debounce[i] = false;
+                }
+            }
+            previous_indicator_bit_states[i] = current_bit_state;
+            uint8_t *ind_idx = malloc(sizeof(uint8_t));
+            if (ind_idx) { *ind_idx = i; lv_async_call(update_indicator_ui, ind_idx); }
+        }
+
+        // Values
+        for (uint8_t vi = 0; vi < can_dispatch_entries[didx].num_values; vi++) {
+            int i = can_dispatch_entries[didx].value_indices[vi];
+            if (values_config[i].enabled) {
+                uint8_t value_id = i + 1;
+                int64_t raw_value = extract_bits(message->data,
+                                                  values_config[i].bit_start,
+                                                  values_config[i].bit_length,
+                                                  values_config[i].endianess,
+                                                  values_config[i].is_signed);
+                double final_value = (double)raw_value * values_config[i].scale + values_config[i].value_offset;
+
+                if (i < 8) {
+                    last_panel_can_received[i] = current_time;
+                    if (i == 6) {
+                        char new_value_str[EXAMPLE_MAX_CHAR_SIZE];
+                        if (values_config[i].decimals == 0) {
+                            snprintf(new_value_str, sizeof(new_value_str), "%d", (int)final_value);
+                        } else {
+                            snprintf(new_value_str, sizeof(new_value_str), "%.*f", values_config[i].decimals, final_value);
+                        }
+                        if (strcmp(new_value_str, previous_values[i]) != 0) {
+                            strcpy(previous_values[i], new_value_str);
+                            panel_update_t *p_upd = malloc(sizeof(panel_update_t));
+                            if (p_upd) { p_upd->panel_index = i; strcpy(p_upd->value_str, new_value_str); p_upd->final_value = final_value; lv_async_call(update_panel_ui, p_upd); }
+                        }
+                    } else {
+                        if (current_time - last_panel_updates[i] >= 25) {
+                            char new_value_str[EXAMPLE_MAX_CHAR_SIZE];
+                            if (values_config[i].decimals == 0) {
+                                snprintf(new_value_str, sizeof(new_value_str), "%d", (int)final_value);
+                            } else {
+                                snprintf(new_value_str, sizeof(new_value_str), "%.*f", values_config[i].decimals, final_value);
+                            }
+                            if (strcmp(new_value_str, previous_values[i]) != 0) {
+                                strcpy(previous_values[i], new_value_str);
+                                panel_update_t *p_upd = malloc(sizeof(panel_update_t));
+                                if (p_upd) { p_upd->panel_index = i; strcpy(p_upd->value_str, new_value_str); p_upd->final_value = final_value; lv_async_call(update_panel_ui, p_upd); }
+                            }
+                            last_panel_updates[i] = current_time;
+                        }
+                    }
+                    continue;
+                }
+
+                if (value_id == BAR1_VALUE_ID || value_id == BAR2_VALUE_ID) {
+                    int bar_index = value_id - BAR1_VALUE_ID;
+                    last_bar_can_received[bar_index] = current_time;
+                    if (values_config[i].use_fuel_input) {
+                        float current_voltage = fuel_input_read_voltage();
+                        float fuel_level = fuel_input_calculate_level(current_voltage, values_config[i].fuel_empty_voltage, values_config[i].fuel_full_voltage);
+                        final_value = fuel_level;
+                    }
+                    if (value_id == BAR2_VALUE_ID || current_time - last_bar_updates[bar_index] >= 25) {
+                        if (value_id == BAR2_VALUE_ID || fabs(final_value - previous_bar_values[bar_index]) >= BAR_UPDATE_THRESHOLD) {
+                            previous_bar_values[bar_index] = final_value;
+                            lv_obj_t *bar_obj = (value_id == BAR1_VALUE_ID) ? ui_Bar_1 : ui_Bar_2;
+                            if (bar_obj) {
+                                int32_t bar_value = (int32_t)final_value;
+                                if (bar_value < values_config[i].bar_min) bar_value = values_config[i].bar_min;
+                                else if (bar_value > values_config[i].bar_max) bar_value = values_config[i].bar_max;
+                                bar_update_t *b_upd = malloc(sizeof(bar_update_t));
+                                if (b_upd) { b_upd->bar_index = bar_index; b_upd->bar_value = bar_value; b_upd->final_value = final_value; b_upd->config_index = i; lv_async_call(update_bar_ui, b_upd); }
+                            }
+                        }
+                        if (value_id != BAR2_VALUE_ID) { last_bar_updates[bar_index] = current_time; }
+                    }
+                    continue;
+                }
+
+                if (value_id == RPM_VALUE_ID) {
+                    last_rpm_can_received = current_time;
+                    int rpm_value = (int)final_value;
+                    int gauge_rpm_value = rpm_value < 0 ? 0 : (rpm_value > rpm_gauge_max ? rpm_gauge_max : rpm_value);
+                    int display_rpm_value = (int)((float)rpm_value * 1.0229f);
+                    char rpm_str[EXAMPLE_MAX_CHAR_SIZE];
+                    snprintf(rpm_str, sizeof(rpm_str), "%d", display_rpm_value);
+                    static int last_rpm_value = -1;
+                    if (strcmp(rpm_str, previous_values[i]) != 0 || rpm_value != last_rpm_value) {
+                        strcpy(previous_values[i], rpm_str);
+                        last_rpm_value = rpm_value;
+                        rpm_update_t *r_upd = malloc(sizeof(rpm_update_t));
+                        if (r_upd) { strcpy(r_upd->rpm_str, rpm_str); r_upd->rpm_value = gauge_rpm_value; lv_async_call(update_rpm_ui, r_upd); }
+                    }
+                } else if (value_id == SPEED_VALUE_ID) {
+                    if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) { continue; }
+                    last_speed_can_received = current_time;
+                    double speed_value = final_value;
+                    char speed_str[EXAMPLE_MAX_CHAR_SIZE];
+                    snprintf(speed_str, sizeof(speed_str), "%.0f", speed_value);
+                    if (strcmp(speed_str, previous_values[i]) != 0) {
+                        strcpy(previous_values[i], speed_str);
+                        speed_update_t *s_upd = malloc(sizeof(speed_update_t));
+                        if (s_upd) { strcpy(s_upd->speed_str, speed_str); lv_async_call(update_speed_ui, s_upd); }
+                    }
+                } else if (value_id == GEAR_VALUE_ID) {
+                    last_gear_can_received = current_time;
+                    char gear_str[EXAMPLE_MAX_CHAR_SIZE];
+                    if (strcasecmp(label_texts[GEAR_VALUE_ID - 1], "GEAR") == 0) {
+                        uint8_t gear_mode = values_config[GEAR_VALUE_ID - 1].gear_detection_mode;
+                        if (gear_mode == 1) {
+                            if (final_value == 0) { snprintf(gear_str, sizeof(gear_str), "N"); }
+                            else if (final_value == 0xFE || final_value == 0xF0 || final_value == 0xFF) { snprintf(gear_str, sizeof(gear_str), "R"); }
+                            else if (final_value >= 1 && final_value <= 10) { snprintf(gear_str, sizeof(gear_str), "%d", (int)final_value); }
+                            else { snprintf(gear_str, sizeof(gear_str), "-"); }
+                        } else if (gear_mode == 2) {
+                            if (final_value == 0) { snprintf(gear_str, sizeof(gear_str), "N"); }
+                            else if (final_value == 255 || final_value == 0xFE) { snprintf(gear_str, sizeof(gear_str), "R"); }
+                            else if (final_value >= 1 && final_value <= 8) { snprintf(gear_str, sizeof(gear_str), "%d", (int)final_value); }
+                            else { snprintf(gear_str, sizeof(gear_str), "-"); }
+                        } else {
+                            bool gear_found = false;
+                            uint32_t current_can_id = values_config[value_id - 1].can_id;
+                            for (int gear_idx = 0; gear_idx < 12; gear_idx++) {
+                                if (values_config[GEAR_VALUE_ID - 1].gear_custom_can_ids[gear_idx] == current_can_id && current_can_id != 0) {
+                                    if (gear_idx == 0) { snprintf(gear_str, sizeof(gear_str), "N"); }
+                                    else if (gear_idx == 1) { snprintf(gear_str, sizeof(gear_str), "R"); }
+                                    else { snprintf(gear_str, sizeof(gear_str), "%d", gear_idx - 1); }
+                                    gear_found = true; break;
+                                }
+                            }
+                            if (!gear_found) {
+                                if (final_value == 0) { snprintf(gear_str, sizeof(gear_str), "N"); }
+                                else if (final_value == 0xFE || final_value == 0xF0 || final_value == 0xFF) { snprintf(gear_str, sizeof(gear_str), "R"); }
+                                else if (final_value >= 1 && final_value <= 10) { snprintf(gear_str, sizeof(gear_str), "%d", (int)final_value); }
+                                else { snprintf(gear_str, sizeof(gear_str), "-"); }
+                            }
+                        }
+                    } else {
+                        snprintf(gear_str, sizeof(gear_str), "%.0f", final_value);
+                    }
+                    if (strcmp(gear_str, previous_values[i]) != 0) {
+                        strcpy(previous_values[i], gear_str);
+                        gear_update_t *g_upd = malloc(sizeof(gear_update_t));
+                        if (g_upd) { strcpy(g_upd->gear_str, gear_str); lv_async_call(update_gear_ui, g_upd); }
+                    }
+                }
+            }
+        }
+        return; // handled via fast path
     }
 
     // Process warning configurations (for warnings 0-7)

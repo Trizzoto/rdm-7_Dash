@@ -127,6 +127,9 @@ void start_fuel_update_timer(void);
 void stop_fuel_update_timer(void);
 bool any_fuel_input_enabled(void);
 
+// Rebuild CAN ID -> indices dispatch mapping (warnings/indicators/values)
+void rebuild_can_dispatch(void);
+
 // Indicator config management functions
 void init_indicator_configs(void);
 void save_indicator_configs_to_nvs(void);
