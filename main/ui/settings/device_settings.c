@@ -1,4 +1,4 @@
-﻿#include "device_settings.h"
+#include "device_settings.h"
 #include "theme.h"
 #include "lvgl.h"
 #include "driver/ledc.h"
@@ -21,14 +21,8 @@
 #include "ota_update_dialog.h"
 #include "lwip/ip4_addr.h"
 #include "callbacks/ui_callbacks.h"
+#include "can/can_manager.h"
 
-// External variables
-extern TaskHandle_t canTaskHandle;
-extern twai_timing_config_t g_t_config;
-extern twai_general_config_t g_config;
-extern twai_filter_config_t f_config;
-extern volatile bool can_task_should_stop;
-extern void can_receive_task(void *pvParameter);
 extern char* connected_ssid;
 
 // Global WiFi status labels for updating
@@ -430,123 +424,21 @@ static void close_menu_event_cb(lv_event_t * e) {
     }
 }
 
-// Bitrate dropdown callback
+/* Bitrate dropdown callback — save to NVS then apply via can_manager */
 static void bitrate_dropdown_event_cb(lv_event_t * e) {
     lv_obj_t * dd = lv_event_get_target(e);
     uint16_t selected = lv_dropdown_get_selected(dd);
-    esp_err_t err;
-    
-    ESP_LOGI("CAN", "Auto-applying bitrate change to option %d", selected);
-    
-    // Auto-save bitrate setting to NVS
+
+    /* Persist the new bitrate index */
     nvs_handle_t handle;
     if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "can_bitrate", selected);
+        nvs_set_u8(handle, "can_bitrate", (uint8_t)selected);
         nvs_commit(handle);
         nvs_close(handle);
-        ESP_LOGI("CAN", "Bitrate setting saved to NVS");
-    }
-    
-    // Configure CAN timing based on selection using ESP-IDF standard macros
-    switch(selected) {
-        case 0: // 125 kbps
-            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
-            ESP_LOGI("CAN", "Configured for 125 kbps");
-            break;
-        case 1: // 250 kbps
-            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
-            ESP_LOGI("CAN", "Configured for 250 kbps");
-            break;
-        case 2: // 500 kbps
-            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
-            ESP_LOGI("CAN", "Configured for 500 kbps");
-            break;
-        case 3: // 1 Mbps
-            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
-            ESP_LOGI("CAN", "Configured for 1 Mbps");
-            break;
-        default:
-            ESP_LOGE("CAN", "Invalid bitrate selection: %d", selected);
-            return;
-    }
-    
-    // Step 1: Signal the CAN task to stop gracefully
-    if (canTaskHandle != NULL) {
-        ESP_LOGI("CAN", "Signaling CAN task to stop gracefully");
-        can_task_should_stop = true;
-        
-        // Wait for the task to exit (up to 2 seconds)
-        for (int i = 0; i < 200; i++) {
-            if (eTaskGetState(canTaskHandle) == eDeleted) {
-                ESP_LOGI("CAN", "CAN task exited gracefully");
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        
-        // If task still exists after timeout, force delete it
-        if (eTaskGetState(canTaskHandle) != eDeleted) {
-            ESP_LOGW("CAN", "Force deleting CAN task after timeout");
-            vTaskDelete(canTaskHandle);
-        }
-        canTaskHandle = NULL;
     }
 
-    // Step 2: Stop and uninstall CAN driver
-    ESP_LOGI("CAN", "Stopping CAN driver");
-    err = twai_stop();
-    if (err != ESP_OK) {
-        ESP_LOGE("CAN", "Failed to stop CAN driver: %s", esp_err_to_name(err));
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    ESP_LOGI("CAN", "Uninstalling CAN driver");
-    err = twai_driver_uninstall();
-    if (err != ESP_OK) {
-        ESP_LOGE("CAN", "Failed to uninstall CAN driver: %s", esp_err_to_name(err));
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    // Step 3: Rebuild CAN dispatch and filter with current configs
-    extern void rebuild_can_dispatch(void);
-    
-    ESP_LOGI("CAN", "Rebuilding CAN dispatch and filter");
-    rebuild_can_dispatch();
-    build_twai_filter_from_configs(&f_config);
-    
-    // Step 4: Reinstall driver with new configuration
-    ESP_LOGI("CAN", "Installing CAN driver with new configuration");
-    ESP_LOGI("CAN", "Timing config - BRP: %d, TSEG1: %d, TSEG2: %d, SJW: %d", 
-             g_t_config.brp, g_t_config.tseg_1, g_t_config.tseg_2, g_t_config.sjw);
-    err = twai_driver_install(&g_config, &g_t_config, &f_config);
-    if (err != ESP_OK) {
-        ESP_LOGE("CAN", "Failed to install CAN driver: %s", esp_err_to_name(err));
-        return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    // Step 5: Start the driver
-    ESP_LOGI("CAN", "Starting CAN driver");
-    err = twai_start();
-    if (err != ESP_OK) {
-        ESP_LOGE("CAN", "Failed to start CAN driver: %s", esp_err_to_name(err));
-        return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    // Step 6: Reset the stop flag and recreate the CAN task
-    can_task_should_stop = false;  // Reset the stop flag for the new task
-    ESP_LOGI("CAN", "Recreating CAN receive task");
-    if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 
-                               4096, NULL, 7, &canTaskHandle, 0) != pdPASS) {
-        ESP_LOGE("CAN", "Failed to create CAN receive task");
-        canTaskHandle = NULL;
-        return;
-    }
-
-    ESP_LOGI("CAN", "Bitrate change completed successfully");
-    ESP_LOGI("CAN", "Final timing config - BRP: %d, TSEG1: %d, TSEG2: %d, SJW: %d", 
-             g_t_config.brp, g_t_config.tseg_1, g_t_config.tseg_2, g_t_config.sjw);
+    /* Apply the new bitrate (stops task, reinits TWAI, restarts task) */
+    can_change_bitrate((uint8_t)selected);
 }
 
 // Loading dialog for WiFi

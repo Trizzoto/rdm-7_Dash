@@ -1,11 +1,13 @@
-﻿#include "screens/ui_Screen3.h"
+#include "screens/ui_Screen3.h"
+#include "can/can_decode.h"
+#include "can/can_dispatch.h"
 #include "../theme.h"
 #include "../callbacks/ui_callbacks.h"
-#include "../config/create_config_controls.h"
+#include "../config/config_controls.h"
 #include "../menu/menu_screen.h"
 #include "../ui.h"
 #include "../ui_helpers.h"
-#include "../ui_preconfig.h"
+#include "preset_picker.h"
 #include "device_id.h"
 #include "device_settings.h"
 #include "driver/ledc.h"
@@ -24,7 +26,7 @@
 #include "ota_handler.h"
 #include "ui.h"
 #include "ui_helpers.h"
-#include "ui_preconfig.h"
+#include "preset_picker.h"
 #include "ui_wifi.h"
 #include "version.h"
 #include <math.h>
@@ -4455,160 +4457,18 @@ void update_indicator_ui(void *param) {
 	update_config_preview(indicator_idx);
 }
 
-static int64_t extract_bits(const uint8_t *data, uint8_t bit_offset,
-							uint8_t bit_length, int endian, bool is_signed) {
-	// Fast path for common cases
-	if (bit_length == 0)
-		return 0;
-	if (bit_length > 64)
-		bit_length = 64;
-
-	uint64_t value = 0;
-
-	if (endian == 0) { // Big Endian
-		// Calculate byte boundaries
-		uint8_t start_byte = bit_offset / 8;
-		uint8_t end_byte = (bit_offset + bit_length - 1) / 8;
-		uint8_t bytes_needed = end_byte - start_byte + 1;
-
-		// Fast path for single byte extraction
-		if (bytes_needed == 1) {
-			uint8_t bit_pos = bit_offset % 8;
-			uint8_t mask = ((1U << bit_length) - 1)
-						   << (8 - bit_pos - bit_length);
-			value = (data[start_byte] & mask) >> (8 - bit_pos - bit_length);
-		}
-		// Fast path for aligned multi-byte values (8, 16, 32 bits)
-		else if ((bit_offset % 8) == 0 && (bit_length % 8) == 0) {
-			for (int i = 0; i < bytes_needed && i < 8; i++) {
-				value = (value << 8) | data[start_byte + i];
-			}
-		}
-		// General case - optimized bit operations
-		else {
-			// Load all relevant bytes into a 64-bit word
-			uint64_t word = 0;
-			for (int i = 0; i < bytes_needed && i < 8; i++) {
-				word = (word << 8) | data[start_byte + i];
-			}
-			// Shift and mask to extract the bits
-			uint8_t shift = (bytes_needed * 8) - (bit_offset % 8) - bit_length;
-			uint64_t mask = ((1ULL << bit_length) - 1);
-			value = (word >> shift) & mask;
-		}
-	} else { // Little Endian
-		// Calculate byte boundaries
-		uint8_t start_byte = bit_offset / 8;
-		uint8_t end_byte = (bit_offset + bit_length - 1) / 8;
-		uint8_t bytes_needed = end_byte - start_byte + 1;
-
-		// Fast path for single byte extraction
-		if (bytes_needed == 1) {
-			uint8_t bit_pos = bit_offset % 8;
-			uint8_t mask = (1U << bit_length) - 1;
-			value = (data[start_byte] >> bit_pos) & mask;
-		}
-		// Fast path for aligned multi-byte values (8, 16, 32 bits)
-		else if ((bit_offset % 8) == 0 && (bit_length % 8) == 0) {
-			for (int i = 0; i < bytes_needed && i < 8; i++) {
-				value |= ((uint64_t)data[start_byte + i]) << (i * 8);
-			}
-		}
-		// General case - optimized bit operations
-		else {
-			// Load all relevant bytes
-			uint64_t word = 0;
-			for (int i = 0; i < bytes_needed && i < 8; i++) {
-				word |= ((uint64_t)data[start_byte + i]) << (i * 8);
-			}
-			// Shift and mask to extract the bits
-			uint8_t shift = bit_offset % 8;
-			uint64_t mask = ((1ULL << bit_length) - 1);
-			value = (word >> shift) & mask;
-		}
-	}
-
-	// Handle signed values with optimized sign extension
-	if (is_signed && (value & ((uint64_t)1 << (bit_length - 1)))) {
-		// Sign extend using arithmetic right shift
-		value |= (~((1ULL << bit_length) - 1));
-	}
-
-	return (int64_t)value;
+/* Thin wrapper — implementation lives in can_decode.c */
+static inline int64_t extract_bits(const uint8_t *data, uint8_t bit_offset,
+                                   uint8_t bit_length, int endian,
+                                   bool is_signed)
+{
+    return can_extract_bits(data, bit_offset, bit_length, endian, is_signed);
 }
 
-// ---------- Stage 2: O(1) dispatch mapping from CAN ID to affected indices
-// ----------
-typedef struct {
-	uint32_t can_id;
-	uint8_t num_warning;
-	uint8_t warning_indices[8];
-	uint8_t num_indicator;
-	uint8_t indicator_indices[2];
-	uint8_t num_values;
-	uint8_t value_indices[13];
-} can_dispatch_entry_t;
-
-static can_dispatch_entry_t can_dispatch_entries[32];
-static int can_dispatch_count = 0;
-static int16_t can_id_to_dispatch_index[2048]; // -1 if none
-
-static int get_or_add_dispatch_entry(uint32_t can_id) {
-	uint32_t sid = can_id & 0x7FF;
-	if (sid < 2048) {
-		int16_t idx = can_id_to_dispatch_index[sid];
-		if (idx >= 0)
-			return idx;
-	}
-	if (can_dispatch_count >=
-		(int)(sizeof(can_dispatch_entries) / sizeof(can_dispatch_entries[0]))) {
-		return -1;
-	}
-	int idx = can_dispatch_count++;
-	can_dispatch_entries[idx].can_id = sid;
-	can_dispatch_entries[idx].num_warning = 0;
-	can_dispatch_entries[idx].num_indicator = 0;
-	can_dispatch_entries[idx].num_values = 0;
-	if (sid < 2048)
-		can_id_to_dispatch_index[sid] = (int16_t)idx;
-	return idx;
-}
-
-void rebuild_can_dispatch(void) {
-	for (int i = 0; i < 2048; i++)
-		can_id_to_dispatch_index[i] = -1;
-	can_dispatch_count = 0;
-
-	for (int i = 0; i < 8; i++) {
-		if (warning_configs[i].can_id != 0) {
-			int idx = get_or_add_dispatch_entry(warning_configs[i].can_id);
-			if (idx >= 0 && can_dispatch_entries[idx].num_warning < 8) {
-				can_dispatch_entries[idx]
-					.warning_indices[can_dispatch_entries[idx].num_warning++] =
-					(uint8_t)i;
-			}
-		}
-	}
-	for (int i = 0; i < 2; i++) {
-		if (indicator_configs[i].can_id != 0) {
-			int idx = get_or_add_dispatch_entry(indicator_configs[i].can_id);
-			if (idx >= 0 && can_dispatch_entries[idx].num_indicator < 2) {
-				can_dispatch_entries[idx].indicator_indices
-					[can_dispatch_entries[idx].num_indicator++] = (uint8_t)i;
-			}
-		}
-	}
-	for (int i = 0; i < 13; i++) {
-		if (values_config[i].enabled && values_config[i].can_id != 0) {
-			int idx = get_or_add_dispatch_entry(values_config[i].can_id);
-			if (idx >= 0 && can_dispatch_entries[idx].num_values < 13) {
-				can_dispatch_entries[idx]
-					.value_indices[can_dispatch_entries[idx].num_values++] =
-					(uint8_t)i;
-			}
-		}
-	}
-}
+/* Dispatch table (can_dispatch_entry_t, can_dispatch_entries, etc.) and
+ * rebuild_can_dispatch() have moved to can/can_dispatch.c.  The dispatch
+ * table globals are declared in can/can_dispatch.h which is included above,
+ * so process_can_message() can still access them directly.              */
 
 void process_can_message(const twai_message_t *message) {
 	static uint64_t last_panel_updates[8] = {0};

@@ -1,4 +1,4 @@
-#include "create_config_controls.h"
+#include "config_controls.h"
 #include "../theme.h"
 #include "../settings/settings_panel.h"
 #include <stdio.h>
@@ -6,7 +6,7 @@
 #include "lvgl.h"
 #include "../screens/ui_Screen3.h"
 #include "../ui.h"
-#include "../ui_preconfig.h"
+#include "preset_picker.h"
 #include "../callbacks/ui_callbacks.h"
 
 /* External input-widget arrays written by this function */

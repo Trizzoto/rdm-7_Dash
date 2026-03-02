@@ -1,6 +1,6 @@
-﻿#include "device_id.h"
-#include "ui/theme.h"
+#include "device_id.h"
 #include "display_capture.h"
+#include "ui/theme.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include <math.h>
@@ -33,7 +33,7 @@
 #include "screens/ui_Screen3.h"
 #include "sdkconfig.h"
 #include "sdmmc_cmd.h"
-#include "ui/device_settings.h"
+#include "device_settings.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/ui.h"
 #include "ui_Screen1.h"
@@ -141,102 +141,10 @@ void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 lv_disp_drv_t disp_drv;
 lv_disp_draw_buf_t draw_buf;
 
-// Configuration for the CAN bus - make them global
-// Initialize with default 500 kbps, will be loaded from NVS during startup
-twai_timing_config_t g_t_config = TWAI_TIMING_CONFIG_500KBITS();
-twai_general_config_t g_config =
-	TWAI_GENERAL_CONFIG_DEFAULT(20, 19, TWAI_MODE_NORMAL);
-twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-
-// Forward declarations for filter building and reconfiguration
+/* CAN subsystem — TWAI hardware, dispatch table, receive task */
+#include "can/can_manager.h"
+#include "can/can_dispatch.h"
 #include "ui/screens/ui_Screen3.h"
-
-// Forward references to CAN task symbols defined later/in other units
-extern TaskHandle_t canTaskHandle;
-extern volatile bool can_task_should_stop;
-extern void can_receive_task(void *pvParameter);
-
-void build_twai_filter_from_configs(twai_filter_config_t *out_filter) {
-	// Collect all relevant standard 11-bit IDs from configs
-	uint32_t ids[8 + 2 + 13];
-	int count = 0;
-
-	for (int i = 0; i < 8; i++) {
-		if (warning_configs[i].can_id != 0) {
-			ids[count++] = (warning_configs[i].can_id & 0x7FF);
-		}
-	}
-	for (int i = 0; i < 2; i++) {
-		if (indicator_configs[i].can_id != 0) {
-			ids[count++] = (indicator_configs[i].can_id & 0x7FF);
-		}
-	}
-	for (int i = 0; i < 13; i++) {
-		if (values_config[i].enabled && values_config[i].can_id != 0) {
-			ids[count++] = (values_config[i].can_id & 0x7FF);
-		}
-	}
-
-	// Default to accept all if no IDs are configured
-	if (count == 0) {
-		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
-		return;
-	}
-
-	// Compute common pattern across all IDs to derive a mask-based filter
-	uint32_t ref = ids[0] & 0x7FF;
-	uint32_t varying = 0;
-	for (int i = 1; i < count; i++) {
-		varying |= (ref ^ (ids[i] & 0x7FF));
-	}
-	uint32_t compare_bits =
-		(~varying) & 0x7FF; // bits that are equal across all IDs
-	uint32_t code_bits = ref & compare_bits;
-
-	// In TWAI, mask bit 1 = don't care, 0 = compare. Place ID in MSBs
-	// (bits 31..21)
-	uint32_t acceptance_code = (code_bits << 21);
-	uint32_t acceptance_mask = 0xFFFFFFFF; // start with don't care everywhere
-	acceptance_mask &= ~(compare_bits << 21); // set 0 where we compare
-
-	out_filter->acceptance_code = acceptance_code;
-	out_filter->acceptance_mask = acceptance_mask;
-	out_filter->single_filter = true; // single filter mode for standard IDs
-}
-
-void reconfigure_can_filter(void) {
-	// Stop CAN task
-	if (canTaskHandle != NULL) {
-		can_task_should_stop = true;
-		for (int i = 0; i < 200; i++) {
-			if (eTaskGetState(canTaskHandle) == eDeleted) {
-				break;
-			}
-			vTaskDelay(pdMS_TO_TICKS(10));
-		}
-		if (eTaskGetState(canTaskHandle) != eDeleted) {
-			vTaskDelete(canTaskHandle);
-		}
-		canTaskHandle = NULL;
-	}
-
-	// Rebuild filter from current configuration
-	build_twai_filter_from_configs(&f_config);
-
-	// Restart TWAI driver with new filter
-	twai_stop();
-	vTaskDelay(pdMS_TO_TICKS(50));
-	twai_driver_uninstall();
-	vTaskDelay(pdMS_TO_TICKS(50));
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK) {
-		twai_start();
-	}
-	vTaskDelay(pdMS_TO_TICKS(50));
-
-	// Recreate CAN receive task
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 7,
-							&canTaskHandle, 0);
-}
 
 // PWM configuration for GPIO16
 #define LEDC_TIMER LEDC_TIMER_0
@@ -358,12 +266,7 @@ bool example_lvgl_lock(int timeout_ms) {
 
 void example_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
 
-// At the top with other declarations
 TaskHandle_t lvglTaskHandle = NULL;
-TaskHandle_t canTaskHandle = NULL;
-
-// Add a flag to signal CAN task to stop gracefully
-volatile bool can_task_should_stop = false;
 
 // Change the LVGL task function to be accessible
 void example_lvgl_port_task(void *pvParameter) {
@@ -459,160 +362,6 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 		data->point.y = touchpad_y[0];
 		data->state = LV_INDEV_STATE_PR;
 	}
-}
-
-void can_init() {
-	// Load saved bitrate setting from NVS
-	nvs_handle_t handle;
-	uint8_t saved_bitrate = 2; // Default to 500 kbps (index 2)
-	if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
-		nvs_get_u8(handle, "can_bitrate", &saved_bitrate);
-		nvs_close(handle);
-	}
-
-	// Configure timing based on saved bitrate
-	switch (saved_bitrate) {
-	case 0: // 125 kbps
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
-		ESP_LOGI(TAG, "CAN bitrate set to 125 kbps");
-		break;
-	case 1: // 250 kbps
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
-		ESP_LOGI(TAG, "CAN bitrate set to 250 kbps");
-		break;
-	case 2: // 500 kbps
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
-		ESP_LOGI(TAG, "CAN bitrate set to 500 kbps");
-		break;
-	case 3: // 1 Mbps
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
-		ESP_LOGI(TAG, "CAN bitrate set to 1 Mbps");
-		break;
-	default: // Default to 500 kbps
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
-		ESP_LOGI(TAG, "CAN bitrate set to default 500 kbps");
-		break;
-	}
-
-	// Build dispatch and filter based on current configuration
-	rebuild_can_dispatch();
-	build_twai_filter_from_configs(&f_config);
-
-	// Install the CAN driver
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK) {
-		ESP_LOGI(TAG, "CAN driver installed successfully");
-	} else {
-		ESP_LOGE(TAG, "Failed to install CAN driver");
-	}
-
-	// Start the CAN driver
-	if (twai_start() == ESP_OK) {
-		ESP_LOGI(TAG, "CAN driver started");
-	} else {
-		ESP_LOGE(TAG, "Failed to start CAN driver");
-	}
-}
-
-void can_receive_task(void *pvParameter) {
-	const TickType_t xDelay =
-		pdMS_TO_TICKS(1); // Small delay to prevent tight loop
-	uint32_t last_warning_time = 0;
-	const uint32_t warning_interval =
-		30000; // Increased to 30 seconds to reduce spam
-	uint32_t consecutive_failures = 0;
-	const uint32_t failure_threshold = 50; // Higher threshold before warning
-
-	while (1) {
-		// Check if we should stop the task
-		if (can_task_should_stop) {
-			ESP_LOGI(TAG, "CAN task stopping gracefully");
-			break;
-		}
-
-		twai_message_t message;
-		esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5)); // 5ms timeout
-
-		if (ret == ESP_OK) {
-			// Check if this is a priority message (wideband or BAR2)
-			bool is_priority = false;
-			for (int i = 0; i < 13; i++) {
-				// Check for panel 7 (wideband) or panel 13 (BAR2)
-				if ((i == 6 || i == 12) && values_config[i].enabled &&
-					values_config[i].can_id == message.identifier) {
-					is_priority = true;
-					break;
-				}
-			}
-
-			bool mutex_acquired = false;
-			int retry_count = 0;
-			const int max_retries =
-				is_priority ? 3 : 1; // More retries for priority messages
-
-			// Try multiple times for priority messages
-			while (!mutex_acquired && retry_count < max_retries) {
-				if (example_lvgl_lock(pdMS_TO_TICKS(is_priority ? 2 : 5))) {
-					mutex_acquired = true;
-					consecutive_failures = 0;
-					process_can_message(&message);
-					example_lvgl_unlock();
-					break;
-				}
-				retry_count++;
-				// Small delay between retries
-				if (!mutex_acquired && retry_count < max_retries) {
-					vTaskDelay(pdMS_TO_TICKS(0));
-				}
-			}
-
-			if (!mutex_acquired) {
-				consecutive_failures++;
-
-				// Only log warning if we've had many consecutive failures
-				if (consecutive_failures >= failure_threshold) {
-					uint32_t current_time = esp_timer_get_time() / 1000;
-					if (current_time - last_warning_time > warning_interval) {
-						ESP_LOGW(
-							TAG,
-							"LVGL mutex contention (%lu consecutive failures)",
-							consecutive_failures);
-						last_warning_time = current_time;
-						consecutive_failures = 0; // Reset after warning
-					}
-				}
-
-				// Dynamic delay based on contention
-				if (consecutive_failures > 100) {
-					vTaskDelay(pdMS_TO_TICKS(3));
-				} else if (consecutive_failures > 50) {
-					vTaskDelay(pdMS_TO_TICKS(2));
-				} else if (!is_priority) {
-					vTaskDelay(pdMS_TO_TICKS(1));
-				}
-			}
-		} else if (ret == ESP_ERR_TIMEOUT) {
-			// No CAN messages received, yield to other tasks
-			vTaskDelay(xDelay);
-			consecutive_failures =
-				0; // Reset on timeout as it's a natural pause
-		} else if (ret == ESP_ERR_INVALID_STATE) {
-			// CAN bus is likely disconnected, try to recover
-			ESP_LOGW(TAG, "CAN bus error, attempting recovery...");
-			twai_stop();
-			vTaskDelay(pdMS_TO_TICKS(100)); // Wait 100ms
-			twai_start();
-			vTaskDelay(pdMS_TO_TICKS(100)); // Wait another 100ms
-			consecutive_failures = 0;		// Reset after recovery attempt
-		} else {
-			ESP_LOGW(TAG, "CAN receive error: %s", esp_err_to_name(ret));
-			vTaskDelay(xDelay);
-		}
-	}
-
-	ESP_LOGI(TAG, "CAN task exited gracefully");
-	// Reset the flag when task exits
-	can_task_should_stop = false;
-	vTaskDelete(NULL);
 }
 
 void test_sd_card_write() {
@@ -2549,11 +2298,9 @@ void app_main(void) {
 	ESP_LOGI(TAG, "Indicator wire inputs (GPIO %d left, %d right) initialized",
 			 INDICATOR_LEFT_GPIO, INDICATOR_RIGHT_GPIO);
 
-	// Now that LVGL mutex exists and configs are loaded, start CAN task for
-	// fast data reception
+	/* Now that the LVGL mutex exists, start the CAN receive task */
 	ESP_LOGI(TAG, "Creating CAN task now that LVGL mutex is ready...");
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 4,
-							&canTaskHandle, 0);
+	can_start_task();
 	ESP_LOGI(TAG, "CAN task started - data will be available when UI loads");
 
 	ESP_LOGI(TAG, "Loading splash screen for smooth boot experience");

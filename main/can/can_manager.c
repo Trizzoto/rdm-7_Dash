@@ -1,0 +1,246 @@
+/*
+ * can_manager.c — TWAI peripheral lifecycle and CAN receive task.
+ *
+ * Owns all TWAI hardware configuration, the acceptance filter, and the
+ * simplified receive task that acquires the LVGL mutex once per frame and
+ * delegates all routing to can_dispatch_process_frame().
+ */
+#include "can_manager.h"
+#include "can_dispatch.h"
+#include "ui/screens/ui_Screen3.h"   /* warning_configs, indicator_configs, values_config */
+
+#include "driver/twai.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+
+static const char *TAG = "CAN_MGR";
+
+/* ── TWAI hardware configuration ────────────────────────────────────── */
+
+static twai_timing_config_t  g_t_config = TWAI_TIMING_CONFIG_500KBITS();
+static twai_general_config_t g_config   =
+    TWAI_GENERAL_CONFIG_DEFAULT(20, 19, TWAI_MODE_NORMAL);
+static twai_filter_config_t  f_config   = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+/* ── Receive task management ─────────────────────────────────────────── */
+
+static TaskHandle_t  canTaskHandle       = NULL;
+static volatile bool can_task_should_stop = false;
+
+/* LVGL mutex helpers — defined in main.c */
+extern bool example_lvgl_lock(uint32_t timeout_ms);
+extern void example_lvgl_unlock(void);
+
+/* ── CAN receive task ─────────────────────────────────────────────────
+ *
+ * Simplified: receive one frame, acquire LVGL mutex, dispatch, release.
+ * No priority detection, no retry accounting — keeps the task lean.
+ */
+static void can_receive_task(void *pvParameter)
+{
+    (void)pvParameter;
+
+    while (!can_task_should_stop) {
+        twai_message_t message;
+        esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5));
+
+        if (ret == ESP_OK) {
+            if (example_lvgl_lock(pdMS_TO_TICKS(10))) {
+                can_dispatch_process_frame(&message);
+                example_lvgl_unlock();
+            }
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        } else if (ret == ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "CAN bus error, attempting recovery");
+            twai_stop();
+            vTaskDelay(pdMS_TO_TICKS(100));
+            twai_start();
+        } else {
+            ESP_LOGW(TAG, "CAN receive error: %s", esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+    }
+
+    ESP_LOGI(TAG, "CAN task exited gracefully");
+    can_task_should_stop = false;
+    vTaskDelete(NULL);
+}
+
+/* ── Public API ──────────────────────────────────────────────────────── */
+
+void build_twai_filter_from_configs(twai_filter_config_t *out_filter)
+{
+    uint32_t ids[8 + 2 + 13];
+    int count = 0;
+
+    for (int i = 0; i < 8; i++)
+        if (warning_configs[i].can_id != 0)
+            ids[count++] = warning_configs[i].can_id  & 0x7FFu;
+    for (int i = 0; i < 2; i++)
+        if (indicator_configs[i].can_id != 0)
+            ids[count++] = indicator_configs[i].can_id & 0x7FFu;
+    for (int i = 0; i < 13; i++)
+        if (values_config[i].enabled && values_config[i].can_id != 0)
+            ids[count++] = values_config[i].can_id     & 0x7FFu;
+
+    if (count == 0) {
+        *out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+        return;
+    }
+
+    uint32_t ref     = ids[0];
+    uint32_t varying = 0;
+    for (int i = 1; i < count; i++)
+        varying |= (ref ^ ids[i]);
+
+    uint32_t compare_bits = (~varying) & 0x7FFu;
+    uint32_t code_bits    = ref & compare_bits;
+
+    out_filter->acceptance_code = code_bits << 21;
+    out_filter->acceptance_mask = 0xFFFFFFFFu & ~(compare_bits << 21);
+    out_filter->single_filter   = true;
+}
+
+void reconfigure_can_filter(void)
+{
+    /* Stop the receive task gracefully */
+    if (canTaskHandle != NULL) {
+        can_task_should_stop = true;
+        for (int i = 0; i < 200; i++) {
+            if (eTaskGetState(canTaskHandle) == eDeleted) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (eTaskGetState(canTaskHandle) != eDeleted)
+            vTaskDelete(canTaskHandle);
+        canTaskHandle = NULL;
+    }
+
+    build_twai_filter_from_configs(&f_config);
+
+    twai_stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    twai_driver_uninstall();
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK)
+        twai_start();
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    xTaskCreatePinnedToCore(can_receive_task, "can_receive_task",
+                            4096, NULL, 7, &canTaskHandle, 0);
+}
+
+void can_init(void)
+{
+    /* Load saved bitrate from NVS (default index 2 = 500 kbps) */
+    nvs_handle_t handle;
+    uint8_t saved_bitrate = 2;
+    if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_get_u8(handle, "can_bitrate", &saved_bitrate);
+        nvs_close(handle);
+    }
+
+    switch (saved_bitrate) {
+    case 0: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 125 kbps"); break;
+    case 1: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 250 kbps"); break;
+    case 3: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 1 Mbps");   break;
+    default:
+    case 2: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 500 kbps"); break;
+    }
+
+    rebuild_can_dispatch();
+    build_twai_filter_from_configs(&f_config);
+
+    if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK)
+        ESP_LOGI(TAG, "TWAI driver installed");
+    else
+        ESP_LOGE(TAG, "TWAI driver install failed");
+
+    if (twai_start() == ESP_OK)
+        ESP_LOGI(TAG, "TWAI started");
+    else
+        ESP_LOGE(TAG, "TWAI start failed");
+}
+
+void can_start_task(void)
+{
+    xTaskCreatePinnedToCore(can_receive_task, "can_receive_task",
+                            4096, NULL, 4, &canTaskHandle, 0);
+    ESP_LOGI(TAG, "CAN receive task started");
+}
+
+UBaseType_t can_task_get_priority(void)
+{
+    if (canTaskHandle == NULL) return tskIDLE_PRIORITY;
+    return uxTaskPriorityGet(canTaskHandle);
+}
+
+void can_task_set_priority(UBaseType_t priority)
+{
+    if (canTaskHandle != NULL)
+        vTaskPrioritySet(canTaskHandle, priority);
+}
+
+void can_change_bitrate(uint8_t bitrate_index)
+{
+    /* Stop the receive task */
+    if (canTaskHandle != NULL) {
+        can_task_should_stop = true;
+        for (int i = 0; i < 200; i++) {
+            if (eTaskGetState(canTaskHandle) == eDeleted) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (eTaskGetState(canTaskHandle) != eDeleted)
+            vTaskDelete(canTaskHandle);
+        canTaskHandle = NULL;
+    }
+
+    /* Apply new timing config */
+    switch (bitrate_index) {
+    case 0: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 125 kbps"); break;
+    case 1: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 250 kbps"); break;
+    case 3: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 1 Mbps");   break;
+    default:
+    case 2: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
+            ESP_LOGI(TAG, "CAN bitrate: 500 kbps"); break;
+    }
+
+    /* Uninstall, rebuild filter, reinstall */
+    twai_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    twai_driver_uninstall();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    rebuild_can_dispatch();
+    build_twai_filter_from_configs(&f_config);
+
+    if (twai_driver_install(&g_config, &g_t_config, &f_config) != ESP_OK) {
+        ESP_LOGE(TAG, "TWAI driver install failed after bitrate change");
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    if (twai_start() != ESP_OK) {
+        ESP_LOGE(TAG, "TWAI start failed after bitrate change");
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    /* Recreate receive task at priority 7 (same as reconfigure_can_filter) */
+    if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task",
+                                4096, NULL, 7, &canTaskHandle, 0) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create CAN task after bitrate change");
+        canTaskHandle = NULL;
+    }
+    ESP_LOGI(TAG, "Bitrate change completed");
+}

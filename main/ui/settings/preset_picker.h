@@ -1,5 +1,5 @@
-#ifndef UI_PRECONFIG_H
-#define UI_PRECONFIG_H
+#ifndef PRESET_PICKER_H
+#define PRESET_PICKER_H
 
 #include "lvgl.h"
 
@@ -16,4 +16,4 @@ void destroy_preconfig_menu(void);
  */
 void open_preset_picker(lv_obj_t *parent_screen, uint8_t value_id);
 
-#endif // UI_PRECONFIG_H
+#endif /* PRESET_PICKER_H */

@@ -1,5 +1,5 @@
-#ifndef CREATE_CONFIG_CONTROLS_H
-#define CREATE_CONFIG_CONTROLS_H
+#ifndef CONFIG_CONTROLS_H
+#define CONFIG_CONTROLS_H
 
 #include <stdint.h>
 #include "lvgl.h"
@@ -15,4 +15,4 @@ void create_config_controls(lv_obj_t * parent, uint8_t value_id);
 }
 #endif
 
-#endif // CREATE_CONFIG_CONTROLS_H 
+#endif /* CONFIG_CONTROLS_H */

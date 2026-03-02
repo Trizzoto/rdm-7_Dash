@@ -1,4 +1,4 @@
-#include "custom_gear_section.h"
+#include "gear_config.h"
 #include "../theme.h"
 #include <stdio.h>
 #include <string.h>
@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "lvgl.h"
 #include "../screens/ui_Screen3.h"
-#include "../ui_preconfig.h"
+#include "preset_picker.h"
 #include "../callbacks/ui_callbacks.h"
 #include "esp_log.h"
 

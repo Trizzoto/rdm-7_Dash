@@ -1,18 +1,18 @@
 /* menu_screen.c — Phase 0B rebuild */
 #include "menu_screen.h"
-#include "custom_gear_section.h"
+#include "gear_config.h"
 #include "config_modal.h"
 #include "../theme.h"
 #include "../settings/settings_panel.h"
 #include <stdio.h>
 #include <string.h>
 #include "lvgl.h"
-#include "../screens/ui_Screen3.h"  /* value_config_t, values_config, rebuild_can_dispatch, etc. */
+#include "../screens/ui_Screen3.h"
 #include "../ui.h"
-#include "../ui_preconfig.h"         /* show_preconfig_menu, destroy_preconfig_menu */
-#include "../config/create_config_controls.h"
-#include "../callbacks/ui_callbacks.h" /* all fuel sender + bar toggle + speed + custom_text cbs */
-#include "../device_settings.h"      /* get_selected_ecu_preconfig */
+#include "preset_picker.h"
+#include "../config/config_controls.h"
+#include "../callbacks/ui_callbacks.h"
+#include "device_settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 

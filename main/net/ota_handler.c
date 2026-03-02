@@ -23,8 +23,8 @@
 
 // Add external declarations
 extern TaskHandle_t lvglTaskHandle;
-extern TaskHandle_t canTaskHandle;
 extern void example_lvgl_port_task(void *pvParameter);
+#include "can/can_manager.h"
 
 // Updated URLs for your firmware portal
 #define FIRMWARE_API_URL "https://rdm-7-ota-firmware-updates.vercel.app/api/firmware/latest"
@@ -768,12 +768,10 @@ static void ota_update_task(void *pvParameter) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     ESP_LOGI(TAG, "Free internal memory: %d bytes", free_internal);
     
-    // Temporarily reduce CAN task priority to free up CPU for smoother UI
-    UBaseType_t original_can_priority = uxTaskPriorityGet(canTaskHandle);
-    if (canTaskHandle != NULL) {
-        vTaskPrioritySet(canTaskHandle, 1); // Lower CAN priority during OTA
-        ESP_LOGI(TAG, "Temporarily reduced CAN task priority for smoother OTA");
-    }
+    /* Temporarily reduce CAN task priority to free up CPU for smoother UI */
+    UBaseType_t original_can_priority = can_task_get_priority();
+    can_task_set_priority(1);
+    ESP_LOGI(TAG, "Temporarily reduced CAN task priority for smoother OTA");
     
     // Set status to in progress
     ota_status = OTA_UPDATE_IN_PROGRESS;
@@ -785,11 +783,9 @@ static void ota_update_task(void *pvParameter) {
     // Attempt OTA update
     esp_err_t ret = start_ota_update();
     
-    // Restore CAN task priority
-    if (canTaskHandle != NULL) {
-        vTaskPrioritySet(canTaskHandle, original_can_priority);
-        ESP_LOGI(TAG, "Restored CAN task priority");
-    }
+    /* Restore CAN task priority */
+    can_task_set_priority(original_can_priority);
+    ESP_LOGI(TAG, "Restored CAN task priority");
     
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "OTA update completed successfully");
