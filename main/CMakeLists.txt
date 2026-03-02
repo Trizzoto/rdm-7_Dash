@@ -38,6 +38,8 @@ idf_component_register(
         "widgets/widget_panel.c"
         "widgets/widget_rpm_bar.c"
         "widgets/widget_dispatcher.c"
+        "layout/layout_manager.c"
+        "layout/default_layout.c"
         "ui/screens/splash_screen.c"
         "ui/screens/ui_Screen4.c"
         "ui/screens/ui_wifi.c"
@@ -98,6 +100,7 @@ idf_component_register(
         "mbedtls"
         "esp-tls"
         "esp_http_server"
+        "joltwallet__littlefs"
 )
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")

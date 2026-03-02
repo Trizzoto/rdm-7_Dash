@@ -5,10 +5,10 @@ extern "C" {
 #endif
 
 /** GPIO number for the left turn-indicator wire input (high = active). */
-#define WIRE_INPUT_LEFT_GPIO  43
+#define WIRE_INPUT_LEFT_GPIO -1 // 43
 
 /** GPIO number for the right turn-indicator wire input (high = active). */
-#define WIRE_INPUT_RIGHT_GPIO 44
+#define WIRE_INPUT_RIGHT_GPIO -1 // 44
 
 /**
  * @brief Configure GPIO 43 and 44 as digital inputs with pull-down enabled.
