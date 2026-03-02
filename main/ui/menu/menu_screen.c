@@ -2,12 +2,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "lvgl.h"
 #include "../screens/ui_Screen3.h"
 #include "../ui.h"
 #include "../ui_preconfig.h"
 #include "../config/create_config_controls.h"
 #include "../callbacks/ui_callbacks.h"
+
+// External declaration for Smart_Car_Key image
+extern const lv_img_dsc_t Smart_Car_Key;
 #include "../menu/menu_screen.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,9 +19,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl_helpers.h"  // Add this for lvgl_mux
-#include "gps/gps.h"      // Add GPS functionality
 #include "../device_settings.h"
-#include "fuel_input.h"
 #include "nvs_flash.h"    // Add NVS support for timezone settings
 
 // Reconfigure CAN acceptance filter after saving monitored IDs
@@ -34,73 +36,6 @@ extern char previous_values[13][64];
 extern float previous_bar_values[2];
 extern SemaphoreHandle_t xGuiSemaphore;
 
-// Timezone management
-static uint8_t selected_timezone = 0; // Default to UTC+0
-
-// Function to get current timezone offset
-uint8_t get_timezone_offset(void) {
-    // Load from NVS if available
-    nvs_handle_t handle;
-    if (nvs_open("gps_config", NVS_READONLY, &handle) == ESP_OK) {
-        if (nvs_get_u8(handle, "timezone", &selected_timezone) != ESP_OK) {
-            selected_timezone = 0; // Default to UTC+0
-        }
-        nvs_close(handle);
-    }
-    return selected_timezone;
-}
-
-// Function to save timezone setting
-static void save_timezone_setting(uint8_t timezone_index) {
-    selected_timezone = timezone_index;
-    nvs_handle_t handle;
-    if (nvs_open("gps_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "timezone", selected_timezone);
-        nvs_commit(handle);
-        nvs_close(handle);
-        ESP_LOGI("GPS", "Timezone setting saved: %d", selected_timezone);
-    }
-}
-
-// Timezone dropdown event callback
-static void timezone_dropdown_event_cb(lv_event_t *e) {
-    lv_obj_t * dd = lv_event_get_target(e);
-    uint8_t selected = lv_dropdown_get_selected(dd);
-    save_timezone_setting(selected);
-    ESP_LOGI("GPS", "Timezone changed to index: %d", selected);
-}
-
-// Function to get DST enabled state
-bool get_dst_enabled(void) {
-    uint8_t dst_enabled = 0;
-    nvs_handle_t handle;
-    if (nvs_open("gps_config", NVS_READONLY, &handle) == ESP_OK) {
-        if (nvs_get_u8(handle, "dst_enabled", &dst_enabled) != ESP_OK) {
-            dst_enabled = 0; // Default to DST off
-        }
-        nvs_close(handle);
-    }
-    return dst_enabled != 0;
-}
-
-// Function to save DST setting
-static void save_dst_setting(bool enabled) {
-    nvs_handle_t handle;
-    if (nvs_open("gps_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "dst_enabled", enabled ? 1 : 0);
-        nvs_commit(handle);
-        nvs_close(handle);
-        ESP_LOGI("GPS", "DST setting saved: %s", enabled ? "ON" : "OFF");
-    }
-}
-
-// DST switch event callback
-static void dst_switch_event_cb(lv_event_t *e) {
-    lv_obj_t * sw = lv_event_get_target(e);
-    bool is_checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    save_dst_setting(is_checked);
-    ESP_LOGI("GPS", "DST changed to: %s", is_checked ? "ON" : "OFF");
-}
 
 // External references to UI objects
 extern lv_obj_t* ui_Screen3;
@@ -119,12 +54,6 @@ typedef struct {
     double final_value;
 } panel_update_t;
 
-typedef struct {
-    uint8_t bar_index;
-    int32_t bar_value;
-    double final_value;
-    int config_index;
-} bar_update_t;
 
 typedef struct {
     char rpm_str[EXAMPLE_MAX_CHAR_SIZE];
@@ -161,20 +90,58 @@ extern bool any_fuel_input_enabled(void);
 // Forward declaration for timer callback
 static void delete_old_screen_cb(lv_timer_t * timer);
 
-// GPS status update timer callback declaration
-void gps_status_update_timer_cb(lv_timer_t * timer);
+// Custom text input event callback declaration
+void custom_text_input_event_cb(lv_event_t * e);
+
+// Custom gear values section
+static lv_obj_t * custom_gear_values_container = NULL;
+static lv_obj_t * custom_gear_value_inputs[14] = {NULL}; // P, R, N, D, 1-10
+static lv_obj_t * custom_icon_inputs[7] = {NULL}; // Custom icons (KEY, etc.)
+static lv_obj_t * custom_icon_type_dropdowns[7] = {NULL}; // Icon type dropdowns (KEY, etc.)
+static lv_obj_t * custom_icon_images[7] = {NULL}; // Icon images (for KEY, etc.)
+
+// Custom gear value functions
+void create_custom_gear_values_section(lv_obj_t * parent, uint8_t gear_mode);
+void hide_custom_gear_values_section(void);
+void custom_icon_input_event_cb(lv_event_t * e);
+void custom_gear_value_input_event_cb(lv_event_t * e);
 
 // RPM limiter effect callback declarations
 extern void rpm_limiter_effect_dropdown_event_cb(lv_event_t * e);
 extern void rpm_limiter_roller_event_cb(lv_event_t * e);
 extern void rpm_limiter_color_dropdown_event_cb(lv_event_t * e);
 extern void rpm_lights_switch_event_cb(lv_event_t * e);
-extern void rpm_gradient_switch_event_cb(lv_event_t * e);
+extern void rpm_background_switch_event_cb(lv_event_t * e);
+extern void rpm_background_color_dropdown_event_cb(lv_event_t * e);
+extern void rpm_background_threshold_roller_event_cb(lv_event_t * e);
 extern void stop_limiter_effect_demo(void);
 extern void create_rpm_lights_circles(lv_obj_t * parent);
 extern void bar_low_color_event_cb(lv_event_t * e);
 extern void bar_high_color_event_cb(lv_event_t * e);
 extern void bar_in_range_color_event_cb(lv_event_t * e);
+extern void show_value_switch_event_cb(lv_event_t * e);
+extern void invert_value_switch_event_cb(lv_event_t * e);
+extern void fuel_sender_switch_event_cb(lv_event_t * e);
+extern void fuel_sender_ctx_free_event_cb(lv_event_t * e);
+extern void fs_empty_btn_event_cb(lv_event_t * e);
+extern void fs_full_btn_event_cb(lv_event_t * e);
+extern void fs_empty_v_input_event_cb(lv_event_t * e);
+extern void fs_full_v_input_event_cb(lv_event_t * e);
+static void fs_voltage_update_timer_cb(lv_timer_t * timer);
+static void fs_filter_slider_event_cb(lv_event_t * e);
+
+typedef struct {
+    uint8_t      value_id;
+    lv_obj_t    *set_label;
+    lv_obj_t    *empty_btn;
+    lv_obj_t    *full_btn;
+    lv_obj_t    *empty_input;
+    lv_obj_t    *full_input;
+    lv_obj_t    *current_label;
+    lv_timer_t  *update_timer;
+    lv_obj_t    *filter_label;
+    lv_obj_t    *filter_slider;
+} fuel_sender_ctx_t;
 
 // External references
 extern lv_obj_t *ui_MenuScreen;
@@ -190,6 +157,8 @@ extern int rpm_gauge_max;
 extern lv_obj_t *ui_Label[];
 extern lv_obj_t *ui_Value[];
 extern lv_obj_t *ui_Box[];
+extern lv_obj_t *ui_Bar_1_Value;
+extern lv_obj_t *ui_Bar_2_Value;
 extern lv_obj_t *ui_RPM_Value;
 extern lv_obj_t *ui_Speed_Value;
 extern lv_obj_t *ui_Kmh;
@@ -207,6 +176,7 @@ lv_obj_t * menu_rpm_value_label = NULL;         // Track the RPM value label in 
 lv_obj_t * menu_speed_value_label = NULL;       // Speed value label in menu for live updates
 lv_obj_t * menu_speed_units_label = NULL;       // Speed units label in menu for live updates
 lv_obj_t * menu_gear_value_label = NULL;        // Gear value label in menu for live updates
+lv_obj_t * menu_gear_icon = NULL;                // Gear icon in menu for custom icon display
 lv_obj_t * menu_panel_value_labels[8] = {NULL}; // Panel value labels in menu for live updates
 lv_obj_t * menu_panel_boxes[8] = {NULL}; // Panel boxes in menu for border effects
 lv_obj_t * menu_panel_labels[8] = {NULL}; // Panel text labels in menu for label updates
@@ -235,6 +205,42 @@ void close_menu_event_cb(lv_event_t * e) {
 
     // First, try to save configuration with timeout protection
     ESP_LOGI("menu_screen", "Attempting to save configuration...");
+    
+    // Before saving, explicitly read all custom gear and icon input values
+    // This ensures values like "0" are saved even if input events haven't fired
+    // Note: custom_gear_value_inputs and custom_icon_inputs are static arrays in this file
+    
+    // Read all custom gear values
+    for (int i = 0; i < 14; i++) {
+        if (custom_gear_value_inputs[i] && lv_obj_is_valid(custom_gear_value_inputs[i])) {
+            const char* value_str = lv_textarea_get_text(custom_gear_value_inputs[i]);
+            uint32_t gear_value = UINT32_MAX;
+            if (value_str != NULL && strlen(value_str) > 0) {
+                if (strncmp(value_str, "0x", 2) == 0 || strncmp(value_str, "0X", 2) == 0) {
+                    gear_value = strtoul(value_str, NULL, 16);
+                } else {
+                    gear_value = strtoul(value_str, NULL, 10);
+                }
+            }
+            values_config[GEAR_VALUE_ID - 1].gear_custom_values[i] = gear_value;
+        }
+    }
+    
+    // Read all custom icon values
+    for (int i = 0; i < 7; i++) {
+        if (custom_icon_inputs[i] && lv_obj_is_valid(custom_icon_inputs[i])) {
+            const char* value_str = lv_textarea_get_text(custom_icon_inputs[i]);
+            uint32_t icon_value = UINT32_MAX;
+            if (value_str != NULL && strlen(value_str) > 0) {
+                if (strncmp(value_str, "0x", 2) == 0 || strncmp(value_str, "0X", 2) == 0) {
+                    icon_value = strtoul(value_str, NULL, 16);
+                } else {
+                    icon_value = strtoul(value_str, NULL, 10);
+                }
+            }
+            values_config[GEAR_VALUE_ID - 1].custom_icon_values[i] = icon_value;
+        }
+    }
     
     // Disable the button to prevent double-clicks
     lv_obj_t * btn = lv_event_get_target(e);
@@ -301,6 +307,7 @@ void close_menu_event_cb(lv_event_t * e) {
     menu_speed_value_label = NULL;
     menu_speed_units_label = NULL;
     menu_gear_value_label = NULL;
+    menu_gear_icon = NULL;
     for (int i = 0; i < 8; i++) {
         menu_panel_value_labels[i] = NULL;
         menu_panel_boxes[i] = NULL;
@@ -373,6 +380,7 @@ void cancel_menu_event_cb(lv_event_t * e) {
     menu_speed_value_label = NULL;
     menu_speed_units_label = NULL;
     menu_gear_value_label = NULL;
+    menu_gear_icon = NULL;
     for (int i = 0; i < 8; i++) {
         menu_panel_value_labels[i] = NULL;
         menu_panel_boxes[i] = NULL;
@@ -427,55 +435,108 @@ void load_menu_screen_for_value(uint8_t value_id) {
     if (value_id >= 1 && value_id <= 8) {
         create_menu_objects(ui_MenuScreen, value_id);
       
+    // Create background boxes for customization section
+    lv_obj_t * customization_box_1 = lv_obj_create(ui_MenuScreen);
+    lv_obj_set_width(customization_box_1, 194);
+    lv_obj_set_height(customization_box_1, 155);
+    lv_obj_set_pos(customization_box_1, -18, -23);
+    lv_obj_set_align(customization_box_1, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(customization_box_1, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(customization_box_1, lv_color_hex(0x181818), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(customization_box_1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(customization_box_1, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(customization_box_1, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_obj_t * customization_box_2 = lv_obj_create(ui_MenuScreen);
+    lv_obj_set_width(customization_box_2, 194);
+    lv_obj_set_height(customization_box_2, 155);
+    lv_obj_set_pos(customization_box_2, -18, 137);
+    lv_obj_set_align(customization_box_2, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(customization_box_2, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(customization_box_2, lv_color_hex(0x181818), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(customization_box_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(customization_box_2, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(customization_box_2, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
+
      // High Warning Threshold
     lv_obj_t * warning_high_label = lv_label_create(ui_MenuScreen);
-    lv_label_set_text(warning_high_label, "High Warning:");
+    lv_label_set_text(warning_high_label, "Value:");
     lv_obj_set_style_text_color(warning_high_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(warning_high_label, LV_ALIGN_CENTER, -50, -87);
+    lv_obj_align(warning_high_label, LV_ALIGN_CENTER, -78, 113);
 
     lv_obj_t * warning_high_input = lv_textarea_create(ui_MenuScreen);
     lv_obj_add_style(warning_high_input, get_common_style(), LV_PART_MAIN);
     lv_textarea_set_one_line(warning_high_input, true);
+    lv_textarea_set_placeholder_text(warning_high_input, "Range High");
     lv_obj_set_width(warning_high_input, 100);
-    lv_obj_align(warning_high_input, LV_ALIGN_CENTER, 80, -87);
+    lv_obj_align(warning_high_input, LV_ALIGN_CENTER, 12, 113);
     lv_obj_add_event_cb(warning_high_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
 
     // High Warning Color
     lv_obj_t * warning_high_color_label = lv_label_create(ui_MenuScreen);
-    lv_label_set_text(warning_high_color_label, "High Color:");
+    lv_label_set_text(warning_high_color_label, "Colour:");
     lv_obj_set_style_text_color(warning_high_color_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(warning_high_color_label, LV_ALIGN_CENTER, -50, -47);
+    lv_obj_align(warning_high_color_label, LV_ALIGN_CENTER, -78, 153);
 
     lv_obj_t * warning_high_color_dd = lv_dropdown_create(ui_MenuScreen);
     lv_dropdown_set_options(warning_high_color_dd, "Red\nBlue");
     lv_obj_set_width(warning_high_color_dd, 100);
-    lv_obj_align(warning_high_color_dd, LV_ALIGN_CENTER, 80, -47);
+    lv_obj_align(warning_high_color_dd, LV_ALIGN_CENTER, 12, 153);
     lv_obj_add_style(warning_high_color_dd, get_common_style(), LV_PART_MAIN);
+
+    // Range Low Label
+    lv_obj_t * range_low_label = lv_label_create(ui_MenuScreen);
+    lv_label_set_text(range_low_label, "Range Low");
+    lv_obj_set_style_text_color(range_low_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(range_low_label, LV_ALIGN_CENTER, -18, -87);
 
     // Low Warning Threshold
     lv_obj_t * warning_low_label = lv_label_create(ui_MenuScreen);
-    lv_label_set_text(warning_low_label, "Low Warning:");
+    lv_label_set_text(warning_low_label, "Value:");
     lv_obj_set_style_text_color(warning_low_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(warning_low_label, LV_ALIGN_CENTER, -50, -7);
+    lv_obj_align(warning_low_label, LV_ALIGN_CENTER, -78, -47);
 
     lv_obj_t * warning_low_input = lv_textarea_create(ui_MenuScreen);
     lv_obj_add_style(warning_low_input, get_common_style(), LV_PART_MAIN);
     lv_textarea_set_one_line(warning_low_input, true);
+    lv_textarea_set_placeholder_text(warning_low_input, "Range Low");
     lv_obj_set_width(warning_low_input, 100);
-    lv_obj_align(warning_low_input, LV_ALIGN_CENTER, 80, -7);
+    lv_obj_align(warning_low_input, LV_ALIGN_CENTER, 12, -47);
     lv_obj_add_event_cb(warning_low_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
 
     // Low Warning Color
     lv_obj_t * warning_low_color_label = lv_label_create(ui_MenuScreen);
-    lv_label_set_text(warning_low_color_label, "Low Color:");
+    lv_label_set_text(warning_low_color_label, "Colour:");
     lv_obj_set_style_text_color(warning_low_color_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(warning_low_color_label, LV_ALIGN_CENTER, -50, 33);
+    lv_obj_align(warning_low_color_label, LV_ALIGN_CENTER, -78, -7);
 
     lv_obj_t * warning_low_color_dd = lv_dropdown_create(ui_MenuScreen);
     lv_dropdown_set_options(warning_low_color_dd, "Red\nBlue");
     lv_obj_set_width(warning_low_color_dd, 100);
-    lv_obj_align(warning_low_color_dd, LV_ALIGN_CENTER, 80, 33);
+    lv_obj_align(warning_low_color_dd, LV_ALIGN_CENTER, 12, -7);
     lv_obj_add_style(warning_low_color_dd, get_common_style(), LV_PART_MAIN);
+
+    // Range High Label
+    lv_obj_t * range_high_label = lv_label_create(ui_MenuScreen);
+    lv_label_set_text(range_high_label, "Range High");
+    lv_obj_set_style_text_color(range_high_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(range_high_label, LV_ALIGN_CENTER, -18, 73);
+
+    // Display Unit Input (moved to far right of customization)
+    lv_obj_t * display_unit_label = lv_label_create(ui_MenuScreen);
+    lv_label_set_text(display_unit_label, "Display Unit:");
+    lv_obj_set_style_text_color(display_unit_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(display_unit_label, LV_ALIGN_CENTER, 220, -47);
+
+    lv_obj_t * display_unit_input = lv_textarea_create(ui_MenuScreen);
+    lv_obj_add_style(display_unit_input, get_common_style(), LV_PART_MAIN);
+    lv_textarea_set_one_line(display_unit_input, true);
+    lv_obj_set_width(display_unit_input, 80);
+    lv_obj_align(display_unit_input, LV_ALIGN_CENTER, 320, -47);
+    lv_obj_add_event_cb(display_unit_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    
+    // Set current custom text
+    lv_textarea_set_text(display_unit_input, values_config[value_id - 1].custom_text);
 
     // Set current values
     char buf[16];
@@ -498,6 +559,11 @@ void load_menu_screen_for_value(uint8_t value_id) {
     lv_obj_add_event_cb(warning_low_input, warning_low_threshold_event_cb, LV_EVENT_VALUE_CHANGED, id_ptr);
     lv_obj_add_event_cb(warning_high_color_dd, warning_high_color_event_cb, LV_EVENT_VALUE_CHANGED, id_ptr);
     lv_obj_add_event_cb(warning_low_color_dd, warning_low_color_event_cb, LV_EVENT_VALUE_CHANGED, id_ptr);
+    
+    // Add display unit event handler
+    uint8_t *display_unit_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+    *display_unit_id_ptr = value_id;
+    lv_obj_add_event_cb(display_unit_input, custom_text_input_event_cb, LV_EVENT_VALUE_CHANGED, display_unit_id_ptr);
 
     } else if (value_id == RPM_VALUE_ID) {
         // RPM value
@@ -539,22 +605,23 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	lv_obj_align(max_rpm_text, LV_ALIGN_CENTER, 220, -87);
    		lv_obj_set_style_text_align(max_rpm_text, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
     	
-		// Add RPM Gauge Roller
-		lv_obj_t * rpm_gauge_roller = lv_roller_create(ui_MenuScreen);
-		lv_roller_set_options(rpm_gauge_roller,
-   		 "3000\n4000\n5000\n6000\n7000\n8000\n9000\n10000\n11000\n12000",
-   		 LV_ROLLER_MODE_NORMAL);
+		// RPM Gauge dropdown (200 RPM steps)
+		lv_obj_t * rpm_gauge_roller = lv_dropdown_create(ui_MenuScreen);
+		lv_obj_add_style(rpm_gauge_roller, get_common_style(), LV_PART_MAIN);
+		lv_dropdown_set_options(rpm_gauge_roller,
+		    "3000\n3200\n3400\n3600\n3800\n4000\n4200\n4400\n4600\n4800\n"
+		    "5000\n5200\n5400\n5600\n5800\n6000\n6200\n6400\n6600\n6800\n"
+		    "7000\n7200\n7400\n7600\n7800\n8000\n8200\n8400\n8600\n8800\n"
+		    "9000\n9200\n9400\n9600\n9800\n10000\n10200\n10400\n10600\n10800\n"
+		    "11000\n11200\n11400\n11600\n11800\n12000");
 		uint16_t selected_index = 0;
 		if (rpm_gauge_max >= 3000 && rpm_gauge_max <= 12000) {
-		    selected_index = (rpm_gauge_max - 3000) / 1000;
+		    selected_index = (rpm_gauge_max - 3000) / 200;
 		}
-		lv_roller_set_selected(rpm_gauge_roller, selected_index, LV_ANIM_OFF);
-		lv_roller_set_visible_row_count(rpm_gauge_roller, 1);
-		lv_obj_set_width(rpm_gauge_roller, 80);
-		lv_obj_set_height(rpm_gauge_roller, 35);
-		lv_obj_align(rpm_gauge_roller, LV_ALIGN_CENTER, 320, -87); // Position in menu
+		lv_dropdown_set_selected(rpm_gauge_roller, selected_index);
+		lv_obj_set_width(rpm_gauge_roller, 90);
+		lv_obj_align(rpm_gauge_roller, LV_ALIGN_CENTER, 320, -87);
 		lv_obj_add_event_cb(rpm_gauge_roller, rpm_gauge_roller_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-		apply_common_roller_styles(rpm_gauge_roller);
 		
 		lv_obj_t * rpm_ecu_dropdown_label = lv_label_create(ui_MenuScreen);
     	lv_label_set_text(rpm_ecu_dropdown_label, "ECU Presets:");
@@ -562,8 +629,8 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	lv_obj_align(rpm_ecu_dropdown_label, LV_ALIGN_CENTER, -50, -87);
     	
     	lv_obj_t * rpm_ecu_dropdown = lv_dropdown_create(ui_MenuScreen);
-    	// Provide the three options
-    	lv_dropdown_set_options(rpm_ecu_dropdown, "Custom\nMaxxECU\nHaltech");
+    	// Provide the four options
+    	lv_dropdown_set_options(rpm_ecu_dropdown, "Custom\nMaxxECU\nHaltech\nFord BA/BF/FG");
     	lv_obj_align(rpm_ecu_dropdown, LV_ALIGN_CENTER, 80, -87);
     	lv_obj_set_width(rpm_ecu_dropdown, 120);
     	lv_obj_add_style(rpm_ecu_dropdown, get_common_style(), LV_PART_MAIN);
@@ -622,25 +689,24 @@ void load_menu_screen_for_value(uint8_t value_id) {
 		lv_obj_align(redline_rpm_text, LV_ALIGN_CENTER, 220, -47); // Position next to RPM color
 		lv_obj_set_style_text_align(redline_rpm_text, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
 		
-		lv_obj_t * redline_rpm_roller = lv_roller_create(ui_MenuScreen);
-		// Create options from 3000 to 12000 in 500 RPM increments (19 options total)
-		lv_roller_set_options(redline_rpm_roller,
-		    "3000\n3500\n4000\n4500\n5000\n5500\n6000\n6500\n7000\n7500\n8000\n8500\n9000\n9500\n10000\n10500\n11000\n11500\n12000",
-		    LV_ROLLER_MODE_NORMAL);
-		
-		// Set current selection based on redline value
+		lv_obj_t * redline_rpm_roller = lv_dropdown_create(ui_MenuScreen);
+		lv_obj_add_style(redline_rpm_roller, get_common_style(), LV_PART_MAIN);
+		lv_dropdown_set_options(redline_rpm_roller,
+		    "3000\n3200\n3400\n3600\n3800\n4000\n4200\n4400\n4600\n4800\n"
+		    "5000\n5200\n5400\n5600\n5800\n6000\n6200\n6400\n6600\n6800\n"
+		    "7000\n7200\n7400\n7600\n7800\n8000\n8200\n8400\n8600\n8800\n"
+		    "9000\n9200\n9400\n9600\n9800\n10000\n10200\n10400\n10600\n10800\n"
+		    "11000\n11200\n11400\n11600\n11800\n12000");
+
 		uint16_t redline_selected_index = 0;
 		extern int rpm_redline_value;
 		if (rpm_redline_value >= 3000 && rpm_redline_value <= 12000) {
-		    redline_selected_index = (rpm_redline_value - 3000) / 500;
+		    redline_selected_index = (rpm_redline_value - 3000) / 200;
 		}
-		lv_roller_set_selected(redline_rpm_roller, redline_selected_index, LV_ANIM_OFF);
-		lv_roller_set_visible_row_count(redline_rpm_roller, 1);
-		lv_obj_set_width(redline_rpm_roller, 80);
-		lv_obj_set_height(redline_rpm_roller, 35);
-		lv_obj_align(redline_rpm_roller, LV_ALIGN_CENTER, 320, -47); // Position below the gauge roller
+		lv_dropdown_set_selected(redline_rpm_roller, redline_selected_index);
+		lv_obj_set_width(redline_rpm_roller, 90);
+		lv_obj_align(redline_rpm_roller, LV_ALIGN_CENTER, 320, -47);
 		lv_obj_add_event_cb(redline_rpm_roller, rpm_redline_roller_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-		apply_common_roller_styles(redline_rpm_roller);
 
 		// Limiter Effect dropdown
 		lv_obj_t * limiter_effect_label = lv_label_create(ui_MenuScreen);
@@ -651,13 +717,13 @@ void load_menu_screen_for_value(uint8_t value_id) {
 		
 		lv_obj_t * limiter_effect_dropdown = lv_dropdown_create(ui_MenuScreen);
 		lv_obj_add_style(limiter_effect_dropdown, get_common_style(), LV_PART_MAIN);
-		lv_dropdown_set_options(limiter_effect_dropdown, "None\nBar Flash\nBar & Circles Flash\nCircles Flash");
+		lv_dropdown_set_options(limiter_effect_dropdown, "None\nBar Flash\nBar & Circles Flash\nCircles Flash\nBar Solid\nBar & Circles Solid\nCircles Solid");
 		lv_obj_set_width(limiter_effect_dropdown, 120);
 		lv_obj_align(limiter_effect_dropdown, LV_ALIGN_CENTER, 80, -7);
 		
 		// Set current selection based on saved configuration
 		uint8_t limiter_effect = values_config[RPM_VALUE_ID - 1].rpm_limiter_effect;
-		// Map internal effect type to dropdown index (0=None, 2=Bar Flash, 3=Bar & Circles Flash, 4=Circles Flash)
+		// Map internal effect type to dropdown index (0=None, 2=Bar Flash, 3=Bar & Circles Flash, 4=Circles Flash, 5=Bar Solid, 6=Bar & Circles Solid, 7=Circles Solid)
 		uint8_t dropdown_index = 0;
 		if (limiter_effect == 2) {
 			dropdown_index = 1; // Bar Flash
@@ -665,6 +731,12 @@ void load_menu_screen_for_value(uint8_t value_id) {
 			dropdown_index = 2; // Bar & Circles Flash
 		} else if (limiter_effect == 4) {
 			dropdown_index = 3; // Circles Flash
+		} else if (limiter_effect == 5) {
+			dropdown_index = 4; // Bar Solid
+		} else if (limiter_effect == 6) {
+			dropdown_index = 5; // Bar & Circles Solid
+		} else if (limiter_effect == 7) {
+			dropdown_index = 6; // Circles Solid
 		}
 		lv_dropdown_set_selected(limiter_effect_dropdown, dropdown_index);
 		
@@ -678,25 +750,24 @@ void load_menu_screen_for_value(uint8_t value_id) {
 		lv_obj_align(rpm_limiter_label, LV_ALIGN_CENTER, 220, -7); // Position next to effect dropdown
 		lv_obj_set_style_text_align(rpm_limiter_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
 		
-		lv_obj_t * rpm_limiter_roller = lv_roller_create(ui_MenuScreen);
-		// Create options from 3000 to 12000 in 500 RPM increments (19 options total)
-		lv_roller_set_options(rpm_limiter_roller,
-		    "3000\n3500\n4000\n4500\n5000\n5500\n6000\n6500\n7000\n7500\n8000\n8500\n9000\n9500\n10000\n10500\n11000\n11500\n12000",
-		    LV_ROLLER_MODE_NORMAL);
-		
-		// Set current selection based on limiter value
+		lv_obj_t * rpm_limiter_roller = lv_dropdown_create(ui_MenuScreen);
+		lv_obj_add_style(rpm_limiter_roller, get_common_style(), LV_PART_MAIN);
+		lv_dropdown_set_options(rpm_limiter_roller,
+		    "3000\n3200\n3400\n3600\n3800\n4000\n4200\n4400\n4600\n4800\n"
+		    "5000\n5200\n5400\n5600\n5800\n6000\n6200\n6400\n6600\n6800\n"
+		    "7000\n7200\n7400\n7600\n7800\n8000\n8200\n8400\n8600\n8800\n"
+		    "9000\n9200\n9400\n9600\n9800\n10000\n10200\n10400\n10600\n10800\n"
+		    "11000\n11200\n11400\n11600\n11800\n12000");
+
 		uint16_t limiter_selected_index = 0;
 		int32_t limiter_value = values_config[RPM_VALUE_ID - 1].rpm_limiter_value;
 		if (limiter_value >= 3000 && limiter_value <= 12000) {
-		    limiter_selected_index = (limiter_value - 3000) / 500;
+		    limiter_selected_index = (limiter_value - 3000) / 200;
 		}
-		lv_roller_set_selected(rpm_limiter_roller, limiter_selected_index, LV_ANIM_OFF);
-		lv_roller_set_visible_row_count(rpm_limiter_roller, 1);
-		lv_obj_set_width(rpm_limiter_roller, 80);
-		lv_obj_set_height(rpm_limiter_roller, 35);
-		lv_obj_align(rpm_limiter_roller, LV_ALIGN_CENTER, 320, -7); // Position below redline roller
+		lv_dropdown_set_selected(rpm_limiter_roller, limiter_selected_index);
+		lv_obj_set_width(rpm_limiter_roller, 90);
+		lv_obj_align(rpm_limiter_roller, LV_ALIGN_CENTER, 320, -7);
 		lv_obj_add_event_cb(rpm_limiter_roller, rpm_limiter_roller_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-		apply_common_roller_styles(rpm_limiter_roller);
 
 		// Limiter Colour dropdown
 		lv_obj_t * limiter_color_label = lv_label_create(ui_MenuScreen);
@@ -760,26 +831,85 @@ void load_menu_screen_for_value(uint8_t value_id) {
 		// Add event handler for RPM lights switch
 		lv_obj_add_event_cb(rpm_lights_switch, rpm_lights_switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-		// Gradient toggle
-		lv_obj_t * gradient_label = lv_label_create(ui_MenuScreen);
-		lv_label_set_text(gradient_label, "Gradient:");
-		lv_obj_set_style_text_color(gradient_label, lv_color_hex(0xCCCCCC), 0);
-		lv_obj_align(gradient_label, LV_ALIGN_CENTER, 220, 73); // Position next to RPM lights
-		lv_obj_set_style_text_align(gradient_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+		// RPM Background toggle
+		lv_obj_t * rpm_background_label = lv_label_create(ui_MenuScreen);
+		lv_label_set_text(rpm_background_label, "RPM Background:");
+		lv_obj_set_style_text_color(rpm_background_label, lv_color_hex(0xCCCCCC), 0);
+		lv_obj_align(rpm_background_label, LV_ALIGN_CENTER, 220, 73); // Position below RPM lights
+		lv_obj_set_style_text_align(rpm_background_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
 		
-		lv_obj_t * gradient_switch = lv_switch_create(ui_MenuScreen);
-		lv_obj_set_size(gradient_switch, 50, 25);
-		lv_obj_align(gradient_switch, LV_ALIGN_CENTER, 320, 73);
+		lv_obj_t * rpm_background_switch = lv_switch_create(ui_MenuScreen);
+		lv_obj_set_size(rpm_background_switch, 50, 25);
+		lv_obj_align(rpm_background_switch, LV_ALIGN_CENTER, 320, 73);
 		
 		// Set current state based on saved configuration
-		if (values_config[RPM_VALUE_ID - 1].rpm_gradient_enabled) {
-		    lv_obj_add_state(gradient_switch, LV_STATE_CHECKED);
+		if (values_config[RPM_VALUE_ID - 1].rpm_background_enabled) {
+		    lv_obj_add_state(rpm_background_switch, LV_STATE_CHECKED);
 		} else {
-		    lv_obj_clear_state(gradient_switch, LV_STATE_CHECKED);
+		    lv_obj_clear_state(rpm_background_switch, LV_STATE_CHECKED);
 		}
 		
-		// Add event handler for gradient switch
-		lv_obj_add_event_cb(gradient_switch, rpm_gradient_switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+		// Add event handler for RPM background switch
+		lv_obj_add_event_cb(rpm_background_switch, rpm_background_switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+		// RPM Background Colour dropdown
+		lv_obj_t * rpm_background_color_label = lv_label_create(ui_MenuScreen);
+		lv_label_set_text(rpm_background_color_label, "Background Colour:");
+		lv_obj_set_style_text_color(rpm_background_color_label, lv_color_hex(0xCCCCCC), 0);
+		lv_obj_align(rpm_background_color_label, LV_ALIGN_CENTER, -50, 113); // Position below RPM background toggle
+		lv_obj_set_style_text_align(rpm_background_color_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+		
+		lv_obj_t * rpm_background_color_dropdown = lv_dropdown_create(ui_MenuScreen);
+		lv_obj_add_style(rpm_background_color_dropdown, get_common_style(), LV_PART_MAIN);
+		lv_dropdown_set_options(rpm_background_color_dropdown, "Green\nLight Blue\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nCustom");
+		lv_obj_set_width(rpm_background_color_dropdown, 120);
+		lv_obj_align(rpm_background_color_dropdown, LV_ALIGN_CENTER, 80, 113);
+		
+		// Set current selection based on saved configuration
+		uint8_t rpm_background_color_selected_index = 9; // Default to custom
+		uint32_t saved_rpm_background_color = values_config[RPM_VALUE_ID - 1].rpm_background_color.full;
+		if (saved_rpm_background_color == lv_color_hex(0x00FF00).full) rpm_background_color_selected_index = 0; // Green
+		else if (saved_rpm_background_color == lv_color_hex(0x00FFFF).full) rpm_background_color_selected_index = 1; // Light Blue
+		else if (saved_rpm_background_color == lv_color_hex(0xFFFF00).full) rpm_background_color_selected_index = 2; // Yellow
+		else if (saved_rpm_background_color == lv_color_hex(0xFF7F00).full) rpm_background_color_selected_index = 3; // Orange
+		else if (saved_rpm_background_color == lv_color_hex(0xFF0000).full) rpm_background_color_selected_index = 4; // Red
+		else if (saved_rpm_background_color == lv_color_hex(0x0080FF).full) rpm_background_color_selected_index = 5; // Dark Blue
+		else if (saved_rpm_background_color == lv_color_hex(0x8000FF).full) rpm_background_color_selected_index = 6; // Purple
+		else if (saved_rpm_background_color == lv_color_hex(0xFF00FF).full) rpm_background_color_selected_index = 7; // Magenta
+		else if (saved_rpm_background_color == lv_color_hex(0xFF1493).full) rpm_background_color_selected_index = 8; // Pink
+		// If none of the predefined colors match, it's a custom color (index 9)
+		lv_dropdown_set_selected(rpm_background_color_dropdown, rpm_background_color_selected_index);
+		
+		// Add event handler for RPM background color dropdown
+		lv_obj_add_event_cb(rpm_background_color_dropdown, rpm_background_color_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+		// RPM Background threshold roller
+		lv_obj_t * rpm_background_threshold_label = lv_label_create(ui_MenuScreen);
+		lv_label_set_text(rpm_background_threshold_label, "Background RPM:");
+		lv_obj_set_style_text_color(rpm_background_threshold_label, lv_color_hex(0xCCCCCC), 0);
+		lv_obj_align(rpm_background_threshold_label, LV_ALIGN_CENTER, 220, 113); // Position next to background color
+		lv_obj_set_style_text_align(rpm_background_threshold_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+		
+		lv_obj_t * rpm_background_threshold_roller = lv_dropdown_create(ui_MenuScreen);
+		lv_obj_add_style(rpm_background_threshold_roller, get_common_style(), LV_PART_MAIN);
+		lv_dropdown_set_options(rpm_background_threshold_roller,
+		    "3000\n3200\n3400\n3600\n3800\n4000\n4200\n4400\n4600\n4800\n"
+		    "5000\n5200\n5400\n5600\n5800\n6000\n6200\n6400\n6600\n6800\n"
+		    "7000\n7200\n7400\n7600\n7800\n8000\n8200\n8400\n8600\n8800\n"
+		    "9000\n9200\n9400\n9600\n9800\n10000\n10200\n10400\n10600\n10800\n"
+		    "11000\n11200\n11400\n11600\n11800\n12000");
+
+		uint16_t background_threshold_selected_index = 0;
+		int32_t background_threshold_value = values_config[RPM_VALUE_ID - 1].rpm_background_value;
+		if (background_threshold_value >= 3000 && background_threshold_value <= 12000) {
+		    background_threshold_selected_index = (background_threshold_value - 3000) / 200;
+		}
+		lv_dropdown_set_selected(rpm_background_threshold_roller, background_threshold_selected_index);
+		lv_obj_set_width(rpm_background_threshold_roller, 90);
+		lv_obj_align(rpm_background_threshold_roller, LV_ALIGN_CENTER, 320, 113);
+		lv_obj_add_event_cb(rpm_background_threshold_roller, rpm_background_threshold_roller_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+		// Gradient option removed
 
     } else if (value_id == SPEED_VALUE_ID) {
         // Speed value
@@ -805,30 +935,9 @@ void load_menu_screen_for_value(uint8_t value_id) {
         lv_obj_set_style_text_color(menu_speed_units_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_opa(menu_speed_units_label, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(menu_speed_units_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_align(menu_speed_units_label, LV_ALIGN_CENTER, -295, -156);
-    	
-    	// Add GPS/CAN toggle under Customisation header
-    	lv_obj_t * speed_source_label = lv_label_create(ui_MenuScreen);
-    	lv_label_set_text(speed_source_label, "Speed Source:");
-    	lv_obj_set_style_text_color(speed_source_label, lv_color_hex(0xCCCCCC), 0);
-    	lv_obj_align(speed_source_label, LV_ALIGN_CENTER, -50, -87);
-    	lv_obj_set_style_text_align(speed_source_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	
-    	lv_obj_t * speed_source_dropdown = lv_dropdown_create(ui_MenuScreen);
-    	lv_obj_add_style(speed_source_dropdown, get_common_style(), LV_PART_MAIN);
-    	lv_dropdown_set_options(speed_source_dropdown, "CAN ID\nGPS");
-    	lv_obj_set_align(speed_source_dropdown, LV_ALIGN_CENTER);
-    	lv_obj_set_width(speed_source_dropdown, 120);
-    	lv_obj_set_pos(speed_source_dropdown, 80, -87);
-    	
-    	// Set current selection based on configuration
-    	uint16_t current_selection = values_config[SPEED_VALUE_ID - 1].use_gps_for_speed ? 1 : 0;
-    	lv_dropdown_set_selected(speed_source_dropdown, current_selection);
-    	
-    	// Add event callback for speed source dropdown
-    	lv_obj_add_event_cb(speed_source_dropdown, speed_source_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    	
-    	// Add KMH/MPH units dropdown
+   	lv_obj_align(menu_speed_units_label, LV_ALIGN_CENTER, -295, -156);
+   	
+   	// Add KMH/MPH units dropdown
     	lv_obj_t * speed_units_label = lv_label_create(ui_MenuScreen);
     	lv_label_set_text(speed_units_label, "Speed Units:");
     	lv_obj_set_style_text_color(speed_units_label, lv_color_hex(0xCCCCCC), 0);
@@ -846,121 +955,54 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	uint16_t units_selection = values_config[SPEED_VALUE_ID - 1].use_mph ? 1 : 0;
     	lv_dropdown_set_selected(speed_units_dropdown, units_selection);
     	
-    	// Add event callback for speed units dropdown
-    	lv_obj_add_event_cb(speed_units_dropdown, speed_units_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    	
-    	// GPS Status and Raw Values Display
-    	lv_obj_t * gps_status_label = lv_label_create(ui_MenuScreen);
-    	lv_label_set_text(gps_status_label, "GPS Status:");
-    	lv_obj_set_style_text_color(gps_status_label, lv_color_hex(0xCCCCCC), 0);
-    	lv_obj_align(gps_status_label, LV_ALIGN_CENTER, -50, 20);  // Back under speed units, lower position
-    	lv_obj_set_style_text_align(gps_status_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	
-    	// GPS raw values display - positioned inline with GPS Status label
-    	lv_obj_t * gps_values_label = lv_label_create(ui_MenuScreen);
-    	lv_obj_set_style_text_color(gps_values_label, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_set_style_text_font(gps_values_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_align_to(gps_values_label, gps_status_label, LV_ALIGN_OUT_RIGHT_TOP, 10, 0);  // Align inline with GPS Status label
-    	lv_obj_set_width(gps_values_label, 300);
-    	lv_obj_set_style_text_align(gps_values_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-        // Create GPS status update timer for this menu screen
-        lv_timer_t * gps_status_timer = lv_timer_create(gps_status_update_timer_cb, 500, gps_values_label);
-        lv_timer_set_repeat_count(gps_status_timer, -1); // Repeat indefinitely
-
-        // Timezone selection
-        lv_obj_t * timezone_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(timezone_label, "Timezone:");
-        lv_obj_set_style_text_color(timezone_label, lv_color_hex(0xCCCCCC), 0);
-        lv_obj_align(timezone_label, LV_ALIGN_CENTER, -50, 80);  // Below GPS status
-        lv_obj_set_style_text_align(timezone_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-        
-        // Timezone dropdown
-        lv_obj_t * timezone_dropdown = lv_dropdown_create(ui_MenuScreen);
-        lv_dropdown_set_options(timezone_dropdown, 
-            "UTC+0 - London, Dublin\n"
-            "UTC+1 - Paris, Berlin, Rome\n"
-            "UTC+2 - Athens, Cairo\n"
-            "UTC+3 - Moscow, Dubai\n"
-            "UTC+4 - Abu Dhabi\n"
-            "UTC+5 - Karachi\n"
-            "UTC+5:30 - Mumbai, Delhi\n"
-            "UTC+6 - Dhaka\n"
-            "UTC+7 - Bangkok, Jakarta\n"
-            "UTC+8 - Perth, Singapore, HK\n"
-            "UTC+9 - Tokyo, Seoul\n"
-            "UTC+9:30 - Adelaide, Darwin\n"
-            "UTC+10 - Sydney, Melbourne\n"
-            "UTC+11 - Sydney (DST)\n"
-            "UTC+12 - Auckland\n"
-            "UTC-12 - Baker Island\n"
-            "UTC-11 - Samoa\n"
-            "UTC-10 - Hawaii\n"
-            "UTC-9 - Alaska\n"
-            "UTC-8 - Los Angeles, Seattle\n"
-            "UTC-7 - Denver, Phoenix\n"
-            "UTC-6 - Chicago, Dallas\n"
-            "UTC-5 - New York, Toronto\n"
-            "UTC-4 - Halifax\n"
-            "UTC-3 - Buenos Aires\n"
-            "UTC-2 - South Georgia\n"
-            "UTC-1 - Cape Verde");
-        lv_obj_set_size(timezone_dropdown, 250, 35);
-        lv_obj_align_to(timezone_dropdown, timezone_label, LV_ALIGN_OUT_RIGHT_TOP, 10, -5);
-        lv_obj_set_style_bg_color(timezone_dropdown, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_color(timezone_dropdown, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_color(timezone_dropdown, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_border_width(timezone_dropdown, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_radius(timezone_dropdown, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
-        
-        // Daylight Saving Toggle
-        lv_obj_t * dst_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(dst_label, "Daylight Saving:");
-        lv_obj_set_style_text_color(dst_label, lv_color_hex(0xCCCCCC), 0);
-        lv_obj_align(dst_label, LV_ALIGN_CENTER, -50, 115);  // Below timezone
-        lv_obj_set_style_text_align(dst_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
-        
-        lv_obj_t * dst_switch = lv_switch_create(ui_MenuScreen);
-        lv_obj_set_size(dst_switch, 50, 25);
-        lv_obj_align_to(dst_switch, dst_label, LV_ALIGN_OUT_RIGHT_TOP, 10, -5);
-        lv_obj_set_style_bg_color(dst_switch, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_color(dst_switch, lv_color_hex(0x4CAF50), LV_PART_MAIN | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(dst_switch, lv_color_hex(0x666666), LV_PART_INDICATOR | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_color(dst_switch, lv_color_white(), LV_PART_INDICATOR | LV_STATE_CHECKED);
-        
-        // Load saved DST setting
-        bool dst_enabled = get_dst_enabled();
-        if (dst_enabled) {
-            lv_obj_add_state(dst_switch, LV_STATE_CHECKED);
-        }
-        lv_obj_add_event_cb(dst_switch, dst_switch_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-        
-        // Load saved timezone setting
-        uint8_t saved_timezone = get_timezone_offset();
-        lv_dropdown_set_selected(timezone_dropdown, saved_timezone);
-        
-        // Add event callback for timezone dropdown
-        lv_obj_add_event_cb(timezone_dropdown, timezone_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+   	// Add event callback for speed units dropdown
+   	lv_obj_add_event_cb(speed_units_dropdown, speed_units_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     } else if (value_id == GEAR_VALUE_ID) {
 		create_config_controls(ui_MenuScreen, GEAR_VALUE_ID);
 	
-		ui_Gear_Label = lv_label_create(ui_MenuScreen);
-    	lv_label_set_text(ui_Gear_Label, label_texts[GEAR_VALUE_ID - 1]); 
-    	lv_obj_set_style_text_color(ui_Gear_Label, lv_color_hex(0xFFFFFF), 0);
-    	lv_obj_align(ui_Gear_Label, LV_ALIGN_CENTER, -312, -216);
-    	
-    	// Create Gear value preview and store global reference for live updates
-    	const char *current_gear_value = lv_label_get_text(ui_GEAR_Value);
-    	menu_gear_value_label = lv_label_create(ui_MenuScreen);
-    	lv_label_set_text(menu_gear_value_label, current_gear_value ? current_gear_value : " ");
-    	lv_obj_set_style_text_color(menu_gear_value_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_set_style_text_opa(menu_gear_value_label, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_set_style_text_font(menu_gear_value_label, &ui_font_Manrope_54_BOLD, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_set_style_text_align(menu_gear_value_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	lv_obj_set_style_transform_zoom(menu_gear_value_label, 150, LV_PART_MAIN | LV_STATE_DEFAULT); // Slightly smaller than Screen3
-    	lv_obj_set_width(menu_gear_value_label, 80);
-    	lv_obj_align(menu_gear_value_label, LV_ALIGN_CENTER, -312, -178);
+	// Create box for gear demo (matching panel box style but without border)
+   	lv_obj_t * gear_demo_box = lv_obj_create(ui_MenuScreen);
+   	lv_obj_set_size(gear_demo_box, 155, 92);
+   	lv_obj_set_align(gear_demo_box, LV_ALIGN_TOP_LEFT);
+   	lv_obj_set_pos(gear_demo_box, 5, 5);  // Same position as panel box
+   	lv_obj_clear_flag(gear_demo_box, LV_OBJ_FLAG_SCROLLABLE);
+   	lv_obj_add_style(gear_demo_box, get_box_style(), LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_style_border_width(gear_demo_box, 0, LV_PART_MAIN | LV_STATE_DEFAULT);  // No border for gear
+   	
+   	// Gear label (as child of box, matching panel label)
+	ui_Gear_Label = lv_label_create(gear_demo_box);
+   	lv_label_set_text(ui_Gear_Label, label_texts[GEAR_VALUE_ID - 1]); 
+   	lv_obj_set_style_text_color(ui_Gear_Label, lv_color_hex(0xFFFFFF), 0);
+   	lv_obj_set_style_text_font(ui_Gear_Label, &ui_font_fugaz_14, 0);
+   	lv_obj_set_style_text_align(ui_Gear_Label, LV_TEXT_ALIGN_CENTER, 0);  // Ensure text is centered
+   	lv_obj_align(ui_Gear_Label, LV_ALIGN_TOP_MID, 0, -14);  // Top-mid alignment with offset
+   	
+   	// Create Gear value preview and store global reference for live updates (as child of box, perfectly centered)
+   	const char *current_gear_value = lv_label_get_text(ui_GEAR_Value);
+   	menu_gear_value_label = lv_label_create(gear_demo_box);
+   	lv_label_set_text(menu_gear_value_label, current_gear_value ? current_gear_value : " ");
+   	lv_obj_set_style_text_color(menu_gear_value_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_style_text_opa(menu_gear_value_label, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_style_text_font(menu_gear_value_label, &ui_font_Manrope_54_BOLD, LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_style_text_align(menu_gear_value_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_style_transform_zoom(menu_gear_value_label, 150, LV_PART_MAIN | LV_STATE_DEFAULT);
+   	lv_obj_set_width(menu_gear_value_label, LV_SIZE_CONTENT);
+   	lv_obj_align(menu_gear_value_label, LV_ALIGN_CENTER, 0, 5);  // Perfectly centered horizontally and vertically with slight offset
+   	
+   	// Create gear icon for menu test panel (for custom icon display)
+   	menu_gear_icon = lv_img_create(gear_demo_box);
+   	lv_img_set_src(menu_gear_icon, &Smart_Car_Key);
+   	// Set zoom to 88% (12% smaller): 256 * 0.88 = 225.28, use 225
+   	lv_img_set_zoom(menu_gear_icon, 225);
+   	lv_obj_set_size(menu_gear_icon, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+   	lv_img_set_size_mode(menu_gear_icon, LV_IMG_SIZE_MODE_REAL);
+   	// Set pivot point to center of image (30x58 original size, so center is 15, 29)
+   	// This ensures the icon stays centered when zoomed
+   	lv_img_set_pivot(menu_gear_icon, 15, 29);
+   	lv_obj_align(menu_gear_icon, LV_ALIGN_CENTER, -15, 5);  // Same position as label, shifted left 15px
+   	// Initially hidden - will be shown when custom icon value matches
+   	lv_obj_add_flag(menu_gear_icon, LV_OBJ_FLAG_HIDDEN);
     	
     	// Add Gear ECU dropdown
     	lv_obj_t * gear_ecu_dropdown_label = lv_label_create(ui_MenuScreen);
@@ -970,7 +1012,7 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	lv_obj_set_style_text_align(gear_ecu_dropdown_label, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
     	
     	lv_obj_t * gear_ecu_dropdown = lv_dropdown_create(ui_MenuScreen);
-    	lv_dropdown_set_options(gear_ecu_dropdown, "Custom\nMaxxECU\nHaltech");
+    	lv_dropdown_set_options(gear_ecu_dropdown, "Custom\nMaxxECU\nHaltech\nFord\nSpeed/RPM Ratio");
     	lv_obj_align(gear_ecu_dropdown, LV_ALIGN_CENTER, 80, -87);
     	lv_obj_set_width(gear_ecu_dropdown, 120);
     	lv_obj_add_style(gear_ecu_dropdown, get_common_style(), LV_PART_MAIN);
@@ -978,18 +1020,22 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	// Auto-select the saved gear detection mode
     	uint8_t gear_mode = values_config[GEAR_VALUE_ID - 1].gear_detection_mode;
     	
-    	// If not in custom mode (0), sync with device settings ECU preconfig
-    	if (gear_mode != 0) {
+    	// If not in custom mode (0) or Speed/RPM Ratio (4), sync with device settings ECU preconfig
+    	if (gear_mode != 0 && gear_mode != 4) {
     	    uint8_t device_ecu_preconfig = get_selected_ecu_preconfig();
-    	    // Map device settings to gear detection mode: 0=Custom, 1=MaxxECU, 2=Haltech
+    	    // Map device settings to gear detection mode: 0=Custom, 1=MaxxECU, 2=Haltech, 3=Ford, 4=Speed/RPM Ratio
     	    if (device_ecu_preconfig == 1) {
     	        gear_mode = 1; // MaxxECU
     	        values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 1;
     	    } else if (device_ecu_preconfig == 2) {
     	        gear_mode = 2; // Haltech
     	        values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 2;
+    	    } else if (device_ecu_preconfig == 3) {
+    	        gear_mode = 3; // Ford
+    	        values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 3;
     	    }
     	    // If device_ecu_preconfig is 0 (Custom), keep current gear_mode
+    	    // Speed/RPM Ratio (4) is independent and not synced with device settings
     	}
     	
     	lv_dropdown_set_selected(gear_ecu_dropdown, gear_mode);
@@ -997,43 +1043,19 @@ void load_menu_screen_for_value(uint8_t value_id) {
     	// Attach event callback for gear ECU dropdown
     	lv_obj_add_event_cb(gear_ecu_dropdown, gear_ecu_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     	
-    	// Add Custom Gear Configuration button (only show if Custom mode is selected)
+    	// Add Custom Gear Value Configuration (only show if Custom mode is selected)
     	if (gear_mode == 0) {
-    	    // Custom gear configuration button - darker themed with new text
-    	    custom_gear_config_button = lv_btn_create(ui_MenuScreen);
-    	    lv_obj_set_size(custom_gear_config_button, 180, 40);
-    	    lv_obj_align(custom_gear_config_button, LV_ALIGN_CENTER, 0, -47);
-    	    
-    	    // Dark theme styling for the button
-    	    lv_obj_set_style_bg_color(custom_gear_config_button, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_bg_opa(custom_gear_config_button, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_border_color(custom_gear_config_button, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_border_width(custom_gear_config_button, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_radius(custom_gear_config_button, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_shadow_width(custom_gear_config_button, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_shadow_color(custom_gear_config_button, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    lv_obj_set_style_shadow_opa(custom_gear_config_button, 128, LV_PART_MAIN | LV_STATE_DEFAULT);
-    	    
-    	    // Hover/pressed states
-    	    lv_obj_set_style_bg_color(custom_gear_config_button, lv_color_hex(0x2A2A2A), LV_PART_MAIN | LV_STATE_PRESSED);
-    	    lv_obj_set_style_border_color(custom_gear_config_button, lv_color_hex(0x606060), LV_PART_MAIN | LV_STATE_PRESSED);
-    	    
-    	    lv_obj_t * custom_gear_btn_label = lv_label_create(custom_gear_config_button);
-    	    lv_label_set_text(custom_gear_btn_label, "Custom Gear CAN IDs");
-    	    lv_obj_set_style_text_color(custom_gear_btn_label, lv_color_hex(0xFFFFFF), 0);
-    	    lv_obj_set_style_text_font(custom_gear_btn_label, &lv_font_montserrat_12, 0);
-    	    lv_obj_center(custom_gear_btn_label);
-    	    
-    	    // Add event callback for custom gear button
-    	    lv_obj_add_event_cb(custom_gear_config_button, custom_gear_config_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    	    // Create custom gear values section
+    	    create_custom_gear_values_section(ui_MenuScreen, gear_mode);
+    	    // Ensure save and cancel buttons are on top after custom gear container is created
+    	    // This prevents the container from blocking button clicks
+    	    // Note: save_btn and close_btn are local variables defined earlier in this function
+    	    // We need to move them to foreground here to ensure they're above the container
+    	    lv_obj_move_foreground(save_btn);
+    	    lv_obj_move_foreground(close_btn);
     	} else {
-    	    // Not in custom mode, ensure button is hidden if it exists and is valid
-    	    if (custom_gear_config_button != NULL && lv_obj_is_valid(custom_gear_config_button)) {
-    	        lv_obj_add_flag(custom_gear_config_button, LV_OBJ_FLAG_HIDDEN);
-    	    } else {
-    	        // If button is invalid, reset the pointer
-    	        custom_gear_config_button = NULL;
-    	    }
+    	    // Hide custom gear values section if it exists
+    	    hide_custom_gear_values_section();
     	}
     	
     	// Add preconfig panel for gear menu
@@ -1086,27 +1108,75 @@ void load_menu_screen_for_value(uint8_t value_id) {
         
         // Bar Minimum input
         lv_obj_t * bar_min_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_min_label, "Bar Min Value:");
+        lv_label_set_text(bar_min_label, "Min Value:");
         lv_obj_set_style_text_color(bar_min_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(bar_min_label, LV_ALIGN_CENTER, -50, -87);
       
         lv_obj_t * bar_min_input = lv_textarea_create(ui_MenuScreen);
         lv_obj_add_style(bar_min_input, get_common_style(), LV_PART_MAIN);
         lv_textarea_set_one_line(bar_min_input, true);
+        lv_textarea_set_placeholder_text(bar_min_input, "Min Value");
         lv_obj_set_width(bar_min_input, 100);
         lv_obj_align(bar_min_input, LV_ALIGN_CENTER, 80, -87);
         lv_obj_add_event_cb(bar_min_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
         lv_obj_set_user_data(bar_min_input, (void*)1); // Mark as min input
       
+        // Show Value Toggle (second column after Min Value)
+        lv_obj_t * show_value_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(show_value_label, "Show Value:");
+        lv_obj_set_style_text_color(show_value_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(show_value_label, LV_ALIGN_CENTER, 200, -87);
+        
+        lv_obj_t * show_value_switch = lv_switch_create(ui_MenuScreen);
+        lv_obj_align(show_value_switch, LV_ALIGN_CENTER, 330, -87);
+        lv_obj_set_size(show_value_switch, 50, 25);
+        
+        // Set switch state based on configuration
+        if (values_config[value_id - 1].show_bar_value) {
+            lv_obj_add_state(show_value_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(show_value_switch, LV_STATE_CHECKED);
+        }
+        
+        // Add event callbacks
+        uint8_t *show_value_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+        *show_value_id_ptr = value_id;
+        lv_obj_add_event_cb(show_value_switch, show_value_switch_event_cb, LV_EVENT_VALUE_CHANGED, show_value_id_ptr);
+        lv_obj_add_event_cb(show_value_switch, free_value_id_event_cb, LV_EVENT_DELETE, show_value_id_ptr);
+        
+        // Invert Value Toggle (second column, down one row after Max Value)
+        lv_obj_t * invert_value_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(invert_value_label, "Invert Value:");
+        lv_obj_set_style_text_color(invert_value_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(invert_value_label, LV_ALIGN_CENTER, 200, -47);
+        
+        lv_obj_t * invert_value_switch = lv_switch_create(ui_MenuScreen);
+        lv_obj_align(invert_value_switch, LV_ALIGN_CENTER, 330, -47);
+        lv_obj_set_size(invert_value_switch, 50, 25);
+        
+        // Set switch state based on configuration
+        if (values_config[value_id - 1].invert_bar_value) {
+            lv_obj_add_state(invert_value_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(invert_value_switch, LV_STATE_CHECKED);
+        }
+        
+        // Add event callbacks
+        uint8_t *invert_value_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+        *invert_value_id_ptr = value_id;
+        lv_obj_add_event_cb(invert_value_switch, invert_value_switch_event_cb, LV_EVENT_VALUE_CHANGED, invert_value_id_ptr);
+        lv_obj_add_event_cb(invert_value_switch, free_value_id_event_cb, LV_EVENT_DELETE, invert_value_id_ptr);
+      
         // Bar Maximum input
         lv_obj_t * bar_max_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_max_label, "Bar Max Value:");
+        lv_label_set_text(bar_max_label, "Max Value:");
         lv_obj_set_style_text_color(bar_max_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(bar_max_label, LV_ALIGN_CENTER, -50, -47);
       
         lv_obj_t * bar_max_input = lv_textarea_create(ui_MenuScreen);
         lv_obj_add_style(bar_max_input, get_common_style(), LV_PART_MAIN);
         lv_textarea_set_one_line(bar_max_input, true);
+        lv_textarea_set_placeholder_text(bar_max_input, "Max Value");
         lv_obj_set_width(bar_max_input, 100);
         lv_obj_align(bar_max_input, LV_ALIGN_CENTER, 80, -47);
         lv_obj_add_event_cb(bar_max_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -1119,6 +1189,8 @@ void load_menu_screen_for_value(uint8_t value_id) {
       
         // Set current values for min and max
         char buf[16];
+        
+        // Set min/max values from configuration
         snprintf(buf, sizeof(buf), "%d", values_config[value_id - 1].bar_min);
         lv_textarea_set_text(bar_min_input, buf);
         snprintf(buf, sizeof(buf), "%d", values_config[value_id - 1].bar_max);
@@ -1126,13 +1198,14 @@ void load_menu_screen_for_value(uint8_t value_id) {
         
         // NEW: Create "Bar Low Value:" label and input field
         lv_obj_t * bar_low_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_low_label, "Bar Low Value:");
+        lv_label_set_text(bar_low_label, "Low Value:");
         lv_obj_set_style_text_color(bar_low_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(bar_low_label, LV_ALIGN_CENTER, -50, -7);
       
         lv_obj_t * bar_low_input = lv_textarea_create(ui_MenuScreen);
         lv_obj_add_style(bar_low_input, get_common_style(), LV_PART_MAIN);
         lv_textarea_set_one_line(bar_low_input, true);
+        lv_textarea_set_placeholder_text(bar_low_input, "Low Value");
         lv_obj_set_width(bar_low_input, 100);
         lv_obj_align(bar_low_input, LV_ALIGN_CENTER, 80, -7);
         lv_obj_add_event_cb(bar_low_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -1148,17 +1221,201 @@ void load_menu_screen_for_value(uint8_t value_id) {
         snprintf(buf_low, sizeof(buf_low), "%d", values_config[value_id - 1].bar_low);
         lv_textarea_set_text(bar_low_input, buf_low);
         
+        // Fuel Sender Toggle (right column alongside Low Value)
+        lv_obj_t * fuel_sender_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(fuel_sender_label, "Fuel Sender:");
+        lv_obj_set_style_text_color(fuel_sender_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(fuel_sender_label, LV_ALIGN_CENTER, 200, -7);
+
+        lv_obj_t * fuel_sender_switch = lv_switch_create(ui_MenuScreen);
+        lv_obj_align(fuel_sender_switch, LV_ALIGN_CENTER, 330, -7);
+        lv_obj_set_size(fuel_sender_switch, 50, 25);
+
+        if (values_config[value_id - 1].fuel_sender) {
+            lv_obj_add_state(fuel_sender_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(fuel_sender_switch, LV_STATE_CHECKED);
+        }
+
+        // "Set:" label — left side of the top row
+        lv_obj_t * fs_set_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(fs_set_label, "Set:");
+        lv_obj_set_style_text_color(fs_set_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(fs_set_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(fs_set_label, LV_ALIGN_CENTER, 185, 30);
+
+        // Empty / Full calibration buttons (shown only when fuel sender is on)
+        lv_obj_t * fs_empty_btn = lv_btn_create(ui_MenuScreen);
+        lv_obj_set_size(fs_empty_btn, 90, 30);
+        lv_obj_align(fs_empty_btn, LV_ALIGN_CENTER, 215, 55);
+        lv_obj_set_style_bg_color(fs_empty_btn, lv_color_hex(0x555555), 0);
+        lv_obj_set_style_radius(fs_empty_btn, 6, 0);
+        lv_obj_t * fs_empty_label = lv_label_create(fs_empty_btn);
+        lv_label_set_text(fs_empty_label, "Empty");
+        lv_obj_set_style_text_color(fs_empty_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(fs_empty_label, &lv_font_montserrat_14, 0);
+        lv_obj_center(fs_empty_label);
+        uint8_t *fs_empty_id = lv_mem_alloc(sizeof(uint8_t));
+        *fs_empty_id = value_id;
+        lv_obj_add_event_cb(fs_empty_btn, fs_empty_btn_event_cb, LV_EVENT_CLICKED, fs_empty_id);
+        lv_obj_add_event_cb(fs_empty_btn, free_value_id_event_cb, LV_EVENT_DELETE, fs_empty_id);
+
+        lv_obj_t * fs_full_btn = lv_btn_create(ui_MenuScreen);
+        lv_obj_set_size(fs_full_btn, 90, 30);
+        lv_obj_align(fs_full_btn, LV_ALIGN_CENTER, 320, 55);
+        lv_obj_set_style_bg_color(fs_full_btn, lv_color_hex(0x555555), 0);
+        lv_obj_set_style_radius(fs_full_btn, 6, 0);
+        lv_obj_t * fs_full_label = lv_label_create(fs_full_btn);
+        lv_label_set_text(fs_full_label, "Full");
+        lv_obj_set_style_text_color(fs_full_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(fs_full_label, &lv_font_montserrat_14, 0);
+        lv_obj_center(fs_full_label);
+        uint8_t *fs_full_id = lv_mem_alloc(sizeof(uint8_t));
+        *fs_full_id = value_id;
+        lv_obj_add_event_cb(fs_full_btn, fs_full_btn_event_cb, LV_EVENT_CLICKED, fs_full_id);
+        lv_obj_add_event_cb(fs_full_btn, free_value_id_event_cb, LV_EVENT_DELETE, fs_full_id);
+
+        // Voltage value inputs (shown below the buttons)
+        lv_obj_t * fs_empty_input = lv_textarea_create(ui_MenuScreen);
+        lv_obj_add_style(fs_empty_input, get_common_style(), LV_PART_MAIN);
+        lv_textarea_set_one_line(fs_empty_input, true);
+        lv_textarea_set_placeholder_text(fs_empty_input, "Empty V");
+        lv_obj_set_width(fs_empty_input, 90);
+        lv_obj_align(fs_empty_input, LV_ALIGN_CENTER, 215, 93);
+        lv_obj_add_event_cb(fs_empty_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        {
+            char vbuf[12];
+            snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[value_id - 1].fuel_sender_empty_v);
+            lv_textarea_set_text(fs_empty_input, vbuf);
+        }
+        uint8_t *fs_empty_v_id = lv_mem_alloc(sizeof(uint8_t));
+        *fs_empty_v_id = value_id;
+        lv_obj_add_event_cb(fs_empty_input, fs_empty_v_input_event_cb, LV_EVENT_VALUE_CHANGED, fs_empty_v_id);
+        lv_obj_add_event_cb(fs_empty_input, free_value_id_event_cb, LV_EVENT_DELETE, fs_empty_v_id);
+
+        lv_obj_t * fs_full_input = lv_textarea_create(ui_MenuScreen);
+        lv_obj_add_style(fs_full_input, get_common_style(), LV_PART_MAIN);
+        lv_textarea_set_one_line(fs_full_input, true);
+        lv_textarea_set_placeholder_text(fs_full_input, "Full V");
+        lv_obj_set_width(fs_full_input, 90);
+        lv_obj_align(fs_full_input, LV_ALIGN_CENTER, 320, 93);
+        lv_obj_add_event_cb(fs_full_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        {
+            char vbuf[12];
+            snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[value_id - 1].fuel_sender_full_v);
+            lv_textarea_set_text(fs_full_input, vbuf);
+        }
+        uint8_t *fs_full_v_id = lv_mem_alloc(sizeof(uint8_t));
+        *fs_full_v_id = value_id;
+        lv_obj_add_event_cb(fs_full_input, fs_full_v_input_event_cb, LV_EVENT_VALUE_CHANGED, fs_full_v_id);
+        lv_obj_add_event_cb(fs_full_input, free_value_id_event_cb, LV_EVENT_DELETE, fs_full_v_id);
+
+        // Live current voltage label — right side of the top row, beside "Set:"
+        lv_obj_t * fs_current_label = lv_label_create(ui_MenuScreen);
+        lv_obj_set_style_text_color(fs_current_label, lv_color_hex(0xAAAAAA), 0);
+        lv_obj_set_style_text_font(fs_current_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(fs_current_label, LV_ALIGN_CENTER, 325, 30);
+        {
+            char vbuf[24];
+            uint8_t bar_idx = (value_id == 12) ? 0 : 1;
+            snprintf(vbuf, sizeof(vbuf), "Current: %.2f V", fuel_sender_get_filtered_v(bar_idx));
+            lv_label_set_text(fs_current_label, vbuf);
+        }
+
+        // Filter label + slider
+        lv_obj_t * fs_filter_label = lv_label_create(ui_MenuScreen);
+        lv_obj_set_style_text_color(fs_filter_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(fs_filter_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(fs_filter_label, LV_ALIGN_CENTER, 265, 125);
+        {
+            char fbuf[24];
+            snprintf(fbuf, sizeof(fbuf), "Filter: %d%%", values_config[value_id - 1].fuel_sender_filter);
+            lv_label_set_text(fs_filter_label, fbuf);
+        }
+
+        lv_obj_t * fs_filter_slider = lv_slider_create(ui_MenuScreen);
+        lv_obj_set_size(fs_filter_slider, 180, 12);
+        lv_obj_align(fs_filter_slider, LV_ALIGN_CENTER, 265, 143);
+        lv_slider_set_range(fs_filter_slider, 0, 100);
+        lv_slider_set_value(fs_filter_slider, values_config[value_id - 1].fuel_sender_filter, LV_ANIM_OFF);
+
+        // Initial visibility matches the current toggle state
+        if (!values_config[value_id - 1].fuel_sender) {
+            lv_obj_add_flag(fs_set_label,     LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_empty_btn,     LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_full_btn,      LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_empty_input,   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_full_input,    LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_current_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_filter_label,  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(fs_filter_slider, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        // Pass value_id + label + button + input pointers to the toggle callback
+        fuel_sender_ctx_t *fs_ctx = lv_mem_alloc(sizeof(fuel_sender_ctx_t));
+        fs_ctx->value_id      = value_id;
+        fs_ctx->set_label     = fs_set_label;
+        fs_ctx->empty_btn     = fs_empty_btn;
+        fs_ctx->full_btn      = fs_full_btn;
+        fs_ctx->empty_input   = fs_empty_input;
+        fs_ctx->full_input    = fs_full_input;
+        fs_ctx->current_label = fs_current_label;
+        fs_ctx->filter_label  = fs_filter_label;
+        fs_ctx->filter_slider = fs_filter_slider;
+
+        // LVGL timer to refresh the filtered voltage reading every 200 ms
+        fs_ctx->update_timer = lv_timer_create(fs_voltage_update_timer_cb, 200, fs_ctx);
+
+        lv_obj_add_event_cb(fs_filter_slider, fs_filter_slider_event_cb, LV_EVENT_VALUE_CHANGED, fs_ctx);
+        lv_obj_add_event_cb(fs_filter_slider, fs_filter_slider_event_cb, LV_EVENT_RELEASED, fs_ctx);
+
+        lv_obj_add_event_cb(fuel_sender_switch, fuel_sender_switch_event_cb, LV_EVENT_VALUE_CHANGED, fs_ctx);
+        lv_obj_add_event_cb(fuel_sender_switch, fuel_sender_ctx_free_event_cb, LV_EVENT_DELETE, fs_ctx);
+
+        // Bar Low Color
+        lv_obj_t * bar_low_color_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(bar_low_color_label, "Low Colour:");
+        lv_obj_set_style_text_color(bar_low_color_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(bar_low_color_label, LV_ALIGN_CENTER, -50, 33);
+
+        lv_obj_t * bar_low_color_dropdown = lv_dropdown_create(ui_MenuScreen);
+        lv_dropdown_set_options(bar_low_color_dropdown, 
+            "Blue\nRed\nGreen\nYellow\nOrange\nPurple\nCyan\nMagenta\nCustom");
+        lv_obj_set_width(bar_low_color_dropdown, 100);
+        lv_obj_align(bar_low_color_dropdown, LV_ALIGN_CENTER, 80, 33);
+        lv_obj_add_style(bar_low_color_dropdown, get_common_style(), LV_PART_MAIN);
+        
+        // Set current low color selection based on saved values
+        uint16_t low_color_selected = 0; // Default to Blue
+        if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x19439a).full) low_color_selected = 0; // Blue
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF0000).full) low_color_selected = 1; // Red
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x38FF00).full) low_color_selected = 2; // Green
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFFFF00).full) low_color_selected = 3; // Yellow
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF7F00).full) low_color_selected = 4; // Orange
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x8000FF).full) low_color_selected = 5; // Purple
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x00FFFF).full) low_color_selected = 6; // Cyan
+        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF00FF).full) low_color_selected = 7; // Magenta
+        else low_color_selected = 8; // Custom
+        lv_dropdown_set_selected(bar_low_color_dropdown, low_color_selected);
+        
+        // Add event callback for bar low color dropdown
+        uint8_t *bar_low_color_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+        *bar_low_color_id_ptr = value_id;
+        lv_obj_add_event_cb(bar_low_color_dropdown, bar_low_color_event_cb, LV_EVENT_VALUE_CHANGED, bar_low_color_id_ptr);
+        lv_obj_add_event_cb(bar_low_color_dropdown, free_value_id_event_cb, LV_EVENT_DELETE, bar_low_color_id_ptr);
+        
         // NEW: Create "Bar High Value:" label and input field
         lv_obj_t * bar_high_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_high_label, "Bar High Value:");
+        lv_label_set_text(bar_high_label, "High Value:");
         lv_obj_set_style_text_color(bar_high_label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(bar_high_label, LV_ALIGN_CENTER, -50, 33);   // Adjust vertical positioning as needed
+        lv_obj_align(bar_high_label, LV_ALIGN_CENTER, -50, 73);   // Adjust vertical positioning as needed
      
         lv_obj_t * bar_high_input = lv_textarea_create(ui_MenuScreen);
         lv_obj_add_style(bar_high_input, get_common_style(), LV_PART_MAIN);
         lv_textarea_set_one_line(bar_high_input, true);
+        lv_textarea_set_placeholder_text(bar_high_input, "High Value");
         lv_obj_set_width(bar_high_input, 100);
-        lv_obj_align(bar_high_input, LV_ALIGN_CENTER, 80, 33);    // Adjust vertical positioning as needed
+        lv_obj_align(bar_high_input, LV_ALIGN_CENTER, 80, 73);    // Adjust vertical positioning as needed
         lv_obj_add_event_cb(bar_high_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
      
         uint8_t *bar_high_id_ptr = lv_mem_alloc(sizeof(uint8_t));
@@ -1170,23 +1427,9 @@ void load_menu_screen_for_value(uint8_t value_id) {
         snprintf(buf_high, sizeof(buf_high), "%d", values_config[value_id - 1].bar_high);
         lv_textarea_set_text(bar_high_input, buf_high);
         
-        // Bar Color Configuration
-        // Bar Low Color
-        lv_obj_t * bar_low_color_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_low_color_label, "Bar Low Colour:");
-        lv_obj_set_style_text_color(bar_low_color_label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(bar_low_color_label, LV_ALIGN_CENTER, -50, 73);
-
-        lv_obj_t * bar_low_color_dropdown = lv_dropdown_create(ui_MenuScreen);
-        lv_dropdown_set_options(bar_low_color_dropdown, 
-            "Blue\nRed\nGreen\nYellow\nOrange\nPurple\nCyan\nMagenta\nCustom");
-        lv_obj_set_width(bar_low_color_dropdown, 100);
-        lv_obj_align(bar_low_color_dropdown, LV_ALIGN_CENTER, 80, 73);
-        lv_obj_add_style(bar_low_color_dropdown, get_common_style(), LV_PART_MAIN);
-
         // Bar High Color
         lv_obj_t * bar_high_color_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_high_color_label, "Bar High Colour:");
+        lv_label_set_text(bar_high_color_label, "High Colour:");
         lv_obj_set_style_text_color(bar_high_color_label, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(bar_high_color_label, LV_ALIGN_CENTER, -50, 113);
 
@@ -1196,38 +1439,9 @@ void load_menu_screen_for_value(uint8_t value_id) {
         lv_obj_set_width(bar_high_color_dropdown, 100);
         lv_obj_align(bar_high_color_dropdown, LV_ALIGN_CENTER, 80, 113);
         lv_obj_add_style(bar_high_color_dropdown, get_common_style(), LV_PART_MAIN);
-
-        // Bar In Range Color
-        lv_obj_t * bar_in_range_color_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(bar_in_range_color_label, "Bar In Range Colour:");
-        lv_obj_set_style_text_color(bar_in_range_color_label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(bar_in_range_color_label, LV_ALIGN_CENTER, -50, 153);
-
-        lv_obj_t * bar_in_range_color_dropdown = lv_dropdown_create(ui_MenuScreen);
-        lv_dropdown_set_options(bar_in_range_color_dropdown, 
-            "Blue\nRed\nGreen\nYellow\nOrange\nPurple\nCyan\nMagenta\nCustom");
-        lv_obj_set_width(bar_in_range_color_dropdown, 100);
-        lv_obj_align(bar_in_range_color_dropdown, LV_ALIGN_CENTER, 80, 153);
-        lv_obj_add_style(bar_in_range_color_dropdown, get_common_style(), LV_PART_MAIN);
-
-        // Set current color selections based on saved values
-        // Determine which color index to select for each dropdown
-        uint16_t low_color_selected = 0; // Default to Blue
+        
+        // Set current high color selection based on saved values
         uint16_t high_color_selected = 1; // Default to Red
-        uint16_t in_range_color_selected = 2; // Default to Green
-        
-        // Check bar low color
-        if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x19439a).full) low_color_selected = 0; // Blue
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF0000).full) low_color_selected = 1; // Red
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x38FF00).full) low_color_selected = 2; // Green
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFFFF00).full) low_color_selected = 3; // Yellow
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF7F00).full) low_color_selected = 4; // Orange
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x8000FF).full) low_color_selected = 5; // Purple
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0x00FFFF).full) low_color_selected = 6; // Cyan
-        else if (values_config[value_id - 1].bar_low_color.full == lv_color_hex(0xFF00FF).full) low_color_selected = 7; // Magenta
-        else low_color_selected = 8; // Custom
-        
-        // Check bar high color
         if (values_config[value_id - 1].bar_high_color.full == lv_color_hex(0x19439a).full) high_color_selected = 0; // Blue
         else if (values_config[value_id - 1].bar_high_color.full == lv_color_hex(0xFF0000).full) high_color_selected = 1; // Red
         else if (values_config[value_id - 1].bar_high_color.full == lv_color_hex(0x38FF00).full) high_color_selected = 2; // Green
@@ -1237,8 +1451,30 @@ void load_menu_screen_for_value(uint8_t value_id) {
         else if (values_config[value_id - 1].bar_high_color.full == lv_color_hex(0x00FFFF).full) high_color_selected = 6; // Cyan
         else if (values_config[value_id - 1].bar_high_color.full == lv_color_hex(0xFF00FF).full) high_color_selected = 7; // Magenta
         else high_color_selected = 8; // Custom
+        lv_dropdown_set_selected(bar_high_color_dropdown, high_color_selected);
         
-        // Check bar in range color
+        // Add event callback for bar high color dropdown
+        uint8_t *bar_high_color_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+        *bar_high_color_id_ptr = value_id;
+        lv_obj_add_event_cb(bar_high_color_dropdown, bar_high_color_event_cb, LV_EVENT_VALUE_CHANGED, bar_high_color_id_ptr);
+        lv_obj_add_event_cb(bar_high_color_dropdown, free_value_id_event_cb, LV_EVENT_DELETE, bar_high_color_id_ptr);
+        
+
+        // Bar In Range Color
+        lv_obj_t * bar_in_range_color_label = lv_label_create(ui_MenuScreen);
+        lv_label_set_text(bar_in_range_color_label, "In Range Colour:");
+        lv_obj_set_style_text_color(bar_in_range_color_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(bar_in_range_color_label, LV_ALIGN_CENTER, -50, 153);
+
+        lv_obj_t * bar_in_range_color_dropdown = lv_dropdown_create(ui_MenuScreen);
+        lv_dropdown_set_options(bar_in_range_color_dropdown, 
+            "Blue\nRed\nGreen\nYellow\nOrange\nPurple\nCyan\nMagenta\nCustom");
+        lv_obj_set_width(bar_in_range_color_dropdown, 100);
+        lv_obj_align(bar_in_range_color_dropdown, LV_ALIGN_CENTER, 80, 153);
+        lv_obj_add_style(bar_in_range_color_dropdown, get_common_style(), LV_PART_MAIN);
+        
+        // Set current in range color selection based on saved values
+        uint16_t in_range_color_selected = 2; // Default to Green
         if (values_config[value_id - 1].bar_in_range_color.full == lv_color_hex(0x19439a).full) in_range_color_selected = 0; // Blue
         else if (values_config[value_id - 1].bar_in_range_color.full == lv_color_hex(0xFF0000).full) in_range_color_selected = 1; // Red
         else if (values_config[value_id - 1].bar_in_range_color.full == lv_color_hex(0x38FF00).full) in_range_color_selected = 2; // Green
@@ -1248,118 +1484,14 @@ void load_menu_screen_for_value(uint8_t value_id) {
         else if (values_config[value_id - 1].bar_in_range_color.full == lv_color_hex(0x00FFFF).full) in_range_color_selected = 6; // Cyan
         else if (values_config[value_id - 1].bar_in_range_color.full == lv_color_hex(0xFF00FF).full) in_range_color_selected = 7; // Magenta
         else in_range_color_selected = 8; // Custom
-        
-        lv_dropdown_set_selected(bar_low_color_dropdown, low_color_selected);
-        lv_dropdown_set_selected(bar_high_color_dropdown, high_color_selected);
         lv_dropdown_set_selected(bar_in_range_color_dropdown, in_range_color_selected);
-
-        // Add event callbacks for color dropdowns
-        uint8_t *bar_low_color_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-        *bar_low_color_id_ptr = value_id;
-        lv_obj_add_event_cb(bar_low_color_dropdown, bar_low_color_event_cb, LV_EVENT_VALUE_CHANGED, bar_low_color_id_ptr);
-        lv_obj_add_event_cb(bar_low_color_dropdown, free_value_id_event_cb, LV_EVENT_DELETE, bar_low_color_id_ptr);
-
-        uint8_t *bar_high_color_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-        *bar_high_color_id_ptr = value_id;
-        lv_obj_add_event_cb(bar_high_color_dropdown, bar_high_color_event_cb, LV_EVENT_VALUE_CHANGED, bar_high_color_id_ptr);
-        lv_obj_add_event_cb(bar_high_color_dropdown, free_value_id_event_cb, LV_EVENT_DELETE, bar_high_color_id_ptr);
-
+        
+        // Add event callback for bar in range color dropdown
         uint8_t *bar_in_range_color_id_ptr = lv_mem_alloc(sizeof(uint8_t));
         *bar_in_range_color_id_ptr = value_id;
         lv_obj_add_event_cb(bar_in_range_color_dropdown, bar_in_range_color_event_cb, LV_EVENT_VALUE_CHANGED, bar_in_range_color_id_ptr);
         lv_obj_add_event_cb(bar_in_range_color_dropdown, free_value_id_event_cb, LV_EVENT_DELETE, bar_in_range_color_id_ptr);
-        
-        // Fuel Input Controls (move to top right, next to bar min/max etc)
-        int fuel_x = 220; // right of value fields
-        int fuel_y = -87; // align with bar min value
-        int fuel_y_step = 40;
 
-        // Fuel Input Enable Label and Switch
-        lv_obj_t * fuel_enable_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(fuel_enable_label, "Use Fuel Input:");
-        lv_obj_set_style_text_color(fuel_enable_label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(fuel_enable_label, LV_ALIGN_CENTER, fuel_x, fuel_y);
-
-        lv_obj_t * fuel_enable_switch = lv_switch_create(ui_MenuScreen);
-        lv_obj_align(fuel_enable_switch, LV_ALIGN_CENTER, fuel_x + 120, fuel_y);
-        lv_obj_set_size(fuel_enable_switch, 50, 25);
-        if (values_config[value_id - 1].use_fuel_input) {
-            lv_obj_add_state(fuel_enable_switch, LV_STATE_CHECKED);
-        }
-        uint8_t *fuel_enable_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-        *fuel_enable_id_ptr = value_id;
-        lv_obj_add_event_cb(fuel_enable_switch, fuel_enable_switch_event_cb, LV_EVENT_VALUE_CHANGED, fuel_enable_id_ptr);
-        lv_obj_add_event_cb(fuel_enable_switch, free_value_id_event_cb, LV_EVENT_DELETE, fuel_enable_id_ptr);
-
-        // Fuel Calibration Section
-        lv_obj_t * fuel_calib_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(fuel_calib_label, "Fuel Calibration:");
-        lv_obj_set_style_text_color(fuel_calib_label, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align(fuel_calib_label, LV_ALIGN_CENTER, fuel_x, fuel_y + fuel_y_step);
-
-        // Empty Calibration Button
-        lv_obj_t * fuel_empty_btn = lv_btn_create(ui_MenuScreen);
-        lv_obj_set_size(fuel_empty_btn, 80, 30);
-        lv_obj_align(fuel_empty_btn, LV_ALIGN_CENTER, fuel_x, fuel_y + 2 * fuel_y_step);
-        lv_obj_t * fuel_empty_btn_label = lv_label_create(fuel_empty_btn);
-        lv_label_set_text(fuel_empty_btn_label, "EMPTY");
-        lv_obj_center(fuel_empty_btn_label);
-
-        // Full Calibration Button
-        lv_obj_t * fuel_full_btn = lv_btn_create(ui_MenuScreen);
-        lv_obj_set_size(fuel_full_btn, 80, 30);
-        lv_obj_align(fuel_full_btn, LV_ALIGN_CENTER, fuel_x + 100, fuel_y + 2 * fuel_y_step);
-        lv_obj_t * fuel_full_btn_label = lv_label_create(fuel_full_btn);
-        lv_label_set_text(fuel_full_btn_label, "FULL");
-        lv_obj_center(fuel_full_btn_label);
-
-        // Voltage Display Labels
-        lv_obj_t * fuel_empty_voltage_label = lv_label_create(ui_MenuScreen);
-        char empty_voltage_text[32];
-        snprintf(empty_voltage_text, sizeof(empty_voltage_text), "Empty: %.3fV", values_config[value_id - 1].fuel_empty_voltage);
-        lv_label_set_text(fuel_empty_voltage_label, empty_voltage_text);
-        lv_obj_set_style_text_color(fuel_empty_voltage_label, lv_color_hex(0xCCCCCC), 0);
-        lv_obj_align(fuel_empty_voltage_label, LV_ALIGN_CENTER, fuel_x, fuel_y + 3 * fuel_y_step);
-
-        lv_obj_t * fuel_full_voltage_label = lv_label_create(ui_MenuScreen);
-        char full_voltage_text[32];
-        snprintf(full_voltage_text, sizeof(full_voltage_text), "Full: %.3fV", values_config[value_id - 1].fuel_full_voltage);
-        lv_label_set_text(fuel_full_voltage_label, full_voltage_text);
-        lv_obj_set_style_text_color(fuel_full_voltage_label, lv_color_hex(0xCCCCCC), 0);
-        lv_obj_align(fuel_full_voltage_label, LV_ALIGN_CENTER, fuel_x + 100, fuel_y + 3 * fuel_y_step);
-
-        // Current Voltage Display
-        lv_obj_t * fuel_current_voltage_label = lv_label_create(ui_MenuScreen);
-        lv_label_set_text(fuel_current_voltage_label, "Current: 0.000V");
-        lv_obj_set_style_text_color(fuel_current_voltage_label, lv_color_hex(0x00FF00), 0);
-        lv_obj_align(fuel_current_voltage_label, LV_ALIGN_CENTER, fuel_x + 50, fuel_y + 4 * fuel_y_step);
-
-        // Start timer for periodic voltage updates (update every 500ms)
-        if (values_config[value_id - 1].use_fuel_input) {
-            lv_timer_t * voltage_timer = lv_timer_create(fuel_voltage_update_timer_cb, 500, fuel_current_voltage_label);
-            lv_timer_ready(voltage_timer); // Update immediately
-        }
-
-        // Add event callbacks for calibration buttons
-        uint8_t *fuel_empty_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-        *fuel_empty_id_ptr = value_id;
-        lv_obj_add_event_cb(fuel_empty_btn, fuel_empty_calib_event_cb, LV_EVENT_CLICKED, fuel_empty_id_ptr);
-        lv_obj_add_event_cb(fuel_empty_btn, free_value_id_event_cb, LV_EVENT_DELETE, fuel_empty_id_ptr);
-
-        uint8_t *fuel_full_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-        *fuel_full_id_ptr = value_id;
-        lv_obj_add_event_cb(fuel_full_btn, fuel_full_calib_event_cb, LV_EVENT_CLICKED, fuel_full_id_ptr);
-        lv_obj_add_event_cb(fuel_full_btn, free_value_id_event_cb, LV_EVENT_DELETE, fuel_full_id_ptr);
-
-        // Initially hide fuel calibration controls if fuel input is disabled
-        if (!values_config[value_id - 1].use_fuel_input) {
-            lv_obj_add_flag(fuel_calib_label, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(fuel_empty_btn, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(fuel_full_btn, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(fuel_empty_voltage_label, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(fuel_full_voltage_label, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(fuel_current_voltage_label, LV_OBJ_FLAG_HIDDEN);
-        }
     }	
 	
 	lv_obj_move_foreground(save_btn);
@@ -1380,66 +1512,68 @@ void create_menu_objects(lv_obj_t * parent, uint8_t value_id) {
     // Use LOCAL variables instead of overwriting global arrays to prevent corruption
     // This ensures Screen3 objects remain intact while menu is open
     
-    // Label (store in global array for live label updates)
-    menu_panel_labels[idx] = lv_label_create(parent);
-    lv_label_set_text(menu_panel_labels[idx], label_texts[idx]);
-    lv_obj_set_style_text_color(menu_panel_labels[idx], lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(menu_panel_labels[idx], &ui_font_fugaz_14, 0);
-    lv_obj_set_x(menu_panel_labels[idx], -312);
-    lv_obj_set_y(menu_panel_labels[idx], -216);
-    lv_obj_set_align(menu_panel_labels[idx], LV_ALIGN_CENTER);
-
-    // Value (store in global array for live updates)
-    menu_panel_value_labels[idx] = lv_label_create(parent);
-    // Initialize with current Screen3 value if available
-    const char *current_value = (ui_Value[idx] && lv_obj_is_valid(ui_Value[idx])) ? 
-                                lv_label_get_text(ui_Value[idx]) : "0";
-    lv_label_set_text(menu_panel_value_labels[idx], current_value);
-    lv_obj_set_style_text_color(menu_panel_value_labels[idx], lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(menu_panel_value_labels[idx], &ui_font_Manrope_35_BOLD, 0);
-    lv_obj_set_x(menu_panel_value_labels[idx], -312);
-    lv_obj_set_y(menu_panel_value_labels[idx], -178);
-    lv_obj_set_align(menu_panel_value_labels[idx], LV_ALIGN_CENTER);
-
-    // Box (store reference for border effects)
+    printf("Creating menu objects for panel %d (idx %d)\n", value_id, idx);
+    
+    // Box (create first so labels are on top)
     menu_panel_boxes[idx] = lv_obj_create(parent);
     lv_obj_set_size(menu_panel_boxes[idx], 155, 92);
-    lv_obj_set_pos(menu_panel_boxes[idx], -312, -185);
-    lv_obj_set_align(menu_panel_boxes[idx], LV_ALIGN_CENTER);
+    lv_obj_set_align(menu_panel_boxes[idx], LV_ALIGN_TOP_LEFT);
+    lv_obj_set_pos(menu_panel_boxes[idx], 5, 5);  // 5 pixels from top-left corner
     lv_obj_clear_flag(menu_panel_boxes[idx], LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_style(menu_panel_boxes[idx], get_box_style(), LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Set initial border properties for warning effects
     lv_obj_set_style_border_width(menu_panel_boxes[idx], 3, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(menu_panel_boxes[idx], lv_color_hex(0x2e2f2e), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    // Label (store in global array for live label updates) - Match Screen 3 style
+    menu_panel_labels[idx] = lv_label_create(menu_panel_boxes[idx]);  // Parent to box for easier centering
+    lv_label_set_text(menu_panel_labels[idx], label_texts[idx]);
+    lv_obj_set_style_text_color(menu_panel_labels[idx], lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(menu_panel_labels[idx], &ui_font_fugaz_14, 0);
+    lv_obj_set_style_text_align(menu_panel_labels[idx], LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(menu_panel_labels[idx], 145);
+    lv_label_set_long_mode(menu_panel_labels[idx], LV_LABEL_LONG_CLIP);
+    lv_obj_set_x(menu_panel_labels[idx], 0);
+    lv_obj_set_y(menu_panel_labels[idx], -28);  // Relative to box center, matching Screen 3
+    lv_obj_set_align(menu_panel_labels[idx], LV_ALIGN_CENTER);
 
+    // Value (store in global array for live updates) - Match Screen 3 style
+    menu_panel_value_labels[idx] = lv_label_create(menu_panel_boxes[idx]);  // Parent to box for easier centering
+    // Initialize with current Screen3 value if available
+    extern char previous_values[13][64];
+    const char *current_value = NULL;
+    
+    // First try to get value from ui_Value array
+    if (ui_Value[idx] && lv_obj_is_valid(ui_Value[idx])) {
+        current_value = lv_label_get_text(ui_Value[idx]);
+        printf("Panel %d: Using ui_Value[%d] = '%s'\n", value_id, idx, current_value);
+    } 
+    // Then try previous_values array
+    else if (strlen(previous_values[idx]) > 0) {
+        current_value = previous_values[idx];
+        printf("Panel %d: Using previous_values[%d] = '%s'\n", value_id, idx, current_value);
+    }
+    // Fallback to "0"
+    else {
+        current_value = "0";
+        printf("Panel %d: Using fallback value = '%s'\n", value_id, current_value);
+    }
+    
+    lv_label_set_text(menu_panel_value_labels[idx], current_value);
+    lv_obj_set_style_text_color(menu_panel_value_labels[idx], lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(menu_panel_value_labels[idx], &ui_font_Manrope_35_BOLD, 0);  // Match Screen 3 font
+    lv_obj_set_style_text_align(menu_panel_value_labels[idx], LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(menu_panel_value_labels[idx], 140);  // Match Screen 3 width
+    lv_label_set_long_mode(menu_panel_value_labels[idx], LV_LABEL_LONG_CLIP);
+    lv_obj_set_x(menu_panel_value_labels[idx], 0);
+    lv_obj_set_y(menu_panel_value_labels[idx], 9);  // Relative to box center, matching Screen 3
+    lv_obj_set_align(menu_panel_value_labels[idx], LV_ALIGN_CENTER);
+
+    printf("Panel %d: Created all menu objects successfully\n", value_id);
+    
     // Add configuration controls for any value
     create_config_controls(parent, value_id);
-}
-
-// Speed source dropdown event callback
-void speed_source_dropdown_event_cb(lv_event_t * e) {
-    lv_obj_t * dropdown = lv_event_get_target(e);
-    uint16_t selected = lv_dropdown_get_selected(dropdown);
-    
-    // Update the speed configuration
-    values_config[SPEED_VALUE_ID - 1].use_gps_for_speed = (selected == 1);
-    
-    // Save configuration to NVS immediately
-    save_values_config_to_nvs();
-    
-    ESP_LOGI("MENU", "Speed source changed to: %s (saved to NVS)", 
-        values_config[SPEED_VALUE_ID - 1].use_gps_for_speed ? "GPS" : "CAN ID");
-    
-    // If GPS is selected, immediately trigger a speed update to show "---" if no fix
-    if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) {
-        // Create a speed update to show "---" immediately while GPS searches for fix
-        speed_update_t *s_upd = malloc(sizeof(speed_update_t));
-        if (s_upd) {
-            strcpy(s_upd->speed_str, "---");
-            lv_async_call(update_speed_ui, s_upd);
-        }
-    }
 }
 
 // Speed units dropdown event callback
@@ -1467,235 +1601,595 @@ void speed_units_dropdown_event_cb(lv_event_t * e) {
         values_config[SPEED_VALUE_ID - 1].use_mph ? "MPH" : "KMH");
 }
 
-// GPS status update timer callback for menu screen
-void gps_status_update_timer_cb(lv_timer_t * timer) {
-    lv_obj_t * gps_label = (lv_obj_t *)timer->user_data;
-    if (!gps_label || !lv_obj_is_valid(gps_label)) {
-        return;
-    }
-    
-    gps_data_t gps_data;
-    char status_text[400];
-    
-    // Speed preview is handled through the status text display below
-    
-    if (gps_get_data(&gps_data)) {
-        if (gps_data.fix_valid) {
-            // Show GPS speed in preview if GPS is selected
-            if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) {
-                float display_speed = gps_data.speed_kmh;
-                const char* units = "km/h";
-                
-                // Convert to MPH if selected
-                if (values_config[SPEED_VALUE_ID - 1].use_mph) {
-                    display_speed = display_speed * 0.621371f;
-                    units = "mph";
-                }
-                
-                snprintf(status_text, sizeof(status_text), 
-                    "GPS: VALID FIX (%lu baud)\n"
-                    "Mode: Ultra Low Latency\n"
-                    "Speed: %.1f %s [ACTIVE]\n"
-                    "Satellites: %d\n"
-                    "Position: %.4f, %.4f",
-                    gps_data.detected_baud_rate,
-                    display_speed,
-                    units,
-                    gps_data.satellites,
-                    gps_data.latitude,
-                    gps_data.longitude);
-            } else {
-                float display_speed = gps_data.speed_kmh;
-                const char* units = "km/h";
-                
-                // Convert to MPH if selected (for display consistency)
-                if (values_config[SPEED_VALUE_ID - 1].use_mph) {
-                    display_speed = display_speed * 0.621371f;
-                    units = "mph";
-                }
-                
-                snprintf(status_text, sizeof(status_text), 
-                    "GPS: VALID FIX (%lu baud)\n"
-                    "Mode: Ultra Low Latency\n"
-                    "Speed: %.1f %s\n"
-                    "Satellites: %d\n"
-                    "Position: %.4f, %.4f",
-                    gps_data.detected_baud_rate,
-                    display_speed,
-                    units,
-                    gps_data.satellites,
-                    gps_data.latitude,
-                    gps_data.longitude);
-            }
-            lv_obj_set_style_text_color(gps_label, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
-        } else {
-            // No GPS fix
-            if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) {
-                snprintf(status_text, sizeof(status_text), 
-                    "GPS: NO FIX (%lu baud)\n"
-                    "Mode: Ultra Low Latency\n"
-                    "Speed: --- [ACTIVE]\n"
-                    "Satellites: %d\n"
-                    "Searching for fix...",
-                    gps_data.detected_baud_rate,
-                    gps_data.satellites);
-            } else {
-                snprintf(status_text, sizeof(status_text), 
-                    "GPS: NO FIX (%lu baud)\n"
-                    "Mode: Ultra Low Latency\n"
-                    "Satellites: %d\n"
-                    "Searching for fix...",
-                    gps_data.detected_baud_rate,
-                    gps_data.satellites);
-            }
-            lv_obj_set_style_text_color(gps_label, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
-        }
-    } else {
-        // GPS not available
-        if (values_config[SPEED_VALUE_ID - 1].use_gps_for_speed) {
-            snprintf(status_text, sizeof(status_text), 
-                "GPS: NOT AVAILABLE\n"
-                "Speed: --- [ACTIVE]\n"
-                "Check connections");
-        } else {
-            snprintf(status_text, sizeof(status_text), 
-                "GPS: NOT AVAILABLE\n"
-                "Check connections");
-        }
-        lv_obj_set_style_text_color(gps_label, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    }
-    
-    lv_label_set_text(gps_label, status_text);
-}
-
 // Custom gear configuration button event callback
 void custom_gear_config_btn_event_cb(lv_event_t * e) {
     ESP_LOGI("GEAR", "Opening custom gear configuration screen");
     create_custom_gear_config_menu();
 }
 
-// Timer callback for refreshing menu after fuel input toggle
-static void fuel_menu_refresh_timer_cb(lv_timer_t * timer) {
-    // Get the value_id from timer user data
-    uint8_t value_id = (uint8_t)(uintptr_t)timer->user_data;
-    
-    // Close and reopen the menu to refresh the fuel controls
-    if (lv_scr_act() && lv_scr_act() == ui_MenuScreen) {
-        load_menu_screen_for_value(value_id);
-    }
-    
-    // Delete the timer after use
-    lv_timer_del(timer);
-}
-
-// Fuel input enable switch event callback
-void fuel_enable_switch_event_cb(lv_event_t * e) {
+// Show value switch event callback
+void show_value_switch_event_cb(lv_event_t * e) {
     lv_obj_t * switch_obj = lv_event_get_target(e);
     uint8_t *value_id_ptr = (uint8_t *)lv_event_get_user_data(e);
     uint8_t value_id = *value_id_ptr;
     
-    bool is_enabled = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
-    values_config[value_id - 1].use_fuel_input = is_enabled;
+    bool show_value = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
+    values_config[value_id - 1].show_bar_value = show_value;
     
-    // Simple approach: just set a flag to refresh the entire menu screen
-    // This avoids complex child searching that can cause watchdog timeouts
-    ESP_LOGI("FUEL", "Fuel input %s for bar %d - refreshing menu", 
-             is_enabled ? "enabled" : "disabled", value_id);
+    // Update visibility on Screen 3 immediately
+    if (value_id == BAR1_VALUE_ID && ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
+        if (show_value) {
+            lv_obj_clear_flag(ui_Bar_1_Value, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui_Bar_1_Value, LV_OBJ_FLAG_HIDDEN);
+        }
+    } else if (value_id == BAR2_VALUE_ID && ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
+        if (show_value) {
+            lv_obj_clear_flag(ui_Bar_2_Value, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ui_Bar_2_Value, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     
-    // Save configuration to NVS (this should be quick)
+    // Save configuration to NVS
     save_values_config_to_nvs();
     
-    // Start or stop fuel update timer based on whether any bar has fuel input enabled
-    if (any_fuel_input_enabled()) {
-        start_fuel_update_timer();
+    ESP_LOGI("BAR", "Show value %s for bar %d", show_value ? "enabled" : "disabled", value_id);
+}
+
+// Invert value switch event callback
+void invert_value_switch_event_cb(lv_event_t * e) {
+    lv_obj_t * switch_obj = lv_event_get_target(e);
+    uint8_t *value_id_ptr = (uint8_t *)lv_event_get_user_data(e);
+    uint8_t value_id = *value_id_ptr;
+    
+    bool invert_value = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
+    values_config[value_id - 1].invert_bar_value = invert_value;
+    
+    // The next CAN update will apply the inversion automatically
+    // No need to manually update the bar here
+    
+    // Save configuration to NVS
+    save_values_config_to_nvs();
+    
+    ESP_LOGI("BAR", "Invert value %s for bar %d", invert_value ? "enabled" : "disabled", value_id);
+}
+
+// Manually typed empty voltage
+void fs_empty_v_input_event_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    lv_obj_t *ta = lv_event_get_target(e);
+    uint8_t *id  = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    float v = atof(lv_textarea_get_text(ta));
+    if (v < 0.0f) v = 0.0f;
+    if (v > 3.3f) v = 3.3f;
+    values_config[*id - 1].fuel_sender_empty_v = v;
+    save_values_config_to_nvs();
+}
+
+// Manually typed full voltage
+void fs_full_v_input_event_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    lv_obj_t *ta = lv_event_get_target(e);
+    uint8_t *id  = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    float v = atof(lv_textarea_get_text(ta));
+    if (v < 0.0f) v = 0.0f;
+    if (v > 3.3f) v = 3.3f;
+    values_config[*id - 1].fuel_sender_full_v = v;
+    save_values_config_to_nvs();
+}
+
+// Capture current ADC voltage as the "empty" calibration point
+void fs_empty_btn_event_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    fuel_sender_capture_empty(*id);
+    // Refresh the input box to show the newly captured voltage
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *screen = lv_obj_get_screen(btn);
+    // Re-read the value from config:
+    char vbuf[12];
+    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_empty_v);
+    // Find the matching textarea by placeholder
+    uint32_t cnt = lv_obj_get_child_cnt(screen);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t *obj = lv_obj_get_child(screen, i);
+        if (lv_obj_check_type(obj, &lv_textarea_class)) {
+            const char *ph = lv_textarea_get_placeholder_text(obj);
+            if (ph && strstr(ph, "Empty V")) {
+                lv_textarea_set_text(obj, vbuf);
+                break;
+            }
+        }
+    }
+}
+
+// Capture current ADC voltage as the "full" calibration point
+void fs_full_btn_event_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    fuel_sender_capture_full(*id);
+    // Refresh the input box to show the newly captured voltage
+    char vbuf[12];
+    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_full_v);
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *screen = lv_obj_get_screen(btn);
+    uint32_t cnt = lv_obj_get_child_cnt(screen);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t *obj = lv_obj_get_child(screen, i);
+        if (lv_obj_check_type(obj, &lv_textarea_class)) {
+            const char *ph = lv_textarea_get_placeholder_text(obj);
+            if (ph && strstr(ph, "Full V")) {
+                lv_textarea_set_text(obj, vbuf);
+                break;
+            }
+        }
+    }
+}
+
+// Free the fuel_sender context struct when the switch is deleted
+static void fs_filter_slider_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED) return;
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    lv_obj_t *slider = lv_event_get_target(e);
+    int32_t val = lv_slider_get_value(slider);
+    values_config[ctx->value_id - 1].fuel_sender_filter = (uint8_t)val;
+    // Update label while dragging; only write NVS on release
+    char fbuf[24];
+    snprintf(fbuf, sizeof(fbuf), "Filter: %d%%", (int)val);
+    lv_label_set_text(ctx->filter_label, fbuf);
+    if (code == LV_EVENT_RELEASED) {
+        save_values_config_to_nvs();
+    }
+}
+
+static void fs_voltage_update_timer_cb(lv_timer_t * timer) {
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)timer->user_data;
+    if (!ctx) return;
+    lv_obj_t *label = ctx->current_label;
+    if (!label || !lv_obj_is_valid(label)) return;
+    if (lv_obj_has_flag(label, LV_OBJ_FLAG_HIDDEN)) return;
+    // bar_idx: BAR1_VALUE_ID=12 → 0, BAR2_VALUE_ID=13 → 1
+    uint8_t bar_idx = (ctx->value_id == 12) ? 0 : 1;
+    char vbuf[24];
+    snprintf(vbuf, sizeof(vbuf), "Current: %.2f V", fuel_sender_get_filtered_v(bar_idx));
+    lv_label_set_text(label, vbuf);
+}
+
+void fuel_sender_ctx_free_event_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+        fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+        if (ctx) {
+            if (ctx->update_timer) {
+                lv_timer_del(ctx->update_timer);
+                ctx->update_timer = NULL;
+            }
+            lv_mem_free(ctx);
+        }
+    }
+}
+
+// Fuel sender switch event callback
+void fuel_sender_switch_event_cb(lv_event_t * e) {
+    lv_obj_t * switch_obj = lv_event_get_target(e);
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+
+    bool fuel_sender = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
+    values_config[ctx->value_id - 1].fuel_sender = fuel_sender;
+
+    // Show or hide the "Set:" label, buttons and voltage inputs
+#define FS_SHOW(obj) if ((obj) && lv_obj_is_valid(obj)) lv_obj_clear_flag((obj), LV_OBJ_FLAG_HIDDEN)
+#define FS_HIDE(obj) if ((obj) && lv_obj_is_valid(obj)) lv_obj_add_flag((obj),   LV_OBJ_FLAG_HIDDEN)
+    if (fuel_sender) {
+        FS_SHOW(ctx->set_label);
+        FS_SHOW(ctx->empty_btn);
+        FS_SHOW(ctx->full_btn);
+        FS_SHOW(ctx->empty_input);
+        FS_SHOW(ctx->full_input);
+        FS_SHOW(ctx->current_label);
+        FS_SHOW(ctx->filter_label);
+        FS_SHOW(ctx->filter_slider);
     } else {
-        stop_fuel_update_timer();
+        FS_HIDE(ctx->set_label);
+        FS_HIDE(ctx->empty_btn);
+        FS_HIDE(ctx->full_btn);
+        FS_HIDE(ctx->empty_input);
+        FS_HIDE(ctx->full_input);
+        FS_HIDE(ctx->current_label);
+        FS_HIDE(ctx->filter_label);
+        FS_HIDE(ctx->filter_slider);
     }
-    
-    // Create a small delay timer to refresh the menu after a short delay
-    // This allows the current event to complete before doing heavy UI work
-    lv_timer_t * refresh_timer = lv_timer_create(fuel_menu_refresh_timer_cb, 50, (void*)(uintptr_t)value_id);
-    lv_timer_set_repeat_count(refresh_timer, 1); // Run only once
+#undef FS_SHOW
+#undef FS_HIDE
+
+    save_values_config_to_nvs();
+
+    ESP_LOGI("BAR", "Fuel sender %s for bar %d", fuel_sender ? "enabled" : "disabled", ctx->value_id);
 }
 
-// Fuel empty calibration button event callback
-void fuel_empty_calib_event_cb(lv_event_t * e) {
+// Custom text input event callback
+void custom_text_input_event_cb(lv_event_t * e) {
     uint8_t *value_id_ptr = (uint8_t *)lv_event_get_user_data(e);
     uint8_t value_id = *value_id_ptr;
     
-    // Read current voltage and store as empty voltage
-    float current_voltage = fuel_input_read_voltage();
-    values_config[value_id - 1].fuel_empty_voltage = current_voltage;
+    lv_obj_t * textarea = lv_event_get_target(e);
+    const char * text = lv_textarea_get_text(textarea);
     
-    // Update voltage display
-    lv_obj_t * parent = lv_obj_get_parent(lv_event_get_target(e));
-    if (parent) {
-        lv_obj_t * child = lv_obj_get_child(parent, -1);
-        while (child) {
-            if (lv_obj_get_class(child) == &lv_label_class) {
-                const char *text = lv_label_get_text(child);
-                if (strstr(text, "Empty:")) {
-                    char empty_voltage_text[32];
-                    snprintf(empty_voltage_text, sizeof(empty_voltage_text), "Empty: %.3fV", current_voltage);
-                    lv_label_set_text(child, empty_voltage_text);
-                    break;
-                }
-            }
-            child = lv_obj_get_child(parent, lv_obj_get_index(child) - 1);
+    // Update configuration with new custom text
+    if (text != NULL) {
+        strncpy(values_config[value_id - 1].custom_text, text, sizeof(values_config[value_id - 1].custom_text) - 1);
+        values_config[value_id - 1].custom_text[sizeof(values_config[value_id - 1].custom_text) - 1] = '\0'; // Ensure null termination
+    } else {
+        values_config[value_id - 1].custom_text[0] = '\0'; // Empty string if text is null
+    }
+    
+    // Update the custom text label on Screen3 immediately if it exists
+    extern lv_obj_t * ui_CustomText[8];
+    uint8_t panel_idx = value_id - 1;
+    if (panel_idx < 8 && ui_CustomText[panel_idx] && lv_obj_is_valid(ui_CustomText[panel_idx])) {
+        lv_label_set_text(ui_CustomText[panel_idx], values_config[panel_idx].custom_text);
+        
+        // Show/hide custom text based on whether it's empty
+        if (strlen(values_config[panel_idx].custom_text) == 0) {
+            lv_obj_add_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_clear_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
         }
     }
     
     // Save configuration to NVS
     save_values_config_to_nvs();
     
-    ESP_LOGI("FUEL", "Empty calibration set to %.3fV for bar %d", current_voltage, value_id);
+    ESP_LOGI("PANEL", "Custom text set to '%s' for panel %d", values_config[value_id - 1].custom_text, value_id);
 }
 
-// Fuel full calibration button event callback
-void fuel_full_calib_event_cb(lv_event_t * e) {
-    uint8_t *value_id_ptr = (uint8_t *)lv_event_get_user_data(e);
-    uint8_t value_id = *value_id_ptr;
+// Custom icon type dropdown event callback
+void custom_icon_type_dropdown_event_cb(lv_event_t * e) {
+    lv_obj_t * dropdown = lv_event_get_target(e);
+    int icon_index = (int)(intptr_t)lv_event_get_user_data(e);
     
-    // Read current voltage and store as full voltage
-    float current_voltage = fuel_input_read_voltage();
-    values_config[value_id - 1].fuel_full_voltage = current_voltage;
+    if (icon_index < 0 || icon_index >= 7) return;
     
-    // Update voltage display
-    lv_obj_t * parent = lv_obj_get_parent(lv_event_get_target(e));
-    if (parent) {
-        lv_obj_t * child = lv_obj_get_child(parent, -1);
-        while (child) {
-            if (lv_obj_get_class(child) == &lv_label_class) {
-                const char *text = lv_label_get_text(child);
-                if (strstr(text, "Full:")) {
-                    char full_voltage_text[32];
-                    snprintf(full_voltage_text, sizeof(full_voltage_text), "Full: %.3fV", current_voltage);
-                    lv_label_set_text(child, full_voltage_text);
-                    break;
-                }
-            }
-            child = lv_obj_get_child(parent, lv_obj_get_index(child) - 1);
+    uint16_t selected = lv_dropdown_get_selected(dropdown);
+    
+    // Save the selection: 0 = None, 1 = KEY
+    values_config[GEAR_VALUE_ID - 1].custom_icon_types[icon_index] = selected;
+    
+    // If None is selected, clear the icon value to UINT32_MAX (not configured)
+    if (selected == 0) {
+        values_config[GEAR_VALUE_ID - 1].custom_icon_values[icon_index] = UINT32_MAX;
+        // Clear the input box to show blank
+        if (custom_icon_inputs[icon_index] && lv_obj_is_valid(custom_icon_inputs[icon_index])) {
+            lv_textarea_set_text(custom_icon_inputs[icon_index], "");
         }
     }
     
-    // Save configuration to NVS
-    save_values_config_to_nvs();
-    
-    ESP_LOGI("FUEL", "Full calibration set to %.3fV for bar %d", current_voltage, value_id);
-}
-
-// Fuel voltage update timer callback
-void fuel_voltage_update_timer_cb(lv_timer_t * timer) {
-    lv_obj_t * voltage_label = (lv_obj_t *)timer->user_data;
-    if (!voltage_label || !lv_obj_is_valid(voltage_label)) {
-        // Timer's target object is invalid, delete timer
-        lv_timer_del(timer);
-        return;
+    // Show/hide image based on selection (0 = None, 1 = KEY)
+    if (custom_icon_images[icon_index] && lv_obj_is_valid(custom_icon_images[icon_index])) {
+        if (selected == 1) {
+            // KEY selected - show image
+            lv_obj_clear_flag(custom_icon_images[icon_index], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            // None (0) or other option selected - hide image
+            lv_obj_add_flag(custom_icon_images[icon_index], LV_OBJ_FLAG_HIDDEN);
+        }
     }
     
-    // Read current voltage and update label
-    float current_voltage = fuel_input_read_voltage();
-    char voltage_text[32];
-    snprintf(voltage_text, sizeof(voltage_text), "Current: %.3fV", current_voltage);
-    lv_label_set_text(voltage_label, voltage_text);
+    // Save to NVS
+    save_values_config_to_nvs();
+    
+    ESP_LOGI("GEAR", "Custom icon %d type set to: %d", icon_index, selected);
+}
+
+// Custom icon input event callback
+void custom_icon_input_event_cb(lv_event_t * e) {
+    lv_obj_t * textarea = lv_event_get_target(e);
+    
+    // Find which icon input this corresponds to
+    int icon_index = -1;
+    for (int i = 0; i < 7; i++) {
+        if (custom_icon_inputs[i] == textarea) {
+            icon_index = i;
+            break;
+        }
+    }
+    
+    if (icon_index == -1) return;
+    
+    // Get the value from the input
+    const char* value_str = lv_textarea_get_text(textarea);
+    uint32_t icon_value = UINT32_MAX; // Use UINT32_MAX as sentinel for "not configured"
+    
+    // Check if input is empty - if so, set to UINT32_MAX (not configured)
+    // If not empty, parse the value (0 is now a valid configured value)
+    if (value_str != NULL && strlen(value_str) > 0) {
+        // Parse value (support both decimal and hex like other CAN config)
+        if (strncmp(value_str, "0x", 2) == 0 || strncmp(value_str, "0X", 2) == 0) {
+            icon_value = strtoul(value_str, NULL, 16);
+        } else {
+            icon_value = strtoul(value_str, NULL, 10);
+        }
+    }
+    // If empty, icon_value remains UINT32_MAX (not configured)
+    
+    // Store the icon value (0 is a valid configured value, UINT32_MAX means not configured)
+    values_config[GEAR_VALUE_ID - 1].custom_icon_values[icon_index] = icon_value;
+    
+    // Save to NVS
+    save_values_config_to_nvs();
+    
+    ESP_LOGI("GEAR", "Custom icon %d value set to: %u", icon_index, icon_value);
+}
+
+// Custom gear value input event callback
+void custom_gear_value_input_event_cb(lv_event_t * e) {
+    lv_obj_t * textarea = lv_event_get_target(e);
+    
+    // Find which gear this input corresponds to
+    int gear_index = -1;
+    for (int i = 0; i < 14; i++) {
+        if (custom_gear_value_inputs[i] == textarea) {
+            gear_index = i;
+            break;
+        }
+    }
+    
+    if (gear_index == -1) return;
+    
+    // Get the value from the input
+    const char* value_str = lv_textarea_get_text(textarea);
+    uint32_t gear_value = UINT32_MAX; // Use UINT32_MAX as sentinel for "not configured"
+    
+    // Check if input is empty - if so, set to UINT32_MAX (not configured)
+    // If not empty, parse the value (0 is now a valid configured value)
+    if (value_str != NULL && strlen(value_str) > 0) {
+        // Parse value (support both decimal and hex like other CAN config)
+        if (strncmp(value_str, "0x", 2) == 0 || strncmp(value_str, "0X", 2) == 0) {
+            gear_value = strtoul(value_str, NULL, 16);
+        } else {
+            gear_value = strtoul(value_str, NULL, 10);
+        }
+    }
+    // If empty, gear_value remains UINT32_MAX (not configured)
+    
+    // Store the gear value (0 is a valid configured value, UINT32_MAX means not configured)
+    values_config[GEAR_VALUE_ID - 1].gear_custom_values[gear_index] = gear_value;
+    
+    // Save to NVS
+    save_values_config_to_nvs();
+    
+    // Log the change
+    const char* gear_names[] = {"P", "R", "N", "D", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+    ESP_LOGI("GEAR", "Custom gear %s value set to: %u", gear_names[gear_index], gear_value);
+}
+
+// Create custom gear values section
+void create_custom_gear_values_section(lv_obj_t * parent, uint8_t gear_mode) {
+    // If container already exists, check if it's valid and on the correct parent
+    if (custom_gear_values_container != NULL) {
+        if (lv_obj_is_valid(custom_gear_values_container)) {
+            // Check if parent matches - if not, delete and recreate
+            lv_obj_t *current_parent = lv_obj_get_parent(custom_gear_values_container);
+            if (current_parent == parent) {
+                // Container exists and is on correct parent - just make sure it's visible
+                lv_obj_clear_flag(custom_gear_values_container, LV_OBJ_FLAG_HIDDEN);
+                return; // Already created and visible
+            } else {
+                // Container exists but on wrong parent - delete it
+                lv_obj_del(custom_gear_values_container);
+                custom_gear_values_container = NULL;
+                // Clear input references
+                for (int i = 0; i < 14; i++) {
+                    custom_gear_value_inputs[i] = NULL;
+                }
+                for (int i = 0; i < 7; i++) {
+                    custom_icon_inputs[i] = NULL;
+                    custom_icon_type_dropdowns[i] = NULL;
+                    custom_icon_images[i] = NULL;
+                }
+            }
+        } else {
+            // Container is invalid - clear the pointer
+            custom_gear_values_container = NULL;
+        }
+    }
+    
+    // Create container for custom gear values
+    custom_gear_values_container = lv_obj_create(parent);
+    lv_obj_set_size(custom_gear_values_container, 500, 330);
+    lv_obj_align(custom_gear_values_container, LV_ALIGN_CENTER, 110, 75);
+    lv_obj_set_style_bg_color(custom_gear_values_container, lv_color_hex(0x181818), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(custom_gear_values_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(custom_gear_values_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(custom_gear_values_container, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(custom_gear_values_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(custom_gear_values_container, LV_OBJ_FLAG_SCROLLABLE);
+    // Make container non-clickable so it doesn't block buttons behind it
+    // Only the child elements (inputs, dropdowns) should be clickable
+    lv_obj_clear_flag(custom_gear_values_container, LV_OBJ_FLAG_CLICKABLE);
+    
+    // Gear labels and inputs - 3 column layout: left (P-R-N-D-1-2-3), middle (4-5-6-7-8-9-10), right (KEY boxes)
+    const char* gear_labels[] = {"P", "R", "N", "D", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+    
+    // Left column: P, R, N, D, 1, 2, 3 (first 7 gears)
+    // Calculate equal spacing: container is 500px wide
+    // Three columns with equal spacing between their start positions
+    // Column 1: 20, Column 2: 20 + (500-40)/3 ≈ 173, Column 3: 20 + 2*(500-40)/3 ≈ 326
+    int col1_x = 20;   // First column start
+    int col2_x = 173;  // Second column start (equal spacing)
+    int col3_x = 326;  // Third column start (equal spacing)
+    
+    for (int i = 0; i < 7; i++) {
+        int row = i;
+        int x_pos = col1_x;
+        int y_pos = 25 + row * 30;
+        
+        // Gear label with " = " suffix (space before equals)
+        char gear_label_text[8];
+        snprintf(gear_label_text, sizeof(gear_label_text), "%s =", gear_labels[i]);
+        lv_obj_t * gear_label = lv_label_create(custom_gear_values_container);
+        lv_label_set_text(gear_label, gear_label_text);
+        lv_obj_set_style_text_color(gear_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(gear_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_pos(gear_label, x_pos, y_pos);
+        
+        // Value input - adjust position to account for space in label
+        custom_gear_value_inputs[i] = lv_textarea_create(custom_gear_values_container);
+        lv_textarea_set_one_line(custom_gear_value_inputs[i], true);
+        lv_textarea_set_max_length(custom_gear_value_inputs[i], 8);
+        lv_obj_set_width(custom_gear_value_inputs[i], 60);
+        lv_obj_set_height(custom_gear_value_inputs[i], 25);
+        lv_obj_set_pos(custom_gear_value_inputs[i], x_pos + 30, y_pos - 2); // Adjusted for "X =" format
+        lv_obj_clear_flag(custom_gear_value_inputs[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_style(custom_gear_value_inputs[i], get_common_style(), LV_PART_MAIN);
+        
+        // Set current value - leave blank if UINT32_MAX (not configured)
+        uint32_t gear_val = values_config[GEAR_VALUE_ID - 1].gear_custom_values[i];
+        if (gear_val != UINT32_MAX) {
+            char current_value[16];
+            snprintf(current_value, sizeof(current_value), "%u", gear_val);
+            lv_textarea_set_text(custom_gear_value_inputs[i], current_value);
+        } else {
+            lv_textarea_set_text(custom_gear_value_inputs[i], "");
+        }
+        
+        // Add event callback
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], custom_gear_value_input_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], custom_gear_value_input_event_cb, LV_EVENT_DEFOCUSED, NULL);
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], keyboard_event_cb, LV_EVENT_ALL, NULL);
+    }
+    
+    // Middle column: 4, 5, 6, 7, 8, 9, 10 (remaining 7 gears)
+    for (int i = 7; i < 14; i++) {
+        int row = i - 7;
+        int x_pos = col2_x;
+        int y_pos = 25 + row * 30;
+        
+        // Gear label with " = " suffix (space before equals)
+        char gear_label_text[8];
+        snprintf(gear_label_text, sizeof(gear_label_text), "%s =", gear_labels[i]);
+        lv_obj_t * gear_label = lv_label_create(custom_gear_values_container);
+        lv_label_set_text(gear_label, gear_label_text);
+        lv_obj_set_style_text_color(gear_label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(gear_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_pos(gear_label, x_pos, y_pos);
+        
+        // Value input - adjust position to account for space in label
+        custom_gear_value_inputs[i] = lv_textarea_create(custom_gear_values_container);
+        lv_textarea_set_one_line(custom_gear_value_inputs[i], true);
+        lv_textarea_set_max_length(custom_gear_value_inputs[i], 8);
+        lv_obj_set_width(custom_gear_value_inputs[i], 60);
+        lv_obj_set_height(custom_gear_value_inputs[i], 25);
+        lv_obj_set_pos(custom_gear_value_inputs[i], x_pos + 30, y_pos - 2); // Adjusted for "X =" format
+        lv_obj_clear_flag(custom_gear_value_inputs[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_style(custom_gear_value_inputs[i], get_common_style(), LV_PART_MAIN);
+        
+        // Set current value - leave blank if UINT32_MAX (not configured)
+        uint32_t gear_val = values_config[GEAR_VALUE_ID - 1].gear_custom_values[i];
+        if (gear_val != UINT32_MAX) {
+            char current_value[16];
+            snprintf(current_value, sizeof(current_value), "%u", gear_val);
+            lv_textarea_set_text(custom_gear_value_inputs[i], current_value);
+        } else {
+            lv_textarea_set_text(custom_gear_value_inputs[i], "");
+        }
+        
+        // Add event callback
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], custom_gear_value_input_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], custom_gear_value_input_event_cb, LV_EVENT_DEFOCUSED, NULL);
+        lv_obj_add_event_cb(custom_gear_value_inputs[i], keyboard_event_cb, LV_EVENT_ALL, NULL);
+    }
+    
+    // Right column: Icon type dropdowns and value inputs (7 custom icon boxes)
+    for (int i = 0; i < 7; i++) {
+        int row = i;
+        int x_pos = col3_x;
+        int y_pos = 25 + row * 30;
+        
+        // Icon type dropdown - replace "KEY=" label
+        custom_icon_type_dropdowns[i] = lv_dropdown_create(custom_gear_values_container);
+        lv_dropdown_set_options(custom_icon_type_dropdowns[i], "None\nKEY"); // None is option 0, KEY is option 1
+        lv_obj_set_width(custom_icon_type_dropdowns[i], 60);
+        lv_obj_set_height(custom_icon_type_dropdowns[i], 25);
+        lv_obj_set_pos(custom_icon_type_dropdowns[i], x_pos, y_pos - 2);
+        lv_obj_add_style(custom_icon_type_dropdowns[i], get_common_style(), LV_PART_MAIN);
+        
+        // Load saved icon type (0 = None, 1 = KEY)
+        // Default to KEY (1) if not set - NVS load sets default to 1, so 0 means explicitly None
+        uint8_t saved_icon_type = values_config[GEAR_VALUE_ID - 1].custom_icon_types[i];
+        // If 0 and we want to default new entries to KEY, we'd check if it's uninitialized
+        // But since NVS load defaults to 1, if it's 0 it means None was explicitly selected
+        lv_dropdown_set_selected(custom_icon_type_dropdowns[i], saved_icon_type);
+        
+        // Create icon image (for KEY icon)
+        custom_icon_images[i] = lv_img_create(custom_gear_values_container);
+        lv_img_set_src(custom_icon_images[i], &Smart_Car_Key);
+        // Use zoom to scale the image properly (original is 30x58, target is ~14x27)
+        // Zoom: 256 = 100%, 128 = 50%, so for ~47% use ~120
+        lv_img_set_zoom(custom_icon_images[i], 120); // Scale to ~47% of original size
+        // Set object size to content so it matches the zoomed image size
+        lv_obj_set_size(custom_icon_images[i], LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        // Use REAL size mode so object size matches zoomed image size
+        lv_img_set_size_mode(custom_icon_images[i], LV_IMG_SIZE_MODE_REAL);
+        lv_obj_set_pos(custom_icon_images[i], x_pos + 65, y_pos + 0); // Position with more space after dropdown, vertically centered
+        
+        // Show/hide image based on saved icon type (1 = KEY shows image, 0 = None hides it)
+        if (saved_icon_type == 1) {
+            lv_obj_clear_flag(custom_icon_images[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(custom_icon_images[i], LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        // Add event callback to dropdown to show/hide image based on selection
+        lv_obj_add_event_cb(custom_icon_type_dropdowns[i], custom_icon_type_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, (void*)(intptr_t)i);
+        
+        // Value input - adjust spacing after dropdown and image with more gap
+        custom_icon_inputs[i] = lv_textarea_create(custom_gear_values_container);
+        lv_textarea_set_one_line(custom_icon_inputs[i], true);
+        lv_textarea_set_max_length(custom_icon_inputs[i], 8);
+        lv_obj_set_width(custom_icon_inputs[i], 60);
+        lv_obj_set_height(custom_icon_inputs[i], 25);
+        lv_obj_set_pos(custom_icon_inputs[i], x_pos + 90, y_pos - 2); // More space between icon and input (10px gap)
+        lv_obj_clear_flag(custom_icon_inputs[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_style(custom_icon_inputs[i], get_common_style(), LV_PART_MAIN);
+        
+        // Load saved icon value - leave blank if UINT32_MAX (not configured)
+        uint32_t saved_icon_value = values_config[GEAR_VALUE_ID - 1].custom_icon_values[i];
+        if (saved_icon_value != UINT32_MAX) {
+            char icon_value_str[16];
+            snprintf(icon_value_str, sizeof(icon_value_str), "%u", saved_icon_value);
+            lv_textarea_set_text(custom_icon_inputs[i], icon_value_str);
+        } else {
+            lv_textarea_set_text(custom_icon_inputs[i], "");
+        }
+        
+        // Add event callbacks for saving values
+        lv_obj_add_event_cb(custom_icon_inputs[i], custom_icon_input_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_add_event_cb(custom_icon_inputs[i], custom_icon_input_event_cb, LV_EVENT_DEFOCUSED, NULL);
+        lv_obj_add_event_cb(custom_icon_inputs[i], keyboard_event_cb, LV_EVENT_ALL, NULL);
+    }
+}
+
+// Hide custom gear values section
+void hide_custom_gear_values_section(void) {
+    if (custom_gear_values_container != NULL && lv_obj_is_valid(custom_gear_values_container)) {
+        lv_obj_del(custom_gear_values_container);
+        custom_gear_values_container = NULL;
+        // Clear input references
+        for (int i = 0; i < 14; i++) {
+            custom_gear_value_inputs[i] = NULL;
+        }
+        for (int i = 0; i < 7; i++) {
+            custom_icon_inputs[i] = NULL;
+            custom_icon_type_dropdowns[i] = NULL;
+            custom_icon_images[i] = NULL;
+        }
+    }
 }

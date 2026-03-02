@@ -24,8 +24,8 @@
 
 #define LV_MEMCPY_MEMSET_STD 1
 
-#define LV_DISP_DEF_REFR_PERIOD 20
-#define LV_INDEV_DEF_READ_PERIOD 50
+#define LV_DISP_DEF_REFR_PERIOD 10
+#define LV_INDEV_DEF_READ_PERIOD 20  // Reduced from 50ms for more responsive touch input at 70fps
 #define LV_DPI_DEF 130
 
 #define LV_DRAW_COMPLEX 0
@@ -46,7 +46,13 @@
 #define LV_USE_FLEX 0
 #define LV_USE_GRID 0
 
-#define LV_USE_PERF_MONITOR 0
+#define LV_USE_LABEL 1
+#if LV_USE_LABEL
+    #define LV_LABEL_TEXT_SELECTION 1 /*Enable selecting text of the label*/
+    #define LV_LABEL_LONG_TXT_HINT 1  /*Store some extra info in labels to speed up drawing of very long texts*/
+#endif
+
+#define LV_USE_PERF_MONITOR 1
 #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
 
 #endif /*LV_CONF_H*/ 

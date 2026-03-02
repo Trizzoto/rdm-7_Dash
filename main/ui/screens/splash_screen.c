@@ -40,7 +40,11 @@ void show_splash_screen(void) {
 
     // Create and center the RDM logo
     lv_obj_t * logo = lv_img_create(splash_screen);
-    lv_img_set_src(logo, &ui_img_rdm_logo_dash_png);
+    lv_img_set_src(logo, &ui_img_RDM_Light);
+    // Set zoom to 125% (320 = 1.25x size, 256 = no zoom/100%)
+    lv_img_set_zoom(logo, 320);
+    // Set object size to content so it matches the zoomed image
+    lv_obj_set_size(logo, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_center(logo);
 
     // Load the splash screen

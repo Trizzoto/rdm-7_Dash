@@ -30,21 +30,22 @@ extern void rpm_ecu_dropdown_event_cb(lv_event_t * e);
 extern void rpm_color_dropdown_event_cb(lv_event_t * e);
 extern void rpm_redline_roller_event_cb(lv_event_t * e);
 extern void speed_preview_timer_cb(lv_timer_t * timer);
-extern void speed_source_dropdown_event_cb(lv_event_t * e);
 extern void speed_units_dropdown_event_cb(lv_event_t * e);
 extern void gear_ecu_dropdown_event_cb(lv_event_t * e);
 extern void bar_range_input_event_cb(lv_event_t * e);
 extern void bar_low_value_event_cb(lv_event_t * e);
 extern void bar_high_value_event_cb(lv_event_t * e);
-extern void fuel_enable_switch_event_cb(lv_event_t * e);
-extern void fuel_empty_calib_event_cb(lv_event_t * e);
-extern void fuel_full_calib_event_cb(lv_event_t * e);
-extern void fuel_voltage_update_timer_cb(lv_timer_t * timer);
 extern void custom_gear_config_btn_event_cb(lv_event_t * e);
 extern void create_custom_gear_config_menu(void);
 extern void custom_gear_can_id_event_cb(lv_event_t * e);
 extern void custom_gear_back_btn_event_cb(lv_event_t * e);
 extern void custom_gear_save_btn_event_cb(lv_event_t * e);
+extern void create_speed_rpm_ratio_config_menu(void);
+extern void speed_rpm_tire_circumference_event_cb(lv_event_t * e);
+extern void speed_rpm_final_drive_event_cb(lv_event_t * e);
+extern void speed_rpm_gear_ratio_event_cb(lv_event_t * e);
+extern void speed_rpm_ratio_back_btn_event_cb(lv_event_t * e);
+extern void speed_rpm_ratio_save_btn_event_cb(lv_event_t * e);
 
 // Global variables
 extern lv_obj_t * custom_gear_config_button;

@@ -25,7 +25,7 @@ static lv_obj_t * ui_ID_Input = NULL;
 // A single "preconfig record"
 typedef struct {
     const char* ecu;           // e.g. "MaxxECU"
-    const char* version;       // e.g. "1.2"
+    const char* version;       // e.g. "1.3"
     const char* label;         // e.g. "Lambda"
     const char* can_id;        // Store as string to preserve exact format
     uint8_t endianess;         // 0 = Big Endian, 1 = Little Endian
@@ -138,74 +138,162 @@ const preconfig_item_t preconfig_items[] = {
     { "MaxxECU", "1.3", "VVT EXHAUST CAM 1 POS", "541", 1, 16, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "VVT INTAKE CAM 2 POS", "541", 1, 32, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "VVT EXHAUST CAM 2 POS", "541", 1, 48, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "THROTTLE %", "520", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "MAP", "520", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "LAMBDA", "520", 1, 48, 16, 0.001, 0, 2, false },
+    { "MaxxECU", "1.3", "LAMBDA A", "521", 1, 0, 16, 0.001, 0, 2, false },
+    { "MaxxECU", "1.3", "LAMBDA B", "521", 1, 16, 16, 0.001, 0, 2, false },
+    { "MaxxECU", "1.3", "IGNITION ANGLE", "521", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "IGNITION CUT", "521", 1, 48, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "FUEL PULSEWIDTH PRIMARY", "522", 1, 0, 16, 0.01, 0, 0, false },
+    { "MaxxECU", "1.3", "FUEL DUTY PRIMARY", "522", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "FUEL CUT", "522", 1, 32, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "VEHICLE SPEED", "522", 1, 48, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "UNDRIVEN WHEELS AVG SPD", "523", 1, 0, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "DRIVEN WHEELS AVG SPD", "523", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "WHEEL SLIP", "523", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "TARGET SLIP", "523", 1, 48, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "TRACTION CTRL POWER LIMIT", "524", 1, 0, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "LAMBDA CORR A", "524", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "LAMBDA CORR B", "524", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "FIRMWARE VERSION", "524", 1, 48, 16, 0.001, 0, 0, false },
+    { "MaxxECU", "1.3", "BATTERY VOLTAGE", "530", 1, 0, 16, 0.01, 0, 0, false },
+    { "MaxxECU", "1.3", "BARO PRESSURE", "530", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "INTAKE AIR TEMP", "530", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "COOLANT TEMP", "530", 1, 48, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "TOTAL FUEL TRIM", "531", 1, 0, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "E85 %", "531", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "TOTAL IGNITION COMP", "531", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 1", "531", 1, 48, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 2", "532", 1, 0, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 3", "532", 1, 16, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 4", "532", 1, 32, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 5", "532", 1, 48, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 6", "533", 1, 0, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 7", "533", 1, 16, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT 8", "533", 1, 32, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT HIGHEST", "533", 1, 48, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "EGT DIFFERENCE", "534", 1, 0, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "CPU TEMP", "534", 1, 16, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "ERROR CODE COUNT", "534", 1, 32, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "LOST SYNC COUNT", "534", 1, 48, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "USER ANALOG INPUT 1", "535", 1, 0, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "USER ANALOG INPUT 2", "535", 1, 16, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "USER ANALOG INPUT 3", "535", 1, 32, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "USER ANALOG INPUT 4", "535", 1, 48, 16, 0.1, 0, 0, false },
+    { "MaxxECU", "1.3", "GEAR", "536", 1, 0, 16, 1, 0, 0, false },
+    { "MaxxECU", "1.3", "BOOST SOLENOID DUTY", "536", 1, 16, 16, 0.1, 0, 0, false },
 
-{ "Haltech", "3.10", "RPM", "360", 0, 0, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "MANIFOLD PRESSURE", "360", 0, 16, 16, 0.0145, 0, 1, false },
-{ "Haltech", "3.10", "THROTTLE POSITION", "360", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "COOLANT PRESSURE", "360", 0, 48, 16, 0.0145, -14.7, 1, false },
-{ "Haltech", "3.10", "FUEL PRESSURE", "361", 0, 0, 16, 0.0145, -14.7, 1, false },
-{ "Haltech", "3.10", "OIL PRESSURE", "361", 0, 16, 16, 0.0145, -14.7, 1, false },
-{ "Haltech", "3.10", "ENGINE DEMAND", "361", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "WASTEGATE PRESS", "361", 0, 48, 16, 0.0145, -14.7, 1, false },
-{ "Haltech", "3.10", "INJECTION STG1", "362", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "INJECTION STG2", "362", 0, 16, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "IGN ANGLE LEAD", "362", 0, 32, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "WHEEL SLIP", "363", 0, 0, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "WHEEL DIFF", "363", 0, 16, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "LAUNCH END RPM", "363", 0, 48, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "INJ STG1 TIME", "364", 0, 0, 16, 0.001, 0, 3, false },
-{ "Haltech", "3.10", "INJ STG2 TIME", "364", 0, 16, 16, 0.001, 0, 3, false },
-{ "Haltech", "3.10", "INJ STG3 TIME", "364", 0, 32, 16, 0.001, 0, 3, false },
-{ "Haltech", "3.10", "INJ STG4 TIME", "364", 0, 48, 16, 0.001, 0, 3, false },
-{ "Haltech", "3.10", "WIDEBAND 1", "368", 0, 0, 16, 0.0147, 0, 3, false },
-{ "Haltech", "3.10", "WIDEBAND 2", "368", 0, 16, 16, 0.0147, 0, 3, false },
-{ "Haltech", "3.10", "WIDEBAND 3", "368", 0, 32, 16, 0.0147, 0, 3, false },
-{ "Haltech", "3.10", "WIDEBAND 4", "368", 0, 48, 16, 0.0147, 0, 3, false },
-{ "Haltech", "3.10", "TRIGGER ERR CNT", "369", 0, 0, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "TRIGGER COUNT", "369", 0, 16, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "TRIGGER SYNC", "369", 0, 48, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "KNOCK LEVEL 1", "36A", 0, 0, 16, 0.01, 0, 2, false },
-{ "Haltech", "3.10", "KNOCK LEVEL 2", "36A", 0, 16, 16, 0.01, 0, 2, false },
-{ "Haltech", "3.10", "BRAKE PRESSURE", "36B", 0, 0, 16, 0.0145, -14.7, 1, false },
-{ "Haltech", "3.10", "NOS PRESSURE", "36B", 0, 16, 16, 0.0319, -14.7, 1, false },
-{ "Haltech", "3.10", "TURBO SPEED", "36B", 0, 32, 16, 10.0, 0, 0, false },
-{ "Haltech", "3.10", "LATERAL G", "36B", 0, 48, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "ENGINE LIMIT", "36E", 0, 0, 16, 1.0, 0, 0, false },
-{ "Haltech", "3.10", "LC IGN RETARD", "36E", 0, 16, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "LC FUEL ENRICH", "36E", 0, 32, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "LONGITUDINAL G", "36E", 0, 48, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "VEHICLE SPEED", "370", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "INTAKE CAM 1", "370", 0, 32, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "INTAKE CAM 2", "370", 0, 48, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "BATTERY VOLT", "372", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 1", "373", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 2", "373", 0, 16, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "AMBIENT AIR TEMP", "376", 0, 0, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "REL HUMIDITY", "376", 0, 16, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "EGT SENSOR 3", "373", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 4", "373", 0, 48, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 5", "374", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 6", "374", 0, 16, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 7", "374", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 8", "374", 0, 48, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 9", "375", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 10", "375", 0, 16, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 11", "375", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "EGT SENSOR 12", "375", 0, 48, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "SPEC HUMIDITY", "376", 0, 32, 16, 100.0, 0, 0, false },
-{ "Haltech", "3.10", "ABS HUMIDITY", "376", 0, 48, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "COOLANT TEMP", "3E0", 0, 0, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "AIR TEMP", "3E0", 0, 16, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "FUEL TEMP", "3E0", 0, 32, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "OIL TEMP", "3E0", 0, 48, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "GEARBOX OIL TEMP", "3E1", 0, 0, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "DIFF OIL TEMP", "3E1", 0, 16, 16, 0.1, -273.15, 1, false },
-{ "Haltech", "3.10", "FUEL COMP", "3E1", 0, 32, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "FUEL LEVEL", "3E2", 0, 0, 16, 0.1, 0, 1, false },
-{ "Haltech", "3.10", "FUEL TRIM ST B1", "3E3", 0, 0, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "FUEL TRIM ST B2", "3E3", 0, 16, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "FUEL TRIM LT B1", "3E3", 0, 32, 16, 0.1, 0, 1, true },
-{ "Haltech", "3.10", "FUEL TRIM LT B2", "3E3", 0, 48, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "RPM", "360", 0, 0, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "MANIFOLD PRESSURE", "360", 0, 16, 16, 0.0145, 0, 1, false },
+{ "Haltech", "Nexus", "THROTTLE POSITION", "360", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "COOLANT PRESSURE", "360", 0, 48, 16, 0.0145, -14.7, 1, false },
+{ "Haltech", "Nexus", "FUEL PRESSURE", "361", 0, 0, 16, 0.0145, -14.7, 1, false },
+{ "Haltech", "Nexus", "OIL PRESSURE", "361", 0, 16, 16, 0.0145, -14.7, 1, false },
+{ "Haltech", "Nexus", "ENGINE DEMAND", "361", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "WASTEGATE PRESS", "361", 0, 48, 16, 0.0145, -14.7, 1, false },
+{ "Haltech", "Nexus", "INJECTION STG1", "362", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "INJECTION STG2", "362", 0, 16, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "IGN ANGLE LEAD", "362", 0, 32, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "WHEEL SLIP", "363", 0, 0, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "WHEEL DIFF", "363", 0, 16, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "LAUNCH END RPM", "363", 0, 48, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "INJ STG1 TIME", "364", 0, 0, 16, 0.001, 0, 3, false },
+{ "Haltech", "Nexus", "INJ STG2 TIME", "364", 0, 16, 16, 0.001, 0, 3, false },
+{ "Haltech", "Nexus", "INJ STG3 TIME", "364", 0, 32, 16, 0.001, 0, 3, false },
+{ "Haltech", "Nexus", "INJ STG4 TIME", "364", 0, 48, 16, 0.001, 0, 3, false },
+{ "Haltech", "Nexus", "WIDEBAND 1", "368", 0, 0, 16, 0.0147, 0, 3, false },
+{ "Haltech", "Nexus", "WIDEBAND 2", "368", 0, 16, 16, 0.0147, 0, 3, false },
+{ "Haltech", "Nexus", "WIDEBAND 3", "368", 0, 32, 16, 0.0147, 0, 3, false },
+{ "Haltech", "Nexus", "WIDEBAND 4", "368", 0, 48, 16, 0.0147, 0, 3, false },
+{ "Haltech", "Nexus", "TRIGGER ERR CNT", "369", 0, 0, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "TRIGGER COUNT", "369", 0, 16, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "TRIGGER SYNC", "369", 0, 48, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "KNOCK LEVEL 1", "36A", 0, 0, 16, 0.01, 0, 2, false },
+{ "Haltech", "Nexus", "KNOCK LEVEL 2", "36A", 0, 16, 16, 0.01, 0, 2, false },
+{ "Haltech", "Nexus", "BRAKE PRESSURE", "36B", 0, 0, 16, 0.0145, -14.7, 1, false },
+{ "Haltech", "Nexus", "NOS PRESSURE", "36B", 0, 16, 16, 0.0319, -14.7, 1, false },
+{ "Haltech", "Nexus", "TURBO SPEED", "36B", 0, 32, 16, 10.0, 0, 0, false },
+{ "Haltech", "Nexus", "LATERAL G", "36B", 0, 48, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "ENGINE LIMIT", "36E", 0, 0, 16, 1.0, 0, 0, false },
+{ "Haltech", "Nexus", "LC IGN RETARD", "36E", 0, 16, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "LC FUEL ENRICH", "36E", 0, 32, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "LONGITUDINAL G", "36E", 0, 48, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "VEHICLE SPEED", "370", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "INTAKE CAM 1", "370", 0, 32, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "INTAKE CAM 2", "370", 0, 48, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "BATTERY VOLT", "372", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 1", "373", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 2", "373", 0, 16, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "AMBIENT AIR TEMP", "376", 0, 0, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "REL HUMIDITY", "376", 0, 16, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "EGT SENSOR 3", "373", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 4", "373", 0, 48, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 5", "374", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 6", "374", 0, 16, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 7", "374", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 8", "374", 0, 48, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 9", "375", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 10", "375", 0, 16, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 11", "375", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "EGT SENSOR 12", "375", 0, 48, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "SPEC HUMIDITY", "376", 0, 32, 16, 100.0, 0, 0, false },
+{ "Haltech", "Nexus", "ABS HUMIDITY", "376", 0, 48, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "COOLANT TEMP", "3E0", 0, 0, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "AIR TEMP", "3E0", 0, 16, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "FUEL TEMP", "3E0", 0, 32, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "OIL TEMP", "3E0", 0, 48, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "GEARBOX OIL TEMP", "3E1", 0, 0, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "DIFF OIL TEMP", "3E1", 0, 16, 16, 0.1, -273.15, 1, false },
+{ "Haltech", "Nexus", "FUEL COMP", "3E1", 0, 32, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "FUEL LEVEL", "3E2", 0, 0, 16, 0.1, 0, 1, false },
+{ "Haltech", "Nexus", "FUEL TRIM ST B1", "3E3", 0, 0, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "FUEL TRIM ST B2", "3E3", 0, 16, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "FUEL TRIM LT B1", "3E3", 0, 32, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "FUEL TRIM LT B2", "3E3", 0, 48, 16, 0.1, 0, 1, true },
+
+// { "Make", "Model", "Name", "ID", Bus/Endian, Start, Len, Scale, Offset, Decimals, Signed }
+
+/* BA/BF Engine & Powertrain (PCM Broadcast) */
+{ "Ford", "BA/BF", "ENGINE RPM",      "201", 1, 0,  16, 0.25,     0,   0, false },
+{ "Ford", "BA/BF", "THROTTLE %",      "201", 1, 16, 16, 0.00152,  0,   1, false },
+{ "Ford", "BA/BF", "ENGINE TORQUE",   "201", 1, 32, 12, 1.0,      0,   0, true  },
+
+/* BA/BF Speed (ABS Module) */
+{ "Ford", "BA/BF", "VEHICLE SPEED",   "415", 1, 0,  16, 0.01,     0,   2, false },
+
+/* BA/BF Temperatures (Cluster Feed) */
+{ "Ford", "BA/BF", "COOLANT TEMP",    "420", 1, 0,  8,  1.0,    -40,   0, false },
+
+// { "Make", "Model", "Name", "ID", Bus/Endian, Start, Len, Scale, Offset, Decimals, Signed }
+
+/* FG Engine Data (PCM) */
+{ "Ford", "FG",    "ENGINE RPM",      "109", 1, 0,  16, 0.25,     0,   0, false },
+{ "Ford", "FG",    "VEHICLE SPEED",   "109", 1, 32, 16, 0.01,     0,   2, false }, // PCM Speed Source
+
+/* FG Temperatures (Broadcast) */
+{ "Ford", "FG",    "COOLANT TEMP",    "156", 1, 0,  8,  1.0,    -60,   0, false },
+{ "Ford", "FG",    "OIL TEMP",        "156", 1, 8,  8,  1.0,    -60,   0, false },
+
+/* FG Pedals & Steering */
+{ "Ford", "FG",    "ACCEL PEDAL %",   "204", 1, 0,  16, 0.01,     0,   1, false },
+{ "Ford", "FG",    "STEER ANGL",      "082", 1, 0,  16, 0.1,      0,   1, true  }, // Signed (+/-)
+{ "Ford", "FG",    "BRAKE SWITCH",    "060", 1, 18, 1,  1.0,      0,   0, false },
+
+/* FG Transmission (ZF 6HP) */
+{ "Ford", "FG",    "GEAR (BITMASK)",  "171", 1, 0,  8,  1.0,      0,   0, false },
+{ "Ford", "FG",    "SHIFTER POS",     "191", 1, 0,  8,  1.0,      0,   0, false },
+
+/* FG Wheel Speeds (ABS) */
+{ "Ford", "FG",    "WHEEL SPD FL",    "217", 1, 0,  16, 0.01,     0,   2, false },
+{ "Ford", "FG",    "WHEEL SPD FR",    "217", 1, 16, 16, 0.01,     0,   2, false },
+{ "Ford", "FG",    "WHEEL SPD RL",    "217", 1, 32, 16, 0.01,     0,   2, false },
+{ "Ford", "FG",    "WHEEL SPD RR",    "217", 1, 48, 16, 0.01,     0,   2, false },
+
+/* FG Fuel */
+{ "Ford", "FG",    "FUEL LEVEL %",    "320", 1, 0,  16, 0.01,     0,   1, false },
+
+
 { NULL, NULL, NULL, NULL, 0, 0, 0, 0.0, 0, 0, false } // Keep this terminator entry at the end
 };
 
@@ -267,34 +355,20 @@ static void ecu_dropdown_event_cb(lv_event_t * e)
             
             // Only auto-select if the current ECU matches the saved ECU
             if ((saved_ecu == 1 && strcmp(selected_txt, "MaxxECU") == 0) ||
-                (saved_ecu == 2 && strcmp(selected_txt, "Haltech") == 0)) {
+                (saved_ecu == 2 && strcmp(selected_txt, "Haltech") == 0) ||
+                (saved_ecu == 3 && strcmp(selected_txt, "Ford") == 0)) {
                 
                 if (saved_ecu == 1) { // MaxxECU
-                    // saved_version: 0="1.2", 1="1.3"
-                    if (saved_version == 0 && strstr(versions, "1.2") != NULL) {
-                        // Find index of "1.2" in dropdown
+                    // saved_version: 0="1.2" (first option), 1="1.3" (second option)
+                    const char* target_version = (saved_version == 0) ? "1.2" : "1.3";
+                    if (strstr(versions, target_version) != NULL) {
+                        // Find index of target_version in dropdown
                         char *versions_copy = strdup(versions);
                         if (versions_copy) {
                             int index = 0;
                             char *token = strtok(versions_copy, "\n");
                             while (token) {
-                                if (strcmp(token, "1.2") == 0) {
-                                    lv_dropdown_set_selected(ui_Version_Input, index);
-                                    break;
-                                }
-                                token = strtok(NULL, "\n");
-                                index++;
-                            }
-                            free(versions_copy);
-                        }
-                    } else if (saved_version == 1 && strstr(versions, "1.3") != NULL) {
-                        // Find index of "1.3" in dropdown
-                        char *versions_copy = strdup(versions);
-                        if (versions_copy) {
-                            int index = 0;
-                            char *token = strtok(versions_copy, "\n");
-                            while (token) {
-                                if (strcmp(token, "1.3") == 0) {
+                                if (strcmp(token, target_version) == 0) {
                                     lv_dropdown_set_selected(ui_Version_Input, index);
                                     break;
                                 }
@@ -307,14 +381,34 @@ static void ecu_dropdown_event_cb(lv_event_t * e)
                         lv_dropdown_set_selected(ui_Version_Input, 0); // Default to first
                     }
                 } else if (saved_ecu == 2) { // Haltech
-                    // Haltech only has "3.10", so just select it
-                    if (strstr(versions, "3.10") != NULL) {
+                    // Haltech only has "Nexus", so just select it
+                    if (strstr(versions, "Nexus") != NULL) {
                         char *versions_copy = strdup(versions);
                         if (versions_copy) {
                             int index = 0;
                             char *token = strtok(versions_copy, "\n");
                             while (token) {
-                                if (strcmp(token, "3.10") == 0) {
+                                if (strcmp(token, "Nexus") == 0) {
+                                    lv_dropdown_set_selected(ui_Version_Input, index);
+                                    break;
+                                }
+                                token = strtok(NULL, "\n");
+                                index++;
+                            }
+                            free(versions_copy);
+                        }
+                    } else {
+                        lv_dropdown_set_selected(ui_Version_Input, 0); // Default to first
+                    }
+                } else if (saved_ecu == 3) { // Ford
+                    // Ford only has "BA/BF/FG", so just select it
+                    if (strstr(versions, "BA/BF/FG") != NULL) {
+                        char *versions_copy = strdup(versions);
+                        if (versions_copy) {
+                            int index = 0;
+                            char *token = strtok(versions_copy, "\n");
+                            while (token) {
+                                if (strcmp(token, "BA/BF/FG") == 0) {
                                     lv_dropdown_set_selected(ui_Version_Input, index);
                                     break;
                                 }
@@ -399,7 +493,8 @@ static void version_dropdown_event_cb(lv_event_t * e)
         }
         
         // Build the final string with sorted labels
-        char id_labels[1024] = {0};
+        // Increased buffer size to accommodate all MaxxECU 1.3 items (need ~4KB for ~150+ items)
+        char id_labels[4096] = {0};
         for (int i = 0; i < label_count; i++) {
             if (i > 0) {
                 strncat(id_labels, "\n", sizeof(id_labels) - strlen(id_labels) - 1);
@@ -606,7 +701,7 @@ void show_preconfig_menu(lv_obj_t * parent)
 
     // 5) ECU dropdown
     ui_ECU_Input = lv_dropdown_create(parent);
-    lv_dropdown_set_options(ui_ECU_Input, "MaxxECU\nHaltech");
+    lv_dropdown_set_options(ui_ECU_Input, "MaxxECU\nHaltech\nFord");
     lv_obj_add_event_cb(ui_ECU_Input, ecu_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_set_width(ui_ECU_Input, 109);
     lv_obj_set_height(ui_ECU_Input, LV_SIZE_CONTENT);
@@ -626,6 +721,8 @@ void show_preconfig_menu(lv_obj_t * parent)
         lv_dropdown_set_selected(ui_ECU_Input, 0); // MaxxECU is first in dropdown
     } else if (saved_ecu == 2) { // Haltech
         lv_dropdown_set_selected(ui_ECU_Input, 1); // Haltech is second in dropdown
+    } else if (saved_ecu == 3) { // Ford
+        lv_dropdown_set_selected(ui_ECU_Input, 2); // Ford is third in dropdown
     }
     
     // Trigger ECU dropdown event to update version dropdown (for any ECU)

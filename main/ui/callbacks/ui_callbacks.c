@@ -152,6 +152,15 @@ void decimal_dropdown_event_cb(lv_event_t * e) {
 
 // Text Input Dialog Event Handlers
 static text_input_dialog_t *current_text_dialog = NULL;
+/* Set to true during close_text_input_dialog() so that any focus events
+ * triggered by LVGL's internal keyboard/group teardown are ignored. */
+static bool s_dialog_closing = false;
+/* After closing, block ALL textareas from reopening for a short window.
+ * 200ms is long enough to absorb any LVGL-internal cascade (fires within
+ * microseconds) but short enough that a deliberate subsequent tap is never
+ * blocked (human reaction time is comfortably above 200ms). */
+static uint32_t s_dialog_close_tick = 0;
+#define DIALOG_REOPEN_COOLDOWN_MS 200
 
 // Text Input Dialog Event Handlers
 static void text_input_keyboard_event_cb(lv_event_t *e) {
@@ -169,16 +178,16 @@ static void text_input_keyboard_event_cb(lv_event_t *e) {
         }
     }
     else if (code == LV_EVENT_READY) {
-        // User pressed Enter/Done - confirm the input
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev) lv_indev_reset(indev, NULL);
+
         if (current_text_dialog) {
             const char *text = lv_textarea_get_text(current_text_dialog->target_textarea);
             
-            // Call custom confirm callback if provided
             if (current_text_dialog->on_confirm) {
                 current_text_dialog->on_confirm(text ? text : "", current_text_dialog->user_data);
             }
             
-            // Trigger value changed event for the target textarea to update the system
             if (current_text_dialog->target_textarea && lv_obj_is_valid(current_text_dialog->target_textarea)) {
                 lv_event_send(current_text_dialog->target_textarea, LV_EVENT_VALUE_CHANGED, NULL);
             }
@@ -186,9 +195,21 @@ static void text_input_keyboard_event_cb(lv_event_t *e) {
         close_text_input_dialog();
     }
     else if (code == LV_EVENT_CANCEL) {
-        // User pressed Escape/Cancel
-        if (current_text_dialog->on_cancel) {
-            current_text_dialog->on_cancel(current_text_dialog->user_data);
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev) lv_indev_reset(indev, NULL);
+
+        if (current_text_dialog) {
+            if (current_text_dialog->target_textarea && lv_obj_is_valid(current_text_dialog->target_textarea)) {
+                if (current_text_dialog->current_text) {
+                    lv_textarea_set_text(current_text_dialog->target_textarea, current_text_dialog->current_text);
+                } else {
+                    lv_textarea_set_text(current_text_dialog->target_textarea, "");
+                }
+            }
+            
+            if (current_text_dialog->on_cancel) {
+                current_text_dialog->on_cancel(current_text_dialog->user_data);
+            }
         }
         close_text_input_dialog();
     }
@@ -196,16 +217,21 @@ static void text_input_keyboard_event_cb(lv_event_t *e) {
 
 static void text_input_ok_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+
+    /* Reset the active touch device NOW, while we are still inside the event
+     * handler and lv_indev_get_act() is valid.  This discards the current
+     * touch so that when the modal is deleted the release event cannot fall
+     * through and activate whatever textarea is sitting behind the OK button. */
+    lv_indev_t *indev = lv_indev_get_act();
+    if (indev) lv_indev_reset(indev, NULL);
     
     if (current_text_dialog) {
         const char *text = lv_textarea_get_text(current_text_dialog->target_textarea);
         
-        // Call custom confirm callback if provided
         if (current_text_dialog->on_confirm) {
             current_text_dialog->on_confirm(text ? text : "", current_text_dialog->user_data);
         }
         
-        // Trigger value changed event for the target textarea to update the system
         if (current_text_dialog->target_textarea && lv_obj_is_valid(current_text_dialog->target_textarea)) {
             lv_event_send(current_text_dialog->target_textarea, LV_EVENT_VALUE_CHANGED, NULL);
         }
@@ -215,9 +241,24 @@ static void text_input_ok_event_cb(lv_event_t *e) {
 
 static void text_input_cancel_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+
+    /* Same indev reset as OK — discard the current touch before the modal
+     * disappears so nothing beneath receives the release. */
+    lv_indev_t *indev = lv_indev_get_act();
+    if (indev) lv_indev_reset(indev, NULL);
     
-    if (current_text_dialog && current_text_dialog->on_cancel) {
-        current_text_dialog->on_cancel(current_text_dialog->user_data);
+    if (current_text_dialog) {
+        if (current_text_dialog->target_textarea && lv_obj_is_valid(current_text_dialog->target_textarea)) {
+            if (current_text_dialog->current_text) {
+                lv_textarea_set_text(current_text_dialog->target_textarea, current_text_dialog->current_text);
+            } else {
+                lv_textarea_set_text(current_text_dialog->target_textarea, "");
+            }
+        }
+        
+        if (current_text_dialog->on_cancel) {
+            current_text_dialog->on_cancel(current_text_dialog->user_data);
+        }
     }
     close_text_input_dialog();
 }
@@ -250,6 +291,17 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
     current_text_dialog->on_confirm = on_confirm;
     current_text_dialog->on_cancel = on_cancel;
     current_text_dialog->user_data = user_data;
+    
+    // Save the original text so we can restore it on cancel
+    const char *original = lv_textarea_get_text(target_textarea);
+    if (original && strlen(original) > 0) {
+        current_text_dialog->current_text = lv_mem_alloc(strlen(original) + 1);
+        if (current_text_dialog->current_text) {
+            strcpy(current_text_dialog->current_text, original);
+        }
+    } else {
+        current_text_dialog->current_text = NULL;
+    }
     
     // Create modal background on current screen (not top layer) for screenshots
     current_text_dialog->modal = lv_obj_create(lv_scr_act());
@@ -374,23 +426,46 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
 
 void close_text_input_dialog(void) {
     if (!current_text_dialog) return;
-    
+    if (s_dialog_closing) return;  /* prevent re-entrant teardown */
+
+    s_dialog_closing = true;
+
     // Store reference to avoid using freed memory
     text_input_dialog_t *dialog_to_close = current_text_dialog;
     current_text_dialog = NULL;  // Clear global reference first
-    
-    // Clean up modal and all child objects
+
+    /* Disconnect the keyboard from the textarea BEFORE deleting the modal.
+     * If we delete the modal first, LVGL's keyboard destructor calls
+     * lv_keyboard_set_textarea(kb, NULL) internally, which fires
+     * LV_EVENT_DEFOCUSED on the target_textarea, causing LVGL's focus group
+     * to shift focus to the next focusable object (the textarea that happens
+     * to be sitting behind the OK button), which then fires LV_EVENT_FOCUSED
+     * and reopens the dialog.  Disconnecting here under our guard flag stops
+     * that chain before it starts. */
+    if (dialog_to_close->keyboard && lv_obj_is_valid(dialog_to_close->keyboard)) {
+        lv_keyboard_set_textarea(dialog_to_close->keyboard, NULL);
+    }
+
+    // Explicitly clear textarea focus before deleting the modal
+    if (dialog_to_close->target_textarea && lv_obj_is_valid(dialog_to_close->target_textarea)) {
+        lv_obj_clear_state(dialog_to_close->target_textarea, LV_STATE_FOCUSED);
+    }
+
+    // Delete modal and all its children (keyboard, dialog container, etc.)
     if (dialog_to_close->modal && lv_obj_is_valid(dialog_to_close->modal)) {
         lv_obj_del(dialog_to_close->modal);
     }
     
-    // Clear textarea focus if it exists
-    if (dialog_to_close->target_textarea && lv_obj_is_valid(dialog_to_close->target_textarea)) {
-        lv_obj_clear_state(dialog_to_close->target_textarea, LV_STATE_FOCUSED);
+    // Free the original text if it was allocated
+    if (dialog_to_close->current_text) {
+        lv_mem_free(dialog_to_close->current_text);
     }
     
     // Free the dialog structure
     lv_mem_free(dialog_to_close);
+
+    s_dialog_close_tick = lv_tick_get();  /* start cooldown window */
+    s_dialog_closing = false;
 }
 
 // Force close any active text input dialog - useful for screen transitions
@@ -414,6 +489,15 @@ void keyboard_event_cb(lv_event_t * e) {
 
     if(code == LV_EVENT_FOCUSED) {
         if(obj == NULL) return;
+
+        /* Block all re-open paths for a short window after any dialog closes.
+         * This covers focus-cascade, touch-through, and LVGL group cycling
+         * regardless of which textarea ends up being spuriously focused.
+         * 200ms is well below deliberate human tap speed but well above any
+         * LVGL-internal event cascade. */
+        if (s_dialog_closing) return;
+        if (current_text_dialog) return;
+        if (lv_tick_elaps(s_dialog_close_tick) < DIALOG_REOPEN_COOLDOWN_MS) return;
         
         // Check if we're on the WiFi screen - if so, skip our custom dialog
         // The WiFi screen handles its own keyboard with password_input_event_cb
@@ -425,6 +509,7 @@ void keyboard_event_cb(lv_event_t * e) {
         const char *title = "Enter Text";
         const char *placeholder = "Type here...";
         bool show_prefix = false;
+        bool numeric_only = false;
         
         // Detect field type based on placeholder or position
         const char *existing_placeholder = lv_textarea_get_placeholder_text(obj);
@@ -439,22 +524,68 @@ void keyboard_event_cb(lv_event_t * e) {
             } else if (strstr(existing_placeholder, "Scale") || strstr(existing_placeholder, "Enter Scale")) {
                 title = "Scale:";
                 placeholder = "1.0";
+                numeric_only = true;
             } else if (strstr(existing_placeholder, "Offset") || strstr(existing_placeholder, "Enter Offset")) {
                 title = "Offset:";
                 placeholder = "0.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Range Low")) {
+                title = "Range Low:";
+                placeholder = "0.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Range High")) {
+                title = "Range High:";
+                placeholder = "100.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Min Value")) {
+                title = "Min Value:";
+                placeholder = "0.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Max Value")) {
+                title = "Max Value:";
+                placeholder = "100.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Low Value")) {
+                title = "Low Value:";
+                placeholder = "0.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "High Value")) {
+                title = "High Value:";
+                placeholder = "100.0";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Empty V")) {
+                title = "Empty Voltage:";
+                placeholder = "0.00";
+                numeric_only = true;
+            } else if (strstr(existing_placeholder, "Full V")) {
+                title = "Full Voltage:";
+                placeholder = "3.30";
+                numeric_only = true;
             }
         }
         
         show_text_input_dialog_ex(obj, title, placeholder, show_prefix, NULL, NULL, NULL);
         
+        // If we opened a dialog and know this is a numeric field, switch keyboard to number mode
+        if (!is_wifi_screen_active() && numeric_only && current_text_dialog && current_text_dialog->keyboard) {
+            lv_keyboard_set_mode(current_text_dialog->keyboard, LV_KEYBOARD_MODE_NUMBER);
+        }
+        
     } else if(code == LV_EVENT_DEFOCUSED) {
-        // Check if we're on the WiFi screen
         if (is_wifi_screen_active()) {
             return;
         }
-        
-        // For all other screens, close the text input dialog
-        close_text_input_dialog();
+
+        /* Do NOT close the dialog here if one is currently open or being built.
+         * When the dialog's keyboard widget is created, LVGL internally shifts
+         * focus away from the textarea (the keyboard claims it), firing
+         * DEFOCUSED on the textarea.  Closing here would destroy the dialog
+         * that was just opened and restart the cooldown, making the textarea
+         * appear unresponsive.  The modal ensures OK/Cancel are the only valid
+         * close paths; force_close_text_input_dialog() covers screen switches. */
+        if (current_text_dialog || s_dialog_closing) {
+            return;
+        }
     }
 }
 

@@ -27,6 +27,7 @@ extern lv_obj_t * ui_SPEED_Value;
 extern lv_obj_t * ui_Gear_Panel;
 extern lv_obj_t * ui_Gear_Label;
 extern lv_obj_t * ui_GEAR_Value;
+extern lv_obj_t * ui_GEAR_Icon;
 extern lv_obj_t * ui_Panel_1;
 extern lv_obj_t * ui_Panel_1_Label;
 extern lv_obj_t * ui_Panel_1_Value;
@@ -127,12 +128,14 @@ LV_IMG_DECLARE(ui_img_handbrake_png);    // assets/handbrake.png
 LV_IMG_DECLARE(ui_img_check_engine_png);    // assets/check engine.png
 LV_IMG_DECLARE(ui_img_launch_control_png);    // assets/launch control.png
 LV_IMG_DECLARE(ui_img_high_beam_png);    // assets/high beam.png
+LV_IMG_DECLARE(Smart_Car_Key);    // Smart Car Key icon
 LV_IMG_DECLARE(ui_img_gauge_v0_2_png);
 LV_IMG_DECLARE(ui_img_648933004);
 LV_IMG_DECLARE(ui_img_363163260);
+LV_IMG_DECLARE(ui_img_RDM_Light);    // assets/RDM_Light.png
+LV_IMG_DECLARE(ui_img_RDM_Dark);     // assets/RDM_Dark.png
 
 
-LV_FONT_DECLARE(ui_font_Manrope_16_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_36_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_50_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_72);

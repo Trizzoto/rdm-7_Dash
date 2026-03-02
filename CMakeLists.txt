@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 set(PROJECT_NAME "esp32-firmware")
 
-# Set compiler path
-set(CMAKE_C_COMPILER "C:/Users/ruuva/esp/v5.3.1/tools/xtensa-esp32s3-elf/esp-2023r1-12.2.0/xtensa-esp32s3-elf/bin/xtensa-esp32s3-elf-gcc.exe")
 
 # Include the ESP-IDF project cmake file
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

@@ -1,0 +1,13 @@
+# Build output
+build/
+
+# Logs
+*.log
+build_log.txt
+cmake_debug*.log
+
+# VS Code
+.vscode/
+
+# ESP-IDF generated
+sdkconfig.old

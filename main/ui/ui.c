@@ -21,6 +21,7 @@ lv_obj_t * ui_SPEED_Value;
 lv_obj_t * ui_Gear_Panel;
 
 lv_obj_t * ui_GEAR_Value;
+lv_obj_t * ui_GEAR_Icon;
 lv_obj_t * ui_Panel_1;
 lv_obj_t * ui_Panel_1_Label;
 lv_obj_t * ui_Panel_1_Value;

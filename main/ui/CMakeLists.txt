@@ -18,6 +18,7 @@ SET(SOURCES components/ui_comp_slider2.c
     images/ui_img_check_engine_png.c
     images/ui_img_launch_control_png.c
     images/ui_img_high_beam_png.c
+    images/ui_img_Smart_car_key.c
 	images/ui_img_669363031.c
 	images/ui_img_rev_0_sticker_png.c
 	images/ui_img_rev_0_sticker2_png.c

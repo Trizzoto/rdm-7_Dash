@@ -449,7 +449,6 @@ static void back_btn_event_cb(lv_event_t *e) {
     if (wifi_screen && lv_obj_is_valid(wifi_screen)) {
         lv_obj_del(wifi_screen);
         wifi_screen = NULL;
-        wifi_screen_initialized = false;
     }
 }
 
@@ -914,3 +913,4 @@ void wifi_screen_delete(void) {
 bool is_wifi_screen_active(void) {
     return wifi_screen && lv_obj_is_valid(wifi_screen) && lv_scr_act() == wifi_screen;
 }
+

@@ -12,12 +12,14 @@
 #include "device_id.h"
 #include "ui.h"
 #include "ui_helpers.h"
+#include "screens/ui_Screen3.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_err.h"
 #include "ota_update_dialog.h"
 #include "lwip/ip4_addr.h"
+#include "callbacks/ui_callbacks.h"
 
 // External variables
 extern TaskHandle_t canTaskHandle;
@@ -85,7 +87,22 @@ static bool ledc_initialized = false;
 static lv_obj_t* brightness_label = NULL;
 static uint8_t selected_ecu_preconfig = 0; // 0=Custom, 1=MaxxECU, 2=Haltech
 static uint8_t selected_ecu_version = 0; // For storing selected version index
-static uint8_t current_brightness = 100; // Track current brightness value
+uint8_t current_brightness = 100; // Track current brightness value (non-static for extern access)
+
+// Brightness dimmer switch configuration (typedef is in header)
+brightness_dimmer_config_t dimmer_config = {
+    .can_id = 0x000,
+    .bit_position = 0,
+    .is_momentary = true,
+    .invert_toggle = false,
+    .brightness_value = 50,
+    .enabled = false
+};
+
+bool previous_dimmer_bit_state = false; // Track previous bit state for toggle mode
+static lv_timer_t* brightness_preview_timer = NULL; // Timer for brightness preview demo
+static uint8_t saved_brightness_before_preview = 100; // Store brightness before preview
+
 static lv_obj_t* device_settings_return_screen = NULL; // Screen to return to when closing device settings
 
 void set_display_brightness(int percent) {
@@ -136,6 +153,274 @@ static void brightness_bar_event_cb(lv_event_t * e) {
     }
 }
 
+// Forward declarations
+static void brightness_dimmer_config_cb(lv_event_t * e);
+static void save_dimmer_config_cb(lv_event_t * e);
+static void close_dimmer_popup_cb(lv_event_t * e);
+static void brightness_set_slider_cb(lv_event_t * e);
+void save_dimmer_config_to_nvs(void);
+void load_dimmer_config_from_nvs(void);
+
+// Brightness dimmer switch configuration popup
+static void brightness_dimmer_config_cb(lv_event_t * e) {
+    // Create semi-transparent overlay
+    lv_obj_t* overlay = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(overlay, LV_HOR_RES, LV_VER_RES);
+    lv_obj_align(overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_50, LV_PART_MAIN | LV_STATE_DEFAULT); // 50% transparent
+    lv_obj_set_style_border_width(overlay, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(overlay, close_dimmer_popup_cb, LV_EVENT_CLICKED, NULL);
+    
+    // Create popup container
+    lv_obj_t* popup = lv_obj_create(overlay);
+    lv_obj_set_size(popup, 500, 400);
+    lv_obj_align(popup, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(popup, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(popup, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(popup, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(popup, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(popup, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(popup, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(popup, LV_OBJ_FLAG_CLICKABLE); // Allow clicks to pass through to overlay
+    
+    // Title
+    lv_obj_t* title = lv_label_create(popup);
+    lv_label_set_text(title, "Brightness Dimmer Switch");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    // Close button
+    lv_obj_t* close_btn = lv_btn_create(popup);
+    lv_obj_set_size(close_btn, 40, 35);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 5);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* close_label = lv_label_create(close_btn);
+    lv_label_set_text(close_label, "X");
+    lv_obj_center(close_label);
+    lv_obj_add_event_cb(close_btn, close_dimmer_popup_cb, LV_EVENT_CLICKED, overlay);
+    
+    // CAN ID input
+    lv_obj_t* can_id_label = lv_label_create(popup);
+    lv_label_set_text(can_id_label, "CAN ID:");
+    lv_obj_align(can_id_label, LV_ALIGN_TOP_LEFT, 10, 50);
+    lv_obj_set_style_text_color(can_id_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* can_id_prefix = lv_label_create(popup);
+    lv_label_set_text(can_id_prefix, "0x");
+    lv_obj_align(can_id_prefix, LV_ALIGN_TOP_LEFT, 10, 75);
+    lv_obj_set_style_text_color(can_id_prefix, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* can_id_input = lv_textarea_create(popup);
+    lv_obj_set_size(can_id_input, 120, 40);
+    lv_obj_align(can_id_input, LV_ALIGN_TOP_LEFT, 35, 70);
+    lv_textarea_set_placeholder_text(can_id_input, "Enter CAN ID");
+    lv_textarea_set_max_length(can_id_input, 3);
+    lv_obj_set_style_text_align(can_id_input, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_clear_flag(can_id_input, LV_OBJ_FLAG_SCROLLABLE);
+    char can_id_str[8];
+    snprintf(can_id_str, sizeof(can_id_str), "%03X", dimmer_config.can_id);
+    lv_textarea_set_text(can_id_input, can_id_str);
+    // Add keyboard event callback to show keyboard when focused
+    lv_obj_add_event_cb(can_id_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    
+    // Bit Position dropdown
+    lv_obj_t* bit_pos_label = lv_label_create(popup);
+    lv_label_set_text(bit_pos_label, "Bit Position:");
+    lv_obj_align(bit_pos_label, LV_ALIGN_TOP_LEFT, 180, 50);
+    lv_obj_set_style_text_color(bit_pos_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* bit_pos_dd = lv_dropdown_create(popup);
+    lv_obj_set_size(bit_pos_dd, 120, 40);
+    lv_obj_align(bit_pos_dd, LV_ALIGN_TOP_LEFT, 180, 70);
+    char bit_options[256] = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63";
+    lv_dropdown_set_options(bit_pos_dd, bit_options);
+    lv_dropdown_set_selected(bit_pos_dd, dimmer_config.bit_position);
+    
+    // Toggle Mode dropdown
+    lv_obj_t* toggle_mode_label = lv_label_create(popup);
+    lv_label_set_text(toggle_mode_label, "Toggle Mode:");
+    lv_obj_align(toggle_mode_label, LV_ALIGN_TOP_LEFT, 10, 120);
+    lv_obj_set_style_text_color(toggle_mode_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* toggle_mode_dd = lv_dropdown_create(popup);
+    lv_obj_set_size(toggle_mode_dd, 120, 40);
+    lv_obj_align(toggle_mode_dd, LV_ALIGN_TOP_LEFT, 10, 140);
+    lv_dropdown_set_options(toggle_mode_dd, "On/Off\nMomentary");
+    lv_dropdown_set_selected(toggle_mode_dd, dimmer_config.is_momentary ? 1 : 0);
+    
+    // Invert Toggle switch
+    lv_obj_t* invert_label = lv_label_create(popup);
+    lv_label_set_text(invert_label, "Invert Toggle:");
+    lv_obj_align(invert_label, LV_ALIGN_TOP_LEFT, 180, 120);
+    lv_obj_set_style_text_color(invert_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* invert_switch = lv_switch_create(popup);
+    lv_obj_set_size(invert_switch, 50, 25);
+    lv_obj_align(invert_switch, LV_ALIGN_TOP_LEFT, 180, 140);
+    if (dimmer_config.invert_toggle) {
+        lv_obj_add_state(invert_switch, LV_STATE_CHECKED);
+    }
+    
+    // Brightness Set slider
+    lv_obj_t* brightness_set_label = lv_label_create(popup);
+    lv_label_set_text(brightness_set_label, "Brightness Set:");
+    lv_obj_align(brightness_set_label, LV_ALIGN_TOP_LEFT, 10, 190);
+    lv_obj_set_style_text_color(brightness_set_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* brightness_set_slider = lv_slider_create(popup);
+    lv_obj_set_size(brightness_set_slider, 280, 20);
+    lv_obj_align(brightness_set_slider, LV_ALIGN_TOP_LEFT, 10, 210);
+    lv_slider_set_range(brightness_set_slider, 5, 100);
+    lv_slider_set_value(brightness_set_slider, dimmer_config.brightness_value, LV_ANIM_OFF);
+    
+    lv_obj_t* brightness_value_label = lv_label_create(popup);
+    lv_label_set_text_fmt(brightness_value_label, "%d%%", dimmer_config.brightness_value);
+    lv_obj_align(brightness_value_label, LV_ALIGN_TOP_LEFT, 300, 210);
+    lv_obj_set_style_text_color(brightness_value_label, lv_color_hex(0xFFFF40), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_add_event_cb(brightness_set_slider, brightness_set_slider_cb, LV_EVENT_VALUE_CHANGED, brightness_value_label);
+    
+    // Enable/Disable switch
+    lv_obj_t* enable_label = lv_label_create(popup);
+    lv_label_set_text(enable_label, "Enabled:");
+    lv_obj_align(enable_label, LV_ALIGN_TOP_LEFT, 10, 250);
+    lv_obj_set_style_text_color(enable_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    lv_obj_t* enable_switch = lv_switch_create(popup);
+    lv_obj_set_size(enable_switch, 50, 25);
+    lv_obj_align(enable_switch, LV_ALIGN_TOP_LEFT, 10, 270);
+    if (dimmer_config.enabled) {
+        lv_obj_add_state(enable_switch, LV_STATE_CHECKED);
+    }
+    
+    // Save button
+    lv_obj_t* save_btn = lv_btn_create(popup);
+    lv_obj_set_size(save_btn, 120, 40);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(save_btn, lv_color_hex(0x40FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(save_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* save_label = lv_label_create(save_btn);
+    lv_label_set_text(save_label, "Save");
+    lv_obj_center(save_label);
+    
+    // Store all inputs in user data for save callback
+    typedef struct {
+        lv_obj_t* overlay;
+        lv_obj_t* can_id_input;
+        lv_obj_t* bit_pos_dd;
+        lv_obj_t* toggle_mode_dd;
+        lv_obj_t* invert_switch;
+        lv_obj_t* brightness_slider;
+        lv_obj_t* enable_switch;
+    } dimmer_popup_data_t;
+    
+    dimmer_popup_data_t* popup_data = lv_mem_alloc(sizeof(dimmer_popup_data_t));
+    popup_data->overlay = overlay;
+    popup_data->can_id_input = can_id_input;
+    popup_data->bit_pos_dd = bit_pos_dd;
+    popup_data->toggle_mode_dd = toggle_mode_dd;
+    popup_data->invert_switch = invert_switch;
+    popup_data->brightness_slider = brightness_set_slider;
+    popup_data->enable_switch = enable_switch;
+    
+    lv_obj_add_event_cb(save_btn, save_dimmer_config_cb, LV_EVENT_CLICKED, popup_data);
+}
+
+// Timer callback to restore brightness after preview
+static void brightness_preview_restore_cb(lv_timer_t * timer) {
+    set_display_brightness(saved_brightness_before_preview);
+    if (brightness_preview_timer) {
+        lv_timer_del(brightness_preview_timer);
+        brightness_preview_timer = NULL;
+    }
+}
+
+static void brightness_set_slider_cb(lv_event_t * e) {
+    lv_obj_t* slider = lv_event_get_target(e);
+    lv_obj_t* label = (lv_obj_t*)lv_event_get_user_data(e);
+    int val = lv_slider_get_value(slider);
+    lv_label_set_text_fmt(label, "%d%%", val);
+    
+    // Cancel any existing preview timer
+    if (brightness_preview_timer) {
+        lv_timer_del(brightness_preview_timer);
+        brightness_preview_timer = NULL;
+    }
+    
+    // Save current brightness before preview
+    saved_brightness_before_preview = current_brightness;
+    
+    // Set brightness to preview value
+    set_display_brightness(val);
+    
+    // Create timer to restore brightness after 2 seconds
+    brightness_preview_timer = lv_timer_create(brightness_preview_restore_cb, 2000, NULL);
+    lv_timer_set_repeat_count(brightness_preview_timer, 1); // Run once
+}
+
+static void close_dimmer_popup_cb(lv_event_t * e) {
+    lv_obj_t* overlay = (lv_obj_t*)lv_event_get_user_data(e);
+    if (overlay) {
+        lv_obj_del(overlay);
+    }
+}
+
+static void save_dimmer_config_cb(lv_event_t * e) {
+    typedef struct {
+        lv_obj_t* overlay;
+        lv_obj_t* can_id_input;
+        lv_obj_t* bit_pos_dd;
+        lv_obj_t* toggle_mode_dd;
+        lv_obj_t* invert_switch;
+        lv_obj_t* brightness_slider;
+        lv_obj_t* enable_switch;
+    } dimmer_popup_data_t;
+    
+    dimmer_popup_data_t* popup_data = (dimmer_popup_data_t*)lv_event_get_user_data(e);
+    if (!popup_data) return;
+    
+    // Get CAN ID
+    const char* can_id_str = lv_textarea_get_text(popup_data->can_id_input);
+    uint32_t can_id = strtoul(can_id_str, NULL, 16);
+    if (can_id > 0x7FF) can_id = 0x7FF;
+    dimmer_config.can_id = can_id;
+    
+    // Get bit position
+    dimmer_config.bit_position = lv_dropdown_get_selected(popup_data->bit_pos_dd);
+    
+    // Get toggle mode
+    dimmer_config.is_momentary = (lv_dropdown_get_selected(popup_data->toggle_mode_dd) == 1);
+    
+    // Get invert toggle
+    dimmer_config.invert_toggle = lv_obj_has_state(popup_data->invert_switch, LV_STATE_CHECKED);
+    
+    // Get brightness value
+    dimmer_config.brightness_value = lv_slider_get_value(popup_data->brightness_slider);
+    
+    // Get enabled state
+    dimmer_config.enabled = lv_obj_has_state(popup_data->enable_switch, LV_STATE_CHECKED);
+    
+    // Reset previous bit state when saving
+    previous_dimmer_bit_state = false;
+    
+    // Save to NVS
+    save_dimmer_config_to_nvs();
+    
+    // Close popup
+    lv_obj_del(popup_data->overlay);
+    lv_mem_free(popup_data);
+    
+    ESP_LOGI("DIMMER", "Brightness dimmer config saved: CAN=0x%03X, Bit=%d, Mode=%s, Invert=%d, Brightness=%d%%, Enabled=%d",
+        dimmer_config.can_id, dimmer_config.bit_position,
+        dimmer_config.is_momentary ? "Momentary" : "Toggle",
+        dimmer_config.invert_toggle, dimmer_config.brightness_value, dimmer_config.enabled);
+}
+
 // Close menu callback
 static void close_menu_event_cb(lv_event_t * e) {
     lv_obj_t * old_screen = (lv_obj_t *)lv_event_get_user_data(e);
@@ -161,34 +446,22 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
         ESP_LOGI("CAN", "Bitrate setting saved to NVS");
     }
     
-    // Configure CAN timing based on selection
+    // Configure CAN timing based on selection using ESP-IDF standard macros
     switch(selected) {
         case 0: // 125 kbps
-            g_t_config.brp = 64;
-            g_t_config.tseg_1 = 15;
-            g_t_config.tseg_2 = 4;
-            g_t_config.sjw = 3;
+            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
             ESP_LOGI("CAN", "Configured for 125 kbps");
             break;
         case 1: // 250 kbps
-            g_t_config.brp = 32;
-            g_t_config.tseg_1 = 15;
-            g_t_config.tseg_2 = 4;
-            g_t_config.sjw = 3;
+            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
             ESP_LOGI("CAN", "Configured for 250 kbps");
             break;
         case 2: // 500 kbps
-            g_t_config.brp = 16;
-            g_t_config.tseg_1 = 15;
-            g_t_config.tseg_2 = 4;
-            g_t_config.sjw = 3;
+            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
             ESP_LOGI("CAN", "Configured for 500 kbps");
             break;
         case 3: // 1 Mbps
-            g_t_config.brp = 8;
-            g_t_config.tseg_1 = 15;
-            g_t_config.tseg_2 = 4;
-            g_t_config.sjw = 3;
+            g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
             ESP_LOGI("CAN", "Configured for 1 Mbps");
             break;
         default:
@@ -233,8 +506,17 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     }
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // Step 3: Reinstall driver with new configuration
+    // Step 3: Rebuild CAN dispatch and filter with current configs
+    extern void rebuild_can_dispatch(void);
+    
+    ESP_LOGI("CAN", "Rebuilding CAN dispatch and filter");
+    rebuild_can_dispatch();
+    build_twai_filter_from_configs(&f_config);
+    
+    // Step 4: Reinstall driver with new configuration
     ESP_LOGI("CAN", "Installing CAN driver with new configuration");
+    ESP_LOGI("CAN", "Timing config - BRP: %d, TSEG1: %d, TSEG2: %d, SJW: %d", 
+             g_t_config.brp, g_t_config.tseg_1, g_t_config.tseg_2, g_t_config.sjw);
     err = twai_driver_install(&g_config, &g_t_config, &f_config);
     if (err != ESP_OK) {
         ESP_LOGE("CAN", "Failed to install CAN driver: %s", esp_err_to_name(err));
@@ -242,7 +524,7 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     }
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Step 4: Start the driver
+    // Step 5: Start the driver
     ESP_LOGI("CAN", "Starting CAN driver");
     err = twai_start();
     if (err != ESP_OK) {
@@ -251,7 +533,8 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     }
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Step 5: Recreate the CAN task
+    // Step 6: Reset the stop flag and recreate the CAN task
+    can_task_should_stop = false;  // Reset the stop flag for the new task
     ESP_LOGI("CAN", "Recreating CAN receive task");
     if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 
                                4096, NULL, 7, &canTaskHandle, 0) != pdPASS) {
@@ -261,6 +544,8 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     }
 
     ESP_LOGI("CAN", "Bitrate change completed successfully");
+    ESP_LOGI("CAN", "Final timing config - BRP: %d, TSEG1: %d, TSEG2: %d, SJW: %d", 
+             g_t_config.brp, g_t_config.tseg_1, g_t_config.tseg_2, g_t_config.sjw);
 }
 
 // Loading dialog for WiFi
@@ -388,7 +673,11 @@ static void ecu_dropdown_event_cb(lv_event_t *e) {
                 lv_dropdown_set_selected(data->version_dropdown, 0);
                 break;
             case 2: // Haltech
-                lv_dropdown_set_options(data->version_dropdown, "3.10");
+                lv_dropdown_set_options(data->version_dropdown, "Nexus");
+                lv_dropdown_set_selected(data->version_dropdown, 0);
+                break;
+            case 3: // Ford
+                lv_dropdown_set_options(data->version_dropdown, "BA/BF/FG");
                 lv_dropdown_set_selected(data->version_dropdown, 0);
                 break;
         }
@@ -478,7 +767,9 @@ static void update_ecu_status_label(lv_obj_t* status_label) {
         const char* version_str = (selected_ecu_version == 0) ? "1.2" : "1.3";
         snprintf(status_text, sizeof(status_text), "[OK] MaxxECU %s preconfig applied", version_str);
     } else if (selected_ecu_preconfig == 2) {
-        snprintf(status_text, sizeof(status_text), "[OK] Haltech 3.10 preconfig applied");
+        snprintf(status_text, sizeof(status_text), "[OK] Haltech Nexus preconfig applied");
+    } else if (selected_ecu_preconfig == 3) {
+        snprintf(status_text, sizeof(status_text), "[OK] Ford BA/BF/FG preconfig applied");
     } else {
         snprintf(status_text, sizeof(status_text), "[OK] ECU preconfig applied");
     }
@@ -490,6 +781,57 @@ static void update_ecu_status_label(lv_obj_t* status_label) {
 void init_display_brightness(void) {
     // Always boot at 100% brightness
     set_display_brightness(100);
+    load_dimmer_config_from_nvs();
+}
+
+// Save dimmer config to NVS
+void save_dimmer_config_to_nvs(void) {
+    nvs_handle_t handle;
+    if (nvs_open("dimmer_cfg", NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_set_u32(handle, "can_id", dimmer_config.can_id);
+        nvs_set_u8(handle, "bit_pos", dimmer_config.bit_position);
+        nvs_set_u8(handle, "is_mom", dimmer_config.is_momentary ? 1 : 0);
+        nvs_set_u8(handle, "invert", dimmer_config.invert_toggle ? 1 : 0);
+        nvs_set_u8(handle, "bright", dimmer_config.brightness_value);
+        nvs_set_u8(handle, "enabled", dimmer_config.enabled ? 1 : 0);
+        nvs_commit(handle);
+        nvs_close(handle);
+        ESP_LOGI("DIMMER", "Dimmer config saved to NVS");
+    }
+}
+
+// Load dimmer config from NVS
+void load_dimmer_config_from_nvs(void) {
+    nvs_handle_t handle;
+    if (nvs_open("dimmer_cfg", NVS_READONLY, &handle) == ESP_OK) {
+        uint32_t can_id;
+        if (nvs_get_u32(handle, "can_id", &can_id) == ESP_OK) {
+            dimmer_config.can_id = can_id;
+        }
+        uint8_t bit_pos;
+        if (nvs_get_u8(handle, "bit_pos", &bit_pos) == ESP_OK) {
+            dimmer_config.bit_position = bit_pos;
+        }
+        uint8_t is_mom;
+        if (nvs_get_u8(handle, "is_mom", &is_mom) == ESP_OK) {
+            dimmer_config.is_momentary = (is_mom == 1);
+        }
+        uint8_t invert;
+        if (nvs_get_u8(handle, "invert", &invert) == ESP_OK) {
+            dimmer_config.invert_toggle = (invert == 1);
+        }
+        uint8_t bright;
+        if (nvs_get_u8(handle, "bright", &bright) == ESP_OK) {
+            dimmer_config.brightness_value = bright;
+        }
+        uint8_t enabled;
+        if (nvs_get_u8(handle, "enabled", &enabled) == ESP_OK) {
+            dimmer_config.enabled = (enabled == 1);
+        }
+        nvs_close(handle);
+        ESP_LOGI("DIMMER", "Dimmer config loaded from NVS: CAN=0x%03X, Bit=%d, Enabled=%d",
+            dimmer_config.can_id, dimmer_config.bit_position, dimmer_config.enabled);
+    }
 }
 
 // Function to create device settings with a specific return screen
@@ -504,21 +846,21 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_bg_opa(settings_screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(settings_screen, LV_OBJ_FLAG_SCROLLABLE);
     
-    // Main container with border - made taller
+    // Main container with border - sized properly for 480px screen height
     lv_obj_t* main_container = lv_obj_create(settings_screen);
-    lv_obj_set_size(main_container, 780, 460);
+    lv_obj_set_size(main_container, 760, 440);  // Fit within 480px screen with margins
     lv_obj_align(main_container, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(main_container, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(main_container, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(main_container, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(main_container, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(main_container, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(main_container, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(main_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);  // Reduced padding for more space
     lv_obj_clear_flag(main_container, LV_OBJ_FLAG_SCROLLABLE);
 
     // Header section
     lv_obj_t* header = lv_obj_create(main_container);
-    lv_obj_set_size(header, lv_pct(100), 60);
+    lv_obj_set_size(header, lv_pct(100), 50);  // Reduced height for more content space
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x2E2F2E), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(header, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -535,8 +877,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // Close button
     lv_obj_t* close_btn = lv_btn_create(header);
-    lv_obj_set_size(close_btn, 60, 40);
-    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -20, 0);
+    lv_obj_set_size(close_btn, 50, 35);  // Smaller button for smaller header
+    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -15, 0);
     lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF6666), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -547,10 +889,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(close_label, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(close_btn, close_menu_event_cb, LV_EVENT_CLICKED, device_settings_return_screen);
     
-    // Content area - made scrollable and taller to accommodate all sections
+    // Content area - properly sized for 440px container with scrolling for ECU section
     lv_obj_t* content = lv_obj_create(main_container);
-    lv_obj_set_size(content, lv_pct(100), 400);  // Increased height to fit all sections properly
-    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 80);
+    lv_obj_set_size(content, lv_pct(100), 350);  // Proper size to fit in 440px container
+    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 60);  // Position below 50px header with 10px gap
     lv_obj_set_style_bg_opa(content, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(content, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(content, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -567,7 +909,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // First row container
     lv_obj_t* first_row = lv_obj_create(content);
-    lv_obj_set_size(first_row, lv_pct(100), 130);
+    lv_obj_set_size(first_row, lv_pct(100), 120);  // Reduced height for better fit
     lv_obj_set_style_bg_opa(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -578,7 +920,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // CAN Bus Configuration Section
     lv_obj_t* can_section = lv_obj_create(first_row);
-    lv_obj_set_size(can_section, lv_pct(48), 130);
+    lv_obj_set_size(can_section, lv_pct(48), 120);  // Match first_row height
     lv_obj_set_style_bg_color(can_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(can_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(can_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -615,7 +957,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // Device Information Section
     lv_obj_t* info_section = lv_obj_create(first_row);
-    lv_obj_set_size(info_section, lv_pct(48), 130);
+    lv_obj_set_size(info_section, lv_pct(48), 120);  // Match first_row height
     lv_obj_set_style_bg_color(info_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(info_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(info_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -664,18 +1006,18 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // Second row container
     lv_obj_t* second_row = lv_obj_create(content);
-    lv_obj_set_size(second_row, lv_pct(100), 200);  // Increased height to accommodate sections
+    lv_obj_set_size(second_row, lv_pct(100), 185);  // Increased height to give Check Updates button more room
     lv_obj_set_style_bg_opa(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_bottom(second_row, -10, LV_PART_MAIN | LV_STATE_DEFAULT);  // Reduce gap to ECU section
+    lv_obj_set_style_pad_bottom(second_row, -30, LV_PART_MAIN | LV_STATE_DEFAULT);  // Eliminate gap to ECU section
     lv_obj_clear_flag(second_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(second_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(second_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     // Network & Updates Section
     lv_obj_t* network_section = lv_obj_create(second_row);
-    lv_obj_set_size(network_section, lv_pct(48), 170);  // Reduced height to fit better
+    lv_obj_set_size(network_section, lv_pct(48), 185);  // Increased height to give Check Updates button more room
     lv_obj_set_style_bg_color(network_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(network_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(network_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -736,7 +1078,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // Display Settings Section
     lv_obj_t* display_section = lv_obj_create(second_row);
-    lv_obj_set_size(display_section, lv_pct(48), 170);  // Reduced height to match network section
+    lv_obj_set_size(display_section, lv_pct(48), 185);  // Increased height to match network section
     lv_obj_set_style_bg_color(display_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(display_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(display_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -787,9 +1129,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     lv_obj_add_event_cb(brightness_bar, brightness_bar_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    // Brightness Dimmer Switch button
+    lv_obj_t* dimmer_btn = lv_btn_create(display_section);
+    lv_obj_set_size(dimmer_btn, 220, 35);
+    lv_obj_align(dimmer_btn, LV_ALIGN_TOP_LEFT, 0, 130);
+    lv_obj_set_style_bg_color(dimmer_btn, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(dimmer_btn, lv_color_hex(0x505050), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(dimmer_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(dimmer_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* dimmer_label = lv_label_create(dimmer_btn);
+    lv_label_set_text(dimmer_label, "Brightness Dimmer Switch");
+    lv_obj_center(dimmer_label);
+    lv_obj_set_style_text_font(dimmer_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(dimmer_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
+
     // ECU Preconfig Section - Full width at bottom, reduced gap above
     lv_obj_t* ecu_section = lv_obj_create(content);
-    lv_obj_set_size(ecu_section, lv_pct(100), 140);
+    lv_obj_set_size(ecu_section, lv_pct(100), 140);  // Optimized height for better overall layout
     lv_obj_set_style_bg_color(ecu_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ecu_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(ecu_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -830,7 +1187,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
         const char* version_str = (selected_ecu_version == 0) ? "1.2" : "1.3";
         snprintf(status_text, sizeof(status_text), "[OK] MaxxECU %s preconfig applied", version_str);
     } else if (selected_ecu_preconfig == 2) {
-        snprintf(status_text, sizeof(status_text), "[OK] Haltech 3.10 preconfig applied");
+        snprintf(status_text, sizeof(status_text), "[OK] Haltech Nexus preconfig applied");
     } else {
         snprintf(status_text, sizeof(status_text), "[OK] ECU preconfig applied");
     }
@@ -858,7 +1215,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // ECU dropdown
     lv_obj_t* ecu_dd = lv_dropdown_create(ecu_section);
-    lv_dropdown_set_options(ecu_dd, "Custom\nMaxxECU\nHaltech");
+    lv_dropdown_set_options(ecu_dd, "Custom\nMaxxECU\nHaltech\nFord");
     lv_obj_set_size(ecu_dd, 200, 35);
     lv_obj_align(ecu_dd, LV_ALIGN_TOP_LEFT, 0, 55);
     lv_obj_set_style_bg_color(ecu_dd, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -879,7 +1236,11 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
             lv_dropdown_set_selected(version_dd, selected_ecu_version);
             break;
         case 2: // Haltech
-            lv_dropdown_set_options(version_dd, "3.10");
+            lv_dropdown_set_options(version_dd, "Nexus");
+            lv_dropdown_set_selected(version_dd, selected_ecu_version);
+            break;
+        case 3: // Ford
+            lv_dropdown_set_options(version_dd, "BA/BF/FG");
             lv_dropdown_set_selected(version_dd, selected_ecu_version);
             break;
     }
