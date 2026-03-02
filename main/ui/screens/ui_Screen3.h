@@ -10,7 +10,16 @@
 #include "ui_comp_hook.h"
 #include "ui_events.h"
 
-#define MAX_VALUES 13  // Maximum number of values that can be configured
+#define MAX_VALUES 13      /* Maximum number of values that can be configured */
+#define RPM_VALUE_ID   9
+#define SPEED_VALUE_ID 10
+#define GEAR_VALUE_ID  11
+#define BAR1_VALUE_ID  12
+#define BAR2_VALUE_ID  13
+#define MAX_RPM_LINES  200  /* Maximum number of RPM tick marks per row */
+#ifndef EXAMPLE_MAX_CHAR_SIZE
+#define EXAMPLE_MAX_CHAR_SIZE 64
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,12 +127,37 @@ typedef struct {
 } indicator_config_t;
 
 extern warning_config_t warning_configs[8];
-extern indicator_config_t indicator_configs[2];  // Left and Right indicators
+extern indicator_config_t indicator_configs[2];  /* Left and Right indicators */
 extern value_config_t values_config[13];
 extern uint8_t current_value_id;
 
 extern char label_texts[13][64];
 extern char value_offset_texts[13][64];
+extern char previous_values[13][64];
+extern bool reset_can_tracking;
+
+/* LVGL UI objects — defined in ui_Screen3.c */
+extern lv_obj_t *ui_Label[13];
+extern lv_obj_t *ui_Value[13];
+extern lv_obj_t *ui_Box[8];
+extern lv_obj_t *ui_CustomText[8];
+extern lv_obj_t *config_bars[13];
+extern lv_obj_t *rpm_bar_gauge;
+extern lv_obj_t *rpm_redline_zone;
+extern lv_obj_t *keyboard;
+extern lv_timer_t *menu_button_hide_timer;
+
+/* RPM configuration globals */
+extern int rpm_gauge_max;
+extern int rpm_redline_value;
+
+/* RPM tick-mark rendering objects (defined in widget_rpm_bar.c) */
+extern int num_rpm_lines;
+extern lv_obj_t *rpm_labels[MAX_RPM_LINES];
+extern lv_obj_t *rpm_lines[MAX_RPM_LINES * 2];
+
+/* Shared LVGL style */
+extern lv_style_t common_style;
 
 void init_values_config_defaults(void);
 
@@ -159,6 +193,11 @@ float fuel_sender_read_voltage(void);
 float fuel_sender_get_filtered_v(uint8_t bar_idx);
 void fuel_sender_capture_empty(uint8_t value_id);
 void fuel_sender_capture_full(uint8_t value_id);
+
+/* Coordinator-level callbacks used by widget modules */
+void value_long_press_event_cb(lv_event_t *e);
+void keyboard_ready_event_cb(lv_event_t *e);
+void screen3_touch_event_cb(lv_event_t *e);
 
 // Indicator config management functions
 void init_indicator_configs(void);

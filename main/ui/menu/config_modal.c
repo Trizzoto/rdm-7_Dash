@@ -51,7 +51,7 @@ extern void bar_in_range_color_event_cb(lv_event_t *e);
 extern void keyboard_ready_event_cb(lv_event_t *e);
 extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 extern lv_obj_t *ui_Value[];        /* live value labels on Screen3    */
-extern char previous_values[13][32];/* last known value strings         */
+extern char previous_values[13][64];/* last known value strings         */
 
 /* ── Widget ID constants ─────────────────────────────────────────────────── */
 #define RPM_VALUE_ID   9

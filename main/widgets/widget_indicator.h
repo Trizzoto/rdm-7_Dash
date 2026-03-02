@@ -1,0 +1,38 @@
+#pragma once
+#include "lvgl.h"
+#include "ui/screens/ui_Screen3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* --- API -----------------------------------------------------------------*/
+/** Create indicator images and transparent touch areas on parent. */
+void widget_indicator_create(lv_obj_t *parent);
+
+/** Immediate (same-task) UI update for one indicator (0=left,1=right). */
+void update_indicator_ui_immediate(uint8_t indicator_idx);
+
+/** Async (lv_async_call-compatible) update — param is heap uint8_t* index. */
+void update_indicator_ui(void *param);
+
+/** Refresh the indicator config popup preview (if open). */
+void update_config_preview(uint8_t indicator_idx);
+
+/** Apply analog (wire) state to both indicators; skips CAN-sourced channels. */
+void indicator_apply_analog_state(bool left_on, bool right_on);
+
+/** LVGL timer callback for indicator blink animation. */
+void indicator_animation_timer_cb(lv_timer_t *timer);
+
+/** Initialise indicator_configs[] to safe defaults. Call before NVS load. */
+void init_indicator_configs(void);
+
+/** Create the full-screen indicator configuration editor. */
+void create_indicator_config_menu(uint8_t indicator_idx);
+
+/* The animation timer handle must be accessible from ui_Screen3.c for pause. */
+extern lv_timer_t *indicator_animation_timer;
+
+#ifdef __cplusplus
+}
+#endif

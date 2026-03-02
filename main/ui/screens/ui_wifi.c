@@ -46,7 +46,7 @@ static lv_obj_t *password_modal = NULL;
 static lv_obj_t *password_input = NULL;
 static lv_obj_t *status_label = NULL;
 static lv_obj_t *connection_progress = NULL;
-static lv_obj_t *keyboard = NULL;
+static lv_obj_t *wifi_keyboard = NULL;
 static char *selected_ssid = NULL;
 static wifi_ap_record *ap_records = NULL;
 static uint16_t ap_count = 0;
@@ -246,17 +246,17 @@ static void connect_btn_event_cb(lv_event_t *e) {
 static void password_input_event_cb(lv_event_t *e) {
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_FOCUSED) {
-        if (!keyboard) {
-            keyboard = lv_keyboard_create(password_modal);
-            lv_obj_set_style_bg_color(keyboard, THEME_COLOR_KEYBOARD_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        if (!wifi_keyboard) {
+            wifi_keyboard = lv_keyboard_create(password_modal);
+            lv_obj_set_style_bg_color(wifi_keyboard, THEME_COLOR_KEYBOARD_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_bg_opa(wifi_keyboard, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
         }
-        lv_keyboard_set_textarea(keyboard, password_input);
-        lv_obj_clear_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_keyboard_set_textarea(wifi_keyboard, password_input);
+        lv_obj_clear_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     } else if (code == LV_EVENT_DEFOCUSED) {
-        if (keyboard) {
-            lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
+        if (wifi_keyboard) {
+            lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
         }
     }
 }
@@ -382,7 +382,7 @@ static void hide_password_modal(void) {
         password_modal = NULL;
         password_input = NULL;
         connection_progress = NULL;
-        keyboard = NULL;
+        wifi_keyboard = NULL;
     }
 }
 
@@ -736,7 +736,7 @@ static void reset_wifi_screen_state(void) {
     password_input = NULL;
     status_label = NULL;
     connection_progress = NULL;
-    keyboard = NULL;
+    wifi_keyboard = NULL;
     
     // Reset state variables
     connection_state = WIFI_STATE_IDLE;
