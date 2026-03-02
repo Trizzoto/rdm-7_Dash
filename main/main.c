@@ -903,7 +903,6 @@ void app_main(void) {
 		"Splash screen displayed, continuing with system initialization...");
 
 	// Initialize remaining components while splash is showing
-	// CAN bus already initialized early for fast startup
 	// init_sd_card();
 	init_wifi_screen();
 	// test_sd_card_write();
@@ -925,6 +924,4 @@ void app_main(void) {
 
 	ESP_LOGI(TAG, "All systems initialized - splash screen will transition to "
 				  "main screen automatically");
-
-	// CAN task created earlier for fast data loading
 }

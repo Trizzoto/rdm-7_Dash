@@ -89,7 +89,7 @@ void close_menu_event_cb(lv_event_t *e)
     lv_obj_t *old = lv_scr_act();
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_add_state(btn, LV_STATE_DISABLED);
-
+    
     custom_gear_section_flush_to_config();
 
     lv_obj_t *ind = lv_label_create(old); lv_label_set_text(ind, "Saving...");
@@ -115,7 +115,7 @@ void cancel_menu_event_cb(lv_event_t *e)
     lv_obj_t *old = lv_scr_act();
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_add_state(btn, LV_STATE_DISABLED);
-
+    
     lv_obj_t *ind = lv_label_create(old); lv_label_set_text(ind, "Canceling...");
     lv_obj_align(ind, LV_ALIGN_CENTER, 0, 0); lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0); lv_refr_now(NULL);
 
@@ -130,7 +130,7 @@ void load_menu_screen_for_value(uint8_t value_id)
     current_value_id = value_id;
     destroy_preconfig_menu();
     custom_gear_config_button = NULL;
-
+    
     ui_MenuScreen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_MenuScreen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(ui_MenuScreen, LV_OPA_COVER, 0);
@@ -153,7 +153,7 @@ void create_menu_objects(lv_obj_t *parent, uint8_t value_id)
     lv_obj_add_style(menu_panel_boxes[idx], get_box_style(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(menu_panel_boxes[idx], 3, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(menu_panel_boxes[idx], THEME_COLOR_PANEL, LV_PART_MAIN | LV_STATE_DEFAULT);
-
+    
     menu_panel_labels[idx] = make_panel_lbl(menu_panel_boxes[idx],
         label_texts[idx], THEME_FONT_DASH_LABEL, -28, 145);
 

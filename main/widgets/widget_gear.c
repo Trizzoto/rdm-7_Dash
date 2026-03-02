@@ -930,7 +930,7 @@ void widget_gear_create(lv_obj_t *parent)
     lv_obj_set_style_text_color(ui_GEAR_Value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_GEAR_Value, THEME_FONT_DASH_GEAR, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(ui_GEAR_Value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_transform_zoom(ui_GEAR_Value, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_transform_zoom(ui_GEAR_Value, 210, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_GEAR_Icon = lv_img_create(parent);
     lv_img_set_src(ui_GEAR_Icon, &Smart_Car_Key);

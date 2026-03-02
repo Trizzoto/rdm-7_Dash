@@ -77,6 +77,9 @@ idf_component_register(
         "ui/settings"
         "ui/menu"
         "widgets"
+        "layout"
+        "design_mode"
+        "web"
     REQUIRES 
         "driver"
         "esp_adc"

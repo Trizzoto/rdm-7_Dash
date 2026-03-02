@@ -1,8 +1,15 @@
-# Name,   Type,   SubType, Offset,   Size,     Flags
-nvs,      data,   nvs,      0x9000,   0x24000,
-otadata,  data,   ota,      0x2d000,  0x2000,
-phy_init, data,   phy,      0x2f000,  0x1000,
-factory,  app,    factory,  0x30000,  2M,
-ota_0,    app,    ota_0,    ,         2M,
-ota_1,    app,    ota_1,    ,         2M,
-storage,  data,   spiffs,   ,         1M,
+# Name,     Type,  SubType,  Offset,   Size,      Flags
+# System bootstrap
+nvs,        data,  nvs,      0x9000,   0x24000,
+otadata,    data,  ota,      0x2d000,  0x2000,
+phy_init,   data,  phy,      0x2f000,  0x1000,
+# OTA dual-bank app partitions (each 0x1F0000 = 1.9375 MB)
+# ota_0 start    : 0x030000
+# ota_0 end      : 0x220000
+# ota_1 end      : 0x410000
+ota_0,      app,   ota_0,    0x30000,  0x1F0000,
+ota_1,      app,   ota_1,    ,         0x1F0000,
+# LittleFS data partition (4 MB minus 64 KB gap = 0x3F0000)
+# start          : 0x410000
+# end            : 0x800000  (fills flash exactly)
+littlefs,   data,  spiffs,   ,         0x3F0000,
