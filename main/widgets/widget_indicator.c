@@ -1,34 +1,34 @@
 #include "widget_indicator.h"
-#include "widget_dispatcher.h"
-#include "ui/screens/ui_Screen3.h"
-#include "ui/ui.h"
-#include "ui/theme.h"
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
-#include "storage/config_store.h"
-#include "lvgl.h"
-#include "lvgl_helpers.h"
 #include "driver/twai.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lvgl.h"
+#include "lvgl_helpers.h"
+#include "storage/config_store.h"
+#include "ui/callbacks/ui_callbacks.h"
+#include "ui/menu/menu_screen.h"
+#include "ui/screens/ui_Screen3.h"
+#include "ui/settings/device_settings.h"
+#include "ui/settings/preset_picker.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
+#include "widget_dispatcher.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ui/menu/menu_screen.h"
-#include "ui/settings/device_settings.h"
-#include "ui/settings/preset_picker.h"
-#include "ui/callbacks/ui_callbacks.h"
 
 void update_indicator_ui_immediate(uint8_t indicator_idx);
 
-bool     indicator_toggle_debounce[2]     = {false};
-uint64_t indicator_toggle_start_time[2]   = {0};
-bool     previous_indicator_bit_states[2] = {false};
+bool indicator_toggle_debounce[2] = {false};
+uint64_t indicator_toggle_start_time[2] = {0};
+bool previous_indicator_bit_states[2] = {false};
 
 // Animation variables
 lv_timer_t *indicator_animation_timer = NULL;
@@ -48,7 +48,8 @@ static lv_obj_t *preview_indicator_config = NULL;
 static lv_obj_t *preview_status_text_config = NULL;
 static uint8_t preview_indicator_idx = 0;
 
-/* Pointers for INPUT dropdown visibility: when Wire selected, hide CAN ID / bit / toggle / animation rows */
+/* Pointers for INPUT dropdown visibility: when Wire selected, hide CAN ID / bit
+ * / toggle / animation rows */
 typedef struct {
 	uint8_t indicator_idx;
 	lv_obj_t *input_src_dropdown;
@@ -76,38 +77,65 @@ void indicator_longpress_cb(lv_event_t *e) {
 
 static void indicator_input_src_changed_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
-	indicator_input_visibility_t *vis = (indicator_input_visibility_t *)lv_event_get_user_data(e);
-	if (!vis) return;
+	indicator_input_visibility_t *vis =
+		(indicator_input_visibility_t *)lv_event_get_user_data(e);
+	if (!vis)
+		return;
 	uint16_t sel = lv_dropdown_get_selected(dropdown);
 	bool show_can = (sel == 1); /* 0 = Wire, 1 = CAN BUS */
-	if (vis->can_id_label) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_label, LV_OBJ_FLAG_HIDDEN);
-	if (vis->can_id_0x) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_0x, LV_OBJ_FLAG_HIDDEN);
-	if (vis->can_id_input) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_input, LV_OBJ_FLAG_HIDDEN);
-	if (vis->bit_pos_label) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->bit_pos_label, LV_OBJ_FLAG_HIDDEN);
-	if (vis->bit_pos_dropdown) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->bit_pos_dropdown, LV_OBJ_FLAG_HIDDEN);
-	if (vis->toggle_mode_label) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->toggle_mode_label, LV_OBJ_FLAG_HIDDEN);
-	if (vis->toggle_mode_dropdown) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->toggle_mode_dropdown, LV_OBJ_FLAG_HIDDEN);
-	if (vis->animation_label) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->animation_label, LV_OBJ_FLAG_HIDDEN);
-	if (vis->animation_switch) (show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->animation_switch, LV_OBJ_FLAG_HIDDEN);
+	if (vis->can_id_label)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_label,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->can_id_0x)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_0x,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->can_id_input)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->can_id_input,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->bit_pos_label)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->bit_pos_label,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->bit_pos_dropdown)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->bit_pos_dropdown,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->toggle_mode_label)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->toggle_mode_label,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->toggle_mode_dropdown)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(
+			vis->toggle_mode_dropdown, LV_OBJ_FLAG_HIDDEN);
+	if (vis->animation_label)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->animation_label,
+														 LV_OBJ_FLAG_HIDDEN);
+	if (vis->animation_switch)
+		(show_can ? lv_obj_clear_flag : lv_obj_add_flag)(vis->animation_switch,
+														 LV_OBJ_FLAG_HIDDEN);
 }
 
 static void indicator_config_screen_delete_cb(lv_event_t *e) {
-	indicator_input_visibility_t *vis = (indicator_input_visibility_t *)lv_event_get_user_data(e);
-	if (vis) lv_mem_free(vis);
+	indicator_input_visibility_t *vis =
+		(indicator_input_visibility_t *)lv_event_get_user_data(e);
+	if (vis)
+		lv_mem_free(vis);
 }
 
 static void save_indicator_config_cb(lv_event_t *e) {
-	indicator_input_visibility_t *vis = (indicator_input_visibility_t *)lv_event_get_user_data(e);
-	if (vis && vis->input_src_dropdown && lv_obj_is_valid(vis->input_src_dropdown) && vis->indicator_idx < 2) {
-		uint8_t new_src = (uint8_t)lv_dropdown_get_selected(vis->input_src_dropdown);
+	indicator_input_visibility_t *vis =
+		(indicator_input_visibility_t *)lv_event_get_user_data(e);
+	if (vis && vis->input_src_dropdown &&
+		lv_obj_is_valid(vis->input_src_dropdown) && vis->indicator_idx < 2) {
+		uint8_t new_src =
+			(uint8_t)lv_dropdown_get_selected(vis->input_src_dropdown);
 		indicator_configs[vis->indicator_idx].input_source = new_src;
-		/* When switching to CAN BUS, turn indicator off until CAN message sets it on */
+		/* When switching to CAN BUS, turn indicator off until CAN message sets
+		 * it on */
 		if (new_src == 1) {
 			indicator_configs[vis->indicator_idx].current_state = false;
 			previous_indicator_states[vis->indicator_idx] = false;
 		}
 		config_store_save_indicators(indicator_configs, 2);
-		/* Sync main screen indicator opacity to current state before returning */
+		/* Sync main screen indicator opacity to current state before returning
+		 */
 		update_indicator_ui_immediate(0);
 		update_indicator_ui_immediate(1);
 	}
@@ -393,7 +421,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_dropdown_set_options(input_src_dropdown, "Wire\nCAN BUS");
 	lv_obj_set_width(input_src_dropdown, 120);
 	lv_obj_align(input_src_dropdown, LV_ALIGN_CENTER, -180, -32);
-	lv_dropdown_set_selected(input_src_dropdown,
+	lv_dropdown_set_selected(
+		input_src_dropdown,
 		indicator_idx < 2 ? indicator_configs[indicator_idx].input_source : 0);
 	if (lv_dropdown_get_selected(input_src_dropdown) > 1)
 		lv_dropdown_set_selected(input_src_dropdown, 0);
@@ -549,8 +578,10 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 						 LV_STATE_CHECKED); // Default to enabled
 	}
 
-	/* Wire vs CAN BUS: when Wire selected, hide CAN ID / bit / toggle / animation */
-	indicator_input_visibility_t *vis = lv_mem_alloc(sizeof(indicator_input_visibility_t));
+	/* Wire vs CAN BUS: when Wire selected, hide CAN ID / bit / toggle /
+	 * animation */
+	indicator_input_visibility_t *vis =
+		lv_mem_alloc(sizeof(indicator_input_visibility_t));
 	if (vis) {
 		vis->indicator_idx = indicator_idx;
 		vis->input_src_dropdown = input_src_dropdown;
@@ -564,9 +595,9 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 		vis->animation_label = animation_label;
 		vis->animation_switch = animation_switch;
 		lv_obj_add_event_cb(input_src_dropdown, indicator_input_src_changed_cb,
-				    LV_EVENT_VALUE_CHANGED, vis);
+							LV_EVENT_VALUE_CHANGED, vis);
 		lv_obj_add_event_cb(config_screen, indicator_config_screen_delete_cb,
-				    LV_EVENT_DELETE, vis);
+							LV_EVENT_DELETE, vis);
 		/* Initial state: Wire (0) = hide CAN rows */
 		if (lv_dropdown_get_selected(input_src_dropdown) == 0) {
 			lv_obj_add_flag(can_id_label, LV_OBJ_FLAG_HIDDEN);
@@ -599,8 +630,10 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_pos(back_btn, 300, 200);
 	lv_obj_center(back_label);
 
-	// Save button event handler (pass vis so input_source can be read and saved to NVS)
-	lv_obj_add_event_cb(save_btn, save_indicator_config_cb, LV_EVENT_CLICKED, vis);
+	// Save button event handler (pass vis so input_source can be read and saved
+	// to NVS)
+	lv_obj_add_event_cb(save_btn, save_indicator_config_cb, LV_EVENT_CLICKED,
+						vis);
 
 	// Back button event handler
 	lv_obj_add_event_cb(back_btn, back_indicator_config_cb, LV_EVENT_CLICKED,
@@ -684,7 +717,8 @@ void update_config_preview(uint8_t indicator_idx) {
 	}
 }
 
-/** Apply analog (wire) indicator state. Only updates indicators with input_source == Wire (0). */
+/** Apply analog (wire) indicator state. Only updates indicators with
+ * input_source == Wire (0). */
 void indicator_apply_analog_state(bool left_on, bool right_on) {
 	for (int i = 0; i < 2; i++) {
 		if (indicator_configs[i].input_source != 0)
@@ -789,61 +823,141 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 	}
 }
 
-void widget_indicator_create(lv_obj_t *parent)
-{
-    ui_Indicator_Left = lv_img_create(parent);
-    lv_img_set_src(ui_Indicator_Left, &ui_img_indicator_left_png);
-    lv_obj_set_width(ui_Indicator_Left, LV_SIZE_CONTENT);
-    lv_obj_set_height(ui_Indicator_Left, LV_SIZE_CONTENT);
-    lv_obj_set_x(ui_Indicator_Left, -95);
-    lv_obj_set_y(ui_Indicator_Left, -133);
-    lv_obj_set_align(ui_Indicator_Left, LV_ALIGN_CENTER);
-    lv_obj_add_flag(ui_Indicator_Left, LV_OBJ_FLAG_ADV_HITTEST);
-    lv_obj_clear_flag(ui_Indicator_Left, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_opa(ui_Indicator_Left, 50, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_outline_width(ui_Indicator_Left, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+void widget_indicator_create(lv_obj_t *parent) {
+	ui_Indicator_Left = lv_img_create(parent);
+	lv_img_set_src(ui_Indicator_Left, &ui_img_indicator_left_png);
+	lv_obj_set_width(ui_Indicator_Left, LV_SIZE_CONTENT);
+	lv_obj_set_height(ui_Indicator_Left, LV_SIZE_CONTENT);
+	lv_obj_set_x(ui_Indicator_Left, -95);
+	lv_obj_set_y(ui_Indicator_Left, -133);
+	lv_obj_set_align(ui_Indicator_Left, LV_ALIGN_CENTER);
+	lv_obj_add_flag(ui_Indicator_Left, LV_OBJ_FLAG_ADV_HITTEST);
+	lv_obj_clear_flag(ui_Indicator_Left, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_opa(ui_Indicator_Left, 50,
+						 LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_outline_width(ui_Indicator_Left, 0,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_Indicator_Right = lv_img_create(parent);
-    lv_img_set_src(ui_Indicator_Right, &ui_img_indicator_right_png);
-    lv_obj_set_width(ui_Indicator_Right, LV_SIZE_CONTENT);
-    lv_obj_set_height(ui_Indicator_Right, LV_SIZE_CONTENT);
-    lv_obj_set_x(ui_Indicator_Right, 95);
-    lv_obj_set_y(ui_Indicator_Right, -133);
-    lv_obj_set_align(ui_Indicator_Right, LV_ALIGN_CENTER);
-    lv_obj_add_flag(ui_Indicator_Right, LV_OBJ_FLAG_ADV_HITTEST);
-    lv_obj_clear_flag(ui_Indicator_Right, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_opa(ui_Indicator_Right, 50, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_outline_width(ui_Indicator_Right, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	ui_Indicator_Right = lv_img_create(parent);
+	lv_img_set_src(ui_Indicator_Right, &ui_img_indicator_right_png);
+	lv_obj_set_width(ui_Indicator_Right, LV_SIZE_CONTENT);
+	lv_obj_set_height(ui_Indicator_Right, LV_SIZE_CONTENT);
+	lv_obj_set_x(ui_Indicator_Right, 95);
+	lv_obj_set_y(ui_Indicator_Right, -133);
+	lv_obj_set_align(ui_Indicator_Right, LV_ALIGN_CENTER);
+	lv_obj_add_flag(ui_Indicator_Right, LV_OBJ_FLAG_ADV_HITTEST);
+	lv_obj_clear_flag(ui_Indicator_Right, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_opa(ui_Indicator_Right, 50,
+						 LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_outline_width(ui_Indicator_Right, 0,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    lv_obj_t *left_ta = lv_obj_create(parent);
-    lv_obj_set_size(left_ta, 50, 50);
-    lv_obj_set_x(left_ta, -95); lv_obj_set_y(left_ta, -133);
-    lv_obj_set_align(left_ta, LV_ALIGN_CENTER);
-    lv_obj_clear_flag(left_ta, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    uint8_t *left_id = lv_mem_alloc(sizeof(uint8_t));
-    if (left_id) { *left_id = 0; lv_obj_add_event_cb(left_ta, indicator_longpress_cb, LV_EVENT_LONG_PRESSED, left_id); }
+	lv_obj_t *left_ta = lv_obj_create(parent);
+	lv_obj_set_size(left_ta, 50, 50);
+	lv_obj_set_x(left_ta, -95);
+	lv_obj_set_y(left_ta, -133);
+	lv_obj_set_align(left_ta, LV_ALIGN_CENTER);
+	lv_obj_clear_flag(left_ta, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_opa(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	uint8_t *left_id = lv_mem_alloc(sizeof(uint8_t));
+	if (left_id) {
+		*left_id = 0;
+		lv_obj_add_event_cb(left_ta, indicator_longpress_cb,
+							LV_EVENT_LONG_PRESSED, left_id);
+	}
 
-    lv_obj_t *right_ta = lv_obj_create(parent);
-    lv_obj_set_size(right_ta, 50, 50);
-    lv_obj_set_x(right_ta, 95); lv_obj_set_y(right_ta, -133);
-    lv_obj_set_align(right_ta, LV_ALIGN_CENTER);
-    lv_obj_clear_flag(right_ta, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    uint8_t *right_id = lv_mem_alloc(sizeof(uint8_t));
-    if (right_id) { *right_id = 1; lv_obj_add_event_cb(right_ta, indicator_longpress_cb, LV_EVENT_LONG_PRESSED, right_id); }
+	lv_obj_t *right_ta = lv_obj_create(parent);
+	lv_obj_set_size(right_ta, 50, 50);
+	lv_obj_set_x(right_ta, 95);
+	lv_obj_set_y(right_ta, -133);
+	lv_obj_set_align(right_ta, LV_ALIGN_CENTER);
+	lv_obj_clear_flag(right_ta, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_opa(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	uint8_t *right_id = lv_mem_alloc(sizeof(uint8_t));
+	if (right_id) {
+		*right_id = 1;
+		lv_obj_add_event_cb(right_ta, indicator_longpress_cb,
+							LV_EVENT_LONG_PRESSED, right_id);
+	}
 }
 
-void init_indicator_configs(void)
-{
-    for (int i = 0; i < 2; i++) {
-        indicator_configs[i].can_id            = 0;
-        indicator_configs[i].bit_position      = 0;
-        indicator_configs[i].input_source      = 0; /* 0 = Wire, 1 = CAN */
-        indicator_configs[i].is_momentary      = true;
-        indicator_configs[i].current_state     = false;
-        indicator_configs[i].animation_enabled = true;
-    }
+void init_indicator_configs(void) {
+	for (int i = 0; i < 2; i++) {
+		indicator_configs[i].can_id = 0;
+		indicator_configs[i].bit_position = 0;
+		indicator_configs[i].input_source = 0; /* 0 = Wire, 1 = CAN */
+		indicator_configs[i].is_momentary = true;
+		indicator_configs[i].current_state = false;
+		indicator_configs[i].animation_enabled = true;
+	}
+}
+
+/* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
+
+static void _indicator_create(widget_t *w, lv_obj_t *parent) {
+	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	if (slot == 0) {
+		widget_indicator_create(parent);
+	}
+	/* root points to the relevant image obj */
+	w->root = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+}
+static void _indicator_update(widget_t *w, void *data) {
+	(void)w;
+	update_indicator_ui(data);
+}
+static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
+	w->w = nw;
+	w->h = nh;
+}
+static void _indicator_open_settings(widget_t *w) {
+	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	create_indicator_config_menu(slot);
+}
+static void _indicator_to_json(widget_t *w, cJSON *out) {
+	widget_base_to_json(w, out);
+	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	if (slot < 2) {
+		cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+		cJSON_AddNumberToObject(cfg, "slot", slot);
+		cJSON_AddNumberToObject(cfg, "input_source",
+								indicator_configs[slot].input_source);
+		cJSON_AddNumberToObject(cfg, "can_id", indicator_configs[slot].can_id);
+		cJSON_AddBoolToObject(cfg, "animation",
+							  indicator_configs[slot].animation_enabled);
+	}
+}
+static void _indicator_from_json(widget_t *w, cJSON *in) {
+	widget_base_from_json(w, in);
+}
+static void _indicator_destroy(widget_t *w) { free(w); }
+
+/* Default positions (relative to LV_ALIGN_CENTER): left x=-95, right x=+95,
+ * y=-133 */
+static const int16_t s_indicator_default_x[2] = {-95, 95};
+
+widget_t *widget_indicator_create_instance(uint8_t slot) {
+	widget_t *w = calloc(1, sizeof(widget_t));
+	if (!w)
+		return NULL;
+
+	w->type = WIDGET_INDICATOR;
+	w->x = s_indicator_default_x[slot & 1];
+	w->y = -133;
+	w->w = 50;
+	w->h = 50;
+	w->type_data = (void *)(uintptr_t)(slot & 1);
+	snprintf(w->id, sizeof(w->id), "indicator_%u", slot & 1);
+
+	w->create = _indicator_create;
+	w->update = _indicator_update;
+	w->resize = _indicator_resize;
+	w->open_settings = _indicator_open_settings;
+	w->to_json = _indicator_to_json;
+	w->from_json = _indicator_from_json;
+	w->destroy = _indicator_destroy;
+
+	return w;
 }

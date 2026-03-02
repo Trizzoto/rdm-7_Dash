@@ -1,28 +1,29 @@
 #include "widget_panel.h"
-#include "widget_dispatcher.h"
-#include "ui/screens/ui_Screen3.h"
-#include "ui/ui.h"
-#include "ui/theme.h"
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
-#include "storage/config_store.h"
-#include "lvgl.h"
-#include "lvgl_helpers.h"
 #include "driver/twai.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lvgl.h"
+#include "lvgl_helpers.h"
+#include "storage/config_store.h"
+#include "ui/callbacks/ui_callbacks.h"
+#include "ui/menu/menu_screen.h"
+#include "ui/screens/ui_Screen3.h"
+#include "ui/settings/device_settings.h"
+#include "ui/settings/preset_picker.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
+#include "widget_dispatcher.h"
+#include "widget_types.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ui/menu/menu_screen.h"
-#include "ui/settings/device_settings.h"
-#include "ui/settings/preset_picker.h"
-#include "ui/callbacks/ui_callbacks.h"
 
 uint64_t last_panel_can_received[8] = {0};
 
@@ -131,7 +132,7 @@ void update_panel_ui(void *param) {
 
 // Immediate (no-alloc, no-async) panel update
 void update_panel_ui_immediate(uint8_t i, const char *value_str,
-									  double final_value) {
+							   double final_value) {
 	if (i >= 8)
 		return;
 	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]) &&
@@ -215,7 +216,7 @@ void init_styles(void) {
 	lv_style_set_radius(&box_style, 7);
 	lv_style_set_bg_color(&box_style,
 						  THEME_COLOR_BG); // Black background
-	lv_style_set_bg_opa(&box_style, 255); // Full opacity for black background
+	lv_style_set_bg_opa(&box_style, 255);  // Full opacity for black background
 	lv_style_set_clip_corner(&box_style, false);
 	lv_style_set_border_color(&box_style, THEME_COLOR_PANEL);
 	lv_style_set_border_opa(&box_style, 255);
@@ -246,9 +247,8 @@ lv_style_t *get_common_style(void) { return &common_style; }
 lv_style_t *get_box_style(void) { return &box_style; }
 
 // Shared panel helper used by widget_rpm_bar.c
-lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x,
-                        int y, int radius, lv_color_t bg_color,
-                        int transform_angle) {
+lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x, int y,
+					   int radius, lv_color_t bg_color, int transform_angle) {
 	lv_obj_t *panel = lv_obj_create(parent);
 	lv_obj_set_size(panel, width, height);
 	lv_obj_set_pos(panel, x, y);
@@ -267,9 +267,8 @@ lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x,
 /////////////////////////////////////////////	ITEM CREATION
 ////////////////////////////////////////////////
 
-void create_transparent_click_zone(lv_obj_t *parent,
-										  lv_obj_t *target_label,
-										  uint8_t value_id) {
+void create_transparent_click_zone(lv_obj_t *parent, lv_obj_t *target_label,
+								   uint8_t value_id) {
 	lv_obj_t *click_zone = lv_obj_create(parent);
 
 	// Check if this is a bar (BAR1_VALUE_ID=12 or BAR2_VALUE_ID=13) and adjust
@@ -290,8 +289,10 @@ void create_transparent_click_zone(lv_obj_t *parent,
 	lv_obj_add_flag(click_zone, LV_OBJ_FLAG_CLICKABLE);
 
 	// Add touch events for quick tap detection (to show menu button)
-	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_PRESSED, NULL);
-	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_RELEASED, NULL);
+	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_PRESSED,
+						NULL);
+	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_RELEASED,
+						NULL);
 
 	// Allocate memory to store value_id and pass it to the event callback
 	uint8_t *id_ptr = lv_mem_alloc(sizeof(uint8_t));
@@ -310,60 +311,160 @@ void init_boxes_and_arcs(void) {
 		lv_obj_set_align(ui_Box[i], LV_ALIGN_CENTER);
 		lv_obj_clear_flag(ui_Box[i], LV_OBJ_FLAG_SCROLLABLE);
 		// Enable content clipping so children don't overflow
-		lv_obj_set_style_clip_corner(ui_Box[i], true, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_clip_corner(ui_Box[i], true,
+									 LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_add_style(ui_Box[i], &box_style,
 						 LV_PART_MAIN | LV_STATE_DEFAULT);
-		
-		// Add touch events to boxes for quick tap detection (to show menu button)
-		lv_obj_add_event_cb(ui_Box[i], screen3_touch_event_cb, LV_EVENT_PRESSED, NULL);
-		lv_obj_add_event_cb(ui_Box[i], screen3_touch_event_cb, LV_EVENT_RELEASED, NULL);
+
+		// Add touch events to boxes for quick tap detection (to show menu
+		// button)
+		lv_obj_add_event_cb(ui_Box[i], screen3_touch_event_cb, LV_EVENT_PRESSED,
+							NULL);
+		lv_obj_add_event_cb(ui_Box[i], screen3_touch_event_cb,
+							LV_EVENT_RELEASED, NULL);
 	}
 }
 
-void widget_panel_create(lv_obj_t *parent)
-{
-    init_boxes_and_arcs();
-    for (uint8_t i = 0; i < 8; i++) {
-        ui_Label[i] = lv_label_create(ui_Box[i]);
-        lv_label_set_text(ui_Label[i], label_texts[i]);
-        lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_opa(ui_Label[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_Label[i], THEME_FONT_DASH_LABEL, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_align(ui_Label[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_width(ui_Label[i], 145);
-        lv_label_set_long_mode(ui_Label[i], LV_LABEL_LONG_CLIP);
-        lv_coord_t relative_y = label_positions[i][1] - box_positions[i][1];
-        lv_obj_set_x(ui_Label[i], 0); lv_obj_set_y(ui_Label[i], relative_y);
-        lv_obj_set_align(ui_Label[i], LV_ALIGN_CENTER);
+void widget_panel_create(lv_obj_t *parent) {
+	init_boxes_and_arcs();
+	for (uint8_t i = 0; i < 8; i++) {
+		ui_Label[i] = lv_label_create(ui_Box[i]);
+		lv_label_set_text(ui_Label[i], label_texts[i]);
+		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_opa(ui_Label[i], 255,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_font(ui_Label[i], THEME_FONT_DASH_LABEL,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_align(ui_Label[i], LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_set_width(ui_Label[i], 145);
+		lv_label_set_long_mode(ui_Label[i], LV_LABEL_LONG_CLIP);
+		lv_coord_t relative_y = label_positions[i][1] - box_positions[i][1];
+		lv_obj_set_x(ui_Label[i], 0);
+		lv_obj_set_y(ui_Label[i], relative_y);
+		lv_obj_set_align(ui_Label[i], LV_ALIGN_CENTER);
 
-        ui_Value[i] = lv_label_create(parent);
-        lv_label_set_text(ui_Value[i], "---");
-        strcpy(previous_values[i], "---");
-        lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_opa(ui_Value[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_Value[i], THEME_FONT_DASH_VALUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_align(ui_Value[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_width(ui_Value[i], 140);
-        lv_label_set_long_mode(ui_Value[i], LV_LABEL_LONG_CLIP);
-        lv_obj_set_x(ui_Value[i], value_positions[i][0]);
-        lv_obj_set_y(ui_Value[i], value_positions[i][1]);
-        lv_obj_set_align(ui_Value[i], LV_ALIGN_CENTER);
+		ui_Value[i] = lv_label_create(parent);
+		lv_label_set_text(ui_Value[i], "---");
+		strcpy(previous_values[i], "---");
+		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_opa(ui_Value[i], 255,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_font(ui_Value[i], THEME_FONT_DASH_VALUE,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_align(ui_Value[i], LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_set_width(ui_Value[i], 140);
+		lv_label_set_long_mode(ui_Value[i], LV_LABEL_LONG_CLIP);
+		lv_obj_set_x(ui_Value[i], value_positions[i][0]);
+		lv_obj_set_y(ui_Value[i], value_positions[i][1]);
+		lv_obj_set_align(ui_Value[i], LV_ALIGN_CENTER);
 
-        create_transparent_click_zone(parent, ui_Value[i], i + 1);
+		create_transparent_click_zone(parent, ui_Value[i], i + 1);
 
-        ui_CustomText[i] = lv_label_create(parent);
-        lv_label_set_text(ui_CustomText[i], values_config[i].custom_text);
-        lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_opa(ui_CustomText[i], 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_CustomText[i], THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_align(ui_CustomText[i], LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_width(ui_CustomText[i], 60);
-        lv_label_set_long_mode(ui_CustomText[i], LV_LABEL_LONG_CLIP);
-        lv_obj_set_x(ui_CustomText[i], box_positions[i][0] + 41);
-        lv_obj_set_y(ui_CustomText[i], box_positions[i][1] + 32);
-        lv_obj_set_align(ui_CustomText[i], LV_ALIGN_CENTER);
-        if (strlen(values_config[i].custom_text) == 0) lv_obj_add_flag(ui_CustomText[i], LV_OBJ_FLAG_HIDDEN);
-    }
+		ui_CustomText[i] = lv_label_create(parent);
+		lv_label_set_text(ui_CustomText[i], values_config[i].custom_text);
+		lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_opa(ui_CustomText[i], 255,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_font(ui_CustomText[i], THEME_FONT_BODY,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_align(ui_CustomText[i], LV_TEXT_ALIGN_RIGHT,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_width(ui_CustomText[i], 60);
+		lv_label_set_long_mode(ui_CustomText[i], LV_LABEL_LONG_CLIP);
+		lv_obj_set_x(ui_CustomText[i], box_positions[i][0] + 41);
+		lv_obj_set_y(ui_CustomText[i], box_positions[i][1] + 32);
+		lv_obj_set_align(ui_CustomText[i], LV_ALIGN_CENTER);
+		if (strlen(values_config[i].custom_text) == 0)
+			lv_obj_add_flag(ui_CustomText[i], LV_OBJ_FLAG_HIDDEN);
+	}
 }
 
-uint64_t *widget_panel_get_last_can_time(uint8_t idx) { return &last_panel_can_received[idx & 7]; }
+uint64_t *widget_panel_get_last_can_time(uint8_t idx) {
+	return &last_panel_can_received[idx & 7];
+}
+
+/* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
+
+/* Panel sizes are fixed at 155×92; positions match box_positions[] above.
+ * Pixel offsets are relative to screen centre (LV_ALIGN_CENTER). */
+static const int16_t s_panel_default_x[8] = {-312, -146, -312, -146,
+											 146,  312,	 146,  312};
+static const int16_t s_panel_default_y[8] = {-26, -26, 82, 82,
+											 -26, -26, 82, 82};
+
+/* create vtable adapter: widget_panel_create() builds all 8 at once.
+ * Only create on slot 0 call; subsequent slots are already built. */
+static void _panel_create(widget_t *w, lv_obj_t *parent) {
+	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	if (slot == 0) {
+		widget_panel_create(parent);
+	}
+	/* position the per-slot box and value label */
+	if (slot < 8) {
+		if (ui_Box[slot] && lv_obj_is_valid(ui_Box[slot])) {
+			lv_obj_set_x(ui_Box[slot], s_panel_default_x[slot]);
+			lv_obj_set_y(ui_Box[slot], s_panel_default_y[slot]);
+		}
+		w->root = ui_Box[slot];
+	}
+}
+
+static void _panel_update(widget_t *w, void *data) {
+	(void)w;
+	update_panel_ui(data);
+}
+static void _panel_resize(widget_t *w, uint16_t nw, uint16_t nh) {
+	if (!w->root || !lv_obj_is_valid(w->root))
+		return;
+	lv_obj_set_size(w->root, nw, nh);
+	w->w = nw;
+	w->h = nh;
+}
+static void _panel_open_settings(widget_t *w) {
+	(void)w; /* triggered via LVGL long-press */
+}
+static void _panel_to_json(widget_t *w, cJSON *out) {
+	widget_base_to_json(w, out);
+	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	if (slot < 8) {
+		cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+		cJSON_AddNumberToObject(cfg, "slot", slot);
+		cJSON_AddNumberToObject(cfg, "can_id", values_config[slot].can_id);
+		cJSON_AddNumberToObject(cfg, "scale", values_config[slot].scale);
+		cJSON_AddNumberToObject(cfg, "offset",
+								values_config[slot].value_offset);
+		cJSON_AddStringToObject(cfg, "label", label_texts[slot]);
+	}
+}
+static void _panel_from_json(widget_t *w, cJSON *in) {
+	widget_base_from_json(w, in);
+	/* Full config restoration handled by NVS / config_store during boot */
+}
+static void _panel_destroy(widget_t *w) { free(w); }
+
+widget_t *widget_panel_create_instance(uint8_t slot) {
+	widget_t *w = calloc(1, sizeof(widget_t));
+	if (!w)
+		return NULL;
+
+	w->type = WIDGET_PANEL;
+	w->x = s_panel_default_x[slot < 8 ? slot : 0];
+	w->y = s_panel_default_y[slot < 8 ? slot : 0];
+	w->w = 155;
+	w->h = 92;
+	w->type_data = (void *)(uintptr_t)slot; /* store slot index */
+	snprintf(w->id, sizeof(w->id), "panel_%u", slot);
+
+	w->create = _panel_create;
+	w->update = _panel_update;
+	w->resize = _panel_resize;
+	w->open_settings = _panel_open_settings;
+	w->to_json = _panel_to_json;
+	w->from_json = _panel_from_json;
+	w->destroy = _panel_destroy;
+
+	return w;
+}

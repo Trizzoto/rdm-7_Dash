@@ -1,6 +1,7 @@
 #pragma once
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
+#include "widget_types.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +33,15 @@ void create_indicator_config_menu(uint8_t indicator_idx);
 
 /* The animation timer handle must be accessible from ui_Screen3.c for pause. */
 extern lv_timer_t *indicator_animation_timer;
+
+/**
+ * Phase 2 — Factory function.
+ * Allocates and returns a widget_t wired with the indicator vtable.
+ * @param slot  0 = left indicator, 1 = right indicator.
+ * @return      Heap-allocated widget_t *, caller must eventually call
+ * w->destroy(w).
+ */
+widget_t *widget_indicator_create_instance(uint8_t slot);
 
 #ifdef __cplusplus
 }

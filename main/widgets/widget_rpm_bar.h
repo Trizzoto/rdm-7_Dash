@@ -1,6 +1,7 @@
 #pragma once
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
+#include "widget_types.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -37,7 +38,8 @@ void stop_limiter_effect_demo(void);
 /** Timer callback for deferred RPM colour update. */
 void check_rpm_color_update(lv_timer_t *timer);
 
-/** RPM-specific config dropdown/roller callbacks (registered by config_modal). */
+/** RPM-specific config dropdown/roller callbacks (registered by config_modal).
+ */
 void rpm_gauge_roller_event_cb(lv_event_t *e);
 void rpm_redline_roller_event_cb(lv_event_t *e);
 void rpm_ecu_dropdown_event_cb(lv_event_t *e);
@@ -57,6 +59,13 @@ void create_limiter_color_wheel_popup(void);
 
 /** Returns pointer to last_rpm_can_received for dispatcher timeout tracking. */
 uint64_t *widget_rpm_bar_get_last_can_time(void);
+
+/**
+ * Phase 2 — Factory function.
+ * Allocates and returns a widget_t wired with the rpm_bar vtable.
+ * @return Heap-allocated widget_t *, caller must eventually call w->destroy(w).
+ */
+widget_t *widget_rpm_bar_create_instance(void);
 
 #ifdef __cplusplus
 }

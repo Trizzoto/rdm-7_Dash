@@ -1,30 +1,30 @@
 #include "widget_rpm_bar.h"
-#include "widget_dispatcher.h"
-#include "ui/screens/ui_Screen3.h"
-#include "ui/ui.h"
-#include "ui/theme.h"
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
-#include "storage/config_store.h"
-#include "lvgl.h"
-#include "lvgl_helpers.h"
 #include "driver/twai.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lvgl.h"
+#include "lvgl_helpers.h"
+#include "storage/config_store.h"
+#include "ui/callbacks/ui_callbacks.h"
+#include "ui/menu/menu_screen.h"
+#include "ui/screens/ui_Screen3.h"
+#include "ui/settings/device_settings.h"
+#include "ui/settings/preset_picker.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
+#include "widget_bar.h"
+#include "widget_dispatcher.h"
+#include "widget_panel.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ui/menu/menu_screen.h"
-#include "ui/settings/device_settings.h"
-#include "ui/settings/preset_picker.h"
-#include "ui/callbacks/ui_callbacks.h"
-#include "widget_bar.h"
-#include "widget_panel.h"
 
 uint64_t last_rpm_can_received = 0;
 
@@ -38,7 +38,7 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value);
 
 /* Missing static state variables */
 static bool real_limiter_active = false;
-static int  last_rpm_for_limiter_check = 0;
+static int last_rpm_for_limiter_check = 0;
 static bool limiter_active = false;
 
 /* menu_rpm_value_label is owned by menu_screen.c */
@@ -82,7 +82,8 @@ void rpm_gauge_roller_event_cb(lv_event_t *e) {
 void rpm_redline_roller_event_cb(lv_event_t *e) {
 	lv_obj_t *roller = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(roller);
-	rpm_redline_value = 3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
+	rpm_redline_value =
+		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Stop any active limiter demo before UI changes
 	stop_limiter_effect_demo();
@@ -271,7 +272,6 @@ void rpm_ecu_dropdown_event_cb(lv_event_t *e) {
 									 values_config[RPM_VALUE_ID - 1].decimals);
 		}
 	}
-
 }
 
 void rpm_color_dropdown_event_cb(lv_event_t *e) {
@@ -379,7 +379,8 @@ void rpm_limiter_roller_event_cb(lv_event_t *e) {
 	lv_obj_t *roller = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(roller);
 
-	int32_t rpm_value = 3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
+	int32_t rpm_value =
+		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
 	values_config[RPM_VALUE_ID - 1].rpm_limiter_value = rpm_value;
@@ -391,40 +392,31 @@ void rpm_limiter_color_dropdown_event_cb(lv_event_t *e) {
 
 	switch (selected) {
 	case 0: // Green
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_GREEN;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_GREEN;
 		break;
 	case 1: // Light Blue
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_CYAN;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_CYAN;
 		break;
 	case 2: // Yellow
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_YELLOW;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_YELLOW;
 		break;
 	case 3: // Orange
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_ORANGE;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_ORANGE;
 		break;
 	case 4: // Red
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_RED;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_RED;
 		break;
 	case 5: // Dark Blue
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_BLUE;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_BLUE;
 		break;
 	case 6: // Purple
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_PURPLE;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_PURPLE;
 		break;
 	case 7: // Magenta
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_MAGENTA;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_MAGENTA;
 		break;
 	case 8: // Pink
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			THEME_COLOR_PINK;
+		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_PINK;
 		break;
 	case 9: // Custom
 		create_limiter_color_wheel_popup();
@@ -518,7 +510,8 @@ void rpm_background_threshold_roller_event_cb(lv_event_t *e) {
 	lv_obj_t *roller = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(roller);
 
-	int32_t threshold_value = 3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
+	int32_t threshold_value =
+		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
 	values_config[RPM_VALUE_ID - 1].rpm_background_value = threshold_value;
@@ -1431,8 +1424,7 @@ void create_limiter_color_wheel_popup(void) {
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_width(limiter_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(limiter_color_wheel_popup,
-								  THEME_COLOR_BG,
+	lv_obj_set_style_shadow_color(limiter_color_wheel_popup, THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(limiter_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1586,17 +1578,17 @@ void set_rpm_value(int rpm) {
 				// active
 				for (int i = 0; i < 8; i++) {
 					if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-						lv_obj_set_style_bg_color(
-							ui_Box[i], THEME_COLOR_PANEL,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_PANEL,
+												  LV_PART_MAIN |
+													  LV_STATE_DEFAULT);
 					}
 				}
 
 				// Change text elements to grey when RPM background is active
 				if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
-					lv_obj_set_style_text_color(
-						ui_RPM_Value, THEME_COLOR_PANEL,
-						LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_PANEL,
+												LV_PART_MAIN |
+													LV_STATE_DEFAULT);
 				}
 				if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
 					lv_obj_set_style_text_color(
@@ -1645,9 +1637,9 @@ void set_rpm_value(int rpm) {
 				// inactive
 				for (int i = 0; i < 8; i++) {
 					if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-						lv_obj_set_style_bg_color(
-							ui_Box[i], THEME_COLOR_BG,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_BG,
+												  LV_PART_MAIN |
+													  LV_STATE_DEFAULT);
 					}
 				}
 
@@ -1664,9 +1656,9 @@ void set_rpm_value(int rpm) {
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-					lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
-												LV_PART_MAIN |
-													LV_STATE_DEFAULT);
+					lv_obj_set_style_text_color(
+						ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
+						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
 					lv_obj_set_style_text_color(
@@ -2009,8 +2001,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 			lv_label_set_text(label, rpm_str);
 
 			// Style the label
-			lv_obj_set_style_text_color(label, THEME_COLOR_BG,
-										LV_PART_MAIN);
+			lv_obj_set_style_text_color(label, THEME_COLOR_BG, LV_PART_MAIN);
 			lv_obj_set_style_text_opa(label, LV_OPA_COVER, LV_PART_MAIN);
 			lv_obj_set_style_text_font(label, THEME_FONT_DASH_TICK,
 									   LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2053,33 +2044,98 @@ void update_rpm_lines(lv_obj_t *parent) {
 	}
 }
 
-void widget_rpm_bar_create(lv_obj_t *parent)
-{
-    create_rpm_bar_gauge(parent);
-    update_rpm_lines(parent);
-    update_redline_position();
+void widget_rpm_bar_create(lv_obj_t *parent) {
+	create_rpm_bar_gauge(parent);
+	update_rpm_lines(parent);
+	update_redline_position();
 
-    ui_RPM_Value = lv_label_create(parent);
-    lv_obj_set_width(ui_RPM_Value, LV_SIZE_CONTENT);
-    lv_obj_set_height(ui_RPM_Value, LV_SIZE_CONTENT);
-    lv_obj_set_x(ui_RPM_Value, 0); lv_obj_set_y(ui_RPM_Value, -127);
-    lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_RPM_Value, "---");
-    strcpy(previous_values[RPM_VALUE_ID - 1], "---");
-    lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_opa(ui_RPM_Value, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_RPM_Value, THEME_FONT_DASH_RPM, LV_PART_MAIN | LV_STATE_DEFAULT);
+	ui_RPM_Value = lv_label_create(parent);
+	lv_obj_set_width(ui_RPM_Value, LV_SIZE_CONTENT);
+	lv_obj_set_height(ui_RPM_Value, LV_SIZE_CONTENT);
+	lv_obj_set_x(ui_RPM_Value, 0);
+	lv_obj_set_y(ui_RPM_Value, -127);
+	lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
+	lv_label_set_text(ui_RPM_Value, "---");
+	strcpy(previous_values[RPM_VALUE_ID - 1], "---");
+	lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(ui_RPM_Value, 255,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(ui_RPM_Value, THEME_FONT_DASH_RPM,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    ui_RPM_Label = lv_label_create(parent);
-    lv_obj_set_x(ui_RPM_Label, 0); lv_obj_set_y(ui_RPM_Label, -164);
-    lv_obj_set_align(ui_RPM_Label, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_RPM_Label, "RPM");
-    lv_obj_set_style_text_color(ui_RPM_Label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_RPM_Label, THEME_FONT_DASH_LABEL, LV_PART_MAIN | LV_STATE_DEFAULT);
+	ui_RPM_Label = lv_label_create(parent);
+	lv_obj_set_x(ui_RPM_Label, 0);
+	lv_obj_set_y(ui_RPM_Label, -164);
+	lv_obj_set_align(ui_RPM_Label, LV_ALIGN_CENTER);
+	lv_label_set_text(ui_RPM_Label, "RPM");
+	lv_obj_set_style_text_color(ui_RPM_Label, THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(ui_RPM_Label, THEME_FONT_DASH_LABEL,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    if (values_config[RPM_VALUE_ID - 1].rpm_lights_enabled) {
-        create_rpm_lights_circles(parent);
-    }
+	if (values_config[RPM_VALUE_ID - 1].rpm_lights_enabled) {
+		create_rpm_lights_circles(parent);
+	}
 }
 
-uint64_t *widget_rpm_bar_get_last_can_time(void) { return &last_rpm_can_received; }
+uint64_t *widget_rpm_bar_get_last_can_time(void) {
+	return &last_rpm_can_received;
+}
+
+/* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
+
+static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
+	widget_rpm_bar_create(parent);
+	/* The RPM bar spans the full top of the screen; use the gauge as root */
+	w->root = rpm_bar_gauge;
+}
+static void _rpm_bar_update(widget_t *w, void *data) {
+	(void)w;
+	update_rpm_ui(data);
+}
+static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
+	w->w = nw;
+	w->h = nh;
+}
+static void _rpm_bar_open_settings(widget_t *w) { (void)w; }
+static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
+	widget_base_to_json(w, out);
+	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+	uint8_t idx = RPM_VALUE_ID - 1;
+	cJSON_AddNumberToObject(cfg, "can_id", values_config[idx].can_id);
+	cJSON_AddNumberToObject(cfg, "rpm_max", rpm_gauge_max);
+	cJSON_AddNumberToObject(cfg, "redline", rpm_redline_value);
+	cJSON_AddNumberToObject(cfg, "limiter",
+							values_config[idx].rpm_limiter_value);
+	cJSON_AddBoolToObject(cfg, "lights_enabled",
+						  values_config[idx].rpm_lights_enabled);
+}
+static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
+	widget_base_from_json(w, in);
+}
+static void _rpm_bar_destroy(widget_t *w) { free(w); }
+
+widget_t *widget_rpm_bar_create_instance(void) {
+	widget_t *w = calloc(1, sizeof(widget_t));
+	if (!w)
+		return NULL;
+
+	w->type = WIDGET_RPM_BAR;
+	/* RPM bar occupies full screen width at top */
+	w->x = 0;
+	w->y = 0;
+	w->w = 800;
+	w->h = 55;
+	snprintf(w->id, sizeof(w->id), "rpm_bar_0");
+
+	w->create = _rpm_bar_create;
+	w->update = _rpm_bar_update;
+	w->resize = _rpm_bar_resize;
+	w->open_settings = _rpm_bar_open_settings;
+	w->to_json = _rpm_bar_to_json;
+	w->from_json = _rpm_bar_from_json;
+	w->destroy = _rpm_bar_destroy;
+
+	return w;
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
+#include "widget_types.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,11 +40,20 @@ void create_speed_rpm_ratio_config_menu(void);
 void custom_gear_save_btn_event_cb(lv_event_t *e);
 void custom_gear_back_btn_event_cb(lv_event_t *e);
 
-/** Returns pointer to last_gear_can_received for dispatcher timeout tracking. */
+/** Returns pointer to last_gear_can_received for dispatcher timeout tracking.
+ */
 uint64_t *widget_gear_get_last_can_time(void);
 
-/* ui_Gear_Label is defined in widget_gear.c; declare extern for extern access */
+/* ui_Gear_Label is defined in widget_gear.c; declare extern for extern access
+ */
 extern lv_obj_t *ui_Gear_Label;
+
+/**
+ * Phase 2 — Factory function.
+ * Allocates and returns a widget_t wired with the gear vtable.
+ * @return Heap-allocated widget_t *, caller must eventually call w->destroy(w).
+ */
+widget_t *widget_gear_create_instance(void);
 
 #ifdef __cplusplus
 }
