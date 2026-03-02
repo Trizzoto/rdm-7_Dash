@@ -13,8 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "nvs.h"
-#include "nvs_flash.h"
+#include "storage/config_store.h"
 
 static const char *TAG = "CAN_MGR";
 
@@ -136,12 +135,8 @@ void reconfigure_can_filter(void)
 void can_init(void)
 {
     /* Load saved bitrate from NVS (default index 2 = 500 kbps) */
-    nvs_handle_t handle;
     uint8_t saved_bitrate = 2;
-    if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_get_u8(handle, "can_bitrate", &saved_bitrate);
-        nvs_close(handle);
-    }
+    config_store_load_bitrate(&saved_bitrate);
 
     switch (saved_bitrate) {
     case 0: g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();

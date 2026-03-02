@@ -16,9 +16,6 @@
 extern "C" {
 #endif
 
-extern void save_warning_configs_to_nvs();
-extern void load_warning_configs_from_nvs();
-extern void load_values_config_from_nvs();
 extern void device_settings_longpress_cb(lv_event_t* e);
 extern void build_twai_filter_from_configs(twai_filter_config_t *out_filter);
 
@@ -165,8 +162,6 @@ void fuel_sender_capture_full(uint8_t value_id);
 
 // Indicator config management functions
 void init_indicator_configs(void);
-void save_indicator_configs_to_nvs(void);
-void load_indicator_configs_from_nvs(void);
 void create_indicator_config_menu(uint8_t indicator_idx);
 void update_indicator_ui(void *param);
 /** Apply analog (wire) indicator state; only updates indicators with input_source == Wire (0). */

@@ -13,12 +13,12 @@
 #include "../config/config_controls.h"
 #include "../callbacks/ui_callbacks.h"
 #include "device_settings.h"
+#include "storage/config_store.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 /* Externs not already covered by the headers above */
 extern void reconfigure_can_filter(void);
-extern void save_values_config_to_nvs(void);
 extern void stop_limiter_effect_demo(void);
 extern char previous_values[13][64];
 extern lv_obj_t *keyboard;
@@ -95,7 +95,7 @@ void close_menu_event_cb(lv_event_t *e)
     lv_obj_t *ind = lv_label_create(old); lv_label_set_text(ind, "Saving...");
     lv_obj_align(ind, LV_ALIGN_CENTER, 0, 0); lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0); lv_refr_now(NULL);
 
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, MAX_VALUES);
     rebuild_can_dispatch();
     reconfigure_can_filter();
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -119,7 +119,7 @@ void cancel_menu_event_cb(lv_event_t *e)
     lv_obj_t *ind = lv_label_create(old); lv_label_set_text(ind, "Canceling...");
     lv_obj_align(ind, LV_ALIGN_CENTER, 0, 0); lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0); lv_refr_now(NULL);
 
-    load_values_config_from_nvs();
+    config_store_load_values(values_config, MAX_VALUES);
     vTaskDelay(pdMS_TO_TICKS(200));
     lv_obj_del(ind);
     do_screen_transition(old, btn);

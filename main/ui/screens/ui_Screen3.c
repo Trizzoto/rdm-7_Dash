@@ -1,6 +1,7 @@
 #include "screens/ui_Screen3.h"
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
+#include "storage/config_store.h"
 #include "../theme.h"
 #include "../callbacks/ui_callbacks.h"
 #include "../config/config_controls.h"
@@ -63,7 +64,6 @@ extern twai_general_config_t g_config;
 extern twai_filter_config_t f_config;
 extern volatile bool can_task_should_stop;
 extern void can_receive_task(void *pvParameter);
-extern void save_values_config_to_nvs();
 
 lv_obj_t *ui_Label[13] = {NULL};
 lv_obj_t *ui_Value[13] = {NULL};
@@ -2791,7 +2791,7 @@ static void save_warning_config_cb(lv_event_t *e) {
 	// Clean up
 	lv_mem_free(inputs);
 	lv_mem_free(save_data);
-	save_warning_configs_to_nvs();
+	config_store_save_warnings(warning_configs, 8);
 
 	// Return to Screen3
 	lv_scr_load(ui_Screen3);
@@ -2857,7 +2857,7 @@ static void save_indicator_config_cb(lv_event_t *e) {
 			indicator_configs[vis->indicator_idx].current_state = false;
 			previous_indicator_states[vis->indicator_idx] = false;
 		}
-		save_indicator_configs_to_nvs();
+		config_store_save_indicators(indicator_configs, 2);
 		/* Sync main screen indicator opacity to current state before returning */
 		update_indicator_ui_immediate(0);
 		update_indicator_ui_immediate(1);
@@ -2907,7 +2907,7 @@ static void indicator_can_id_changed_cb(lv_event_t *e) {
 	// Update configuration and save to NVS
 	indicator_configs[indicator_idx].can_id = can_id;
 	printf("Calling save_indicator_configs_to_nvs() for CAN ID change...\n");
-	save_indicator_configs_to_nvs();
+	config_store_save_indicators(indicator_configs, 2);
 
 	printf("Indicator %d CAN ID updated to: 0x%X\n", indicator_idx, can_id);
 }
@@ -2927,7 +2927,7 @@ static void indicator_bit_pos_changed_cb(lv_event_t *e) {
 	indicator_configs[indicator_idx].bit_position = bit_pos;
 	printf(
 		"Calling save_indicator_configs_to_nvs() for bit position change...\n");
-	save_indicator_configs_to_nvs();
+	config_store_save_indicators(indicator_configs, 2);
 
 	printf("Indicator %d bit position updated to: %d\n", indicator_idx,
 		   bit_pos);
@@ -2948,7 +2948,7 @@ static void indicator_toggle_mode_changed_cb(lv_event_t *e) {
 	indicator_configs[indicator_idx].is_momentary = is_momentary;
 	printf(
 		"Calling save_indicator_configs_to_nvs() for toggle mode change...\n");
-	save_indicator_configs_to_nvs();
+	config_store_save_indicators(indicator_configs, 2);
 
 	printf("Indicator %d toggle mode updated to: %s\n", indicator_idx,
 		   is_momentary ? "Momentary" : "Toggle");
@@ -2967,7 +2967,7 @@ static void indicator_animation_changed_cb(lv_event_t *e) {
 	// Update configuration and save to NVS
 	indicator_configs[indicator_idx].animation_enabled = is_enabled;
 	printf("Calling save_indicator_configs_to_nvs() for animation change...\n");
-	save_indicator_configs_to_nvs();
+	config_store_save_indicators(indicator_configs, 2);
 
 	printf("Indicator %d animation updated to: %s\n", indicator_idx,
 		   is_enabled ? "Enabled" : "Disabled");
@@ -5973,7 +5973,7 @@ static void invert_warning_toggle_event_cb(lv_event_t * e) {
 	warning_configs[warning_idx].invert_toggle = new_invert_toggle;
 	
 	// Save configuration to NVS
-	save_warning_configs_to_nvs();
+	config_store_save_warnings(warning_configs, 8);
 	
 	ESP_LOGI("WARNING", "Invert toggle %s for warning %d", new_invert_toggle ? "enabled" : "disabled", warning_idx);
 }
@@ -6129,8 +6129,8 @@ void ui_Screen3_screen_init(void) {
 	init_values_config_defaults();
 	init_warning_configs();
 	// Note: indicator configs already initialized and loaded in main.c
-	load_values_config_from_nvs();
-	load_warning_configs_from_nvs();
+	config_store_load_values(values_config, MAX_VALUES);
+	config_store_load_warnings(warning_configs, 8);
 	
 	// Update warning UI for warnings with invert enabled (they should show as active on boot)
 	// This needs to be done after loading from NVS but before creating UI elements
@@ -7089,7 +7089,7 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		// Show custom gear values section - use ui_MenuScreen if available, otherwise current screen
 		lv_obj_t *parent_screen = (ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen)) ? ui_MenuScreen : lv_scr_act();
 		create_custom_gear_values_section(parent_screen, 0);
-		save_values_config_to_nvs();
+		config_store_save_values(values_config, MAX_VALUES);
 		ESP_LOGI("MENU",
 				 "Gear ECU set to Custom mode - device settings overridden");
 	} else if (selected == 1) {
@@ -7287,13 +7287,13 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		// Open the Speed/RPM Ratio configuration menu
 		create_speed_rpm_ratio_config_menu();
 		
-		save_values_config_to_nvs();
+		config_store_save_values(values_config, MAX_VALUES);
 		ESP_LOGI("MENU", "Gear ECU set to Speed/RPM Ratio mode - opens configuration");
 		return; // Exit early since we're opening a new menu
 	}
 
 	// Save configuration to NVS immediately (moved outside custom check)
-	save_values_config_to_nvs();
+	config_store_save_values(values_config, MAX_VALUES);
 	ESP_LOGI("MENU", "Gear ECU preset changed to: %s (saved to NVS)",
 			 selected == 0
 				 ? "Custom"
@@ -7362,7 +7362,7 @@ void custom_gear_can_id_event_cb(lv_event_t *e) {
 	// menu_screen.c
 
 	// Save to NVS
-	save_values_config_to_nvs();
+	config_store_save_values(values_config, MAX_VALUES);
 
 	// Log the change
 	const char *gear_names[] = {"P", "R", "N", "D", "1", "2", "3",
@@ -7475,7 +7475,7 @@ void custom_gear_back_btn_event_cb(lv_event_t *e) {
 void custom_gear_save_btn_event_cb(lv_event_t *e) {
 	ESP_LOGI("GEAR", "Saving custom gear configuration");
 	// Save configuration to NVS
-	save_values_config_to_nvs();
+	config_store_save_values(values_config, MAX_VALUES);
 	// Go back to the gear configuration menu
 	load_menu_screen_for_value(GEAR_VALUE_ID);
 }
@@ -7540,7 +7540,7 @@ void speed_rpm_ratio_back_btn_event_cb(lv_event_t *e) {
 
 void speed_rpm_ratio_save_btn_event_cb(lv_event_t *e) {
 	ESP_LOGI("GEAR", "Saving Speed/RPM Ratio configuration");
-	save_values_config_to_nvs();
+	config_store_save_values(values_config, MAX_VALUES);
 	load_menu_screen_for_value(GEAR_VALUE_ID);
 }
 

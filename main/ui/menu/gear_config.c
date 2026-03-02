@@ -9,10 +9,10 @@
 #include "preset_picker.h"
 #include "../callbacks/ui_callbacks.h"
 #include "esp_log.h"
+#include "storage/config_store.h"
 
 extern const lv_img_dsc_t Smart_Car_Key;
 extern value_config_t values_config[];
-extern void save_values_config_to_nvs(void);
 
 #define GEAR_VALUE_ID 11
 
@@ -60,7 +60,7 @@ static void custom_icon_type_dropdown_event_cb(lv_event_t *e)
             lv_obj_is_valid(custom_icon_inputs[icon_index]))
             lv_textarea_set_text(custom_icon_inputs[icon_index], "");
     }
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("GEAR", "Custom icon %d type: %d", icon_index, selected);
 }
 
@@ -74,7 +74,7 @@ static void custom_icon_input_event_cb(lv_event_t *e)
     if (idx < 0) return;
     uint32_t v = parse_hex_or_dec(lv_textarea_get_text(ta));
     values_config[GEAR_VALUE_ID - 1].custom_icon_values[idx] = v;
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("GEAR", "Custom icon %d value: %u", idx, v);
 }
 
@@ -88,7 +88,7 @@ static void custom_gear_value_input_event_cb(lv_event_t *e)
     if (idx < 0) return;
     uint32_t v = parse_hex_or_dec(lv_textarea_get_text(ta));
     values_config[GEAR_VALUE_ID - 1].gear_custom_values[idx] = v;
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     const char *names[] = {"P","R","N","D","1","2","3","4","5","6","7","8","9","10"};
     ESP_LOGI("GEAR", "Gear %s = %u", names[idx], v);
 }

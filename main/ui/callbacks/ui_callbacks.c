@@ -8,6 +8,7 @@
 #include "../screens/ui_wifi.h"
 #include "../ui.h"
 #include "esp_log.h"
+#include "storage/config_store.h"
 
 // External references to global variables from ui_Screen3.c
 extern lv_obj_t * g_label_input[];
@@ -36,21 +37,15 @@ extern lv_obj_t* ui_Kmh;
 extern lv_obj_t* menu_speed_units_label;
 extern lv_obj_t* ui_CustomText[];
 
-extern void save_values_config_to_nvs(void);
 extern void fuel_sender_capture_empty(uint8_t value_id);
 extern void fuel_sender_capture_full(uint8_t value_id);
 extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 
-#define BAR1_VALUE_ID 12
-#define BAR2_VALUE_ID 13
+#define RPM_VALUE_ID   9
 #define SPEED_VALUE_ID 10
-
-// External references to constants
-#define RPM_VALUE_ID 9
-#define SPEED_VALUE_ID 10
-#define GEAR_VALUE_ID 11
-#define BAR1_VALUE_ID 12
-#define BAR2_VALUE_ID 13
+#define GEAR_VALUE_ID  11
+#define BAR1_VALUE_ID  12
+#define BAR2_VALUE_ID  13
 
 // External function references
 extern void print_value_config(uint8_t value_id);
@@ -736,7 +731,7 @@ void speed_units_dropdown_event_cb(lv_event_t *e)
     if (ui_Kmh) lv_label_set_text(ui_Kmh, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
     if (menu_speed_units_label && lv_obj_is_valid(menu_speed_units_label))
         lv_label_set_text(menu_speed_units_label, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("MENU", "Speed units: %s", values_config[SPEED_VALUE_ID - 1].use_mph ? "MPH" : "KMH");
 }
 
@@ -754,7 +749,7 @@ void show_value_switch_event_cb(lv_event_t *e)
         if (show) lv_obj_clear_flag(target, LV_OBJ_FLAG_HIDDEN);
         else       lv_obj_add_flag(target,   LV_OBJ_FLAG_HIDDEN);
     }
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("BAR", "Show value %s for bar %d", show ? "on" : "off", vid);
 }
 
@@ -764,7 +759,7 @@ void invert_value_switch_event_cb(lv_event_t *e)
     uint8_t vid = *(uint8_t *)lv_event_get_user_data(e);
     bool inv = lv_obj_has_state(sw, LV_STATE_CHECKED);
     values_config[vid - 1].invert_bar_value = inv;
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("BAR", "Invert %s for bar %d", inv ? "on" : "off", vid);
 }
 
@@ -791,7 +786,7 @@ void custom_text_input_event_cb(lv_event_t *e)
         else
             lv_obj_clear_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
     }
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("PANEL", "Custom text '%s' for panel %d", values_config[vid - 1].custom_text, vid);
 }
 
@@ -806,7 +801,7 @@ void fs_empty_v_input_event_cb(lv_event_t *e)
     float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
     v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
     values_config[*id - 1].fuel_sender_empty_v = v;
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
 }
 
 void fs_full_v_input_event_cb(lv_event_t *e)
@@ -817,7 +812,7 @@ void fs_full_v_input_event_cb(lv_event_t *e)
     float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
     v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
     values_config[*id - 1].fuel_sender_full_v = v;
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
 }
 
 /* =========================================================================
@@ -897,7 +892,7 @@ void fs_filter_slider_event_cb(lv_event_t *e)
     char fbuf[24];
     snprintf(fbuf, sizeof(fbuf), "Filter: %d%%", (int)val);
     lv_label_set_text(ctx->filter_label, fbuf);
-    if (code == LV_EVENT_RELEASED) save_values_config_to_nvs();
+    if (code == LV_EVENT_RELEASED) config_store_save_values(values_config, 13);
 }
 
 void fuel_sender_switch_event_cb(lv_event_t *e)
@@ -920,7 +915,7 @@ void fuel_sender_switch_event_cb(lv_event_t *e)
     }
 #undef FS_SHOW
 #undef FS_HIDE
-    save_values_config_to_nvs();
+    config_store_save_values(values_config, 13);
     ESP_LOGI("BAR", "Fuel sender %s for bar %d", on ? "on" : "off", ctx->value_id);
 }
 

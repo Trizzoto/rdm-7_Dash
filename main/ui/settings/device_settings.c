@@ -22,6 +22,7 @@
 #include "lwip/ip4_addr.h"
 #include "callbacks/ui_callbacks.h"
 #include "can/can_manager.h"
+#include "storage/config_store.h"
 
 extern char* connected_ssid;
 
@@ -429,13 +430,7 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     lv_obj_t * dd = lv_event_get_target(e);
     uint16_t selected = lv_dropdown_get_selected(dd);
 
-    /* Persist the new bitrate index */
-    nvs_handle_t handle;
-    if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "can_bitrate", (uint8_t)selected);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
+    config_store_save_bitrate((uint8_t)selected);
 
     /* Apply the new bitrate (stops task, reinits TWAI, restarts task) */
     can_change_bitrate((uint8_t)selected);
@@ -576,15 +571,8 @@ static void ecu_dropdown_event_cb(lv_event_t *e) {
         }
     }
     
-    // Auto-save ECU preconfig to NVS immediately
-    nvs_handle_t handle;
-    if (nvs_open("ecu_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "ecu_preconfig", selected_ecu_preconfig);
-        nvs_set_u8(handle, "ecu_version", selected_ecu_version);
-        nvs_commit(handle);
-        nvs_close(handle);
-        ESP_LOGI("ECU", "ECU preconfig auto-saved: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
-    }
+    config_store_save_ecu_preset(selected_ecu_preconfig, selected_ecu_version);
+    ESP_LOGI("ECU", "ECU preconfig auto-saved: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
     
     // Update status label
     if (data && data->status_label) {
@@ -598,15 +586,8 @@ static void version_dropdown_event_cb(lv_event_t *e) {
     selected_ecu_version = lv_dropdown_get_selected(dd);
     ESP_LOGI("ECU", "ECU version selected: %d", selected_ecu_version);
     
-    // Auto-save version selection to NVS immediately
-    nvs_handle_t handle;
-    if (nvs_open("ecu_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u8(handle, "ecu_preconfig", selected_ecu_preconfig);
-        nvs_set_u8(handle, "ecu_version", selected_ecu_version);
-        nvs_commit(handle);
-        nvs_close(handle);
-        ESP_LOGI("ECU", "ECU version auto-saved: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
-    }
+    config_store_save_ecu_preset(selected_ecu_preconfig, selected_ecu_version);
+    ESP_LOGI("ECU", "ECU version auto-saved: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
     
     // Update status label
     lv_obj_t* status_label = (lv_obj_t*)lv_event_get_user_data(e);
@@ -619,24 +600,8 @@ static void version_dropdown_event_cb(lv_event_t *e) {
 
 // Load ECU preconfig from NVS
 void load_ecu_preconfig(void) {
-    nvs_handle_t handle;
-    if (nvs_open("ecu_config", NVS_READONLY, &handle) == ESP_OK) {
-        if (nvs_get_u8(handle, "ecu_preconfig", &selected_ecu_preconfig) != ESP_OK) {
-            selected_ecu_preconfig = 0; // Default to Custom
-        }
-        
-        if (nvs_get_u8(handle, "ecu_version", &selected_ecu_version) != ESP_OK) {
-            selected_ecu_version = 0; // Default to first version
-        }
-        
-        nvs_close(handle);
-        ESP_LOGI("ECU", "Loaded ECU preconfig from NVS: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
-    } else {
-        // Set defaults if NVS can't be opened
-        selected_ecu_preconfig = 0;
-        selected_ecu_version = 0;
-        ESP_LOGI("ECU", "Using default ECU preconfig: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
-    }
+    config_store_load_ecu_preset(&selected_ecu_preconfig, &selected_ecu_version);
+    ESP_LOGI("ECU", "Loaded ECU preconfig: ECU=%d, Version=%d", selected_ecu_preconfig, selected_ecu_version);
 }
 
 // Getter function for other files to access the selected ECU preconfig
@@ -679,52 +644,15 @@ void init_display_brightness(void) {
 
 // Save dimmer config to NVS
 void save_dimmer_config_to_nvs(void) {
-    nvs_handle_t handle;
-    if (nvs_open("dimmer_cfg", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u32(handle, "can_id", dimmer_config.can_id);
-        nvs_set_u8(handle, "bit_pos", dimmer_config.bit_position);
-        nvs_set_u8(handle, "is_mom", dimmer_config.is_momentary ? 1 : 0);
-        nvs_set_u8(handle, "invert", dimmer_config.invert_toggle ? 1 : 0);
-        nvs_set_u8(handle, "bright", dimmer_config.brightness_value);
-        nvs_set_u8(handle, "enabled", dimmer_config.enabled ? 1 : 0);
-        nvs_commit(handle);
-        nvs_close(handle);
-        ESP_LOGI("DIMMER", "Dimmer config saved to NVS");
-    }
+    config_store_save_dimmer(&dimmer_config);
+    ESP_LOGI("DIMMER", "Dimmer config saved to NVS");
 }
 
 // Load dimmer config from NVS
 void load_dimmer_config_from_nvs(void) {
-    nvs_handle_t handle;
-    if (nvs_open("dimmer_cfg", NVS_READONLY, &handle) == ESP_OK) {
-        uint32_t can_id;
-        if (nvs_get_u32(handle, "can_id", &can_id) == ESP_OK) {
-            dimmer_config.can_id = can_id;
-        }
-        uint8_t bit_pos;
-        if (nvs_get_u8(handle, "bit_pos", &bit_pos) == ESP_OK) {
-            dimmer_config.bit_position = bit_pos;
-        }
-        uint8_t is_mom;
-        if (nvs_get_u8(handle, "is_mom", &is_mom) == ESP_OK) {
-            dimmer_config.is_momentary = (is_mom == 1);
-        }
-        uint8_t invert;
-        if (nvs_get_u8(handle, "invert", &invert) == ESP_OK) {
-            dimmer_config.invert_toggle = (invert == 1);
-        }
-        uint8_t bright;
-        if (nvs_get_u8(handle, "bright", &bright) == ESP_OK) {
-            dimmer_config.brightness_value = bright;
-        }
-        uint8_t enabled;
-        if (nvs_get_u8(handle, "enabled", &enabled) == ESP_OK) {
-            dimmer_config.enabled = (enabled == 1);
-        }
-        nvs_close(handle);
-        ESP_LOGI("DIMMER", "Dimmer config loaded from NVS: CAN=0x%03X, Bit=%d, Enabled=%d",
-            dimmer_config.can_id, dimmer_config.bit_position, dimmer_config.enabled);
-    }
+    config_store_load_dimmer(&dimmer_config);
+    ESP_LOGI("DIMMER", "Dimmer config loaded: CAN=0x%03X, Bit=%d, Enabled=%d",
+        dimmer_config.can_id, dimmer_config.bit_position, dimmer_config.enabled);
 }
 
 // Function to create device settings with a specific return screen
@@ -1138,13 +1066,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
             break;
     }
 
-    // Load saved bitrate setting from NVS
-    nvs_handle_t handle;
-    uint8_t saved_bitrate = 2; // Default to 500 kbps
-    if (nvs_open("can_config", NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_get_u8(handle, "can_bitrate", &saved_bitrate);
-        nvs_close(handle);
-    }
+    uint8_t saved_bitrate = 2; /* default 500 kbps */
+    config_store_load_bitrate(&saved_bitrate);
     lv_dropdown_set_selected(bitrate_dd, saved_bitrate);
 
     // Create timer to refresh WiFi status every 2 seconds
