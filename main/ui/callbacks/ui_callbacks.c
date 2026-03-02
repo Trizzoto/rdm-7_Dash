@@ -1,4 +1,5 @@
 #include "ui_callbacks.h"
+#include "../theme.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6,6 +7,7 @@
 #include "../screens/ui_Screen3.h"
 #include "../screens/ui_wifi.h"
 #include "../ui.h"
+#include "esp_log.h"
 
 // External references to global variables from ui_Screen3.c
 extern lv_obj_t * g_label_input[];
@@ -28,6 +30,20 @@ extern lv_obj_t* ui_Label[];
 extern lv_obj_t* ui_Gear_Label;
 extern lv_obj_t* ui_Bar_1_Label;
 extern lv_obj_t* ui_Bar_2_Label;
+extern lv_obj_t* ui_Bar_1_Value;
+extern lv_obj_t* ui_Bar_2_Value;
+extern lv_obj_t* ui_Kmh;
+extern lv_obj_t* menu_speed_units_label;
+extern lv_obj_t* ui_CustomText[];
+
+extern void save_values_config_to_nvs(void);
+extern void fuel_sender_capture_empty(uint8_t value_id);
+extern void fuel_sender_capture_full(uint8_t value_id);
+extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
+
+#define BAR1_VALUE_ID 12
+#define BAR2_VALUE_ID 13
+#define SPEED_VALUE_ID 10
 
 // External references to constants
 #define RPM_VALUE_ID 9
@@ -313,9 +329,9 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
     // Create dialog container - taller to fully contain buttons
     lv_obj_t *dialog_container = lv_obj_create(current_text_dialog->modal);
     lv_obj_set_size(dialog_container, 400, 160);
-    lv_obj_set_style_bg_color(dialog_container, lv_color_hex(0x2e2f2e), 0);
+    lv_obj_set_style_bg_color(dialog_container, THEME_COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(dialog_container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(dialog_container, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_color(dialog_container, THEME_COLOR_SCROLLBAR, 0);
     lv_obj_set_style_border_width(dialog_container, 2, 0);
     lv_obj_set_style_radius(dialog_container, 8, 0);
     lv_obj_align(dialog_container, LV_ALIGN_TOP_MID, 0, 20);
@@ -326,7 +342,7 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
         lv_obj_t *title_label = lv_label_create(dialog_container);
         lv_label_set_text(title_label, title);
         lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-        lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(title_label, THEME_FONT_BODY, 0);
         lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 8);
     }
     
@@ -335,7 +351,7 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
         current_text_dialog->prefix_label = lv_label_create(dialog_container);
         lv_label_set_text(current_text_dialog->prefix_label, "0x");
         lv_obj_set_style_text_color(current_text_dialog->prefix_label, lv_color_white(), 0);
-        lv_obj_set_style_text_font(current_text_dialog->prefix_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(current_text_dialog->prefix_label, THEME_FONT_BODY, 0);
         lv_obj_align(current_text_dialog->prefix_label, LV_ALIGN_TOP_MID, -130, 47);
     } else {
         current_text_dialog->prefix_label = NULL;
@@ -348,11 +364,11 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
     lv_obj_set_size(current_text_dialog->text_display, display_width, 30);
     lv_obj_set_style_bg_color(current_text_dialog->text_display, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(current_text_dialog->text_display, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(current_text_dialog->text_display, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_border_color(current_text_dialog->text_display, THEME_COLOR_SCROLLBAR, 0);
     lv_obj_set_style_border_width(current_text_dialog->text_display, 1, 0);
     lv_obj_set_style_radius(current_text_dialog->text_display, 4, 0);
     lv_obj_set_style_text_color(current_text_dialog->text_display, lv_color_black(), 0);
-    lv_obj_set_style_text_font(current_text_dialog->text_display, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(current_text_dialog->text_display, THEME_FONT_BODY, 0);
     lv_obj_set_style_pad_all(current_text_dialog->text_display, 6, 0);
     lv_obj_align(current_text_dialog->text_display, LV_ALIGN_TOP_MID, display_x, 40);
     lv_label_set_long_mode(current_text_dialog->text_display, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -367,7 +383,7 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
         } else if (placeholder) {
             lv_label_set_text(current_text_dialog->text_display, placeholder);
             // Grey color for placeholder text
-            lv_obj_set_style_text_color(current_text_dialog->text_display, lv_color_hex(0x888888), 0);
+            lv_obj_set_style_text_color(current_text_dialog->text_display, THEME_COLOR_TEXT_GHOST, 0);
         }
     }
     
@@ -385,32 +401,32 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
     // Cancel button - smaller
     lv_obj_t *cancel_btn = lv_btn_create(btn_container);
     lv_obj_set_size(cancel_btn, 120, 30);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336), 0);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL, 0);
     lv_obj_set_style_radius(cancel_btn, 6, 0);
     lv_obj_add_event_cb(cancel_btn, text_input_cancel_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *cancel_label = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_label, "Cancel");
     lv_obj_set_style_text_color(cancel_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(cancel_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, 0);
     lv_obj_center(cancel_label);
     
     // OK button - smaller
     lv_obj_t *ok_btn = lv_btn_create(btn_container);
     lv_obj_set_size(ok_btn, 120, 30);
-    lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50), 0);
+    lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE, 0);
     lv_obj_set_style_radius(ok_btn, 6, 0);
     lv_obj_add_event_cb(ok_btn, text_input_ok_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *ok_label = lv_label_create(ok_btn);
     lv_label_set_text(ok_label, "OK");
     lv_obj_set_style_text_color(ok_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(ok_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(ok_label, THEME_FONT_SMALL, 0);
     lv_obj_center(ok_label);
     
     // Create keyboard
     current_text_dialog->keyboard = lv_keyboard_create(current_text_dialog->modal);
-    lv_obj_set_style_bg_color(current_text_dialog->keyboard, lv_color_hex(0x303030), 0);
+    lv_obj_set_style_bg_color(current_text_dialog->keyboard, THEME_COLOR_KEYBOARD_BG, 0);
     lv_obj_set_style_bg_opa(current_text_dialog->keyboard, LV_OPA_COVER, 0);
     lv_obj_align(current_text_dialog->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     
@@ -708,4 +724,204 @@ void type_dropdown_event_cb(lv_event_t * e) {
         print_value_config(value_id);
     }
 }
+
+/* =========================================================================
+ * Speed-units callback
+ * ========================================================================= */
+void speed_units_dropdown_event_cb(lv_event_t *e)
+{
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);
+    values_config[SPEED_VALUE_ID - 1].use_mph = (sel == 1);
+    if (ui_Kmh) lv_label_set_text(ui_Kmh, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
+    if (menu_speed_units_label && lv_obj_is_valid(menu_speed_units_label))
+        lv_label_set_text(menu_speed_units_label, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
+    save_values_config_to_nvs();
+    ESP_LOGI("MENU", "Speed units: %s", values_config[SPEED_VALUE_ID - 1].use_mph ? "MPH" : "KMH");
+}
+
+/* =========================================================================
+ * Bar show/invert callbacks
+ * ========================================================================= */
+void show_value_switch_event_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    uint8_t vid = *(uint8_t *)lv_event_get_user_data(e);
+    bool show = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    values_config[vid - 1].show_bar_value = show;
+    lv_obj_t *target = (vid == BAR1_VALUE_ID) ? ui_Bar_1_Value : ui_Bar_2_Value;
+    if (target && lv_obj_is_valid(target)) {
+        if (show) lv_obj_clear_flag(target, LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_add_flag(target,   LV_OBJ_FLAG_HIDDEN);
+    }
+    save_values_config_to_nvs();
+    ESP_LOGI("BAR", "Show value %s for bar %d", show ? "on" : "off", vid);
+}
+
+void invert_value_switch_event_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    uint8_t vid = *(uint8_t *)lv_event_get_user_data(e);
+    bool inv = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    values_config[vid - 1].invert_bar_value = inv;
+    save_values_config_to_nvs();
+    ESP_LOGI("BAR", "Invert %s for bar %d", inv ? "on" : "off", vid);
+}
+
+/* =========================================================================
+ * Custom text (display unit) callback
+ * ========================================================================= */
+void custom_text_input_event_cb(lv_event_t *e)
+{
+    uint8_t *id_ptr = (uint8_t *)lv_event_get_user_data(e);
+    if (!id_ptr) return;
+    uint8_t vid = *id_ptr;
+    const char *text = lv_textarea_get_text(lv_event_get_target(e));
+    if (text) {
+        strncpy(values_config[vid - 1].custom_text, text, sizeof(values_config[vid - 1].custom_text) - 1);
+        values_config[vid - 1].custom_text[sizeof(values_config[vid - 1].custom_text) - 1] = '\0';
+    } else {
+        values_config[vid - 1].custom_text[0] = '\0';
+    }
+    uint8_t panel_idx = vid - 1;
+    if (panel_idx < 8 && ui_CustomText[panel_idx] && lv_obj_is_valid(ui_CustomText[panel_idx])) {
+        lv_label_set_text(ui_CustomText[panel_idx], values_config[panel_idx].custom_text);
+        if (strlen(values_config[panel_idx].custom_text) == 0)
+            lv_obj_add_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_clear_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
+    }
+    save_values_config_to_nvs();
+    ESP_LOGI("PANEL", "Custom text '%s' for panel %d", values_config[vid - 1].custom_text, vid);
+}
+
+/* =========================================================================
+ * Fuel sender voltage-input callbacks
+ * ========================================================================= */
+void fs_empty_v_input_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
+    v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
+    values_config[*id - 1].fuel_sender_empty_v = v;
+    save_values_config_to_nvs();
+}
+
+void fs_full_v_input_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
+    v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
+    values_config[*id - 1].fuel_sender_full_v = v;
+    save_values_config_to_nvs();
+}
+
+/* =========================================================================
+ * Fuel sender calibration-button callbacks
+ * ========================================================================= */
+void fs_empty_btn_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    fuel_sender_capture_empty(*id);
+    char vbuf[12];
+    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_empty_v);
+    lv_obj_t *screen = lv_obj_get_screen(lv_event_get_target(e));
+    uint32_t cnt = lv_obj_get_child_cnt(screen);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t *obj = lv_obj_get_child(screen, i);
+        if (lv_obj_check_type(obj, &lv_textarea_class)) {
+            const char *ph = lv_textarea_get_placeholder_text(obj);
+            if (ph && strstr(ph, "Empty V")) { lv_textarea_set_text(obj, vbuf); break; }
+        }
+    }
+}
+
+void fs_full_btn_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    uint8_t *id = (uint8_t *)lv_event_get_user_data(e);
+    if (!id) return;
+    fuel_sender_capture_full(*id);
+    char vbuf[12];
+    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_full_v);
+    lv_obj_t *screen = lv_obj_get_screen(lv_event_get_target(e));
+    uint32_t cnt = lv_obj_get_child_cnt(screen);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t *obj = lv_obj_get_child(screen, i);
+        if (lv_obj_check_type(obj, &lv_textarea_class)) {
+            const char *ph = lv_textarea_get_placeholder_text(obj);
+            if (ph && strstr(ph, "Full V")) { lv_textarea_set_text(obj, vbuf); break; }
+        }
+    }
+}
+
+/* =========================================================================
+ * Fuel sender context callbacks
+ * ========================================================================= */
+void fuel_sender_ctx_free_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+    if (ctx) {
+        if (ctx->update_timer) { lv_timer_del(ctx->update_timer); ctx->update_timer = NULL; }
+        lv_mem_free(ctx);
+    }
+}
+
+void fs_voltage_update_timer_cb(lv_timer_t *timer)
+{
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)timer->user_data;
+    if (!ctx) return;
+    if (!ctx->current_label || !lv_obj_is_valid(ctx->current_label)) return;
+    if (lv_obj_has_flag(ctx->current_label, LV_OBJ_FLAG_HIDDEN)) return;
+    uint8_t bar_idx = (ctx->value_id == 12) ? 0 : 1;
+    char vbuf[24];
+    snprintf(vbuf, sizeof(vbuf), "Current: %.2f V", fuel_sender_get_filtered_v(bar_idx));
+    lv_label_set_text(ctx->current_label, vbuf);
+}
+
+void fs_filter_slider_event_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED) return;
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    int32_t val = lv_slider_get_value(lv_event_get_target(e));
+    values_config[ctx->value_id - 1].fuel_sender_filter = (uint8_t)val;
+    char fbuf[24];
+    snprintf(fbuf, sizeof(fbuf), "Filter: %d%%", (int)val);
+    lv_label_set_text(ctx->filter_label, fbuf);
+    if (code == LV_EVENT_RELEASED) save_values_config_to_nvs();
+}
+
+void fuel_sender_switch_event_cb(lv_event_t *e)
+{
+    lv_obj_t *sw = lv_event_get_target(e);
+    fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    values_config[ctx->value_id - 1].fuel_sender = on;
+#define FS_SHOW(o) if ((o) && lv_obj_is_valid(o)) lv_obj_clear_flag((o), LV_OBJ_FLAG_HIDDEN)
+#define FS_HIDE(o) if ((o) && lv_obj_is_valid(o)) lv_obj_add_flag((o),   LV_OBJ_FLAG_HIDDEN)
+    if (on) {
+        FS_SHOW(ctx->set_label);   FS_SHOW(ctx->empty_btn);  FS_SHOW(ctx->full_btn);
+        FS_SHOW(ctx->empty_input); FS_SHOW(ctx->full_input); FS_SHOW(ctx->current_label);
+        FS_SHOW(ctx->filter_label); FS_SHOW(ctx->filter_slider);
+    } else {
+        FS_HIDE(ctx->set_label);   FS_HIDE(ctx->empty_btn);  FS_HIDE(ctx->full_btn);
+        FS_HIDE(ctx->empty_input); FS_HIDE(ctx->full_input); FS_HIDE(ctx->current_label);
+        FS_HIDE(ctx->filter_label); FS_HIDE(ctx->filter_slider);
+    }
+#undef FS_SHOW
+#undef FS_HIDE
+    save_values_config_to_nvs();
+    ESP_LOGI("BAR", "Fuel sender %s for bar %d", on ? "on" : "off", ctx->value_id);
+}
+
 

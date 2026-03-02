@@ -7,6 +7,7 @@
 #include "core/lv_event.h"
 #include "ui_helpers.h"
 #include "screens/splash_screen.h"
+#include "ui_styles.h"
 
 ///////////////////// VARIABLES ////////////////////
 
@@ -245,6 +246,8 @@ void ui_event_Panel2(lv_event_t * e)
 
 void ui_init(void)
 {
+    ui_styles_init();
+
     lv_disp_t * dispp = lv_disp_get_default();
     lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
                                              true, LV_FONT_DEFAULT);

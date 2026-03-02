@@ -1,4 +1,5 @@
-#include "ui.h"
+﻿#include "ui.h"
+#include "../theme.h"
 #include "ui_helpers.h"
 #include "ui_Screen3.h"
 #include "esp_timer.h"
@@ -34,7 +35,7 @@ static void splash_timer_cb(void * arg) {
 void show_splash_screen(void) {
     // Create a new screen for the splash
     splash_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(splash_screen, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(splash_screen, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(splash_screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(splash_screen, LV_OBJ_FLAG_SCROLLABLE);
 

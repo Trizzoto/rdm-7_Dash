@@ -1,4 +1,5 @@
-#include "screens/ui_Screen3.h"
+﻿#include "screens/ui_Screen3.h"
+#include "../theme.h"
 #include "../callbacks/ui_callbacks.h"
 #include "../config/create_config_controls.h"
 #include "../menu/menu_screen.h"
@@ -246,9 +247,9 @@ void init_values_config_defaults(void) {
 			values_config[i].warning_high_threshold = 0;
 			values_config[i].warning_low_threshold = 0;
 			values_config[i].warning_high_color =
-				lv_color_hex(0xFF0000); // Default red
+				THEME_COLOR_RED; // Default red
 			values_config[i].warning_low_color =
-				lv_color_hex(0x19439a); // Default blue
+				THEME_COLOR_BLUE_DARK; // Default blue
 			values_config[i].warning_high_enabled = false;
 			values_config[i].warning_low_enabled = false;
 		}
@@ -256,12 +257,12 @@ void init_values_config_defaults(void) {
 
 	values_config[RPM_VALUE_ID - 1].enabled = true;
 	values_config[RPM_VALUE_ID - 1].rpm_bar_color =
-		lv_color_hex(0xFF0000);								// Default red
+		THEME_COLOR_RED;								// Default red
 	values_config[RPM_VALUE_ID - 1].rpm_limiter_effect = 0; // Default: None
 	values_config[RPM_VALUE_ID - 1].rpm_limiter_value =
 		7000; // Default: 7000 RPM
 	values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-		lv_color_hex(0xFF0000); // Default: Red
+		THEME_COLOR_RED; // Default: Red
 	values_config[RPM_VALUE_ID - 1].rpm_lights_enabled =
 		false; // Default: Disabled
 	values_config[RPM_VALUE_ID - 1].rpm_background_enabled =
@@ -269,7 +270,7 @@ void init_values_config_defaults(void) {
 	values_config[RPM_VALUE_ID - 1].rpm_background_value =
 		7000; // Default: 7000 RPM
 	values_config[RPM_VALUE_ID - 1].rpm_background_color =
-		lv_color_hex(0x00FF00); // Default: Green
+		THEME_COLOR_GREEN; // Default: Green
 	values_config[SPEED_VALUE_ID - 1].enabled = true;
 	values_config[GEAR_VALUE_ID - 1].enabled = true;
 	values_config[GEAR_VALUE_ID - 1].gear_detection_mode =
@@ -308,22 +309,22 @@ void init_values_config_defaults(void) {
 
 	// Set default bar colors for BAR1 and BAR2
 	values_config[BAR1_VALUE_ID - 1].bar_low_color =
-		lv_color_hex(0x19439a); // Blue
+		THEME_COLOR_BLUE_DARK; // Blue
 	values_config[BAR1_VALUE_ID - 1].bar_high_color =
-		lv_color_hex(0xFF0000); // Red
+		THEME_COLOR_RED; // Red
 	values_config[BAR1_VALUE_ID - 1].bar_in_range_color =
-		lv_color_hex(0x38FF00); // Green
+		THEME_COLOR_GREEN_BRIGHT; // Green
 	values_config[BAR1_VALUE_ID - 1].show_bar_value =
 		true; // Show value by default
 	values_config[BAR1_VALUE_ID - 1].invert_bar_value =
 		false; // Don't invert by default
 
 	values_config[BAR2_VALUE_ID - 1].bar_low_color =
-		lv_color_hex(0x19439a); // Blue
+		THEME_COLOR_BLUE_DARK; // Blue
 	values_config[BAR2_VALUE_ID - 1].bar_high_color =
-		lv_color_hex(0xFF0000); // Red
+		THEME_COLOR_RED; // Red
 	values_config[BAR2_VALUE_ID - 1].bar_in_range_color =
-		lv_color_hex(0x38FF00); // Green
+		THEME_COLOR_GREEN_BRIGHT; // Green
 	values_config[BAR2_VALUE_ID - 1].show_bar_value =
 		true; // Show value by default
 	values_config[BAR2_VALUE_ID - 1].invert_bar_value =
@@ -336,7 +337,7 @@ static void init_warning_configs(void) {
 		warning_configs[i].can_id = 0x000;
 		warning_configs[i].bit_position = 0;
 		warning_configs[i].endianess = 1; // Default to Little Endian
-		warning_configs[i].active_color = lv_color_hex(0xFF0000);
+		warning_configs[i].active_color = THEME_COLOR_RED;
 		snprintf(warning_configs[i].label, sizeof(warning_configs[i].label),
 				 "Warning %d", i + 1);
 		warning_configs[i].is_momentary = true;
@@ -801,37 +802,37 @@ void rpm_color_dropdown_event_cb(lv_event_t *e) {
 	// Determine new color based on selection - SUPER VIBRANT COLORS
 	switch (selected) {
 	case 0:
-		new_rpm_color = lv_color_hex(0x00FF00);
+		new_rpm_color = THEME_COLOR_GREEN;
 		break; // Bright Green
 	case 1:
-		new_rpm_color = lv_color_hex(0x00FFFF);
+		new_rpm_color = THEME_COLOR_CYAN;
 		break; // Bright Cyan
 	case 2:
-		new_rpm_color = lv_color_hex(0xFFFF00);
+		new_rpm_color = THEME_COLOR_YELLOW;
 		break; // Bright Yellow
 	case 3:
-		new_rpm_color = lv_color_hex(0xFF7F00);
+		new_rpm_color = THEME_COLOR_ORANGE;
 		break; // Bright Orange
 	case 4:
-		new_rpm_color = lv_color_hex(0xFF0000);
+		new_rpm_color = THEME_COLOR_RED;
 		break; // Bright Red
 	case 5:
-		new_rpm_color = lv_color_hex(0x0080FF);
+		new_rpm_color = THEME_COLOR_BLUE;
 		break; // Bright Blue
 	case 6:
-		new_rpm_color = lv_color_hex(0x8000FF);
+		new_rpm_color = THEME_COLOR_PURPLE;
 		break; // Bright Purple
 	case 7:
-		new_rpm_color = lv_color_hex(0xFF00FF);
+		new_rpm_color = THEME_COLOR_MAGENTA;
 		break; // Bright Magenta
 	case 8:
-		new_rpm_color = lv_color_hex(0xFF1493);
+		new_rpm_color = THEME_COLOR_PINK;
 		break; // Bright Hot Pink
 	case 9:	   // Custom color - open color wheel popup
 		create_rpm_color_wheel_popup();
 		return; // Don't update color yet, wait for color wheel selection
 	default:
-		new_rpm_color = lv_color_hex(0x00FF00);
+		new_rpm_color = THEME_COLOR_GREEN;
 		break;
 	}
 
@@ -912,39 +913,39 @@ void rpm_limiter_color_dropdown_event_cb(lv_event_t *e) {
 	switch (selected) {
 	case 0: // Green
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0x00FF00);
+			THEME_COLOR_GREEN;
 		break;
 	case 1: // Light Blue
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0x00FFFF);
+			THEME_COLOR_CYAN;
 		break;
 	case 2: // Yellow
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0xFFFF00);
+			THEME_COLOR_YELLOW;
 		break;
 	case 3: // Orange
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0xFF7F00);
+			THEME_COLOR_ORANGE;
 		break;
 	case 4: // Red
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0xFF0000);
+			THEME_COLOR_RED;
 		break;
 	case 5: // Dark Blue
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0x0080FF);
+			THEME_COLOR_BLUE;
 		break;
 	case 6: // Purple
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0x8000FF);
+			THEME_COLOR_PURPLE;
 		break;
 	case 7: // Magenta
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0xFF00FF);
+			THEME_COLOR_MAGENTA;
 		break;
 	case 8: // Pink
 		values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-			lv_color_hex(0xFF1493);
+			THEME_COLOR_PINK;
 		break;
 	case 9: // Custom
 		create_limiter_color_wheel_popup();
@@ -997,37 +998,37 @@ void rpm_background_color_dropdown_event_cb(lv_event_t *e) {
 	lv_color_t new_background_color;
 	switch (selected) {
 	case 0:
-		new_background_color = lv_color_hex(0x00FF00);
+		new_background_color = THEME_COLOR_GREEN;
 		break; // Green
 	case 1:
-		new_background_color = lv_color_hex(0x00FFFF);
+		new_background_color = THEME_COLOR_CYAN;
 		break; // Light Blue
 	case 2:
-		new_background_color = lv_color_hex(0xFFFF00);
+		new_background_color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	case 3:
-		new_background_color = lv_color_hex(0xFF7F00);
+		new_background_color = THEME_COLOR_ORANGE;
 		break; // Orange
 	case 4:
-		new_background_color = lv_color_hex(0xFF0000);
+		new_background_color = THEME_COLOR_RED;
 		break; // Red
 	case 5:
-		new_background_color = lv_color_hex(0x0080FF);
+		new_background_color = THEME_COLOR_BLUE;
 		break; // Blue
 	case 6:
-		new_background_color = lv_color_hex(0x8000FF);
+		new_background_color = THEME_COLOR_PURPLE;
 		break; // Purple
 	case 7:
-		new_background_color = lv_color_hex(0xFF00FF);
+		new_background_color = THEME_COLOR_MAGENTA;
 		break; // Magenta
 	case 8:
-		new_background_color = lv_color_hex(0xFF1493);
+		new_background_color = THEME_COLOR_PINK;
 		break; // Pink
 	case 9:	   // Custom color - open color wheel popup
 		create_rpm_background_color_wheel_popup();
 		return; // Don't update color yet, wait for color wheel selection
 	default:
-		new_background_color = lv_color_hex(0x00FF00);
+		new_background_color = THEME_COLOR_GREEN;
 		break;
 	}
 
@@ -1052,28 +1053,28 @@ void bar_low_color_event_cb(lv_event_t *e) {
 
 	switch (selected) {
 	case 0:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0x19439a);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_BLUE_DARK;
 		break; // Blue
 	case 1:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0xFF0000);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_RED;
 		break; // Red
 	case 2:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0x38FF00);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_GREEN_BRIGHT;
 		break; // Green
 	case 3:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0xFFFF00);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	case 4:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0xFF7F00);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_ORANGE;
 		break; // Orange
 	case 5:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0x8000FF);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_PURPLE;
 		break; // Purple
 	case 6:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0x00FFFF);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_CYAN;
 		break; // Cyan
 	case 7:
-		values_config[value_id - 1].bar_low_color = lv_color_hex(0xFF00FF);
+		values_config[value_id - 1].bar_low_color = THEME_COLOR_MAGENTA;
 		break; // Magenta
 	case 8:	   // Custom color - open color wheel popup
 		create_bar_low_color_wheel_popup(value_id);
@@ -1088,28 +1089,28 @@ void bar_high_color_event_cb(lv_event_t *e) {
 
 	switch (selected) {
 	case 0:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0x19439a);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_BLUE_DARK;
 		break; // Blue
 	case 1:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0xFF0000);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_RED;
 		break; // Red
 	case 2:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0x38FF00);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_GREEN_BRIGHT;
 		break; // Green
 	case 3:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0xFFFF00);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	case 4:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0xFF7F00);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_ORANGE;
 		break; // Orange
 	case 5:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0x8000FF);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_PURPLE;
 		break; // Purple
 	case 6:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0x00FFFF);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_CYAN;
 		break; // Cyan
 	case 7:
-		values_config[value_id - 1].bar_high_color = lv_color_hex(0xFF00FF);
+		values_config[value_id - 1].bar_high_color = THEME_COLOR_MAGENTA;
 		break; // Magenta
 	case 8:	   // Custom color - open color wheel popup
 		create_bar_high_color_wheel_popup(value_id);
@@ -1124,28 +1125,28 @@ void bar_in_range_color_event_cb(lv_event_t *e) {
 
 	switch (selected) {
 	case 0:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0x19439a);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_BLUE_DARK;
 		break; // Blue
 	case 1:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0xFF0000);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_RED;
 		break; // Red
 	case 2:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0x38FF00);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
 		break; // Green
 	case 3:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0xFFFF00);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	case 4:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0xFF7F00);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_ORANGE;
 		break; // Orange
 	case 5:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0x8000FF);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_PURPLE;
 		break; // Purple
 	case 6:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0x00FFFF);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_CYAN;
 		break; // Cyan
 	case 7:
-		values_config[value_id - 1].bar_in_range_color = lv_color_hex(0xFF00FF);
+		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_MAGENTA;
 		break; // Magenta
 	case 8:	   // Custom color - open color wheel popup
 		create_bar_in_range_color_wheel_popup(value_id);
@@ -1833,10 +1834,10 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_set_size(rpm_background_color_wheel_popup, 400, 350);
 	lv_obj_center(rpm_background_color_wheel_popup);
 	lv_obj_set_style_bg_color(rpm_background_color_wheel_popup,
-							  lv_color_hex(0x2E2F2E),
+							  THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(rpm_background_color_wheel_popup,
-								  lv_color_hex(0x808080),
+								  THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(rpm_background_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1845,7 +1846,7 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_set_style_shadow_width(rpm_background_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_color(rpm_background_color_wheel_popup,
-								  lv_color_hex(0x000000),
+								  THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(rpm_background_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1853,9 +1854,9 @@ void create_rpm_background_color_wheel_popup(void) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(rpm_background_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Background Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -1880,13 +1881,13 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_t *ok_btn = lv_btn_create(rpm_background_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 	lv_obj_add_event_cb(ok_btn, rpm_background_color_wheel_ok_event_cb,
@@ -1896,13 +1897,13 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_t *cancel_btn = lv_btn_create(rpm_background_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 	lv_obj_add_event_cb(cancel_btn, rpm_background_color_wheel_cancel_event_cb,
@@ -1918,9 +1919,9 @@ void create_rpm_color_wheel_popup(void) {
 	color_wheel_popup = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(color_wheel_popup, 400, 350);
 	lv_obj_center(color_wheel_popup);
-	lv_obj_set_style_bg_color(color_wheel_popup, lv_color_hex(0x2E2F2E),
+	lv_obj_set_style_bg_color(color_wheel_popup, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(color_wheel_popup, lv_color_hex(0x808080),
+	lv_obj_set_style_border_color(color_wheel_popup, THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1928,7 +1929,7 @@ void create_rpm_color_wheel_popup(void) {
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_width(color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(color_wheel_popup, lv_color_hex(0x000000),
+	lv_obj_set_style_shadow_color(color_wheel_popup, THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1936,9 +1937,9 @@ void create_rpm_color_wheel_popup(void) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom RPM Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -1960,13 +1961,13 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_t *ok_btn = lv_btn_create(color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -1977,13 +1978,13 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_t *cancel_btn = lv_btn_create(color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -2137,10 +2138,10 @@ void create_limiter_color_wheel_popup(void) {
 	limiter_color_wheel_popup = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(limiter_color_wheel_popup, 400, 350);
 	lv_obj_center(limiter_color_wheel_popup);
-	lv_obj_set_style_bg_color(limiter_color_wheel_popup, lv_color_hex(0x2E2F2E),
+	lv_obj_set_style_bg_color(limiter_color_wheel_popup, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(limiter_color_wheel_popup,
-								  lv_color_hex(0x808080),
+								  THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(limiter_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2149,7 +2150,7 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_set_style_shadow_width(limiter_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_color(limiter_color_wheel_popup,
-								  lv_color_hex(0x000000),
+								  THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(limiter_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2157,9 +2158,9 @@ void create_limiter_color_wheel_popup(void) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(limiter_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Limiter Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -2183,13 +2184,13 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_t *ok_btn = lv_btn_create(limiter_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -2200,13 +2201,13 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_t *cancel_btn = lv_btn_create(limiter_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -2226,10 +2227,10 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	bar_low_color_wheel_popup = lv_obj_create(lv_scr_act());
 	lv_obj_set_size(bar_low_color_wheel_popup, 400, 350);
 	lv_obj_center(bar_low_color_wheel_popup);
-	lv_obj_set_style_bg_color(bar_low_color_wheel_popup, lv_color_hex(0x2E2F2E),
+	lv_obj_set_style_bg_color(bar_low_color_wheel_popup, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(bar_low_color_wheel_popup,
-								  lv_color_hex(0x808080),
+								  THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(bar_low_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2238,7 +2239,7 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	lv_obj_set_style_shadow_width(bar_low_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_color(bar_low_color_wheel_popup,
-								  lv_color_hex(0x000000),
+								  THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(bar_low_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2246,9 +2247,9 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(bar_low_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Bar Low Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -2271,13 +2272,13 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *ok_btn = lv_btn_create(bar_low_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -2288,13 +2289,13 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *cancel_btn = lv_btn_create(bar_low_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -2315,10 +2316,10 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_set_size(bar_high_color_wheel_popup, 400, 350);
 	lv_obj_center(bar_high_color_wheel_popup);
 	lv_obj_set_style_bg_color(bar_high_color_wheel_popup,
-							  lv_color_hex(0x2E2F2E),
+							  THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(bar_high_color_wheel_popup,
-								  lv_color_hex(0x808080),
+								  THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(bar_high_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2327,7 +2328,7 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_set_style_shadow_width(bar_high_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_color(bar_high_color_wheel_popup,
-								  lv_color_hex(0x000000),
+								  THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(bar_high_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2335,9 +2336,9 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(bar_high_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Bar High Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -2361,13 +2362,13 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *ok_btn = lv_btn_create(bar_high_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -2378,13 +2379,13 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *cancel_btn = lv_btn_create(bar_high_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -2405,10 +2406,10 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_set_size(bar_in_range_color_wheel_popup, 400, 350);
 	lv_obj_center(bar_in_range_color_wheel_popup);
 	lv_obj_set_style_bg_color(bar_in_range_color_wheel_popup,
-							  lv_color_hex(0x2E2F2E),
+							  THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_color(bar_in_range_color_wheel_popup,
-								  lv_color_hex(0x808080),
+								  THEME_COLOR_BORDER_MED,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(bar_in_range_color_wheel_popup, 2,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2417,7 +2418,7 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_set_style_shadow_width(bar_in_range_color_wheel_popup, 15,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_color(bar_in_range_color_wheel_popup,
-								  lv_color_hex(0x000000),
+								  THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(bar_in_range_color_wheel_popup, 150,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -2425,9 +2426,9 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	// Title label
 	lv_obj_t *title_label = lv_label_create(bar_in_range_color_wheel_popup);
 	lv_label_set_text(title_label, "Select Custom Bar In-Range Colour");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
 
@@ -2451,13 +2452,13 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *ok_btn = lv_btn_create(bar_in_range_color_wheel_popup);
 	lv_obj_set_size(ok_btn, 80, 35);
 	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, lv_color_hex(0x4CAF50),
+	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *ok_label = lv_label_create(ok_btn);
 	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(ok_label);
 
@@ -2468,13 +2469,13 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_t *cancel_btn = lv_btn_create(bar_in_range_color_wheel_popup);
 	lv_obj_set_size(cancel_btn, 80, 35);
 	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xF44336),
+	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
 	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(cancel_label);
 
@@ -2508,7 +2509,7 @@ void warning_high_color_event_cb(lv_event_t *e) {
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		uint16_t selected = lv_dropdown_get_selected(dropdown);
 		values_config[value_id - 1].warning_high_color =
-			selected == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x19439a);
+			selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
 	}
 }
 
@@ -2518,7 +2519,7 @@ void warning_low_color_event_cb(lv_event_t *e) {
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		uint16_t selected = lv_dropdown_get_selected(dropdown);
 		values_config[value_id - 1].warning_low_color =
-			selected == 0 ? lv_color_hex(0xFF0000) : lv_color_hex(0x19439a);
+			selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
 	}
 }
 
@@ -2557,22 +2558,22 @@ static void color_dropdown_cb(lv_event_t *e) {
 	lv_color_t color;
 	switch (selected) {
 	case 0:
-		color = lv_color_hex(0x00FF00);
+		color = THEME_COLOR_GREEN;
 		break; // Green
 	case 1:
-		color = lv_color_hex(0x0000FF);
+		color = THEME_COLOR_BLUE_PURE;
 		break; // Blue
 	case 2:
-		color = lv_color_hex(0xFFA500);
+		color = THEME_COLOR_ORANGE_WEB;
 		break; // Orange
 	case 3:
-		color = lv_color_hex(0xFF0000);
+		color = THEME_COLOR_RED;
 		break; // Red
 	case 4:
-		color = lv_color_hex(0xFFFF00);
+		color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	default:
-		color = lv_color_hex(0x00FF00);
+		color = THEME_COLOR_GREEN;
 		break;
 	}
 	if (data->preview_objects && data->preview_objects[0]) {
@@ -2646,22 +2647,22 @@ static void apply_preconfig_warning_cb(lv_event_t *e) {
 	lv_color_t color;
 	switch (preconfig->color_index) {
 	case 0:
-		color = lv_color_hex(0x00FF00);
+		color = THEME_COLOR_GREEN;
 		break; // Green
 	case 1:
-		color = lv_color_hex(0x0000FF);
+		color = THEME_COLOR_BLUE_PURE;
 		break; // Blue
 	case 2:
-		color = lv_color_hex(0xFFA500);
+		color = THEME_COLOR_ORANGE_WEB;
 		break; // Orange
 	case 3:
-		color = lv_color_hex(0xFF0000);
+		color = THEME_COLOR_RED;
 		break; // Red
 	case 4:
-		color = lv_color_hex(0xFFFF00);
+		color = THEME_COLOR_YELLOW;
 		break; // Yellow
 	default:
-		color = lv_color_hex(0x00FF00);
+		color = THEME_COLOR_GREEN;
 		break;
 	}
 
@@ -2728,22 +2729,22 @@ static void save_warning_config_cb(lv_event_t *e) {
 		uint8_t selected_color = lv_dropdown_get_selected(inputs[4]);
 		switch (selected_color) {
 		case 0:
-			warning_configs[warning_idx].active_color = lv_color_hex(0x00FF00);
+			warning_configs[warning_idx].active_color = THEME_COLOR_GREEN;
 			break; // Green
 		case 1:
-			warning_configs[warning_idx].active_color = lv_color_hex(0x0000FF);
+			warning_configs[warning_idx].active_color = THEME_COLOR_BLUE_PURE;
 			break; // Blue
 		case 2:
-			warning_configs[warning_idx].active_color = lv_color_hex(0xFFA500);
+			warning_configs[warning_idx].active_color = THEME_COLOR_ORANGE_WEB;
 			break; // Orange
 		case 3:
-			warning_configs[warning_idx].active_color = lv_color_hex(0xFF0000);
+			warning_configs[warning_idx].active_color = THEME_COLOR_RED;
 			break; // Red
 		case 4:
-			warning_configs[warning_idx].active_color = lv_color_hex(0xFFFF00);
+			warning_configs[warning_idx].active_color = THEME_COLOR_YELLOW;
 			break; // Yellow
 		default:
-			warning_configs[warning_idx].active_color = lv_color_hex(0x00FF00);
+			warning_configs[warning_idx].active_color = THEME_COLOR_GREEN;
 			break;
 		}
 	}
@@ -2984,7 +2985,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 
 	// Create the configuration screen
 	lv_obj_t *config_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(config_screen, lv_color_hex(0x0000), 0);
+	lv_obj_set_style_bg_color(config_screen, THEME_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(config_screen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(config_screen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2996,7 +2997,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_y(main_border, 67);
 	lv_obj_clear_flag(main_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(main_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(main_border, lv_color_hex(0x292C29),
+	lv_obj_set_style_bg_color(main_border, THEME_COLOR_INACTIVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(main_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(main_border, 0,
@@ -3011,7 +3012,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_align(input_border, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(input_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(input_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(input_border, lv_color_hex(0x181818),
+	lv_obj_set_style_bg_color(input_border, THEME_COLOR_INPUT_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(input_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(input_border, 0,
@@ -3026,21 +3027,21 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_align(preview_panel, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(preview_panel, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preview_panel, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(preview_panel, lv_color_hex(0x1A1A1A),
+	lv_obj_set_style_bg_color(preview_panel, THEME_COLOR_SURFACE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(preview_panel, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(preview_panel, 1,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(preview_panel, lv_color_hex(0x333333),
+	lv_obj_set_style_border_color(preview_panel, THEME_COLOR_CONTROL_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	// Create preview title
 	lv_obj_t *preview_title = lv_label_create(preview_panel);
 	lv_label_set_text(preview_title, "Live Preview");
 	lv_obj_align(preview_title, LV_ALIGN_TOP_MID, 0, 10);
-	lv_obj_set_style_text_color(preview_title, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(preview_title, &lv_font_montserrat_14, 0);
+	lv_obj_set_style_text_color(preview_title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(preview_title, THEME_FONT_BODY, 0);
 
 	// Create preview indicator centered in the panel
 	lv_obj_t *preview_indicator = lv_img_create(preview_panel);
@@ -3082,15 +3083,15 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 
 	// Set text color based on state
 	if (indicator_idx < 2 && indicator_configs[indicator_idx].current_state) {
-		lv_obj_set_style_text_color(status_text, lv_color_hex(0x00FF00),
+		lv_obj_set_style_text_color(status_text, THEME_COLOR_GREEN,
 									0); // Green when active
 	} else {
-		lv_obj_set_style_text_color(status_text, lv_color_hex(0xCCCCCC),
+		lv_obj_set_style_text_color(status_text, THEME_COLOR_TEXT_MUTED,
 									0); // Gray when inactive
 	}
 
 	lv_obj_set_style_text_align(status_text, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_style_text_font(status_text, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_font(status_text, THEME_FONT_SMALL, 0);
 
 	// Store references for live preview updates
 	preview_indicator_config = preview_indicator;
@@ -3109,8 +3110,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_label_set_text_fmt(title, "%s Indicator Configuration",
 						  indicator_idx == 0 ? "Left" : "Right");
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
-	lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
 
 	// Create a container for inputs
 	lv_obj_t *inputs_container = lv_obj_create(config_screen);
@@ -3124,8 +3125,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *input_title = lv_label_create(inputs_container);
 	lv_label_set_text(input_title, "Configuration Settings");
 	lv_obj_align(input_title, LV_ALIGN_CENTER, -244, -75);
-	lv_obj_set_style_text_color(input_title, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(input_title, &lv_font_montserrat_14, 0);
+	lv_obj_set_style_text_color(input_title, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(input_title, THEME_FONT_BODY, 0);
 
 	// INPUT: Wire / CANBUS dropdown (top row - functionality to be added)
 	lv_obj_t *input_src_label = lv_label_create(inputs_container);
@@ -3133,8 +3134,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(input_src_label, 110);
 	lv_obj_set_style_text_align(input_src_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(input_src_label, LV_ALIGN_CENTER, -312, -32);
-	lv_obj_set_style_text_color(input_src_label, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(input_src_label, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color(input_src_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(input_src_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *input_src_dropdown = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(input_src_dropdown, get_common_style(), LV_PART_MAIN);
@@ -3152,17 +3153,17 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(can_id_label, 110);
 	lv_obj_set_style_text_align(can_id_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(can_id_label, LV_ALIGN_CENTER, -312, 8);
-	lv_obj_set_style_text_color(can_id_label, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(can_id_label, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color(can_id_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(can_id_label, THEME_FONT_SMALL, 0);
 
 	// CAN ID "0x" prefix
 	lv_obj_t *can_id_0x = lv_label_create(inputs_container);
 	lv_label_set_text(can_id_0x, "0x");
 	lv_obj_set_width(can_id_0x, 20);
-	lv_obj_set_style_text_color(can_id_0x, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(can_id_0x, THEME_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(can_id_0x, LV_ALIGN_CENTER, -200, 8);
 	lv_obj_set_style_text_align(can_id_0x, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_style_text_font(can_id_0x, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_font(can_id_0x, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *can_id_input = lv_textarea_create(inputs_container);
 	lv_obj_add_style(can_id_input, get_common_style(), LV_PART_MAIN);
@@ -3200,8 +3201,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(bit_pos_label, 110);
 	lv_obj_set_style_text_align(bit_pos_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(bit_pos_label, LV_ALIGN_CENTER, -312, 48);
-	lv_obj_set_style_text_color(bit_pos_label, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(bit_pos_label, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color(bit_pos_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(bit_pos_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *bit_pos_dropdown = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(bit_pos_dropdown, get_common_style(), LV_PART_MAIN);
@@ -3236,8 +3237,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(toggle_mode_label, 110);
 	lv_obj_set_style_text_align(toggle_mode_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(toggle_mode_label, LV_ALIGN_CENTER, -312, 88);
-	lv_obj_set_style_text_color(toggle_mode_label, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(toggle_mode_label, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(toggle_mode_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *toggle_mode_dropdown = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(toggle_mode_dropdown, get_common_style(), LV_PART_MAIN);
@@ -3269,8 +3270,8 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_set_width(animation_label, 110);
 	lv_obj_set_style_text_align(animation_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(animation_label, LV_ALIGN_CENTER, -312, 128);
-	lv_obj_set_style_text_color(animation_label, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(animation_label, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color(animation_label, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(animation_label, THEME_FONT_SMALL, 0);
 
 	lv_obj_t *animation_switch = lv_switch_create(inputs_container);
 	lv_obj_add_style(animation_switch, get_common_style(), LV_PART_MAIN);
@@ -3333,7 +3334,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *save_btn = lv_btn_create(config_screen);
 	lv_obj_t *save_label = lv_label_create(save_btn);
 	lv_label_set_text(save_label, "Save");
-	lv_obj_set_style_bg_color(save_btn, lv_color_hex(0x4CAF50), LV_PART_MAIN);
+	lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE, LV_PART_MAIN);
 	lv_obj_set_align(save_btn, LV_ALIGN_CENTER);
 	lv_obj_set_pos(save_btn, 200, 200);
 	lv_obj_center(save_label);
@@ -3342,7 +3343,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_t *back_btn = lv_btn_create(config_screen);
 	lv_obj_t *back_label = lv_label_create(back_btn);
 	lv_label_set_text(back_label, "Cancel");
-	lv_obj_set_style_bg_color(back_btn, lv_color_hex(0xF44336), LV_PART_MAIN);
+	lv_obj_set_style_bg_color(back_btn, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN);
 	lv_obj_set_align(back_btn, LV_ALIGN_CENTER);
 	lv_obj_set_pos(back_btn, 300, 200);
 	lv_obj_center(back_label);
@@ -3557,7 +3558,7 @@ void set_rpm_value(int rpm) {
 					lv_obj_is_valid(ui_Screen3)) {
 					// Get current background color (assuming it's the default)
 					original_screen_bg_color =
-						lv_color_hex(0x000000); // Default black background
+						THEME_COLOR_BG; // Default black background
 					original_screen_bg_color_saved = true;
 				}
 
@@ -3574,7 +3575,7 @@ void set_rpm_value(int rpm) {
 				for (int i = 0; i < 8; i++) {
 					if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
 						lv_obj_set_style_bg_color(
-							ui_Box[i], lv_color_hex(0x2e2f2e),
+							ui_Box[i], THEME_COLOR_PANEL,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 					}
 				}
@@ -3582,37 +3583,37 @@ void set_rpm_value(int rpm) {
 				// Change text elements to grey when RPM background is active
 				if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 					lv_obj_set_style_text_color(
-						ui_RPM_Value, lv_color_hex(0x2e2f2e),
+						ui_RPM_Value, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Speed_Value, lv_color_hex(0x2e2f2e),
+						ui_Speed_Value, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-					lv_obj_set_style_text_color(ui_Kmh, lv_color_hex(0x2e2f2e),
+					lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_PANEL,
 												LV_PART_MAIN |
 													LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_1_Label, lv_color_hex(0x2e2f2e),
+						ui_Bar_1_Label, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_1_Value, lv_color_hex(0x2e2f2e),
+						ui_Bar_1_Value, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_2_Label, lv_color_hex(0x2e2f2e),
+						ui_Bar_2_Label, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_2_Value, lv_color_hex(0x2e2f2e),
+						ui_Bar_2_Value, THEME_COLOR_PANEL,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 			} else if (rpm_background_active &&
@@ -3633,7 +3634,7 @@ void set_rpm_value(int rpm) {
 				for (int i = 0; i < 8; i++) {
 					if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
 						lv_obj_set_style_bg_color(
-							ui_Box[i], lv_color_hex(0x000000),
+							ui_Box[i], THEME_COLOR_BG,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 					}
 				}
@@ -3642,37 +3643,37 @@ void set_rpm_value(int rpm) {
 				// inactive
 				if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 					lv_obj_set_style_text_color(
-						ui_RPM_Value, lv_color_hex(0xFFFFFF),
+						ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Speed_Value, lv_color_hex(0xFFFFFF),
+						ui_Speed_Value, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-					lv_obj_set_style_text_color(ui_Kmh, lv_color_hex(0xFFFFFF),
+					lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
 												LV_PART_MAIN |
 													LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_1_Label, lv_color_hex(0xFFFFFF),
+						ui_Bar_1_Label, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_1_Value, lv_color_hex(0xFFFFFF),
+						ui_Bar_1_Value, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_2_Label, lv_color_hex(0xFFFFFF),
+						ui_Bar_2_Label, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 				if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
 					lv_obj_set_style_text_color(
-						ui_Bar_2_Value, lv_color_hex(0xFFFFFF),
+						ui_Bar_2_Value, THEME_COLOR_TEXT_PRIMARY,
 						LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 			}
@@ -3691,7 +3692,7 @@ void set_rpm_value(int rpm) {
 			// disabled
 			for (int i = 0; i < 8; i++) {
 				if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-					lv_obj_set_style_bg_color(ui_Box[i], lv_color_hex(0x000000),
+					lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_BG,
 											  LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 			}
@@ -3699,36 +3700,36 @@ void set_rpm_value(int rpm) {
 			// Restore text elements to white when RPM background is disabled
 			if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 				lv_obj_set_style_text_color(ui_RPM_Value,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
 				lv_obj_set_style_text_color(ui_Speed_Value,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-				lv_obj_set_style_text_color(ui_Kmh, lv_color_hex(0xFFFFFF),
+				lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
 				lv_obj_set_style_text_color(ui_Bar_1_Label,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
 				lv_obj_set_style_text_color(ui_Bar_1_Value,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
 				lv_obj_set_style_text_color(ui_Bar_2_Label,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
 				lv_obj_set_style_text_color(ui_Bar_2_Value,
-											lv_color_hex(0xFFFFFF),
+											THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 		}
@@ -3808,7 +3809,7 @@ void update_panel_ui(void *param) {
 		// Apply same border logic as main screen panels
 		if (strcmp(update->value_str, "---") == 0) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  lv_color_hex(0x2e2f2e),
+										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else if (values_config[i].warning_high_enabled &&
 				   update->final_value >
@@ -3827,7 +3828,7 @@ void update_panel_ui(void *param) {
 		} else {
 			// No thresholds exceeded, use default color
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  lv_color_hex(0x2e2f2e),
+										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 		// Ensure border is visible
@@ -3842,7 +3843,7 @@ void update_panel_ui(void *param) {
 		lv_obj_get_screen(ui_Box[i]) != NULL) {
 		// Special case: if showing "---", always use default grey color
 		if (strcmp(update->value_str, "---") == 0) {
-			lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e),
+			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else if (values_config[i].warning_high_enabled &&
 				   update->final_value >
@@ -3860,7 +3861,7 @@ void update_panel_ui(void *param) {
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
 			// No thresholds exceeded, use default color
-			lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e),
+			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 		// Ensure border is visible
@@ -3892,7 +3893,7 @@ static void update_panel_ui_immediate(uint8_t i, const char *value_str,
 		lv_scr_act() == ui_MenuScreen) {
 		if (strcmp(value_str, "---") == 0) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  lv_color_hex(0x2e2f2e),
+										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else if (values_config[i].warning_high_enabled &&
 				   final_value > values_config[i].warning_high_threshold) {
@@ -3906,7 +3907,7 @@ static void update_panel_ui_immediate(uint8_t i, const char *value_str,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  lv_color_hex(0x2e2f2e),
+										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
@@ -3917,7 +3918,7 @@ static void update_panel_ui_immediate(uint8_t i, const char *value_str,
 	if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) &&
 		lv_obj_get_screen(ui_Box[i]) != NULL) {
 		if (strcmp(value_str, "---") == 0) {
-			lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e),
+			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else if (values_config[i].warning_high_enabled &&
 				   final_value > values_config[i].warning_high_threshold) {
@@ -3930,7 +3931,7 @@ static void update_panel_ui_immediate(uint8_t i, const char *value_str,
 										  values_config[i].warning_low_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
-			lv_obj_set_style_border_color(ui_Box[i], lv_color_hex(0x2e2f2e),
+			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 		lv_obj_set_style_border_width(ui_Box[i], 3,
@@ -4275,7 +4276,7 @@ void update_warning_ui(void *param) {
 
 	lv_color_t new_color = warning_configs[warning_idx].current_state
 							   ? warning_configs[warning_idx].active_color
-							   : lv_color_hex(0x292C29); // Default "off" color.
+							   : THEME_COLOR_INACTIVE; // Default "off" color.
 
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -4301,7 +4302,7 @@ static void update_warning_ui_immediate(uint8_t warning_idx) {
 	}
 	lv_color_t new_color = warning_configs[warning_idx].current_state
 							   ? warning_configs[warning_idx].active_color
-							   : lv_color_hex(0x292C29);
+							   : THEME_COLOR_INACTIVE;
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (warning_labels[warning_idx] &&
@@ -4374,11 +4375,11 @@ void update_config_preview(uint8_t indicator_idx) {
 		// Update text color based on state
 		if (indicator_configs[indicator_idx].current_state) {
 			lv_obj_set_style_text_color(preview_status_text_config,
-										lv_color_hex(0x00FF00),
+										THEME_COLOR_GREEN,
 										0); // Green when active
 		} else {
 			lv_obj_set_style_text_color(preview_status_text_config,
-										lv_color_hex(0xCCCCCC),
+										THEME_COLOR_TEXT_MUTED,
 										0); // Gray when inactive
 		}
 	}
@@ -5384,10 +5385,10 @@ static void init_styles(void) {
 	lv_style_init(&box_style);
 	lv_style_set_radius(&box_style, 7);
 	lv_style_set_bg_color(&box_style,
-						  lv_color_hex(0x000000)); // Black background
+						  THEME_COLOR_BG); // Black background
 	lv_style_set_bg_opa(&box_style, 255); // Full opacity for black background
 	lv_style_set_clip_corner(&box_style, false);
-	lv_style_set_border_color(&box_style, lv_color_hex(0x2e2f2e));
+	lv_style_set_border_color(&box_style, THEME_COLOR_PANEL);
 	lv_style_set_border_opa(&box_style, 255);
 	lv_style_set_border_width(&box_style, 3);
 	lv_style_set_border_post(&box_style, true); // Ensure border is drawn on top
@@ -5400,14 +5401,14 @@ void init_common_style(void) {
 	lv_style_set_radius(&common_style, 7);
 	lv_style_set_pad_all(&common_style, 8); // 7px padding on all sides
 	lv_style_set_bg_color(&common_style,
-						  lv_color_hex(0xFFFFFF)); // White background
+						  THEME_COLOR_TEXT_PRIMARY); // White background
 	lv_style_set_bg_opa(&common_style, LV_OPA_COVER);
 	lv_style_set_border_color(&common_style,
-							  lv_color_hex(0xCCCCCC)); // Light gray border
+							  THEME_COLOR_TEXT_MUTED); // Light gray border
 	lv_style_set_border_width(&common_style, 1);
 	lv_style_set_text_color(&common_style, lv_color_black()); // Black text
 	lv_style_set_text_font(&common_style,
-						   &lv_font_montserrat_12); // Common font
+						   THEME_FONT_SMALL); // Common font
 }
 
 // Getter function for common_style to allow access from other files
@@ -5439,13 +5440,13 @@ static lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x,
 
 void create_rpm_bar_gauge(lv_obj_t *parent_screen) {
 	ui_RPM_Base_1 = create_panel(parent_screen, 800, 6, 0, -182, 0,
-								 lv_color_hex(0x2E2F2E), 0); // Moved up 2px
+								 THEME_COLOR_PANEL, 0); // Moved up 2px
 	ui_RPM_Base_2 = create_panel(parent_screen, 49, 22, -41, -193, 7,
-								 lv_color_hex(0x2E2F2E), 550);
+								 THEME_COLOR_PANEL, 550);
 	ui_RPM_Base_3 = create_panel(parent_screen, 49, 22, 105, -181, 7,
-								 lv_color_hex(0x2E2F2E), 1250);
+								 THEME_COLOR_PANEL, 1250);
 	ui_RPM_Base_4 =
-		create_panel(parent_screen, 111, 44, 0, -176, 7, lv_color_hex(0x2E2F2E),
+		create_panel(parent_screen, 111, 44, 0, -176, 7, THEME_COLOR_PANEL,
 					 0); // Back to original position
 	lv_color_t saved_color = values_config[RPM_VALUE_ID - 1].rpm_bar_color;
 	ui_Panel9 = create_panel(parent_screen, 55, 55, -373, -213, 0, saved_color,
@@ -5472,7 +5473,7 @@ void create_rpm_bar_gauge(lv_obj_t *parent_screen) {
 
 	// Set styles for the RPM bar gauge (no gradient, solid color)
 	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(rpm_bar_gauge, lv_color_hex(0xF3F3F3),
+	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT); // Light gray
 	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -5500,7 +5501,7 @@ void create_rpm_bar_gauge(lv_obj_t *parent_screen) {
 	lv_obj_clear_flag(rpm_redline_zone, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(rpm_redline_zone, 0,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(rpm_redline_zone, lv_color_hex(0xFF0000),
+	lv_obj_set_style_bg_color(rpm_redline_zone, THEME_COLOR_RED,
 							  LV_PART_MAIN | LV_STATE_DEFAULT); // Bright red
 	lv_obj_set_style_bg_opa(rpm_redline_zone, 180,
 							LV_PART_MAIN |
@@ -5594,7 +5595,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 		lv_obj_t *line_top = lv_obj_create(parent);
 		lv_obj_set_size(line_top, line_width, line_height);
 		lv_obj_set_style_radius(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(line_top, lv_color_hex(0x000000),
+		lv_obj_set_style_bg_color(line_top, THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(line_top, LV_OPA_COVER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -5619,10 +5620,10 @@ void update_rpm_lines(lv_obj_t *parent) {
 			lv_label_set_text(label, rpm_str);
 
 			// Style the label
-			lv_obj_set_style_text_color(label, lv_color_hex(0x000000),
+			lv_obj_set_style_text_color(label, THEME_COLOR_BG,
 										LV_PART_MAIN);
 			lv_obj_set_style_text_opa(label, LV_OPA_COVER, LV_PART_MAIN);
-			lv_obj_set_style_text_font(label, &ui_font_fugaz_17,
+			lv_obj_set_style_text_font(label, THEME_FONT_DASH_TICK,
 									   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 			// Position the label below the line
@@ -5638,7 +5639,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 		lv_obj_set_size(line_bottom, line_width, line_height);
 		lv_obj_set_style_radius(line_bottom, 0,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(line_bottom, lv_color_hex(0x000000),
+		lv_obj_set_style_bg_color(line_bottom, THEME_COLOR_BG,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(line_bottom, LV_OPA_COVER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -5726,7 +5727,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Create the configuration screen
 	lv_obj_t *config_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(config_screen, lv_color_hex(0x0000), 0);
+	lv_obj_set_style_bg_color(config_screen, THEME_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(config_screen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(config_screen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -5751,7 +5752,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_y(main_border, 117); // Lowered by 50px (was 67)
 	lv_obj_clear_flag(main_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(main_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(main_border, lv_color_hex(0x292C29),
+	lv_obj_set_style_bg_color(main_border, THEME_COLOR_INACTIVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(main_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(main_border, 0,
@@ -5765,7 +5766,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_align(input_border, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(input_border, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(input_border, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(input_border, lv_color_hex(0x181818),
+	lv_obj_set_style_bg_color(input_border, THEME_COLOR_INPUT_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(input_border, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(input_border, 0,
@@ -5801,13 +5802,13 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_y(preview_label, -112); // Same y-position as in Screen3
 	lv_obj_set_align(preview_label, LV_ALIGN_CENTER);
 	lv_label_set_text(preview_label, warning_configs[warning_idx].label);
-	lv_obj_set_style_text_color(preview_label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(preview_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(preview_label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(preview_label, LV_TEXT_ALIGN_CENTER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(preview_label, &lv_font_montserrat_10,
+	lv_obj_set_style_text_font(preview_label, THEME_FONT_TINY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	preview_objects[1] = preview_label;
@@ -5823,7 +5824,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_t *title = lv_label_create(config_screen);
 	lv_label_set_text_fmt(title, "Warning %d Configuration", warning_idx + 1);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
-	lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
 	// Create a container for inputs
 	lv_obj_t *inputs_container = lv_obj_create(config_screen);
@@ -5841,7 +5842,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_style_text_align(label_text_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(label_text_label, LV_ALIGN_CENTER, -312,
 				 -47); // Was 73, now -47
-	lv_obj_set_style_text_color(label_text_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(label_text_label, THEME_COLOR_TEXT_MUTED, 0);
 
 	input_objects[3] = lv_textarea_create(inputs_container);
 	lv_obj_add_style(input_objects[3], &common_style, LV_PART_MAIN);
@@ -5859,7 +5860,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(can_id_label, 110);
 	lv_obj_set_style_text_align(can_id_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(can_id_label, LV_ALIGN_CENTER, -312, -7); // Was -47, now -7
-	lv_obj_set_style_text_color(can_id_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(can_id_label, THEME_COLOR_TEXT_MUTED, 0);
 
 	input_objects[0] = lv_textarea_create(inputs_container);
 	lv_obj_add_style(input_objects[0], &common_style, LV_PART_MAIN);
@@ -5880,7 +5881,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(bit_pos_label, 110);
 	lv_obj_set_style_text_align(bit_pos_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(bit_pos_label, LV_ALIGN_CENTER, -312, 33); // Was -7, now 33
-	lv_obj_set_style_text_color(bit_pos_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(bit_pos_label, THEME_COLOR_TEXT_MUTED, 0);
 
 	input_objects[1] = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(input_objects[1], &common_style, LV_PART_MAIN);
@@ -5901,7 +5902,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(color_label, 110);
 	lv_obj_set_style_text_align(color_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(color_label, LV_ALIGN_CENTER, -312, 73);
-	lv_obj_set_style_text_color(color_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(color_label, THEME_COLOR_TEXT_MUTED, 0);
 
 	input_objects[4] = lv_dropdown_create(inputs_container);
 	lv_obj_add_style(input_objects[4], &common_style, LV_PART_MAIN);
@@ -5913,13 +5914,13 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	// Set the current color selection based on the saved configuration
 	lv_color_t current_color = warning_configs[warning_idx].active_color;
 	uint8_t selected_color = 0; // Default to Green
-	if (current_color.full == lv_color_hex(0x0000FF).full)
+	if (current_color.full == THEME_COLOR_BLUE_PURE.full)
 		selected_color = 1; // Blue
-	else if (current_color.full == lv_color_hex(0xFFA500).full)
+	else if (current_color.full == THEME_COLOR_ORANGE_WEB.full)
 		selected_color = 2; // Orange
-	else if (current_color.full == lv_color_hex(0xFF0000).full)
+	else if (current_color.full == THEME_COLOR_RED.full)
 		selected_color = 3; // Red
-	else if (current_color.full == lv_color_hex(0xFFFF00).full)
+	else if (current_color.full == THEME_COLOR_YELLOW.full)
 		selected_color = 4; // Yellow
 	lv_dropdown_set_selected(input_objects[4], selected_color);
 
@@ -5932,7 +5933,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_label_set_text(toggle_mode_label, "Toggle Mode:");
 	lv_obj_set_width(toggle_mode_label, 110);
 	lv_obj_set_style_text_align(toggle_mode_label, LV_TEXT_ALIGN_LEFT, 0);
-	lv_obj_set_style_text_color(toggle_mode_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(toggle_mode_label, LV_ALIGN_CENTER, -312, 113);
 
 	input_objects[5] = lv_dropdown_create(inputs_container);
@@ -5948,7 +5949,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_label_set_text(invert_toggle_label, "Invert Toggle:");
 	lv_obj_set_width(invert_toggle_label, 110);
 	lv_obj_set_style_text_align(invert_toggle_label, LV_TEXT_ALIGN_LEFT, 0);
-	lv_obj_set_style_text_color(invert_toggle_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(invert_toggle_label, THEME_COLOR_TEXT_MUTED, 0);
 	lv_obj_align(invert_toggle_label, LV_ALIGN_CENTER, -312, 153);
 	
 	lv_obj_t *invert_toggle_switch = lv_switch_create(inputs_container);
@@ -5976,7 +5977,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_align(preconfig_container, LV_ALIGN_CENTER, 250, 40);
 	lv_obj_clear_flag(preconfig_container, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preconfig_container, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(preconfig_container, lv_color_hex(0x181818), LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(preconfig_container, THEME_COLOR_INPUT_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(preconfig_container, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(preconfig_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(preconfig_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -5984,8 +5985,8 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	// Heading for preconfig container
 	lv_obj_t *preconfig_heading = lv_label_create(preconfig_container);
 	lv_label_set_text(preconfig_heading, "Pre-configurations");
-	lv_obj_set_style_text_color(preconfig_heading, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(preconfig_heading, &lv_font_montserrat_14, 0);
+	lv_obj_set_style_text_color(preconfig_heading, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(preconfig_heading, THEME_FONT_BODY, 0);
 	lv_obj_align(preconfig_heading, LV_ALIGN_TOP_MID, 0, 0);
 	
 	// ECU dropdown
@@ -5994,7 +5995,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_ecu_label, 70);
 	lv_obj_set_style_text_align(preconfig_ecu_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_ecu_label, LV_ALIGN_TOP_LEFT, 0, 30);
-	lv_obj_set_style_text_color(preconfig_ecu_label, lv_color_hex(0xCCCCCC), 0);
+	lv_obj_set_style_text_color(preconfig_ecu_label, THEME_COLOR_TEXT_MUTED, 0);
 
 	lv_obj_t *preconfig_ecu_dd = lv_dropdown_create(preconfig_container);
 	lv_obj_add_style(preconfig_ecu_dd, &common_style, LV_PART_MAIN);
@@ -6008,7 +6009,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_version_label, 70);
 	lv_obj_set_style_text_align(preconfig_version_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_version_label, LV_ALIGN_TOP_LEFT, 0, 70);
-	lv_obj_set_style_text_color(preconfig_version_label, lv_color_hex(0xCCCCCC),
+	lv_obj_set_style_text_color(preconfig_version_label, THEME_COLOR_TEXT_MUTED,
 								0);
 
 	lv_obj_t *preconfig_version_dd = lv_dropdown_create(preconfig_container);
@@ -6023,7 +6024,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(preconfig_warning_label, 70);
 	lv_obj_set_style_text_align(preconfig_warning_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_warning_label, LV_ALIGN_TOP_LEFT, 0, 110);
-	lv_obj_set_style_text_color(preconfig_warning_label, lv_color_hex(0xCCCCCC),
+	lv_obj_set_style_text_color(preconfig_warning_label, THEME_COLOR_TEXT_MUTED,
 								0);
 
 	lv_obj_t *preconfig_warning_dd = lv_dropdown_create(preconfig_container);
@@ -6226,7 +6227,7 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 		// Create setup menu screen
 		ui_Setup_Menu_Screen = lv_obj_create(NULL);
 		lv_obj_clear_flag(ui_Setup_Menu_Screen, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_bg_color(ui_Setup_Menu_Screen, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_color(ui_Setup_Menu_Screen, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(ui_Setup_Menu_Screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 		
 		// Create close button at bottom center
@@ -6236,14 +6237,14 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 		lv_obj_set_x(close_btn, 0);
 		lv_obj_set_y(close_btn, -20); // 20px from bottom
 		lv_obj_set_align(close_btn, LV_ALIGN_BOTTOM_MID);
-		lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xF44336), LV_PART_MAIN | LV_STATE_DEFAULT); // Red
+		lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN | LV_STATE_DEFAULT); // Red
 		lv_obj_set_style_bg_opa(close_btn, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(close_btn, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
 		
 		// Add label to close button
 		lv_obj_t *close_label = lv_label_create(close_btn);
 		lv_label_set_text(close_label, "CLOSE");
-		lv_obj_set_style_text_color(close_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_color(close_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_center(close_label);
 		
 		// Add click event to close button
@@ -6291,7 +6292,7 @@ void ui_Screen3_screen_init(void) {
 
 	ui_Screen3 = lv_obj_create(NULL);
 	lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ui_Screen3, lv_color_hex(0x000000),
+	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	
@@ -6360,11 +6361,11 @@ void ui_Screen3_screen_init(void) {
 		// Create label as child of box (so it gets clipped if it overflows)
 		ui_Label[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_Label[i], label_texts[i]);
-		lv_obj_set_style_text_color(ui_Label[i], lv_color_hex(0xFFFFFF),
+		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Label[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(ui_Label[i], &ui_font_fugaz_14,
+		lv_obj_set_style_text_font(ui_Label[i], THEME_FONT_DASH_LABEL,
 								   LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_align(ui_Label[i], LV_TEXT_ALIGN_CENTER, 0);
 		// Set max width and clip mode to prevent overflow
@@ -6382,11 +6383,11 @@ void ui_Screen3_screen_init(void) {
 		lv_label_set_text(ui_Value[i], "---");
 		strcpy(previous_values[i], "---");
 		
-		lv_obj_set_style_text_color(ui_Value[i], lv_color_hex(0xFFFFFF),
+		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Value[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(ui_Value[i], &ui_font_Manrope_35_BOLD,
+		lv_obj_set_style_text_font(ui_Value[i], THEME_FONT_DASH_VALUE,
 								   LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_align(ui_Value[i], LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_width(ui_Value[i], 140);
@@ -6401,11 +6402,11 @@ void ui_Screen3_screen_init(void) {
 		// Create custom text label in bottom right corner of panel
 		ui_CustomText[i] = lv_label_create(ui_Screen3);
 		lv_label_set_text(ui_CustomText[i], values_config[i].custom_text);
-		lv_obj_set_style_text_color(ui_CustomText[i], lv_color_hex(0xCCCCCC),
+		lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_CustomText[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(ui_CustomText[i], &lv_font_montserrat_14,
+		lv_obj_set_style_text_font(ui_CustomText[i], THEME_FONT_BODY,
 								   LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_align(ui_CustomText[i], LV_TEXT_ALIGN_RIGHT,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6433,11 +6434,11 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_RPM_Value, "---");
 	strcpy(previous_values[RPM_VALUE_ID - 1], "---");
-	lv_obj_set_style_text_color(ui_RPM_Value, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_RPM_Value, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_RPM_Value, &ui_font_fugaz_28,
+	lv_obj_set_style_text_font(ui_RPM_Value, THEME_FONT_DASH_RPM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	ui_RPM_Label = lv_label_create(ui_Screen3);
@@ -6447,11 +6448,11 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_RPM_Label, -164);
 	lv_obj_set_align(ui_RPM_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_RPM_Label, "RPM");
-	lv_obj_set_style_text_color(ui_RPM_Label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_RPM_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_RPM_Label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_RPM_Label, &ui_font_fugaz_14,
+	lv_obj_set_style_text_font(ui_RPM_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	ui_Speed_Value = lv_label_create(ui_Screen3);
@@ -6463,11 +6464,11 @@ void ui_Screen3_screen_init(void) {
 	// Set initial speed value to "---" to indicate no signal yet
 	lv_label_set_text(ui_Speed_Value, "---");
 	strcpy(previous_values[SPEED_VALUE_ID - 1], "---");
-	lv_obj_set_style_text_color(ui_Speed_Value, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Speed_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Speed_Value, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Speed_Value, &ui_font_fugaz_56,
+	lv_obj_set_style_text_font(ui_Speed_Value, THEME_FONT_DASH_SPEED,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	ui_Kmh = lv_label_create(ui_Screen3);
@@ -6479,10 +6480,10 @@ void ui_Screen3_screen_init(void) {
 	// Set units text based on saved configuration
 	lv_label_set_text(
 		ui_Kmh, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
-	lv_obj_set_style_text_color(ui_Kmh, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Kmh, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Kmh, &lv_font_montserrat_12,
+	lv_obj_set_style_text_font(ui_Kmh, THEME_FONT_SMALL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	ui_Indicator_Left = lv_img_create(ui_Screen3);
@@ -6585,10 +6586,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_Bar_1, 209);
 	lv_obj_set_align(ui_Bar_1, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_1, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_1, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_bg_color(ui_Bar_1, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Bar_1, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_border_color(ui_Bar_1, THEME_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_opa(ui_Bar_1, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Bar_1, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6601,7 +6602,7 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_pad_bottom(ui_Bar_1, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_set_style_radius(ui_Bar_1, 0, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_1, lv_color_hex(0x38FF00),
+	lv_obj_set_style_bg_color(ui_Bar_1, THEME_COLOR_GREEN_BRIGHT,
 							  LV_PART_INDICATOR |
 								  LV_STATE_DEFAULT); //(0x19439a) = cold blue
 	lv_obj_set_style_bg_opa(ui_Bar_1, 255,
@@ -6614,16 +6615,16 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_Bar_1_Label, 181);
 	lv_obj_set_align(ui_Bar_1_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_1_Label, label_texts[BAR1_VALUE_ID - 1]);
-	lv_obj_set_style_text_color(ui_Bar_1_Label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Bar_1_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Bar_1_Label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_Bar_1_Label, LV_TEXT_ALIGN_CENTER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Bar_1_Label, &ui_font_fugaz_14,
+	lv_obj_set_style_text_font(ui_Bar_1_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_1_Label, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_1_Label, lv_color_hex(0x000000),
+	lv_obj_set_style_bg_color(ui_Bar_1_Label, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_1_Label, 0,
 							LV_PART_MAIN |
@@ -6647,13 +6648,13 @@ void ui_Screen3_screen_init(void) {
 		181); // Position so right edge is at -100 (width 80, so center at -140)
 	lv_label_set_text(ui_Bar_1_Value, "---"); // Initial value
 	strcpy(previous_values[BAR1_VALUE_ID - 1], "---");
-	lv_obj_set_style_text_color(ui_Bar_1_Value, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Bar_1_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Bar_1_Value, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_Bar_1_Value, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Bar_1_Value, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(ui_Bar_1_Value, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_1_Value, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_1_Value, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6680,10 +6681,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_Bar_2, 209);
 	lv_obj_set_align(ui_Bar_2, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_2, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_2, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_bg_color(ui_Bar_2, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Bar_2, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_border_color(ui_Bar_2, THEME_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_opa(ui_Bar_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Bar_2, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6696,7 +6697,7 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_pad_bottom(ui_Bar_2, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_set_style_radius(ui_Bar_2, 0, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_2, lv_color_hex(0x38FF00),
+	lv_obj_set_style_bg_color(ui_Bar_2, THEME_COLOR_GREEN_BRIGHT,
 							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_2, 255,
 							LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -6708,14 +6709,14 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_Bar_2_Label, 181);
 	lv_obj_set_align(ui_Bar_2_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_2_Label, label_texts[BAR2_VALUE_ID - 1]);
-	lv_obj_set_style_text_color(ui_Bar_2_Label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Bar_2_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Bar_2_Label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Bar_2_Label, &ui_font_fugaz_14,
+	lv_obj_set_style_text_font(ui_Bar_2_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_2_Label, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Bar_2_Label, lv_color_hex(0x000000),
+	lv_obj_set_style_bg_color(ui_Bar_2_Label, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_2_Label, 0,
 							LV_PART_MAIN |
@@ -6739,13 +6740,13 @@ void ui_Screen3_screen_init(void) {
 		181); // Position so right edge is at 380 (width 80, so center at 340)
 	lv_label_set_text(ui_Bar_2_Value, "---"); // Initial value
 	strcpy(previous_values[BAR2_VALUE_ID - 1], "---");
-	lv_obj_set_style_text_color(ui_Bar_2_Value, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Bar_2_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Bar_2_Value, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_Bar_2_Value, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Bar_2_Value, &lv_font_montserrat_16,
+	lv_obj_set_style_text_font(ui_Bar_2_Value, THEME_FONT_MEDIUM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Bar_2_Value, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Bar_2_Value, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6763,17 +6764,17 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_align(ui_Gear_Panel, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(ui_Gear_Panel, LV_OBJ_FLAG_SCROLLABLE); /// Flags
 	lv_obj_set_style_radius(ui_Gear_Panel, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(ui_Gear_Panel, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_bg_color(ui_Gear_Panel, THEME_COLOR_PANEL,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Gear_Panel, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Gear_Panel, lv_color_hex(0x2e2f2e),
+	lv_obj_set_style_border_color(ui_Gear_Panel, THEME_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_opa(ui_Gear_Panel, 255,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Gear_Panel, 3,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_outline_color(ui_Gear_Panel, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_outline_color(ui_Gear_Panel, THEME_COLOR_TEXT_PRIMARY,
 								   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_outline_opa(ui_Gear_Panel, 255,
 								 LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6789,11 +6790,11 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_y(ui_Gear_Label, 152);
 	lv_obj_set_align(ui_Gear_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Gear_Label, label_texts[GEAR_VALUE_ID - 1]);
-	lv_obj_set_style_text_color(ui_Gear_Label, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_Gear_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Gear_Label, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Gear_Label, &ui_font_fugaz_14,
+	lv_obj_set_style_text_font(ui_Gear_Label, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_radius(ui_Gear_Label, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_left(ui_Gear_Label, 10,
@@ -6814,13 +6815,13 @@ void ui_Screen3_screen_init(void) {
 	lv_label_set_text(ui_GEAR_Value, "---");
 	strcpy(previous_values[GEAR_VALUE_ID - 1], "---");
 	
-	lv_obj_set_style_text_color(ui_GEAR_Value, lv_color_hex(0xFFFFFF),
+	lv_obj_set_style_text_color(ui_GEAR_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_GEAR_Value, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_GEAR_Value, LV_TEXT_ALIGN_CENTER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_GEAR_Value, &ui_font_Manrope_54_BOLD,
+	lv_obj_set_style_text_font(ui_GEAR_Value, THEME_FONT_DASH_GEAR,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_transform_zoom(ui_GEAR_Value, 210,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6858,11 +6859,11 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN); // Initially hidden
 	
 	// Glassmorphism effect: semi-transparent white background
-	lv_obj_set_style_bg_color(ui_Menu_Button, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Menu_Button, 60, LV_PART_MAIN | LV_STATE_DEFAULT); // Very transparent
 	
 	// Subtle white border for glass effect
-	lv_obj_set_style_border_color(ui_Menu_Button, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_color(ui_Menu_Button, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ui_Menu_Button, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_opa(ui_Menu_Button, 120, LV_PART_MAIN | LV_STATE_DEFAULT);
 	
@@ -6871,14 +6872,14 @@ void ui_Screen3_screen_init(void) {
 	
 	// Soft shadow for depth
 	lv_obj_set_style_shadow_width(ui_Menu_Button, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(ui_Menu_Button, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_shadow_color(ui_Menu_Button, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_shadow_opa(ui_Menu_Button, 100, LV_PART_MAIN | LV_STATE_DEFAULT);
 	
 	// Add label to button
 	lv_obj_t *menu_button_label = lv_label_create(ui_Menu_Button);
 	lv_label_set_text(menu_button_label, "MENU");
-	lv_obj_set_style_text_color(menu_button_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(menu_button_label, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(menu_button_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(menu_button_label, THEME_FONT_MEDIUM, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(menu_button_label);
 	
 	// Add click event to menu button
@@ -6911,7 +6912,7 @@ void ui_Screen3_screen_init(void) {
 		lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
 		lv_obj_set_style_radius(warning_circles[i], 100,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(warning_circles[i], lv_color_hex(0x292C29),
+		lv_obj_set_style_bg_color(warning_circles[i], THEME_COLOR_INACTIVE,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(warning_circles[i], 255,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -6941,13 +6942,13 @@ void ui_Screen3_screen_init(void) {
 			lv_label_set_text(warning_labels[i], label_text);
 		}
 
-		lv_obj_set_style_text_color(warning_labels[i], lv_color_hex(0xFFFFFF),
+		lv_obj_set_style_text_color(warning_labels[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(warning_labels[i], 255,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_align(warning_labels[i], LV_TEXT_ALIGN_CENTER,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(warning_labels[i], &lv_font_montserrat_10,
+		lv_obj_set_style_text_font(warning_labels[i], THEME_FONT_TINY,
 								   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 		// Don't reset current_state here - it was already loaded from NVS
@@ -7513,14 +7514,14 @@ void custom_gear_can_id_event_cb(lv_event_t *e) {
 void create_custom_gear_config_menu(void) {
 	// Create a new screen for custom gear configuration
 	lv_obj_t *custom_gear_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(custom_gear_screen, lv_color_hex(0x000000),
+	lv_obj_set_style_bg_color(custom_gear_screen, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	// Title
 	lv_obj_t *title_label = lv_label_create(custom_gear_screen);
 	lv_label_set_text(title_label, "Custom Gear CAN ID Configuration");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(title_label, &ui_font_fugaz_14, 0);
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(title_label, THEME_FONT_DASH_LABEL, 0);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 20);
 
 	// Instructions
@@ -7528,8 +7529,8 @@ void create_custom_gear_config_menu(void) {
 	lv_label_set_text(instructions,
 					  "Set individual CAN IDs for each gear position.\nLeave "
 					  "blank (0x000) to disable a gear.");
-	lv_obj_set_style_text_color(instructions, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(instructions, &lv_font_montserrat_10, 0);
+	lv_obj_set_style_text_color(instructions, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(instructions, THEME_FONT_TINY, 0);
 	lv_obj_align(instructions, LV_ALIGN_TOP_MID, 0, 50);
 	lv_obj_set_style_text_align(instructions, LV_TEXT_ALIGN_CENTER, 0);
 
@@ -7545,7 +7546,7 @@ void create_custom_gear_config_menu(void) {
 		// Gear label
 		lv_obj_t *gear_label = lv_label_create(custom_gear_screen);
 		lv_label_set_text(gear_label, gear_labels[i]);
-		lv_obj_set_style_text_color(gear_label, lv_color_hex(0xFFFFFF), 0);
+		lv_obj_set_style_text_color(gear_label, THEME_COLOR_TEXT_PRIMARY, 0);
 		lv_obj_align(gear_label, LV_ALIGN_TOP_LEFT, 50 + col * 350,
 					 100 + row * 60);
 
@@ -7686,29 +7687,29 @@ void speed_rpm_ratio_save_btn_event_cb(lv_event_t *e) {
 void create_speed_rpm_ratio_config_menu(void) {
 	// Create a new screen for Speed/RPM Ratio configuration
 	lv_obj_t *speed_rpm_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(speed_rpm_screen, lv_color_hex(0x000000),
+	lv_obj_set_style_bg_color(speed_rpm_screen, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	// Title
 	lv_obj_t *title_label = lv_label_create(speed_rpm_screen);
 	lv_label_set_text(title_label, "Speed/RPM Ratio Gear Configuration");
-	lv_obj_set_style_text_color(title_label, lv_color_hex(0xFFFFFF), 0);
-	lv_obj_set_style_text_font(title_label, &ui_font_fugaz_14, 0);
+	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(title_label, THEME_FONT_DASH_LABEL, 0);
 	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
 
 	// Instructions
 	lv_obj_t *instructions = lv_label_create(speed_rpm_screen);
 	lv_label_set_text(instructions,
 					  "Configure tire size, final drive, and gear ratios.\nGear is estimated from speed and RPM.");
-	lv_obj_set_style_text_color(instructions, lv_color_hex(0xCCCCCC), 0);
-	lv_obj_set_style_text_font(instructions, &lv_font_montserrat_10, 0);
+	lv_obj_set_style_text_color(instructions, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_set_style_text_font(instructions, THEME_FONT_TINY, 0);
 	lv_obj_align(instructions, LV_ALIGN_TOP_MID, 0, 35);
 	lv_obj_set_style_text_align(instructions, LV_TEXT_ALIGN_CENTER, 0);
 
 	// Tire Circumference
 	lv_obj_t *tire_label = lv_label_create(speed_rpm_screen);
 	lv_label_set_text(tire_label, "Tire Circumference (mm):");
-	lv_obj_set_style_text_color(tire_label, lv_color_hex(0xFFFFFF), 0);
+	lv_obj_set_style_text_color(tire_label, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_align(tire_label, LV_ALIGN_TOP_LEFT, 50, 70);
 	
 	speed_rpm_tire_circumference_input = lv_textarea_create(speed_rpm_screen);
@@ -7726,7 +7727,7 @@ void create_speed_rpm_ratio_config_menu(void) {
 	// Final Drive Ratio
 	lv_obj_t *final_drive_label = lv_label_create(speed_rpm_screen);
 	lv_label_set_text(final_drive_label, "Final Drive Ratio:");
-	lv_obj_set_style_text_color(final_drive_label, lv_color_hex(0xFFFFFF), 0);
+	lv_obj_set_style_text_color(final_drive_label, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_align(final_drive_label, LV_ALIGN_TOP_LEFT, 400, 70);
 	
 	speed_rpm_final_drive_input = lv_textarea_create(speed_rpm_screen);
@@ -7751,7 +7752,7 @@ void create_speed_rpm_ratio_config_menu(void) {
 		// Gear label
 		lv_obj_t *gear_label = lv_label_create(speed_rpm_screen);
 		lv_label_set_text(gear_label, gear_labels[i]);
-		lv_obj_set_style_text_color(gear_label, lv_color_hex(0xFFFFFF), 0);
+		lv_obj_set_style_text_color(gear_label, THEME_COLOR_TEXT_PRIMARY, 0);
 		lv_obj_align(gear_label, LV_ALIGN_TOP_LEFT, 50 + col * 150, 120 + row * 50);
 
 		// Gear ratio input

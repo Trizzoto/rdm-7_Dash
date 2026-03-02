@@ -1,4 +1,5 @@
-#include "device_id.h"
+﻿#include "device_id.h"
+#include "ui/theme.h"
 #include "display_capture.h"
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
@@ -760,7 +761,7 @@ void load_values_config_from_nvs(void) {
 					values_config[i].rpm_limiter_color.full = limiter_color;
 				} else {
 					// Default to red if not found in NVS
-					values_config[i].rpm_limiter_color = lv_color_hex(0xFF0000);
+					values_config[i].rpm_limiter_color = THEME_COLOR_RED;
 				}
 
 				// Load RPM lights enabled
@@ -806,7 +807,7 @@ void load_values_config_from_nvs(void) {
 				} else {
 					// Default to green if not found in NVS
 					values_config[i].rpm_background_color =
-						lv_color_hex(0x00FF00);
+						THEME_COLOR_GREEN;
 				}
 			}
 
@@ -2489,7 +2490,7 @@ void app_main(void) {
 	lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
 
 	// Set display background to black immediately to prevent white flicker
-	lv_disp_set_bg_color(disp, lv_color_hex(0x000000));
+	lv_disp_set_bg_color(disp, THEME_COLOR_BG);
 	ESP_LOGI(TAG, "Display background set to black to prevent white flicker");
 
 	// Don't turn on backlight yet - wait until splash screen is ready
@@ -2518,7 +2519,7 @@ void app_main(void) {
 	// Create a black screen BEFORE starting LVGL task to prevent white flash
 	ESP_LOGI(TAG, "Creating initial black screen to prevent white flash");
 	lv_obj_t *black_screen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(black_screen, lv_color_hex(0x000000), 0);
+	lv_obj_set_style_bg_color(black_screen, THEME_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(black_screen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(black_screen, LV_OBJ_FLAG_SCROLLABLE);
 	lv_scr_load(black_screen);

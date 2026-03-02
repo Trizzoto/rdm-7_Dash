@@ -1,4 +1,5 @@
-#include "ota_update_dialog.h"
+﻿#include "ota_update_dialog.h"
+#include "theme.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -36,7 +37,7 @@ static void install_btn_event_cb(lv_event_t *e) {
     // Update status and show progress bar
     if (status_label && lv_obj_is_valid(status_label)) {
         lv_label_set_text(status_label, "Initializing update...");
-        lv_obj_set_style_text_color(status_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
     
     if (progress_bar && lv_obj_is_valid(progress_bar)) {
@@ -107,18 +108,18 @@ static void progress_timer_cb(lv_timer_t *timer) {
                 } else {
                     lv_label_set_text(status_label, "Preparing download...");
                 }
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
                 break;
                 
             case OTA_UPDATE_COMPLETED:
                 lv_label_set_text(status_label, "Update successful! Rebooting...");
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
                 // Will reboot automatically, dialog will be destroyed
                 break;
                 
             case OTA_UPDATE_FAILED:
                 lv_label_set_text(status_label, "Update failed! Please try again.");
-                lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
+                lv_obj_set_style_text_color(status_label, THEME_COLOR_BTN_CLOSE, LV_PART_MAIN | LV_STATE_DEFAULT);
                 update_in_progress = false;
                 
                 // Show install button again for retry
@@ -152,7 +153,7 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     ota_modal = lv_obj_create(lv_scr_act());
     lv_obj_set_size(ota_modal, LV_HOR_RES, LV_VER_RES);
     lv_obj_align(ota_modal, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_modal, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ota_modal, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ota_modal, 180, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(ota_modal, LV_OBJ_FLAG_SCROLLABLE);
     
@@ -160,10 +161,10 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     ota_dialog = lv_obj_create(ota_modal);
     lv_obj_set_size(ota_dialog, 500, 400);
     lv_obj_align(ota_dialog, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(ota_dialog, lv_color_hex(0x2E2F2E), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ota_dialog, THEME_COLOR_PANEL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ota_dialog, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(ota_dialog, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ota_dialog, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(ota_dialog, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ota_dialog, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(ota_dialog, 25, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(ota_dialog, LV_OBJ_FLAG_SCROLLABLE);
@@ -172,37 +173,37 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     lv_obj_t *title = lv_label_create(ota_dialog);
     lv_label_set_text(title, "Firmware Update Available");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Version info
     lv_obj_t *version_label = lv_label_create(ota_dialog);
     lv_label_set_text_fmt(version_label, "Current: %s -> New: %s", current_version, new_version);
     lv_obj_align(version_label, LV_ALIGN_TOP_LEFT, 0, 40);
-    lv_obj_set_style_text_font(version_label, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(version_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(version_label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(version_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Update type
     lv_obj_t *type_label = lv_label_create(ota_dialog);
     lv_label_set_text_fmt(type_label, "Type: %s", update_type);
     lv_obj_align(type_label, LV_ALIGN_TOP_LEFT, 0, 65);
-    lv_obj_set_style_text_font(type_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(type_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(type_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(type_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // File size
     lv_obj_t *size_label = lv_label_create(ota_dialog);
     lv_label_set_text_fmt(size_label, "Size: %.1f MB", file_size_mb);
     lv_obj_align(size_label, LV_ALIGN_TOP_LEFT, 0, 85);
-    lv_obj_set_style_text_font(size_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(size_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(size_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(size_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Release notes (if provided)
     if (release_notes && strlen(release_notes) > 0) {
         lv_obj_t *notes_label = lv_label_create(ota_dialog);
         lv_label_set_text_fmt(notes_label, "Notes: %s", release_notes);
         lv_obj_align(notes_label, LV_ALIGN_TOP_LEFT, 0, 110);
-        lv_obj_set_style_text_font(notes_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_color(notes_label, lv_color_hex(0xAAAAA), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_font(notes_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(notes_label, THEME_COLOR_TEXT_DISABLED, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_long_mode(notes_label, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(notes_label, 450);
     }
@@ -211,8 +212,8 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     progress_bar = lv_bar_create(ota_dialog);
     lv_obj_set_size(progress_bar, 450, 20);
     lv_obj_align(progress_bar, LV_ALIGN_TOP_LEFT, 0, 180);
-    lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(progress_bar, lv_color_hex(0x4080FF), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(progress_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(progress_bar, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(progress_bar, 10, LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_bar_set_range(progress_bar, 0, 100);
@@ -223,16 +224,16 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     progress_label = lv_label_create(ota_dialog);
     lv_label_set_text(progress_label, "0%");
     lv_obj_align(progress_label, LV_ALIGN_TOP_RIGHT, 0, 185);
-    lv_obj_set_style_text_font(progress_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(progress_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(progress_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(progress_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_flag(progress_label, LV_OBJ_FLAG_HIDDEN);
     
     // Status label
     status_label = lv_label_create(ota_dialog);
     lv_label_set_text(status_label, "Ready to install firmware update");
     lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, 0, 220);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(status_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(status_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Button container
     lv_obj_t *btn_container = lv_obj_create(ota_dialog);
@@ -248,29 +249,29 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     // Cancel button
     cancel_btn = lv_btn_create(btn_container);
     lv_obj_set_size(cancel_btn, 200, 40);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x666666), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x777777), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(cancel_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t *cancel_label = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_label, "Cancel");
     lv_obj_center(cancel_label);
-    lv_obj_set_style_text_font(cancel_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(cancel_btn, cancel_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
     // Install button
     install_btn = lv_btn_create(btn_container);
     lv_obj_set_size(install_btn, 200, 40);
-    lv_obj_set_style_bg_color(install_btn, lv_color_hex(0x00AA44), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(install_btn, lv_color_hex(0x00CC55), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_CONNECT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_CONNECT_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(install_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(install_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t *install_label = lv_label_create(install_btn);
     lv_label_set_text(install_label, "Install Update");
     lv_obj_center(install_label);
-    lv_obj_set_style_text_font(install_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(install_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(install_btn, install_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
     // Reset state

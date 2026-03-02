@@ -1,4 +1,5 @@
-#include "device_settings.h"
+﻿#include "device_settings.h"
+#include "theme.h"
 #include "lvgl.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -43,10 +44,10 @@ static void refresh_wifi_status(void) {
         char status_text[32];
         snprintf(status_text, sizeof(status_text), "WiFi: %s", connected_ssid);
         lv_label_set_text(wifi_status_label, status_text);
-        lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     } else {
         lv_label_set_text(wifi_status_label, "WiFi: Not Connected");
-        lv_obj_set_style_text_color(wifi_status_label, lv_color_hex(0xFF4080), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
     
     // Update web server status
@@ -58,14 +59,14 @@ static void refresh_wifi_status(void) {
             char web_text[64];
             snprintf(web_text, sizeof(web_text), "Web: http://" IPSTR, IP2STR(&ip_info.ip));
             lv_label_set_text(web_status_label, web_text);
-            lv_obj_set_style_text_color(web_status_label, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
         } else {
             lv_label_set_text(web_status_label, "Web: Waiting for IP...");
-            lv_obj_set_style_text_color(web_status_label, lv_color_hex(0xFFFF40), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
         }
     } else {
         lv_label_set_text(web_status_label, "Web: Connect WiFi first");
-        lv_obj_set_style_text_color(web_status_label, lv_color_hex(0xFF4080), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(web_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
 }
 
@@ -167,7 +168,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* overlay = lv_obj_create(lv_scr_act());
     lv_obj_set_size(overlay, LV_HOR_RES, LV_VER_RES);
     lv_obj_align(overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(overlay, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(overlay, LV_OPA_50, LV_PART_MAIN | LV_STATE_DEFAULT); // 50% transparent
     lv_obj_set_style_border_width(overlay, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -177,9 +178,9 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* popup = lv_obj_create(overlay);
     lv_obj_set_size(popup, 500, 400);
     lv_obj_align(popup, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(popup, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(popup, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(popup, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(popup, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(popup, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(popup, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(popup, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(popup, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -190,14 +191,14 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* title = lv_label_create(popup);
     lv_label_set_text(title, "Brightness Dimmer Switch");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Close button
     lv_obj_t* close_btn = lv_btn_create(popup);
     lv_obj_set_size(close_btn, 40, 35);
     lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 5);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* close_label = lv_label_create(close_btn);
     lv_label_set_text(close_label, "X");
@@ -208,12 +209,12 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* can_id_label = lv_label_create(popup);
     lv_label_set_text(can_id_label, "CAN ID:");
     lv_obj_align(can_id_label, LV_ALIGN_TOP_LEFT, 10, 50);
-    lv_obj_set_style_text_color(can_id_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(can_id_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* can_id_prefix = lv_label_create(popup);
     lv_label_set_text(can_id_prefix, "0x");
     lv_obj_align(can_id_prefix, LV_ALIGN_TOP_LEFT, 10, 75);
-    lv_obj_set_style_text_color(can_id_prefix, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(can_id_prefix, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* can_id_input = lv_textarea_create(popup);
     lv_obj_set_size(can_id_input, 120, 40);
@@ -232,7 +233,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* bit_pos_label = lv_label_create(popup);
     lv_label_set_text(bit_pos_label, "Bit Position:");
     lv_obj_align(bit_pos_label, LV_ALIGN_TOP_LEFT, 180, 50);
-    lv_obj_set_style_text_color(bit_pos_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(bit_pos_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* bit_pos_dd = lv_dropdown_create(popup);
     lv_obj_set_size(bit_pos_dd, 120, 40);
@@ -245,7 +246,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* toggle_mode_label = lv_label_create(popup);
     lv_label_set_text(toggle_mode_label, "Toggle Mode:");
     lv_obj_align(toggle_mode_label, LV_ALIGN_TOP_LEFT, 10, 120);
-    lv_obj_set_style_text_color(toggle_mode_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* toggle_mode_dd = lv_dropdown_create(popup);
     lv_obj_set_size(toggle_mode_dd, 120, 40);
@@ -257,7 +258,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* invert_label = lv_label_create(popup);
     lv_label_set_text(invert_label, "Invert Toggle:");
     lv_obj_align(invert_label, LV_ALIGN_TOP_LEFT, 180, 120);
-    lv_obj_set_style_text_color(invert_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(invert_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* invert_switch = lv_switch_create(popup);
     lv_obj_set_size(invert_switch, 50, 25);
@@ -270,7 +271,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* brightness_set_label = lv_label_create(popup);
     lv_label_set_text(brightness_set_label, "Brightness Set:");
     lv_obj_align(brightness_set_label, LV_ALIGN_TOP_LEFT, 10, 190);
-    lv_obj_set_style_text_color(brightness_set_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(brightness_set_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* brightness_set_slider = lv_slider_create(popup);
     lv_obj_set_size(brightness_set_slider, 280, 20);
@@ -281,7 +282,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* brightness_value_label = lv_label_create(popup);
     lv_label_set_text_fmt(brightness_value_label, "%d%%", dimmer_config.brightness_value);
     lv_obj_align(brightness_value_label, LV_ALIGN_TOP_LEFT, 300, 210);
-    lv_obj_set_style_text_color(brightness_value_label, lv_color_hex(0xFFFF40), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(brightness_value_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_add_event_cb(brightness_set_slider, brightness_set_slider_cb, LV_EVENT_VALUE_CHANGED, brightness_value_label);
     
@@ -289,7 +290,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* enable_label = lv_label_create(popup);
     lv_label_set_text(enable_label, "Enabled:");
     lv_obj_align(enable_label, LV_ALIGN_TOP_LEFT, 10, 250);
-    lv_obj_set_style_text_color(enable_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(enable_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     lv_obj_t* enable_switch = lv_switch_create(popup);
     lv_obj_set_size(enable_switch, 50, 25);
@@ -302,7 +303,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_t* save_btn = lv_btn_create(popup);
     lv_obj_set_size(save_btn, 120, 40);
     lv_obj_align(save_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(save_btn, lv_color_hex(0x40FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE_ALT, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(save_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* save_label = lv_label_create(save_btn);
     lv_label_set_text(save_label, "Save");
@@ -573,7 +574,7 @@ static void wifi_btn_event_cb(lv_event_t *e) {
     lv_obj_set_size(wifi_loading_dialog, 300, 150);
     lv_obj_align(wifi_loading_dialog, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(wifi_loading_dialog, lv_color_hex(0x2E2E2E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(wifi_loading_dialog, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(wifi_loading_dialog, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(wifi_loading_dialog, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(wifi_loading_dialog, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(wifi_loading_dialog, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -583,22 +584,22 @@ static void wifi_btn_event_cb(lv_event_t *e) {
     lv_obj_t* title = lv_label_create(wifi_loading_dialog);
     lv_label_set_text(title, "Wi-Fi Settings");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Loading spinner
     lv_obj_t* spinner = lv_spinner_create(wifi_loading_dialog, 1000, 60);
     lv_obj_set_size(spinner, 40, 40);
     lv_obj_align(spinner, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_arc_color(spinner, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_arc_color(spinner, lv_color_hex(0x4080FF), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
     
     // Loading text
     lv_obj_t* loading_text = lv_label_create(wifi_loading_dialog);
     lv_label_set_text(loading_text, "Searching for networks...");
     lv_obj_align(loading_text, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_text_color(loading_text, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(loading_text, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(loading_text, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(loading_text, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Create timer to show WiFi screen after a brief delay (allows dialog to render)
     lv_timer_create(show_wifi_screen_delayed, 100, NULL);
@@ -775,7 +776,7 @@ static void update_ecu_status_label(lv_obj_t* status_label) {
     }
     
     lv_label_set_text(status_label, status_text);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 void init_display_brightness(void) {
@@ -842,7 +843,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     // Store the return screen for later use
     device_settings_return_screen = return_screen ? return_screen : lv_scr_act();
     lv_obj_t* settings_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(settings_screen, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(settings_screen, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(settings_screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(settings_screen, LV_OBJ_FLAG_SCROLLABLE);
     
@@ -850,9 +851,9 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* main_container = lv_obj_create(settings_screen);
     lv_obj_set_size(main_container, 760, 440);  // Fit within 480px screen with margins
     lv_obj_align(main_container, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(main_container, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(main_container, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(main_container, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(main_container, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(main_container, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(main_container, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(main_container, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(main_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);  // Reduced padding for more space
@@ -862,7 +863,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* header = lv_obj_create(main_container);
     lv_obj_set_size(header, lv_pct(100), 50);  // Reduced height for more content space
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_hex(0x2E2F2E), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(header, THEME_COLOR_PANEL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(header, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(header, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(header, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -872,21 +873,21 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* title = lv_label_create(header);
     lv_label_set_text(title, "DEVICE SETTINGS");
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(title, THEME_FONT_XLARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Close button
     lv_obj_t* close_btn = lv_btn_create(header);
     lv_obj_set_size(close_btn, 50, 35);  // Smaller button for smaller header
     lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -15, 0);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF4444), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xFF6666), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(close_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* close_label = lv_label_create(close_btn);
     lv_label_set_text(close_label, "X");
     lv_obj_center(close_label);
-    lv_obj_set_style_text_font(close_label, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(close_label, THEME_FONT_MEDIUM, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(close_btn, close_menu_event_cb, LV_EVENT_CLICKED, device_settings_return_screen);
     
     // Content area - properly sized for 440px container with scrolling for ECU section
@@ -902,7 +903,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     
     // Scrollbar styling - move it away from content
-    lv_obj_set_style_bg_color(content, lv_color_hex(0x555555), LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(content, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(content, 200, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
     lv_obj_set_style_width(content, 8, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_right(content, 5, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);  // Move scrollbar away from edge
@@ -921,10 +922,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     // CAN Bus Configuration Section
     lv_obj_t* can_section = lv_obj_create(first_row);
     lv_obj_set_size(can_section, lv_pct(48), 120);  // Match first_row height
-    lv_obj_set_style_bg_color(can_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(can_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(can_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(can_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(can_section, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(can_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(can_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(can_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(can_section, LV_OBJ_FLAG_SCROLLABLE);
@@ -933,24 +934,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* can_title = lv_label_create(can_section);
     lv_label_set_text(can_title, "CAN BUS");
     lv_obj_align(can_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(can_title, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(can_title, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(can_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(can_title, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Bitrate label
     lv_obj_t* bitrate_label = lv_label_create(can_section);
     lv_label_set_text(bitrate_label, "Bitrate");
     lv_obj_align(bitrate_label, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_text_font(bitrate_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(bitrate_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(bitrate_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(bitrate_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Bitrate dropdown
     lv_obj_t* bitrate_dd = lv_dropdown_create(can_section);
     lv_dropdown_set_options(bitrate_dd, "125 kbps\n250 kbps\n500 kbps\n1 Mbps");
     lv_obj_set_size(bitrate_dd, 140, 35);
     lv_obj_align(bitrate_dd, LV_ALIGN_TOP_LEFT, 0, 50);
-    lv_obj_set_style_bg_color(bitrate_dd, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(bitrate_dd, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(bitrate_dd, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(bitrate_dd, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(bitrate_dd, THEME_COLOR_SCROLLBAR, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(bitrate_dd, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(bitrate_dd, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(bitrate_dd, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -958,10 +959,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     // Device Information Section
     lv_obj_t* info_section = lv_obj_create(first_row);
     lv_obj_set_size(info_section, lv_pct(48), 120);  // Match first_row height
-    lv_obj_set_style_bg_color(info_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(info_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(info_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(info_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(info_section, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(info_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(info_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(info_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(info_section, LV_OBJ_FLAG_SCROLLABLE);
@@ -970,15 +971,15 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* info_title = lv_label_create(info_section);
     lv_label_set_text(info_title, "DEVICE INFO");
     lv_obj_align(info_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(info_title, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(info_title, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(info_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(info_title, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Serial number - adjusted positions
     lv_obj_t* serial_label = lv_label_create(info_section);
     lv_label_set_text(serial_label, "Serial Number");
     lv_obj_align(serial_label, LV_ALIGN_TOP_LEFT, 0, 25);
-    lv_obj_set_style_text_font(serial_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(serial_label, lv_color_hex(0x999999), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(serial_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(serial_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t* serial_value = lv_label_create(info_section);
     char serial[MAX_SERIAL_LENGTH];
@@ -988,21 +989,21 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
         lv_label_set_text(serial_value, "Unknown");
     }
     lv_obj_align(serial_value, LV_ALIGN_TOP_LEFT, 0, 42);
-    lv_obj_set_style_text_font(serial_value, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(serial_value, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(serial_value, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(serial_value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Firmware version - adjusted positions
     lv_obj_t* fw_label = lv_label_create(info_section);
     lv_label_set_text(fw_label, "Firmware");
     lv_obj_align(fw_label, LV_ALIGN_TOP_LEFT, 0, 70);
-    lv_obj_set_style_text_font(fw_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(fw_label, lv_color_hex(0x999999), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(fw_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(fw_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t* fw_value = lv_label_create(info_section);
     lv_label_set_text(fw_value, FIRMWARE_VERSION);
     lv_obj_align(fw_value, LV_ALIGN_TOP_LEFT, 0, 87);
-    lv_obj_set_style_text_font(fw_value, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(fw_value, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Second row container
     lv_obj_t* second_row = lv_obj_create(content);
@@ -1018,10 +1019,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     // Network & Updates Section
     lv_obj_t* network_section = lv_obj_create(second_row);
     lv_obj_set_size(network_section, lv_pct(48), 185);  // Increased height to give Check Updates button more room
-    lv_obj_set_style_bg_color(network_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(network_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(network_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(network_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(network_section, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(network_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(network_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(network_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(network_section, LV_OBJ_FLAG_SCROLLABLE);
@@ -1030,33 +1031,33 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* network_title = lv_label_create(network_section);
     lv_label_set_text(network_title, "NETWORK & UPDATES");
     lv_obj_align(network_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(network_title, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(network_title, lv_color_hex(0xFF8040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(network_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(network_title, THEME_COLOR_ACCENT_ORANGE, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // WiFi button - adjusted position
     lv_obj_t* wifi_btn = lv_btn_create(network_section);
     lv_obj_set_size(wifi_btn, 180, 35);
     lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_bg_color(wifi_btn, lv_color_hex(0x4080FF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(wifi_btn, lv_color_hex(0x5090FF), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(wifi_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(wifi_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* wifi_label = lv_label_create(wifi_btn);
     lv_label_set_text(wifi_label, "Wi-Fi Settings");
     lv_obj_center(wifi_label);
-    lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(wifi_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(wifi_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(wifi_btn, wifi_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     // WiFi status - adjusted position
     wifi_status_label = lv_label_create(network_section);
     lv_obj_align(wifi_status_label, LV_ALIGN_TOP_LEFT, 0, 75);
-    lv_obj_set_style_text_font(wifi_status_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(wifi_status_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Web server status
     web_status_label = lv_label_create(network_section);
     lv_obj_align(web_status_label, LV_ALIGN_TOP_LEFT, 0, 90);
-    lv_obj_set_style_text_font(web_status_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(web_status_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Initial refresh of WiFi status
     refresh_wifi_status();
@@ -1065,24 +1066,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* update_btn = lv_btn_create(network_section);
     lv_obj_set_size(update_btn, 180, 35);
     lv_obj_align(update_btn, LV_ALIGN_TOP_LEFT, 0, 115);
-    lv_obj_set_style_bg_color(update_btn, lv_color_hex(0x40FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(update_btn, lv_color_hex(0x50FF90), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_BTN_SAVE_ALT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_BTN_SAVE_ALT_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(update_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(update_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* update_label = lv_label_create(update_btn);
     lv_label_set_text(update_label, "Check Updates");
     lv_obj_center(update_label);
-    lv_obj_set_style_text_font(update_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(update_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(update_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(update_label, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(update_btn, update_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     // Display Settings Section
     lv_obj_t* display_section = lv_obj_create(second_row);
     lv_obj_set_size(display_section, lv_pct(48), 185);  // Increased height to match network section
-    lv_obj_set_style_bg_color(display_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(display_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(display_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(display_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(display_section, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(display_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(display_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(display_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(display_section, LV_OBJ_FLAG_SCROLLABLE);
@@ -1091,15 +1092,15 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* display_title = lv_label_create(display_section);
     lv_label_set_text(display_title, "DISPLAY");
     lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(display_title, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(display_title, lv_color_hex(0xFFFF40), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(display_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(display_title, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Brightness label - adjusted position
     lv_obj_t* brightness_text = lv_label_create(display_section);
     lv_label_set_text(brightness_text, "Brightness");
     lv_obj_align(brightness_text, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_text_font(brightness_text, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(brightness_text, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(brightness_text, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(brightness_text, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Use current brightness value (don't load from NVS)
     uint8_t saved_brightness = current_brightness;
@@ -1110,12 +1111,12 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_align(brightness_bar, LV_ALIGN_TOP_LEFT, 0, 60);
     lv_slider_set_range(brightness_bar, 5, 100);
     lv_slider_set_value(brightness_bar, saved_brightness, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(brightness_bar, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(brightness_bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(brightness_bar, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
     
     // Brightness knob
-    lv_obj_set_style_bg_color(brightness_bar, lv_color_hex(0xFFFFFF), LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_TEXT_PRIMARY, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(brightness_bar, 255, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(brightness_bar, LV_RADIUS_CIRCLE, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(brightness_bar, 3, LV_PART_KNOB | LV_STATE_DEFAULT);
@@ -1124,8 +1125,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     brightness_label = lv_label_create(display_section);
     lv_label_set_text_fmt(brightness_label, "Brightness: %d%%", saved_brightness);
     lv_obj_align(brightness_label, LV_ALIGN_TOP_LEFT, 0, 95);
-    lv_obj_set_style_text_font(brightness_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(brightness_label, lv_color_hex(0xFFFF40), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(brightness_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(brightness_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_add_event_cb(brightness_bar, brightness_bar_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -1133,24 +1134,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* dimmer_btn = lv_btn_create(display_section);
     lv_obj_set_size(dimmer_btn, 220, 35);
     lv_obj_align(dimmer_btn, LV_ALIGN_TOP_LEFT, 0, 130);
-    lv_obj_set_style_bg_color(dimmer_btn, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(dimmer_btn, lv_color_hex(0x505050), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_BTN_DIM_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(dimmer_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(dimmer_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_t* dimmer_label = lv_label_create(dimmer_btn);
     lv_label_set_text(dimmer_label, "Brightness Dimmer Switch");
     lv_obj_center(dimmer_label);
-    lv_obj_set_style_text_font(dimmer_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(dimmer_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(dimmer_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(dimmer_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
 
     // ECU Preconfig Section - Full width at bottom, reduced gap above
     lv_obj_t* ecu_section = lv_obj_create(content);
     lv_obj_set_size(ecu_section, lv_pct(100), 140);  // Optimized height for better overall layout
-    lv_obj_set_style_bg_color(ecu_section, lv_color_hex(0x262626), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ecu_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ecu_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(ecu_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ecu_section, lv_color_hex(0x404040), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(ecu_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ecu_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(ecu_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(ecu_section, LV_OBJ_FLAG_SCROLLABLE);
@@ -1159,22 +1160,22 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_t* ecu_title = lv_label_create(ecu_section);
     lv_label_set_text(ecu_title, "ECU Pre-Configurations");
     lv_obj_align(ecu_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(ecu_title, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(ecu_title, lv_color_hex(0xFF4080), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ecu_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ecu_title, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // ECU dropdown label
     lv_obj_t* ecu_label = lv_label_create(ecu_section);
     lv_label_set_text(ecu_label, "ECU Brand");
     lv_obj_align(ecu_label, LV_ALIGN_TOP_LEFT, 0, 35);
-    lv_obj_set_style_text_font(ecu_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(ecu_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ecu_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ecu_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Version dropdown label
     lv_obj_t* version_label = lv_label_create(ecu_section);
     lv_label_set_text(version_label, "Version/Model");
     lv_obj_align(version_label, LV_ALIGN_TOP_LEFT, 250, 35);
-    lv_obj_set_style_text_font(version_label, &lv_font_montserrat_12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(version_label, lv_color_hex(0xCCCCCC), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(version_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(version_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Status label for feedback (create first so we can pass it to callbacks)
     lv_obj_t* status_label = lv_label_create(ecu_section);
@@ -1194,16 +1195,16 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     
     lv_label_set_text(status_label, status_text);
     lv_obj_align(status_label, LV_ALIGN_TOP_LEFT, 0, 100);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0x00FF80), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(status_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Version dropdown (create before ECU dropdown so we can pass it as user data)
     lv_obj_t* version_dd = lv_dropdown_create(ecu_section);
     lv_obj_set_size(version_dd, 200, 35);
     lv_obj_align(version_dd, LV_ALIGN_TOP_LEFT, 250, 55);
-    lv_obj_set_style_bg_color(version_dd, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(version_dd, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(version_dd, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(version_dd, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(version_dd, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(version_dd, THEME_COLOR_SCROLLBAR, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(version_dd, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(version_dd, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(version_dd, version_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, status_label);
@@ -1218,9 +1219,9 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_dropdown_set_options(ecu_dd, "Custom\nMaxxECU\nHaltech\nFord");
     lv_obj_set_size(ecu_dd, 200, 35);
     lv_obj_align(ecu_dd, LV_ALIGN_TOP_LEFT, 0, 55);
-    lv_obj_set_style_bg_color(ecu_dd, lv_color_hex(0x333333), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(ecu_dd, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(ecu_dd, lv_color_hex(0x555555), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ecu_dd, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ecu_dd, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(ecu_dd, THEME_COLOR_SCROLLBAR, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ecu_dd, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(ecu_dd, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_dropdown_set_selected(ecu_dd, selected_ecu_preconfig);

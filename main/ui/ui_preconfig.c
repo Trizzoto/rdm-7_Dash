@@ -1,13 +1,27 @@
 #include "ui_preconfig.h"
+#include "theme.h"
 #include <stdio.h>
 #include "lvgl.h"
 #include "screens/ui_Screen3.h"
 #include "widgets/lv_dropdown.h"
 #include <string.h>
 #include "device_settings.h"
+#include <stdlib.h>
 
 extern value_config_t values_config[13];
 extern uint8_t current_value_id;
+
+/* Widget arrays exposed for live-refresh after preset selection */
+extern lv_obj_t *g_label_input[];
+extern lv_obj_t *g_can_id_input[];
+extern lv_obj_t *g_endian_dropdown[];
+extern lv_obj_t *g_bit_start_dropdown[];
+extern lv_obj_t *g_bit_length_dropdown[];
+extern lv_obj_t *g_scale_input[];
+extern lv_obj_t *g_offset_input[];
+extern lv_obj_t *g_decimals_dropdown[];
+extern lv_obj_t *g_type_dropdown[];
+extern char label_texts[13][64];
 
 // Forward declarations
 static void delayed_version_event_cb(lv_timer_t * timer);
@@ -646,7 +660,7 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_align(ui_Border_2, LV_ALIGN_CENTER);
     lv_obj_clear_flag(ui_Border_2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(ui_Border_2, 7, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_Border_2, lv_color_hex(0x1A1A1A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_Border_2, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_Border_2, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ui_Border_2, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -658,7 +672,7 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_y(ui_Preconfig_Text, -216);
     lv_obj_set_align(ui_Preconfig_Text, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Preconfig_Text, "Pre-configurations");
-    lv_obj_set_style_text_color(ui_Preconfig_Text, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_Preconfig_Text, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_Preconfig_Text, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // 4) ECU label
@@ -669,7 +683,7 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_y(ui_ECU_Text, -185);
     lv_obj_set_align(ui_ECU_Text, LV_ALIGN_CENTER);
     lv_label_set_text(ui_ECU_Text, "ECU:");
-    lv_obj_set_style_text_color(ui_ECU_Text, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_ECU_Text, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_ECU_Text, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
         // 6) Version label (create labels and version dropdown BEFORE ECU auto-selection)
@@ -680,7 +694,7 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_y(ui_Version_Text, -148);
     lv_obj_set_align(ui_Version_Text, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Version_Text, "Version:");
-    lv_obj_set_style_text_color(ui_Version_Text, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_Version_Text, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_Version_Text, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // 7) Version dropdown (create and style BEFORE ECU auto-selection)
@@ -739,7 +753,7 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_y(ui_ID_Text, -185);
     lv_obj_set_align(ui_ID_Text, LV_ALIGN_CENTER);
     lv_label_set_text(ui_ID_Text, "ID:");
-    lv_obj_set_style_text_color(ui_ID_Text, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_ID_Text, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_ID_Text, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // 9) ID dropdown
@@ -758,6 +772,493 @@ void show_preconfig_menu(lv_obj_t * parent)
     lv_obj_set_style_pad_right(ui_ID_Input, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_top(ui_ID_Input, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_bottom(ui_ID_Input, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/* =========================================================================
+ * Full-screen 3-column preset browser
+ *
+ * Layout (780 × 456 centred panel):
+ *  ┌─ SELECT PRESET ─────────────────────────────────────────── [CLOSE] ─┐ 48px
+ *  ├──────────────┬────────────────┬──────────────────────────────────────┤ 356px
+ *  │  BRAND       │  PROTOCOL      │  CHANNEL                             │
+ *  │  MaxxECU ●  │  v1.2          │  THROTTLE %                          │
+ *  │  Haltech     │  v1.3 ●       │  MAP                                 │
+ *  │  Ford        │                │  LAMBDA ...  (scrollable)            │
+ *  ├──────────────┴────────────────┴──────────────────────────────────────┤ 52px
+ *  │  ○ No channel selected                           [✓  APPLY PRESET]  │
+ *  └──────────────────────────────────────────────────────────────────────┘
+ * ========================================================================= */
+
+/* ── State ──────────────────────────────────────────────────────────────── */
+typedef struct {
+    uint8_t   value_id;
+    lv_obj_t *overlay;
+    lv_obj_t *ver_list;       /* inner flex container – version column  */
+    lv_obj_t *sig_list;       /* inner flex container – channel column  */
+    lv_obj_t *preview_lbl;
+    lv_obj_t *apply_btn;
+    char      sel_brand[32];
+    char      sel_ver[32];
+    int       sel_sig;        /* index into preconfig_items[], -1 = none */
+    lv_obj_t *hi_brand;
+    lv_obj_t *hi_ver;
+    lv_obj_t *hi_sig;
+} picker_st_t;
+
+typedef struct { picker_st_t *st; const char *name; } col_txt_ctx_t;
+typedef struct { picker_st_t *st; int idx; }           col_sig_ctx_t;
+
+/* Forward declarations of populate helpers (used by click callbacks) */
+static void populate_ver_col(picker_st_t *st);
+static void populate_sig_col(picker_st_t *st);
+static void update_picker_preview(picker_st_t *st, int idx);
+
+/* ── Memory free callbacks ───────────────────────────────────────────────── */
+static void picker_st_free_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+    picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
+    if (st) lv_mem_free(st);
+}
+static void picker_close_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_obj_t *ov = (lv_obj_t *)lv_event_get_user_data(e);
+    if (ov && lv_obj_is_valid(ov)) lv_obj_del(ov);
+}
+static void col_txt_free_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+    col_txt_ctx_t *c = (col_txt_ctx_t *)lv_event_get_user_data(e);
+    if (c) lv_mem_free(c);
+}
+static void col_sig_free_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+    col_sig_ctx_t *c = (col_sig_ctx_t *)lv_event_get_user_data(e);
+    if (c) lv_mem_free(c);
+}
+
+/* ── Row highlight (accent left-bar + bright text) ───────────────────────── */
+static void set_row_hi(lv_obj_t *row, bool on)
+{
+    if (!row || !lv_obj_is_valid(row)) return;
+    lv_obj_set_style_bg_color(row, on ? THEME_COLOR_ACCENT_DIM : THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_border_width(row, on ? 3 : 0, 0);
+    lv_obj_set_style_border_side(row,  LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_color(row, THEME_COLOR_ACCENT, 0);
+    lv_obj_t *lbl = lv_obj_get_child(row, 0);
+    if (lbl) lv_obj_set_style_text_color(lbl,
+        on ? THEME_COLOR_TEXT_PRIMARY : THEME_COLOR_TEXT_MUTED, 0);
+}
+
+/* ── Click callbacks ─────────────────────────────────────────────────────── */
+static void brand_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    col_txt_ctx_t *ctx = (col_txt_ctx_t *)lv_event_get_user_data(e);
+    picker_st_t *st = ctx->st;
+    set_row_hi(st->hi_brand, false);
+    st->hi_brand = lv_event_get_target(e);
+    set_row_hi(st->hi_brand, true);
+    strncpy(st->sel_brand, ctx->name, sizeof(st->sel_brand) - 1);
+    populate_ver_col(st);
+}
+static void ver_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    col_txt_ctx_t *ctx = (col_txt_ctx_t *)lv_event_get_user_data(e);
+    picker_st_t *st = ctx->st;
+    set_row_hi(st->hi_ver, false);
+    st->hi_ver = lv_event_get_target(e);
+    set_row_hi(st->hi_ver, true);
+    strncpy(st->sel_ver, ctx->name, sizeof(st->sel_ver) - 1);
+    populate_sig_col(st);
+}
+static void sig_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    col_sig_ctx_t *ctx = (col_sig_ctx_t *)lv_event_get_user_data(e);
+    picker_st_t *st = ctx->st;
+    set_row_hi(st->hi_sig, false);
+    st->hi_sig = lv_event_get_target(e);
+    set_row_hi(st->hi_sig, true);
+    st->sel_sig = ctx->idx;
+    update_picker_preview(st, ctx->idx);
+}
+static void apply_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
+    if (!st || st->sel_sig < 0) return;
+
+    const preconfig_item_t *it = &preconfig_items[st->sel_sig];
+    uint8_t idx = st->value_id - 1;
+
+    values_config[idx].can_id       = (uint32_t)strtol(it->can_id, NULL, 16);
+    values_config[idx].endianess    = it->endianess;
+    values_config[idx].bit_start    = it->bit_start;
+    values_config[idx].bit_length   = it->bit_length;
+    values_config[idx].scale        = it->scale;
+    values_config[idx].value_offset = it->value_offset;
+    values_config[idx].decimals     = it->decimals;
+    values_config[idx].is_signed    = it->is_signed;
+    values_config[idx].enabled      = true;
+    strncpy(label_texts[idx], it->label, sizeof(label_texts[idx]) - 1);
+    label_texts[idx][sizeof(label_texts[idx]) - 1] = '\0';
+
+    if (g_label_input[idx])         lv_textarea_set_text(g_label_input[idx], it->label);
+    if (g_can_id_input[idx])        lv_textarea_set_text(g_can_id_input[idx], it->can_id);
+    if (g_endian_dropdown[idx])     lv_dropdown_set_selected(g_endian_dropdown[idx], it->endianess ? 1 : 0);
+    if (g_bit_start_dropdown[idx])  lv_dropdown_set_selected(g_bit_start_dropdown[idx], it->bit_start);
+    if (g_bit_length_dropdown[idx]) lv_dropdown_set_selected(g_bit_length_dropdown[idx], it->bit_length - 1);
+    if (g_scale_input[idx]) {
+        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", it->scale);
+        lv_textarea_set_text(g_scale_input[idx], buf);
+    }
+    if (g_offset_input[idx]) {
+        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", it->value_offset);
+        lv_textarea_set_text(g_offset_input[idx], buf);
+    }
+    if (g_decimals_dropdown[idx])   lv_dropdown_set_selected(g_decimals_dropdown[idx], it->decimals);
+    if (g_type_dropdown[idx])       lv_dropdown_set_selected(g_type_dropdown[idx], it->is_signed ? 1 : 0);
+
+    if (st->overlay && lv_obj_is_valid(st->overlay)) lv_obj_del(st->overlay);
+}
+
+/* ── Preview footer update ───────────────────────────────────────────────── */
+static void update_picker_preview(picker_st_t *st, int idx)
+{
+    if (!st->preview_lbl) return;
+    if (idx < 0) {
+        lv_label_set_text(st->preview_lbl, "Select a brand, protocol, then channel");
+        if (st->apply_btn) lv_obj_add_state(st->apply_btn, LV_STATE_DISABLED);
+    } else {
+        const preconfig_item_t *it = &preconfig_items[idx];
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s  \xc2\xb7  CAN 0x%s  \xc2\xb7  %s  \xc2\xb7  Bit %d  Len %d  \xc2\xb7  \xc3\x97%.4g",
+            it->label, it->can_id,
+            it->endianess ? "LE" : "BE",
+            it->bit_start, it->bit_length,
+            (double)it->scale);
+        lv_label_set_text(st->preview_lbl, buf);
+        if (st->apply_btn) lv_obj_clear_state(st->apply_btn, LV_STATE_DISABLED);
+    }
+}
+
+/* ── Column builder helpers ──────────────────────────────────────────────── */
+
+/* Scrollable flex-column container that fills remaining height of its parent */
+static lv_obj_t *make_col_list(lv_obj_t *col)
+{
+    lv_obj_t *list = lv_obj_create(col);
+    lv_obj_set_width(list, lv_pct(100));
+    lv_obj_set_flex_grow(list, 1);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_pad_all(list, 0, 0);
+    lv_obj_set_style_pad_row(list, 0, 0);
+    lv_obj_set_scroll_snap_y(list, LV_SCROLL_SNAP_NONE);
+    lv_obj_set_style_bg_color(list, THEME_COLOR_SCROLLBAR,
+                               LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
+    lv_obj_set_style_width(list, 3, LV_PART_SCROLLBAR);
+    return list;
+}
+
+/* One complete column (header strip + scrollable list), returns the list obj */
+static lv_obj_t *make_col(lv_obj_t *body, const char *hdr_text, bool right_border)
+{
+    lv_obj_t *col = lv_obj_create(body);
+    lv_obj_set_size(col, 260, 356);
+    lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_bg_opa(col, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(col, 0, 0);
+    lv_obj_set_style_pad_all(col, 0, 0);
+    lv_obj_set_style_pad_row(col, 0, 0);
+    lv_obj_set_style_border_width(col, 0, 0);
+    if (right_border) {
+        lv_obj_set_style_border_side(col, LV_BORDER_SIDE_RIGHT, 0);
+        lv_obj_set_style_border_color(col, THEME_COLOR_BORDER, 0);
+        lv_obj_set_style_border_width(col, 1, 0);
+    }
+
+    /* Column header label strip */
+    lv_obj_t *chdr = lv_obj_create(col);
+    lv_obj_set_size(chdr, 260, 28);
+    lv_obj_clear_flag(chdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(chdr, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(chdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(chdr, 0, 0);
+    lv_obj_set_style_border_width(chdr, 0, 0);
+    lv_obj_set_style_border_side(chdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(chdr, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(chdr, 1, 0);
+    lv_obj_set_style_pad_left(chdr, 12, 0);
+    lv_obj_set_style_pad_right(chdr, 6, 0);
+    lv_obj_set_style_pad_top(chdr, 0, 0);
+    lv_obj_set_style_pad_bottom(chdr, 0, 0);
+
+    lv_obj_t *clbl = lv_label_create(chdr);
+    lv_label_set_text(clbl, hdr_text);
+    lv_obj_set_style_text_color(clbl, THEME_COLOR_ACCENT, 0);
+    lv_obj_set_style_text_font(clbl, THEME_FONT_SMALL, 0);
+    lv_obj_align(clbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    return make_col_list(col);
+}
+
+/* A single clickable row inside a column list */
+static lv_obj_t *make_col_row(lv_obj_t *list, const char *text)
+{
+    lv_obj_t *row = lv_obj_create(list);
+    lv_obj_set_size(row, lv_pct(100), 36);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_radius(row, 0, 0);
+    lv_obj_set_style_pad_left(row, 14, 0);
+    lv_obj_set_style_pad_right(row, 6, 0);
+    lv_obj_set_style_pad_top(row, 0, 0);
+    lv_obj_set_style_pad_bottom(row, 0, 0);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_INPUT_BG, LV_STATE_PRESSED);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, text);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, lv_pct(90));
+    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_BODY, 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+    return row;
+}
+
+/* ── Populate helpers ────────────────────────────────────────────────────── */
+static void populate_ver_col(picker_st_t *st)
+{
+    lv_obj_clean(st->ver_list);
+    lv_obj_clean(st->sig_list);
+    st->hi_ver = st->hi_sig = NULL;
+    st->sel_sig = -1;
+    st->sel_ver[0] = '\0';
+    update_picker_preview(st, -1);
+
+    const char *vers[16]; int nv = 0;
+    for (int i = 0; i < preconfig_data_count - 1 && preconfig_items[i].ecu; i++) {
+        if (strcmp(preconfig_items[i].ecu, st->sel_brand) != 0) continue;
+        bool dup = false;
+        for (int j = 0; j < nv; j++)
+            if (strcmp(vers[j], preconfig_items[i].version) == 0) { dup = true; break; }
+        if (!dup && nv < 16) vers[nv++] = preconfig_items[i].version;
+    }
+    /* Sort protocols alphabetically */
+    for (int i = 0; i < nv - 1; i++)
+        for (int j = i + 1; j < nv; j++)
+            if (strcmp(vers[i], vers[j]) > 0) {
+                const char *tmp = vers[i]; vers[i] = vers[j]; vers[j] = tmp;
+            }
+    for (int i = 0; i < nv; i++) {
+        lv_obj_t *row = make_col_row(st->ver_list, vers[i]);
+        col_txt_ctx_t *ctx = lv_mem_alloc(sizeof(col_txt_ctx_t));
+        ctx->st = st; ctx->name = vers[i];
+        lv_obj_add_event_cb(row, ver_click_cb,   LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(row, col_txt_free_cb, LV_EVENT_DELETE, ctx);
+    }
+}
+
+static void populate_sig_col(picker_st_t *st)
+{
+    lv_obj_clean(st->sig_list);
+    st->hi_sig = NULL;
+    st->sel_sig = -1;
+    update_picker_preview(st, -1);
+
+    /* Collect matching indices */
+    int idxs[256]; int nc = 0;
+    for (int i = 0; i < preconfig_data_count - 1 && preconfig_items[i].ecu; i++) {
+        if (strcmp(preconfig_items[i].ecu,     st->sel_brand) != 0) continue;
+        if (strcmp(preconfig_items[i].version, st->sel_ver)   != 0) continue;
+        if (nc < 256) idxs[nc++] = i;
+    }
+    /* Sort channels alphabetically by label */
+    for (int i = 0; i < nc - 1; i++)
+        for (int j = i + 1; j < nc; j++)
+            if (strcmp(preconfig_items[idxs[i]].label,
+                       preconfig_items[idxs[j]].label) > 0) {
+                int tmp = idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp;
+            }
+    /* Create rows in sorted order */
+    for (int k = 0; k < nc; k++) {
+        lv_obj_t *row = make_col_row(st->sig_list, preconfig_items[idxs[k]].label);
+        col_sig_ctx_t *ctx = lv_mem_alloc(sizeof(col_sig_ctx_t));
+        ctx->st = st; ctx->idx = idxs[k];
+        lv_obj_add_event_cb(row, sig_click_cb,   LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(row, col_sig_free_cb, LV_EVENT_DELETE, ctx);
+    }
+}
+
+/* ── Main function ───────────────────────────────────────────────────────── */
+void open_preset_picker(lv_obj_t *parent_screen, uint8_t value_id)
+{
+    (void)parent_screen;
+
+    picker_st_t *st = lv_mem_alloc(sizeof(picker_st_t));
+    memset(st, 0, sizeof(*st));
+    st->value_id = value_id;
+    st->sel_sig  = -1;
+
+    /* ── Dim overlay ────────────────────────────────────────────────────── */
+    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(overlay, 210, 0);
+    lv_obj_set_style_border_width(overlay, 0, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    st->overlay = overlay;
+    lv_obj_add_event_cb(overlay, picker_st_free_cb, LV_EVENT_DELETE, st);
+
+    /* ── Panel (flex-column: header | body | footer) ────────────────────── */
+    lv_obj_t *panel = lv_obj_create(overlay);
+    lv_obj_set_size(panel, 780, 456);
+    lv_obj_center(panel);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_bg_color(panel, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(panel, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(panel, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+    lv_obj_set_style_pad_row(panel, 0, 0);
+    lv_obj_set_style_shadow_width(panel, 28, 0);
+    lv_obj_set_style_shadow_color(panel, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(panel, 150, 0);
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    lv_obj_t *hdr = lv_obj_create(panel);
+    lv_obj_set_size(hdr, 780, 48);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(hdr, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    lv_obj_set_style_border_width(hdr, 0, 0);
+    lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(hdr, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(hdr, 1, 0);
+    lv_obj_set_style_pad_left(hdr, 14, 0);
+    lv_obj_set_style_pad_right(hdr, 14, 0);
+    lv_obj_set_style_pad_top(hdr, 0, 0);
+    lv_obj_set_style_pad_bottom(hdr, 0, 0);
+
+    lv_obj_t *hdr_t = lv_label_create(hdr);
+    lv_label_set_text(hdr_t, "SELECT PRESET");
+    lv_obj_set_style_text_color(hdr_t, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(hdr_t, THEME_FONT_MEDIUM, 0);
+    lv_obj_align(hdr_t, LV_ALIGN_LEFT_MID, 0, 0);
+
+    lv_obj_t *hdr_s = lv_label_create(hdr);
+    lv_label_set_text(hdr_s, "Brand  \xe2\x86\x92  Protocol  \xe2\x86\x92  Channel  \xe2\x86\x92  Apply");
+    lv_obj_set_style_text_color(hdr_s, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(hdr_s, THEME_FONT_TINY, 0);
+    lv_obj_align(hdr_s, LV_ALIGN_LEFT_MID, 170, 0);
+
+    lv_obj_t *close_btn = lv_btn_create(hdr);
+    lv_obj_set_size(close_btn, 88, 32);
+    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CANCEL, 0);
+    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_border_width(close_btn, 0, 0);
+    lv_obj_t *clbl = lv_label_create(close_btn);
+    lv_label_set_text(clbl, LV_SYMBOL_CLOSE "  CLOSE");
+    lv_obj_set_style_text_font(clbl, THEME_FONT_SMALL, 0);
+    lv_obj_center(clbl);
+    lv_obj_add_event_cb(close_btn, picker_close_cb, LV_EVENT_CLICKED, overlay);
+
+    /* ── 3-column body (flex-row) ────────────────────────────────────────── */
+    lv_obj_t *body = lv_obj_create(panel);
+    lv_obj_set_size(body, 780, 356);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_set_style_pad_column(body, 0, 0);
+
+    /* Build the three columns – each 260px wide */
+    lv_obj_t *brand_list = make_col(body, "BRAND",    true);
+    st->ver_list          = make_col(body, "PROTOCOL", true);
+    st->sig_list          = make_col(body, "CHANNEL",  false);
+
+    /* ── Footer (preview info + Apply button) ────────────────────────────── */
+    lv_obj_t *footer = lv_obj_create(panel);
+    lv_obj_set_size(footer, 780, 52);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(footer, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(footer, 0, 0);
+    lv_obj_set_style_border_width(footer, 0, 0);
+    lv_obj_set_style_border_side(footer, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(footer, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(footer, 1, 0);
+    lv_obj_set_style_pad_left(footer, 14, 0);
+    lv_obj_set_style_pad_right(footer, 14, 0);
+    lv_obj_set_style_pad_top(footer, 0, 0);
+    lv_obj_set_style_pad_bottom(footer, 0, 0);
+
+    lv_obj_t *prev_lbl = lv_label_create(footer);
+    lv_label_set_text(prev_lbl, "Select a brand, protocol, then channel");
+    lv_obj_set_style_text_color(prev_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(prev_lbl, THEME_FONT_SMALL, 0);
+    lv_label_set_long_mode(prev_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(prev_lbl, 548);
+    lv_obj_align(prev_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+    st->preview_lbl = prev_lbl;
+
+    lv_obj_t *apply_btn = lv_btn_create(footer);
+    lv_obj_set_size(apply_btn, 164, 38);
+    lv_obj_align(apply_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_ACCENT, 0);
+    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_ACCENT_DIM, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_SECTION_BG, LV_STATE_DISABLED);
+    lv_obj_set_style_radius(apply_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_border_width(apply_btn, 1, 0);
+    lv_obj_set_style_border_color(apply_btn, THEME_COLOR_BORDER, LV_STATE_DISABLED);
+    lv_obj_add_state(apply_btn, LV_STATE_DISABLED);
+    lv_obj_t *albl = lv_label_create(apply_btn);
+    lv_label_set_text(albl, LV_SYMBOL_OK "  APPLY PRESET");
+    lv_obj_set_style_text_font(albl, THEME_FONT_BODY, 0);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_GHOST, LV_STATE_DISABLED);
+    lv_obj_center(albl);
+    lv_obj_add_event_cb(apply_btn, apply_click_cb, LV_EVENT_CLICKED, st);
+    st->apply_btn = apply_btn;
+
+    /* ── Populate brand column (static, from unique ECU names) ──────────── */
+    const char *brands[16]; int nb = 0;
+    for (int i = 0; i < preconfig_data_count - 1 && preconfig_items[i].ecu; i++) {
+        bool dup = false;
+        for (int j = 0; j < nb; j++)
+            if (strcmp(brands[j], preconfig_items[i].ecu) == 0) { dup = true; break; }
+        if (!dup && nb < 16) brands[nb++] = preconfig_items[i].ecu;
+    }
+    /* Sort brands alphabetically */
+    for (int i = 0; i < nb - 1; i++)
+        for (int j = i + 1; j < nb; j++)
+            if (strcmp(brands[i], brands[j]) > 0) {
+                const char *tmp = brands[i]; brands[i] = brands[j]; brands[j] = tmp;
+            }
+    for (int i = 0; i < nb; i++) {
+        lv_obj_t *row = make_col_row(brand_list, brands[i]);
+        col_txt_ctx_t *ctx = lv_mem_alloc(sizeof(col_txt_ctx_t));
+        ctx->st = st; ctx->name = brands[i];
+        lv_obj_add_event_cb(row, brand_click_cb,  LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(row, col_txt_free_cb, LV_EVENT_DELETE, ctx);
+    }
 }
 
 void destroy_preconfig_menu(void)
