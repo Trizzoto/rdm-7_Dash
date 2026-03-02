@@ -166,15 +166,46 @@ esp_err_t layout_manager_init(void) {
 		}
 	}
 
-	/* Generate the default layout on first boot */
-	if (!layout_manager_any_exist()) {
-		ESP_LOGI(TAG, "No layouts found — generating default layout");
-		err = generate_default_layout();
-		if (err != ESP_OK) {
-			ESP_LOGW(TAG, "generate_default_layout failed: %s",
-					 esp_err_to_name(err));
+	/* ── Ensure default layout exists and is up-to-date ─────────────────
+	 * Read default.json's schema_version.  Regenerate if missing OR if
+	 * the version is older than DEFAULT_LAYOUT_SCHEMA_VERSION so that a
+	 * firmware update automatically refreshes stale position data.      */
+#define DEFAULT_LAYOUT_SCHEMA_VERSION 2
+	bool need_regen = false;
+	char default_path[80];
+	snprintf(default_path, sizeof(default_path), "%s/default.json",
+			 LFS_LAYOUT_DIR);
+
+	FILE *df = fopen(default_path, "r");
+	if (!df) {
+		need_regen = true;
+		ESP_LOGI(TAG, "default.json not found — will generate");
+	} else {
+		char hdr[128];
+		size_t nr = fread(hdr, 1, sizeof(hdr) - 1, df);
+		fclose(df);
+		hdr[nr] = '\0';
+		cJSON *tmp = cJSON_Parse(hdr);
+		int ver = 0;
+		if (tmp) {
+			cJSON *sv = cJSON_GetObjectItemCaseSensitive(tmp, "schema_version");
+			if (cJSON_IsNumber(sv))
+				ver = sv->valueint;
+			cJSON_Delete(tmp);
 		}
-		/* Set active to "default" */
+		if (ver < DEFAULT_LAYOUT_SCHEMA_VERSION) {
+			need_regen = true;
+			ESP_LOGI(TAG, "default.json schema v%d < v%d — regenerating", ver,
+					 DEFAULT_LAYOUT_SCHEMA_VERSION);
+		}
+	}
+
+	if (need_regen) {
+		esp_err_t err2 = generate_default_layout();
+		if (err2 != ESP_OK) {
+			ESP_LOGW(TAG, "generate_default_layout failed: %s",
+					 esp_err_to_name(err2));
+		}
 		layout_manager_set_active("default");
 	}
 

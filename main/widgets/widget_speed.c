@@ -98,8 +98,14 @@ uint64_t *widget_speed_get_last_can_time(void) {
 
 static void _speed_create(widget_t *w, lv_obj_t *parent) {
 	widget_speed_create(parent);
-	/* root is the speed label; set after creation */
-	w->root = NULL; /* speed has no single container root — managed directly */
+	w->root = ui_Speed_Value;
+
+	/* The ui_Kmh label is a sibling to ui_Speed_Value in widget_speed_create.
+	 * Position it relative to the loaded JSON coordinates. */
+	if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
+		lv_obj_set_x(ui_Kmh, w->x + 37);
+		lv_obj_set_y(ui_Kmh, w->y + 34); /* 64 - 30 = 34 diff */
+	}
 }
 static void _speed_update(widget_t *w, void *data) {
 	(void)w;

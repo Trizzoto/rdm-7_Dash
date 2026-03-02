@@ -328,6 +328,7 @@ void init_boxes_and_arcs(void) {
 void widget_panel_create(lv_obj_t *parent) {
 	init_boxes_and_arcs();
 	for (uint8_t i = 0; i < 8; i++) {
+		/* ── Header label (already inside box) ──────────────────────── */
 		ui_Label[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_Label[i], label_texts[i]);
 		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
@@ -339,12 +340,17 @@ void widget_panel_create(lv_obj_t *parent) {
 		lv_obj_set_style_text_align(ui_Label[i], LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_width(ui_Label[i], 145);
 		lv_label_set_long_mode(ui_Label[i], LV_LABEL_LONG_CLIP);
+		/* relative_y: label_positions - box_positions ≈ -28 for all slots */
 		lv_coord_t relative_y = label_positions[i][1] - box_positions[i][1];
 		lv_obj_set_x(ui_Label[i], 0);
 		lv_obj_set_y(ui_Label[i], relative_y);
 		lv_obj_set_align(ui_Label[i], LV_ALIGN_CENTER);
 
-		ui_Value[i] = lv_label_create(parent);
+		/* ── Value label — now a child of ui_Box[i] ─────────────────── *
+		 * Relative position: value_positions - box_positions ≈ (0, +9). *
+		 * This means the label moves with the box automatically when the *
+		 * layout manager repositions ui_Box.                             */
+		ui_Value[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_Value[i], "---");
 		strcpy(previous_values[i], "---");
 		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
@@ -356,13 +362,17 @@ void widget_panel_create(lv_obj_t *parent) {
 		lv_obj_set_style_text_align(ui_Value[i], LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_set_width(ui_Value[i], 140);
 		lv_label_set_long_mode(ui_Value[i], LV_LABEL_LONG_CLIP);
-		lv_obj_set_x(ui_Value[i], value_positions[i][0]);
-		lv_obj_set_y(ui_Value[i], value_positions[i][1]);
+		/* Relative y inside 155×92 box: value_pos.y - box_pos.y */
+		lv_coord_t val_rel_y = value_positions[i][1] - box_positions[i][1];
+		lv_obj_set_x(ui_Value[i], 0);
+		lv_obj_set_y(ui_Value[i], val_rel_y);
 		lv_obj_set_align(ui_Value[i], LV_ALIGN_CENTER);
 
-		create_transparent_click_zone(parent, ui_Value[i], i + 1);
+		/* Click zone lives inside the box so it tracks with it */
+		create_transparent_click_zone(ui_Box[i], ui_Value[i], i + 1);
 
-		ui_CustomText[i] = lv_label_create(parent);
+		/* ── Custom unit text — also a child of ui_Box[i] ───────────── */
+		ui_CustomText[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_CustomText[i], values_config[i].custom_text);
 		lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -374,8 +384,10 @@ void widget_panel_create(lv_obj_t *parent) {
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_width(ui_CustomText[i], 60);
 		lv_label_set_long_mode(ui_CustomText[i], LV_LABEL_LONG_CLIP);
-		lv_obj_set_x(ui_CustomText[i], box_positions[i][0] + 41);
-		lv_obj_set_y(ui_CustomText[i], box_positions[i][1] + 32);
+		/* Relative position inside box: was box_pos + (41,32), so offset is
+		 * simply (41, 32) */
+		lv_obj_set_x(ui_CustomText[i], 41);
+		lv_obj_set_y(ui_CustomText[i], 32);
 		lv_obj_set_align(ui_CustomText[i], LV_ALIGN_CENTER);
 		if (strlen(values_config[i].custom_text) == 0)
 			lv_obj_add_flag(ui_CustomText[i], LV_OBJ_FLAG_HIDDEN);
@@ -402,12 +414,10 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	if (slot == 0) {
 		widget_panel_create(parent);
 	}
-	/* position the per-slot box and value label */
+	/* Set root so layout manager can position the box.
+	 * NOTE: layout_manager sets x,y. The box is LV_ALIGN_CENTER, so x,y are
+	 * relative to screen centre. */
 	if (slot < 8) {
-		if (ui_Box[slot] && lv_obj_is_valid(ui_Box[slot])) {
-			lv_obj_set_x(ui_Box[slot], s_panel_default_x[slot]);
-			lv_obj_set_y(ui_Box[slot], s_panel_default_y[slot]);
-		}
 		w->root = ui_Box[slot];
 	}
 }
