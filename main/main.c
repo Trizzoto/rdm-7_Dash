@@ -30,6 +30,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "storage/config_store.h"
+#include "io/wire_inputs.h"
 #include "ota_handler.h"
 #include "screens/ui_Screen3.h"
 #include "sdkconfig.h"
@@ -72,9 +73,6 @@ SemaphoreHandle_t lvgl_mux = NULL;
 
 #define GPIO_INPUT_IO_4 4
 #define GPIO_INPUT_PIN_SEL 1
-/* Indicator wire input: left = GPIO 43, right = GPIO 44 (digital inputs, high = on) */
-#define INDICATOR_LEFT_GPIO  43
-#define INDICATOR_RIGHT_GPIO 44
 static const char *TAG = "main";
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -577,37 +575,6 @@ static void fuel_sender_task(void *pvParameters) {
     }
 }
 
-/* Indicator wire input: GPIO 43 = left, GPIO 44 = right; high = on */
-static void indicator_gpio_init(void) {
-	gpio_config_t io_conf = {
-		.pin_bit_mask = (1ULL << INDICATOR_LEFT_GPIO) | (1ULL << INDICATOR_RIGHT_GPIO),
-		.mode = GPIO_MODE_INPUT,
-		.pull_up_en = GPIO_PULLUP_DISABLE,
-		.pull_down_en = GPIO_PULLDOWN_ENABLE,
-		.intr_type = GPIO_INTR_DISABLE,
-	};
-	gpio_config(&io_conf);
-	/* Ensure pins are pulled LOW when idle - small delay for stabilization */
-	vTaskDelay(pdMS_TO_TICKS(10));
-}
-
-static void indicator_gpio_task(void *pvParameters) {
-	(void)pvParameters;
-	/* Small delay on startup to ensure GPIO is stable */
-	vTaskDelay(pdMS_TO_TICKS(100));
-	for (;;) {
-		if (indicator_configs[0].input_source == 0 || indicator_configs[1].input_source == 0) {
-			/* Read pins: LOW (0) = inactive, HIGH (1) = active */
-			bool left_on = (gpio_get_level(INDICATOR_LEFT_GPIO) == 1);
-			bool right_on = (gpio_get_level(INDICATOR_RIGHT_GPIO) == 1);
-			if (example_lvgl_lock(pdMS_TO_TICKS(20))) {
-				indicator_apply_analog_state(left_on, right_on);
-				example_lvgl_unlock();
-			}
-		}
-		vTaskDelay(pdMS_TO_TICKS(50));
-	}
-}
 
 void app_main(void) {
 	// Initialize PWM for GPIO16
@@ -902,9 +869,9 @@ void app_main(void) {
 	init_indicator_configs();
 	load_indicator_configs_from_nvs();
 
-	indicator_gpio_init();
+	wire_inputs_init();
 	ESP_LOGI(TAG, "Indicator wire inputs (GPIO %d left, %d right) initialized",
-			 INDICATOR_LEFT_GPIO, INDICATOR_RIGHT_GPIO);
+			 WIRE_INPUT_LEFT_GPIO, WIRE_INPUT_RIGHT_GPIO);
 
 	/* Now that the LVGL mutex exists, start the CAN receive task */
 	ESP_LOGI(TAG, "Creating CAN task now that LVGL mutex is ready...");
@@ -921,7 +888,7 @@ void app_main(void) {
 	}
 
 	/* Start indicator wire task: reads GPIO 43/44 and drives indicators when source is Wire */
-	xTaskCreatePinnedToCore(indicator_gpio_task, "ind_wire", 2048, NULL, 3, NULL, 0);
+	xTaskCreatePinnedToCore(wire_inputs_task, "ind_wire", 2048, NULL, 3, NULL, 0);
 	ESP_LOGI(TAG, "Indicator wire task started");
 
 	/* Fuel sender – ADC on GPIO 6, drives bars when fuel_sender is enabled */
