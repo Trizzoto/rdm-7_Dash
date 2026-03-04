@@ -53,3 +53,17 @@ void        can_task_set_priority(UBaseType_t priority);
  * @param bitrate_index  0=125k  1=250k  2=500k  3=1M
  */
 void can_change_bitrate(uint8_t bitrate_index);
+
+/**
+ * @brief Drain any pending CAN frames from the internal FreeRTOS queue and
+ *        dispatch them to the widget layer.
+ *
+ * This function is *LVGL-thread only*: it must be called from a context that
+ * already holds the LVGL mutex (see example_lvgl_lock/example_lvgl_unlock in
+ * main.c).  It is intended to be invoked from the LVGL task loop so that the
+ * CAN receive task never touches LVGL directly.
+ *
+ * The function processes a small bounded batch of frames per call to avoid
+ * starving other LVGL work if the bus is very busy.
+ */
+void can_process_queued_frames(void);

@@ -290,6 +290,9 @@ void example_lvgl_port_task(void *pvParameter) {
 
 			// Handle any pending LVGL tasks
 			lv_timer_handler();
+			// Drain any queued CAN frames while we hold the LVGL mutex so all
+			// widget/UI work stays single-threaded.
+			can_process_queued_frames();
 			example_lvgl_unlock();
 
 			// Calculate remaining time in the refresh period

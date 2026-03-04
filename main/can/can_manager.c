@@ -12,6 +12,7 @@
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "storage/config_store.h"
 
@@ -26,8 +27,14 @@ static twai_filter_config_t  f_config   = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
 /* ── Receive task management ─────────────────────────────────────────── */
 
-static TaskHandle_t  canTaskHandle       = NULL;
+static TaskHandle_t  canTaskHandle        = NULL;
 static volatile bool can_task_should_stop = false;
+
+/* Queue used to hand CAN frames from the TWAI RX task to the LVGL thread.
+ * The LVGL thread drains this via can_process_queued_frames(), ensuring
+ * that all widget/UI work happens on a single thread while the RX loop
+ * stays completely non-blocking. */
+static QueueHandle_t s_can_queue          = NULL;
 
 /* LVGL mutex helpers — defined in main.c */
 extern bool example_lvgl_lock(uint32_t timeout_ms);
@@ -35,8 +42,8 @@ extern void example_lvgl_unlock(void);
 
 /* ── CAN receive task ─────────────────────────────────────────────────
  *
- * Simplified: receive one frame, acquire LVGL mutex, dispatch, release.
- * No priority detection, no retry accounting — keeps the task lean.
+ * Simplified: receive one frame and enqueue it for the LVGL task to process.
+ * The task never touches LVGL directly — it only writes to s_can_queue.
  */
 static void can_receive_task(void *pvParameter)
 {
@@ -47,9 +54,12 @@ static void can_receive_task(void *pvParameter)
         esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5));
 
         if (ret == ESP_OK) {
-            if (example_lvgl_lock(pdMS_TO_TICKS(10))) {
-                can_dispatch_process_frame(&message);
-                example_lvgl_unlock();
+            if (s_can_queue != NULL) {
+                /* Non-blocking enqueue; drop oldest frames if the queue is
+                 * momentarily full rather than stalling the RX loop. */
+                if (xQueueSendToBack(s_can_queue, &message, 0) != pdPASS) {
+                    /* Optional: add a small trace hook here if needed. */
+                }
             }
         } else if (ret == ESP_ERR_TIMEOUT) {
             vTaskDelay(pdMS_TO_TICKS(1));
@@ -162,6 +172,15 @@ void can_init(void)
         ESP_LOGI(TAG, "TWAI started");
     else
         ESP_LOGE(TAG, "TWAI start failed");
+
+    /* Create the CAN frame queue once the driver is up.  32 entries is more
+     * than enough for this dashboard workload and keeps RAM usage modest. */
+    if (s_can_queue == NULL) {
+        s_can_queue = xQueueCreate(32, sizeof(twai_message_t));
+        if (s_can_queue == NULL) {
+            ESP_LOGE(TAG, "Failed to create CAN RX queue");
+        }
+    }
 }
 
 void can_start_task(void)
@@ -238,4 +257,23 @@ void can_change_bitrate(uint8_t bitrate_index)
         canTaskHandle = NULL;
     }
     ESP_LOGI(TAG, "Bitrate change completed");
+}
+
+void can_process_queued_frames(void)
+{
+    if (s_can_queue == NULL) {
+        return;
+    }
+
+    /* Drain a bounded batch of frames per call to avoid starving other LVGL
+     * work if the bus is very busy. */
+    const int max_batch = 8;
+    int       processed = 0;
+    twai_message_t msg;
+
+    while (processed < max_batch &&
+           xQueueReceive(s_can_queue, &msg, 0) == pdTRUE) {
+        can_dispatch_process_frame(&msg);
+        processed++;
+    }
 }
