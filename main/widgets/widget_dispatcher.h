@@ -54,6 +54,14 @@ typedef struct {
 } gear_update_t;
 #endif
 
+#ifndef TEXT_UPDATE_T_DEFINED
+#define TEXT_UPDATE_T_DEFINED
+typedef struct {
+    uint8_t value_idx;
+    char    value_str[EXAMPLE_MAX_CHAR_SIZE];
+} text_update_t;
+#endif
+
 /* --- API ------------------------------------------------------------------*/
 
 /** Initialise all value_config_t defaults. Called at start of screen init. */

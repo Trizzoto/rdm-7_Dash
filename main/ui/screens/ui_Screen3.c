@@ -207,18 +207,35 @@ void ui_Screen3_screen_init(void) {
 		memset(previous_values[i], 0, sizeof(previous_values[i]));
 	}
 	rpm_bar_gauge = NULL;
+	ui_RPM_Value = NULL;
+	ui_RPM_Label = NULL;
+	ui_Speed_Value = NULL;
+	ui_Kmh = NULL;
+	ui_GEAR_Value = NULL;
+	ui_GEAR_Icon = NULL;
+	ui_Panel9 = NULL;
+	ui_Bar_1 = NULL;
+	ui_Bar_2 = NULL;
+	/* Clear stale static pointers inside widget_rpm_bar module */
+	widget_rpm_bar_clear_stale_pointers();
 	reset_can_tracking = true;
 
 	/* Initialise widget layer via layout manager (loads from LittleFS JSON,
 	 * falls back to direct widget_X_create() if the file is unavailable). */
 	dashboard_init(ui_Screen3);
 
-	/* Click zones for special widgets */
-	create_transparent_click_zone(ui_Screen3, ui_RPM_Value, RPM_VALUE_ID);
-	create_transparent_click_zone(ui_Screen3, ui_Speed_Value, SPEED_VALUE_ID);
-	create_transparent_click_zone(ui_Screen3, ui_GEAR_Value, GEAR_VALUE_ID);
-	create_transparent_click_zone(ui_Screen3, ui_Bar_1, BAR1_VALUE_ID);
-	create_transparent_click_zone(ui_Screen3, ui_Bar_2, BAR2_VALUE_ID);
+	/* Click zones for special widgets — only installed if the widget exists */
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+		create_transparent_click_zone(ui_Screen3, ui_RPM_Value, RPM_VALUE_ID);
+	if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value))
+		create_transparent_click_zone(ui_Screen3, ui_Speed_Value,
+									  SPEED_VALUE_ID);
+	if (ui_GEAR_Value && lv_obj_is_valid(ui_GEAR_Value))
+		create_transparent_click_zone(ui_Screen3, ui_GEAR_Value, GEAR_VALUE_ID);
+	if (ui_Bar_1 && lv_obj_is_valid(ui_Bar_1))
+		create_transparent_click_zone(ui_Screen3, ui_Bar_1, BAR1_VALUE_ID);
+	if (ui_Bar_2 && lv_obj_is_valid(ui_Bar_2))
+		create_transparent_click_zone(ui_Screen3, ui_Bar_2, BAR2_VALUE_ID);
 
 	/* Menu button (glassmorphism) */
 	ui_Menu_Button = lv_btn_create(ui_Screen3);

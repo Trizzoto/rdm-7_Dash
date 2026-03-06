@@ -28,6 +28,8 @@ typedef enum {
     WIDGET_BAR       = 4,
     WIDGET_INDICATOR = 5,
     WIDGET_WARNING   = 6,
+    WIDGET_TEXT      = 7,
+    WIDGET_METER     = 8,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 

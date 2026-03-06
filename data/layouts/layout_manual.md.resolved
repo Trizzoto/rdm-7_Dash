@@ -1,0 +1,135 @@
+# RDM-7 Dashboard Layout JSON Manual
+
+This document provides a technical specification for the JSON layout format used by the RDM-7 Digital Dashboard. It is intended to be used as a reference for manual editing or for other AI agents to understand how to generate compatible layouts.
+
+## Global Structure
+
+Every layout file must be a JSON object with the following top-level fields:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `schema_version` | integer | Currently `3`. Used to trigger automatic regeneration of default files. |
+| [name](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_types.c#34-50) | string | Unique name for the layout (e.g., "rpm_meter_test"). |
+| [widgets](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_dispatcher.c#39-55) | array | A list of widget objects to be rendered on the screen. |
+
+---
+
+## Coordinate System
+
+The dashboard uses a center-aligned coordinate system for an **800 x 480 pixel** display.
+
+-   **Origin (0,0)**: The exact center of the screen.
+-   **X-axis**: Ranges from `-400` (left edge) to `400` (right edge).
+-   **Y-axis**: Ranges from `-240` (top edge) to `240` (bottom edge).
+-   **Alignment**: Widgets are positioned relative to their own center or top-left depending on the widget type, but the `x` and `y` specified in JSON are delivered as-is to the LVGL positioning engine.
+
+---
+
+## Widget Objects
+
+Each entry in the [widgets](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_dispatcher.c#39-55) array shares a common base structure:
+
+```json
+{
+  "type": "panel",
+  "id": "unique_id_string",
+  "x": 0,
+  "y": 0,
+  "w": 155,
+  "h": 92,
+  "config": {}
+}
+```
+
+### Common Fields
+-   **[type](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/layout/layout_manager.c#71-98)**: Required. Must be one of the [Supported Widget Types](#supported-widget-types).
+-   **[id](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/ui/menu/config_modal.c#182-187)**: Required. A unique string to identify this specific instance.
+-   **`x`, `y`**: Integer position offsets from the screen center.
+-   **`w`, `h`**: Dimensions in pixels.
+-   **[config](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/ui/menu/config_modal.c#1167-1578)**: An object containing widget-specific settings.
+
+---
+
+## Data Binding (Slots)
+
+Most widgets bind to a "Value Slot" (indexed **0–12**) which corresponds to a CAN bus data source configured in the device settings.
+
+| Slot Index | Description |
+| :--- | :--- |
+| **0 - 7** | General Purpose Panels (e.g. Temperature, Pressure) |
+| **8** | RPM |
+| **9** | Speed |
+| **10** | Gear |
+| **11** | Horizontal Bar 1 |
+| **12** | Horizontal Bar 2 |
+
+---
+
+## Supported Widget Types
+
+### 1. [meter](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_meter.c#134-140) (Analog Dial)
+A circular gauge with a needle and a central digital readout.
+-   **Required Config**:
+    -   `slot`: (0-12) Data source.
+    -   `min`: (integer) Minimum value on the scale.
+    -   `max`: (integer) Maximum value on the scale.
+    -   `start_angle`: (degrees, 0-360) Start of the arc.
+    -   `end_angle`: (degrees, 0-360) End of the arc.
+
+### 2. [panel](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_panel.c#249-267) (Data Box)
+A rectangular box showing a label and a digital value.
+-   **Required Config**:
+    -   `slot`: (0-7) Maps to one of the 8 main data boxes.
+
+### 3. [bar](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/ui/menu/config_modal.c#158-168) (Horizontal Indicator)
+A linear bar that fills based on the value.
+-   **Required Config**:
+    -   `slot`: (0-1) Maps to Bar 1 (Slot 11) or Bar 2 (Slot 12).
+
+### 4. [speed](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_speed.c#99-110)
+A specialized digital readout for vehicle speed.
+-   **Config**: Empty `{}` (Hardware acceleration and styling are fixed).
+
+### 5. [gear](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_gear.c#1036-1040)
+A large single-character display for the current gear.
+-   **Config**: Empty `{}`.
+
+### 6. [rpm_bar](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_rpm_bar.c#1428-1432)
+The horizontal sweeping RPM bar usually found at the top of the screen.
+-   **Config**: Empty `{}`.
+
+### 7. [indicator](file:///c:/Users/ruuva/workspace/RDM-7_Dash/components/lvgl__lvgl/src/extra/widgets/meter/lv_meter.c#207-227) / [warning](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/ui/menu/config_modal.c#201-212)
+Small icons or circles for status lights.
+-   **Required Config**:
+    -   `slot`: Index for the specific indicator or warning bit.
+
+### 8. [text](file:///c:/Users/ruuva/workspace/RDM-7_Dash/main/widgets/widget_text.c#41-50)
+A generic label for displaying custom strings.
+-   **Required Config**:
+    -   `slot`: (0-12) The data source whose name or value should be shown.
+
+---
+
+## Example Layout
+
+```json
+{
+  "schema_version": 3,
+  "name": "example_layout",
+  "widgets": [
+    {
+      "type": "meter",
+      "id": "rpm_center",
+      "x": 0, "y": 0, "w": 300, "h": 300,
+      "config": {
+        "slot": 8,
+        "min": 0,
+        "max": 9000,
+        "start_angle": 135,
+        "end_angle": 45
+      }
+    },
+    { "type": "speed", "id": "speedo", "x": -200, "y": 50, "w": 100, "h": 50, "config": {} }
+  ]
+}
+```

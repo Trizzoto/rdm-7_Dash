@@ -30,8 +30,42 @@
 #include "widget_bar.h"
 #include "widget_indicator.h"
 #include "widget_warning.h"
+#include "widget_text.h"
+#include "widget_meter.h"
+#include "widget_registry.h"
 
 /* All _update_t typedefs are defined in widget_dispatcher.h — do not repeat. */
+
+/** Notify all text widgets bound to value_idx. Uses stack buffer, no heap. */
+static void _notify_text_widgets(uint8_t value_idx) {
+	widget_t *arr[TEXT_PER_VALUE_MAX];
+	uint8_t cnt;
+	can_dispatch_get_text_widgets_for_value(value_idx, arr, TEXT_PER_VALUE_MAX, &cnt);
+	if (cnt == 0)
+		return;
+	text_update_t tud;
+	tud.value_idx = value_idx;
+	strncpy(tud.value_str, previous_values[value_idx], EXAMPLE_MAX_CHAR_SIZE - 1);
+	tud.value_str[EXAMPLE_MAX_CHAR_SIZE - 1] = '\0';
+	for (uint8_t j = 0; j < cnt; j++) {
+		if (arr[j] && arr[j]->update)
+			arr[j]->update(arr[j], &tud);
+	}
+}
+
+/** Notify all meter widgets bound to value_idx. Uses stack int32_t, no heap. */
+static void _notify_meter_widgets(uint8_t value_idx, int32_t raw_value) {
+	widget_t *arr[METER_PER_VALUE_MAX];
+	uint8_t cnt;
+	can_dispatch_get_meter_widgets_for_value(value_idx, arr, METER_PER_VALUE_MAX, &cnt);
+	if (cnt == 0)
+		return;
+	int32_t v = raw_value;
+	for (uint8_t j = 0; j < cnt; j++) {
+		if (arr[j] && arr[j]->update)
+			arr[j]->update(arr[j], &v);
+	}
+}
 
 /* Externs for per-widget CAN-receive timestamps (owned by each widget .c) */
 extern uint64_t last_panel_can_received[8];
@@ -91,6 +125,8 @@ void check_can_timeouts(lv_timer_t *timer) {
 						0; // Use 0 to ensure no threshold warnings
 					lv_async_call(update_panel_ui, p_upd);
 				}
+				_notify_text_widgets((uint8_t)i);
+				_notify_meter_widgets((uint8_t)i, 0);
 			}
 		}
 	}
@@ -107,6 +143,8 @@ void check_can_timeouts(lv_timer_t *timer) {
 				strcpy(s_upd->speed_str, "---");
 				lv_async_call(update_speed_ui, s_upd);
 			}
+			_notify_text_widgets(SPEED_VALUE_ID - 1);
+			_notify_meter_widgets(SPEED_VALUE_ID - 1, 0);
 		}
 	}
 
@@ -124,6 +162,7 @@ void check_can_timeouts(lv_timer_t *timer) {
 				g_upd->raw_value = 0;
 				lv_async_call(update_gear_ui, g_upd);
 			}
+			_notify_meter_widgets(GEAR_VALUE_ID - 1, 0);
 		}
 	}
 
@@ -135,16 +174,22 @@ void check_can_timeouts(lv_timer_t *timer) {
 			(current_time - last_bar_can_received[i]) > CAN_TIMEOUT_MS) {
 
 			// Set bar to minimum value (representing "no data")
+			int32_t bar_min = values_config[value_index].bar_min;
+			char bar_str[EXAMPLE_MAX_CHAR_SIZE];
+			snprintf(bar_str, sizeof(bar_str), "%d", bar_min);
+			strcpy(previous_values[value_index], bar_str);
+
 			bar_update_t *b_upd = malloc(sizeof(bar_update_t));
 			if (b_upd) {
 				b_upd->bar_index = i;
-				b_upd->bar_value =
-					values_config[value_index].bar_min; // Use minimum value
-				b_upd->final_value = values_config[value_index].bar_min;
+				b_upd->bar_value = bar_min;
+				b_upd->final_value = (double)bar_min;
 				b_upd->config_index = value_index;
 				b_upd->is_timeout = true;
 				lv_async_call(update_bar_ui, b_upd);
 			}
+			_notify_text_widgets((uint8_t)value_index);
+			_notify_meter_widgets((uint8_t)value_index, bar_min);
 		}
 	}
 
@@ -161,6 +206,8 @@ void check_can_timeouts(lv_timer_t *timer) {
 				r_upd->rpm_value = 0; // Use 0 for gauge
 				lv_async_call(update_rpm_ui, r_upd);
 			}
+			_notify_text_widgets(RPM_VALUE_ID - 1);
+			_notify_meter_widgets(RPM_VALUE_ID - 1, 0);
 		}
 	}
 }
@@ -302,6 +349,7 @@ void process_can_message(const twai_message_t *message) {
 							strcpy(previous_values[i], new_value_str);
 							update_panel_ui_immediate((uint8_t)i, new_value_str,
 													  final_value);
+							_notify_meter_widgets((uint8_t)i, (int32_t)final_value);
 						}
 					} else {
 						if (current_time - last_panel_updates[i] >= 25) {
@@ -319,6 +367,8 @@ void process_can_message(const twai_message_t *message) {
 								strcpy(previous_values[i], new_value_str);
 								update_panel_ui_immediate(
 									(uint8_t)i, new_value_str, final_value);
+								_notify_text_widgets((uint8_t)i);
+								_notify_meter_widgets((uint8_t)i, (int32_t)final_value);
 							}
 							last_panel_updates[i] = current_time;
 						}
@@ -354,6 +404,11 @@ void process_can_message(const twai_message_t *message) {
 
 								update_bar_ui_immediate(bar_index, bar_value,
 														final_value, i);
+								char bar_str[EXAMPLE_MAX_CHAR_SIZE];
+								snprintf(bar_str, sizeof(bar_str), "%d", bar_value);
+								strcpy(previous_values[i], bar_str);
+								_notify_text_widgets((uint8_t)i);
+								_notify_meter_widgets((uint8_t)i, bar_value);
 							}
 							last_bar_updates[bar_index] = current_time;
 						}
@@ -378,6 +433,8 @@ void process_can_message(const twai_message_t *message) {
 						strcpy(previous_values[i], rpm_str);
 						last_rpm_value = rpm_value;
 						update_rpm_ui_immediate(rpm_str, gauge_rpm_value);
+						_notify_text_widgets((uint8_t)i);
+						_notify_meter_widgets((uint8_t)i, rpm_value);
 					}
 				} else if (value_id == SPEED_VALUE_ID) {
 					last_speed_can_received = current_time;
@@ -387,6 +444,8 @@ void process_can_message(const twai_message_t *message) {
 					if (strcmp(speed_str, previous_values[i]) != 0) {
 						strcpy(previous_values[i], speed_str);
 						update_speed_ui_immediate(speed_str);
+						_notify_text_widgets((uint8_t)i);
+						_notify_meter_widgets((uint8_t)i, (int32_t)speed_value);
 					}
 				} else if (value_id == GEAR_VALUE_ID) {
 					// Skip CAN gear processing if in Speed/RPM Ratio mode
@@ -484,6 +543,8 @@ void process_can_message(const twai_message_t *message) {
 					last_raw_value = (uint32_t)gear_raw_value;
 					// Use raw value (before scaling/offset) for icon matching
 					update_gear_ui_immediate(gear_str, (uint32_t)gear_raw_value);
+					_notify_text_widgets(GEAR_VALUE_ID - 1);
+					_notify_meter_widgets(GEAR_VALUE_ID - 1, (int32_t)final_value);
 				}
 				}
 			}
@@ -663,6 +724,8 @@ void process_can_message(const twai_message_t *message) {
 							p_upd->final_value = final_value;
 							lv_async_call(update_panel_ui, p_upd);
 						}
+						_notify_text_widgets((uint8_t)i);
+						_notify_meter_widgets((uint8_t)i, (int32_t)final_value);
 					}
 				} else {
 					// Other panels with 25ms update rate
@@ -686,6 +749,8 @@ void process_can_message(const twai_message_t *message) {
 								p_upd->final_value = final_value;
 								lv_async_call(update_panel_ui, p_upd);
 							}
+							_notify_text_widgets((uint8_t)i);
+							_notify_meter_widgets((uint8_t)i, (int32_t)final_value);
 						}
 						last_panel_updates[i] = current_time;
 					}
@@ -731,6 +796,11 @@ void process_can_message(const twai_message_t *message) {
 							b_upd->is_timeout = false;
 							lv_async_call(update_bar_ui, b_upd);
 						}
+						char bar_str[EXAMPLE_MAX_CHAR_SIZE];
+						snprintf(bar_str, sizeof(bar_str), "%d", bar_value);
+						strcpy(previous_values[i], bar_str);
+						_notify_text_widgets((uint8_t)i);
+						_notify_meter_widgets((uint8_t)i, bar_value);
 					}
 				}
 				continue;
@@ -775,6 +845,8 @@ void process_can_message(const twai_message_t *message) {
 							gauge_rpm_value; // Use gauge-limited value for bar
 						lv_async_call(update_rpm_ui, r_upd);
 					}
+					_notify_text_widgets((uint8_t)i);
+					_notify_meter_widgets((uint8_t)i, rpm_value);
 				}
 			}
 			// Handle Speed
@@ -796,6 +868,8 @@ void process_can_message(const twai_message_t *message) {
 						strcpy(s_upd->speed_str, speed_str);
 						lv_async_call(update_speed_ui, s_upd);
 					}
+					_notify_text_widgets((uint8_t)i);
+					_notify_meter_widgets((uint8_t)i, (int32_t)speed_value);
 				}
 			}
 			// Handle Gear
@@ -921,6 +995,8 @@ void process_can_message(const twai_message_t *message) {
 						g_upd->raw_value = (uint32_t)gear_raw_value;
 						lv_async_call(update_gear_ui, g_upd);
 					}
+					_notify_text_widgets(GEAR_VALUE_ID - 1);
+					_notify_meter_widgets(GEAR_VALUE_ID - 1, (int32_t)final_value);
 				}
 			}
 		}

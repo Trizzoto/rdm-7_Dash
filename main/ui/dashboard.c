@@ -1,5 +1,6 @@
 #include "ui/dashboard.h"
 #include "layout/layout_manager.h"
+#include "widgets/widget_registry.h"
 
 /* Existing widget create functions — used as fallback */
 #include "widgets/widget_bar.h"
@@ -10,18 +11,17 @@
 #include "widgets/widget_speed.h"
 #include "widgets/widget_warning.h"
 
-
 /* CAN dispatch rebuild */
 #include "can/can_dispatch.h"
 
 #include "esp_log.h"
+#include "esp_system.h"
 #include <stdlib.h>
 #include <string.h>
 
-
 static const char *TAG = "dashboard";
 
-/* ── Internal widget registry ────────────────────────────────────────────── */
+/* ── Internal widget registry snapshot ───────────────────────────────────── */
 
 /* Maximum widgets the dashboard tracks (7 types × worst-case instances):
  *   panel×8, rpm_bar×1, speed×1, gear×1, bar×2, indicator×2, warning×8 = 23 */
@@ -57,8 +57,15 @@ static void _fallback_create_all(lv_obj_t *parent) {
  * ════════════════════════════════════════════════════════════════════════════
  */
 void dashboard_init(lv_obj_t *parent) {
+	ESP_LOGE(TAG, ">>> dashboard_init START, heap=%u",
+			 (unsigned)esp_get_free_heap_size());
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
+
+	/* Clear the global widget registry before (re)loading a layout. */
+	widget_registry_reset();
+	ESP_LOGE(TAG, ">>> registry_reset done, heap=%u",
+			 (unsigned)esp_get_free_heap_size());
 
 	/* 1 ── Mount LittleFS + generate default layout on first boot ───────── */
 	esp_err_t err = layout_manager_init();
@@ -76,7 +83,11 @@ void dashboard_init(lv_obj_t *parent) {
 	ESP_LOGI(TAG, "Loading layout '%s'", layout_name);
 
 	/* 3 ── Load layout: factory + create() for each widget entry ────────── */
+	ESP_LOGE(TAG, ">>> calling layout_manager_load('%s'), heap=%u", layout_name,
+			 (unsigned)esp_get_free_heap_size());
 	err = layout_manager_load(layout_name, parent);
+	ESP_LOGE(TAG, ">>> layout_manager_load returned %d, heap=%u", (int)err,
+			 (unsigned)esp_get_free_heap_size());
 	if (err != ESP_OK) {
 		ESP_LOGW(TAG, "layout_manager_load('%s') failed (%s) — using fallback",
 				 layout_name, esp_err_to_name(err));
@@ -85,15 +96,12 @@ void dashboard_init(lv_obj_t *parent) {
 		return;
 	}
 
-	/* Layout loaded successfully.  Collect widget handles from the registry
-	 * that layout_manager_load() builds internally.
-	 *
-	 * NOTE: dashboard_get_widgets() returns an empty array for now because
-	 * the Phase 3 layout manager does not yet have a centralised widget
-	 * registry — each widget_t is created and orphaned. Phase 5 will add the
-	 * registry. For Phase 4 the important result is that all LVGL objects
-	 * are correctly created and positioned on @p parent. */
-	ESP_LOGI(TAG, "Widget layer initialised via '%s'", layout_name);
+	/* Layout loaded successfully.  Snapshot widget handles from the global
+	 * registry populated by layout_manager_load(). */
+	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
+
+	ESP_LOGI(TAG, "Widget layer initialised via '%s' (%u widgets)", layout_name,
+			 (unsigned)s_widget_count);
 
 	/* 5 ── Rebuild CAN dispatch table ──────────────────────────────────── */
 	rebuild_can_dispatch();

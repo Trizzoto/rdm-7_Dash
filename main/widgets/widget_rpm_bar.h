@@ -28,12 +28,8 @@ void update_rpm_lines(lv_obj_t *parent);
 /** Create the full RPM bar (base panels + bar widget + redline zone). */
 void create_rpm_bar_gauge(lv_obj_t *parent_screen);
 
-/** Create RPM lights circles if rpm_lights_enabled. */
-void create_rpm_lights_circles(lv_obj_t *parent);
-
-/** Start/stop the limiter effect demo (opened from config modal). */
-void start_limiter_effect_demo(uint8_t effect_type);
-void stop_limiter_effect_demo(void);
+/** Clear stale static pointers (rpm_lights_circles etc.) on layout reload. */
+void widget_rpm_bar_clear_stale_pointers(void);
 
 /** Timer callback for deferred RPM colour update. */
 void check_rpm_color_update(lv_timer_t *timer);
@@ -47,7 +43,6 @@ void rpm_color_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e);
-void rpm_lights_switch_event_cb(lv_event_t *e);
 void rpm_background_switch_event_cb(lv_event_t *e);
 void rpm_background_color_dropdown_event_cb(lv_event_t *e);
 void rpm_background_threshold_roller_event_cb(lv_event_t *e);

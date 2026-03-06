@@ -25,6 +25,8 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_BAR       */ { .min_w = 120, .min_h =  15, .max_w = 450, .max_h =  50 },
     /* WIDGET_INDICATOR */ { .min_w =  30, .min_h =  30, .max_w =  80, .max_h =  80 },
     /* WIDGET_WARNING   */ { .min_w =  18, .min_h =  18, .max_w =  60, .max_h =  60 },
+    /* WIDGET_TEXT      */ { .min_w =  40, .min_h =  20, .max_w = 400, .max_h = 100 },
+    /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = 200, .max_h = 200 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -39,6 +41,8 @@ const char *widget_type_name(widget_type_t type)
         "bar",
         "indicator",
         "warning",
+        "text",
+        "meter",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];

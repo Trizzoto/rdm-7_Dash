@@ -18,6 +18,14 @@ extern "C" {
  */
 esp_err_t generate_default_layout(void);
 
+/**
+ * @brief Write /lfs/layouts/rpm_meter_test.json with the new analog dial
+ * layout.
+ *
+ * @return ESP_OK on success, or an ESP error code.
+ */
+esp_err_t generate_rpm_meter_test_layout(void);
+
 #ifdef __cplusplus
 }
 #endif

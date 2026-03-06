@@ -14,6 +14,7 @@
 #include "esp_err.h"
 #include "lvgl.h"
 #include "widget_types.h"
+#include "cJSON.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -27,6 +28,9 @@ extern "C" {
 
 /* Maximum number of layouts the list function will return. */
 #define LAYOUT_MAX_COUNT 16
+
+/* Maximum JSON file size we'll read or accept (in bytes). */
+#define LAYOUT_MAX_FILE_BYTES 16384
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
@@ -110,6 +114,34 @@ esp_err_t layout_manager_get_active(char *name_out, size_t len);
  * @brief Return true if at least one layout file exists in the layouts dir.
  */
 bool layout_manager_any_exist(void);
+
+/**
+ * @brief Build an in-memory JSON representation of the current layout.
+ *
+ * This uses the same schema as layout_manager_save() but returns a cJSON tree
+ * instead of writing to disk.  The caller owns the returned object and must
+ * call cJSON_Delete() when done.
+ *
+ * @param name    Layout name (used for the \"name\" field).
+ * @param widgets Array of widget_t pointers.
+ * @param count   Number of widgets in @p widgets.
+ * @return cJSON* root object on success, or NULL on error.
+ */
+cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
+								 uint8_t count);
+
+/**
+ * @brief Write a raw cJSON layout tree to /lfs/layouts/{name}.json.
+ *
+ * The root must contain at least a \"widgets\" array; other fields are
+ * preserved as-is.  This is intended for layouts received from the web UI
+ * which are already in the correct schema.
+ *
+ * @param name Layout name (without .json suffix).
+ * @param root Parsed cJSON layout object.
+ * @return ESP_OK on success.
+ */
+esp_err_t layout_manager_save_raw(const char *name, const cJSON *root);
 
 #ifdef __cplusplus
 }

@@ -5,9 +5,12 @@
 #include "widget_bar.h"
 #include "widget_gear.h"
 #include "widget_indicator.h"
+#include "widget_meter.h"
 #include "widget_panel.h"
+#include "widget_registry.h"
 #include "widget_rpm_bar.h"
 #include "widget_speed.h"
+#include "widget_text.h"
 #include "widget_types.h"
 #include "widget_warning.h"
 
@@ -29,9 +32,6 @@ static const char *TAG = "layout_mgr";
 /* NVS namespace + key for the active layout name */
 #define NS_LAYOUT "layout_mgr"
 #define KEY_ACTIVE "active"
-
-/* Maximum JSON file size we'll read into heap */
-#define LAYOUT_MAX_FILE_BYTES 16384
 
 /* Track whether LittleFS has been mounted this boot */
 static bool s_lfs_mounted = false;
@@ -89,6 +89,10 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_INDICATOR;
 	if (strcmp(s, "warning") == 0)
 		return WIDGET_WARNING;
+	if (strcmp(s, "text") == 0)
+		return WIDGET_TEXT;
+	if (strcmp(s, "meter") == 0)
+		return WIDGET_METER;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -109,24 +113,56 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		}
 	}
 
+	widget_t *w = NULL;
+
 	switch (type) {
 	case WIDGET_PANEL:
-		return widget_panel_create_instance(slot);
+		w = widget_panel_create_instance(slot);
+		break;
 	case WIDGET_RPM_BAR:
-		return widget_rpm_bar_create_instance();
+		w = widget_rpm_bar_create_instance();
+		break;
 	case WIDGET_SPEED:
-		return widget_speed_create_instance();
+		w = widget_speed_create_instance();
+		break;
 	case WIDGET_GEAR:
-		return widget_gear_create_instance();
+		w = widget_gear_create_instance();
+		break;
 	case WIDGET_BAR:
-		return widget_bar_create_instance(slot);
+		w = widget_bar_create_instance(slot);
+		break;
 	case WIDGET_INDICATOR:
-		return widget_indicator_create_instance(slot);
+		w = widget_indicator_create_instance(slot);
+		break;
 	case WIDGET_WARNING:
-		return widget_warning_create_instance(slot);
+		w = widget_warning_create_instance(slot);
+		break;
+	case WIDGET_TEXT:
+		w = widget_text_create_instance(slot);
+		break;
+	case WIDGET_METER:
+		w = widget_meter_create_instance(slot);
+		break;
 	default:
 		return NULL;
 	}
+
+	if (!w)
+		return NULL;
+
+	/* Fail fast: if we cannot register this widget, destroy it immediately and
+	 * return NULL so the caller skips this JSON entry.  This prevents
+	 * untracked "zombie" widgets whose LVGL objects would never be updated or
+	 * destroyed. */
+	if (!widget_registry_add(w)) {
+		ESP_LOGE(TAG,
+				 "widget_registry full (%u entries) — dropping widget id=%s",
+				 (unsigned)widget_registry_count(), w->id);
+		w->destroy(w);
+		return NULL;
+	}
+
+	return w;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -206,6 +242,9 @@ esp_err_t layout_manager_init(void) {
 			ESP_LOGW(TAG, "generate_default_layout failed: %s",
 					 esp_err_to_name(err2));
 		}
+		/* Also regenerate the RPM meter test layout to ensure it's up to date
+		 */
+		generate_rpm_meter_test_layout();
 		layout_manager_set_active("default");
 	}
 
@@ -278,10 +317,13 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		/* Restore base fields (x, y, w, h, id) and type-specific config.
 		 * Cast away const: cJSON iterator yields const ptr but our vtable
 		 * takes mutable (cJSON API doesn't propagate const internally). */
+		ESP_LOGD(TAG, "layout_load: Calling from_json for %s", w->id);
 		w->from_json(w, (cJSON *)wj);
 
 		/* Build LVGL objects on the parent screen */
+		ESP_LOGD(TAG, "layout_load: Calling create for %s", w->id);
 		w->create(w, parent);
+		ESP_LOGD(TAG, "layout_load: Returned from create for %s", w->id);
 
 		/* Position root object if valid */
 		if (w->root && lv_obj_is_valid(w->root)) {
@@ -303,17 +345,18 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  layout_manager_save
+ *  layout_manager_build_json / layout_manager_save / layout_manager_save_raw
  * ═══════════════════════════════════════════════════════════════════════════
  */
-esp_err_t layout_manager_save(const char *name, widget_t **widgets,
-							  uint8_t count) {
+
+cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
+								 uint8_t count) {
 	if (!name || !widgets)
-		return ESP_ERR_INVALID_ARG;
+		return NULL;
 
 	cJSON *root = cJSON_CreateObject();
 	if (!root)
-		return ESP_ERR_NO_MEM;
+		return NULL;
 
 	cJSON_AddNumberToObject(root, "schema_version", 1);
 	cJSON_AddStringToObject(root, "name", name);
@@ -324,12 +367,36 @@ esp_err_t layout_manager_save(const char *name, widget_t **widgets,
 		if (!w || !w->to_json)
 			continue;
 		cJSON *wj = cJSON_CreateObject();
+		if (!wj) {
+			continue;
+		}
 		w->to_json(w, wj);
 		cJSON_AddItemToArray(arr, wj);
 	}
 
-	char *json_str = cJSON_PrintUnformatted(root);
+	return root;
+}
+
+esp_err_t layout_manager_save(const char *name, widget_t **widgets,
+							  uint8_t count) {
+	if (!name || !widgets)
+		return ESP_ERR_INVALID_ARG;
+
+	cJSON *root = layout_manager_build_json(name, widgets, count);
+	if (!root)
+		return ESP_ERR_NO_MEM;
+
+	/* Delegate to raw save helper. */
+	esp_err_t err = layout_manager_save_raw(name, root);
 	cJSON_Delete(root);
+	return err;
+}
+
+esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
+	if (!name || !root)
+		return ESP_ERR_INVALID_ARG;
+
+	char *json_str = cJSON_PrintUnformatted(root);
 	if (!json_str)
 		return ESP_ERR_NO_MEM;
 
@@ -338,7 +405,7 @@ esp_err_t layout_manager_save(const char *name, widget_t **widgets,
 
 	FILE *f = fopen(path, "w");
 	if (!f) {
-		ESP_LOGE(TAG, "layout_save: cannot open %s for writing", path);
+		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing", path);
 		free(json_str);
 		return ESP_FAIL;
 	}
@@ -349,12 +416,12 @@ esp_err_t layout_manager_save(const char *name, widget_t **widgets,
 	free(json_str);
 
 	if (nw != len) {
-		ESP_LOGE(TAG, "layout_save: short write (%u/%u bytes) for %s",
+		ESP_LOGE(TAG, "layout_save_raw: short write (%u/%u bytes) for %s",
 				 (unsigned)nw, (unsigned)len, path);
 		return ESP_FAIL;
 	}
 
-	ESP_LOGI(TAG, "layout_save: saved '%s' to %s (%u bytes)", name, path,
+	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes)", name, path,
 			 (unsigned)len);
 	return ESP_OK;
 }
