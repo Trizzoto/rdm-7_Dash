@@ -345,6 +345,56 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  layout_manager_apply_json
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent) {
+	if (!root || !parent)
+		return ESP_ERR_INVALID_ARG;
+
+	const cJSON *widgets_arr =
+		cJSON_GetObjectItemCaseSensitive(root, "widgets");
+	if (!cJSON_IsArray(widgets_arr)) {
+		ESP_LOGE(TAG, "apply_json: no 'widgets' array");
+		return ESP_FAIL;
+	}
+
+	const cJSON *wj = NULL;
+	cJSON_ArrayForEach(wj, widgets_arr) {
+		const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(wj, "type");
+		widget_type_t wtype = _type_from_str(
+			cJSON_IsString(type_item) ? type_item->valuestring : NULL);
+		if (wtype == WIDGET_TYPE_COUNT) {
+			ESP_LOGW(TAG, "apply_json: unknown widget type '%s', skipping",
+					 cJSON_IsString(type_item) ? type_item->valuestring
+											   : "(null)");
+			continue;
+		}
+
+		widget_t *w = _factory(wtype, (cJSON *)wj);
+		if (!w) {
+			ESP_LOGW(TAG, "apply_json: factory returned NULL for type %d",
+					 (int)wtype);
+			continue;
+		}
+
+		w->from_json(w, (cJSON *)wj);
+		w->create(w, parent);
+
+		if (w->root && lv_obj_is_valid(w->root)) {
+			lv_obj_set_x(w->root, w->x);
+			lv_obj_set_y(w->root, w->y);
+		}
+
+		ESP_LOGD(TAG, "apply_json: loaded widget id=%s type=%d at (%d,%d)",
+				 w->id, (int)wtype, (int)w->x, (int)w->y);
+	}
+
+	ESP_LOGI(TAG, "apply_json: applied layout from cJSON");
+	return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  layout_manager_build_json / layout_manager_save / layout_manager_save_raw
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -423,6 +473,35 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 
 	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes)", name, path,
 			 (unsigned)len);
+	return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  layout_manager_read_raw
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+esp_err_t layout_manager_read_raw(const char *name, char *buf,
+								  size_t buf_size, size_t *out_len) {
+	if (!name || !buf || buf_size == 0)
+		return ESP_ERR_INVALID_ARG;
+
+	char path[80];
+	_make_path(name, path, sizeof(path));
+
+	FILE *f = fopen(path, "r");
+	if (!f) {
+		ESP_LOGE(TAG, "layout_read_raw: cannot open %s", path);
+		return ESP_ERR_NOT_FOUND;
+	}
+
+	size_t nread = fread(buf, 1, buf_size - 1, f);
+	fclose(f);
+	buf[nread] = '\0';
+
+	if (out_len)
+		*out_len = nread;
+
+	ESP_LOGD(TAG, "layout_read_raw: read '%s' (%u bytes)", name, (unsigned)nread);
 	return ESP_OK;
 }
 

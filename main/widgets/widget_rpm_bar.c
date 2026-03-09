@@ -33,12 +33,23 @@ uint64_t last_rpm_can_received = 0;
 void update_rpm_ui_immediate(const char *rpm_str, int rpm_value);
 
 /* Missing static state variables */
+static lv_obj_t *rpm_lines_parent = NULL;
+static lv_obj_t *s_rpm_container = NULL;
 
 /* menu_rpm_value_label is owned by menu_screen.c */
 extern lv_obj_t *menu_rpm_value_label;
 
 void widget_rpm_bar_clear_stale_pointers(void) {
-	/* Reset limiter state so stale timer callbacks are harmless */
+	/* After lv_obj_clean(screen), all child objects are already freed.
+	 * NULL out our bookkeeping so update_rpm_lines won't touch freed ptrs. */
+	for (int i = 0; i < num_rpm_lines; i++) {
+		rpm_lines[i] = NULL;
+		if (i < MAX_RPM_LINES)
+			rpm_labels[i] = NULL;
+	}
+	num_rpm_lines = 0;
+	rpm_lines_parent = NULL;
+	s_rpm_container = NULL;
 }
 
 static int current_canbus_rpm = 0; // Store the current CAN bus RPM value
@@ -1101,14 +1112,13 @@ void update_redline_position(void) {
 void update_rpm_ui(void *param) {
 	rpm_update_t *r_upd = (rpm_update_t *)param;
 
-	// Check if both the RPM label and RPM gauge are valid.
-	if ((ui_RPM_Value == NULL || lv_obj_get_screen(ui_RPM_Value) == NULL) ||
-		(rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL)) {
+	if (rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL) {
 		free(r_upd);
 		return;
 	}
 
-	lv_label_set_text(ui_RPM_Value, r_upd->rpm_str);
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+		lv_label_set_text(ui_RPM_Value, r_upd->rpm_str);
 	set_rpm_value(r_upd->rpm_value);
 
 	// Update menu RPM value text when CAN bus is active
@@ -1119,58 +1129,37 @@ void update_rpm_ui(void *param) {
 
 // Immediate RPM update
 void update_rpm_ui_immediate(const char *rpm_str, int rpm_value) {
-	if ((ui_RPM_Value == NULL || lv_obj_get_screen(ui_RPM_Value) == NULL) ||
-		(rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL)) {
+	if (rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL) {
 		return;
 	}
-	lv_label_set_text(ui_RPM_Value, rpm_str);
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+		lv_label_set_text(ui_RPM_Value, rpm_str);
 	set_rpm_value(rpm_value);
 	update_menu_rpm_value_text(rpm_value);
 }
-void create_rpm_bar_gauge(lv_obj_t *parent_screen) {
-	ui_RPM_Base_1 = create_panel(parent_screen, 800, 6, 0, -182, 0,
-								 THEME_COLOR_PANEL, 0); // Moved up 2px
-	ui_RPM_Base_2 = create_panel(parent_screen, 49, 22, -41, -193, 7,
-								 THEME_COLOR_PANEL, 550);
-	ui_RPM_Base_3 = create_panel(parent_screen, 49, 22, 105, -181, 7,
-								 THEME_COLOR_PANEL, 1250);
-	ui_RPM_Base_4 =
-		create_panel(parent_screen, 111, 44, 0, -176, 7, THEME_COLOR_PANEL,
-					 0); // Back to original position
+void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_color_t saved_color = values_config[RPM_VALUE_ID - 1].rpm_bar_color;
-	ui_Panel9 = create_panel(parent_screen, 55, 55, -373, -213, 0, saved_color,
-							 0); // Moved up 2px, left 1px
 
-	// Calculate extended RPM max for rightward extension to screen edge
-	// Original RPM bar: 765px centered (left edge at -382.5px, right
-	// edge at +382.5px) New RPM bar: extends from -382.5px to +400px
-	// (screen edge) = 782.5px total Keep left edge at -382.5px, extend
-	// only rightward
+	/* Panel9 — color indicator square at left edge.
+	 * Inside the 800x55 container, center-relative: (-373, 0). */
+	ui_Panel9 =
+		create_panel(container, 55, 55, -373, 0, 0, saved_color, 0);
+
 	const float bar_extension_ratio = 782.5f / 765.0f;
 	int32_t extended_rpm_max = (int32_t)(rpm_gauge_max * bar_extension_ratio);
 
-	// Create the RPM bar gauge with extended range and rightward
-	// extension
-	rpm_bar_gauge = lv_bar_create(parent_screen);
+	rpm_bar_gauge = lv_bar_create(container);
 	lv_bar_set_range(rpm_bar_gauge, 0, extended_rpm_max);
 	lv_bar_set_value(rpm_bar_gauge, 0, LV_ANIM_OFF);
-	lv_obj_set_size(rpm_bar_gauge, 783,
-					55); // 782.5px rounded up to 783px
+	lv_obj_set_size(rpm_bar_gauge, 783, 55);
+	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, 20, 0);
 
-	// Position bar so left edge stays at -382.5px and extends to +400px
-	// (screen edge) Left edge needs to be at -382.5px, so center should
-	// be at: -382.5 + (783/2) = 8.75px
-	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, 8,
-				 0); // Adjusted to fill remaining space (1px left, 2px up)
-
-	// Set styles for the RPM bar gauge (no gradient, solid color)
 	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
-							  LV_PART_MAIN | LV_STATE_DEFAULT); // Light gray
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	// Use the saved color for the RPM bar indicator
 	lv_obj_set_style_radius(rpm_bar_gauge, 0,
 							LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(rpm_bar_gauge, saved_color,
@@ -1178,49 +1167,38 @@ void create_rpm_bar_gauge(lv_obj_t *parent_screen) {
 	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
 							LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	// Set gradient color to same as main color for solid appearance
 	lv_obj_set_style_bg_grad_color(rpm_bar_gauge, saved_color,
 								   LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 								 LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	// Create redline zone rectangle (above RPM bar, below
-	// numbers/lines)
-	rpm_redline_zone = lv_obj_create(parent_screen);
-	lv_obj_set_height(rpm_redline_zone,
-					  12);				  // Same height as the taller RPM lines
-	lv_obj_set_y(rpm_redline_zone, -191); // Moved up 2px
+	/* Redline zone — inside container, center-relative y.
+	 * Screen y=-191 → container y = -191 - (-213) = 22. */
+	rpm_redline_zone = lv_obj_create(container);
+	lv_obj_set_height(rpm_redline_zone, 12);
+	lv_obj_set_y(rpm_redline_zone, 22);
 	lv_obj_set_align(rpm_redline_zone, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(rpm_redline_zone, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(rpm_redline_zone, 0,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(rpm_redline_zone, THEME_COLOR_RED,
-							  LV_PART_MAIN | LV_STATE_DEFAULT); // Bright red
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(rpm_redline_zone, 180,
-							LV_PART_MAIN |
-								LV_STATE_DEFAULT); // Semi-transparent
+							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(rpm_redline_zone, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	// Initial position and width will be set by
-	// update_redline_position()
 
-	// Create large transparent click zone covering the entire extended
-	// RPM bar gauge
-	lv_obj_t *rpm_click_zone = lv_obj_create(parent_screen);
-	lv_obj_set_size(rpm_click_zone, 783,
-					55); // Match extended RPM bar size
-	lv_obj_align(rpm_click_zone, LV_ALIGN_TOP_MID, 9,
-				 2); // Match extended RPM bar position
+	/* Click zone */
+	lv_obj_t *rpm_click_zone = lv_obj_create(container);
+	lv_obj_set_size(rpm_click_zone, 783, 55);
+	lv_obj_align(rpm_click_zone, LV_ALIGN_TOP_MID, 9, 2);
 	lv_obj_clear_flag(rpm_click_zone, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_bg_opa(rpm_click_zone, 0,
-							LV_PART_MAIN |
-								LV_STATE_DEFAULT); // Completely transparent
+							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_opa(rpm_click_zone, 0,
-								LV_PART_MAIN | LV_STATE_DEFAULT); // No border
+								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_add_flag(rpm_click_zone, LV_OBJ_FLAG_CLICKABLE);
 
-	// Allocate memory to store RPM value_id and pass it to the event
-	// callback
 	uint8_t *rpm_id_ptr = lv_mem_alloc(sizeof(uint8_t));
 	*rpm_id_ptr = RPM_VALUE_ID;
 	lv_obj_add_event_cb(rpm_click_zone, value_long_press_event_cb,
@@ -1234,7 +1212,6 @@ lv_obj_t *rpm_labels[MAX_RPM_LINES];	// Only need labels for the first set
 lv_obj_t *rpm_lines[MAX_RPM_LINES * 2]; // Two sets of lines
 /* Track the parent we last built lines for so we don't try to delete
  * children of a screen that has already been destroyed. */
-static lv_obj_t *rpm_lines_parent = NULL;
 
 void update_rpm_lines(lv_obj_t *parent) {
 	/* If the parent has changed (e.g. Screen3 was recreated after a
@@ -1377,35 +1354,24 @@ void update_rpm_lines(lv_obj_t *parent) {
 	}
 }
 
-void widget_rpm_bar_create(lv_obj_t *parent) {
-	create_rpm_bar_gauge(parent);
-	update_rpm_lines(parent);
+lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent) {
+	/* Create a transparent container that holds all RPM sub-components.
+	 * This allows the whole RPM widget to be moved as a single unit. */
+	lv_obj_t *container = lv_obj_create(parent);
+	lv_obj_set_size(container, 800, 55);
+	lv_obj_set_align(container, LV_ALIGN_CENTER);
+	lv_obj_set_pos(container, 0, -213);
+	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_opa(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_all(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	create_rpm_bar_gauge(container);
+	update_rpm_lines(container);
 	update_redline_position();
 
-	ui_RPM_Value = lv_label_create(parent);
-	lv_obj_set_width(ui_RPM_Value, LV_SIZE_CONTENT);
-	lv_obj_set_height(ui_RPM_Value, LV_SIZE_CONTENT);
-	lv_obj_set_x(ui_RPM_Value, 0);
-	lv_obj_set_y(ui_RPM_Value, -127);
-	lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
-	lv_label_set_text(ui_RPM_Value, "---");
-	strcpy(previous_values[RPM_VALUE_ID - 1], "---");
-	lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_opa(ui_RPM_Value, 255,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_RPM_Value, THEME_FONT_DASH_RPM,
-							   LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	ui_RPM_Label = lv_label_create(parent);
-	lv_obj_set_x(ui_RPM_Label, 0);
-	lv_obj_set_y(ui_RPM_Label, -164);
-	lv_obj_set_align(ui_RPM_Label, LV_ALIGN_CENTER);
-	lv_label_set_text(ui_RPM_Label, "RPM");
-	lv_obj_set_style_text_color(ui_RPM_Label, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_RPM_Label, THEME_FONT_DASH_LABEL,
-							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	s_rpm_container = container;
+	return container;
 }
 
 uint64_t *widget_rpm_bar_get_last_can_time(void) {
@@ -1416,10 +1382,8 @@ uint64_t *widget_rpm_bar_get_last_can_time(void) {
  * ───────────────────────────────────────────── */
 
 static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
-	widget_rpm_bar_create(parent);
-	/* The RPM bar spans the full top of the screen; use the gauge as
-	 * root */
-	w->root = rpm_bar_gauge;
+	lv_obj_t *container = widget_rpm_bar_create(parent);
+	w->root = container;
 }
 static void _rpm_bar_update(widget_t *w, void *data) {
 	(void)w;
@@ -1444,6 +1408,15 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 }
 static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg)
+		return;
+	cJSON *rpm_max_item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_max");
+	if (cJSON_IsNumber(rpm_max_item) && rpm_max_item->valueint > 0)
+		rpm_gauge_max = rpm_max_item->valueint;
+	cJSON *redline_item = cJSON_GetObjectItemCaseSensitive(cfg, "redline");
+	if (cJSON_IsNumber(redline_item) && redline_item->valueint >= 0)
+		rpm_redline_value = redline_item->valueint;
 }
 static void _rpm_bar_destroy(widget_t *w) { free(w); }
 
@@ -1453,9 +1426,10 @@ widget_t *widget_rpm_bar_create_instance(void) {
 		return NULL;
 
 	w->type = WIDGET_RPM_BAR;
-	/* RPM bar occupies full screen width at top */
+	/* RPM bar occupies full screen width at top.
+	 * y = -240 + 55/2 = -213 in center-origin coords. */
 	w->x = 0;
-	w->y = 0;
+	w->y = -213;
 	w->w = 800;
 	w->h = 55;
 	snprintf(w->id, sizeof(w->id), "rpm_bar_0");

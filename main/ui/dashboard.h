@@ -8,6 +8,7 @@
 
 #include "lvgl.h"
 #include "widget_types.h"
+#include "cJSON.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -43,6 +44,17 @@ widget_t **dashboard_get_widgets(void);
  * @brief Return the number of widget instances created by dashboard_init().
  */
 uint8_t dashboard_get_widget_count(void);
+
+/**
+ * @brief Apply a pre-parsed JSON layout for hot-reload / live preview.
+ *
+ * Resets registry, re-creates all widgets from @p root, then rebuilds
+ * CAN dispatch.  Falls back to default widgets if parsing fails.
+ *
+ * @param parent LVGL screen object.
+ * @param root   Parsed cJSON layout tree (must have "widgets" array).
+ */
+void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root);
 
 #ifdef __cplusplus
 }

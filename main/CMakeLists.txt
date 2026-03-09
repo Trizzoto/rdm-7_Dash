@@ -108,6 +108,7 @@ idf_component_register(
         "esp-tls"
         "esp_http_server"
         "joltwallet__littlefs"
+    EMBED_TXTFILES "web/index.html"
 )
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")

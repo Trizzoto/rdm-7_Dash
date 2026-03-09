@@ -43,6 +43,9 @@ extern lv_timer_t *indicator_animation_timer;
  */
 widget_t *widget_indicator_create_instance(uint8_t slot);
 
+/** Reset all indicator LVGL pointers (call before re-creating layout). */
+void widget_indicator_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

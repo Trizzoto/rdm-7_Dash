@@ -1,13 +1,12 @@
 #include "device_id.h"
+#include "device_settings.h"
 #include "display_capture.h"
-#include "ui/theme.h"
 #include "driver/gpio.h"
-#include "esp_adc/adc_oneshot.h"
-#include <math.h>
 #include "driver/i2c.h"
 #include "driver/ledc.h"
 #include "driver/twai.h"
 #include "esp32s3/rom/cache.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -25,22 +24,24 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal/gpio_types.h"
+#include "io/wire_inputs.h"
+#include "layout/layout_manager.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
 #include "nvs.h"
 #include "nvs_flash.h"
-#include "storage/config_store.h"
-#include "io/wire_inputs.h"
 #include "ota_handler.h"
 #include "screens/ui_Screen3.h"
 #include "sdkconfig.h"
 #include "sdmmc_cmd.h"
-#include "device_settings.h"
+#include "storage/config_store.h"
 #include "ui/screens/ui_wifi.h"
+#include "ui/theme.h"
 #include "ui/ui.h"
 #include "ui_Screen1.h"
 #include "web_server.h"
 #include <errno.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -141,8 +142,8 @@ lv_disp_drv_t disp_drv;
 lv_disp_draw_buf_t draw_buf;
 
 /* CAN subsystem — TWAI hardware, dispatch table, receive task */
-#include "can/can_manager.h"
 #include "can/can_dispatch.h"
+#include "can/can_manager.h"
 #include "ui/screens/ui_Screen3.h"
 
 // PWM configuration for GPIO16
@@ -382,11 +383,6 @@ void test_sd_card_write() {
 
 extern warning_config_t warning_configs[8];
 extern indicator_config_t indicator_configs[2]; // Left and Right indicators
-extern value_config_t values_config[13];		// from your ui code
-extern char label_texts[13][64];
-extern char value_offset_texts[13][64];
-extern int rpm_gauge_max;
-extern int rpm_redline_value;
 #define RPM_VALUE_ID 9
 #define SPEED_VALUE_ID 10
 #define GEAR_VALUE_ID 11
@@ -407,14 +403,6 @@ void init_nvs(void) {
 		ESP_LOGE(TAG, "Failed to initialize device ID system: %s",
 				 esp_err_to_name(err));
 	}
-}
-
-void load_values_config_from_nvs(void) {
-	config_store_load_values(values_config, MAX_VALUES);
-}
-
-void save_values_config_to_nvs(void) {
-	config_store_save_values(values_config, MAX_VALUES);
 }
 
 void save_warning_configs_to_nvs(void) {
@@ -460,130 +448,76 @@ static void init_pwm(void) {
 /* -----------------------------------------------------------------------
  * Fuel Sender – GPIO 6, ADC1 Channel 5
  * -----------------------------------------------------------------------*/
-#define FUEL_SENDER_GPIO      6
-#define FUEL_SENDER_ADC_UNIT  ADC_UNIT_1
-#define FUEL_SENDER_ADC_CH    ADC_CHANNEL_5   // GPIO 6 on ESP32-S3
+#define FUEL_SENDER_GPIO 6
+#define FUEL_SENDER_ADC_UNIT ADC_UNIT_1
+#define FUEL_SENDER_ADC_CH ADC_CHANNEL_5	  // GPIO 6 on ESP32-S3
 #define FUEL_SENDER_ADC_ATTEN ADC_ATTEN_DB_12 // 0-3.3 V range
-#define FUEL_SENDER_ADC_BITS  ADC_BITWIDTH_12 // 0-4095
+#define FUEL_SENDER_ADC_BITS ADC_BITWIDTH_12  // 0-4095
 
 static adc_oneshot_unit_handle_t s_fuel_sender_adc = NULL;
 
 /* Initialise the ADC for GPIO 6 */
 void fuel_sender_adc_init(void) {
-    adc_oneshot_unit_init_cfg_t init_cfg = {
-        .unit_id  = FUEL_SENDER_ADC_UNIT,
-        .ulp_mode = ADC_ULP_MODE_DISABLE,
-    };
-    adc_oneshot_new_unit(&init_cfg, &s_fuel_sender_adc);
+	adc_oneshot_unit_init_cfg_t init_cfg = {
+		.unit_id = FUEL_SENDER_ADC_UNIT,
+		.ulp_mode = ADC_ULP_MODE_DISABLE,
+	};
+	adc_oneshot_new_unit(&init_cfg, &s_fuel_sender_adc);
 
-    adc_oneshot_chan_cfg_t chan_cfg = {
-        .atten    = FUEL_SENDER_ADC_ATTEN,
-        .bitwidth = FUEL_SENDER_ADC_BITS,
-    };
-    adc_oneshot_config_channel(s_fuel_sender_adc, FUEL_SENDER_ADC_CH, &chan_cfg);
+	adc_oneshot_chan_cfg_t chan_cfg = {
+		.atten = FUEL_SENDER_ADC_ATTEN,
+		.bitwidth = FUEL_SENDER_ADC_BITS,
+	};
+	adc_oneshot_config_channel(s_fuel_sender_adc, FUEL_SENDER_ADC_CH,
+							   &chan_cfg);
 }
 
 /* Return the current GPIO 6 voltage (0.0 – 3.3 V) */
 float fuel_sender_read_voltage(void) {
-    if (!s_fuel_sender_adc) return 0.0f;
-    int raw = 0;
-    if (adc_oneshot_read(s_fuel_sender_adc, FUEL_SENDER_ADC_CH, &raw) != ESP_OK)
-        return 0.0f;
-    return (raw / 4095.0f) * 3.3f;
+	if (!s_fuel_sender_adc)
+		return 0.0f;
+	int raw = 0;
+	if (adc_oneshot_read(s_fuel_sender_adc, FUEL_SENDER_ADC_CH, &raw) != ESP_OK)
+		return 0.0f;
+	return (raw / 4095.0f) * 3.3f;
 }
 
 /* Capture the current voltage as the "empty" calibration point */
 void fuel_sender_capture_empty(uint8_t value_id) {
-    if (value_id < 1 || value_id > MAX_VALUES) return;
-    values_config[value_id - 1].fuel_sender_empty_v = fuel_sender_read_voltage();
-    save_values_config_to_nvs();
-    ESP_LOGI("FUEL", "Bar %d empty calibrated at %.3f V",
-             value_id, values_config[value_id - 1].fuel_sender_empty_v);
+	// TODO: Port fuel sender to independent architecture
 }
 
 /* Capture the current voltage as the "full" calibration point */
 void fuel_sender_capture_full(uint8_t value_id) {
-    if (value_id < 1 || value_id > MAX_VALUES) return;
-    values_config[value_id - 1].fuel_sender_full_v = fuel_sender_read_voltage();
-    save_values_config_to_nvs();
-    ESP_LOGI("FUEL", "Bar %d full calibrated at %.3f V",
-             value_id, values_config[value_id - 1].fuel_sender_full_v);
+	// TODO: Port fuel sender to independent architecture
 }
 
 /* Background task: reads GPIO 6 and drives any fuel-sender-enabled bars */
-static float s_fuel_filtered_v[2] = { -1.0f, -1.0f };
-
-float fuel_sender_get_filtered_v(uint8_t bar_idx) {
-    if (bar_idx > 1) return 0.0f;
-    float v = s_fuel_filtered_v[bar_idx];
-    return (v < 0.0f) ? fuel_sender_read_voltage() : v;
-}
+float fuel_sender_get_filtered_v(uint8_t bar_idx) { return 0.0f; }
 
 static void fuel_sender_task(void *pvParameters) {
-    (void)pvParameters;
-    vTaskDelay(pdMS_TO_TICKS(200)); // wait for LVGL + UI init
-    float *filtered_v = s_fuel_filtered_v;
-    for (;;) {
-        float voltage = fuel_sender_read_voltage();
-
-        for (int i = 0; i < 2; i++) {
-            int vi = (i == 0) ? BAR1_VALUE_ID - 1 : BAR2_VALUE_ID - 1;
-            if (!values_config[vi].fuel_sender) continue;
-
-            // EMA filter: slider 0 = raw; 1-100 maps alpha 0.80→0.995
-            // giving time constants ~0.45 s (light) to ~20 s (car-gauge heavy)
-            float alpha;
-            uint8_t filt = values_config[vi].fuel_sender_filter;
-            if (filt == 0) {
-                alpha = 0.0f;
-            } else {
-                float t = (filt - 1) / 99.0f; // 0.0 → 1.0
-                alpha = 0.80f + t * (0.995f - 0.80f);
-            }
-            if (filtered_v[i] < 0.0f) {
-                filtered_v[i] = voltage; // seed on first reading
-            } else {
-                filtered_v[i] = alpha * filtered_v[i] + (1.0f - alpha) * voltage;
-            }
-            float v = filtered_v[i];
-
-            float empty_v = values_config[vi].fuel_sender_empty_v;
-            float full_v  = values_config[vi].fuel_sender_full_v;
-            float range   = full_v - empty_v;
-
-            float pct;
-            if (fabsf(range) < 0.01f) {
-                pct = 0.0f; // avoid div-by-zero before calibration
-            } else {
-                pct = (v - empty_v) / range;
-                if (pct < 0.0f) pct = 0.0f;
-                if (pct > 1.0f) pct = 1.0f;
-            }
-
-            int32_t bar_min = values_config[vi].bar_min;
-            int32_t bar_max = values_config[vi].bar_max;
-            int32_t bar_val = (int32_t)(bar_min + pct * (bar_max - bar_min));
-
-            bar_update_t *upd = malloc(sizeof(bar_update_t));
-            if (upd) {
-                upd->bar_index    = i;
-                upd->bar_value    = bar_val;
-                upd->final_value  = bar_min + pct * (bar_max - bar_min);
-                upd->config_index = vi;
-                upd->is_timeout   = false;
-                lv_async_call(update_bar_ui, upd);
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(100)); // 10 Hz refresh
-    }
+	(void)pvParameters;
+	for (;;) {
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
 }
-
 
 void app_main(void) {
 	// Initialize PWM for GPIO16
 	init_pwm();
 
 	init_nvs();
+
+	/* Mount LittleFS and ensure default layout exists before any component
+	 * (web server or dashboard) touches layout files. Prevents panic if a
+	 * GET/POST hits the layout API before the dashboard has run. */
+	esp_err_t layout_err = layout_manager_init();
+	if (layout_err != ESP_OK) {
+		ESP_LOGE(TAG,
+				 "Early layout_manager_init failed (%s) — layout API and "
+				 "dashboard may use fallback",
+				 esp_err_to_name(layout_err));
+	}
 
 	// EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
 	// comes later
@@ -890,13 +824,16 @@ void app_main(void) {
 		example_lvgl_unlock();
 	}
 
-	/* Start indicator wire task: reads GPIO 43/44 and drives indicators when source is Wire */
-	xTaskCreatePinnedToCore(wire_inputs_task, "ind_wire", 2048, NULL, 3, NULL, 0);
+	/* Start indicator wire task: reads GPIO 43/44 and drives indicators when
+	 * source is Wire */
+	xTaskCreatePinnedToCore(wire_inputs_task, "ind_wire", 2048, NULL, 3, NULL,
+							0);
 	ESP_LOGI(TAG, "Indicator wire task started");
 
 	/* Fuel sender – ADC on GPIO 6, drives bars when fuel_sender is enabled */
 	fuel_sender_adc_init();
-	xTaskCreatePinnedToCore(fuel_sender_task, "fuel_sender", 3072, NULL, 3, NULL, 0);
+	xTaskCreatePinnedToCore(fuel_sender_task, "fuel_sender", 3072, NULL, 3,
+							NULL, 0);
 	ESP_LOGI(TAG, "Fuel sender task started (GPIO %d)", FUEL_SENDER_GPIO);
 
 	// Allow splash screen to render and become visible

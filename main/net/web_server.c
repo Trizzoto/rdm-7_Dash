@@ -9,7 +9,10 @@
 #include "system/rdm_settings.h"
 #include "ui/dashboard.h"
 #include "ui/screens/ui_Screen3.h"
+#include "ui/settings/preset_picker.h"
 #include "ui/ui.h"
+#include <stdbool.h>
+#include <string.h>
 #include <sys/param.h>
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define.
@@ -18,6 +21,10 @@
 #define LAYOUT_MAX_FILE_BYTES 16384
 #endif
 
+/* Embedded web UI (provided by EMBED_TXTFILES in CMakeLists.txt) */
+extern const uint8_t index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t index_html_end[] asm("_binary_index_html_end");
+
 static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
@@ -25,308 +32,12 @@ static httpd_handle_t server = NULL;
 extern bool example_lvgl_lock(int timeout_ms);
 extern void example_lvgl_unlock(void);
 
-// HTML page for the web interface (Part 1)
-static const char html_page_part1[] =
-	"<!DOCTYPE html>"
-	"<html>"
-	"<head>"
-	"    <title>ESP32 LVGL Display Viewer</title>"
-	"    <meta charset='utf-8'>"
-	"    <meta name='viewport' content='width=device-width, initial-scale=1'>"
-	"    <style>"
-	"        body {"
-	"            font-family: Arial, sans-serif;"
-	"            margin: 0;"
-	"            padding: 20px;"
-	"            background-color: #f0f0f0;"
-	"            text-align: center;"
-	"        }"
-	"        .container {"
-	"            max-width: 1000px;"
-	"            margin: 0 auto;"
-	"            background-color: white;"
-	"            border-radius: 10px;"
-	"            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);"
-	"            padding: 20px;"
-	"        }"
-	"        h1 {"
-	"            color: #333;"
-	"            margin-bottom: 20px;"
-	"        }"
-	"        .display-container {"
-	"            border: 2px solid #ccc;"
-	"            border-radius: 5px;"
-	"            display: inline-block;"
-	"            background-color: #000;"
-	"            margin: 20px 0;"
-	"        }"
-	"        #display {"
-	"            max-width: 100%;"
-	"            height: auto;"
-	"            display: block;"
-	"        }"
-	"        .controls {"
-	"            margin: 20px 0;"
-	"        }"
-	"        button {"
-	"            background-color: #4CAF50;"
-	"            color: white;"
-	"            padding: 10px 20px;"
-	"            border: none;"
-	"            border-radius: 5px;"
-	"            cursor: pointer;"
-	"            margin: 0 10px;"
-	"            font-size: 16px;"
-	"        }"
-	"        button:hover {"
-	"            background-color: #45a049;"
-	"        }"
-	"        button:disabled {"
-	"            background-color: #ccc;"
-	"            cursor: not-allowed;"
-	"        }"
-	"        .status {"
-	"            margin: 10px 0;"
-	"            padding: 10px;"
-	"            border-radius: 5px;"
-	"        }"
-	"        .status.connected {"
-	"            background-color: #d4edda;"
-	"            color: #155724;"
-	"            border: 1px solid #c3e6cb;"
-	"        }"
-	"        .status.error {"
-	"            background-color: #f8d7da;"
-	"            color: #721c24;"
-	"            border: 1px solid #f5c6cb;"
-	"        }"
-	"        .refresh-rate {"
-	"            margin: 10px 0;"
-	"        }"
-	"        select {"
-	"            padding: 5px;"
-	"            font-size: 16px;"
-	"        }"
-	"    </style>"
-	"</head>"
-	"<body>"
-	"    <div class='container'>"
-	"        <h1>🚗 ESP32 LVGL Display Viewer</h1>"
-	"        <div class='status connected' id='status'>Connected to "
-	"ESP32</div>";
-
-// HTML page part 2 (controls and canvas)
-static const char html_page_part2[] =
-	"        <div class='controls'>"
-	"            <button onclick='captureScreenshot()'>📸 Take "
-	"Screenshot</button>"
-	"            <button onclick='toggleAutoRefresh()' id='autoBtn'>▶️ Start "
-	"Auto Refresh</button>"
-	"            <button onclick='downloadScreenshot()' id='downloadBtn' "
-	"disabled>💾 Download</button>"
-	"        </div>"
-	"        "
-	"        <div class='refresh-rate'>"
-	"            <label for='layoutSelect'>Layout: </label>"
-	"            <select id='layoutSelect'></select>"
-	"            <button onclick='applyLayout()' id='applyLayoutBtn' "
-	"style='padding: 5px 10px;'>Apply</button>"
-	"        </div>"
-	"        "
-	"        <div class='refresh-rate'>"
-	"            <label for='refreshRate'>Refresh Rate: </label>"
-	"            <select id='refreshRate'>"
-	"                <option value='1000'>1 second</option>"
-	"                <option value='2000' selected>2 seconds</option>"
-	"                <option value='5000'>5 seconds</option>"
-	"                <option value='10000'>10 seconds</option>"
-	"            </select>"
-	"        </div>"
-	"        "
-	"        <div class='display-container'>"
-	"            <canvas id='display' width='800' height='480'></canvas>"
-	"        </div>"
-	"        "
-	"        <div id='info'>"
-	"            <p>Display Size: 800x480 pixels</p>"
-	"            <p>Last Update: <span id='lastUpdate'>Never</span></p>"
-	"        </div>"
-	"    </div>";
-
-// JavaScript part 1
-static const char html_page_part3[] =
-	"    <script>"
-	"        let autoRefreshInterval = null;"
-	"        let isAutoRefreshing = false;"
-	"        let lastScreenshotBlob = null;"
-	"        "
-	"        const canvas = document.getElementById('display');"
-	"        const ctx = canvas.getContext('2d');"
-	"        const statusDiv = document.getElementById('status');"
-	"        const autoBtn = document.getElementById('autoBtn');"
-	"        const downloadBtn = document.getElementById('downloadBtn');"
-	"        const lastUpdateSpan = document.getElementById('lastUpdate');"
-	"        "
-	"        function updateStatus(message, isError = false) {"
-	"            statusDiv.textContent = message;"
-	"            statusDiv.className = isError ? 'status error' : 'status "
-	"connected';"
-	"        }"
-	"        "
-	"        function convertRGB565ToImageData(buffer, width, height) {"
-	"            const imageData = ctx.createImageData(width, height);"
-	"            const data = imageData.data;"
-	"            "
-	"            for (let i = 0; i < buffer.length; i += 2) {"
-	"                const pixel565 = (buffer[i + 1] << 8) | buffer[i];"
-	"                const pixelIndex = (i / 2) * 4;"
-	"                "
-	"                const r = ((pixel565 >> 11) & 0x1F) << 3;"
-	"                const g = ((pixel565 >> 5) & 0x3F) << 2;"
-	"                const b = (pixel565 & 0x1F) << 3;"
-	"                "
-	"                data[pixelIndex] = r;"
-	"                data[pixelIndex + 1] = g;"
-	"                data[pixelIndex + 2] = b;"
-	"                data[pixelIndex + 3] = 255;"
-	"            }"
-	"            "
-	"            return imageData;"
-	"        }";
-
-// JavaScript part 2 (functions)
-static const char html_page_part4[] =
-	"        async function captureScreenshot() {"
-	"            try {"
-	"                updateStatus('Capturing screenshot...');"
-	"                const response = await fetch('/screenshot');"
-	"                "
-	"                if (!response.ok) {"
-	"                    throw new Error(`HTTP ${response.status}`);"
-	"                }"
-	"                "
-	"                const arrayBuffer = await response.arrayBuffer();"
-	"                const uint8Array = new Uint8Array(arrayBuffer);"
-	"                "
-	"                const imageData = convertRGB565ToImageData(uint8Array, "
-	"800, 480);"
-	"                ctx.putImageData(imageData, 0, 0);"
-	"                "
-	"                canvas.toBlob((blob) => {"
-	"                    lastScreenshotBlob = blob;"
-	"                    downloadBtn.disabled = false;"
-	"                });"
-	"                "
-	"                lastUpdateSpan.textContent = new "
-	"Date().toLocaleTimeString();"
-	"                updateStatus('Screenshot captured successfully');"
-	"                "
-	"            } catch (error) {"
-	"                console.error('Screenshot error:', error);"
-	"                updateStatus('Failed to capture screenshot: ' + "
-	"error.message, true);"
-	"            }"
-	"        }"
-	"        "
-	"        function toggleAutoRefresh() {"
-	"            if (isAutoRefreshing) {"
-	"                clearInterval(autoRefreshInterval);"
-	"                autoBtn.textContent = '▶️ Start Auto Refresh';"
-	"                isAutoRefreshing = false;"
-	"                updateStatus('Auto refresh stopped');"
-	"            } else {"
-	"                const refreshRate = "
-	"parseInt(document.getElementById('refreshRate').value);"
-	"                autoRefreshInterval = setInterval(captureScreenshot, "
-	"refreshRate);"
-	"                autoBtn.textContent = '⏸️ Stop Auto Refresh';"
-	"                isAutoRefreshing = true;"
-	"                updateStatus('Auto refresh started');"
-	"                captureScreenshot();"
-	"            }"
-	"        }"
-	"        "
-	"        function downloadScreenshot() {"
-	"            if (lastScreenshotBlob) {"
-	"                const url = URL.createObjectURL(lastScreenshotBlob);"
-	"                const a = document.createElement('a');"
-	"                a.href = url;"
-	"                a.download = 'esp32_display_' + new "
-	"Date().toISOString().replace(/[:.]/g, '-') + '.png';"
-	"                document.body.appendChild(a);"
-	"                a.click();"
-	"                document.body.removeChild(a);"
-	"                URL.revokeObjectURL(url);"
-	"            }"
-	"        }"
-	"        "
-	"        document.getElementById('refreshRate').addEventListener('change', "
-	"function() {"
-	"            if (isAutoRefreshing) {"
-	"                toggleAutoRefresh();"
-	"                toggleAutoRefresh();"
-	"            }"
-	"        });"
-	"        "
-	"        async function fetchLayouts() {"
-	"            try {"
-	"                const response = await fetch('/api/layout/list');"
-	"                if (response.ok) {"
-	"                    const data = await response.json();"
-	"                    const select = "
-	"document.getElementById('layoutSelect');"
-	"                    select.innerHTML = '';"
-	"                    data.layouts.forEach(layout => {"
-	"                        const option = document.createElement('option');"
-	"                        option.value = layout;"
-	"                        option.textContent = layout;"
-	"                        if (layout === data.active) option.selected = "
-	"true;"
-	"                        select.appendChild(option);"
-	"                    });"
-	"                }"
-	"            } catch (e) { console.error('Failed to fetch layouts', e); }"
-	"        }"
-	"        "
-	"        async function applyLayout() {"
-	"            const select = document.getElementById('layoutSelect');"
-	"            const layoutName = select.value;"
-	"            if (!layoutName) return;"
-	"            try {"
-	"                updateStatus('Applying layout...');"
-	"                const response = await fetch('/api/layout/set', { "
-	"                    method: 'POST', "
-	"                    headers: {'Content-Type': 'application/json'}, "
-	"                    body: JSON.stringify({name: layoutName}) "
-	"                });"
-	"                if (response.ok) {"
-	"                    updateStatus('Layout applied successfully');"
-	"                    setTimeout(captureScreenshot, 1000);"
-	"                } else { updateStatus('Failed to apply layout', true); }"
-	"            } catch (e) { updateStatus('Failed to apply layout: ' + "
-	"e.message, true); }"
-	"        }"
-	"        "
-	"        fetchLayouts();"
-	"        captureScreenshot();"
-	"    </script>"
-	"</body>"
-	"</html>";
-
-// HTTP handler for the main page
+// HTTP handler for the main page (serves embedded web/index.html)
 static esp_err_t index_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "text/html");
-
-	// Send HTML in parts to avoid string length limitations
-	httpd_resp_send_chunk(req, html_page_part1, HTTPD_RESP_USE_STRLEN);
-	httpd_resp_send_chunk(req, html_page_part2, HTTPD_RESP_USE_STRLEN);
-	httpd_resp_send_chunk(req, html_page_part3, HTTPD_RESP_USE_STRLEN);
-	httpd_resp_send_chunk(req, html_page_part4, HTTPD_RESP_USE_STRLEN);
-
-	// End response
-	httpd_resp_send_chunk(req, NULL, 0);
-
-	return ESP_OK;
+	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+	size_t len = index_html_end - index_html_start;
+	return httpd_resp_send(req, (const char *)index_html_start, len);
 }
 
 // HTTP handler for screenshot API
@@ -421,8 +132,82 @@ static const httpd_uri_t layout_current_uri = {.uri = "/api/layout/current",
 												   layout_current_handler,
 											   .user_ctx = NULL};
 
+/* GET /api/layout/raw?name=<layout_name> — return raw layout JSON from file
+ * (for editing in web UI without switching active layout). */
+static esp_err_t layout_raw_handler(httpd_req_t *req) {
+	char query_buf[128];
+	esp_err_t qerr =
+		httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf));
+	if (qerr != ESP_OK && qerr != ESP_ERR_HTTPD_RESULT_TRUNC) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+		return ESP_FAIL;
+	}
+
+	const char *name_val = strstr(query_buf, "name=");
+	if (!name_val) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name=");
+		return ESP_FAIL;
+	}
+	name_val += 5; /* skip "name=" */
+	const char *end = strchr(name_val, '&');
+	size_t name_len = end ? (size_t)(end - name_val) : strlen(name_val);
+	if (name_len == 0 || name_len >= LAYOUT_MAX_NAME) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name length");
+		return ESP_FAIL;
+	}
+	for (size_t i = 0; i < name_len; i++) {
+		if (name_val[i] == '/' || name_val[i] == '\\') {
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+			return ESP_FAIL;
+		}
+	}
+
+	char layout_name[LAYOUT_MAX_NAME];
+	memcpy(layout_name, name_val, name_len);
+	layout_name[name_len] = '\0';
+
+	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+	if (!buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Out of memory");
+		return ESP_FAIL;
+	}
+
+	size_t out_len = 0;
+	esp_err_t err = layout_manager_read_raw(layout_name, buf,
+											LAYOUT_MAX_FILE_BYTES, &out_len);
+	if (err != ESP_OK) {
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Layout not found");
+		return ESP_FAIL;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+	esp_err_t send_ret = httpd_resp_send(req, buf, out_len);
+	free(buf);
+	return send_ret;
+}
+
+static const httpd_uri_t layout_raw_uri = {.uri = "/api/layout/raw",
+										   .method = HTTP_GET,
+										   .handler = layout_raw_handler,
+										   .user_ctx = NULL};
+
 // HTTP handler for importing/saving a new layout JSON
 static esp_err_t layout_save_handler(httpd_req_t *req) {
+	/* Check query for apply=0 (save without switching active or reloading) */
+	bool apply_after_save = true;
+	char query_buf[64];
+	if (httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf)) ==
+		ESP_OK) {
+		const char *apply_val = strstr(query_buf, "apply=0");
+		if (apply_val && (apply_val == query_buf || apply_val[-1] == '&') &&
+			(apply_val[7] == '\0' || apply_val[7] == '&'))
+			apply_after_save = false;
+	}
+
 	int total_len = req->content_len;
 	if (total_len <= 0 || total_len > LAYOUT_MAX_FILE_BYTES) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid layout size");
@@ -454,9 +239,13 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	}
 	buf[received] = '\0';
 
+	/* Boot-loop prevention: reject syntactically invalid JSON before writing
+	 * to LittleFS. Never call layout_manager_save_raw until parse succeeds. */
 	cJSON *root = cJSON_Parse(buf);
 	free(buf);
 	if (!root) {
+		ESP_LOGW(TAG,
+				 "POST /api/layout/save: invalid JSON rejected (not written)");
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
 		return ESP_FAIL;
 	}
@@ -464,6 +253,8 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
 	cJSON *widgets_arr = cJSON_GetObjectItemCaseSensitive(root, "widgets");
 	if (!cJSON_IsString(name_item) || !cJSON_IsArray(widgets_arr)) {
+		ESP_LOGW(TAG, "POST /api/layout/save: missing or invalid "
+					  "'name'/'widgets' (not written)");
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Missing or invalid 'name'/'widgets'");
@@ -485,21 +276,23 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	// Update active layout name in NVS
-	if (rdm_settings_set_active_layout(layout_name) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Failed to set active layout");
-		return ESP_FAIL;
-	}
+	if (apply_after_save) {
+		// Update active layout name in NVS
+		if (rdm_settings_set_active_layout(layout_name) != ESP_OK) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+								"Failed to set active layout");
+			return ESP_FAIL;
+		}
 
-	// Reload Screen3 layout under LVGL lock to apply changes live
-	if (example_lvgl_lock(1000)) {
-		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-		ui_Screen3_screen_init();
-		lv_scr_load(ui_Screen3);
-		if (old && old != ui_Screen3)
-			lv_obj_del(old);
-		example_lvgl_unlock();
+		// Reload Screen3 layout under LVGL lock to apply changes live
+		if (example_lvgl_lock(1000)) {
+			lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+			ui_Screen3_screen_init();
+			lv_scr_load(ui_Screen3);
+			if (old && old != ui_Screen3)
+				lv_obj_del(old);
+			example_lvgl_unlock();
+		}
 	}
 
 	httpd_resp_set_type(req, "application/json");
@@ -512,6 +305,61 @@ static const httpd_uri_t layout_save_uri = {.uri = "/api/layout/save",
 											.method = HTTP_POST,
 											.handler = layout_save_handler,
 											.user_ctx = NULL};
+
+/* POST /api/layout/preview — apply layout JSON live without saving to file. */
+static esp_err_t layout_preview_handler(httpd_req_t *req) {
+	int total_len = req->content_len;
+	if (total_len <= 0 || total_len > LAYOUT_MAX_FILE_BYTES) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid layout size");
+		return ESP_FAIL;
+	}
+
+	char *buf = malloc(total_len + 1);
+	if (!buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Out of memory");
+		return ESP_FAIL;
+	}
+
+	int received = 0;
+	while (received < total_len) {
+		int r = httpd_req_recv(req, buf + received, total_len - received);
+		if (r <= 0) {
+			free(buf);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+								"Recv failed");
+			return ESP_FAIL;
+		}
+		received += r;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	free(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	// Apply live under LVGL lock
+	if (example_lvgl_lock(1000)) {
+		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+		ui_Screen3_preview_layout(root);
+		lv_scr_load(ui_Screen3);
+		if (old && old != ui_Screen3)
+			lv_obj_del(old);
+		example_lvgl_unlock();
+	}
+
+	cJSON_Delete(root);
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t layout_preview_uri = {.uri = "/api/layout/preview",
+											   .method = HTTP_POST,
+											   .handler =
+												   layout_preview_handler,
+											   .user_ctx = NULL};
 
 static esp_err_t layout_list_handler(httpd_req_t *req) {
 	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
@@ -549,6 +397,50 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	free(json_str);
 	return res;
 }
+
+static esp_err_t presets_list_handler(httpd_req_t *req) {
+	cJSON *root = cJSON_CreateArray();
+	for (size_t i = 0; i < preconfig_items_count; i++) {
+		if (preconfig_items[i].ecu == NULL)
+			continue;
+		cJSON *item = cJSON_CreateObject();
+		cJSON_AddStringToObject(item, "ecu", preconfig_items[i].ecu);
+		cJSON_AddStringToObject(item, "version", preconfig_items[i].version);
+		cJSON_AddStringToObject(item, "label", preconfig_items[i].label);
+		cJSON_AddStringToObject(item, "can_id", preconfig_items[i].can_id);
+		cJSON_AddNumberToObject(item, "endianess",
+								preconfig_items[i].endianess);
+		cJSON_AddNumberToObject(item, "bit_start",
+								preconfig_items[i].bit_start);
+		cJSON_AddNumberToObject(item, "bit_length",
+								preconfig_items[i].bit_length);
+		cJSON_AddNumberToObject(item, "scale", preconfig_items[i].scale);
+		cJSON_AddNumberToObject(item, "offset",
+								preconfig_items[i].value_offset);
+		cJSON_AddNumberToObject(item, "decimals", preconfig_items[i].decimals);
+		cJSON_AddBoolToObject(item, "is_signed", preconfig_items[i].is_signed);
+		cJSON_AddItemToArray(root, item);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json_str) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Alloc failed");
+		return ESP_FAIL;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str, strlen(json_str));
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
+											 .method = HTTP_GET,
+											 .handler = presets_list_handler,
+											 .user_ctx = NULL};
 
 static const httpd_uri_t layout_list_uri = {.uri = "/api/layout/list",
 											.method = HTTP_GET,
@@ -618,7 +510,7 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 12;
+	config.max_uri_handlers = 14;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 
@@ -634,9 +526,13 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &index_uri);
 	httpd_register_uri_handler(server, &screenshot_uri);
 	httpd_register_uri_handler(server, &layout_current_uri);
+	httpd_register_uri_handler(server, &layout_raw_uri);
 	httpd_register_uri_handler(server, &layout_save_uri);
+	httpd_register_uri_handler(server, &layout_preview_uri);
 	httpd_register_uri_handler(server, &layout_list_uri);
+	httpd_register_uri_handler(server, &presets_list_uri);
 	httpd_register_uri_handler(server, &layout_set_uri);
+	httpd_register_uri_handler(server, &layout_preview_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;

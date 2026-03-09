@@ -1,0 +1,2007 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RDM-7 Visual Designer</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            --bg: #1a1a1a;
+            --panel: #2d2d2d;
+            --border: #404040;
+            --text: #e0e0e0;
+            --accent: #3a86ff;
+            --accent-hover: #4895ef;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        header {
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 100;
+        }
+
+        header .title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .top-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        /* Workspace Layout */
+        .workspace {
+            display: grid;
+            grid-template-columns: 200px 1fr 280px;
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* Sidebars */
+        .sidebar {
+            background: var(--panel);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-right {
+            border-right: none;
+            border-left: 1px solid var(--border);
+        }
+
+        .sidebar-header {
+            padding: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #888;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        /* Palette */
+        .palette-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.2s;
+            font-size: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .palette-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        .palette-item .icon {
+            width: 24px;
+            height: 24px;
+            background: var(--accent);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+        }
+
+        /* Main Canvas Area */
+        .main-stage {
+            position: relative;
+            overflow: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+            padding: 40px;
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 800px;
+            height: 480px;
+            background: #000;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+            transform-origin: center;
+            outline: 1px solid #444;
+        }
+
+        #screenshotCanvas {
+            width: 800px;
+            height: 480px;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #interactionLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 800px;
+            height: 480px;
+            cursor: crosshair;
+        }
+
+        /* Widget Box in Editor */
+        .widget-box {
+            position: absolute;
+            border: 1px solid var(--accent);
+            background: rgba(58, 134, 255, 0.1);
+            cursor: move;
+            box-sizing: border-box;
+            transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+        }
+
+        .widget-box.transparent {
+            background: transparent;
+            border-color: rgba(58, 134, 255, 0.3);
+        }
+
+        .widget-box.selected {
+            border: 2px solid #fff;
+            background: rgba(58, 134, 255, 0.25);
+            box-shadow: 0 0 15px rgba(58, 134, 255, 0.4);
+            z-index: 10;
+        }
+
+        .widget-box.locked {
+            border-style: dashed;
+            border-color: #888;
+            background: rgba(136, 136, 136, 0.1);
+            cursor: not-allowed;
+        }
+
+        .widget-box.locked.selected {
+            border-color: #fff;
+            background: rgba(136, 136, 136, 0.2);
+        }
+
+        .widget-box .id-label {
+            position: absolute;
+            top: -18px;
+            left: -1px;
+            background: var(--accent);
+            color: white;
+            font-size: 10px;
+            padding: 2px 4px;
+            border-radius: 2px 2px 0 0;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        /* Resize Handles */
+        .resize-handle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #fff;
+            border: 1px solid var(--accent);
+            border-radius: 50%;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        .resize-handle.nw {
+            top: -5px;
+            left: -5px;
+            cursor: nwse-resize;
+        }
+
+        .resize-handle.n {
+            top: -5px;
+            left: calc(50% - 5px);
+            cursor: ns-resize;
+        }
+
+        .resize-handle.ne {
+            top: -5px;
+            right: -5px;
+            cursor: nesw-resize;
+        }
+
+        .resize-handle.w {
+            top: calc(50% - 5px);
+            left: -5px;
+            cursor: ew-resize;
+        }
+
+        .resize-handle.e {
+            top: calc(50% - 5px);
+            right: -5px;
+            cursor: ew-resize;
+        }
+
+        .resize-handle.sw {
+            bottom: -5px;
+            left: -5px;
+            cursor: nesw-resize;
+        }
+
+        .resize-handle.s {
+            bottom: -5px;
+            left: calc(50% - 5px);
+            cursor: ns-resize;
+        }
+
+        .resize-handle.se {
+            bottom: -5px;
+            right: -5px;
+            cursor: nwse-resize;
+        }
+
+        /* Grid Background */
+        #interactionLayer.show-grid {
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+            background-position: center center;
+        }
+
+        .align-bar {
+            display: flex;
+            gap: 4px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--border);
+            justify-content: center;
+        }
+
+        .align-btn {
+            background: transparent;
+            color: #ccc;
+            border: 1px solid transparent;
+            padding: 4px 8px;
+            font-size: 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .align-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border);
+        }
+
+        /* Inspector */
+        .inspector-group {
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .field label {
+            font-size: 11px;
+            color: #aaa;
+            text-transform: uppercase;
+        }
+
+        .field input,
+        .field select {
+            background: #1a1a1a;
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .field input:focus {
+            border-color: var(--accent);
+            outline: none;
+        }
+
+        /* Buttons */
+        .btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Status Bar */
+        footer {
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            padding: 4px 16px;
+            font-size: 11px;
+            color: #888;
+            display: flex;
+            gap: 20px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            background: #444;
+            margin-right: 4px;
+        }
+
+        .status-dot.online {
+            background: #00ff88;
+        }
+
+        /* Context Menu */
+        #contextMenu {
+            display: none;
+            position: absolute;
+            background: #2a2a2a;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            border-radius: 4px;
+            z-index: 1000;
+            padding: 4px 0;
+            min-width: 150px;
+        }
+
+        .cm-item {
+            padding: 8px 16px;
+            font-size: 12px;
+            color: #ccc;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .cm-item:hover {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .cm-divider {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
+        }
+
+        /* Layer Tree */
+        .layer-item {
+            padding: 6px 12px;
+            font-size: 12px;
+            color: #aaa;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .layer-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .layer-item.active {
+            background: rgba(58, 134, 255, 0.2);
+            color: #fff;
+            border-left: 2px solid var(--accent);
+        }
+
+        /* Smart Guides */
+        .smart-guide-x,
+        .smart-guide-y {
+            position: absolute;
+            background: #ff0055;
+            z-index: 50;
+            pointer-events: none;
+            display: none;
+        }
+
+        .smart-guide-x {
+            width: 100%;
+            height: 1px;
+            left: 0;
+        }
+
+        .smart-guide-y {
+            height: 100%;
+            width: 1px;
+            top: 0;
+        }
+
+        /* Help Modal */
+        #helpModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: #1a1a1a;
+            border: 1px solid var(--border);
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            color: #ddd;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+        }
+
+        .modal-content h2 {
+            margin-top: 0;
+            color: #fff;
+        }
+
+        .shortcut-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 12px 20px;
+            margin-top: 20px;
+        }
+
+        .kbd {
+            background: #333;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #fff;
+            border-bottom: 2px solid #222;
+        }
+
+        /* Draft Toast */
+        #draftToast {
+            display: none;
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ffaa00;
+            color: #000;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 4px 20px rgba(255, 170, 0, 0.4);
+            z-index: 3000;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #draftToast button {
+            background: #000;
+            color: #ffaa00;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        #draftToast button:hover {
+            background: #333;
+        }
+
+        /* Signal Editor */
+        .sig-row {
+            display: grid;
+            grid-template-columns: 1fr 70px 40px 40px 50px 50px 24px;
+            gap: 4px;
+            margin-bottom: 4px;
+            align-items: center;
+        }
+
+        .sig-row input,
+        .sig-row select {
+            width: 100%;
+            background: #1a1a1a;
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 3px 4px;
+            font-size: 11px;
+            border-radius: 2px;
+        }
+
+        .sig-row input:focus {
+            border-color: var(--accent);
+            outline: none;
+        }
+
+        .sig-row input.invalid {
+            border-color: #f44;
+        }
+
+        .sig-hdr {
+            font-size: 10px;
+            color: #666;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .sig-del {
+            cursor: pointer;
+            color: #c00;
+            font-weight: 700;
+            text-align: center;
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        .sig-del:hover {
+            color: #f00;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="draftToast">
+        <span>⚠️ Unsaved draft detected!</span>
+        <button onclick="restoreDraft()">Restore Draft</button>
+        <button onclick="discardDraft()"
+            style="background:transparent; border:1px solid #000; color:#000;">Discard</button>
+    </div>
+    <div id="helpModal" onclick="this.style.display='none'">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>Keyboard Shortcuts</h2>
+            <div class="shortcut-grid">
+                <div><span class="kbd">Ctrl</span>+<span class="kbd">Scroll</span></div>
+                <div>Zoom Canvas In/Out</div>
+                <div><span class="kbd">Space</span>+<span class="kbd">Drag</span></div>
+                <div>Pan Canvas Workspace</div>
+                <div><span class="kbd">Shift</span>+<span class="kbd">Arrows</span></div>
+                <div>Nudge Widget 10px (Snap Size)</div>
+                <div><span class="kbd">Ctrl</span>+<span class="kbd">C</span> / <span class="kbd">V</span></div>
+                <div>Copy / Paste Widget</div>
+                <div><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">C</span> / <span
+                        class="kbd">V</span></div>
+                <div>Format Painter (Copy/Paste Properties)</div>
+                <div><span class="kbd">Ctrl</span>+<span class="kbd">D</span></div>
+                <div>Duplicate Widget</div>
+                <div><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Y</span></div>
+                <div>Undo / Redo</div>
+                <div><span class="kbd">Del</span></div>
+                <div>Delete Widget</div>
+                <div><span class="kbd">Right-Click</span></div>
+                <div>Show Context Menu</div>
+            </div>
+            <p style="margin-top:20px; font-size:12px; color:#888; text-align:center;">Press any key or click outside to
+                close</p>
+        </div>
+    </div>
+    <div id="contextMenu">
+        <!-- populated by js -->
+    </div>
+    <header>
+        <div class="title">RDM-7 Visual Designer</div>
+        <div class="top-controls">
+            <label style="font-size:12px; display:flex; align-items:center; gap:4px; margin-right:8px;">
+                <input type="checkbox" id="showGridToggle" checked
+                    onchange="document.getElementById('interactionLayer').classList.toggle('show-grid', this.checked)">
+                Show Grid
+            </label>
+            <label style="font-size:12px; display:flex; align-items:center; gap:4px; margin-right:8px;">
+                <input type="checkbox" id="livePreviewToggle" checked> Live Preview
+            </label>
+            <select id="layoutSelect"
+                style="background:#1a1a1a; color:#fff; border:1px solid #444; padding:4px;"></select>
+            <button class="btn btn-secondary" onclick="resetView()" title="Reset Zoom/Pan">Reset View</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('helpModal').style.display='flex'"
+                title="Shortcuts (?)">Help (?)</button>
+            <button class="btn btn-secondary" onclick="captureScreenshot()">Sync View</button>
+            <button class="btn" onclick="saveActiveLayout(true)">Save & Apply</button>
+        </div>
+    </header>
+
+    <div class="workspace">
+        <!-- Left Sidebar: Palette -->
+        <aside class="sidebar">
+            <div class="sidebar-header">Widgets</div>
+            <div id="paletteList" style="max-height: 250px; overflow-y: auto;">
+                <!-- Will be populated by JS -->
+            </div>
+
+            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Layers</div>
+            <div id="layerTree" style="flex:1; overflow-y: auto;">
+                <!-- Will be populated by JS -->
+            </div>
+
+            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Signals</div>
+            <div style="padding:8px; overflow-y:auto; max-height:200px;">
+                <div class="sig-row sig-hdr">
+                    <span>Name</span><span>CAN ID</span><span>Start</span><span>Len</span><span>Scale</span><span>Ofs</span><span></span>
+                </div>
+                <div id="sigList"></div>
+                <button class="btn btn-secondary" style="width:100%; margin-top:6px; font-size:11px;" onclick="addSignal()">+ Add Signal</button>
+            </div>
+
+            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Dashboard</div>
+            <div class="inspector-group">
+                <button class="btn btn-secondary" style="width:100%" onclick="layoutEditorNew()">New Layout...</button>
+                <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="layoutEditorSaveAs()">Save
+                    As New...</button>
+                <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="deleteCurrentLayout()">Delete Layout</button>
+                <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="downloadJson()">Export
+                    JSON</button>
+            </div>
+        </aside>
+
+        <!-- Main Stage -->
+        <main class="main-stage" style="flex-direction:column; padding:0;">
+            <div class="align-bar" style="width:100%">
+                <button class="align-btn" onclick="alignWidget('left')" title="Align Left">⬅️ Left</button>
+                <button class="align-btn" onclick="alignWidget('center')" title="Align Center X">↔️ Center X</button>
+                <button class="align-btn" onclick="alignWidget('right')" title="Align Right">➡️ Right</button>
+                <div style="width:1px; background:var(--border); margin:0 8px;"></div>
+                <button class="align-btn" onclick="alignWidget('top')" title="Align Top">⬆️ Top</button>
+                <button class="align-btn" onclick="alignWidget('middle')" title="Align Middle Y">↕️ Center Y</button>
+                <button class="align-btn" onclick="alignWidget('bottom')" title="Align Bottom">⬇️ Bottom</button>
+            </div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; width:100%; overflow:hidden;"
+                id="workspaceViewport">
+                <div class="canvas-container" id="canvasContainer" style="transform: scale(1) translate(0px, 0px);">
+                    <canvas id="screenshotCanvas" width="800" height="480"></canvas>
+                    <div id="interactionLayer" class="show-grid">
+                        <div id="guideX" class="smart-guide-x"></div>
+                        <div id="guideY" class="smart-guide-y"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Sidebar: Inspector -->
+        <aside class="sidebar sidebar-right">
+            <div class="sidebar-header">Properties</div>
+            <div id="inspectorContent" class="inspector-group">
+                <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
+            </div>
+        </aside>
+    </div>
+
+    <footer>
+        <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
+        <div>Resolution: 800x480</div>
+        <div>Origin: Center (0,0)</div>
+    </footer>
+
+    <script>
+        /* Configuration & State */
+        const CANVAS_W = 800;
+        const CANVAS_H = 480;
+        const ORIGIN_X = 400; // Center X
+        const ORIGIN_Y = 240; // Center Y
+
+        let currentLayout = { name: "default", widgets: [], signals: [] };
+        let selectedIndex = -1;
+        let globalPresets = [];
+
+        async function fetchPresets() {
+            try {
+                const response = await fetch('/api/presets');
+                if (response.ok) {
+                    globalPresets = await response.json();
+                }
+            } catch (e) {
+                console.error("Failed to fetch presets", e);
+            }
+        }
+
+        function applyPreset(presetIndex) {
+            if (selectedIndex === -1 || presetIndex === "") return;
+            const preset = globalPresets[parseInt(presetIndex)];
+            if (!preset) return;
+
+            pushHistory();
+            const w = currentLayout.widgets[selectedIndex];
+
+            w.config.can_id = parseInt(preset.can_id, 16);
+            w.config.bit_start = preset.bit_start || 0;
+            w.config.bit_len = preset.bit_len || 16;
+            w.config.scale = preset.scale || 1.0;
+            w.config.offset = preset.offset || 0.0;
+            w.config.is_signed = preset.is_signed || false;
+            w.config.is_big_endian = preset.is_big_endian !== undefined ? preset.is_big_endian : true;
+            w.config.decimals = preset.decimals || 0;
+
+            if (w.type === 'bar') {
+                if (preset.bar_min !== undefined) w.config.bar_min = preset.bar_min;
+                if (preset.bar_max !== undefined) w.config.bar_max = preset.bar_max;
+                updateStatus(`Applied ${preset.label} to Bar`);
+            } else if (w.type === 'panel') {
+                w.config.label = preset.label;
+                updateStatus(`Applied ${preset.label} to Panel`);
+            } else if (w.type === 'text') {
+                updateStatus(`Applied ${preset.label} to Text`);
+            } else if (w.type === 'meter') {
+                if (preset.bar_min !== undefined) w.config.min = preset.bar_min;
+                if (preset.bar_max !== undefined) w.config.max = preset.bar_max;
+                updateStatus(`Applied ${preset.label} to Meter`);
+            }
+
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        let isResizing = false;
+        let resizeHandle = '';
+        let startRect = null;
+
+        // History State
+        let history = [];
+        let historyIndex = -1;
+
+        function pushHistory() {
+            if (historyIndex < history.length - 1) {
+                history = history.slice(0, historyIndex + 1);
+            }
+            const snap = JSON.stringify(currentLayout);
+            history.push(snap);
+            if (history.length > 20) history.shift();
+            historyIndex = history.length - 1;
+
+            // Auto-Save Draft to Local Storage
+            try { localStorage.setItem('rdm7_draft', snap); } catch (e) { }
+        }
+
+        function undo() {
+            if (historyIndex >= 0) {
+                let currentStr = JSON.stringify(currentLayout);
+                if (historyIndex === history.length - 1 && history[historyIndex] !== currentStr) {
+                    history.push(currentStr);
+                    historyIndex++;
+                }
+                historyIndex--;
+                if (historyIndex >= 0) {
+                    currentLayout = JSON.parse(history[historyIndex]);
+                    selectedIndex = -1; // clear selection to avoid out of bounds
+                } else {
+                    return;
+                }
+                renderEditor();
+                renderSignals();
+                updateInspector();
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            }
+        }
+
+        function redo() {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                currentLayout = JSON.parse(history[historyIndex]);
+                selectedIndex = -1;
+                renderEditor();
+                renderSignals();
+                updateInspector();
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            }
+        }
+
+        function layoutEditorNew() {
+            pushHistory();
+            currentLayout = { name: "default", widgets: [], signals: [] };
+            selectedIndex = -1;
+            renderEditor();
+            renderSignals();
+            updateInspector();
+            updateStatus('Created New Layout');
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        const WIDGET_DEFS = {
+            "rpm_bar": {
+                icon: "RPM", defW: 800, defH: 55, fixedY: -213,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
+                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
+                    { name: "rpm_max", label: "RPM Max", type: "number", def: 7000 },
+                    { name: "redline", label: "Redline RPM", type: "number", def: 6000 }
+                ]
+            },
+            "speed": {
+                icon: "SPD", defW: 120, defH: 50,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
+                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                ]
+            },
+            "gear": {
+                icon: "GR", defW: 90, defH: 90,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 8 },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                ]
+            },
+            "panel": {
+                icon: "PNL", defW: 155, defH: 92,
+                fields: [
+                    { name: "label", label: "Header Label", type: "text", def: "" },
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale Factor", type: "number", def: 1.0 },
+                    { name: "offset", label: "Value Offset", type: "number", def: 0.0 },
+                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                ]
+            },
+            "bar": {
+                icon: "BAR", defW: 300, defH: 30,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale Factor", type: "number", def: 1.0 },
+                    { name: "offset", label: "Value Offset", type: "number", def: 0.0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
+                    { name: "bar_min", label: "Min Value", type: "number", def: 0 },
+                    { name: "bar_max", label: "Max Value", type: "number", def: 100 }
+                ]
+            },
+            "indicator": {
+                icon: "IND", defW: 50, defH: 50,
+                fields: [
+                    { name: "side", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0 },
+                    { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0 },
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_position", label: "Bit Position", type: "number", def: 0 },
+                    { name: "animation", label: "Anim Enabled", type: "checkbox", def: true }
+                ]
+            },
+            "warning": {
+                icon: "WRN", defW: 25, defH: 25,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_position", label: "Bit Position", type: "select", options: Array.from({ length: 64 }, (_, i) => i), def: 0 },
+                    { name: "label", label: "Label", type: "text", def: "" },
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: true }
+                ]
+            },
+            "text": {
+                icon: "TXT", defW: 100, defH: 30,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
+                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
+                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                ]
+            },
+            "meter": {
+                icon: "MTR", defW: 300, defH: 300,
+                fields: [
+                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
+                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
+                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
+                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
+                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
+                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
+                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
+                    { name: "min", label: "Min Value", type: "number", def: 0 },
+                    { name: "max", label: "Max Value", type: "number", def: 100 },
+                    { name: "start_angle", label: "Start angle", type: "number", def: 135 },
+                    { name: "end_angle", label: "End angle", type: "number", def: 45 }
+                ]
+            }
+        };
+
+        const SNAP_SIZE = 5;
+
+        /* Elements */
+        const canvas = document.getElementById('screenshotCanvas');
+        const ctx = canvas.getContext('2d');
+        const interactionLayer = document.getElementById('interactionLayer');
+        const inspectorContent = document.getElementById('inspectorContent');
+        const paletteList = document.getElementById('paletteList');
+        const layerTree = document.getElementById('layerTree');
+        const contextMenu = document.getElementById('contextMenu');
+        const layoutSelect = document.getElementById('layoutSelect');
+        const statusText = document.getElementById('statusText');
+        const connectionDot = document.getElementById('connectionStatus');
+        const workspaceViewport = document.getElementById('workspaceViewport');
+        const canvasContainer = document.getElementById('canvasContainer');
+        const guideX = document.getElementById('guideX');
+        const guideY = document.getElementById('guideY');
+
+        // Clipboard & Format Painter
+        let clipboardWidget = null;
+        try {
+            const saved = localStorage.getItem('rdm7_clipboard');
+            if (saved) clipboardWidget = JSON.parse(saved);
+        } catch (e) { }
+        let clipboardProperties = null;
+
+        // Zoom & Pan
+        let zoomLevel = 1;
+        let panX = 0;
+        let panY = 0;
+        let isPanning = false;
+        let startPan = { x: 0, y: 0 };
+
+        interactionLayer.onmousedown = (e) => {
+            if (e.button === 0 && e.target === interactionLayer) { // Left click only
+                selectedIndex = -1;
+                renderEditor();
+                updateInspector();
+            }
+        };
+
+        // Context Menu Setup
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#contextMenu')) return;
+            contextMenu.style.display = 'none';
+        });
+
+        interactionLayer.oncontextmenu = (e) => {
+            e.preventDefault();
+            if (e.target === interactionLayer) selectedIndex = -1;
+            showContextMenu(e.clientX, e.clientY);
+        };
+
+        function showContextMenu(x, y) {
+            contextMenu.innerHTML = '';
+
+            if (selectedIndex !== -1) {
+                const copyBtn = document.createElement('div');
+                copyBtn.className = 'cm-item';
+                copyBtn.innerText = 'Copy (Ctrl+C)';
+                copyBtn.onclick = () => { copyToClipboard(); contextMenu.style.display = 'none'; };
+
+                const dupBtn = document.createElement('div');
+                dupBtn.className = 'cm-item';
+                dupBtn.innerText = 'Duplicate (Ctrl+D)';
+                dupBtn.onclick = () => { duplicateWidget(); contextMenu.style.display = 'none'; };
+
+                const fwdBtn = document.createElement('div');
+                fwdBtn.className = 'cm-item';
+                fwdBtn.innerText = 'Bring Forward';
+                fwdBtn.onclick = () => { bumpZOrder(1); contextMenu.style.display = 'none'; };
+
+                const bckBtn = document.createElement('div');
+                bckBtn.className = 'cm-item';
+                bckBtn.innerText = 'Send Backward';
+                bckBtn.onclick = () => { bumpZOrder(-1); contextMenu.style.display = 'none'; };
+
+                const delBtn = document.createElement('div');
+                delBtn.className = 'cm-item';
+                delBtn.style.color = '#ff4444';
+                delBtn.innerText = 'Delete (Del)';
+                delBtn.onclick = () => { deleteWidget(); contextMenu.style.display = 'none'; };
+
+                contextMenu.appendChild(copyBtn);
+                contextMenu.appendChild(dupBtn);
+                contextMenu.appendChild(fwdBtn);
+                contextMenu.appendChild(bckBtn);
+                const divider = document.createElement('div');
+                divider.className = 'cm-divider';
+                contextMenu.appendChild(divider);
+                contextMenu.appendChild(delBtn);
+            }
+
+            if (clipboardWidget || (selectedIndex === -1)) {
+                if (contextMenu.children.length > 0) {
+                    const divider = document.createElement('div');
+                    divider.className = 'cm-divider';
+                    contextMenu.appendChild(divider);
+                }
+                const pasteBtn = document.createElement('div');
+                pasteBtn.className = 'cm-item' + (!clipboardWidget ? ' locked' : '');
+                pasteBtn.innerText = 'Paste (Ctrl+V)';
+                pasteBtn.onclick = () => { if (clipboardWidget) { pasteClipboard(); contextMenu.style.display = 'none'; } };
+                contextMenu.appendChild(pasteBtn);
+            }
+
+            if (contextMenu.children.length > 0) {
+                contextMenu.style.display = 'block';
+                contextMenu.style.left = `${x}px`;
+                contextMenu.style.top = `${y}px`;
+            } else {
+                contextMenu.style.display = 'none';
+            }
+        }
+
+        /* Coordinate Helpers */
+        function devToWeb(dx, dy) { return { x: dx + ORIGIN_X, y: dy + ORIGIN_Y }; }
+        function webToDev(wx, wy) { return { x: wx - ORIGIN_X, y: wy - ORIGIN_Y }; }
+
+        /* UI Initialization */
+        function initPalette() {
+            paletteList.innerHTML = '';
+            Object.entries(WIDGET_DEFS).forEach(([type, def]) => {
+                const item = document.createElement('div');
+                item.className = 'palette-item';
+                item.innerHTML = `<div class="icon">${def.icon}</div><span>${type}</span>`;
+                item.onclick = () => addWidget(type);
+                paletteList.appendChild(item);
+            });
+        }
+
+        /* Render Logic */
+        function renderEditor() {
+            interactionLayer.innerHTML = '';
+            currentLayout.widgets.forEach((w, index) => {
+                if (w.hidden) return; // Skip rendering hidden widgets
+
+                const pos = devToWeb(w.x, w.y);
+                const box = document.createElement('div');
+                let classes = `widget-box`;
+                if (index === selectedIndex) classes += ` selected`;
+                if (w.locked) classes += ` locked`;
+                if (w.type === 'rpm_bar') classes += ` transparent`;
+                box.className = classes;
+                box.style.left = `${pos.x - w.w / 2}px`;
+                box.style.top = `${pos.y - w.h / 2}px`;
+                box.style.width = `${w.w}px`;
+                box.style.height = `${w.h}px`;
+
+                let customHtml = '';
+                // Removed artificial rendering per user request
+
+                const sigTag = w.signal ? ` <span style="color:#0f0;font-size:9px;">\u2192 ${w.signal}</span>` : '';
+                box.innerHTML = `<div class="id-label">${w.id}${sigTag}</div>${customHtml}`; if (index === selectedIndex && !w.locked) {
+                    const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+                    handles.forEach(h => {
+                        const hDiv = document.createElement('div');
+                        hDiv.className = `resize-handle ${h}`;
+                        hDiv.onmousedown = (e) => startResize(e, index, h);
+                        box.appendChild(hDiv);
+                    });
+                }
+
+                box.onmousedown = (e) => {
+                    if (e.button !== 0 || w.locked) return; // Only start drag on left click or if unlocked
+                    startDrag(e, index);
+                };
+
+                box.oncontextmenu = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectedIndex = index;
+                    renderEditor();
+                    updateInspector();
+                    showContextMenu(e.clientX, e.clientY);
+                };
+
+                interactionLayer.appendChild(box);
+            });
+            renderLayerTree();
+        }
+
+        function renderLayerTree() {
+            layerTree.innerHTML = '';
+            // Render in reverse order so topmost (highest index) are at the top of the list
+            for (let i = currentLayout.widgets.length - 1; i >= 0; i--) {
+                const w = currentLayout.widgets[i];
+                const item = document.createElement('div');
+                item.className = `layer-item ${i === selectedIndex ? 'active' : ''}`;
+
+                // Drag & Drop Reordering
+                item.draggable = true;
+                item.ondragstart = (e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData('text/plain', i);
+                    item.style.opacity = '0.4';
+                };
+                item.ondragend = () => { item.style.opacity = '1'; };
+                item.ondragover = (e) => {
+                    e.preventDefault();
+                    item.style.borderTop = '2px solid var(--accent)';
+                };
+                item.ondragleave = () => { item.style.borderTop = ''; };
+                item.ondrop = (e) => {
+                    e.preventDefault();
+                    item.style.borderTop = '';
+                    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                    if (fromIndex !== i && !isNaN(fromIndex)) {
+                        pushHistory();
+                        const moved = currentLayout.widgets.splice(fromIndex, 1)[0];
+                        // Insert at target index
+                        const insertIdx = fromIndex < i ? i - 1 : i;
+                        currentLayout.widgets.splice(insertIdx, 0, moved);
+                        selectedIndex = currentLayout.widgets.indexOf(moved);
+                        renderEditor();
+                        updateInspector();
+                        if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                    }
+                };
+
+                const typeInfo = document.createElement('span');
+                typeInfo.innerHTML = `<strong>${w.type}</strong> <span style="font-size:10px; opacity:0.7">(${w.id})</span>`;
+
+                const controls = document.createElement('div');
+                controls.style.display = 'flex';
+                controls.style.gap = '8px';
+
+                // Visibility Toggle
+                const visBtn = document.createElement('button');
+                visBtn.innerHTML = w.hidden ? '🙈' : '👁️';
+                visBtn.style.padding = '0';
+                visBtn.style.background = 'transparent';
+                visBtn.style.border = 'none';
+                visBtn.style.cursor = 'pointer';
+                visBtn.title = 'Toggle Visibility';
+                visBtn.onclick = (e) => { e.stopPropagation(); w.hidden = !w.hidden; pushHistory(); renderEditor(); updateInspector(); };
+
+                // Lock Toggle
+                const lockBtn = document.createElement('button');
+                lockBtn.innerHTML = w.locked ? '🔒' : '🔓';
+                lockBtn.style.padding = '0';
+                lockBtn.style.background = 'transparent';
+                lockBtn.style.border = 'none';
+                lockBtn.style.cursor = 'pointer';
+                lockBtn.title = 'Lock Widget';
+                lockBtn.onclick = (e) => { e.stopPropagation(); w.locked = !w.locked; pushHistory(); renderEditor(); updateInspector(); };
+
+                const upBtn = document.createElement('button');
+                upBtn.innerHTML = '↑';
+                upBtn.style.padding = '2px 4px';
+                upBtn.style.fontSize = '10px';
+                upBtn.style.background = 'transparent';
+                upBtn.style.border = 'none';
+                upBtn.style.color = '#aaa';
+                upBtn.style.cursor = 'pointer';
+                upBtn.onclick = (e) => { e.stopPropagation(); selectedIndex = i; bumpZOrder(1); };
+
+                const dnBtn = document.createElement('button');
+                dnBtn.innerHTML = '↓';
+                dnBtn.style.padding = '2px 4px';
+                dnBtn.style.fontSize = '10px';
+                dnBtn.style.background = 'transparent';
+                dnBtn.style.border = 'none';
+                dnBtn.style.color = '#aaa';
+                dnBtn.style.cursor = 'pointer';
+                dnBtn.onclick = (e) => { e.stopPropagation(); selectedIndex = i; bumpZOrder(-1); };
+
+                controls.appendChild(visBtn);
+                controls.appendChild(lockBtn);
+                if (i < currentLayout.widgets.length - 1) controls.appendChild(upBtn);
+                if (i > 0) controls.appendChild(dnBtn);
+
+                item.appendChild(typeInfo);
+                item.appendChild(controls);
+
+                item.onclick = () => {
+                    selectedIndex = i;
+                    renderEditor();
+                    updateInspector();
+                };
+                layerTree.appendChild(item);
+            }
+        }
+
+        function duplicateWidget() {
+            if (selectedIndex === -1) return;
+            pushHistory();
+            const source = currentLayout.widgets[selectedIndex];
+            const clone = JSON.parse(JSON.stringify(source));
+            clone.id = `w_${Date.now()}`;
+            clone.x += 20; // Offset slightly so it's visible
+            clone.y += 20;
+            currentLayout.widgets.push(clone);
+            selectedIndex = currentLayout.widgets.length - 1;
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function copyToClipboard() {
+            if (selectedIndex === -1) return;
+            clipboardWidget = JSON.parse(JSON.stringify(currentLayout.widgets[selectedIndex]));
+            try {
+                localStorage.setItem('rdm7_clipboard', JSON.stringify(clipboardWidget));
+                // Optional: Attempt System Clipboard integration
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(JSON.stringify(clipboardWidget));
+                }
+            } catch (e) { }
+            updateStatus(`Copied ${clipboardWidget.type} to clipboard`);
+        }
+
+        async function pasteClipboard() {
+            // Priority 1: System Clipboard (if contains our JSON)
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    const text = await navigator.clipboard.readText();
+                    const obj = JSON.parse(text);
+                    if (obj.type && WIDGET_DEFS[obj.type]) {
+                        clipboardWidget = obj;
+                    }
+                }
+            } catch (e) { }
+
+            if (!clipboardWidget) return;
+            pushHistory();
+            const clone = JSON.parse(JSON.stringify(clipboardWidget));
+            clone.id = `${clone.type}_${Date.now().toString().slice(-4)}`;
+            clone.x += 20;
+            clone.y += 20;
+            // update clipboard coordinates for consecutive pasting
+            clipboardWidget.x += 20;
+            clipboardWidget.y += 20;
+            try { localStorage.setItem('rdm7_clipboard', JSON.stringify(clipboardWidget)); } catch (e) { }
+
+            currentLayout.widgets.push(clone);
+            selectedIndex = currentLayout.widgets.length - 1;
+            renderEditor();
+            updateInspector();
+            updateStatus(`Pasted ${clone.type}`);
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* Interaction Logic */
+        workspaceViewport.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const zoomStep = 0.1;
+                if (e.deltaY > 0) zoomLevel = Math.max(0.2, zoomLevel - zoomStep);
+                else zoomLevel = Math.min(3.0, zoomLevel + zoomStep);
+                updateCanvasTransform();
+            }
+        }, { passive: false });
+
+        workspaceViewport.onmousedown = (e) => {
+            if (e.button === 0 && e.target === workspaceViewport) {
+                selectedIndex = -1;
+                renderEditor();
+                updateInspector();
+            }
+            if (e.button === 1 || (e.button === 0 && e.code === "Space")) { // Middle click or Space+Click
+                isPanning = true;
+                startPan = { x: e.clientX - panX, y: e.clientY - panY };
+                workspaceViewport.style.cursor = 'grabbing';
+            }
+        };
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+                workspaceViewport.style.cursor = 'grab';
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                workspaceViewport.style.cursor = 'default';
+                isPanning = false;
+            }
+        });
+
+        function resetView() {
+            zoomLevel = 1; panX = 0; panY = 0;
+            updateCanvasTransform();
+        }
+
+        function updateCanvasTransform() {
+            canvasContainer.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+        }
+
+        function startDrag(e, index) {
+            e.stopPropagation();
+            if (selectedIndex !== index) pushHistory();
+
+            if (e.altKey && !currentLayout.widgets[index].locked) {
+                pushHistory();
+                const clone = JSON.parse(JSON.stringify(currentLayout.widgets[index]));
+                clone.id = `w_${Date.now().toString().slice(-4)}`;
+                // Give it a tiny visual offset so it doesn't snap perfectly to the same coordinates immediately
+                currentLayout.widgets.push(clone);
+                selectedIndex = currentLayout.widgets.length - 1;
+            } else {
+                selectedIndex = index;
+            }
+
+            isDragging = true;
+            const w = currentLayout.widgets[selectedIndex];
+            // Scale drag offset by zoomLevel
+            dragOffset = { x: (e.clientX / zoomLevel) - w.x, y: (e.clientY / zoomLevel) - w.y };
+            renderEditor();
+            updateInspector();
+        }
+
+        function startResize(e, index, handle) {
+            e.stopPropagation();
+            pushHistory();
+            selectedIndex = index;
+            isResizing = true;
+            resizeHandle = handle;
+            const w = currentLayout.widgets[index];
+            startRect = { x: w.x, y: w.y, w: w.w, h: w.h, mouseX: e.clientX, mouseY: e.clientY };
+            renderEditor();
+            updateInspector();
+        }
+
+        window.onmousemove = (e) => {
+            if (isResizing) {
+                const w = currentLayout.widgets[selectedIndex];
+                const dx = (e.clientX - startRect.mouseX) / zoomLevel;
+                const dy = (e.clientY - startRect.mouseY) / zoomLevel;
+
+                let newW = startRect.w;
+                let newH = startRect.h;
+                let newX = startRect.x;
+                let newY = startRect.y;
+
+                if (resizeHandle.includes('e')) { newW = startRect.w + dx; newX = startRect.x + dx / 2; }
+                if (resizeHandle.includes('w')) { newW = startRect.w - dx; newX = startRect.x + dx / 2; }
+                if (resizeHandle.includes('s')) { newH = startRect.h + dy; newY = startRect.y + dy / 2; }
+                if (resizeHandle.includes('n')) { newH = startRect.h - dy; newY = startRect.y + dy / 2; }
+
+                if (newW < 5) newW = 5;
+                if (newH < 5) newH = 5;
+
+                // Snap
+                newW = Math.round(newW / SNAP_SIZE) * SNAP_SIZE;
+                newH = Math.round(newH / SNAP_SIZE) * SNAP_SIZE;
+                newX = Math.round(newX / SNAP_SIZE) * SNAP_SIZE;
+                newY = Math.round(newY / SNAP_SIZE) * SNAP_SIZE;
+
+                w.w = newW; w.h = newH; w.x = newX; w.y = newY;
+                renderEditor();
+                updateInspector();
+                return;
+            }
+
+            if (isPanning) {
+                panX = e.clientX - startPan.x;
+                panY = e.clientY - startPan.y;
+                updateCanvasTransform();
+                return;
+            }
+
+            if (!isDragging || selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+
+            let newX = (e.clientX / zoomLevel) - dragOffset.x;
+            let newY = (e.clientY / zoomLevel) - dragOffset.y;
+
+            // Smart Guides & Snapping
+            let snappedX = false;
+            let snappedY = false;
+            guideX.style.display = 'none';
+            guideY.style.display = 'none';
+            const snapThreshold = 10;
+
+            // Convert to web coords for snapping calculation
+            let webX = newX + ORIGIN_X;
+            let webY = newY + ORIGIN_Y;
+
+            if (!e.altKey) { // Alt disables smart guides
+                for (let i = 0; i < currentLayout.widgets.length; i++) {
+                    if (i === selectedIndex) continue;
+                    const target = currentLayout.widgets[i];
+                    const tX = target.x + ORIGIN_X;
+                    const tY = target.y + ORIGIN_Y;
+
+                    // X Snapping (Left, Center, Right)
+                    if (Math.abs(webX - tX) < snapThreshold) { newX = target.x; snappedX = true; guideY.style.display = 'block'; guideY.style.left = `${tX}px`; } // Center to Center
+                    else if (Math.abs((webX - w.w / 2) - (tX - target.w / 2)) < snapThreshold) { newX = target.x - target.w / 2 + w.w / 2; snappedX = true; guideY.style.display = 'block'; guideY.style.left = `${tX - target.w / 2}px`; } // Left to Left
+                    else if (Math.abs((webX + w.w / 2) - (tX + target.w / 2)) < snapThreshold) { newX = target.x + target.w / 2 - w.w / 2; snappedX = true; guideY.style.display = 'block'; guideY.style.left = `${tX + target.w / 2}px`; } // Right to Right
+
+                    // Y Snapping (Top, Middle, Bottom)
+                    if (Math.abs(webY - tY) < snapThreshold) { newY = target.y; snappedY = true; guideX.style.display = 'block'; guideX.style.top = `${tY}px`; } // Middle to Middle
+                    else if (Math.abs((webY - w.h / 2) - (tY - target.h / 2)) < snapThreshold) { newY = target.y - target.h / 2 + w.h / 2; snappedY = true; guideX.style.display = 'block'; guideX.style.top = `${tY - target.h / 2}px`; } // Top to Top
+                    else if (Math.abs((webY + w.h / 2) - (tY + target.h / 2)) < snapThreshold) { newY = target.y + target.h / 2 - w.h / 2; snappedY = true; guideX.style.display = 'block'; guideX.style.top = `${tY + target.h / 2}px`; } // Bottom to Bottom
+                }
+            }
+
+            // Standard Grid Snapping if no smart snap
+            if (!snappedX) newX = Math.round(newX / SNAP_SIZE) * SNAP_SIZE;
+            if (!snappedY) newY = Math.round(newY / SNAP_SIZE) * SNAP_SIZE;
+
+            if (newX !== w.x || newY !== w.y) {
+                w.x = newX;
+                w.y = newY;
+                renderEditor();
+                updateInspector();
+            }
+        };
+
+        window.onmouseup = () => {
+            isPanning = false;
+            workspaceViewport.style.cursor = 'default';
+            if (isDragging || isResizing) {
+                isDragging = false;
+                isResizing = false;
+                guideX.style.display = 'none';
+                guideY.style.display = 'none';
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                updateInspector();
+            }
+        };
+
+        window.onkeydown = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            if (e.ctrlKey || e.metaKey) {
+                if (e.shiftKey) {
+                    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyProperties(); return; }
+                    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteProperties(); return; }
+                } else {
+                    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyToClipboard(); return; }
+                    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteClipboard(); return; }
+                    if (e.key === 'd' || e.key === 'D') { e.preventDefault(); duplicateWidget(); return; }
+                    if (e.key === 'z') { e.preventDefault(); undo(); return; }
+                    if (e.key === 'y') { e.preventDefault(); redo(); return; }
+                }
+            }
+
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+            let changed = false;
+
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (!w.locked) {
+                    pushHistory();
+                    deleteWidget();
+                }
+                return;
+            }
+
+            if (w.locked) return; // Disallow moving locked widgets
+
+            const step = e.shiftKey ? 10 : 1; // Advanced Nudging
+
+            if (e.key === 'ArrowLeft') { pushHistory(); w.x -= step; changed = true; }
+            if (e.key === 'ArrowRight') { pushHistory(); w.x += step; changed = true; }
+            if (e.key === 'ArrowUp') { pushHistory(); w.y -= step; changed = true; }
+            if (e.key === 'ArrowDown') { pushHistory(); w.y += step; changed = true; }
+
+            if (changed) {
+                e.preventDefault();
+                // Nudging intentionally bypasses the 5px snap for pixel-perfect positioning
+                renderEditor();
+                updateInspector();
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            }
+        };
+
+        function copyProperties() {
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+            clipboardProperties = JSON.parse(JSON.stringify(w.config));
+            updateStatus('Properties Copied');
+        }
+
+        function pasteProperties() {
+            if (selectedIndex === -1 || !clipboardProperties) return;
+            pushHistory();
+            const w = currentLayout.widgets[selectedIndex];
+
+            // Only paste properties that the target widget definition supports
+            const def = WIDGET_DEFS[w.type];
+            if (def && def.fields) {
+                def.fields.forEach(f => {
+                    if (clipboardProperties[f.name] !== undefined) {
+                        w.config[f.name] = clipboardProperties[f.name];
+                    }
+                });
+            }
+
+            renderEditor();
+            updateInspector();
+            updateStatus('Properties Pasted');
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        let previewTimer = null;
+        function triggerPreview() {
+            if (previewTimer) clearTimeout(previewTimer);
+            previewTimer = setTimeout(async () => {
+                try {
+                    await fetch('/api/layout/preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(currentLayout)
+                    });
+                } catch (e) { }
+            }, 100); // 100ms debounce
+        }
+
+        function updateInspector() {
+            if (selectedIndex === -1) {
+                inspectorContent.innerHTML = '<div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>';
+                return;
+            }
+            const w = currentLayout.widgets[selectedIndex];
+            const def = WIDGET_DEFS[w.type] || { fields: [] };
+
+            const disabledAttr = w.locked ? 'disabled' : '';
+            const lockMsg = w.locked ? '<div style="background:rgba(255, 68, 68, 0.1); border:1px solid #f44; color:#f44; padding:4px; font-size:11px; margin-bottom:12px; text-align:center; border-radius:4px;">🔒 Widget is Locked</div>' : '';
+
+            let html = lockMsg + `
+                <div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>
+                <div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${disabledAttr}></div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="field"><label>X (Center)</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${disabledAttr}></div>
+                    <div class="field"><label>Y (Center)</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${disabledAttr}></div>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="field"><label>Width</label><input type="number" value="${w.w}" oninput="updateWidgetField('w', parseInt(this.value), true)" ${disabledAttr}></div>
+                    <div class="field"><label>Height</label><input type="number" value="${w.h}" oninput="updateWidgetField('h', parseInt(this.value), true)" ${disabledAttr}></div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+                    <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('up')" ${disabledAttr}>Bring Forward</button>
+                    <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('down')" ${disabledAttr}>Send Backward</button>
+                </div>
+
+                <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
+                <div class="field" style="margin-bottom:8px;">
+                    <label style="color:var(--accent); font-weight:bold;">Signal Binding</label>
+                    <select onchange="assignSignal(this.value)" ${disabledAttr}>
+                        <option value="">-- None --</option>
+                        ${(currentLayout.signals || []).map(s => `<option value="${s.name}" ${w.signal === s.name ? 'selected' : ''}>${s.name}</option>`).join('')}
+                    </select>
+                    <div style="font-size:10px; color:#666; margin-top:2px;">Bind widget to a CAN signal for live data.</div>
+                </div>
+                <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
+                <div class="sidebar-header" style="background:none; border:none; padding:0; margin-bottom:8px;">Config</div>
+            `;
+
+            if (['bar', 'panel', 'text', 'meter', 'rpm_bar', 'speed', 'gear'].includes(w.type)) {
+                html += `
+                    <div class="field" style="margin-bottom:16px;">
+                        <label style="color:var(--accent); font-weight:bold;">Preset Picker</label>
+                        <select onchange="applyPreset(this.value)" ${disabledAttr}>
+                            <option value="">-- Select a Preset --</option>
+                            ${globalPresets.map((p, i) => `<option value="${i}">${p.ecu} ${p.version} - ${p.label}</option>`).join('')}
+                        </select>
+                        <div style="font-size:10px; color:#666; margin-top:2px;">Selecting a preset auto-fills CAN configurations.</div>
+                    </div>
+                `;
+            }
+
+            w.config = w.config || {};
+            def.fields.forEach(f => {
+                const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                html += `<div class="field"><label>${f.label}</label>`;
+
+                if (f.type === 'select') {
+                    html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, true)" ${disabledAttr}>`;
+                    f.options.forEach(opt => {
+                        const v = typeof opt === 'object' ? opt.v : opt;
+                        const l = typeof opt === 'object' ? opt.l : opt;
+                        html += `<option value="${v}" ${v == val ? 'selected' : ''}>${l}</option>`;
+                    });
+                    html += `</select>`;
+                } else if (f.type === 'checkbox') {
+                    html += `<input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" style="width:auto; height:auto; margin-top:4px;" ${disabledAttr}>`;
+                } else if (f.type === 'hex') {
+                    const hexStr = Number(val).toString(16).toUpperCase().padStart(6, '0');
+                    const hexDisplay = "0x" + hexStr;
+                    const colorVal = "#" + hexStr;
+
+                    html += `<div style="display:flex; gap:8px; align-items:center;">
+                        <input type="color" value="${colorVal}" 
+                               oninput="document.getElementById('hex_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', '0x' + this.value.substring(1).toUpperCase(), true)" 
+                               ${disabledAttr} 
+                               style="width:32px; height:28px; padding:0; border:1px solid var(--border); border-radius:4px; cursor:pointer;" title="Visual Color Picker">
+                        <input type="text" id="hex_${f.name}" value="${hexDisplay}" 
+                               oninput="
+                                  try {
+                                      let cleaned = this.value.replace('0x', '');
+                                      if(cleaned.length === 6) {
+                                          this.previousElementSibling.value = '#' + cleaned;
+                                      }
+                                  } catch(e) {}
+                                  updateWidgetConfigField('${f.name}', this.value, true);
+                               " 
+                               ${disabledAttr} style="flex:1;">
+                    </div>`;
+                } else {
+                    html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
+                }
+
+                html += `</div>`;
+            });
+
+            html += `<button class="btn btn-secondary" style="margin-top:24px; border-color:#f44; color:#f44; width:100%" onclick="deleteWidget()" ${disabledAttr}>Delete Widget</button>`;
+
+            inspectorContent.innerHTML = html;
+        }
+
+        function assignSignal(sigName) {
+            if (selectedIndex === -1) return;
+            pushHistory();
+            if (sigName) {
+                currentLayout.widgets[selectedIndex].signal = sigName;
+            } else {
+                delete currentLayout.widgets[selectedIndex].signal;
+            }
+            renderEditor();
+            updateInspector();
+            updateStatus(sigName ? `Bound signal "${sigName}"` : 'Signal unbound');
+        }
+
+        function updateWidgetField(field, val, preview = false) {
+            if (selectedIndex === -1) return;
+            let finalVal = val;
+            if (field !== 'id' && (typeof val === 'number' || !isNaN(Number(val)))) {
+                finalVal = Number(val);
+            }
+            currentLayout.widgets[selectedIndex][field] = finalVal;
+            renderEditor();
+            if (preview && document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function updateWidgetConfigField(field, val, isNumeric) {
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+            const def = WIDGET_DEFS[w.type];
+            const fieldDef = def.fields.find(f => f.name === field);
+
+            let finalVal = val;
+            if (fieldDef && fieldDef.type === 'hex') {
+                const clean = val.toString().replace('0x', '');
+                finalVal = parseInt(clean, 16);
+                if (isNaN(finalVal)) finalVal = 0;
+            } else if (isNumeric) {
+                finalVal = parseFloat(val);
+                if (isNaN(finalVal)) finalVal = 0;
+            }
+
+            w.config[field] = finalVal;
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function moveWidgetLayer(dir) {
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets.splice(selectedIndex, 1)[0];
+            if (dir === 'up') {
+                currentLayout.widgets.push(w);
+                selectedIndex = currentLayout.widgets.length - 1;
+            } else {
+                currentLayout.widgets.unshift(w);
+                selectedIndex = 0;
+            }
+            renderEditor();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function addWidget(type) {
+            pushHistory();
+            const def = WIDGET_DEFS[type];
+            const config = {};
+            def.fields.forEach(f => {
+                config[f.name] = f.def;
+            });
+            const newWidget = {
+                type: type,
+                id: `${type}_${Date.now().toString().slice(-4)}`,
+                x: 0, y: def.fixedY !== undefined ? def.fixedY : 0,
+                w: def.defW, h: def.defH,
+                config: config
+            };
+            if (def.fixedY !== undefined) newWidget.locked = true;
+            currentLayout.widgets.push(newWidget);
+            selectedIndex = currentLayout.widgets.length - 1;
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function deleteWidget() {
+            if (selectedIndex === -1) return;
+            pushHistory();
+            currentLayout.widgets.splice(selectedIndex, 1);
+            selectedIndex = -1;
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* Draft Recovery Engine */
+        function checkDraft() {
+            try {
+                const draftStr = localStorage.getItem('rdm7_draft');
+                if (draftStr) {
+                    const draftObj = JSON.parse(draftStr);
+                    if (JSON.stringify(currentLayout) !== JSON.stringify(draftObj)) {
+                        document.getElementById('draftToast').style.display = 'flex';
+                    }
+                }
+            } catch (e) { }
+        }
+
+        function restoreDraft() {
+            try {
+                const draftStr = localStorage.getItem('rdm7_draft');
+                if (draftStr) {
+                    currentLayout = JSON.parse(draftStr);
+                    if (!currentLayout.signals) currentLayout.signals = [];
+                    history = [draftStr];
+                    historyIndex = 0;
+                    renderEditor();
+                    renderSignals();
+                    updateInspector();
+                    document.getElementById('draftToast').style.display = 'none';
+                    updateStatus('Draft Restored');
+                    if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                }
+            } catch (e) { }
+        }
+
+        function discardDraft() {
+            try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
+            document.getElementById('draftToast').style.display = 'none';
+        }
+
+        /* ── Signal Editor ────────────────────────────────────────────── */
+
+        function addSignal() {
+            if (!currentLayout.signals) currentLayout.signals = [];
+            const existing = currentLayout.signals.map(s => s.name);
+            let name = 'SIG_' + (currentLayout.signals.length + 1);
+            let n = 2;
+            while (existing.includes(name)) { name = 'SIG_' + n; n++; }
+            pushHistory();
+            currentLayout.signals.push({
+                name: name, can_id: 0, bit_start: 0, bit_length: 16,
+                scale: 1, offset: 0, is_signed: false, is_little_endian: true
+            });
+            renderSignals();
+            updateInspector(); /* refresh signal dropdown in inspector */
+        }
+
+        function renderSignals() {
+            const sigs = currentLayout.signals || [];
+            const c = document.getElementById('sigList');
+            c.innerHTML = '';
+            sigs.forEach((s, i) => {
+                const r = document.createElement('div');
+                r.className = 'sig-row';
+                r.innerHTML =
+                    `<input value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" placeholder="Name">` +
+                    `<input type="number" value="${s.can_id}" onchange="updateSignalField(${i},'can_id',+this.value)" title="CAN ID (decimal)">` +
+                    `<input type="number" value="${s.bit_start}" onchange="updateSignalField(${i},'bit_start',+this.value)">` +
+                    `<input type="number" value="${s.bit_length}" onchange="updateSignalField(${i},'bit_length',+this.value)">` +
+                    `<input type="number" value="${s.scale}" step="0.01" onchange="updateSignalField(${i},'scale',+this.value)">` +
+                    `<input type="number" value="${s.offset}" step="0.01" onchange="updateSignalField(${i},'offset',+this.value)">` +
+                    `<span class="sig-del" onclick="deleteSignal(${i})" title="Delete">&times;</span>`;
+                c.appendChild(r);
+            });
+        }
+
+        function updateSignalField(idx, field, val) {
+            const sigs = currentLayout.signals || [];
+            if (idx >= sigs.length) return;
+            if (field === 'name') {
+                /* Duplicate name prevention */
+                const dup = sigs.some((s, i) => i !== idx && s.name === val);
+                if (dup) { updateStatus('Duplicate signal name!', true); return; }
+                /* CAN ID range not applicable to name */
+            }
+            if (field === 'can_id' && (val < 0 || val > 0x7FF)) {
+                updateStatus('CAN ID must be 0x000–0x7FF', true);
+                return;
+            }
+            /* Update widget bindings if signal was renamed */
+            if (field === 'name') {
+                const oldName = sigs[idx].name;
+                (currentLayout.widgets || []).forEach(w => {
+                    if (w.signal === oldName) w.signal = val;
+                });
+            }
+            pushHistory();
+            sigs[idx][field] = val;
+            if (field === 'name') {
+                renderEditor();
+                updateInspector();
+            }
+        }
+
+        function deleteSignal(idx) {
+            if (!currentLayout.signals) return;
+            const removedName = currentLayout.signals[idx].name;
+            pushHistory();
+            currentLayout.signals.splice(idx, 1);
+            /* Clear any widget bindings to this signal */
+            (currentLayout.widgets || []).forEach(w => {
+                if (w.signal === removedName) delete w.signal;
+            });
+            renderSignals();
+            renderEditor();
+            updateInspector();
+        }
+
+        /* ── Layout Delete ───────────────────────────────────────────── */
+
+        async function deleteCurrentLayout() {
+            const name = currentLayout.name || '';
+            if (name === 'default') {
+                updateStatus('Cannot delete default layout', true);
+                return;
+            }
+            if (!confirm('Delete layout "' + name + '"?')) return;
+            try {
+                const response = await fetch('/api/layout/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+                if (response.ok) {
+                    updateStatus('Deleted ' + name);
+                    fetchLayouts();
+                } else throw new Error();
+            } catch (e) { updateStatus('Delete failed', true); }
+        }
+
+        /* Backend Sync */
+        async function fetchLayouts() {
+            try {
+                const response = await fetch('/api/layout/list');
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                layoutSelect.innerHTML = '';
+                data.layouts.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l; opt.textContent = l;
+                    if (l === data.active) opt.selected = true;
+                    layoutSelect.appendChild(opt);
+                });
+                loadLayout(data.active);
+            } catch (e) { updateStatus('Error loading layout list', true); }
+        }
+
+        async function loadLayout(name) {
+            try {
+                const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
+                if (!response.ok) throw new Error();
+                currentLayout = await response.json();
+                if (!currentLayout.signals) currentLayout.signals = [];
+                selectedIndex = -1;
+                history = [JSON.stringify(currentLayout)];
+                historyIndex = 0;
+                renderEditor();
+                renderSignals();
+                updateInspector();
+                updateStatus(`Loaded ${name}`);
+                checkDraft();
+            } catch (e) { updateStatus(`Error loading layout ${name}`, true); }
+        }
+
+        async function saveActiveLayout(apply) {
+            try {
+                updateStatus('Saving layout...');
+                const url = apply ? '/api/layout/save' : '/api/layout/save?apply=0';
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentLayout)
+                });
+                if (response.ok) {
+                    updateStatus('Saved successfully');
+                    // Clear Local Draft on successful save
+                    try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
+                    if (apply) setTimeout(captureScreenshot, 1500);
+                } else throw new Error();
+            } catch (e) { updateStatus('Save failed', true); }
+        }
+
+        async function captureScreenshot() {
+            try {
+                const response = await fetch('/screenshot');
+                if (!response.ok) throw new Error();
+                const arrayBuffer = await response.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+
+                const imageData = ctx.createImageData(CANVAS_W, CANVAS_H);
+                const data = imageData.data;
+                for (let i = 0; i < uint8Array.length; i += 2) {
+                    const pixel565 = (uint8Array[i + 1] << 8) | uint8Array[i];
+                    const idx = (i / 2) * 4;
+                    data[idx] = ((pixel565 >> 11) & 0x1F) << 3;
+                    data[idx + 1] = ((pixel565 >> 5) & 0x3F) << 2;
+                    data[idx + 2] = (pixel565 & 0x1F) << 3;
+                    data[idx + 3] = 255;
+                }
+                ctx.putImageData(imageData, 0, 0);
+            } catch (e) { console.error('Screenshot failed', e); }
+        }
+
+        function updateStatus(msg, isError) {
+            statusText.textContent = msg;
+            connectionDot.className = `status-dot ${isError ? '' : 'online'}`;
+        }
+
+        function downloadJson() {
+            const blob = new Blob([JSON.stringify(currentLayout, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `${currentLayout.name}.json`;
+            a.click();
+        }
+
+        layoutSelect.onchange = () => loadLayout(layoutSelect.value);
+
+        /* Start */
+        initPalette();
+        fetchPresets();
+        fetchLayouts();
+        captureScreenshot();
+    </script>
+</body>
+
+</html>

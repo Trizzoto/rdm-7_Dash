@@ -143,6 +143,30 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
  */
 esp_err_t layout_manager_save_raw(const char *name, const cJSON *root);
 
+/**
+ * @brief Read a layout file as raw text into a caller-provided buffer.
+ *
+ * @param name     Layout name (without .json suffix).
+ * @param buf      Destination buffer.
+ * @param buf_size Size of @p buf in bytes (file is truncated to buf_size-1).
+ * @param out_len  If non-NULL, receives the number of bytes read.
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if file does not exist.
+ */
+esp_err_t layout_manager_read_raw(const char *name, char *buf,
+								  size_t buf_size, size_t *out_len);
+
+/**
+ * @brief Apply an already-parsed cJSON layout tree, creating widgets on
+ *        @p parent without reading from disk.
+ *
+ * Used for hot-reload / live preview from the web editor.
+ *
+ * @param root   Parsed cJSON layout object (must have a "widgets" array).
+ * @param parent LVGL parent object.
+ * @return ESP_OK on success.
+ */
+esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent);
+
 #ifdef __cplusplus
 }
 #endif

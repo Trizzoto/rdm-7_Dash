@@ -53,6 +53,7 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	ESP_LOGI(TAG, "_meter_create: meter created OK, m=%p", (void *)m);
 
 	lv_obj_set_size(m, (lv_coord_t)w->w, (lv_coord_t)w->h);
+	lv_obj_set_align(m, LV_ALIGN_CENTER);
 	lv_obj_set_pos(m, w->x, w->y);
 
 	ESP_LOGI(TAG, "_meter_create: calling lv_meter_add_scale");

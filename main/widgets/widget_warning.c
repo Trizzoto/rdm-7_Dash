@@ -49,9 +49,6 @@ bool toggle_debounce[8] = {false};
 uint64_t toggle_start_time[8] = {0};
 bool previous_bit_states[8] = {false};
 
-// Forward declarations for optimization functions
-static void batch_update_rpm_circles_color(lv_color_t color);
-
 typedef struct {
 	uint8_t warning_idx;
 	lv_obj_t **input_objects;
@@ -368,11 +365,6 @@ typedef struct {
 	lv_obj_t *bit_pos_dropdown;
 	lv_obj_t *toggle_mode_dropdown;
 } indicator_save_data_t;
-
-// Global variables for preview elements (to allow live updates)
-static lv_obj_t *preview_indicator_config = NULL;
-static lv_obj_t *preview_status_text_config = NULL;
-static uint8_t preview_indicator_idx = 0;
 
 /* Pointers for INPUT dropdown visibility: when Wire selected, hide CAN ID / bit
  * / toggle / animation rows */
@@ -877,76 +869,91 @@ void check_warning_timeouts(lv_timer_t *timer) {
 	(void)timer; // Suppress unused parameter warning
 }
 
-void widget_warning_create(lv_obj_t *parent) {
+void widget_warning_reset(void) {
 	for (int i = 0; i < 8; i++) {
-		warning_circles[i] = lv_obj_create(parent);
-		lv_obj_set_width(warning_circles[i], 15);
-		lv_obj_set_height(warning_circles[i], 15);
-		lv_obj_set_x(warning_circles[i], warning_positions[i].x);
-		lv_obj_set_y(warning_circles[i], warning_positions[i].y);
-		lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
-		lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_radius(warning_circles[i], 100,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(warning_circles[i], THEME_COLOR_INACTIVE,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(warning_circles[i], 255,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(warning_circles[i], 0,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		warning_labels[i] = lv_label_create(parent);
-		lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
-		lv_obj_set_height(warning_labels[i], LV_SIZE_CONTENT);
-		lv_obj_set_x(warning_labels[i], warning_positions[i].x);
-		lv_obj_set_y(warning_labels[i], -112);
-		lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
-		lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
-		const char *saved_label = warning_configs[i].label;
-		if (saved_label && saved_label[0] != '\0') {
-			lv_label_set_text(warning_labels[i], saved_label);
-		} else {
-			char label_text[20];
-			snprintf(label_text, sizeof(label_text), "Warning\n%d", i + 1);
-			lv_label_set_text(warning_labels[i], label_text);
-		}
-		lv_obj_set_style_text_color(warning_labels[i], THEME_COLOR_TEXT_PRIMARY,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_opa(warning_labels[i], 255,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_align(warning_labels[i], LV_TEXT_ALIGN_CENTER,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(warning_labels[i], THEME_FONT_TINY,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		lv_obj_t *touch_area = lv_obj_create(parent);
-		lv_obj_set_size(touch_area, 50, 80);
-		lv_obj_set_x(touch_area, warning_positions[i].x);
-		lv_obj_set_y(touch_area, warning_positions[i].y);
-		lv_obj_set_align(touch_area, LV_ALIGN_CENTER);
-		lv_obj_clear_flag(touch_area, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_bg_opa(touch_area, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(touch_area, 0,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-
-		uint8_t *warning_id = lv_mem_alloc(sizeof(uint8_t));
-		*warning_id = i;
-		lv_obj_add_event_cb(touch_area, warning_longpress_cb,
-							LV_EVENT_LONG_PRESSED, warning_id);
-
-		update_warning_ui_immediate(i);
+		warning_circles[i] = NULL;
+		warning_labels[i] = NULL;
 	}
+}
 
+void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
+	if (i >= 8)
+		return;
+	if (warning_circles[i] != NULL)
+		return;
+
+	warning_circles[i] = lv_obj_create(parent);
+	lv_obj_set_width(warning_circles[i], 15);
+	lv_obj_set_height(warning_circles[i], 15);
+	lv_obj_set_x(warning_circles[i], warning_positions[i].x);
+	lv_obj_set_y(warning_circles[i], warning_positions[i].y);
+	lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
+	lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_radius(warning_circles[i], 100,
+							LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(warning_circles[i], THEME_COLOR_INACTIVE,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(warning_circles[i], 255,
+							LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(warning_circles[i], 0,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	warning_labels[i] = lv_label_create(parent);
+	lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
+	lv_obj_set_height(warning_labels[i], LV_SIZE_CONTENT);
+	lv_obj_set_x(warning_labels[i], warning_positions[i].x);
+	lv_obj_set_y(warning_labels[i], -112);
+	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
+	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
+	const char *saved_label = warning_configs[i].label;
+	if (saved_label && saved_label[0] != '\0') {
+		lv_label_set_text(warning_labels[i], saved_label);
+	} else {
+		char label_text[20];
+		snprintf(label_text, sizeof(label_text), "Warning\n%d", i + 1);
+		lv_label_set_text(warning_labels[i], label_text);
+	}
+	lv_obj_set_style_text_color(warning_labels[i], THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(warning_labels[i], 255,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(warning_labels[i], LV_TEXT_ALIGN_CENTER,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(warning_labels[i], THEME_FONT_TINY,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	lv_obj_t *touch_area = lv_obj_create(parent);
+	lv_obj_set_size(touch_area, 50, 80);
+	lv_obj_set_x(touch_area, warning_positions[i].x);
+	lv_obj_set_y(touch_area, warning_positions[i].y);
+	lv_obj_set_align(touch_area, LV_ALIGN_CENTER);
+	lv_obj_clear_flag(touch_area, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_opa(touch_area, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(touch_area, 0,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	uint8_t *warning_id = lv_mem_alloc(sizeof(uint8_t));
+	*warning_id = i;
+	lv_obj_add_event_cb(touch_area, warning_longpress_cb, LV_EVENT_LONG_PRESSED,
+						warning_id);
+
+	update_warning_ui_immediate(i);
+
+	// Sync global ui_Warning_X pointers for SquareLine compatibility
 	extern lv_obj_t *ui_Warning_1, *ui_Warning_2, *ui_Warning_3, *ui_Warning_4;
 	extern lv_obj_t *ui_Warning_5, *ui_Warning_6, *ui_Warning_7, *ui_Warning_8;
-	ui_Warning_1 = warning_circles[0];
-	ui_Warning_2 = warning_circles[1];
-	ui_Warning_3 = warning_circles[2];
-	ui_Warning_4 = warning_circles[3];
-	ui_Warning_5 = warning_circles[4];
-	ui_Warning_6 = warning_circles[5];
-	ui_Warning_7 = warning_circles[6];
-	ui_Warning_8 = warning_circles[7];
+	lv_obj_t **globals[] = {&ui_Warning_1, &ui_Warning_2, &ui_Warning_3,
+							&ui_Warning_4, &ui_Warning_5, &ui_Warning_6,
+							&ui_Warning_7, &ui_Warning_8};
+	if (i < 8) {
+		*globals[i] = warning_circles[i];
+	}
+}
+
+void widget_warning_create(lv_obj_t *parent) {
+	for (int i = 0; i < 8; i++) {
+		widget_warning_create_one(parent, (uint8_t)i);
+	}
 }
 
 void init_warning_configs(void) {
@@ -969,9 +976,7 @@ void init_warning_configs(void) {
 
 static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot == 0) {
-		widget_warning_create(parent);
-	}
+	widget_warning_create_one(parent, slot);
 	w->root = (slot < 8) ? warning_circles[slot] : NULL;
 }
 static void _warning_update(widget_t *w, void *data) {

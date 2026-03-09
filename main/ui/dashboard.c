@@ -57,17 +57,13 @@ static void _fallback_create_all(lv_obj_t *parent) {
  * ════════════════════════════════════════════════════════════════════════════
  */
 void dashboard_init(lv_obj_t *parent) {
-	ESP_LOGE(TAG, ">>> dashboard_init START, heap=%u",
-			 (unsigned)esp_get_free_heap_size());
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
 
-	/* Clear the global widget registry before (re)loading a layout. */
 	widget_registry_reset();
-	ESP_LOGE(TAG, ">>> registry_reset done, heap=%u",
-			 (unsigned)esp_get_free_heap_size());
+	widget_warning_reset();
+	widget_indicator_reset();
 
-	/* 1 ── Mount LittleFS + generate default layout on first boot ───────── */
 	esp_err_t err = layout_manager_init();
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "layout_manager_init failed (%s) — using fallback",
@@ -77,17 +73,11 @@ void dashboard_init(lv_obj_t *parent) {
 		return;
 	}
 
-	/* 2 ── Retrieve the active layout name ─────────────────────────────── */
 	char layout_name[LAYOUT_MAX_NAME];
 	layout_manager_get_active(layout_name, sizeof(layout_name));
 	ESP_LOGI(TAG, "Loading layout '%s'", layout_name);
 
-	/* 3 ── Load layout: factory + create() for each widget entry ────────── */
-	ESP_LOGE(TAG, ">>> calling layout_manager_load('%s'), heap=%u", layout_name,
-			 (unsigned)esp_get_free_heap_size());
 	err = layout_manager_load(layout_name, parent);
-	ESP_LOGE(TAG, ">>> layout_manager_load returned %d, heap=%u", (int)err,
-			 (unsigned)esp_get_free_heap_size());
 	if (err != ESP_OK) {
 		ESP_LOGW(TAG, "layout_manager_load('%s') failed (%s) — using fallback",
 				 layout_name, esp_err_to_name(err));
@@ -96,13 +86,32 @@ void dashboard_init(lv_obj_t *parent) {
 		return;
 	}
 
-	/* Layout loaded successfully.  Snapshot widget handles from the global
-	 * registry populated by layout_manager_load(). */
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
+	rebuild_can_dispatch();
+}
 
-	ESP_LOGI(TAG, "Widget layer initialised via '%s' (%u widgets)", layout_name,
-			 (unsigned)s_widget_count);
+void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
+	if (!root || !parent)
+		return;
 
-	/* 5 ── Rebuild CAN dispatch table ──────────────────────────────────── */
+	s_widget_count = 0;
+	memset(s_widgets, 0, sizeof(s_widgets));
+	widget_registry_reset();
+	widget_warning_reset();
+	widget_indicator_reset();
+
+	/* Ensure layout manager is init (FS mounted etc) before applying */
+	layout_manager_init();
+
+	esp_err_t err = layout_manager_apply_json(root, parent);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "dashboard_apply_layout_json failed (%s)",
+				 esp_err_to_name(err));
+		_fallback_create_all(parent);
+	} else {
+		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
+								 &s_widget_count);
+	}
+
 	rebuild_can_dispatch();
 }

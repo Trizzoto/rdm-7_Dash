@@ -823,64 +823,78 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 	}
 }
 
+void widget_indicator_reset(void) {
+	ui_Indicator_Left = NULL;
+	ui_Indicator_Right = NULL;
+}
+
+void widget_indicator_create_one(lv_obj_t *parent, uint8_t i) {
+	if (i == 0) {
+		ui_Indicator_Left = lv_img_create(parent);
+		lv_img_set_src(ui_Indicator_Left, &ui_img_indicator_left_png);
+		lv_obj_set_width(ui_Indicator_Left, LV_SIZE_CONTENT);
+		lv_obj_set_height(ui_Indicator_Left, LV_SIZE_CONTENT);
+		lv_obj_set_x(ui_Indicator_Left, -95);
+		lv_obj_set_y(ui_Indicator_Left, -133);
+		lv_obj_set_align(ui_Indicator_Left, LV_ALIGN_CENTER);
+		lv_obj_add_flag(ui_Indicator_Left, LV_OBJ_FLAG_ADV_HITTEST);
+		lv_obj_clear_flag(ui_Indicator_Left, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_set_style_opa(ui_Indicator_Left, 50,
+							 LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_outline_width(ui_Indicator_Left, 0,
+									   LV_PART_MAIN | LV_STATE_DEFAULT);
+
+		lv_obj_t *left_ta = lv_obj_create(parent);
+		lv_obj_set_size(left_ta, 50, 50);
+		lv_obj_set_x(left_ta, -95);
+		lv_obj_set_y(left_ta, -133);
+		lv_obj_set_align(left_ta, LV_ALIGN_CENTER);
+		lv_obj_clear_flag(left_ta, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_set_style_bg_opa(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(left_ta, 0,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		uint8_t *left_id = lv_mem_alloc(sizeof(uint8_t));
+		if (left_id) {
+			*left_id = 0;
+			lv_obj_add_event_cb(left_ta, indicator_longpress_cb,
+								LV_EVENT_LONG_PRESSED, left_id);
+		}
+	} else if (i == 1) {
+		ui_Indicator_Right = lv_img_create(parent);
+		lv_img_set_src(ui_Indicator_Right, &ui_img_indicator_right_png);
+		lv_obj_set_width(ui_Indicator_Right, LV_SIZE_CONTENT);
+		lv_obj_set_height(ui_Indicator_Right, LV_SIZE_CONTENT);
+		lv_obj_set_x(ui_Indicator_Right, 95);
+		lv_obj_set_y(ui_Indicator_Right, -133);
+		lv_obj_set_align(ui_Indicator_Right, LV_ALIGN_CENTER);
+		lv_obj_add_flag(ui_Indicator_Right, LV_OBJ_FLAG_ADV_HITTEST);
+		lv_obj_clear_flag(ui_Indicator_Right, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_set_style_opa(ui_Indicator_Right, 50,
+							 LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_outline_width(ui_Indicator_Right, 0,
+									   LV_PART_MAIN | LV_STATE_DEFAULT);
+
+		lv_obj_t *right_ta = lv_obj_create(parent);
+		lv_obj_set_size(right_ta, 50, 50);
+		lv_obj_set_x(right_ta, 95);
+		lv_obj_set_y(right_ta, -133);
+		lv_obj_set_align(right_ta, LV_ALIGN_CENTER);
+		lv_obj_clear_flag(right_ta, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_set_style_bg_opa(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(right_ta, 0,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		uint8_t *right_id = lv_mem_alloc(sizeof(uint8_t));
+		if (right_id) {
+			*right_id = 1;
+			lv_obj_add_event_cb(right_ta, indicator_longpress_cb,
+								LV_EVENT_LONG_PRESSED, right_id);
+		}
+	}
+}
+
 void widget_indicator_create(lv_obj_t *parent) {
-	ui_Indicator_Left = lv_img_create(parent);
-	lv_img_set_src(ui_Indicator_Left, &ui_img_indicator_left_png);
-	lv_obj_set_width(ui_Indicator_Left, LV_SIZE_CONTENT);
-	lv_obj_set_height(ui_Indicator_Left, LV_SIZE_CONTENT);
-	lv_obj_set_x(ui_Indicator_Left, -95);
-	lv_obj_set_y(ui_Indicator_Left, -133);
-	lv_obj_set_align(ui_Indicator_Left, LV_ALIGN_CENTER);
-	lv_obj_add_flag(ui_Indicator_Left, LV_OBJ_FLAG_ADV_HITTEST);
-	lv_obj_clear_flag(ui_Indicator_Left, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_opa(ui_Indicator_Left, 50,
-						 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_outline_width(ui_Indicator_Left, 0,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	ui_Indicator_Right = lv_img_create(parent);
-	lv_img_set_src(ui_Indicator_Right, &ui_img_indicator_right_png);
-	lv_obj_set_width(ui_Indicator_Right, LV_SIZE_CONTENT);
-	lv_obj_set_height(ui_Indicator_Right, LV_SIZE_CONTENT);
-	lv_obj_set_x(ui_Indicator_Right, 95);
-	lv_obj_set_y(ui_Indicator_Right, -133);
-	lv_obj_set_align(ui_Indicator_Right, LV_ALIGN_CENTER);
-	lv_obj_add_flag(ui_Indicator_Right, LV_OBJ_FLAG_ADV_HITTEST);
-	lv_obj_clear_flag(ui_Indicator_Right, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_opa(ui_Indicator_Right, 50,
-						 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_outline_width(ui_Indicator_Right, 0,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	lv_obj_t *left_ta = lv_obj_create(parent);
-	lv_obj_set_size(left_ta, 50, 50);
-	lv_obj_set_x(left_ta, -95);
-	lv_obj_set_y(left_ta, -133);
-	lv_obj_set_align(left_ta, LV_ALIGN_CENTER);
-	lv_obj_clear_flag(left_ta, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_opa(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	uint8_t *left_id = lv_mem_alloc(sizeof(uint8_t));
-	if (left_id) {
-		*left_id = 0;
-		lv_obj_add_event_cb(left_ta, indicator_longpress_cb,
-							LV_EVENT_LONG_PRESSED, left_id);
-	}
-
-	lv_obj_t *right_ta = lv_obj_create(parent);
-	lv_obj_set_size(right_ta, 50, 50);
-	lv_obj_set_x(right_ta, 95);
-	lv_obj_set_y(right_ta, -133);
-	lv_obj_set_align(right_ta, LV_ALIGN_CENTER);
-	lv_obj_clear_flag(right_ta, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_opa(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	uint8_t *right_id = lv_mem_alloc(sizeof(uint8_t));
-	if (right_id) {
-		*right_id = 1;
-		lv_obj_add_event_cb(right_ta, indicator_longpress_cb,
-							LV_EVENT_LONG_PRESSED, right_id);
-	}
+	widget_indicator_create_one(parent, 0);
+	widget_indicator_create_one(parent, 1);
 }
 
 void init_indicator_configs(void) {
@@ -894,13 +908,12 @@ void init_indicator_configs(void) {
 	}
 }
 
-/* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
+/* ── Phase 2: widget_t factory
+ * ───────────────────────────────────────────── */
 
 static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot == 0) {
-		widget_indicator_create(parent);
-	}
+	widget_indicator_create_one(parent, slot);
 	/* root points to the relevant image obj */
 	w->root = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 }

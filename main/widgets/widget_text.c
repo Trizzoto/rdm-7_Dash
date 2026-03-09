@@ -31,6 +31,7 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 		return;
 	}
 	lv_obj_set_size(label, (lv_coord_t)w->w, (lv_coord_t)w->h);
+	lv_obj_set_align(label, LV_ALIGN_CENTER);
 	lv_obj_set_pos(label, w->x, w->y);
 	lv_label_set_text(label, "---");
 	lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);

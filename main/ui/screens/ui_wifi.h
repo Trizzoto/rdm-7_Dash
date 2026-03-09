@@ -15,6 +15,9 @@ void hide_wifi_screen(void);
 void wifi_screen_delete(void);
 bool is_wifi_screen_active(void);
 
+// Auto-connect to saved WiFi credentials (call from app_main at boot)
+void wifi_auto_connect(void);
+
 // Add extern declaration for connected_ssid
 extern char *connected_ssid;
 

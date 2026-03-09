@@ -548,3 +548,61 @@ esp_err_t config_store_load_ecu_preset(uint8_t *preconfig, uint8_t *version)
     nvs_close(handle);
     return ESP_OK;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  WIFI CREDENTIALS
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_WIFI "wifi_cfg"
+
+esp_err_t config_store_save_wifi(const wifi_credentials_t *creds)
+{
+    if (!creds) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    nvs_set_str(handle, "ssid",     creds->ssid);
+    nvs_set_str(handle, "password", creds->password);
+    nvs_set_u8(handle,  "auto_con", creds->auto_connect ? 1 : 0);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "WiFi credentials saved for '%s'", creds->ssid);
+    return err;
+}
+
+esp_err_t config_store_load_wifi(wifi_credentials_t *creds)
+{
+    if (!creds) return ESP_ERR_INVALID_ARG;
+    memset(creds, 0, sizeof(*creds));
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+
+    size_t len = sizeof(creds->ssid);
+    if (nvs_get_str(handle, "ssid", creds->ssid, &len) != ESP_OK)
+        creds->ssid[0] = '\0';
+
+    len = sizeof(creds->password);
+    if (nvs_get_str(handle, "password", creds->password, &len) != ESP_OK)
+        creds->password[0] = '\0';
+
+    uint8_t ac = 0;
+    if (nvs_get_u8(handle, "auto_con", &ac) == ESP_OK)
+        creds->auto_connect = (ac != 0);
+
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_clear_wifi(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    nvs_erase_all(handle);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "WiFi credentials cleared");
+    return err;
+}

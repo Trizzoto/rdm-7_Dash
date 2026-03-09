@@ -53,6 +53,17 @@ esp_err_t config_store_load_bitrate(uint8_t *bitrate);
 esp_err_t config_store_save_ecu_preset(uint8_t preconfig, uint8_t version);
 esp_err_t config_store_load_ecu_preset(uint8_t *preconfig, uint8_t *version);
 
+/* ── WiFi credentials ──────────────────────────────────────────────────── */
+typedef struct {
+	char ssid[33];
+	char password[65];
+	bool auto_connect;
+} wifi_credentials_t;
+
+esp_err_t config_store_save_wifi(const wifi_credentials_t *creds);
+esp_err_t config_store_load_wifi(wifi_credentials_t *creds);
+esp_err_t config_store_clear_wifi(void);
+
 #ifdef __cplusplus
 }
 #endif

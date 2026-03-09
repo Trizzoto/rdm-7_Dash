@@ -6,9 +6,9 @@
 extern "C" {
 #endif
 
-/** Create the RPM bar gauge, redline zone, tick marks, RPM value/label.
- *  Also creates RPM lights circles if enabled in config. */
-void widget_rpm_bar_create(lv_obj_t *parent);
+/** Create the RPM widget container with bar gauge, redline, tick marks, Panel9.
+ *  Returns the container lv_obj_t so the caller can set w->root. */
+lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent);
 
 /** Immediate RPM UI update (called on LVGL thread). */
 void update_rpm_ui_immediate(const char *rpm_str, int rpm_value);

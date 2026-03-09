@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(idf.py build:*)",
+      "Bash(cmd:*)",
+      "Bash(xargs head:*)",
+      "Bash(git checkout:*)"
+    ]
+  }
+}

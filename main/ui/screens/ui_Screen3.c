@@ -279,3 +279,32 @@ void ui_Screen3_screen_init(void) {
 		}
 	}
 }
+
+void ui_Screen3_preview_layout(cJSON *root) {
+	/* Hot-reload: tear down current screen and rebuild from JSON.
+	 * Must clear stale widget pointers BEFORE lv_obj_clean frees them. */
+	widget_rpm_bar_clear_stale_pointers();
+	for (int i = 0; i < 13; i++) {
+		ui_Label[i] = ui_Value[i] = NULL;
+		if (i < 8) {
+			ui_Box[i] = ui_CustomText[i] = NULL;
+		}
+	}
+	rpm_bar_gauge = NULL;
+	rpm_redline_zone = NULL;
+	ui_RPM_Value = NULL;
+	ui_RPM_Label = NULL;
+	ui_Speed_Value = NULL;
+	ui_Kmh = NULL;
+	ui_GEAR_Value = NULL;
+	ui_GEAR_Icon = NULL;
+	ui_Panel9 = NULL;
+	ui_Bar_1 = NULL;
+	ui_Bar_2 = NULL;
+	reset_can_tracking = true;
+
+	if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
+		lv_obj_clean(ui_Screen3);
+	}
+	dashboard_apply_layout_json(ui_Screen3, root);
+}

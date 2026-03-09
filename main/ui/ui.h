@@ -12,236 +12,233 @@ extern "C" {
 
 #include "lvgl.h"
 
-#include "ui_helpers.h"
 #include "components/ui_comp.h"
 #include "components/ui_comp_hook.h"
 #include "ui_events.h"
+#include "ui_helpers.h"
+
 
 // SCREEN: ui_Screen1
 void ui_Screen1_screen_init(void);
-extern lv_obj_t * ui_Screen1;
-extern lv_obj_t * ui_RPM_Label;
-extern lv_obj_t * ui_RPM_Value;
-extern lv_obj_t * ui_Speed_Label;
-extern lv_obj_t * ui_SPEED_Value;
-extern lv_obj_t * ui_Gear_Panel;
-extern lv_obj_t * ui_Gear_Label;
-extern lv_obj_t * ui_GEAR_Value;
-extern lv_obj_t * ui_GEAR_Icon;
-extern lv_obj_t * ui_Panel_1;
-extern lv_obj_t * ui_Panel_1_Label;
-extern lv_obj_t * ui_Panel_1_Value;
-extern lv_obj_t * ui_Panel_2;
-extern lv_obj_t * ui_Panel_2_Label;
-extern lv_obj_t * ui_Panel_2_Value;
-extern lv_obj_t * ui_Panel_3;
-extern lv_obj_t * ui_Panel_3_Label;
-extern lv_obj_t * ui_Panel_3_Value;
-extern lv_obj_t * ui_Panel_4;
-extern lv_obj_t * ui_Panel_4_Label;
-extern lv_obj_t * ui_Panel_4_Value;
-extern lv_obj_t * ui_Panel_5;
-extern lv_obj_t * ui_Panel_5_Label;
-extern lv_obj_t * ui_Panel_5_Value;
-extern lv_obj_t * ui_Panel_6;
-extern lv_obj_t * ui_Panel_6_Label;
-extern lv_obj_t * ui_Panel_6_Value;
-extern lv_obj_t * ui_Panel_7;
-extern lv_obj_t * ui_Panel_7_Label;
-extern lv_obj_t * ui_Panel_7_Value;
-extern lv_obj_t * ui_Panel_8;
-extern lv_obj_t * ui_Panel_8_Label;
-extern lv_obj_t * ui_Panel_8_Value;
-extern lv_obj_t * ui_Centre_Logo;
-extern lv_obj_t * ui_Indicator_Left;
-extern lv_obj_t * ui_Indicator_Right;
-extern lv_obj_t * ui_Icon_1;
-extern lv_obj_t * ui_Icon_2;
-extern lv_obj_t * ui_Icon_3;
-extern lv_obj_t * ui_Icon_4;
-extern lv_obj_t * ui_Bar_1;
-extern lv_obj_t * ui_Bar_1_Label;
-extern lv_obj_t * ui_Bar_1_Minimim;
-extern lv_obj_t * ui_Bar_1_Maximum;
-extern lv_obj_t * ui_Bar_2;
-extern lv_obj_t * ui_Bar_2_Label;
-extern lv_obj_t * ui_Bar_2_Minimum;
-extern lv_obj_t * ui_Bar_2_Maximum;
-extern lv_obj_t * ui_ODO;
-extern lv_obj_t * ui_ODO_Value;
-extern lv_obj_t * ui_Trip;
-extern lv_obj_t * ui_Trip_Value;
-extern lv_obj_t * ui_Fuel_Avg;
-extern lv_obj_t * ui_Fuel_Avg_Value;
-extern lv_obj_t * ui_Fuel_Inst;
-extern lv_obj_t * ui_Fuel_Inst_Value;
-void ui_event_Menu_Button(lv_event_t * e);
-extern lv_obj_t * ui_Menu_Button;
-extern lv_obj_t * ui_Menu_Label;
+extern lv_obj_t *ui_Screen1;
+extern lv_obj_t *ui_RPM_Label;
+extern lv_obj_t *ui_RPM_Value;
+extern lv_obj_t *ui_Speed_Label;
+extern lv_obj_t *ui_SPEED_Value;
+extern lv_obj_t *ui_Gear_Panel;
+extern lv_obj_t *ui_Gear_Label;
+extern lv_obj_t *ui_GEAR_Value;
+extern lv_obj_t *ui_GEAR_Icon;
+extern lv_obj_t *ui_Panel_1;
+extern lv_obj_t *ui_Panel_1_Label;
+extern lv_obj_t *ui_Panel_1_Value;
+extern lv_obj_t *ui_Panel_2;
+extern lv_obj_t *ui_Panel_2_Label;
+extern lv_obj_t *ui_Panel_2_Value;
+extern lv_obj_t *ui_Panel_3;
+extern lv_obj_t *ui_Panel_3_Label;
+extern lv_obj_t *ui_Panel_3_Value;
+extern lv_obj_t *ui_Panel_4;
+extern lv_obj_t *ui_Panel_4_Label;
+extern lv_obj_t *ui_Panel_4_Value;
+extern lv_obj_t *ui_Panel_5;
+extern lv_obj_t *ui_Panel_5_Label;
+extern lv_obj_t *ui_Panel_5_Value;
+extern lv_obj_t *ui_Panel_6;
+extern lv_obj_t *ui_Panel_6_Label;
+extern lv_obj_t *ui_Panel_6_Value;
+extern lv_obj_t *ui_Panel_7;
+extern lv_obj_t *ui_Panel_7_Label;
+extern lv_obj_t *ui_Panel_7_Value;
+extern lv_obj_t *ui_Panel_8;
+extern lv_obj_t *ui_Panel_8_Label;
+extern lv_obj_t *ui_Panel_8_Value;
+extern lv_obj_t *ui_Centre_Logo;
+extern lv_obj_t *ui_Indicator_Left;
+extern lv_obj_t *ui_Indicator_Right;
+extern lv_obj_t *ui_Icon_1;
+extern lv_obj_t *ui_Icon_2;
+extern lv_obj_t *ui_Icon_3;
+extern lv_obj_t *ui_Icon_4;
+extern lv_obj_t *ui_Bar_1;
+extern lv_obj_t *ui_Bar_1_Label;
+extern lv_obj_t *ui_Bar_1_Minimim;
+extern lv_obj_t *ui_Bar_1_Maximum;
+extern lv_obj_t *ui_Bar_2;
+extern lv_obj_t *ui_Bar_2_Label;
+extern lv_obj_t *ui_Bar_2_Minimum;
+extern lv_obj_t *ui_Bar_2_Maximum;
+extern lv_obj_t *ui_ODO;
+extern lv_obj_t *ui_ODO_Value;
+extern lv_obj_t *ui_Trip;
+extern lv_obj_t *ui_Trip_Value;
+extern lv_obj_t *ui_Fuel_Avg;
+extern lv_obj_t *ui_Fuel_Avg_Value;
+extern lv_obj_t *ui_Fuel_Inst;
+extern lv_obj_t *ui_Fuel_Inst_Value;
+void ui_event_Menu_Button(lv_event_t *e);
+extern lv_obj_t *ui_Menu_Button;
+extern lv_obj_t *ui_Menu_Label;
 // SCREEN: ui_Screen2
 void ui_Screen2_screen_init(void);
-extern lv_obj_t * ui_Screen2;
-extern lv_obj_t * ui_Slider1;
-extern lv_obj_t * ui_Slider2;
-extern lv_obj_t * ui_Slider3;
-extern lv_obj_t * ui_Slider4;
-extern lv_obj_t * ui_Switch2;
-extern lv_obj_t * ui_Switch3;
-extern lv_obj_t * ui_Switch4;
-extern lv_obj_t * ui_Switch5;
-extern lv_obj_t * ui_Label1;
-extern lv_obj_t * ui_Label2;
-extern lv_obj_t * ui_Label3;
-extern lv_obj_t * ui_Label4;
-extern lv_obj_t * ui_Label5;
-extern lv_obj_t * ui_Label6;
-extern lv_obj_t * ui_Label7;
-extern lv_obj_t * ui_Label8;
-extern lv_obj_t * ui_slider1_value_label;
-extern lv_obj_t * ui_slider2_value_label;
-extern lv_obj_t * ui_slider3_value_label;
-extern lv_obj_t * ui_slider4_value_label;
-void ui_event_ScreenLeft(lv_event_t * e);
-extern lv_obj_t * ui_ScreenLeft;
-void ui_event_ScreenRight(lv_event_t * e);
-extern lv_obj_t * ui_ScreenRight;
+extern lv_obj_t *ui_Screen2;
+extern lv_obj_t *ui_Slider1;
+extern lv_obj_t *ui_Slider2;
+extern lv_obj_t *ui_Slider3;
+extern lv_obj_t *ui_Slider4;
+extern lv_obj_t *ui_Switch2;
+extern lv_obj_t *ui_Switch3;
+extern lv_obj_t *ui_Switch4;
+extern lv_obj_t *ui_Switch5;
+extern lv_obj_t *ui_Label1;
+extern lv_obj_t *ui_Label2;
+extern lv_obj_t *ui_Label3;
+extern lv_obj_t *ui_Label4;
+extern lv_obj_t *ui_Label5;
+extern lv_obj_t *ui_Label6;
+extern lv_obj_t *ui_Label7;
+extern lv_obj_t *ui_Label8;
+extern lv_obj_t *ui_slider1_value_label;
+extern lv_obj_t *ui_slider2_value_label;
+extern lv_obj_t *ui_slider3_value_label;
+extern lv_obj_t *ui_slider4_value_label;
+void ui_event_ScreenLeft(lv_event_t *e);
+extern lv_obj_t *ui_ScreenLeft;
+void ui_event_ScreenRight(lv_event_t *e);
+extern lv_obj_t *ui_ScreenRight;
 // SCREEN: ui_Screen3
 void ui_Screen3_screen_init(void);
-extern lv_obj_t * ui_Screen3;
-void ui_event_Panel2(lv_event_t * e);
-extern lv_obj_t * ui_Panel2;
-extern lv_obj_t * ui_Label10;
-extern lv_obj_t * ui_Label11;
-extern lv_obj_t * ui____initial_actions0;
+extern lv_obj_t *ui_Screen3;
+void ui_event_Panel2(lv_event_t *e);
+extern lv_obj_t *ui_Panel2;
+extern lv_obj_t *ui_Label10;
+extern lv_obj_t *ui_Label11;
+extern lv_obj_t *ui____initial_actions0;
 // SCREEN: ui_Screen4
 void ui_Screen4_screen_init(void);
-extern lv_obj_t * ui_Screen4;
-
-
+extern lv_obj_t *ui_Screen4;
 
 LV_IMG_DECLARE(ui__temporary_image);
-LV_IMG_DECLARE(ui_img_daihatsu_logo_png);    // assets/daihatsu logo.png
+LV_IMG_DECLARE(ui_img_daihatsu_logo_png); // assets/daihatsu logo.png
 LV_IMG_DECLARE(ui_img_rdm_logo_dash_png);
-LV_IMG_DECLARE(ui_img_indicator_left_png);    // assets/indicator left.png
-LV_IMG_DECLARE(ui_img_indicator_right_png);    // assets/indicator right.png
-LV_IMG_DECLARE(ui_img_handbrake_png);    // assets/handbrake.png
-LV_IMG_DECLARE(ui_img_check_engine_png);    // assets/check engine.png
-LV_IMG_DECLARE(ui_img_launch_control_png);    // assets/launch control.png
-LV_IMG_DECLARE(ui_img_high_beam_png);    // assets/high beam.png
-LV_IMG_DECLARE(Smart_Car_Key);    // Smart Car Key icon
+LV_IMG_DECLARE(ui_img_indicator_left_png);	// assets/indicator left.png
+LV_IMG_DECLARE(ui_img_indicator_right_png); // assets/indicator right.png
+LV_IMG_DECLARE(ui_img_handbrake_png);		// assets/handbrake.png
+LV_IMG_DECLARE(ui_img_check_engine_png);	// assets/check engine.png
+LV_IMG_DECLARE(ui_img_launch_control_png);	// assets/launch control.png
+LV_IMG_DECLARE(ui_img_high_beam_png);		// assets/high beam.png
+LV_IMG_DECLARE(Smart_Car_Key);				// Smart Car Key icon
 LV_IMG_DECLARE(ui_img_gauge_v0_2_png);
 LV_IMG_DECLARE(ui_img_648933004);
 LV_IMG_DECLARE(ui_img_363163260);
-LV_IMG_DECLARE(ui_img_RDM_Light);    // assets/RDM_Light.png
-LV_IMG_DECLARE(ui_img_RDM_Dark);     // assets/RDM_Dark.png
-
+LV_IMG_DECLARE(ui_img_RDM_Light); // assets/RDM_Light.png
+LV_IMG_DECLARE(ui_img_RDM_Dark);  // assets/RDM_Dark.png
 
 LV_FONT_DECLARE(ui_font_Manrope_36_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_50_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_72);
 LV_FONT_DECLARE(ui_font_Manrope_78_BOLD);
 
+extern lv_obj_t *ui_Background;
+extern lv_obj_t *ui_Box_1;
+extern lv_obj_t *ui_Box_2;
+extern lv_obj_t *ui_Box_3;
+extern lv_obj_t *ui_Box_4;
+extern lv_obj_t *ui_Box_5;
+extern lv_obj_t *ui_Box_6;
+extern lv_obj_t *ui_Box_7;
+extern lv_obj_t *ui_Box_8;
+extern lv_obj_t *ui_Arc_1;
+extern lv_obj_t *ui_Arc_2;
+extern lv_obj_t *ui_Arc_3;
+extern lv_obj_t *ui_Arc_4;
+extern lv_obj_t *ui_Arc_5;
+extern lv_obj_t *ui_Arc_6;
+extern lv_obj_t *ui_Arc_7;
+extern lv_obj_t *ui_Arc_8;
+extern lv_obj_t *ui_Box_Barrier;
+extern lv_obj_t *ui_Main_RPM_Circle;
+extern lv_obj_t *ui_Second_RPM_Circle;
+extern lv_obj_t *ui_Third_RPM_Circle;
+extern lv_obj_t *ui_Fourth_RPM_Circle;
+extern lv_obj_t *ui_Fifth_RPM_Circle;
+extern lv_obj_t *ui_Label_1;
+extern lv_obj_t *ui_Label_2;
+extern lv_obj_t *ui_Label_3;
+extern lv_obj_t *ui_Label_4;
+extern lv_obj_t *ui_Label_5;
+extern lv_obj_t *ui_Label_6;
+extern lv_obj_t *ui_Label_7;
+extern lv_obj_t *ui_Label_8;
+extern lv_obj_t *ui_Bar_1;
+extern lv_obj_t *ui_Bar_2;
+extern lv_obj_t *ui_Bar_3;
+extern lv_obj_t *ui_Bar_4;
+extern lv_obj_t *ui_Bar_5;
+extern lv_obj_t *ui_Bar_6;
+extern lv_obj_t *ui_Bar_7;
+extern lv_obj_t *ui_Bar_8;
+extern lv_obj_t *ui_Value_1;
+extern lv_obj_t *ui_Value_2;
+extern lv_obj_t *ui_Value_3;
+extern lv_obj_t *ui_Value_4;
+extern lv_obj_t *ui_Value_5;
+extern lv_obj_t *ui_Value_6;
+extern lv_obj_t *ui_Value_7;
+extern lv_obj_t *ui_Value_8;
+extern lv_obj_t *ui_Speed_Value;
+extern lv_obj_t *ui_Kmh;
+extern lv_obj_t *ui_RDM_Logo;
+extern lv_obj_t *ui_Indicator_Left;
+extern lv_obj_t *ui_Indicator_Right;
+extern lv_obj_t *ui_Unit_1;
+extern lv_obj_t *ui_Unit_2;
+extern lv_obj_t *ui_Unit_3;
+extern lv_obj_t *ui_Unit_4;
+extern lv_obj_t *ui_Unit_5;
+extern lv_obj_t *ui_Unit_6;
+extern lv_obj_t *ui_Unit_7;
+extern lv_obj_t *ui_Unit_8;
+extern lv_obj_t *ui_RPM_Panel_1;
+extern lv_obj_t *ui_RPM_Panel_2;
+extern lv_obj_t *ui_RPM_Value;
+extern lv_obj_t *ui_RPM_Label;
+extern lv_obj_t *ui_RPM_Panel_Block;
+extern lv_obj_t *ui_Panel9;
+extern lv_obj_t *ui_RPM_Base_1;
+extern lv_obj_t *ui_RPM_Base_2;
+extern lv_obj_t *ui_RPM_Base_3;
+extern lv_obj_t *ui_RPM_Base_4;
+extern lv_obj_t *ui_Warning_1;
+extern lv_obj_t *ui_Warning_2;
+extern lv_obj_t *ui_Warning_3;
+extern lv_obj_t *ui_Warning_4;
+extern lv_obj_t *ui_Warning_5;
+extern lv_obj_t *ui_Warning_6;
+extern lv_obj_t *ui_Warning_7;
+extern lv_obj_t *ui_Warning_8;
+extern lv_obj_t *ui_Warning_2_Label;
+extern lv_obj_t *ui_Warning_4_Label;
+extern lv_obj_t *ui_Warning_6_Label;
+extern lv_obj_t *ui_Warning_8_Label;
+extern lv_obj_t *ui_Redline_Indicator_1;
+extern lv_obj_t *ui_Redline_Indicator_2;
+extern lv_obj_t *ui_Redline_Box_1;
+extern lv_obj_t *ui_Redline_Box_2;
+extern lv_obj_t *ui_Daihatsu_Logo;
+extern lv_obj_t *ui_RDM_Border;
+extern lv_obj_t *ui_RDM_Main;
+extern lv_obj_t *ui_RDM_Logo_Text;
+extern lv_obj_t *ui____initial_actions0;
 
-extern lv_obj_t * ui_Background;
-extern lv_obj_t * ui_Box_1;
-extern lv_obj_t * ui_Box_2;
-extern lv_obj_t * ui_Box_3;
-extern lv_obj_t * ui_Box_4;
-extern lv_obj_t * ui_Box_5;
-extern lv_obj_t * ui_Box_6;
-extern lv_obj_t * ui_Box_7;
-extern lv_obj_t * ui_Box_8;
-extern lv_obj_t * ui_Arc_1;
-extern lv_obj_t * ui_Arc_2;
-extern lv_obj_t * ui_Arc_3;
-extern lv_obj_t * ui_Arc_4;
-extern lv_obj_t * ui_Arc_5;
-extern lv_obj_t * ui_Arc_6;
-extern lv_obj_t * ui_Arc_7;
-extern lv_obj_t * ui_Arc_8;
-extern lv_obj_t * ui_Box_Barrier;
-extern lv_obj_t * ui_Main_RPM_Circle;
-extern lv_obj_t * ui_Second_RPM_Circle;
-extern lv_obj_t * ui_Third_RPM_Circle;
-extern lv_obj_t * ui_Fourth_RPM_Circle;
-extern lv_obj_t * ui_Fifth_RPM_Circle;
-extern lv_obj_t * ui_Label_1;
-extern lv_obj_t * ui_Label_2;
-extern lv_obj_t * ui_Label_3;
-extern lv_obj_t * ui_Label_4;
-extern lv_obj_t * ui_Label_5;
-extern lv_obj_t * ui_Label_6;
-extern lv_obj_t * ui_Label_7;
-extern lv_obj_t * ui_Label_8;
-extern lv_obj_t * ui_Bar_1;
-extern lv_obj_t * ui_Bar_2;
-extern lv_obj_t * ui_Bar_3;
-extern lv_obj_t * ui_Bar_4;
-extern lv_obj_t * ui_Bar_5;
-extern lv_obj_t * ui_Bar_6;
-extern lv_obj_t * ui_Bar_7;
-extern lv_obj_t * ui_Bar_8;
-extern lv_obj_t * ui_Value_1;
-extern lv_obj_t * ui_Value_2;
-extern lv_obj_t * ui_Value_3;
-extern lv_obj_t * ui_Value_4;
-extern lv_obj_t * ui_Value_5;
-extern lv_obj_t * ui_Value_6;
-extern lv_obj_t * ui_Value_7;
-extern lv_obj_t * ui_Value_8;
-extern lv_obj_t * ui_Speed_Value;
-extern lv_obj_t * ui_Kmh;
-extern lv_obj_t * ui_RDM_Logo;
-extern lv_obj_t * ui_Indicator_Left;
-extern lv_obj_t * ui_Indicator_Right;
-extern lv_obj_t * ui_Unit_1;
-extern lv_obj_t * ui_Unit_2;
-extern lv_obj_t * ui_Unit_3;
-extern lv_obj_t * ui_Unit_4;
-extern lv_obj_t * ui_Unit_5;
-extern lv_obj_t * ui_Unit_6;
-extern lv_obj_t * ui_Unit_7;
-extern lv_obj_t * ui_Unit_8;
-extern lv_obj_t * ui_RPM_Panel_1;
-extern lv_obj_t * ui_RPM_Panel_2;
-extern lv_obj_t * ui_RPM_Value;
-extern lv_obj_t * ui_RPM_Label;
-extern lv_obj_t * ui_RPM_Panel_Block;
-extern lv_obj_t * ui_Panel9;
-extern lv_obj_t * ui_RPM_Base_1;
-extern lv_obj_t * ui_RPM_Base_2;
-extern lv_obj_t * ui_RPM_Base_3;
-extern lv_obj_t * ui_RPM_Base_4;
-extern lv_obj_t * ui_Warning_1;
-extern lv_obj_t * ui_Warning_2;
-extern lv_obj_t * ui_Warning_3;
-extern lv_obj_t * ui_Warning_4;
-extern lv_obj_t * ui_Warning_5;
-extern lv_obj_t * ui_Warning_6;
-extern lv_obj_t * ui_Warning_7;
-extern lv_obj_t * ui_Warning_8;
-extern lv_obj_t * ui_Warning_2_Label;
-extern lv_obj_t * ui_Warning_4_Label;
-extern lv_obj_t * ui_Warning_6_Label;
-extern lv_obj_t * ui_Warning_8_Label;
-extern lv_obj_t * ui_Redline_Indicator_1;
-extern lv_obj_t * ui_Redline_Indicator_2;
-extern lv_obj_t * ui_Redline_Box_1;
-extern lv_obj_t * ui_Redline_Box_2;
-extern lv_obj_t * ui_Daihatsu_Logo;
-extern lv_obj_t * ui_RDM_Border;
-extern lv_obj_t * ui_RDM_Main;
-extern lv_obj_t * ui_RDM_Logo_Text;
-extern lv_obj_t * ui____initial_actions0;
-
-LV_IMG_DECLARE(ui_img_gauge_v0_3_background_trial_png);    // assets/Gauge v0.3 Background Trial.png
-LV_IMG_DECLARE(ui_img_version_1_3_png);    // assets/Version 1.3.png
-LV_IMG_DECLARE(ui_img_rpm_indicator_png);    // assets/rpm indicator.png
-LV_IMG_DECLARE(ui_img_669363031);    // assets/Untitled-2.png
-LV_IMG_DECLARE(ui_img_rev_0_sticker_png);    // assets/Rev_0_Sticker.png
-LV_IMG_DECLARE(ui_img_rev_0_sticker2_png);    // assets/Rev_0_Sticker2.png
-LV_IMG_DECLARE(ui_img_rev_0_sticker3_png);    // assets/Rev_0_Sticker2.png
-
+LV_IMG_DECLARE(ui_img_gauge_v0_3_background_trial_png); // assets/Gauge v0.3
+														// Background Trial.png
+LV_IMG_DECLARE(ui_img_version_1_3_png);	   // assets/Version 1.3.png
+LV_IMG_DECLARE(ui_img_rpm_indicator_png);  // assets/rpm indicator.png
+LV_IMG_DECLARE(ui_img_669363031);		   // assets/Untitled-2.png
+LV_IMG_DECLARE(ui_img_rev_0_sticker_png);  // assets/Rev_0_Sticker.png
+LV_IMG_DECLARE(ui_img_rev_0_sticker2_png); // assets/Rev_0_Sticker2.png
+LV_IMG_DECLARE(ui_img_rev_0_sticker3_png); // assets/Rev_0_Sticker2.png
 
 LV_FONT_DECLARE(ui_font_Manrope_16_BOLD);
 LV_FONT_DECLARE(ui_font_Manrope_35_BOLD);

@@ -50,6 +50,9 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id);
  */
 widget_t *widget_warning_create_instance(uint8_t slot);
 
+/** Reset all warning circle LVGL pointers (call before re-creating layout). */
+void widget_warning_reset(void);
+
 #ifdef __cplusplus
 }
 #endif

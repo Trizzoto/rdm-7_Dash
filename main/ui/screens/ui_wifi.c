@@ -13,6 +13,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "storage/config_store.h"
 
 static const char *TAG = "wifi_screen";
 #define DEFAULT_SCAN_LIST_SIZE 20
@@ -63,6 +64,7 @@ static esp_event_base_t pending_event_base;
 static int32_t pending_event_id;
 static bool pending_connected = false;
 static char pending_ssid[33] = {0};
+static char last_password[65] = {0};
 static bool pending_needs_scan = false;
 
 // Forward declarations
@@ -98,6 +100,13 @@ static void wifi_event_task(lv_timer_t *timer) {
             if (pending_ssid[0] != '\0') {
                 if (connected_ssid) free(connected_ssid);
                 connected_ssid = strdup(pending_ssid);
+
+                // Save credentials to NVS for auto-connect on next boot
+                wifi_credentials_t creds = {0};
+                strncpy(creds.ssid, pending_ssid, sizeof(creds.ssid) - 1);
+                strncpy(creds.password, last_password, sizeof(creds.password) - 1);
+                creds.auto_connect = true;
+                config_store_save_wifi(&creds);
             }
             hide_password_modal();
             update_wifi_list();
@@ -426,13 +435,16 @@ static void forget_btn_event_cb(lv_event_t *e) {
     if (!connected_ssid) return;
     
     ESP_LOGI(TAG, "Forgetting network: %s", connected_ssid);
-    
+
     update_connection_status("Disconnecting...", false);
-    
+
+    // Clear saved credentials from NVS
+    config_store_clear_wifi();
+
     // Clear connected SSID
     free(connected_ssid);
     connected_ssid = NULL;
-    
+
     // Disconnect and scan
     esp_wifi_disconnect();
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -657,6 +669,14 @@ static void connect_to_wifi(const char *ssid, const char *password) {
 
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
 
+    // Remember password for NVS save on successful connection
+    if (password && strlen(password) > 0) {
+        strncpy(last_password, password, sizeof(last_password) - 1);
+        last_password[sizeof(last_password) - 1] = '\0';
+    } else {
+        last_password[0] = '\0';
+    }
+
     // Configure WiFi
     wifi_config_t wifi_config = {0};
     strncpy((char *)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
@@ -726,6 +746,15 @@ void init_wifi_screen(void) {
 
     wifi_screen_initialized = true;
     ESP_LOGI(TAG, "WiFi screen initialized");
+
+    // Auto-connect to saved WiFi network
+    wifi_credentials_t creds;
+    if (config_store_load_wifi(&creds) == ESP_OK &&
+        creds.auto_connect && strlen(creds.ssid) > 0) {
+        ESP_LOGI(TAG, "Auto-connecting to saved network: %s", creds.ssid);
+        selected_ssid = strdup(creds.ssid);
+        connect_to_wifi(creds.ssid, creds.password);
+    }
 }
 
 // Reset static variables to prevent crashes on re-entry
@@ -913,5 +942,13 @@ void wifi_screen_delete(void) {
 
 bool is_wifi_screen_active(void) {
     return wifi_screen && lv_obj_is_valid(wifi_screen) && lv_scr_act() == wifi_screen;
+}
+
+void wifi_auto_connect(void) {
+    /* Initialise WiFi hardware if not already done */
+    if (!wifi_screen_initialized) {
+        init_wifi_screen();
+    }
+    /* init_wifi_screen already attempts auto-connect from saved creds */
 }
 

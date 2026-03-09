@@ -407,19 +407,86 @@ static const int16_t s_panel_default_x[8] = {-312, -146, -312, -146,
 static const int16_t s_panel_default_y[8] = {-26, -26, 82, 82,
 											 -26, -26, 82, 82};
 
-/* create vtable adapter: widget_panel_create() builds all 8 at once.
- * Only create on slot 0 call; subsequent slots are already built. */
+/* create vtable adapter: creates a single panel box for the given slot.
+ * Only panels present in the JSON layout will be created. */
 static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot == 0) {
-		widget_panel_create(parent);
-	}
-	/* Set root so layout manager can position the box.
-	 * NOTE: layout_manager sets x,y. The box is LV_ALIGN_CENTER, so x,y are
-	 * relative to screen centre. */
-	if (slot < 8) {
-		w->root = ui_Box[slot];
-	}
+	if (slot >= 8)
+		return;
+
+	/* Create single box for this slot */
+	ui_Box[slot] = lv_obj_create(parent);
+	lv_obj_set_size(ui_Box[slot], w->w, w->h);
+	lv_obj_set_pos(ui_Box[slot], w->x, w->y);
+	lv_obj_set_align(ui_Box[slot], LV_ALIGN_CENTER);
+	lv_obj_clear_flag(ui_Box[slot], LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_clip_corner(ui_Box[slot], true,
+								 LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_add_style(ui_Box[slot], &box_style,
+					 LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_add_event_cb(ui_Box[slot], screen3_touch_event_cb, LV_EVENT_PRESSED,
+						NULL);
+	lv_obj_add_event_cb(ui_Box[slot], screen3_touch_event_cb,
+						LV_EVENT_RELEASED, NULL);
+
+	/* Header label */
+	ui_Label[slot] = lv_label_create(ui_Box[slot]);
+	lv_label_set_text(ui_Label[slot], label_texts[slot]);
+	lv_obj_set_style_text_color(ui_Label[slot], THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(ui_Label[slot], 255,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(ui_Label[slot], THEME_FONT_DASH_LABEL,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(ui_Label[slot], LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_width(ui_Label[slot], w->w - 10);
+	lv_label_set_long_mode(ui_Label[slot], LV_LABEL_LONG_CLIP);
+	lv_coord_t relative_y = label_positions[slot][1] - box_positions[slot][1];
+	lv_obj_set_x(ui_Label[slot], 0);
+	lv_obj_set_y(ui_Label[slot], relative_y);
+	lv_obj_set_align(ui_Label[slot], LV_ALIGN_CENTER);
+
+	/* Value label */
+	ui_Value[slot] = lv_label_create(ui_Box[slot]);
+	lv_label_set_text(ui_Value[slot], "---");
+	strcpy(previous_values[slot], "---");
+	lv_obj_set_style_text_color(ui_Value[slot], THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(ui_Value[slot], 255,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(ui_Value[slot], THEME_FONT_DASH_VALUE,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(ui_Value[slot], LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_width(ui_Value[slot], w->w - 15);
+	lv_label_set_long_mode(ui_Value[slot], LV_LABEL_LONG_CLIP);
+	lv_coord_t val_rel_y = value_positions[slot][1] - box_positions[slot][1];
+	lv_obj_set_x(ui_Value[slot], 0);
+	lv_obj_set_y(ui_Value[slot], val_rel_y);
+	lv_obj_set_align(ui_Value[slot], LV_ALIGN_CENTER);
+
+	/* Click zone */
+	create_transparent_click_zone(ui_Box[slot], ui_Value[slot], slot + 1);
+
+	/* Custom unit text */
+	ui_CustomText[slot] = lv_label_create(ui_Box[slot]);
+	lv_label_set_text(ui_CustomText[slot], values_config[slot].custom_text);
+	lv_obj_set_style_text_color(ui_CustomText[slot], THEME_COLOR_TEXT_MUTED,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(ui_CustomText[slot], 255,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(ui_CustomText[slot], THEME_FONT_BODY,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(ui_CustomText[slot], LV_TEXT_ALIGN_RIGHT,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_width(ui_CustomText[slot], 60);
+	lv_label_set_long_mode(ui_CustomText[slot], LV_LABEL_LONG_CLIP);
+	lv_obj_set_x(ui_CustomText[slot], 41);
+	lv_obj_set_y(ui_CustomText[slot], 32);
+	lv_obj_set_align(ui_CustomText[slot], LV_ALIGN_CENTER);
+	if (strlen(values_config[slot].custom_text) == 0)
+		lv_obj_add_flag(ui_CustomText[slot], LV_OBJ_FLAG_HIDDEN);
+
+	w->root = ui_Box[slot];
 }
 
 static void _panel_update(widget_t *w, void *data) {

@@ -36,20 +36,7 @@ static lv_obj_t * ui_Version_Input = NULL;
 static lv_obj_t * ui_ID_Text = NULL;
 static lv_obj_t * ui_ID_Input = NULL;
 
-// A single "preconfig record"
-typedef struct {
-    const char* ecu;           // e.g. "MaxxECU"
-    const char* version;       // e.g. "1.3"
-    const char* label;         // e.g. "Lambda"
-    const char* can_id;        // Store as string to preserve exact format
-    uint8_t endianess;         // 0 = Big Endian, 1 = Little Endian
-    uint8_t bit_start;
-    uint8_t bit_length;
-    float scale;
-    float value_offset;
-    uint8_t decimals;
-    bool is_signed;           // true = Signed, false = Unsigned
-} preconfig_item_t;
+/* preconfig_item_t is defined in preset_picker.h */
 
 const preconfig_item_t preconfig_items[] = {
     { "MaxxECU", "1.2", "THROTTLE %", "520", 1, 16, 16, 0.1, 0, 0, false },
@@ -311,6 +298,7 @@ const preconfig_item_t preconfig_items[] = {
 { NULL, NULL, NULL, NULL, 0, 0, 0, 0.0, 0, 0, false } // Keep this terminator entry at the end
 };
 
+const int preconfig_items_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
 static const int preconfig_data_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
 
 static void ecu_dropdown_event_cb(lv_event_t * e)
