@@ -62,6 +62,12 @@ uint64_t *widget_rpm_bar_get_last_can_time(void);
  */
 widget_t *widget_rpm_bar_create_instance(void);
 
+void widget_rpm_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg,
+                                     int gauge_max, int redline);
+
+void widget_rpm_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg,
+                                   int *gauge_max_out, int *redline_out);
+
 #ifdef __cplusplus
 }
 #endif

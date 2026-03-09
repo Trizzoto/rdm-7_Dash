@@ -7,6 +7,7 @@
  */
 #include "can_manager.h"
 #include "can_dispatch.h"
+#include "signal.h"
 #include "ui/screens/ui_Screen3.h" /* warning_configs, indicator_configs, values_config */
 
 #include "driver/twai.h"
@@ -284,6 +285,9 @@ void can_process_queued_frames(void) {
 
 	while (processed < max_batch &&
 		   xQueueReceive(s_can_queue, &msg, 0) == pdTRUE) {
+		/* Signal-centric decode: notify all signal subscribers */
+		signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+		/* Legacy CAN dispatch: keeps working for widgets not yet on signals */
 		can_dispatch_process_frame(&msg);
 		processed++;
 	}

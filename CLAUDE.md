@@ -473,7 +473,7 @@ These are loaded from NVS at boot and saved back when the user edits via the con
 ## Adding a New Widget Type
 
 1. Create `main/widgets/widget_newtype.c` and `widget_newtype.h`
-2. Implement all vtable functions: `create`, `update`, `resize`, `open_settings`, `to_json`, `from_json`, `destroy`
+2. Implement all vtable functions: `create`, `update`, `resize`, `open_settings`, `to_json`, `from_json`, `destroy`claude
 3. In `create`: use `lv_obj_set_align(obj, LV_ALIGN_CENTER)` before `lv_obj_set_pos()`
 4. Add factory function: `widget_t *widget_newtype_create_instance(uint8_t slot)`
 5. Add enum value to `widget_type_t` in `widget_types.h`

@@ -14,6 +14,8 @@
 #include "widget_types.h"
 #include "widget_warning.h"
 
+#include "signal.h"
+
 #include "cJSON.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
@@ -252,6 +254,103 @@ esp_err_t layout_manager_init(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Signal loading + resolution helpers
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/**
+ * Parse the "signals" array from a layout JSON root and register each signal.
+ * Must be called AFTER signal_registry_reset() and BEFORE widget creation so
+ * that from_json can resolve signal names to indices.
+ */
+static void _load_signals(const cJSON *root) {
+	const cJSON *signals_arr =
+		cJSON_GetObjectItemCaseSensitive(root, "signals");
+	if (!cJSON_IsArray(signals_arr))
+		return;
+
+	const cJSON *sj = NULL;
+	cJSON_ArrayForEach(sj, signals_arr) {
+		const cJSON *name_item = cJSON_GetObjectItemCaseSensitive(sj, "name");
+		const cJSON *can_id_item =
+			cJSON_GetObjectItemCaseSensitive(sj, "can_id");
+		const cJSON *start_item =
+			cJSON_GetObjectItemCaseSensitive(sj, "bit_start");
+		const cJSON *len_item =
+			cJSON_GetObjectItemCaseSensitive(sj, "bit_length");
+
+		if (!cJSON_IsString(name_item) || !cJSON_IsNumber(can_id_item) ||
+			!cJSON_IsNumber(start_item) || !cJSON_IsNumber(len_item))
+			continue;
+
+		float scale = 1.0f, offset = 0.0f;
+		bool is_signed = false;
+		uint8_t endian = 1; /* default Intel (little-endian) */
+
+		const cJSON *item;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "scale");
+		if (cJSON_IsNumber(item))
+			scale = (float)item->valuedouble;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "offset");
+		if (cJSON_IsNumber(item))
+			offset = (float)item->valuedouble;
+		item = cJSON_GetObjectItemCaseSensitive(sj, "is_signed");
+		if (cJSON_IsBool(item))
+			is_signed = cJSON_IsTrue(item);
+		item = cJSON_GetObjectItemCaseSensitive(sj, "endian");
+		if (cJSON_IsNumber(item))
+			endian = (uint8_t)item->valueint;
+
+		int16_t idx = signal_register(
+			name_item->valuestring, (uint32_t)can_id_item->valueint,
+			(uint8_t)start_item->valueint, (uint8_t)len_item->valueint, scale,
+			offset, is_signed, endian);
+
+		if (idx >= 0) {
+			ESP_LOGD(TAG, "Registered signal '%s' → index %d",
+					 name_item->valuestring, (int)idx);
+		} else {
+			ESP_LOGW(TAG, "Failed to register signal '%s'",
+					 name_item->valuestring);
+		}
+	}
+
+	ESP_LOGI(TAG, "_load_signals: registered %u signals",
+			 (unsigned)signal_get_count());
+}
+
+/**
+ * Serialise all registered signals into a "signals" JSON array on @p root.
+ */
+static void _save_signals(cJSON *root) {
+	uint16_t count = signal_get_count();
+	if (count == 0)
+		return;
+
+	cJSON *arr = cJSON_AddArrayToObject(root, "signals");
+	if (!arr)
+		return;
+
+	for (uint16_t i = 0; i < count; i++) {
+		signal_t *sig = signal_get_by_index(i);
+		if (!sig)
+			continue;
+		cJSON *sj = cJSON_CreateObject();
+		if (!sj)
+			continue;
+		cJSON_AddStringToObject(sj, "name", sig->name);
+		cJSON_AddNumberToObject(sj, "can_id", sig->can_id);
+		cJSON_AddNumberToObject(sj, "bit_start", sig->bit_start);
+		cJSON_AddNumberToObject(sj, "bit_length", sig->bit_length);
+		cJSON_AddNumberToObject(sj, "scale", sig->scale);
+		cJSON_AddNumberToObject(sj, "offset", sig->offset);
+		cJSON_AddBoolToObject(sj, "is_signed", sig->is_signed);
+		cJSON_AddNumberToObject(sj, "endian", sig->endian);
+		cJSON_AddItemToArray(arr, sj);
+	}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  layout_manager_load
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -286,6 +385,10 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		ESP_LOGE(TAG, "layout_load: JSON parse failed for %s", path);
 		return ESP_FAIL;
 	}
+
+	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
+	signal_registry_reset();
+	_load_signals(root);
 
 	const cJSON *widgets_arr =
 		cJSON_GetObjectItemCaseSensitive(root, "widgets");
@@ -352,6 +455,10 @@ esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent) {
 	if (!root || !parent)
 		return ESP_ERR_INVALID_ARG;
 
+	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
+	signal_registry_reset();
+	_load_signals(root);
+
 	const cJSON *widgets_arr =
 		cJSON_GetObjectItemCaseSensitive(root, "widgets");
 	if (!cJSON_IsArray(widgets_arr)) {
@@ -408,8 +515,11 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	if (!root)
 		return NULL;
 
-	cJSON_AddNumberToObject(root, "schema_version", 1);
+	cJSON_AddNumberToObject(root, "schema_version", 7);
 	cJSON_AddStringToObject(root, "name", name);
+
+	/* Serialise registered signals */
+	_save_signals(root);
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
 	for (uint8_t i = 0; i < count; i++) {

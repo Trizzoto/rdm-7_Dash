@@ -7,6 +7,8 @@
  */
 #include "widget_meter.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "ui/theme.h"
@@ -34,7 +36,30 @@ typedef struct {
 	lv_meter_indicator_t *needle;
 	lv_obj_t *value_label;
 	lv_obj_t *id_label;
+	char     signal_name[32];
+	int16_t  signal_index;
 } meter_data_t;
+
+static void _meter_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !w->root || !lv_obj_is_valid(w->root)) return;
+	if (is_stale) {
+		lv_meter_set_indicator_value(md->meter, md->needle, md->min);
+		if (md->value_label && lv_obj_is_valid(md->value_label))
+			lv_label_set_text(md->value_label, "---");
+		return;
+	}
+	int32_t v = (int32_t)value;
+	if (v < md->min) v = md->min;
+	if (v > md->max) v = md->max;
+	lv_meter_set_indicator_value(md->meter, md->needle, v);
+	if (md->value_label && lv_obj_is_valid(md->value_label)) {
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%d", (int)v);
+		lv_label_set_text(md->value_label, buf);
+	}
+}
 
 static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
@@ -108,6 +133,11 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_align(md->id_label, LV_ALIGN_CENTER, 0, 45);
 
 	w->root = m;
+
+	/* Subscribe to signal if bound */
+	if (md->signal_index >= 0)
+		signal_subscribe(md->signal_index, _meter_on_signal, w);
+
 	ESP_LOGI(TAG, "_meter_create: DONE");
 }
 
@@ -154,6 +184,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "max", md->max);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
+	if (md->signal_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
 }
 
 static void _meter_from_json(widget_t *w, cJSON *in) {
@@ -182,6 +214,15 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
 		md->end_angle = (int16_t)ea_item->valueint;
+	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
+		strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name) - 1);
+		md->signal_name[sizeof(md->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (md->signal_name[0] != '\0')
+		md->signal_index = signal_find_by_name(md->signal_name);
 }
 
 static void _meter_destroy(widget_t *w) {
@@ -206,7 +247,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	if (!w)
 		return NULL;
 
-	meter_data_t *md = calloc(1, sizeof(meter_data_t));
+	meter_data_t *md = heap_caps_calloc(1, sizeof(meter_data_t), MALLOC_CAP_SPIRAM);
+	if (!md) md = calloc(1, sizeof(meter_data_t));
 	if (!md) {
 		free(w);
 		return NULL;
@@ -220,6 +262,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->meter = NULL;
 	md->scale = NULL;
 	md->needle = NULL;
+	md->signal_index = -1;
 
 	w->type = WIDGET_METER;
 	w->x = 0;

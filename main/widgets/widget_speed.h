@@ -25,6 +25,10 @@ uint64_t *widget_speed_get_last_can_time(void);
  */
 widget_t *widget_speed_create_instance(void);
 
+void widget_speed_sync_from_legacy(widget_t *w, const value_config_t *cfg);
+
+void widget_speed_sync_to_legacy(const widget_t *w, value_config_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif

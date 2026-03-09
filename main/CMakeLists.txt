@@ -44,6 +44,7 @@ idf_component_register(
         "widgets/widget_registry.c"
         "widgets/widget_dispatcher.c"
         "widgets/widget_types.c"
+        "widgets/signal.c"
         "layout/layout_manager.c"
         "layout/default_layout.c"
         "layout/layout_loader.c"

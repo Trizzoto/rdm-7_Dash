@@ -53,6 +53,13 @@ uint64_t *widget_panel_get_last_can_time(uint8_t idx);
  */
 widget_t *widget_panel_create_instance(uint8_t slot);
 
+void widget_panel_sync_from_legacy(widget_t *w, const value_config_t *cfg,
+                                   const char *label_text);
+
+uint8_t widget_panel_get_slot(const widget_t *w);
+void widget_panel_sync_to_legacy(const widget_t *w, value_config_t *cfg,
+                                 char *label_out, size_t label_size);
+
 #ifdef __cplusplus
 }
 #endif

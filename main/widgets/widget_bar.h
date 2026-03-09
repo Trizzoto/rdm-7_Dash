@@ -49,6 +49,11 @@ extern lv_obj_t *ui_Bar_2_Value;
  */
 widget_t *widget_bar_create_instance(uint8_t slot);
 
+void widget_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg);
+
+uint8_t widget_bar_get_slot(const widget_t *w);
+void widget_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif

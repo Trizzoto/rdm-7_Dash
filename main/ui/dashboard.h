@@ -6,6 +6,7 @@
  */
 #pragma once
 
+#include "esp_err.h"
 #include "lvgl.h"
 #include "widget_types.h"
 #include "cJSON.h"
@@ -55,6 +56,34 @@ uint8_t dashboard_get_widget_count(void);
  * @param root   Parsed cJSON layout tree (must have "widgets" array).
  */
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root);
+
+/**
+ * @brief Sync legacy config globals (values_config[], label_texts[], etc.)
+ *        into each widget's type_data struct.
+ *
+ * Call this after config modal callbacks have modified the legacy globals,
+ * before persisting the layout as JSON.
+ */
+void dashboard_sync_config_to_widgets(void);
+
+/**
+ * @brief Reverse sync: push widget type_data back into legacy globals.
+ *
+ * Call after layout_manager_load() so that values_config[], label_texts[],
+ * rpm_gauge_max, etc. reflect the freshly loaded JSON config.  This prevents
+ * stale globals from overwriting type_data on the next save.
+ */
+void dashboard_sync_widgets_to_config(void);
+
+/**
+ * @brief Persist the current dashboard layout to LittleFS as JSON.
+ *
+ * Calls dashboard_sync_config_to_widgets() internally, then serialises
+ * all widgets via to_json() and writes to the active layout file.
+ *
+ * @return ESP_OK on success.
+ */
+esp_err_t dashboard_persist_layout(void);
 
 #ifdef __cplusplus
 }

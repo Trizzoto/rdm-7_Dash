@@ -2,6 +2,8 @@
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
 #include "driver/twai.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -23,6 +25,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
+	int32_t  bar_min;
+	int32_t  bar_max;
+	int32_t  bar_low;
+	int32_t  bar_high;
+	lv_color_t bar_low_color;
+	lv_color_t bar_high_color;
+	lv_color_t bar_in_range_color;
+	bool     show_bar_value;
+	bool     invert_bar_value;
+	bool     fuel_sender;
+	float    fuel_sender_empty_v;
+	float    fuel_sender_full_v;
+	uint8_t  fuel_sender_filter;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+} bar_data_t;
 
 uint64_t last_bar_can_received[2] = {0, 0};
 float previous_bar_values[2] = {0, 0};
@@ -869,12 +891,32 @@ uint64_t *widget_bar_get_last_can_time(uint8_t bar_idx) {
 
 /* bar_create() creates both BAR1 and BAR2 together; slot 0 triggers creation.
  */
+static void _bar_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+	uint8_t bar_index = bd->slot;
+	uint8_t vid = (bar_index == 0) ? BAR1_VALUE_ID : BAR2_VALUE_ID;
+	int config_index = vid - 1;
+	if (is_stale) {
+		update_bar_ui_immediate(bar_index, 0, 0.0, config_index);
+		return;
+	}
+	int32_t bar_value = (int32_t)value;
+	update_bar_ui_immediate(bar_index, bar_value, (double)value, config_index);
+}
+
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	uint8_t slot = bd ? bd->slot : 0;
 	if (slot == 0) {
 		widget_bar_create(parent);
 	}
 	w->root = (slot == 0) ? ui_Bar_1 : ui_Bar_2;
+
+	/* Subscribe to signal if bound */
+	if (bd && bd->signal_index >= 0)
+		signal_subscribe(bd->signal_index, _bar_on_signal, w);
 }
 static void _bar_update(widget_t *w, void *data) {
 	(void)w;
@@ -889,19 +931,82 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 static void _bar_open_settings(widget_t *w) { (void)w; }
 static void _bar_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	uint8_t vid = (slot == 0) ? BAR1_VALUE_ID : BAR2_VALUE_ID;
-	uint8_t idx = vid - 1;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
 	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-	cJSON_AddNumberToObject(cfg, "slot", slot);
-	cJSON_AddNumberToObject(cfg, "can_id", values_config[idx].can_id);
-	cJSON_AddNumberToObject(cfg, "bar_min", values_config[idx].bar_min);
-	cJSON_AddNumberToObject(cfg, "bar_max", values_config[idx].bar_max);
+	if (!cfg) return;
+	if (bd) {
+		cJSON_AddNumberToObject(cfg, "slot", bd->slot);
+		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
+		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
+		cJSON_AddNumberToObject(cfg, "bar_low", bd->bar_low);
+		cJSON_AddNumberToObject(cfg, "bar_high", bd->bar_high);
+		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
+		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
+		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
+		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
+		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
+		cJSON_AddBoolToObject(cfg, "fuel_sender", bd->fuel_sender);
+		cJSON_AddNumberToObject(cfg, "fuel_sender_empty_v", bd->fuel_sender_empty_v);
+		cJSON_AddNumberToObject(cfg, "fuel_sender_full_v", bd->fuel_sender_full_v);
+		cJSON_AddNumberToObject(cfg, "fuel_sender_filter", bd->fuel_sender_filter);
+		cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
+		if (bd->signal_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "signal_name", bd->signal_name);
+	} else {
+		cJSON_AddNumberToObject(cfg, "slot", 0);
+	}
 }
 static void _bar_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
+	if (cJSON_IsNumber(item)) bd->slot = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_min");
+	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
+	if (cJSON_IsNumber(item)) bd->bar_max = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low");
+	if (cJSON_IsNumber(item)) bd->bar_low = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high");
+	if (cJSON_IsNumber(item)) bd->bar_high = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low_color");
+	if (cJSON_IsNumber(item)) bd->bar_low_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high_color");
+	if (cJSON_IsNumber(item)) bd->bar_high_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_in_range_color");
+	if (cJSON_IsNumber(item)) bd->bar_in_range_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_value");
+	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
+	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender");
+	if (cJSON_IsBool(item)) bd->fuel_sender = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_empty_v");
+	if (cJSON_IsNumber(item)) bd->fuel_sender_empty_v = (float)item->valuedouble;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_full_v");
+	if (cJSON_IsNumber(item)) bd->fuel_sender_full_v = (float)item->valuedouble;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_filter");
+	if (cJSON_IsNumber(item)) bd->fuel_sender_filter = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
+	if (cJSON_IsNumber(item)) bd->decimals = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(bd->signal_name, item->valuestring, sizeof(bd->signal_name) - 1);
+		bd->signal_name[sizeof(bd->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (bd->signal_name[0] != '\0')
+		bd->signal_index = signal_find_by_name(bd->signal_name);
 }
-static void _bar_destroy(widget_t *w) { free(w); }
+static void _bar_destroy(widget_t *w) {
+	free(w->type_data);
+	free(w);
+}
 
 /* Default x offsets from screen centre for BAR1 and BAR2 */
 static const int16_t s_bar_default_x[2] = {-240, 240};
@@ -911,12 +1016,36 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	if (!w)
 		return NULL;
 
+	bar_data_t *bd = heap_caps_calloc(1, sizeof(bar_data_t), MALLOC_CAP_SPIRAM);
+	if (!bd) bd = calloc(1, sizeof(bar_data_t));
+	if (!bd) { free(w); return NULL; }
+
+	/* Bridge from global config */
+	bd->slot = slot & 1;
+	uint8_t vid = (bd->slot == 0) ? BAR1_VALUE_ID : BAR2_VALUE_ID;
+	uint8_t idx = vid - 1;
+	bd->bar_min = values_config[idx].bar_min;
+	bd->bar_max = values_config[idx].bar_max;
+	bd->bar_low = values_config[idx].bar_low;
+	bd->bar_high = values_config[idx].bar_high;
+	bd->bar_low_color = values_config[idx].bar_low_color;
+	bd->bar_high_color = values_config[idx].bar_high_color;
+	bd->bar_in_range_color = values_config[idx].bar_in_range_color;
+	bd->show_bar_value = values_config[idx].show_bar_value;
+	bd->invert_bar_value = values_config[idx].invert_bar_value;
+	bd->fuel_sender = values_config[idx].fuel_sender;
+	bd->fuel_sender_empty_v = values_config[idx].fuel_sender_empty_v;
+	bd->fuel_sender_full_v = values_config[idx].fuel_sender_full_v;
+	bd->fuel_sender_filter = values_config[idx].fuel_sender_filter;
+	bd->decimals = values_config[idx].decimals;
+	bd->signal_index = -1;
+
 	w->type = WIDGET_BAR;
 	w->x = s_bar_default_x[slot & 1];
 	w->y = 209;
 	w->w = 300;
 	w->h = 30;
-	w->type_data = (void *)(uintptr_t)(slot & 1);
+	w->type_data = bd;
 	snprintf(w->id, sizeof(w->id), "bar_%u", slot & 1);
 
 	w->create = _bar_create;
@@ -928,4 +1057,47 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	w->destroy = _bar_destroy;
 
 	return w;
+}
+
+void widget_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data || !cfg) return;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	bd->bar_min = cfg->bar_min;
+	bd->bar_max = cfg->bar_max;
+	bd->bar_low = cfg->bar_low;
+	bd->bar_high = cfg->bar_high;
+	bd->bar_low_color = cfg->bar_low_color;
+	bd->bar_high_color = cfg->bar_high_color;
+	bd->bar_in_range_color = cfg->bar_in_range_color;
+	bd->show_bar_value = cfg->show_bar_value;
+	bd->invert_bar_value = cfg->invert_bar_value;
+	bd->fuel_sender = cfg->fuel_sender;
+	bd->fuel_sender_empty_v = cfg->fuel_sender_empty_v;
+	bd->fuel_sender_full_v = cfg->fuel_sender_full_v;
+	bd->fuel_sender_filter = cfg->fuel_sender_filter;
+	bd->decimals = cfg->decimals;
+}
+
+uint8_t widget_bar_get_slot(const widget_t *w) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data) return 0;
+	return ((const bar_data_t *)w->type_data)->slot;
+}
+
+void widget_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data || !cfg) return;
+	const bar_data_t *bd = (const bar_data_t *)w->type_data;
+	cfg->bar_min = bd->bar_min;
+	cfg->bar_max = bd->bar_max;
+	cfg->bar_low = bd->bar_low;
+	cfg->bar_high = bd->bar_high;
+	cfg->bar_low_color = bd->bar_low_color;
+	cfg->bar_high_color = bd->bar_high_color;
+	cfg->bar_in_range_color = bd->bar_in_range_color;
+	cfg->show_bar_value = bd->show_bar_value;
+	cfg->invert_bar_value = bd->invert_bar_value;
+	cfg->fuel_sender = bd->fuel_sender;
+	cfg->fuel_sender_empty_v = bd->fuel_sender_empty_v;
+	cfg->fuel_sender_full_v = bd->fuel_sender_full_v;
+	cfg->fuel_sender_filter = bd->fuel_sender_filter;
+	cfg->decimals = bd->decimals;
 }

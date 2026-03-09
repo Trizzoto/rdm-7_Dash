@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "esp_heap_caps.h"
+#include "signal.h"
 
 uint64_t last_panel_can_received[8] = {0};
 
@@ -40,6 +42,27 @@ static const lv_coord_t value_positions[8][2] = {
 static const lv_coord_t box_positions[8][2] = {
 	{-312, -26}, {-146, -26}, {-312, 82}, {-146, 82},
 	{146, -26},	 {312, -26},  {146, 82},  {312, 82}};
+/* ── panel_data_t: per-instance state replacing raw slot cast ────────────── */
+typedef struct {
+	uint8_t    slot;
+	char       label[64];
+	char       custom_text[32];
+	uint8_t    decimals;
+	bool       warning_high_enabled;
+	float      warning_high_threshold;
+	lv_color_t warning_high_color;
+	bool       warning_low_enabled;
+	float      warning_low_threshold;
+	lv_color_t warning_low_color;
+	char       signal_name[32];
+	int16_t    signal_index;
+	/* LVGL object pointers (runtime only) */
+	lv_obj_t  *box;
+	lv_obj_t  *header_label;
+	lv_obj_t  *value_label;
+	lv_obj_t  *custom_text_label;
+} panel_data_t;
+
 void update_panel_ui(void *param) {
 	panel_update_t *update = (panel_update_t *)param;
 	if (!update)
@@ -409,8 +432,28 @@ static const int16_t s_panel_default_y[8] = {-26, -26, 82, 82,
 
 /* create vtable adapter: creates a single panel box for the given slot.
  * Only panels present in the JSON layout will be created. */
+static void _panel_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (!pd) return;
+	uint8_t slot = pd->slot;
+	if (slot >= 8) return;
+	if (is_stale) {
+		update_panel_ui_immediate(slot, "---", 0.0);
+		return;
+	}
+	char buf[32];
+	if (pd->decimals == 0)
+		snprintf(buf, sizeof(buf), "%d", (int)value);
+	else
+		snprintf(buf, sizeof(buf), "%.*f", pd->decimals, (double)value);
+	update_panel_ui_immediate(slot, buf, (double)value);
+}
+
 static void _panel_create(widget_t *w, lv_obj_t *parent) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (!pd) return;
+	uint8_t slot = pd->slot;
 	if (slot >= 8)
 		return;
 
@@ -431,7 +474,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 
 	/* Header label */
 	ui_Label[slot] = lv_label_create(ui_Box[slot]);
-	lv_label_set_text(ui_Label[slot], label_texts[slot]);
+	lv_label_set_text(ui_Label[slot], pd->label);
 	lv_obj_set_style_text_color(ui_Label[slot], THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_Label[slot], 255,
@@ -469,7 +512,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 
 	/* Custom unit text */
 	ui_CustomText[slot] = lv_label_create(ui_Box[slot]);
-	lv_label_set_text(ui_CustomText[slot], values_config[slot].custom_text);
+	lv_label_set_text(ui_CustomText[slot], pd->custom_text);
 	lv_obj_set_style_text_color(ui_CustomText[slot], THEME_COLOR_TEXT_MUTED,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(ui_CustomText[slot], 255,
@@ -483,10 +526,14 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_x(ui_CustomText[slot], 41);
 	lv_obj_set_y(ui_CustomText[slot], 32);
 	lv_obj_set_align(ui_CustomText[slot], LV_ALIGN_CENTER);
-	if (strlen(values_config[slot].custom_text) == 0)
+	if (strlen(pd->custom_text) == 0)
 		lv_obj_add_flag(ui_CustomText[slot], LV_OBJ_FLAG_HIDDEN);
 
 	w->root = ui_Box[slot];
+
+	/* Subscribe to signal if bound */
+	if (pd->signal_index >= 0)
+		signal_subscribe(pd->signal_index, _panel_on_signal, w);
 }
 
 static void _panel_update(widget_t *w, void *data) {
@@ -504,35 +551,120 @@ static void _panel_open_settings(widget_t *w) {
 	(void)w; /* triggered via LVGL long-press */
 }
 static void _panel_to_json(widget_t *w, cJSON *out) {
+	panel_data_t *pd = (panel_data_t *)w->type_data;
 	widget_base_to_json(w, out);
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot < 8) {
-		cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-		cJSON_AddNumberToObject(cfg, "slot", slot);
-		cJSON_AddNumberToObject(cfg, "can_id", values_config[slot].can_id);
-		cJSON_AddNumberToObject(cfg, "scale", values_config[slot].scale);
-		cJSON_AddNumberToObject(cfg, "offset",
-								values_config[slot].value_offset);
-		cJSON_AddStringToObject(cfg, "label", label_texts[slot]);
+	if (!pd) return;
+	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+	if (!cfg) return;
+	cJSON_AddNumberToObject(cfg, "slot", pd->slot);
+	cJSON_AddStringToObject(cfg, "label", pd->label);
+	cJSON_AddStringToObject(cfg, "custom_text", pd->custom_text);
+	cJSON_AddNumberToObject(cfg, "decimals", pd->decimals);
+	if (pd->warning_high_enabled) {
+		cJSON_AddBoolToObject(cfg, "warning_high_enabled", true);
+		cJSON_AddNumberToObject(cfg, "warning_high_threshold", pd->warning_high_threshold);
+		cJSON_AddNumberToObject(cfg, "warning_high_color", (int)pd->warning_high_color.full);
 	}
+	if (pd->warning_low_enabled) {
+		cJSON_AddBoolToObject(cfg, "warning_low_enabled", true);
+		cJSON_AddNumberToObject(cfg, "warning_low_threshold", pd->warning_low_threshold);
+		cJSON_AddNumberToObject(cfg, "warning_low_color", (int)pd->warning_low_color.full);
+	}
+	if (pd->signal_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "signal_name", pd->signal_name);
 }
 static void _panel_from_json(widget_t *w, cJSON *in) {
+	panel_data_t *pd = (panel_data_t *)w->type_data;
 	widget_base_from_json(w, in);
-	/* Full config restoration handled by NVS / config_store during boot */
+	if (!pd) return;
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg) return;
+
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
+	if (cJSON_IsNumber(item)) pd->slot = (uint8_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
+	if (cJSON_IsString(item) && item->valuestring)
+		strncpy(pd->label, item->valuestring, sizeof(pd->label) - 1);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text");
+	if (cJSON_IsString(item) && item->valuestring)
+		strncpy(pd->custom_text, item->valuestring, sizeof(pd->custom_text) - 1);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
+	if (cJSON_IsNumber(item)) pd->decimals = (uint8_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_enabled");
+	if (cJSON_IsBool(item)) pd->warning_high_enabled = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_threshold");
+	if (cJSON_IsNumber(item)) pd->warning_high_threshold = (float)item->valuedouble;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_color");
+	if (cJSON_IsNumber(item)) pd->warning_high_color.full = (uint32_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_enabled");
+	if (cJSON_IsBool(item)) pd->warning_low_enabled = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_threshold");
+	if (cJSON_IsNumber(item)) pd->warning_low_threshold = (float)item->valuedouble;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_color");
+	if (cJSON_IsNumber(item)) pd->warning_low_color.full = (uint32_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring)
+		strncpy(pd->signal_name, item->valuestring, sizeof(pd->signal_name) - 1);
+
+	/* Resolve signal name → index */
+	if (pd->signal_name[0] != '\0')
+		pd->signal_index = signal_find_by_name(pd->signal_name);
 }
-static void _panel_destroy(widget_t *w) { free(w); }
+static void _panel_destroy(widget_t *w) {
+	if (w) {
+		free(w->type_data);
+		free(w);
+	}
+}
 
 widget_t *widget_panel_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
 		return NULL;
 
+	/* Allocate per-instance data in PSRAM, fall back to internal RAM */
+	panel_data_t *pd = heap_caps_calloc(1, sizeof(panel_data_t), MALLOC_CAP_SPIRAM);
+	if (!pd)
+		pd = calloc(1, sizeof(panel_data_t));
+	if (!pd) {
+		free(w);
+		return NULL;
+	}
+
+	pd->slot = slot < 8 ? slot : 0;
+	pd->signal_index = -1;
+
+	/* Bridge: populate from current global config so runtime behaviour
+	 * is unchanged while we still have the global arrays. */
+	if (pd->slot < 8) {
+		strncpy(pd->label, label_texts[pd->slot], sizeof(pd->label) - 1);
+		strncpy(pd->custom_text, values_config[pd->slot].custom_text, sizeof(pd->custom_text) - 1);
+		pd->decimals = values_config[pd->slot].decimals;
+		pd->warning_high_enabled = values_config[pd->slot].warning_high_enabled;
+		pd->warning_high_threshold = values_config[pd->slot].warning_high_threshold;
+		pd->warning_high_color = values_config[pd->slot].warning_high_color;
+		pd->warning_low_enabled = values_config[pd->slot].warning_low_enabled;
+		pd->warning_low_threshold = values_config[pd->slot].warning_low_threshold;
+		pd->warning_low_color = values_config[pd->slot].warning_low_color;
+	}
+
 	w->type = WIDGET_PANEL;
-	w->x = s_panel_default_x[slot < 8 ? slot : 0];
-	w->y = s_panel_default_y[slot < 8 ? slot : 0];
+	w->x = s_panel_default_x[pd->slot];
+	w->y = s_panel_default_y[pd->slot];
 	w->w = 155;
 	w->h = 92;
-	w->type_data = (void *)(uintptr_t)slot; /* store slot index */
+	w->type_data = pd;
 	snprintf(w->id, sizeof(w->id), "panel_%u", slot);
 
 	w->create = _panel_create;
@@ -544,4 +676,49 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	w->destroy = _panel_destroy;
 
 	return w;
+}
+
+void widget_panel_sync_from_legacy(widget_t *w, const value_config_t *cfg,
+                                   const char *label_text) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data) return;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (label_text) {
+		strncpy(pd->label, label_text, sizeof(pd->label) - 1);
+		pd->label[sizeof(pd->label) - 1] = '\0';
+	}
+	if (!cfg) return;
+	strncpy(pd->custom_text, cfg->custom_text, sizeof(pd->custom_text) - 1);
+	pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
+	pd->decimals = cfg->decimals;
+	pd->warning_high_enabled = cfg->warning_high_enabled;
+	pd->warning_high_threshold = cfg->warning_high_threshold;
+	pd->warning_high_color = cfg->warning_high_color;
+	pd->warning_low_enabled = cfg->warning_low_enabled;
+	pd->warning_low_threshold = cfg->warning_low_threshold;
+	pd->warning_low_color = cfg->warning_low_color;
+}
+
+uint8_t widget_panel_get_slot(const widget_t *w) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data) return 0;
+	return ((const panel_data_t *)w->type_data)->slot;
+}
+
+void widget_panel_sync_to_legacy(const widget_t *w, value_config_t *cfg,
+                                 char *label_out, size_t label_size) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data) return;
+	const panel_data_t *pd = (const panel_data_t *)w->type_data;
+	if (label_out && label_size > 0) {
+		strncpy(label_out, pd->label, label_size - 1);
+		label_out[label_size - 1] = '\0';
+	}
+	if (!cfg) return;
+	strncpy(cfg->custom_text, pd->custom_text, sizeof(cfg->custom_text) - 1);
+	cfg->custom_text[sizeof(cfg->custom_text) - 1] = '\0';
+	cfg->decimals = pd->decimals;
+	cfg->warning_high_enabled = pd->warning_high_enabled;
+	cfg->warning_high_threshold = pd->warning_high_threshold;
+	cfg->warning_high_color = pd->warning_high_color;
+	cfg->warning_low_enabled = pd->warning_low_enabled;
+	cfg->warning_low_threshold = pd->warning_low_threshold;
+	cfg->warning_low_color = pd->warning_low_color;
 }

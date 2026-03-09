@@ -2,6 +2,8 @@
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
 #include "driver/twai.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -23,6 +25,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+	bool     use_mph;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+	lv_obj_t *speed_label;
+	lv_obj_t *units_label;
+} speed_data_t;
 
 uint64_t last_speed_can_received = 0;
 
@@ -96,6 +107,17 @@ uint64_t *widget_speed_get_last_can_time(void) {
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
+static void _speed_on_signal(float value, bool is_stale, void *user_data) {
+	(void)user_data;
+	if (is_stale) {
+		update_speed_ui_immediate("---");
+		return;
+	}
+	char buf[32];
+	snprintf(buf, sizeof(buf), "%d", (int)value);
+	update_speed_ui_immediate(buf);
+}
+
 static void _speed_create(widget_t *w, lv_obj_t *parent) {
 	widget_speed_create(parent);
 	w->root = ui_Speed_Value;
@@ -106,6 +128,11 @@ static void _speed_create(widget_t *w, lv_obj_t *parent) {
 		lv_obj_set_x(ui_Kmh, w->x + 37);
 		lv_obj_set_y(ui_Kmh, w->y + 34); /* 64 - 30 = 34 diff */
 	}
+
+	/* Subscribe to signal if bound */
+	speed_data_t *sd = (speed_data_t *)w->type_data;
+	if (sd && sd->signal_index >= 0)
+		signal_subscribe(sd->signal_index, _speed_on_signal, w);
 }
 static void _speed_update(widget_t *w, void *data) {
 	(void)w;
@@ -119,27 +146,65 @@ static void _speed_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 static void _speed_open_settings(widget_t *w) { (void)w; }
 static void _speed_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
+	speed_data_t *sd = (speed_data_t *)w->type_data;
 	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-	uint8_t idx = SPEED_VALUE_ID - 1;
-	cJSON_AddNumberToObject(cfg, "can_id", values_config[idx].can_id);
-	cJSON_AddBoolToObject(cfg, "use_mph", values_config[idx].use_mph);
-	cJSON_AddNumberToObject(cfg, "scale", values_config[idx].scale);
+	if (!cfg) return;
+	if (sd) {
+		cJSON_AddBoolToObject(cfg, "use_mph", sd->use_mph);
+		if (sd->signal_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "signal_name", sd->signal_name);
+	} else {
+		uint8_t idx = SPEED_VALUE_ID - 1;
+		cJSON_AddBoolToObject(cfg, "use_mph", values_config[idx].use_mph);
+	}
 }
 static void _speed_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	speed_data_t *sd = (speed_data_t *)w->type_data;
+	if (!sd) return;
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "use_mph");
+	if (cJSON_IsBool(item)) {
+		sd->use_mph = cJSON_IsTrue(item);
+		/* Sync to legacy global for backward compat */
+		values_config[SPEED_VALUE_ID - 1].use_mph = sd->use_mph;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(sd->signal_name, item->valuestring, sizeof(sd->signal_name) - 1);
+		sd->signal_name[sizeof(sd->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (sd->signal_name[0] != '\0')
+		sd->signal_index = signal_find_by_name(sd->signal_name);
 }
-static void _speed_destroy(widget_t *w) { free(w); }
+static void _speed_destroy(widget_t *w) {
+	free(w->type_data);
+	free(w);
+}
 
 widget_t *widget_speed_create_instance(void) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
 		return NULL;
 
+	speed_data_t *sd = heap_caps_calloc(1, sizeof(speed_data_t), MALLOC_CAP_SPIRAM);
+	if (!sd) sd = calloc(1, sizeof(speed_data_t));
+	if (!sd) { free(w); return NULL; }
+
+	/* Bridge from global config */
+	sd->use_mph = values_config[SPEED_VALUE_ID - 1].use_mph;
+	sd->signal_index = -1;
+
 	w->type = WIDGET_SPEED;
 	w->x = 0;
 	w->y = 30;
 	w->w = 120;
 	w->h = 50;
+	w->type_data = sd;
 	snprintf(w->id, sizeof(w->id), "speed_0");
 
 	w->create = _speed_create;
@@ -151,4 +216,16 @@ widget_t *widget_speed_create_instance(void) {
 	w->destroy = _speed_destroy;
 
 	return w;
+}
+
+void widget_speed_sync_from_legacy(widget_t *w, const value_config_t *cfg) {
+	if (!w || w->type != WIDGET_SPEED || !w->type_data || !cfg) return;
+	speed_data_t *sd = (speed_data_t *)w->type_data;
+	sd->use_mph = cfg->use_mph;
+}
+
+void widget_speed_sync_to_legacy(const widget_t *w, value_config_t *cfg) {
+	if (!w || w->type != WIDGET_SPEED || !w->type_data || !cfg) return;
+	const speed_data_t *sd = (const speed_data_t *)w->type_data;
+	cfg->use_mph = sd->use_mph;
 }

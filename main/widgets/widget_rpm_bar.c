@@ -1,4 +1,6 @@
 #include "widget_rpm_bar.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
 #include "driver/twai.h"
@@ -51,6 +53,21 @@ void widget_rpm_bar_clear_stale_pointers(void) {
 	rpm_lines_parent = NULL;
 	s_rpm_container = NULL;
 }
+
+typedef struct {
+	int32_t  gauge_max;
+	int32_t  redline;
+	lv_color_t bar_color;
+	uint8_t  limiter_effect;   /* 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined */
+	int32_t  limiter_value;
+	lv_color_t limiter_color;
+	bool     lights_enabled;
+	bool     background_enabled;
+	int32_t  background_value;
+	lv_color_t background_color;
+	char     signal_name[32];
+	int16_t  signal_index;
+} rpm_bar_data_t;
 
 static int current_canbus_rpm = 0; // Store the current CAN bus RPM value
 
@@ -1381,9 +1398,26 @@ uint64_t *widget_rpm_bar_get_last_can_time(void) {
 /* ── Phase 2: widget_t factory
  * ───────────────────────────────────────────── */
 
+static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
+	(void)user_data;
+	if (is_stale) {
+		update_rpm_ui_immediate("---", 0);
+		return;
+	}
+	int rpm = (int)value;
+	char buf[16];
+	snprintf(buf, sizeof(buf), "%d", rpm);
+	update_rpm_ui_immediate(buf, rpm);
+}
+
 static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_t *container = widget_rpm_bar_create(parent);
 	w->root = container;
+
+	/* Subscribe to signal if bound */
+	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
+	if (rbd && rbd->signal_index >= 0)
+		signal_subscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 }
 static void _rpm_bar_update(widget_t *w, void *data) {
 	(void)w;
@@ -1395,36 +1429,101 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 }
 static void _rpm_bar_open_settings(widget_t *w) { (void)w; }
 static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
 	widget_base_to_json(w, out);
+	if (!rd) return;
 	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-	uint8_t idx = RPM_VALUE_ID - 1;
-	cJSON_AddNumberToObject(cfg, "can_id", values_config[idx].can_id);
-	cJSON_AddNumberToObject(cfg, "rpm_max", rpm_gauge_max);
-	cJSON_AddNumberToObject(cfg, "redline", rpm_redline_value);
-	cJSON_AddNumberToObject(cfg, "limiter",
-							values_config[idx].rpm_limiter_value);
-	cJSON_AddBoolToObject(cfg, "lights_enabled",
-						  values_config[idx].rpm_lights_enabled);
+	if (!cfg) return;
+	cJSON_AddNumberToObject(cfg, "rpm_max", rd->gauge_max);
+	cJSON_AddNumberToObject(cfg, "redline", rd->redline);
+	cJSON_AddNumberToObject(cfg, "bar_color", (int)rd->bar_color.full);
+	cJSON_AddNumberToObject(cfg, "limiter_effect", rd->limiter_effect);
+	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
+	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
+	cJSON_AddBoolToObject(cfg, "lights_enabled", rd->lights_enabled);
+	cJSON_AddBoolToObject(cfg, "background_enabled", rd->background_enabled);
+	cJSON_AddNumberToObject(cfg, "background_value", rd->background_value);
+	cJSON_AddNumberToObject(cfg, "background_color", (int)rd->background_color.full);
+	if (rd->signal_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
 }
 static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
 	widget_base_from_json(w, in);
+	if (!rd) return;
 	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
-	if (!cfg)
-		return;
-	cJSON *rpm_max_item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_max");
-	if (cJSON_IsNumber(rpm_max_item) && rpm_max_item->valueint > 0)
-		rpm_gauge_max = rpm_max_item->valueint;
-	cJSON *redline_item = cJSON_GetObjectItemCaseSensitive(cfg, "redline");
-	if (cJSON_IsNumber(redline_item) && redline_item->valueint >= 0)
-		rpm_redline_value = redline_item->valueint;
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_max");
+	if (cJSON_IsNumber(item) && item->valueint > 0) {
+		rd->gauge_max = item->valueint;
+		rpm_gauge_max = rd->gauge_max; /* sync global for legacy code */
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "redline");
+	if (cJSON_IsNumber(item) && item->valueint >= 0) {
+		rd->redline = item->valueint;
+		rpm_redline_value = rd->redline; /* sync global */
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_color");
+	if (cJSON_IsNumber(item)) rd->bar_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_effect");
+	if (cJSON_IsNumber(item)) rd->limiter_effect = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_value");
+	if (cJSON_IsNumber(item)) rd->limiter_value = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_color");
+	if (cJSON_IsNumber(item)) rd->limiter_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "lights_enabled");
+	if (cJSON_IsBool(item)) rd->lights_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_enabled");
+	if (cJSON_IsBool(item)) rd->background_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_value");
+	if (cJSON_IsNumber(item)) rd->background_value = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_color");
+	if (cJSON_IsNumber(item)) rd->background_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring)
+		strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name) - 1);
+
+	/* Resolve signal name → index */
+	if (rd->signal_name[0] != '\0')
+		rd->signal_index = signal_find_by_name(rd->signal_name);
 }
-static void _rpm_bar_destroy(widget_t *w) { free(w); }
+static void _rpm_bar_destroy(widget_t *w) {
+	if (w) {
+		free(w->type_data);
+		free(w);
+	}
+}
 
 widget_t *widget_rpm_bar_create_instance(void) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
 		return NULL;
 
+	rpm_bar_data_t *rd = heap_caps_calloc(1, sizeof(rpm_bar_data_t), MALLOC_CAP_SPIRAM);
+	if (!rd)
+		rd = calloc(1, sizeof(rpm_bar_data_t));
+	if (!rd) {
+		free(w);
+		return NULL;
+	}
+
+	rd->signal_index = -1;
+
+	/* Bridge current globals into type_data */
+	rd->gauge_max = rpm_gauge_max;
+	rd->redline = rpm_redline_value;
+	uint8_t idx = RPM_VALUE_ID - 1;
+	rd->bar_color = values_config[idx].rpm_bar_color;
+	rd->limiter_effect = values_config[idx].rpm_limiter_effect;
+	rd->limiter_value = values_config[idx].rpm_limiter_value;
+	rd->limiter_color = values_config[idx].rpm_limiter_color;
+	rd->lights_enabled = values_config[idx].rpm_lights_enabled;
+	rd->background_enabled = values_config[idx].rpm_background_enabled;
+	rd->background_value = values_config[idx].rpm_background_value;
+	rd->background_color = values_config[idx].rpm_background_color;
+
+	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;
 	/* RPM bar occupies full screen width at top.
 	 * y = -240 + 55/2 = -213 in center-origin coords. */
@@ -1443,4 +1542,36 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	w->destroy = _rpm_bar_destroy;
 
 	return w;
+}
+
+void widget_rpm_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg,
+                                     int gauge_max, int redline) {
+	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !cfg) return;
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
+	rd->gauge_max = gauge_max;
+	rd->redline = redline;
+	rd->bar_color = cfg->rpm_bar_color;
+	rd->limiter_effect = cfg->rpm_limiter_effect;
+	rd->limiter_value = cfg->rpm_limiter_value;
+	rd->limiter_color = cfg->rpm_limiter_color;
+	rd->lights_enabled = cfg->rpm_lights_enabled;
+	rd->background_enabled = cfg->rpm_background_enabled;
+	rd->background_value = cfg->rpm_background_value;
+	rd->background_color = cfg->rpm_background_color;
+}
+
+void widget_rpm_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg,
+                                   int *gauge_max_out, int *redline_out) {
+	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !cfg) return;
+	const rpm_bar_data_t *rd = (const rpm_bar_data_t *)w->type_data;
+	if (gauge_max_out) *gauge_max_out = rd->gauge_max;
+	if (redline_out) *redline_out = rd->redline;
+	cfg->rpm_bar_color = rd->bar_color;
+	cfg->rpm_limiter_effect = rd->limiter_effect;
+	cfg->rpm_limiter_value = rd->limiter_value;
+	cfg->rpm_limiter_color = rd->limiter_color;
+	cfg->rpm_lights_enabled = rd->lights_enabled;
+	cfg->rpm_background_enabled = rd->background_enabled;
+	cfg->rpm_background_value = rd->background_value;
+	cfg->rpm_background_color = rd->background_color;
 }

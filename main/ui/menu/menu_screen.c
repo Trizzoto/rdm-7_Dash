@@ -2,6 +2,7 @@
 #include "menu_screen.h"
 #include "../callbacks/ui_callbacks.h"
 #include "../config/config_controls.h"
+#include "../dashboard.h"
 #include "../screens/ui_Screen3.h"
 #include "../settings/settings_panel.h"
 #include "../theme.h"
@@ -107,6 +108,11 @@ void close_menu_event_cb(lv_event_t *e) {
 	lv_refr_now(NULL);
 
 	config_store_save_values(values_config, MAX_VALUES);
+
+	/* Phase 4: also persist widget config into JSON layout on LittleFS.
+	 * This syncs values_config → type_data → JSON automatically. */
+	dashboard_persist_layout();
+
 	rebuild_can_dispatch();
 	reconfigure_can_filter();
 	vTaskDelay(pdMS_TO_TICKS(50));

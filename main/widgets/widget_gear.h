@@ -55,6 +55,10 @@ extern lv_obj_t *ui_Gear_Label;
  */
 widget_t *widget_gear_create_instance(void);
 
+void widget_gear_sync_from_legacy(widget_t *w, const value_config_t *cfg);
+
+void widget_gear_sync_to_legacy(const widget_t *w, value_config_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif

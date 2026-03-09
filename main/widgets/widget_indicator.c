@@ -2,6 +2,8 @@
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
 #include "driver/twai.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -23,6 +25,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+	uint8_t  slot;              /* 0=left, 1=right */
+	uint8_t  input_source;      /* 0=Wire, 1=CAN */
+	bool     animation_enabled;
+	bool     is_momentary;
+	bool     current_state;     /* runtime only -- NOT serialized */
+	char     signal_name[32];
+	int16_t  signal_index;
+} indicator_data_t;
 
 void update_indicator_ui_immediate(uint8_t indicator_idx);
 
@@ -911,11 +923,27 @@ void init_indicator_configs(void) {
 /* ── Phase 2: widget_t factory
  * ───────────────────────────────────────────── */
 
+static void _indicator_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (!id) return;
+	uint8_t slot = id->slot;
+	if (slot >= 2) return;
+	bool on = !is_stale && (value != 0.0f);
+	indicator_configs[slot].current_state = on;
+	update_indicator_ui_immediate(slot);
+}
+
 static void _indicator_create(widget_t *w, lv_obj_t *parent) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	uint8_t slot = id ? id->slot : 0;
 	widget_indicator_create_one(parent, slot);
 	/* root points to the relevant image obj */
 	w->root = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+
+	/* Subscribe to signal if bound */
+	if (id && id->signal_index >= 0)
+		signal_subscribe(id->signal_index, _indicator_on_signal, w);
 }
 static void _indicator_update(widget_t *w, void *data) {
 	(void)w;
@@ -926,26 +954,53 @@ static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->h = nh;
 }
 static void _indicator_open_settings(widget_t *w) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	uint8_t slot = id ? id->slot : 0;
 	create_indicator_config_menu(slot);
 }
 static void _indicator_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot < 2) {
-		cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-		cJSON_AddNumberToObject(cfg, "slot", slot);
-		cJSON_AddNumberToObject(cfg, "input_source",
-								indicator_configs[slot].input_source);
-		cJSON_AddNumberToObject(cfg, "can_id", indicator_configs[slot].can_id);
-		cJSON_AddBoolToObject(cfg, "animation",
-							  indicator_configs[slot].animation_enabled);
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+	if (!cfg) return;
+	if (id) {
+		cJSON_AddNumberToObject(cfg, "slot", id->slot);
+		cJSON_AddNumberToObject(cfg, "input_source", id->input_source);
+		cJSON_AddBoolToObject(cfg, "animation", id->animation_enabled);
+		cJSON_AddBoolToObject(cfg, "is_momentary", id->is_momentary);
+		if (id->signal_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "signal_name", id->signal_name);
 	}
 }
 static void _indicator_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (!id) return;
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
+	if (cJSON_IsNumber(item)) id->slot = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "input_source");
+	if (cJSON_IsNumber(item)) id->input_source = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "animation");
+	if (cJSON_IsBool(item)) id->animation_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "is_momentary");
+	if (cJSON_IsBool(item)) id->is_momentary = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(id->signal_name, item->valuestring, sizeof(id->signal_name) - 1);
+		id->signal_name[sizeof(id->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (id->signal_name[0] != '\0')
+		id->signal_index = signal_find_by_name(id->signal_name);
 }
-static void _indicator_destroy(widget_t *w) { free(w); }
+static void _indicator_destroy(widget_t *w) {
+	free(w->type_data);
+	free(w);
+}
 
 /* Default positions (relative to LV_ALIGN_CENTER): left x=-95, right x=+95,
  * y=-133 */
@@ -956,13 +1011,26 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	if (!w)
 		return NULL;
 
+	indicator_data_t *id = heap_caps_calloc(1, sizeof(indicator_data_t), MALLOC_CAP_SPIRAM);
+	if (!id) id = calloc(1, sizeof(indicator_data_t));
+	if (!id) { free(w); return NULL; }
+
+	/* Bridge from global config */
+	uint8_t s = slot & 1;
+	id->slot = s;
+	id->input_source = indicator_configs[s].input_source;
+	id->animation_enabled = indicator_configs[s].animation_enabled;
+	id->is_momentary = indicator_configs[s].is_momentary;
+	id->current_state = false;
+	id->signal_index = -1;
+
 	w->type = WIDGET_INDICATOR;
-	w->x = s_indicator_default_x[slot & 1];
+	w->x = s_indicator_default_x[s];
 	w->y = -133;
 	w->w = 50;
 	w->h = 50;
-	w->type_data = (void *)(uintptr_t)(slot & 1);
-	snprintf(w->id, sizeof(w->id), "indicator_%u", slot & 1);
+	w->type_data = id;
+	snprintf(w->id, sizeof(w->id), "indicator_%u", s);
 
 	w->create = _indicator_create;
 	w->update = _indicator_update;

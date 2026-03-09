@@ -1,5 +1,6 @@
 #include "ui/dashboard.h"
 #include "layout/layout_manager.h"
+#include "widgets/signal.h"
 #include "widgets/widget_registry.h"
 
 /* Existing widget create functions — used as fallback */
@@ -14,8 +15,13 @@
 /* CAN dispatch rebuild */
 #include "can/can_dispatch.h"
 
+/* Legacy config globals — used by sync bridge */
+#include "ui/screens/ui_Screen3.h"
+
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "lvgl.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,6 +35,16 @@ static const char *TAG = "dashboard";
 
 static widget_t *s_widgets[DASHBOARD_MAX_WIDGETS];
 static uint8_t s_widget_count = 0;
+
+/* ── Signal timeout timer ─────────────────────────────────────────────────── */
+
+static lv_timer_t *s_signal_timeout_timer = NULL;
+
+static void _signal_timeout_cb(lv_timer_t *timer) {
+	(void)timer;
+	uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+	signal_check_timeouts(now_ms);
+}
 
 /* ── Accessors ───────────────────────────────────────────────────────────── */
 
@@ -60,9 +76,16 @@ void dashboard_init(lv_obj_t *parent) {
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
 
+	signal_registry_init();
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
+
+	/* Create (or keep) signal timeout timer — checks every 500 ms */
+	if (!s_signal_timeout_timer) {
+		s_signal_timeout_timer =
+			lv_timer_create(_signal_timeout_cb, 500, NULL);
+	}
 
 	esp_err_t err = layout_manager_init();
 	if (err != ESP_OK) {
@@ -87,6 +110,11 @@ void dashboard_init(lv_obj_t *parent) {
 	}
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
+
+	/* Push freshly loaded JSON config back into legacy globals so that
+	 * values_config[], label_texts[], rpm_gauge_max etc. stay in sync. */
+	dashboard_sync_widgets_to_config();
+
 	rebuild_can_dispatch();
 }
 
@@ -111,7 +139,124 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	} else {
 		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
 								 &s_widget_count);
+		dashboard_sync_widgets_to_config();
 	}
 
 	rebuild_can_dispatch();
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Phase 4: Sync legacy globals → widget type_data, then persist as JSON.
+ *
+ *  The config modal callbacks still write to values_config[].  These bridge
+ *  functions copy those values into each widget's type_data struct so that
+ *  to_json() produces the complete, up-to-date layout file.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+
+/* values_config[], label_texts[], rpm_gauge_max, rpm_redline_value
+ * declared in ui/screens/ui_Screen3.h (included above) */
+
+void dashboard_sync_config_to_widgets(void) {
+	for (uint8_t i = 0; i < s_widget_count; i++) {
+		widget_t *w = s_widgets[i];
+		if (!w || !w->type_data)
+			continue;
+
+		switch (w->type) {
+		case WIDGET_PANEL: {
+			uint8_t slot = widget_panel_get_slot(w);
+			if (slot < 8)
+				widget_panel_sync_from_legacy(w, &values_config[slot],
+											  label_texts[slot]);
+			break;
+		}
+		case WIDGET_RPM_BAR:
+			widget_rpm_bar_sync_from_legacy(w, &values_config[8],
+											rpm_gauge_max, rpm_redline_value);
+			break;
+
+		case WIDGET_SPEED:
+			widget_speed_sync_from_legacy(w, &values_config[9]);
+			break;
+
+		case WIDGET_GEAR:
+			widget_gear_sync_from_legacy(w, &values_config[10]);
+			break;
+
+		case WIDGET_BAR: {
+			uint8_t slot = widget_bar_get_slot(w);
+			if (slot < 2)
+				widget_bar_sync_from_legacy(w, &values_config[11 + slot]);
+			break;
+		}
+		default:
+			break;
+		}
+	}
+}
+
+void dashboard_sync_widgets_to_config(void) {
+	for (uint8_t i = 0; i < s_widget_count; i++) {
+		widget_t *w = s_widgets[i];
+		if (!w || !w->type_data)
+			continue;
+
+		switch (w->type) {
+		case WIDGET_PANEL: {
+			uint8_t slot = widget_panel_get_slot(w);
+			if (slot < 8)
+				widget_panel_sync_to_legacy(w, &values_config[slot],
+											label_texts[slot],
+											sizeof(label_texts[slot]));
+			break;
+		}
+		case WIDGET_RPM_BAR:
+			widget_rpm_bar_sync_to_legacy(w, &values_config[8],
+										  &rpm_gauge_max, &rpm_redline_value);
+			break;
+
+		case WIDGET_SPEED:
+			widget_speed_sync_to_legacy(w, &values_config[9]);
+			break;
+
+		case WIDGET_GEAR:
+			widget_gear_sync_to_legacy(w, &values_config[10]);
+			break;
+
+		case WIDGET_BAR: {
+			uint8_t slot = widget_bar_get_slot(w);
+			if (slot < 2)
+				widget_bar_sync_to_legacy(w, &values_config[11 + slot]);
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	ESP_LOGI(TAG, "Synced %d widgets → legacy config", s_widget_count);
+}
+
+esp_err_t dashboard_persist_layout(void) {
+	char layout_name[LAYOUT_MAX_NAME];
+	esp_err_t err = layout_manager_get_active(layout_name, sizeof(layout_name));
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "dashboard_persist_layout: get_active failed (%s)",
+				 esp_err_to_name(err));
+		return err;
+	}
+
+	/* Sync legacy config globals into widget type_data */
+	dashboard_sync_config_to_widgets();
+
+	/* Serialise current widgets to JSON and write to LittleFS */
+	err = layout_manager_save(layout_name, s_widgets, s_widget_count);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "dashboard_persist_layout: save '%s' failed (%s)",
+				 layout_name, esp_err_to_name(err));
+	} else {
+		ESP_LOGI(TAG, "Layout '%s' persisted (%d widgets)", layout_name,
+				 s_widget_count);
+	}
+	return err;
 }

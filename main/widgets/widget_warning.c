@@ -2,6 +2,8 @@
 #include "can/can_decode.h"
 #include "can/can_dispatch.h"
 #include "driver/twai.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -23,6 +25,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+	uint8_t    slot;
+	lv_color_t active_color;
+	char       label[32];
+	bool       is_momentary;
+	bool       invert_toggle;
+	bool       current_state;     /* runtime only -- NOT serialized */
+	char       signal_name[32];
+	int16_t    signal_index;
+} warning_data_t;
 
 /* forward declarations */
 static void free_warning_idx_event_cb(lv_event_t *e);
@@ -974,10 +987,27 @@ void init_warning_configs(void) {
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
+static void _warning_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	uint8_t slot = wd->slot;
+	if (slot >= 8) return;
+	bool bit_on = !is_stale && (value != 0.0f);
+	if (wd->invert_toggle) bit_on = !bit_on;
+	warning_configs[slot].current_state = bit_on;
+	update_warning_ui_immediate(slot);
+}
+
 static void _warning_create(widget_t *w, lv_obj_t *parent) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	uint8_t slot = wd ? wd->slot : 0;
 	widget_warning_create_one(parent, slot);
 	w->root = (slot < 8) ? warning_circles[slot] : NULL;
+
+	/* Subscribe to signal if bound */
+	if (wd && wd->signal_index >= 0)
+		signal_subscribe(wd->signal_index, _warning_on_signal, w);
 }
 static void _warning_update(widget_t *w, void *data) {
 	(void)w;
@@ -990,43 +1020,87 @@ static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->h = nh;
 }
 static void _warning_open_settings(widget_t *w) {
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	uint8_t slot = wd ? wd->slot : 0;
 	create_warning_config_menu(slot);
 }
 static void _warning_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
-	uint8_t slot = (uint8_t)(uintptr_t)w->type_data;
-	if (slot < 8) {
-		cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-		cJSON_AddNumberToObject(cfg, "slot", slot);
-		cJSON_AddNumberToObject(cfg, "can_id", warning_configs[slot].can_id);
-		cJSON_AddNumberToObject(cfg, "bit_position",
-								warning_configs[slot].bit_position);
-		cJSON_AddStringToObject(cfg, "label", warning_configs[slot].label);
-		cJSON_AddBoolToObject(cfg, "is_momentary",
-							  warning_configs[slot].is_momentary);
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
+	if (!cfg) return;
+	if (wd) {
+		cJSON_AddNumberToObject(cfg, "slot", wd->slot);
+		cJSON_AddNumberToObject(cfg, "active_color", (int)wd->active_color.full);
+		cJSON_AddStringToObject(cfg, "label", wd->label);
+		cJSON_AddBoolToObject(cfg, "is_momentary", wd->is_momentary);
+		cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
+		if (wd->signal_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "signal_name", wd->signal_name);
 	}
 }
 static void _warning_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
+	if (cJSON_IsNumber(item)) wd->slot = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "active_color");
+	if (cJSON_IsNumber(item)) wd->active_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(wd->label, item->valuestring, sizeof(wd->label) - 1);
+		wd->label[sizeof(wd->label) - 1] = '\0';
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "is_momentary");
+	if (cJSON_IsBool(item)) wd->is_momentary = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_toggle");
+	if (cJSON_IsBool(item)) wd->invert_toggle = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(wd->signal_name, item->valuestring, sizeof(wd->signal_name) - 1);
+		wd->signal_name[sizeof(wd->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (wd->signal_name[0] != '\0')
+		wd->signal_index = signal_find_by_name(wd->signal_name);
 }
-static void _warning_destroy(widget_t *w) { free(w); }
+static void _warning_destroy(widget_t *w) {
+	free(w->type_data);
+	free(w);
+}
 
 widget_t *widget_warning_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
 		return NULL;
 
+	warning_data_t *wd = heap_caps_calloc(1, sizeof(warning_data_t), MALLOC_CAP_SPIRAM);
+	if (!wd) wd = calloc(1, sizeof(warning_data_t));
+	if (!wd) { free(w); return NULL; }
+
+	/* Bridge from global config */
+	uint8_t s = slot < 8 ? slot : 0;
+	wd->slot = s;
+	wd->active_color = warning_configs[s].active_color;
+	strncpy(wd->label, warning_configs[s].label, sizeof(wd->label) - 1);
+	wd->label[sizeof(wd->label) - 1] = '\0';
+	wd->is_momentary = warning_configs[s].is_momentary;
+	wd->invert_toggle = warning_configs[s].invert_toggle;
+	wd->current_state = false;
+	wd->signal_index = -1;
+
 	w->type = WIDGET_WARNING;
-	/* warning_positions[] is defined internally in widget_warning.c;
-	 * we use 0/0 as the logical position — layout manager overrides via
-	 * from_json. */
 	w->x = 0;
 	w->y = 0;
 	w->w = 15;
 	w->h = 15;
-	w->type_data = (void *)(uintptr_t)(slot < 8 ? slot : 0);
-	snprintf(w->id, sizeof(w->id), "warning_%u", slot < 8 ? slot : 0);
+	w->type_data = wd;
+	snprintf(w->id, sizeof(w->id), "warning_%u", s);
 
 	w->create = _warning_create;
 	w->update = _warning_update;

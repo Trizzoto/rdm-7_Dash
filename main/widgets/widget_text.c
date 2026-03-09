@@ -10,6 +10,8 @@
 #include "widget_types.h"
 #include "ui/theme.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "signal.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include <stdbool.h>
@@ -17,12 +19,35 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+	uint8_t  value_idx;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+} text_data_t;
+
 static const char *TAG = "widget_text";
 
 #define TEXT_DEFAULT_W 100
 #define TEXT_DEFAULT_H 24
 
 /* ── Vtable implementation ───────────────────────────────────────────────── */
+
+static void _text_on_signal(float value, bool is_stale, void *user_data) {
+	widget_t *w = (widget_t *)user_data;
+	if (!w->root || !lv_obj_is_valid(w->root)) return;
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (is_stale) {
+		lv_label_set_text(w->root, "---");
+		return;
+	}
+	char buf[32];
+	if (!td || td->decimals == 0)
+		snprintf(buf, sizeof(buf), "%d", (int)value);
+	else
+		snprintf(buf, sizeof(buf), "%.*f", td->decimals, (double)value);
+	lv_label_set_text(w->root, buf);
+}
 
 static void _text_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_t *label = lv_label_create(parent);
@@ -37,13 +62,19 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
 	w->root = label;
+
+	/* Subscribe to signal if bound */
+	text_data_t *td2 = (text_data_t *)w->type_data;
+	if (td2 && td2->signal_index >= 0)
+		signal_subscribe(td2->signal_index, _text_on_signal, w);
 }
 
 static void _text_update(widget_t *w, void *data) {
 	text_update_t *tud = (text_update_t *)data;
 	if (!tud || !w || !w->root || !lv_obj_is_valid(w->root))
 		return;
-	uint8_t bound_idx = (uint8_t)(uintptr_t)w->type_data;
+	text_data_t *td = (text_data_t *)w->type_data;
+	uint8_t bound_idx = td ? td->value_idx : 0;
 	if (tud->value_idx != bound_idx)
 		return;
 	lv_label_set_text(w->root, tud->value_str);
@@ -62,29 +93,47 @@ static void _text_open_settings(widget_t *w) {
 
 static void _text_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
-	uint8_t value_idx = (uint8_t)(uintptr_t)w->type_data;
+	text_data_t *td = (text_data_t *)w->type_data;
 	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-	if (cfg)
-		cJSON_AddNumberToObject(cfg, "slot", value_idx);
+	if (!cfg) return;
+	if (td) {
+		cJSON_AddNumberToObject(cfg, "slot", td->value_idx);
+		cJSON_AddNumberToObject(cfg, "decimals", td->decimals);
+		if (td->signal_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "signal_name", td->signal_name);
+	}
 }
 
 static void _text_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (!td) return;
 	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
-	if (cfg) {
-		cJSON *slot_item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
-		if (cJSON_IsNumber(slot_item)) {
-			uint8_t idx = (uint8_t)slot_item->valueint;
-			if (idx < 13)
-				w->type_data = (void *)(uintptr_t)idx;
-		}
+	if (!cfg) return;
+	cJSON *item;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
+	if (cJSON_IsNumber(item)) {
+		uint8_t idx = (uint8_t)item->valueint;
+		if (idx < 13) td->value_idx = idx;
 	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
+	if (cJSON_IsNumber(item)) td->decimals = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(td->signal_name, item->valuestring, sizeof(td->signal_name) - 1);
+		td->signal_name[sizeof(td->signal_name) - 1] = '\0';
+	}
+
+	/* Resolve signal name → index */
+	if (td->signal_name[0] != '\0')
+		td->signal_index = signal_find_by_name(td->signal_name);
 }
 
 static void _text_destroy(widget_t *w) {
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
+	free(w->type_data);
 	free(w);
 }
 
@@ -95,13 +144,20 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	if (!w)
 		return NULL;
 
+	text_data_t *td = heap_caps_calloc(1, sizeof(text_data_t), MALLOC_CAP_SPIRAM);
+	if (!td) td = calloc(1, sizeof(text_data_t));
+	if (!td) { free(w); return NULL; }
+
+	td->value_idx = value_idx < 13 ? value_idx : 0;
+	td->signal_index = -1;
+
 	w->type = WIDGET_TEXT;
 	w->x = 0;
 	w->y = 0;
 	w->w = TEXT_DEFAULT_W;
 	w->h = TEXT_DEFAULT_H;
-	w->type_data = (void *)(uintptr_t)(value_idx < 13 ? value_idx : 0);
-	snprintf(w->id, sizeof(w->id), "text_%u", value_idx < 13 ? value_idx : 0);
+	w->type_data = td;
+	snprintf(w->id, sizeof(w->id), "text_%u", td->value_idx);
 
 	w->create = _text_create;
 	w->update = _text_update;

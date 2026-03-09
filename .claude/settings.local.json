@@ -4,7 +4,8 @@
       "Bash(idf.py build:*)",
       "Bash(cmd:*)",
       "Bash(xargs head:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(grep:*)"
     ]
   }
 }
