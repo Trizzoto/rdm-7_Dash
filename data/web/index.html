@@ -36,6 +36,7 @@
             align-items: center;
             justify-content: space-between;
             z-index: 100;
+            flex-shrink: 0;
         }
 
         header .title {
@@ -53,18 +54,21 @@
         /* Workspace Layout */
         .workspace {
             display: grid;
-            grid-template-columns: 200px 1fr 280px;
+            grid-template-columns: 200px 1fr 300px;
+            grid-template-rows: 1fr;
             flex: 1;
             min-height: 0;
+            overflow: hidden;
         }
 
         /* Sidebars */
         .sidebar {
             background: var(--panel);
             border-right: 1px solid var(--border);
-            overflow-y: auto;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
+            min-height: 0;
         }
 
         .sidebar-right {
@@ -80,6 +84,7 @@
             color: #888;
             border-bottom: 1px solid var(--border);
             background: rgba(0, 0, 0, 0.1);
+            flex-shrink: 0;
         }
 
         /* Palette */
@@ -375,6 +380,7 @@
             font-size: 11px;
             color: #888;
             display: flex;
+            flex-shrink: 0;
             gap: 20px;
         }
 
@@ -581,6 +587,110 @@
             line-height: 1.5;
         }
 
+        /* Expandable Signal Cards (sidebar) */
+        .sig-card {
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: background 0.15s;
+            cursor: pointer;
+        }
+        .sig-card:hover { background: rgba(58,134,255,0.06); }
+        .sig-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            font-size: 12px;
+            color: #ccc;
+        }
+        .sig-card-header .sig-expand-icon {
+            font-size: 9px;
+            color: #555;
+            transition: transform 0.15s;
+            width: 10px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .sig-card.expanded .sig-card-header .sig-expand-icon { transform: rotate(90deg); }
+        .sig-card.highlighted {
+            border-left: 3px solid var(--accent);
+            background: rgba(58,134,255,0.08);
+        }
+        .sig-card.highlighted .sig-card-header { padding-left: 9px; }
+        .sig-card-body {
+            display: none;
+            padding: 0 12px 10px 12px;
+        }
+        .sig-card.expanded .sig-card-body { display: block; }
+        .sig-card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+        .sig-card-grid .field { gap: 2px; }
+        .sig-card-grid .field label { font-size: 9px; }
+        .sig-card-grid .field input {
+            background: #1a1a1a;
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 4px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .sig-card-grid .field input:focus { border-color: var(--accent); outline: none; }
+        .sig-card-toggles {
+            display: flex;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .sig-card-bound {
+            font-size: 10px;
+            color: #666;
+            margin-top: 8px;
+            padding-top: 6px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+        .sig-card-bound span { color: #888; }
+        .sig-widget-chip {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            background: rgba(58,134,255,0.15);
+            color: var(--accent);
+            cursor: pointer;
+            margin: 2px 2px 0 0;
+            border: 1px solid rgba(58,134,255,0.25);
+            transition: background 0.15s;
+        }
+        .sig-widget-chip:hover { background: rgba(58,134,255,0.3); }
+        .sig-card-footer {
+            margin-top: 8px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .sig-card-footer button {
+            font-size: 10px;
+            color: #f44;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 2px 4px;
+        }
+        .sig-card-footer button:hover { text-decoration: underline; }
+        .sig-open-manager {
+            display: block;
+            text-align: center;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #666;
+            cursor: pointer;
+            transition: color 0.15s;
+            border-top: 1px solid rgba(255,255,255,0.04);
+        }
+        .sig-open-manager:hover { color: var(--accent); }
+
+        /* (Preset quick-pick dropdown removed — now uses modal) */
+
         /* Signal Manager Modal */
         #signalModal {
             display: none;
@@ -763,36 +873,7 @@
             color: #666;
         }
 
-        /* Inspector signal card */
-        .signal-card {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 10px 12px;
-            margin-top: 6px;
-        }
-        .signal-card .sc-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 11px;
-            color: #777;
-            padding: 2px 0;
-        }
-        .signal-card .sc-val { color: #ccc; font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 11px; }
-        .signal-card .sc-badges { display: flex; gap: 4px; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); }
-        .signal-card .sc-badge {
-            font-size: 9px;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-        .sc-badge.signed { background: rgba(255,152,0,0.12); color: #ffb74d; border: 1px solid rgba(255,152,0,0.25); }
-        .sc-badge.unsigned { background: rgba(100,100,100,0.1); color: #777; border: 1px solid rgba(100,100,100,0.2); }
-        .sc-badge.le { background: rgba(0,200,83,0.1); color: #69f0ae; border: 1px solid rgba(0,200,83,0.25); }
-        .sc-badge.be { background: rgba(156,39,176,0.1); color: #ce93d8; border: 1px solid rgba(156,39,176,0.25); }
+        /* (Inspector signal card removed — replaced by linked-state chip) */
 
         /* Preset Picker (embedded inside Signal Manager) */
         .preset-columns {
@@ -869,6 +950,44 @@
             border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
         }
         .color-field-wrap input[type="text"] { flex: 1; }
+
+        /* Sidebar Tabs */
+        .sidebar-tabs { display:flex; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.15); flex-shrink:0; }
+        .sidebar-tab { flex:1; padding:8px 4px; font-size:11px; font-weight:600; text-transform:uppercase; text-align:center;
+            background:none; border:none; border-bottom:2px solid transparent; color:#666; cursor:pointer; }
+        .sidebar-tab:hover { color:#aaa; }
+        .sidebar-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+        .sidebar-tab-content { display:none; flex:1; overflow-y:auto; flex-direction:column; min-height:0; }
+        .sidebar-tab-content.active { display:flex; }
+
+        /* Accordion Inspector */
+        .inspector-accordion { border:none; margin:0; }
+        .inspector-accordion summary {
+            padding:8px 12px; font-size:11px; font-weight:700; text-transform:uppercase;
+            color:#888; cursor:pointer; border-bottom:1px solid var(--border);
+            background:rgba(0,0,0,0.1); list-style:none; display:flex; align-items:center; gap:6px;
+            user-select:none;
+        }
+        .inspector-accordion summary::before { content:'\25B6'; font-size:8px; transition:transform 0.15s; }
+        .inspector-accordion[open] summary::before { transform:rotate(90deg); }
+        .accordion-body { padding:12px; display:flex; flex-direction:column; gap:8px; }
+
+        /* Signal Linked State */
+        .signal-linked-state { display:flex; flex-direction:column; gap:8px; }
+        .signal-chip {
+            display:inline-flex; align-items:center; gap:6px;
+            background:rgba(58,134,255,0.12); border:1px solid rgba(58,134,255,0.3);
+            border-radius:16px; padding:6px 14px 6px 10px;
+            font-size:13px; font-weight:600; color:var(--accent);
+        }
+        .signal-linked-actions { display:flex; gap:6px; }
+        .signal-linked-actions .btn { flex:1; font-size:11px; }
+        .btn-assign-data {
+            background:rgba(58,134,255,0.1); border:1px dashed var(--accent);
+            color:var(--accent); padding:10px; border-radius:6px;
+            font-size:13px; font-weight:600; cursor:pointer; width:100%; text-align:center;
+        }
+        .btn-assign-data:hover { background:rgba(58,134,255,0.2); }
     </style>
 </head>
 
@@ -1006,20 +1125,20 @@
     </header>
 
     <div class="workspace">
-        <!-- Left Sidebar: Palette -->
+        <!-- Left Sidebar: Palette / Layers -->
         <aside class="sidebar">
-            <div class="sidebar-header">Widgets</div>
-            <div id="paletteList" style="max-height: 250px; overflow-y: auto;">
-                <!-- Will be populated by JS -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" onclick="switchSidebarTab('palette')">Palette</button>
+                <button class="sidebar-tab" onclick="switchSidebarTab('layers')">Layers</button>
             </div>
-
-            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Layers</div>
-            <div id="layerTree" style="flex:1; overflow-y: auto;">
-                <!-- Will be populated by JS -->
+            <div class="sidebar-tab-content active" id="tabPalette" style="overflow:hidden;">
+                <div id="paletteList" style="flex:1; overflow-y:auto; min-height:0;"></div>
             </div>
-
-            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Dashboard</div>
-            <div class="inspector-group">
+            <div class="sidebar-tab-content" id="tabLayers" style="overflow:hidden;">
+                <div id="layerTree" style="flex:1; overflow-y:auto; min-height:0;"></div>
+            </div>
+            <div class="sidebar-header" style="border-top:1px solid var(--border);">Dashboard</div>
+            <div class="inspector-group" style="flex-shrink:0;">
                 <button class="btn btn-secondary" style="width:100%" onclick="layoutEditorNew()">New Layout...</button>
                 <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="layoutEditorSaveAs()">Save
                     As New...</button>
@@ -1052,18 +1171,19 @@
             </div>
         </main>
 
-        <!-- Right Sidebar: Inspector + Signals -->
+        <!-- Right Sidebar: Properties / Signals -->
         <aside class="sidebar sidebar-right">
-            <div class="sidebar-header">Properties</div>
-            <div id="inspectorContent" class="inspector-group" style="flex:0 1 auto; overflow-y:auto;">
-                <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" onclick="switchRightTab('properties')">Properties</button>
+                <button class="sidebar-tab" onclick="switchRightTab('signals')">Signals</button>
             </div>
-            <div class="sidebar-header" style="border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
-                <span>Signals</span>
-                <button class="btn" style="font-size:10px; padding:2px 8px; margin-right:4px;" onclick="openSignalManager()">Manage</button>
+            <div class="sidebar-tab-content active" id="tabProperties" style="overflow:hidden;">
+                <div id="inspectorContent" class="inspector-group" style="flex:1; overflow-y:auto; min-height:0;">
+                    <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
+                </div>
             </div>
-            <div id="sigList" style="overflow-y:auto; flex:1 1 0; min-height:80px;">
-                <!-- Compact signal list populated by renderSignals() -->
+            <div class="sidebar-tab-content" id="tabSignals" style="overflow:hidden;">
+                <div id="sigList" style="flex:1; overflow-y:auto; min-height:0;"></div>
             </div>
         </aside>
     </div>
@@ -1084,6 +1204,25 @@
         let currentLayout = { name: "default", widgets: [], signals: [] };
         let selectedIndex = -1;
         let globalPresets = [];
+        let expandedSignalIdx = -1;
+
+        function switchSidebarTab(tabName) {
+            const left = document.querySelector('.workspace > .sidebar:not(.sidebar-right)');
+            if (!left) return;
+            left.querySelectorAll('.sidebar-tab').forEach(t =>
+                t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
+            left.querySelectorAll('.sidebar-tab-content').forEach(c =>
+                c.classList.toggle('active', c.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
+        }
+
+        function switchRightTab(tabName) {
+            const right = document.querySelector('.sidebar-right');
+            if (!right) return;
+            right.querySelectorAll('.sidebar-tab').forEach(t =>
+                t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
+            right.querySelectorAll('.sidebar-tab-content').forEach(c =>
+                c.classList.toggle('active', c.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
+        }
 
         async function fetchPresets() {
             try {
@@ -1103,7 +1242,13 @@
         function switchSignalView(view) {
             document.getElementById('sigViewSignals').classList.toggle('active', view === 'signals');
             document.getElementById('sigViewPresets').classList.toggle('active', view === 'presets');
-            if (view === 'presets') _initPresetColumns();
+            const isPickMode = document.getElementById('signalModal')?.dataset.mode === 'pick';
+            if (view === 'presets') {
+                _initPresetColumns();
+                /* Update button label for pick mode */
+                const btn = document.getElementById('presetApplyBtn');
+                if (btn) btn.textContent = isPickMode ? 'Add & Assign' : 'Add Signal';
+            }
             if (view === 'signals') renderSignalTable();
         }
 
@@ -1182,13 +1327,19 @@
 
         function applySelectedPreset() {
             if (!_presetPickerSelection || !_presetPickerSelection.preset) return;
-            if (_presetPickerWidgetIdx === -1) {
+            const isPickMode = document.getElementById('signalModal')?.dataset.mode === 'pick';
+            if (_presetPickerWidgetIdx === -1 && !isPickMode) {
                 _createSignalFromPreset(_presetPickerSelection.preset);
             } else {
                 applyPresetToWidget(_presetPickerSelection.preset, _presetPickerWidgetIdx);
             }
-            /* Switch back to signals view to show the new signal */
-            switchSignalView('signals');
+            /* In pick mode, close modal after applying */
+            if (isPickMode) {
+                closeSignalManager();
+            } else {
+                /* Switch back to signals view to show the new signal */
+                switchSignalView('signals');
+            }
             /* Reset selection for next use */
             _presetPickerSelection = null;
             document.getElementById('presetApplyBtn').disabled = true;
@@ -1362,27 +1513,27 @@
             "rpm_bar": {
                 icon: "RPM", defW: 800, defH: 55, fixedY: -213,
                 fields: [
-                    { name: "rpm_max", label: "RPM Max", type: "number", def: 7000 },
-                    { name: "redline", label: "Redline RPM", type: "number", def: 6000 },
-                    { name: "rpm_bar_color", label: "Bar Color", type: "color", def: 0x00FF00 },
+                    { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
+                    { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
+                    { name: "rpm_bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
                     { name: "rpm_limiter_effect", label: "Limiter Effect", type: "select", options: [
                         { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar+Circles" },
                         { v: 3, l: "Circles" }, { v: 4, l: "Bar Solid" }, { v: 5, l: "Bar+Circles Solid" },
                         { v: 6, l: "Circles Solid" }
-                    ], def: 0 },
-                    { name: "rpm_limiter_value", label: "Limiter RPM", type: "number", def: 7000 },
-                    { name: "rpm_limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000 },
-                    { name: "rpm_lights_enabled", label: "RPM Lights", type: "checkbox", def: false },
-                    { name: "rpm_background_enabled", label: "Background Enabled", type: "checkbox", def: false },
-                    { name: "rpm_background_value", label: "Background RPM", type: "number", def: 0 },
-                    { name: "rpm_background_color", label: "Background Color", type: "color", def: 0x333333 }
+                    ], def: 0, cat: "appearance" },
+                    { name: "rpm_limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
+                    { name: "rpm_limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "rpm_lights_enabled", label: "RPM Lights", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "rpm_background_enabled", label: "Background Enabled", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "rpm_background_value", label: "Background RPM", type: "number", def: 0, cat: "appearance" },
+                    { name: "rpm_background_color", label: "Background Color", type: "color", def: 0x333333, cat: "appearance" }
                 ]
             },
             "speed": {
                 icon: "SPD", defW: 120, defH: 50,
                 fields: [
-                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
-                    { name: "use_mph", label: "Use MPH", type: "checkbox", def: false }
+                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    { name: "use_mph", label: "Use MPH", type: "checkbox", def: false, cat: "data" }
                 ]
             },
             "gear": {
@@ -1391,75 +1542,75 @@
                     { name: "gear_detection_mode", label: "Detection Mode", type: "select", options: [
                         { v: 0, l: "Custom" }, { v: 1, l: "MaxxECU" }, { v: 2, l: "Haltech" },
                         { v: 3, l: "Ford" }, { v: 4, l: "Speed\u00F7RPM Ratio" }
-                    ], def: 0 },
-                    { name: "tire_circumference_mm", label: "Tire Circ. (mm)", type: "number", def: 0 },
-                    { name: "final_drive_ratio", label: "Final Drive Ratio", type: "number", def: 0 },
-                    { name: "reverse_gear_ratio", label: "Reverse Ratio", type: "number", def: 0 },
-                    { name: "gear_ratios", label: "Gear Ratios (1-10, comma sep.)", type: "text", def: "" },
-                    { name: "gear_custom_values", label: "Custom Values (P,R,N,D,1-10)", type: "text", def: "" }
+                    ], def: 0, cat: "data" },
+                    { name: "tire_circumference_mm", label: "Tire Circ. (mm)", type: "number", def: 0, cat: "data" },
+                    { name: "final_drive_ratio", label: "Final Drive Ratio", type: "number", def: 0, cat: "data" },
+                    { name: "reverse_gear_ratio", label: "Reverse Ratio", type: "number", def: 0, cat: "data" },
+                    { name: "gear_ratios", label: "Gear Ratios (1-10, comma sep.)", type: "text", def: "", cat: "data" },
+                    { name: "gear_custom_values", label: "Custom Values (P,R,N,D,1-10)", type: "text", def: "", cat: "data" }
                 ]
             },
             "panel": {
                 icon: "PNL", defW: 155, defH: 92,
                 fields: [
-                    { name: "label", label: "Header Label", type: "text", def: "" },
-                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
-                    { name: "warning_high_threshold", label: "Warn High Threshold", type: "number", def: 0 },
-                    { name: "warning_high_color", label: "Warn High Color", type: "color", def: 0xFF0000 },
-                    { name: "warning_low_threshold", label: "Warn Low Threshold", type: "number", def: 0 },
-                    { name: "warning_low_color", label: "Warn Low Color", type: "color", def: 0x0000FF }
+                    { name: "label", label: "Header Label", type: "text", def: "", cat: "data" },
+                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    { name: "warning_high_threshold", label: "Warn High Threshold", type: "number", def: 0, cat: "alerts" },
+                    { name: "warning_high_color", label: "Warn High Color", type: "color", def: 0xFF0000, cat: "alerts" },
+                    { name: "warning_low_threshold", label: "Warn Low Threshold", type: "number", def: 0, cat: "alerts" },
+                    { name: "warning_low_color", label: "Warn Low Color", type: "color", def: 0x0000FF, cat: "alerts" }
                 ]
             },
             "bar": {
                 icon: "BAR", defW: 300, defH: 30,
                 fields: [
-                    { name: "label", label: "Label", type: "text", def: "" },
-                    { name: "bar_min", label: "Min Value", type: "number", def: 0 },
-                    { name: "bar_max", label: "Max Value", type: "number", def: 100 },
-                    { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false },
-                    { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false },
-                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0 },
-                    { name: "bar_high", label: "High Threshold", type: "number", def: 0 },
-                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF },
-                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000 },
-                    { name: "bar_in_range_color", label: "In-Range Color", type: "color", def: 0x00FF00 },
-                    { name: "fuel_sender", label: "Fuel Sender Mode", type: "checkbox", def: false },
-                    { name: "fuel_sender_empty_v", label: "Fuel Empty (V)", type: "number", def: 0 },
-                    { name: "fuel_sender_full_v", label: "Fuel Full (V)", type: "number", def: 5.0 },
-                    { name: "fuel_sender_filter", label: "Fuel EMA Filter (0-100)", type: "number", def: 50 }
+                    { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                    { name: "bar_min", label: "Min Value", type: "number", def: 0, cat: "data" },
+                    { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data" },
+                    { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
+                    { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts" },
+                    { name: "bar_high", label: "High Threshold", type: "number", def: 0, cat: "alerts" },
+                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts" },
+                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts" },
+                    { name: "bar_in_range_color", label: "In-Range Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "fuel_sender", label: "Fuel Sender Mode", type: "checkbox", def: false, cat: "data" },
+                    { name: "fuel_sender_empty_v", label: "Fuel Empty (V)", type: "number", def: 0, cat: "data" },
+                    { name: "fuel_sender_full_v", label: "Fuel Full (V)", type: "number", def: 5.0, cat: "data" },
+                    { name: "fuel_sender_filter", label: "Fuel EMA Filter (0-100)", type: "number", def: 50, cat: "data" }
                 ]
             },
             "indicator": {
                 icon: "IND", defW: 50, defH: 50,
                 fields: [
-                    { name: "side", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0 },
-                    { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0 },
-                    { name: "animation", label: "Anim Enabled", type: "checkbox", def: true },
-                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: false }
+                    { name: "side", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0, cat: "data" },
+                    { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0, cat: "data" },
+                    { name: "animation", label: "Anim Enabled", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: false, cat: "appearance" }
                 ]
             },
             "warning": {
                 icon: "WRN", defW: 25, defH: 25,
                 fields: [
-                    { name: "label", label: "Label", type: "text", def: "" },
-                    { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000 },
-                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: true },
-                    { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false }
+                    { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                    { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" }
                 ]
             },
             "text": {
                 icon: "TXT", defW: 100, defH: 30,
                 fields: [
-                    { name: "decimals", label: "Decimals", type: "number", def: 0 }
+                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" }
                 ]
             },
             "meter": {
                 icon: "MTR", defW: 300, defH: 300,
                 fields: [
-                    { name: "min", label: "Min Value", type: "number", def: 0 },
-                    { name: "max", label: "Max Value", type: "number", def: 100 },
-                    { name: "start_angle", label: "Start angle", type: "number", def: 135 },
-                    { name: "end_angle", label: "End angle", type: "number", def: 45 }
+                    { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
+                    { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
+                    { name: "start_angle", label: "Start angle", type: "number", def: 135, cat: "data" },
+                    { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" }
                 ]
             }
         };
@@ -1502,6 +1653,7 @@
                 selectedIndex = -1;
                 renderEditor();
                 updateInspector();
+                renderSignals();
             }
         };
 
@@ -1743,6 +1895,7 @@
                     selectedIndex = i;
                     renderEditor();
                     updateInspector();
+                    renderSignals();
                 };
                 layerTree.appendChild(item);
             }
@@ -1823,6 +1976,7 @@
                 selectedIndex = -1;
                 renderEditor();
                 updateInspector();
+                renderSignals();
             }
             if (e.button === 1 || (e.button === 0 && e.code === "Space")) { // Middle click or Space+Click
                 isPanning = true;
@@ -1874,6 +2028,7 @@
             dragOffset = { x: (e.clientX / zoomLevel) - w.x, y: (e.clientY / zoomLevel) - w.y };
             renderEditor();
             updateInspector();
+            renderSignals();
         }
 
         function startResize(e, index, handle) {
@@ -2088,6 +2243,63 @@
             }, 100); // 100ms debounce
         }
 
+        function renderFieldHTML(f, val, disabledAttr) {
+            let html = `<div class="field"><label>${f.label}</label>`;
+            if (f.type === 'select') {
+                html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, true)" ${disabledAttr}>`;
+                f.options.forEach(opt => {
+                    const v = typeof opt === 'object' ? opt.v : opt;
+                    const l = typeof opt === 'object' ? opt.l : opt;
+                    html += `<option value="${v}" ${v == val ? 'selected' : ''}>${l}</option>`;
+                });
+                html += `</select>`;
+            } else if (f.type === 'checkbox') {
+                html += `<input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" style="width:auto; height:auto; margin-top:4px;" ${disabledAttr}>`;
+            } else if (f.type === 'color') {
+                const colorHex = Number(val || 0).toString(16).toUpperCase().padStart(6, '0');
+                html += `<div class="color-field-wrap">
+                    <input type="color" value="#${colorHex}"
+                           oninput="document.getElementById('clr_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', parseInt('0x' + this.value.substring(1).toUpperCase()), false)"
+                           ${disabledAttr}>
+                    <input type="text" id="clr_${f.name}" value="0x${colorHex}"
+                           oninput="
+                              let v = parseInt(this.value);
+                              if(!isNaN(v)){
+                                  let h=v.toString(16).padStart(6,'0');
+                                  this.previousElementSibling.value='#'+h;
+                                  updateWidgetConfigField('${f.name}', v, false);
+                              }
+                           "
+                           ${disabledAttr}>
+                </div>`;
+            } else if (f.type === 'hex') {
+                const hexStr = Number(val).toString(16).toUpperCase().padStart(6, '0');
+                const hexDisplay = "0x" + hexStr;
+                const colorVal = "#" + hexStr;
+                html += `<div style="display:flex; gap:8px; align-items:center;">
+                    <input type="color" value="${colorVal}"
+                           oninput="document.getElementById('hex_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', '0x' + this.value.substring(1).toUpperCase(), true)"
+                           ${disabledAttr}
+                           style="width:32px; height:28px; padding:0; border:1px solid var(--border); border-radius:4px; cursor:pointer;" title="Visual Color Picker">
+                    <input type="text" id="hex_${f.name}" value="${hexDisplay}"
+                           oninput="
+                              try {
+                                  let cleaned = this.value.replace('0x', '');
+                                  if(cleaned.length === 6) {
+                                      this.previousElementSibling.value = '#' + cleaned;
+                                  }
+                              } catch(e) {}
+                              updateWidgetConfigField('${f.name}', this.value, true);
+                           "
+                           ${disabledAttr} style="flex:1;">
+                </div>`;
+            } else {
+                html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
+            }
+            html += `</div>`;
+            return html;
+        }
+
         function updateInspector() {
             if (selectedIndex === -1) {
                 inspectorContent.innerHTML = '<div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>';
@@ -2095,130 +2307,86 @@
             }
             const w = currentLayout.widgets[selectedIndex];
             const def = WIDGET_DEFS[w.type] || { fields: [] };
+            w.config = w.config || {};
 
             const disabledAttr = w.locked ? 'disabled' : '';
-            const lockMsg = w.locked ? '<div style="background:rgba(255, 68, 68, 0.1); border:1px solid #f44; color:#f44; padding:4px; font-size:11px; margin-bottom:12px; text-align:center; border-radius:4px;">🔒 Widget is Locked</div>' : '';
+            const lockMsg = w.locked ? '<div style="background:rgba(255, 68, 68, 0.1); border:1px solid #f44; color:#f44; padding:4px; font-size:11px; margin-bottom:12px; text-align:center; border-radius:4px;">Widget is Locked</div>' : '';
 
-            let html = lockMsg + `
-                <div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>
-                <div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${disabledAttr}></div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                    <div class="field"><label>X (Center)</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${disabledAttr}></div>
-                    <div class="field"><label>Y (Center)</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${disabledAttr}></div>
-                </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                    <div class="field"><label>Width</label><input type="number" value="${w.w}" oninput="updateWidgetField('w', parseInt(this.value), true)" ${disabledAttr}></div>
-                    <div class="field"><label>Height</label><input type="number" value="${w.h}" oninput="updateWidgetField('h', parseInt(this.value), true)" ${disabledAttr}></div>
-                </div>
-                
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
-                    <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('up')" ${disabledAttr}>Bring Forward</button>
-                    <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('down')" ${disabledAttr}>Send Backward</button>
-                </div>
+            let html = lockMsg;
 
-                <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
-                <div class="field" style="margin-bottom:4px;">
-                    <label style="color:var(--accent); font-weight:bold;">Signal Binding</label>
-                    <div style="display:flex; gap:4px;">
-                        <select onchange="assignSignal(this.value)" style="flex:1;" ${disabledAttr}>
-                            <option value="">-- None --</option>
-                            ${(currentLayout.signals || []).map(s => {
-                                const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
-                                return `<option value="${s.name}" ${w.signal === s.name ? 'selected' : ''}>${s.name}  [${hexId}]</option>`;
-                            }).join('')}
-                        </select>
-                        <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; white-space:nowrap;" onclick="openSignalManager()" title="Open Signal Manager" ${disabledAttr}>Edit</button>
-                    </div>
-                </div>
-                ${(() => {
-                    if (!w.signal) return '<div style="font-size:10px; color:#666; margin-bottom:8px;">No signal bound. Select one above or use a preset.</div>';
-                    const sig = (currentLayout.signals || []).find(s => s.name === w.signal);
-                    if (!sig) return '<div style="font-size:10px; color:#f44; margin-bottom:8px;">Signal "' + w.signal + '" not found!</div>';
-                    const hexId = '0x' + sig.can_id.toString(16).toUpperCase().padStart(3, '0');
-                    return '<div class="signal-card">' +
-                        '<div class="sc-row"><span>CAN ID</span><span class="sc-val">' + hexId + ' (' + sig.can_id + ')</span></div>' +
-                        '<div class="sc-row"><span>Bits</span><span class="sc-val">' + sig.bit_start + ':' + sig.bit_length + '</span></div>' +
-                        '<div class="sc-row"><span>Scale / Offset</span><span class="sc-val">' + sig.scale + ' / ' + sig.offset + '</span></div>' +
-                        '<div class="sc-badges">' +
-                        '<span class="sc-badge ' + (sig.is_signed ? 'signed' : 'unsigned') + '">' + (sig.is_signed ? 'Signed' : 'Unsigned') + '</span>' +
-                        '<span class="sc-badge ' + (sig.is_little_endian ? 'le' : 'be') + '">' + (sig.is_little_endian ? 'Little-Endian' : 'Big-Endian') + '</span>' +
-                        '</div></div>';
-                })()}
-                <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
-                <div class="sidebar-header" style="background:none; border:none; padding:0; margin-bottom:8px;">Config</div>
-            `;
+            /* ── Layout Accordion (open by default) ── */
+            html += `<details class="inspector-accordion" open><summary>Layout</summary><div class="accordion-body">`;
+            html += `<div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>`;
+            html += `<div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${disabledAttr}></div>`;
+            html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div class="field"><label>X (Center)</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${disabledAttr}></div>
+                <div class="field"><label>Y (Center)</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${disabledAttr}></div>
+            </div>`;
+            html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div class="field"><label>Width</label><input type="number" value="${w.w}" oninput="updateWidgetField('w', parseInt(this.value), true)" ${disabledAttr}></div>
+                <div class="field"><label>Height</label><input type="number" value="${w.h}" oninput="updateWidgetField('h', parseInt(this.value), true)" ${disabledAttr}></div>
+            </div>`;
+            html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;">
+                <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('up')" ${disabledAttr}>Bring Forward</button>
+                <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('down')" ${disabledAttr}>Send Backward</button>
+            </div>`;
+            html += `<button class="btn btn-secondary" style="margin-top:8px; border-color:#f44; color:#f44; width:100%; font-size:11px;" onclick="deleteWidget()" ${disabledAttr}>Delete Widget</button>`;
+            html += `</div></details>`;
 
-            if (['bar', 'panel', 'text', 'meter', 'rpm_bar', 'speed', 'gear'].includes(w.type)) {
-                html += `
-                    <div class="field" style="margin-bottom:16px;">
-                        <button class="btn btn-secondary" style="width:100%; font-size:12px;" onclick="openPresetPicker(${selectedIndex})" ${disabledAttr}>Browse ECU Presets...</button>
-                        <div style="font-size:10px; color:#666; margin-top:2px;">Import a signal from a known ECU and bind it to this widget.</div>
-                    </div>
-                `;
+            /* ── Data Accordion (open by default) ── */
+            const dataFields = def.fields.filter(f => f.cat === 'data');
+            const hasSignalBinding = !['indicator'].includes(w.type); /* most widgets can bind */
+            if (dataFields.length || hasSignalBinding) {
+                html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
+                /* Signal binding UI */
+                if (hasSignalBinding) {
+                    if (w.signal) {
+                        const sig = (currentLayout.signals || []).find(s => s.name === w.signal);
+                        if (sig) {
+                            const sigIdx = (currentLayout.signals || []).indexOf(sig);
+                            html += `<div class="signal-linked-state">
+                                <span class="signal-chip"><span class="chip-icon">&#x1f517;</span> ${w.signal}</span>
+                                <div class="signal-linked-actions">
+                                    <button class="btn btn-secondary" onclick="navigateToSignalEdit(${sigIdx})">Edit Signal</button>
+                                    <button class="btn btn-secondary" style="border-color:#f44; color:#f44;" onclick="unbindSignal()">Unbind</button>
+                                </div>
+                            </div>`;
+                        } else {
+                            html += `<div style="font-size:11px; color:#f44; margin-bottom:4px;">Signal "${w.signal}" not found!</div>`;
+                            html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
+                        }
+                    } else {
+                        html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
+                    }
+                }
+                dataFields.forEach(f => {
+                    const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                    html += renderFieldHTML(f, val, disabledAttr);
+                });
+                html += `</div></details>`;
             }
 
-            w.config = w.config || {};
-            def.fields.forEach(f => {
-                const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                html += `<div class="field"><label>${f.label}</label>`;
+            /* ── Appearance Accordion (closed by default) ── */
+            const appearFields = def.fields.filter(f => f.cat === 'appearance');
+            if (appearFields.length) {
+                html += `<details class="inspector-accordion"><summary>Appearance</summary><div class="accordion-body">`;
+                appearFields.forEach(f => {
+                    const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                    html += renderFieldHTML(f, val, disabledAttr);
+                });
+                html += `</div></details>`;
+            }
 
-                if (f.type === 'select') {
-                    html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, true)" ${disabledAttr}>`;
-                    f.options.forEach(opt => {
-                        const v = typeof opt === 'object' ? opt.v : opt;
-                        const l = typeof opt === 'object' ? opt.l : opt;
-                        html += `<option value="${v}" ${v == val ? 'selected' : ''}>${l}</option>`;
-                    });
-                    html += `</select>`;
-                } else if (f.type === 'checkbox') {
-                    html += `<input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" style="width:auto; height:auto; margin-top:4px;" ${disabledAttr}>`;
-                } else if (f.type === 'color') {
-                    const colorHex = Number(val || 0).toString(16).toUpperCase().padStart(6, '0');
-                    html += `<div class="color-field-wrap">
-                        <input type="color" value="#${colorHex}"
-                               oninput="document.getElementById('clr_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', parseInt('0x' + this.value.substring(1).toUpperCase()), false)"
-                               ${disabledAttr}>
-                        <input type="text" id="clr_${f.name}" value="0x${colorHex}"
-                               oninput="
-                                  let v = parseInt(this.value);
-                                  if(!isNaN(v)){
-                                      let h=v.toString(16).padStart(6,'0');
-                                      this.previousElementSibling.value='#'+h;
-                                      updateWidgetConfigField('${f.name}', v, false);
-                                  }
-                               "
-                               ${disabledAttr}>
-                    </div>`;
-                } else if (f.type === 'hex') {
-                    const hexStr = Number(val).toString(16).toUpperCase().padStart(6, '0');
-                    const hexDisplay = "0x" + hexStr;
-                    const colorVal = "#" + hexStr;
-
-                    html += `<div style="display:flex; gap:8px; align-items:center;">
-                        <input type="color" value="${colorVal}"
-                               oninput="document.getElementById('hex_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', '0x' + this.value.substring(1).toUpperCase(), true)"
-                               ${disabledAttr}
-                               style="width:32px; height:28px; padding:0; border:1px solid var(--border); border-radius:4px; cursor:pointer;" title="Visual Color Picker">
-                        <input type="text" id="hex_${f.name}" value="${hexDisplay}"
-                               oninput="
-                                  try {
-                                      let cleaned = this.value.replace('0x', '');
-                                      if(cleaned.length === 6) {
-                                          this.previousElementSibling.value = '#' + cleaned;
-                                      }
-                                  } catch(e) {}
-                                  updateWidgetConfigField('${f.name}', this.value, true);
-                               "
-                               ${disabledAttr} style="flex:1;">
-                    </div>`;
-                } else {
-                    html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
-                }
-
-                html += `</div>`;
-            });
-
-            html += `<button class="btn btn-secondary" style="margin-top:24px; border-color:#f44; color:#f44; width:100%" onclick="deleteWidget()" ${disabledAttr}>Delete Widget</button>`;
+            /* ── Alerts Accordion (closed by default) ── */
+            const alertFields = def.fields.filter(f => f.cat === 'alerts');
+            if (alertFields.length) {
+                html += `<details class="inspector-accordion"><summary>Alerts</summary><div class="accordion-body">`;
+                alertFields.forEach(f => {
+                    const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                    html += renderFieldHTML(f, val, disabledAttr);
+                });
+                html += `</div></details>`;
+            }
 
             inspectorContent.innerHTML = html;
         }
@@ -2245,6 +2413,27 @@
             renderEditor();
             updateInspector();
             updateStatus(sigName ? `Bound signal "${sigName}"` : 'Signal unbound');
+        }
+
+        function openDataSourcePicker() {
+            _presetPickerWidgetIdx = selectedIndex;
+            openSignalManager('pick');
+        }
+
+        function pickSignalFromModal(sigName) {
+            assignSignal(sigName);
+            closeSignalManager();
+            renderSignals();
+            updateInspector();
+        }
+
+        function unbindSignal() {
+            if (selectedIndex === -1) return;
+            pushHistory();
+            delete currentLayout.widgets[selectedIndex].signal;
+            renderEditor();
+            updateInspector();
+            renderSignals();
         }
 
         function updateWidgetField(field, val, preview = false) {
@@ -2362,11 +2551,20 @@
 
         /* ── Signal Manager ───────────────────────────────────────────── */
 
-        function openSignalManager() {
+        function openSignalManager(mode) {
+            mode = mode || 'manage';
+            const modal = document.getElementById('signalModal');
+            modal.dataset.mode = mode;
+            /* Update header text */
+            modal.querySelector('.signal-modal-header span').textContent =
+                mode === 'pick' ? 'Assign Data Source' : 'Signal Manager';
+            /* Update footer Done button label */
+            const doneBtn = modal.querySelector('.signal-modal-footer .btn');
+            if (doneBtn) doneBtn.textContent = mode === 'pick' ? 'Cancel' : 'Done';
             document.getElementById('signalSearchInput').value = '';
             renderSignalTable();
             switchSignalView('signals');
-            document.getElementById('signalModal').style.display = 'flex';
+            modal.style.display = 'flex';
         }
 
         function closeSignalManager() {
@@ -2396,23 +2594,94 @@
             const sigs = currentLayout.signals || [];
             const c = document.getElementById('sigList');
             if (!c) return;
-            const boundNames = new Set((currentLayout.widgets || []).filter(w => w.signal).map(w => w.signal));
+            const boundMap = {};
+            (currentLayout.widgets || []).forEach((w, wi) => {
+                if (w.signal) {
+                    if (!boundMap[w.signal]) boundMap[w.signal] = [];
+                    boundMap[w.signal].push({ id: w.id, type: w.type, idx: wi });
+                }
+            });
+            /* Which signal is the selected widget bound to? */
+            const selWidget = selectedIndex >= 0 ? currentLayout.widgets[selectedIndex] : null;
+            const highlightSig = selWidget && selWidget.signal ? selWidget.signal : null;
+
             if (sigs.length === 0) {
-                c.innerHTML = '<div class="sig-list-empty">No signals yet.<br>Click <b>Manage</b> to add signals.</div>';
+                c.innerHTML = '<div class="sig-list-empty">No signals yet.<br>Select a widget and click <b>+ New</b> in the inspector,<br>or use ECU Presets.</div>' +
+                    '<div class="sig-open-manager" onclick="openSignalManager()">Open Signal Manager...</div>';
                 return;
             }
-            c.innerHTML = sigs.map(s => {
+            c.innerHTML = sigs.map((s, i) => {
                 const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
-                const bound = boundNames.has(s.name);
-                const endStr = s.is_little_endian ? 'LE' : 'BE';
-                return `<div class="sig-list-item" onclick="openSignalManager()" title="${s.name}\nCAN ${hexId} | Bits ${s.bit_start}:${s.bit_length} | ${endStr}">` +
-                    `<span class="sig-dot ${bound ? 'bound' : 'unbound'}"></span>` +
-                    `<div class="sig-info">` +
-                    `<span class="sig-name">${s.name}</span>` +
-                    `<span class="sig-meta">${hexId} | ${s.bit_start}:${s.bit_length}</span>` +
-                    `</div>` +
-                    `</div>`;
-            }).join('');
+                const bound = boundMap[s.name] || [];
+                const isExpanded = expandedSignalIdx === i;
+                const isHighlighted = highlightSig === s.name;
+                let cls = 'sig-card';
+                if (isExpanded) cls += ' expanded';
+                if (isHighlighted) cls += ' highlighted';
+
+                let html = `<div class="${cls}" data-sig-idx="${i}">`;
+                html += `<div class="sig-card-header" onclick="toggleSignalExpand(${i})">`;
+                html += `<span class="sig-expand-icon">\u25B6</span>`;
+                html += `<span class="sig-dot ${bound.length ? 'bound' : 'unbound'}"></span>`;
+                html += `<div class="sig-info">`;
+                html += `<span class="sig-name">${s.name}</span>`;
+                html += `<span class="sig-meta">${hexId} | ${s.bit_start}:${s.bit_length}</span>`;
+                html += `</div></div>`;
+
+                /* Expanded body with inline-editable fields */
+                html += `<div class="sig-card-body" onclick="event.stopPropagation()">`;
+                html += `<div class="sig-card-grid">`;
+                html += `<div class="field"><label>Name</label><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value); renderSignals();" spellcheck="false"></div>`;
+                html += `<div class="field"><label>CAN ID</label><input type="text" value="${hexId}" onchange="updateSignalCanId(${i},this); renderSignals();" spellcheck="false" style="font-family:monospace;"></div>`;
+                html += `<div class="field"><label>Bit Start</label><input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)"></div>`;
+                html += `<div class="field"><label>Bit Length</label><input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)"></div>`;
+                html += `<div class="field"><label>Scale</label><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"></div>`;
+                html += `<div class="field"><label>Offset</label><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"></div>`;
+                html += `</div>`; /* end grid */
+                html += `<div class="sig-card-toggles">`;
+                html += `<span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_signed'); renderSignals();" title="${s.is_signed ? 'Signed' : 'Unsigned'}">${s.is_signed ? 'Signed' : 'Unsigned'}</span>`;
+                html += `<span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_little_endian'); renderSignals();" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span>`;
+                html += `</div>`;
+
+                /* Bound widgets */
+                html += `<div class="sig-card-bound">`;
+                if (bound.length) {
+                    html += `<span>Bound to:</span> `;
+                    html += bound.map(b => `<span class="sig-widget-chip" onclick="selectWidgetByIndex(${b.idx})" title="${b.type} (${b.id})">${b.id}</span>`).join('');
+                } else {
+                    html += `<span style="color:#555;">Not bound to any widget</span>`;
+                }
+                html += `</div>`;
+
+                /* Delete */
+                html += `<div class="sig-card-footer"><button onclick="deleteSignal(${i})">Delete Signal</button></div>`;
+                html += `</div>`; /* end body */
+                html += `</div>`; /* end card */
+                return html;
+            }).join('') + '<div class="sig-open-manager" onclick="openSignalManager()">Open Signal Manager...</div>';
+        }
+
+        function toggleSignalExpand(idx) {
+            expandedSignalIdx = expandedSignalIdx === idx ? -1 : idx;
+            renderSignals();
+        }
+
+        function navigateToSignalEdit(sigIdx) {
+            switchRightTab('signals');
+            expandedSignalIdx = sigIdx;
+            renderSignals();
+            setTimeout(() => {
+                const card = document.querySelector('.sig-card.expanded');
+                if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 50);
+        }
+
+        function selectWidgetByIndex(idx) {
+            if (idx < 0 || idx >= currentLayout.widgets.length) return;
+            selectedIndex = idx;
+            renderEditor();
+            updateInspector();
+            renderSignals();
         }
 
         function renderSignalTable() {
@@ -2423,6 +2692,8 @@
             const emptyEl = document.getElementById('signalTableEmpty');
             const tableEl = document.getElementById('signalTableEl');
             if (!tbody) return;
+
+            const isPickMode = document.getElementById('signalModal')?.dataset.mode === 'pick';
 
             /* Show empty state */
             if (sigs.length === 0 && !filter) {
@@ -2445,6 +2716,7 @@
                 const bound = boundNames.has(s.name);
                 const boundWidgets = bound ? (currentLayout.widgets || []).filter(w => w.signal === s.name).map(w => w.id).join(', ') : '';
                 const boundTitle = bound ? `Bound to: ${boundWidgets}` : 'Not bound to any widget';
+                const pickBtn = isPickMode ? `<td style="width:60px;"><button class="btn" style="font-size:10px; padding:3px 8px;" onclick="pickSignalFromModal('${s.name.replace(/'/g, "\\'")}')">Select</button></td>` : '';
                 return `<tr>` +
                     `<td class="col-status"><span class="sig-bound-dot ${bound ? 'active' : 'inactive'}" title="${boundTitle}"></span></td>` +
                     `<td class="col-name"><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"></td>` +
@@ -2456,6 +2728,7 @@
                     `<td class="col-toggle"><span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_signed')" title="${s.is_signed ? 'Signed (click to toggle)' : 'Unsigned (click to toggle)'}">${s.is_signed ? 'S' : 'U'}</span></td>` +
                     `<td class="col-toggle"><span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_little_endian')" title="${s.is_little_endian ? 'Little-Endian / Intel (click to toggle)' : 'Big-Endian / Motorola (click to toggle)'}">${s.is_little_endian ? 'LE' : 'BE'}</span></td>` +
                     `<td class="col-actions"><button class="sig-del-btn" onclick="deleteSignal(${i})" title="Delete signal">&times;</button></td>` +
+                    pickBtn +
                     `</tr>`;
             }).join('');
 

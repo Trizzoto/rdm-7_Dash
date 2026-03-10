@@ -6,7 +6,13 @@
       "Bash(xargs head:*)",
       "Bash(git checkout:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(for f in main/widgets/widget_panel.c main/widgets/widget_bar.c main/widgets/widget_rpm_bar.c)",
+      "Bash(do echo \"=== $f ===\")",
+      "Read(//c/Users/ruuva/workspace/RDM-7_Dash/**)",
+      "Bash(done)",
+      "Bash(ls:*)"
     ]
   }
 }
