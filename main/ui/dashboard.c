@@ -5,11 +5,9 @@
 
 /* Existing widget create functions — used as fallback */
 #include "widgets/widget_bar.h"
-#include "widgets/widget_gear.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
 #include "widgets/widget_rpm_bar.h"
-#include "widgets/widget_speed.h"
 #include "widgets/widget_warning.h"
 
 #include "esp_log.h"
@@ -23,8 +21,8 @@ static const char *TAG = "dashboard";
 
 /* ── Internal widget registry snapshot ───────────────────────────────────── */
 
-/* Maximum widgets the dashboard tracks (7 types × worst-case instances):
- *   panel×8, rpm_bar×1, speed×1, gear×1, bar×2, indicator×2, warning×8 = 23 */
+/* Maximum widgets the dashboard tracks (5 types × worst-case instances):
+ *   panel×8, rpm_bar×1, bar×2, indicator×2, warning×8, text×N, meter×N */
 #define DASHBOARD_MAX_WIDGETS 24
 
 static widget_t *s_widgets[DASHBOARD_MAX_WIDGETS];
@@ -54,8 +52,6 @@ static void _fallback_create_all(lv_obj_t *parent) {
 	ESP_LOGW(TAG, "Using fallback direct widget creation");
 	widget_panel_create(parent);
 	widget_rpm_bar_create(parent);
-	widget_speed_create(parent);
-	widget_gear_create(parent);
 	widget_bar_create(parent);
 	widget_indicator_create(parent);
 	widget_warning_create(parent);

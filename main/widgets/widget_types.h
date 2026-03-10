@@ -23,13 +23,11 @@ extern "C" {
 typedef enum {
     WIDGET_PANEL     = 0,
     WIDGET_RPM_BAR   = 1,
-    WIDGET_SPEED     = 2,
-    WIDGET_GEAR      = 3,
-    WIDGET_BAR       = 4,
-    WIDGET_INDICATOR = 5,
-    WIDGET_WARNING   = 6,
-    WIDGET_TEXT      = 7,
-    WIDGET_METER     = 8,
+    WIDGET_BAR       = 2,
+    WIDGET_INDICATOR = 3,
+    WIDGET_WARNING   = 4,
+    WIDGET_TEXT      = 5,
+    WIDGET_METER     = 6,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 
@@ -93,6 +91,10 @@ extern const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT];
 
 /** Return a short ASCII name for a widget type (e.g. "panel", "rpm_bar"). */
 const char *widget_type_name(widget_type_t type);
+
+/** Resolve a font name string to an lv_font_t pointer.
+ *  Returns the theme default body font if name is NULL/empty/unrecognised. */
+const lv_font_t *widget_resolve_font(const char *name);
 
 /** Write the base fields (type, id, x, y, w, h) into an existing JSON object. */
 void widget_base_to_json(const widget_t *w, cJSON *out);

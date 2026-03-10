@@ -73,7 +73,6 @@ void fs_voltage_update_timer_cb(lv_timer_t *timer);
 /* Bar/panel event callbacks */
 void show_value_switch_event_cb(lv_event_t *e);
 void invert_value_switch_event_cb(lv_event_t *e);
-void speed_units_dropdown_event_cb(lv_event_t *e);
 void custom_text_input_event_cb(lv_event_t *e);
 
 #ifdef __cplusplus

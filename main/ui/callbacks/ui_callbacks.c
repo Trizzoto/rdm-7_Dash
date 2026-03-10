@@ -26,13 +26,10 @@ extern lv_obj_t* keyboard;
 
 // External references to UI objects that may be used in callbacks
 extern lv_obj_t* ui_Label[];
-extern lv_obj_t* ui_Gear_Label;
 extern lv_obj_t* ui_Bar_1_Label;
 extern lv_obj_t* ui_Bar_2_Label;
 extern lv_obj_t* ui_Bar_1_Value;
 extern lv_obj_t* ui_Bar_2_Value;
-extern lv_obj_t* ui_Kmh;
-extern lv_obj_t* menu_speed_units_label;
 extern lv_obj_t* ui_CustomText[];
 
 extern void fuel_sender_capture_empty(uint8_t value_id);
@@ -40,8 +37,6 @@ extern void fuel_sender_capture_full(uint8_t value_id);
 extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 
 #define RPM_VALUE_ID   9
-#define SPEED_VALUE_ID 10
-#define GEAR_VALUE_ID  11
 #define BAR1_VALUE_ID  12
 #define BAR2_VALUE_ID  13
 
@@ -54,18 +49,16 @@ void label_input_event_cb(lv_event_t * e) {
 
         uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 
-        // Handle regular panels (1-8) and gear
-        if ((value_id >= 1 && value_id <= 8) || (value_id == GEAR_VALUE_ID)) {
+        // Handle regular panels (1-8)
+        if (value_id >= 1 && value_id <= 8) {
             config_bridge_set_label(value_id, txt);
 
-            if(value_id == GEAR_VALUE_ID && ui_Gear_Label) {
-                lv_label_set_text(ui_Gear_Label, config_bridge_get_label(value_id));
-            } else if (ui_Label[value_id - 1]) {
+            if (ui_Label[value_id - 1]) {
                 lv_label_set_text(ui_Label[value_id - 1], config_bridge_get_label(value_id));
             }
-            
+
             // Also update menu preview label if it exists and menu is visible
-            if (value_id >= 1 && value_id <= 8) {
+            {
                 extern lv_obj_t * menu_panel_labels[8];
                 extern lv_obj_t * ui_MenuScreen;
                 uint8_t idx = value_id - 1;
@@ -701,22 +694,6 @@ void type_dropdown_event_cb(lv_event_t * e) {
         printf("Updated Type for Value #%d to %s\n", value_id,
                config_bridge_get_is_signed(value_id) ? "Signed" : "Unsigned");
     }
-}
-
-/* =========================================================================
- * Speed-units callback
- * ========================================================================= */
-void speed_units_dropdown_event_cb(lv_event_t *e)
-{
-    lv_obj_t *dd = lv_event_get_target(e);
-    uint16_t sel = lv_dropdown_get_selected(dd);
-    config_bridge_set_use_mph(sel == 1);
-    bool use_mph = config_bridge_get_use_mph();
-    if (ui_Kmh) lv_label_set_text(ui_Kmh, use_mph ? "mph" : "k/mh");
-    if (menu_speed_units_label && lv_obj_is_valid(menu_speed_units_label))
-        lv_label_set_text(menu_speed_units_label, use_mph ? "mph" : "k/mh");
-    /* Config persisted via dashboard_persist_layout() on menu close */
-    ESP_LOGI("MENU", "Speed units: %s", use_mph ? "MPH" : "KMH");
 }
 
 /* =========================================================================

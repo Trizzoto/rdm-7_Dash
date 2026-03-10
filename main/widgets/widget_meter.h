@@ -19,6 +19,8 @@ typedef struct {
 	lv_meter_indicator_t *needle;
 	lv_obj_t *value_label;
 	lv_obj_t *id_label;
+	char     label_font[32];
+	char     value_font[32];
 	char     signal_name[32];
 	int16_t  signal_index;
 } meter_data_t;
@@ -26,7 +28,7 @@ typedef struct {
 /**
  * Create an analog meter widget bound to a value slot.
  *
- * @param value_idx  Value slot 0–12 (panel0–7, RPM, Speed, Gear, BAR1, BAR2).
+ * @param value_idx  Value slot 0–10 (panel0–7, RPM, BAR1, BAR2).
  * @return           Heap-allocated widget_t*, caller must call w->destroy(w).
  */
 widget_t *widget_meter_create_instance(uint8_t value_idx);

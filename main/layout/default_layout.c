@@ -15,8 +15,6 @@ static const char *TAG = "default_layout";
  * (screen centre).  Screen resolution: 800 × 480.
  *
  * widget_panel.c   box_positions[8][2]
- * widget_speed.c   ui_Speed_Value at (0, 30); ui_Kmh at (37, 64)
- * widget_gear.c    ui_Gear_Panel  at (0, 180)
  * widget_bar.c     ui_Bar_1 at (-240, 209);  ui_Bar_2 at (240, 209)
  * widget_indicator.c  Left (-95,-133); Right (95,-133)
  * widget_warning.c warning_positions[] below
@@ -94,14 +92,6 @@ esp_err_t generate_default_layout(void) {
 	/* ── RPM Bar (singleton) ────────────────────────────────────────────── */
 	/* RPM bar uses LV_ALIGN_TOP_MID; x=0, y=0 keeps it at top */
 	_add_widget(arr, "rpm_bar", "rpm_bar_0", 0, 0, 800, 55, NULL);
-
-	/* ── Speed (singleton) ──────────────────────────────────────────────── */
-	/* widget_speed_create: ui_Speed_Value at (0, 30) */
-	_add_widget(arr, "speed", "speed_0", 0, 30, 120, 50, NULL);
-
-	/* ── Gear (singleton) ───────────────────────────────────────────────── */
-	/* widget_gear_create: ui_Gear_Panel at (0, 180) */
-	_add_widget(arr, "gear", "gear_0", 0, 180, 90, 90, NULL);
 
 	/* ── Panels (8 slots) ───────────────────────────────────────────────── */
 	for (int i = 0; i < 8; i++) {
@@ -200,12 +190,6 @@ esp_err_t generate_rpm_meter_test_layout(void) {
 	cJSON_AddStringToObject(root, "name", "rpm_meter_test");
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
-
-	/* ── Speed Singleton ────────────────────────────────────────────────── */
-	_add_widget(arr, "speed", "speed_0", -280, 30, 120, 50, NULL);
-
-	/* ── Gear Singleton ─────────────────────────────────────────────────── */
-	_add_widget(arr, "gear", "gear_0", 280, 30, 120, 120, NULL);
 
 	/* ── Panels (8 slots) ───────────────────────────────────────────────── */
 	static const struct {

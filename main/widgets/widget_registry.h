@@ -46,7 +46,7 @@ widget_t *widget_registry_find_by_id(const char *id);
 
 /**
  * Lookup a widget by type and slot index.  Returns NULL if not found.
- * For singleton widgets (RPM, Speed, Gear) the slot is ignored.
+ * For singleton widgets (RPM) the slot is ignored.
  */
 widget_t *widget_registry_find_by_type_and_slot(widget_type_t type, uint8_t slot);
 

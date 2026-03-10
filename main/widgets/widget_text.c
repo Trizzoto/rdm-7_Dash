@@ -17,7 +17,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 static const char *TAG = "widget_text";
 
 #define TEXT_DEFAULT_W 100
@@ -50,15 +49,23 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_size(label, (lv_coord_t)w->w, (lv_coord_t)w->h);
 	lv_obj_set_align(label, LV_ALIGN_CENTER);
 	lv_obj_set_pos(label, w->x, w->y);
-	lv_label_set_text(label, "---");
+	lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
 	lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	text_data_t *td = (text_data_t *)w->type_data;
+	const lv_font_t *resolved = td ? widget_resolve_font(td->font) : NULL;
+	lv_obj_set_style_text_font(label, resolved ? resolved : THEME_FONT_BODY,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Show static text if no signal bound, otherwise "---" until signal arrives */
+	if (td && td->signal_index < 0 && td->static_text[0] != '\0')
+		lv_label_set_text(label, td->static_text);
+	else
+		lv_label_set_text(label, "---");
 	w->root = label;
 
 	/* Subscribe to signal if bound */
-	text_data_t *td2 = (text_data_t *)w->type_data;
-	if (td2 && td2->signal_index >= 0)
-		signal_subscribe(td2->signal_index, _text_on_signal, w);
+	if (td && td->signal_index >= 0)
+		signal_subscribe(td->signal_index, _text_on_signal, w);
 }
 
 static void _text_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -80,8 +87,12 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 	if (td) {
 		cJSON_AddNumberToObject(cfg, "slot", td->value_idx);
 		cJSON_AddNumberToObject(cfg, "decimals", td->decimals);
+		if (td->static_text[0] != '\0')
+			cJSON_AddStringToObject(cfg, "static_text", td->static_text);
 		if (td->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", td->signal_name);
+		if (td->font[0] != '\0')
+			cJSON_AddStringToObject(cfg, "font", td->font);
 	}
 }
 
@@ -99,10 +110,21 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	if (cJSON_IsNumber(item)) td->decimals = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "static_text");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(td->static_text, item->valuestring, sizeof(td->static_text) - 1);
+		td->static_text[sizeof(td->static_text) - 1] = '\0';
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
 		strncpy(td->signal_name, item->valuestring, sizeof(td->signal_name) - 1);
 		td->signal_name[sizeof(td->signal_name) - 1] = '\0';
+	}
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "font");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(td->font, item->valuestring, sizeof(td->font) - 1);
+		td->font[sizeof(td->font) - 1] = '\0';
 	}
 
 	/* Resolve signal name → index */

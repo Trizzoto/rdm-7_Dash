@@ -13,8 +13,6 @@
 
 #define MAX_VALUES 13 /* Maximum number of values that can be configured */
 #define RPM_VALUE_ID 9
-#define SPEED_VALUE_ID 10
-#define GEAR_VALUE_ID 11
 #define BAR1_VALUE_ID 12
 #define BAR2_VALUE_ID 13
 #define MAX_RPM_LINES 200 /* Maximum number of RPM tick marks per row */

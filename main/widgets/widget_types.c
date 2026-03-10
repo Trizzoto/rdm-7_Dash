@@ -7,8 +7,34 @@
  *   - widget_base_to_json() / widget_base_from_json() shared helpers
  */
 #include "widget_types.h"
+#include "ui/theme.h"
+#include "ui/ui.h"
 #include <stdio.h>
 #include <string.h>
+
+/* ─── Shared font resolver ──────────────────────────────────────────────── */
+
+const lv_font_t *widget_resolve_font(const char *name) {
+	if (!name || name[0] == '\0') return NULL;
+	/* Montserrat system fonts */
+	if (strcmp(name, "montserrat_8") == 0)  return &lv_font_montserrat_8;
+	if (strcmp(name, "montserrat_10") == 0) return &lv_font_montserrat_10;
+	if (strcmp(name, "montserrat_12") == 0) return &lv_font_montserrat_12;
+	if (strcmp(name, "montserrat_14") == 0) return &lv_font_montserrat_14;
+	if (strcmp(name, "montserrat_16") == 0) return &lv_font_montserrat_16;
+	if (strcmp(name, "montserrat_18") == 0) return &lv_font_montserrat_18;
+	if (strcmp(name, "montserrat_20") == 0) return &lv_font_montserrat_20;
+	if (strcmp(name, "montserrat_22") == 0) return &lv_font_montserrat_22;
+	if (strcmp(name, "montserrat_24") == 0) return &lv_font_montserrat_24;
+	/* Custom dashboard fonts */
+	if (strcmp(name, "fugaz_14") == 0)      return &ui_font_fugaz_14;
+	if (strcmp(name, "fugaz_17") == 0)      return &ui_font_fugaz_17;
+	if (strcmp(name, "fugaz_28") == 0)      return &ui_font_fugaz_28;
+	if (strcmp(name, "fugaz_56") == 0)      return &ui_font_fugaz_56;
+	if (strcmp(name, "manrope_35_bold") == 0) return &ui_font_Manrope_35_BOLD;
+	if (strcmp(name, "manrope_54_bold") == 0) return &ui_font_Manrope_54_BOLD;
+	return NULL;
+}
 
 /* ─── Size constraints table ────────────────────────────────────────────── */
 /*
@@ -20,8 +46,6 @@
 const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_PANEL     */ { .min_w =  80, .min_h =  40, .max_w = 250, .max_h = 130 },
     /* WIDGET_RPM_BAR   */ { .min_w = 300, .min_h =  30, .max_w = 800, .max_h =  80 },
-    /* WIDGET_SPEED     */ { .min_w =  60, .min_h =  30, .max_w = 200, .max_h =  80 },
-    /* WIDGET_GEAR      */ { .min_w =  50, .min_h =  50, .max_w = 130, .max_h = 130 },
     /* WIDGET_BAR       */ { .min_w = 120, .min_h =  15, .max_w = 450, .max_h =  50 },
     /* WIDGET_INDICATOR */ { .min_w =  30, .min_h =  30, .max_w =  80, .max_h =  80 },
     /* WIDGET_WARNING   */ { .min_w =  18, .min_h =  18, .max_w =  60, .max_h =  60 },
@@ -36,8 +60,6 @@ const char *widget_type_name(widget_type_t type)
     static const char *const names[WIDGET_TYPE_COUNT] = {
         "panel",
         "rpm_bar",
-        "speed",
-        "gear",
         "bar",
         "indicator",
         "warning",

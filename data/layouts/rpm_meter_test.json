@@ -3,24 +3,6 @@
   "name": "rpm_meter_test",
   "widgets": [
     {
-      "type": "speed",
-      "id": "speed_0",
-      "x": -280,
-      "y": 30,
-      "w": 120,
-      "h": 50,
-      "config": {}
-    },
-    {
-      "type": "gear",
-      "id": "gear_0",
-      "x": 280,
-      "y": 30,
-      "w": 120,
-      "h": 120,
-      "config": {}
-    },
-    {
       "type": "panel",
       "id": "panel_0",
       "x": -312,

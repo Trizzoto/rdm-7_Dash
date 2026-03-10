@@ -100,7 +100,8 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	/* Add digital value label in the center */
 	md->value_label = lv_label_create(m);
 	lv_label_set_text(md->value_label, "0");
-	lv_obj_set_style_text_font(md->value_label, THEME_FONT_DASH_RPM,
+	const lv_font_t *mtr_val_font = widget_resolve_font(md->value_font);
+	lv_obj_set_style_text_font(md->value_label, mtr_val_font ? mtr_val_font : THEME_FONT_DASH_RPM,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(md->value_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -109,7 +110,8 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	/* Add ID label (e.g. "RPM") below the value */
 	md->id_label = lv_label_create(m);
 	lv_label_set_text(md->id_label, md->signal_name[0] != '\0' ? md->signal_name : w->id);
-	lv_obj_set_style_text_font(md->id_label, THEME_FONT_SMALL,
+	const lv_font_t *mtr_lbl_font = widget_resolve_font(md->label_font);
+	lv_obj_set_style_text_font(md->id_label, mtr_lbl_font ? mtr_lbl_font : THEME_FONT_SMALL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(md->id_label, THEME_COLOR_TEXT_MUTED,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -146,6 +148,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "max", md->max);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
+	if (md->label_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "label_font", md->label_font);
+	if (md->value_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "value_font", md->value_font);
 	if (md->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
 }
@@ -176,6 +182,16 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
 		md->end_angle = (int16_t)ea_item->valueint;
+	cJSON *lf_item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
+	if (cJSON_IsString(lf_item) && lf_item->valuestring) {
+		strncpy(md->label_font, lf_item->valuestring, sizeof(md->label_font) - 1);
+		md->label_font[sizeof(md->label_font) - 1] = '\0';
+	}
+	cJSON *vf_item = cJSON_GetObjectItemCaseSensitive(cfg, "value_font");
+	if (cJSON_IsString(vf_item) && vf_item->valuestring) {
+		strncpy(md->value_font, vf_item->valuestring, sizeof(md->value_font) - 1);
+		md->value_font[sizeof(md->value_font) - 1] = '\0';
+	}
 	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
 		strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name) - 1);

@@ -25,6 +25,8 @@ typedef struct {
 	float    fuel_sender_full_v;
 	uint8_t  fuel_sender_filter;
 	uint8_t  decimals;
+	char     label_font[32];
+	char     value_font[32];
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* LVGL object pointers (runtime only, per-instance) */

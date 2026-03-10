@@ -3,13 +3,11 @@
 
 /* Widget factory headers */
 #include "widget_bar.h"
-#include "widget_gear.h"
 #include "widget_indicator.h"
 #include "widget_meter.h"
 #include "widget_panel.h"
 #include "widget_registry.h"
 #include "widget_rpm_bar.h"
-#include "widget_speed.h"
 #include "widget_text.h"
 #include "widget_types.h"
 #include "widget_warning.h"
@@ -81,10 +79,6 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_PANEL;
 	if (strcmp(s, "rpm_bar") == 0)
 		return WIDGET_RPM_BAR;
-	if (strcmp(s, "speed") == 0)
-		return WIDGET_SPEED;
-	if (strcmp(s, "gear") == 0)
-		return WIDGET_GEAR;
 	if (strcmp(s, "bar") == 0)
 		return WIDGET_BAR;
 	if (strcmp(s, "indicator") == 0)
@@ -123,12 +117,6 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_RPM_BAR:
 		w = widget_rpm_bar_create_instance();
-		break;
-	case WIDGET_SPEED:
-		w = widget_speed_create_instance();
-		break;
-	case WIDGET_GEAR:
-		w = widget_gear_create_instance();
 		break;
 	case WIDGET_BAR:
 		w = widget_bar_create_instance(slot);

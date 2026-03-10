@@ -205,6 +205,15 @@
             background: rgba(136, 136, 136, 0.2);
         }
 
+        .widget-box[data-type="panel"]    { border-color: #4CAF50; }
+        .widget-box[data-type="rpm_bar"]  { border-color: #FF5722; }
+        .widget-box[data-type="bar"]      { border-color: #FF9800; }
+        .widget-box[data-type="indicator"]{ border-color: #FFEB3B; }
+        .widget-box[data-type="warning"]  { border-color: #F44336; }
+        .widget-box[data-type="text"]     { border-color: #00BCD4; }
+        .widget-box[data-type="meter"]    { border-color: #8BC34A; }
+        .widget-box.selected              { border-color: #fff !important; }
+
         .widget-box .id-label {
             position: absolute;
             top: -18px;
@@ -1149,6 +1158,9 @@
                 <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="deleteCurrentLayout()">Delete Layout</button>
                 <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="downloadJson()">Export
                     JSON</button>
+                <button class="btn btn-secondary" style="width:100%; margin-top:8px" onclick="importJson()">Import
+                    JSON</button>
+                <input type="file" id="importJsonInput" accept=".json" style="display:none">
             </div>
         </aside>
 
@@ -1199,6 +1211,9 @@
 
         let currentLayout = { name: "default", widgets: [], signals: [] };
         let selectedIndex = -1;
+        let selectedIndices = new Set();
+        let _dragStartPositions = {};
+        let _dragAnchorStart = { x: 0, y: 0 };
         let globalPresets = [];
         let expandedSignalIdx = -1;
 
@@ -1464,7 +1479,7 @@
                 historyIndex--;
                 if (historyIndex >= 0) {
                     currentLayout = JSON.parse(history[historyIndex]);
-                    selectedIndex = -1; // clear selection to avoid out of bounds
+                    selectedIndex = -1; selectedIndices = new Set(); // clear selection to avoid out of bounds
                 } else {
                     return;
                 }
@@ -1479,7 +1494,7 @@
             if (historyIndex < history.length - 1) {
                 historyIndex++;
                 currentLayout = JSON.parse(history[historyIndex]);
-                selectedIndex = -1;
+                selectedIndex = -1; selectedIndices = new Set();
                 renderEditor();
                 renderSignals();
                 updateInspector();
@@ -1488,14 +1503,98 @@
         }
 
         function layoutEditorNew() {
+            const name = prompt('New layout name:', '');
+            if (!name || !name.trim()) return;
+            const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
             pushHistory();
-            currentLayout = { name: "default", widgets: [], signals: [] };
-            selectedIndex = -1;
+            currentLayout = { name: safeName, widgets: [], signals: [] };
+            selectedIndex = -1; selectedIndices = new Set();
             renderEditor();
             renderSignals();
             updateInspector();
-            updateStatus('Created New Layout');
+            updateStatus('Created new layout: ' + safeName);
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        async function layoutEditorSaveAs() {
+            const currentName = currentLayout.name || '';
+            const suggested = currentName === 'default' ? '' : currentName + '_copy';
+            const name = prompt('Save as new layout name:', suggested);
+            if (!name || !name.trim()) return;
+            const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+            if (safeName === 'default') {
+                updateStatus('Cannot overwrite default layout', true);
+                return;
+            }
+            currentLayout.name = safeName;
+            try {
+                updateStatus('Saving as ' + safeName + '...');
+                const payload = buildFirmwarePayload();
+                const response = await fetch('/api/layout/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (response.ok) {
+                    updateStatus('Saved as ' + safeName);
+                    history = [JSON.stringify(currentLayout)];
+                    historyIndex = 0;
+                    _lastDeviceSnapshot = JSON.stringify(payload);
+                    try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
+                    await fetchLayoutsKeepCurrent();
+                    setTimeout(captureScreenshot, 1500);
+                } else throw new Error();
+            } catch (e) { updateStatus('Save As failed', true); }
+        }
+
+        function importJson() {
+            const input = document.getElementById('importJsonInput');
+            input.value = '';
+            input.onchange = function () {
+                const file = input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (!data.widgets || !Array.isArray(data.widgets)) {
+                            updateStatus('Invalid layout JSON: missing widgets array', true);
+                            return;
+                        }
+                        if (!data.signals) data.signals = [];
+                        pushHistory();
+                        /* Bridge firmware→web signal names */
+                        (data.widgets || []).forEach(w => {
+                            if (w.config && w.config.signal_name && !w.signal)
+                                w.signal = w.config.signal_name;
+                            if (w.type === 'bar' && w.config) {
+                                const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
+                                const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
+                                const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                                const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                                w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                            }
+                        });
+                        convertWidgetColors(data.widgets, rgb565to888);
+                        currentLayout = data;
+                        if (!currentLayout.name) currentLayout.name = 'imported';
+                        /* Prevent importing over default name */
+                        if (currentLayout.name === 'default')
+                            currentLayout.name = 'imported';
+                        selectedIndex = -1; selectedIndices = new Set();
+                        history = [JSON.stringify(currentLayout)];
+                        historyIndex = 0;
+                        renderEditor();
+                        renderSignals();
+                        updateInspector();
+                        updateStatus('Imported ' + file.name);
+                    } catch (err) {
+                        updateStatus('Failed to parse JSON file', true);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
         }
 
         /* ── RGB565 ↔ RGB888 color conversion ──────────────────────────────
@@ -1538,52 +1637,68 @@
                 fields: [
                     { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
                     { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
-                    { name: "rpm_bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
-                    { name: "rpm_limiter_effect", label: "Limiter Effect", type: "select", options: [
+                    { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "limiter_effect", label: "Limiter Effect", type: "select", options: [
                         { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar+Circles" },
                         { v: 3, l: "Circles" }, { v: 4, l: "Bar Solid" }, { v: 5, l: "Bar+Circles Solid" },
                         { v: 6, l: "Circles Solid" }
                     ], def: 0, cat: "appearance" },
-                    { name: "rpm_limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
-                    { name: "rpm_limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" },
-                    { name: "rpm_lights_enabled", label: "RPM Lights", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "rpm_background_enabled", label: "Background Enabled", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "rpm_background_value", label: "Background RPM", type: "number", def: 0, cat: "appearance" },
-                    { name: "rpm_background_color", label: "Background Color", type: "color", def: 0x333333, cat: "appearance" }
-                ]
-            },
-            "speed": {
-                icon: "SPD", defW: 120, defH: 50,
-                fields: [
-                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
-                    { name: "use_mph", label: "Use MPH", type: "checkbox", def: false, cat: "data" }
-                ]
-            },
-            "gear": {
-                icon: "GR", defW: 90, defH: 90,
-                fields: [
-                    { name: "gear_detection_mode", label: "Detection Mode", type: "select", options: [
-                        { v: 0, l: "Custom" }, { v: 1, l: "MaxxECU" }, { v: 2, l: "Haltech" },
-                        { v: 3, l: "Ford" }, { v: 4, l: "Speed\u00F7RPM Ratio" }
-                    ], def: 0, cat: "data" },
-                    { name: "tire_circumference_mm", label: "Tire Circ. (mm)", type: "number", def: 0, cat: "data" },
-                    { name: "final_drive_ratio", label: "Final Drive Ratio", type: "number", def: 0, cat: "data" },
-                    { name: "reverse_gear_ratio", label: "Reverse Ratio", type: "number", def: 0, cat: "data" },
-                    { name: "gear_ratios", label: "Gear Ratios (1-10, comma sep.)", type: "text", def: "", cat: "data" },
-                    { name: "gear_custom_values", label: "Custom Values (P,R,N,D,1-10)", type: "text", def: "", cat: "data" }
+                    { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
+                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "lights_enabled", label: "RPM Lights", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "background_enabled", label: "Background Enabled", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "background_value", label: "Background RPM", type: "number", def: 0, cat: "appearance" },
+                    { name: "background_color", label: "Background Color", type: "color", def: 0x333333, cat: "appearance" }
                 ]
             },
             "panel": {
                 icon: "PNL", defW: 155, defH: 92,
                 fields: [
                     { name: "label", label: "Header Label", type: "text", def: "", cat: "data" },
+                    { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "warning_high_enabled", label: "High Warning", type: "checkbox", def: false, cat: "alerts", group: "high" },
                     { name: "warning_high_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_low_enabled", label: "Low Warning", type: "checkbox", def: false, cat: "alerts", group: "low" },
                     { name: "warning_low_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
-                    { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" }
+                    { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
+                    { name: "label_font", label: "Label Font", type: "select", options: [
+                        { v: "", l: "Default (Label)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" },
+                    { name: "value_font", label: "Value Font", type: "select", options: [
+                        { v: "", l: "Default (Value)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" }
                 ]
             },
             "bar": {
@@ -1596,6 +1711,42 @@
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                     { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "label_font", label: "Label Font", type: "select", options: [
+                        { v: "", l: "Default (Label)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" },
+                    { name: "value_font", label: "Value Font", type: "select", options: [
+                        { v: "", l: "Default (Value)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" },
                     { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
                     { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
                     { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
@@ -1628,7 +1779,25 @@
             "text": {
                 icon: "TXT", defW: 100, defH: 30,
                 fields: [
-                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" }
+                    { name: "static_text", label: "Static Text", type: "text", def: "", cat: "data" },
+                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    { name: "font", label: "Font", type: "select", options: [
+                        { v: "", l: "Default (Montserrat 14)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" }
                 ]
             },
             "meter": {
@@ -1637,7 +1806,43 @@
                     { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
                     { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
                     { name: "start_angle", label: "Start angle", type: "number", def: 135, cat: "data" },
-                    { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" }
+                    { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" },
+                    { name: "label_font", label: "Label Font", type: "select", options: [
+                        { v: "", l: "Default (Label)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" },
+                    { name: "value_font", label: "Value Font", type: "select", options: [
+                        { v: "", l: "Default (Value)" },
+                        { v: "montserrat_8", l: "Montserrat 8" },
+                        { v: "montserrat_10", l: "Montserrat 10" },
+                        { v: "montserrat_12", l: "Montserrat 12" },
+                        { v: "montserrat_14", l: "Montserrat 14" },
+                        { v: "montserrat_16", l: "Montserrat 16" },
+                        { v: "montserrat_18", l: "Montserrat 18" },
+                        { v: "montserrat_20", l: "Montserrat 20" },
+                        { v: "montserrat_22", l: "Montserrat 22" },
+                        { v: "montserrat_24", l: "Montserrat 24" },
+                        { v: "fugaz_14", l: "Fugaz One 14" },
+                        { v: "fugaz_17", l: "Fugaz One 17" },
+                        { v: "fugaz_28", l: "Fugaz One 28" },
+                        { v: "fugaz_56", l: "Fugaz One 56" },
+                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
+                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
+                    ], def: "", cat: "appearance" }
                 ]
             }
         };
@@ -1677,7 +1882,7 @@
 
         interactionLayer.onmousedown = (e) => {
             if (e.button === 0 && e.target === interactionLayer) { // Left click only
-                selectedIndex = -1;
+                selectedIndex = -1; selectedIndices = new Set();
                 renderEditor();
                 updateInspector();
                 renderSignals();
@@ -1692,7 +1897,7 @@
 
         interactionLayer.oncontextmenu = (e) => {
             e.preventDefault();
-            if (e.target === interactionLayer) selectedIndex = -1;
+            if (e.target === interactionLayer) { selectedIndex = -1; selectedIndices = new Set(); }
             showContextMenu(e.clientX, e.clientY);
         };
 
@@ -1783,7 +1988,7 @@
                 const pos = devToWeb(w.x, w.y);
                 const box = document.createElement('div');
                 let classes = `widget-box`;
-                if (index === selectedIndex) classes += ` selected`;
+                if (selectedIndices.has(index)) classes += ` selected`;
                 if (w.locked) classes += ` locked`;
                 if (w.type === 'rpm_bar') classes += ` transparent`;
                 box.className = classes;
@@ -1792,11 +1997,27 @@
                 box.style.width = `${w.w}px`;
                 box.style.height = `${w.h}px`;
 
+                box.setAttribute('data-type', w.type);
+
                 let customHtml = '';
-                // Removed artificial rendering per user request
+                if (w.config) {
+                    const colorField = w.type === 'rpm_bar' ? 'bar_color'
+                                     : w.type === 'bar' ? 'bar_in_range_color'
+                                     : w.type === 'warning' ? 'active_color' : null;
+                    if (colorField && w.config[colorField] != null) {
+                        const hex = Number(w.config[colorField]).toString(16).padStart(6, '0');
+                        customHtml += `<div style="position:absolute;bottom:2px;right:2px;width:10px;height:10px;background:#${hex};border:1px solid rgba(255,255,255,0.3);border-radius:2px;"></div>`;
+                    }
+                }
+                if (w.type === 'panel' && w.config) {
+                    if (w.config.label)
+                        customHtml += `<div style="position:absolute;top:14px;left:4px;font-size:9px;color:#ccc;pointer-events:none;overflow:hidden;white-space:nowrap;">${w.config.label}</div>`;
+                    if (w.config.custom_text)
+                        customHtml += `<div style="position:absolute;bottom:2px;left:4px;font-size:9px;color:#aaa;pointer-events:none;">${w.config.custom_text}</div>`;
+                }
 
                 const sigTag = w.signal ? ` <span style="color:#0f0;font-size:9px;">\u2192 ${w.signal}</span>` : '';
-                box.innerHTML = `<div class="id-label">${w.id}${sigTag}</div>${customHtml}`; if (index === selectedIndex && !w.locked) {
+                box.innerHTML = `<div class="id-label">${w.id}${sigTag}</div>${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
                     const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
                     handles.forEach(h => {
                         const hDiv = document.createElement('div');
@@ -1814,7 +2035,10 @@
                 box.oncontextmenu = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    selectedIndex = index;
+                    if (!selectedIndices.has(index)) {
+                        selectedIndex = index;
+                        selectedIndices = new Set([index]);
+                    }
                     renderEditor();
                     updateInspector();
                     showContextMenu(e.clientX, e.clientY);
@@ -1831,7 +2055,7 @@
             for (let i = currentLayout.widgets.length - 1; i >= 0; i--) {
                 const w = currentLayout.widgets[i];
                 const item = document.createElement('div');
-                item.className = `layer-item ${i === selectedIndex ? 'active' : ''}`;
+                item.className = `layer-item ${selectedIndices.has(i) ? 'active' : ''}`;
 
                 // Drag & Drop Reordering
                 item.draggable = true;
@@ -1857,6 +2081,7 @@
                         const insertIdx = fromIndex < i ? i - 1 : i;
                         currentLayout.widgets.splice(insertIdx, 0, moved);
                         selectedIndex = currentLayout.widgets.indexOf(moved);
+                        selectedIndices = new Set([selectedIndex]);
                         renderEditor();
                         updateInspector();
                         if (document.getElementById('livePreviewToggle').checked) triggerPreview();
@@ -1918,8 +2143,15 @@
                 item.appendChild(typeInfo);
                 item.appendChild(controls);
 
-                item.onclick = () => {
-                    selectedIndex = i;
+                item.onclick = (e) => {
+                    if (e.shiftKey) {
+                        if (selectedIndices.has(i)) { selectedIndices.delete(i); }
+                        else { selectedIndices.add(i); }
+                        selectedIndex = selectedIndices.size > 0 ? [...selectedIndices][selectedIndices.size - 1] : -1;
+                    } else {
+                        selectedIndex = i;
+                        selectedIndices = new Set([i]);
+                    }
                     renderEditor();
                     updateInspector();
                     renderSignals();
@@ -2037,6 +2269,7 @@
         workspaceViewport.onmousedown = (e) => {
             if (e.button === 0 && e.target === workspaceViewport) {
                 selectedIndex = -1;
+                selectedIndices = new Set();
                 renderEditor();
                 updateInspector();
                 renderSignals();
@@ -2072,24 +2305,42 @@
 
         function startDrag(e, index) {
             e.stopPropagation();
-            if (selectedIndex !== index) pushHistory();
+            pushHistory();
 
             if (e.altKey && !currentLayout.widgets[index].locked) {
-                pushHistory();
                 const clone = JSON.parse(JSON.stringify(currentLayout.widgets[index]));
                 clone.id = `w_${Date.now().toString().slice(-4)}`;
                 sanitizeClone(clone);
-                // Give it a tiny visual offset so it doesn't snap perfectly to the same coordinates immediately
                 currentLayout.widgets.push(clone);
-                selectedIndex = currentLayout.widgets.length - 1;
-            } else {
+                const newIdx = currentLayout.widgets.length - 1;
+                selectedIndex = newIdx;
+                selectedIndices = new Set([newIdx]);
+            } else if (e.shiftKey) {
+                /* Shift-click: toggle index in multi-selection */
+                if (selectedIndices.has(index)) {
+                    selectedIndices.delete(index);
+                    selectedIndex = selectedIndices.size > 0 ? [...selectedIndices][selectedIndices.size - 1] : -1;
+                } else {
+                    selectedIndices.add(index);
+                    selectedIndex = index;
+                }
+            } else if (!selectedIndices.has(index)) {
+                /* Normal click on unselected widget: single-select */
                 selectedIndex = index;
+                selectedIndices = new Set([index]);
             }
+            /* If clicking a widget already in the multi-selection, keep the set and drag all */
 
             isDragging = true;
-            const w = currentLayout.widgets[selectedIndex];
-            // Scale drag offset by zoomLevel
+            const w = currentLayout.widgets[selectedIndex >= 0 ? selectedIndex : index];
             dragOffset = { x: (e.clientX / zoomLevel) - w.x, y: (e.clientY / zoomLevel) - w.y };
+            /* Store initial positions for all selected widgets for group drag */
+            _dragStartPositions = {};
+            selectedIndices.forEach(i => {
+                const sw = currentLayout.widgets[i];
+                _dragStartPositions[i] = { x: sw.x, y: sw.y };
+            });
+            _dragAnchorStart = { x: w.x, y: w.y };
             renderEditor();
             updateInspector();
             renderSignals();
@@ -2098,7 +2349,7 @@
         function startResize(e, index, handle) {
             e.stopPropagation();
             pushHistory();
-            selectedIndex = index;
+            selectedIndex = index; selectedIndices = new Set([index]);
             isResizing = true;
             resizeHandle = handle;
             const w = currentLayout.widgets[index];
@@ -2164,7 +2415,7 @@
 
             if (!e.altKey) { // Alt disables smart guides
                 for (let i = 0; i < currentLayout.widgets.length; i++) {
-                    if (i === selectedIndex) continue;
+                    if (selectedIndices.has(i)) continue;
                     const target = currentLayout.widgets[i];
                     const tX = target.x + ORIGIN_X;
                     const tY = target.y + ORIGIN_Y;
@@ -2186,8 +2437,14 @@
             if (!snappedY) newY = Math.round(newY / SNAP_SIZE) * SNAP_SIZE;
 
             if (newX !== w.x || newY !== w.y) {
-                w.x = newX;
-                w.y = newY;
+                /* Move all selected widgets by the same delta */
+                const dx = newX - _dragAnchorStart.x;
+                const dy = newY - _dragAnchorStart.y;
+                selectedIndices.forEach(i => {
+                    const sw = currentLayout.widgets[i];
+                    const sp = _dragStartPositions[i];
+                    if (sp) { sw.x = sp.x + dx; sw.y = sp.y + dy; }
+                });
                 renderEditor();
                 updateInspector();
             }
@@ -2222,26 +2479,32 @@
                 }
             }
 
-            if (selectedIndex === -1) return;
-            const w = currentLayout.widgets[selectedIndex];
-            let changed = false;
+            if (selectedIndex === -1 && selectedIndices.size === 0) return;
 
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (!w.locked) {
-                    pushHistory();
-                    deleteWidget();
-                }
+                deleteWidget();
                 return;
             }
 
-            if (w.locked) return; // Disallow moving locked widgets
+            /* Collect movable widgets from selection */
+            const indices = selectedIndices.size > 0 ? [...selectedIndices] : (selectedIndex >= 0 ? [selectedIndex] : []);
+            const movable = indices.filter(i => !currentLayout.widgets[i].locked);
+            if (movable.length === 0) return;
 
-            const step = e.shiftKey ? 10 : 1; // Advanced Nudging
+            const step = e.shiftKey ? 10 : 1;
+            let changed = false;
 
-            if (e.key === 'ArrowLeft') { pushHistory(); w.x -= step; changed = true; }
-            if (e.key === 'ArrowRight') { pushHistory(); w.x += step; changed = true; }
-            if (e.key === 'ArrowUp') { pushHistory(); w.y -= step; changed = true; }
-            if (e.key === 'ArrowDown') { pushHistory(); w.y += step; changed = true; }
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                pushHistory();
+                movable.forEach(i => {
+                    const w = currentLayout.widgets[i];
+                    if (e.key === 'ArrowLeft') w.x -= step;
+                    if (e.key === 'ArrowRight') w.x += step;
+                    if (e.key === 'ArrowUp') w.y -= step;
+                    if (e.key === 'ArrowDown') w.y += step;
+                });
+                changed = true;
+            }
 
             if (changed) {
                 e.preventDefault();
@@ -2323,7 +2586,8 @@
         function renderFieldHTML(f, val, disabledAttr) {
             let html = `<div class="field"><label>${f.label}</label>`;
             if (f.type === 'select') {
-                html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, true)" ${disabledAttr}>`;
+                const allNumeric = f.options.every(opt => { const v = typeof opt === 'object' ? opt.v : opt; return v === '' || typeof v === 'number' || !isNaN(Number(v)); });
+                html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, ${allNumeric})" ${disabledAttr}>`;
                 f.options.forEach(opt => {
                     const v = typeof opt === 'object' ? opt.v : opt;
                     const l = typeof opt === 'object' ? opt.l : opt;
@@ -2380,6 +2644,10 @@
         function updateInspector() {
             if (selectedIndex === -1) {
                 inspectorContent.innerHTML = '<div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>';
+                return;
+            }
+            if (selectedIndices.size > 1) {
+                inspectorContent.innerHTML = `<div style="text-align:center; color:#aaa; padding-top:40px;">${selectedIndices.size} widgets selected<br><span style="font-size:11px;color:#666;">Drag to move together &bull; Arrow keys to nudge &bull; Delete to remove</span></div>`;
                 return;
             }
             const w = currentLayout.widgets[selectedIndex];
@@ -2595,10 +2863,13 @@
         }
 
         function deleteWidget() {
-            if (selectedIndex === -1) return;
+            if (selectedIndices.size === 0 && selectedIndex === -1) return;
             pushHistory();
-            currentLayout.widgets.splice(selectedIndex, 1);
+            /* Delete in reverse index order to preserve indices */
+            const toDelete = selectedIndices.size > 0 ? [...selectedIndices].sort((a, b) => b - a) : [selectedIndex];
+            toDelete.forEach(i => currentLayout.widgets.splice(i, 1));
             selectedIndex = -1;
+            selectedIndices = new Set();
             renderEditor();
             updateInspector();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
@@ -2949,6 +3220,22 @@
             } catch (e) { updateStatus('Error loading layout list', true); }
         }
 
+        async function fetchLayoutsKeepCurrent() {
+            try {
+                const response = await fetch('/api/layout/list');
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                layoutSelect.innerHTML = '';
+                const activeName = currentLayout.name || data.active;
+                data.layouts.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l; opt.textContent = l;
+                    if (l === activeName) opt.selected = true;
+                    layoutSelect.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        }
+
         async function loadLayout(name) {
             try {
                 /* Fetch live in-memory state first; fall back to raw file */
@@ -2975,7 +3262,7 @@
                 });
                 /* Convert firmware RGB565 colors → RGB888 for editor */
                 convertWidgetColors(currentLayout.widgets, rgb565to888);
-                selectedIndex = -1;
+                selectedIndex = -1; selectedIndices = new Set();
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 _lastDeviceSnapshot = JSON.stringify(currentLayout);
@@ -2988,6 +3275,12 @@
         }
 
         async function saveActiveLayout(apply) {
+            /* Protect default layout — redirect to Save As */
+            if ((currentLayout.name || '') === 'default') {
+                updateStatus('Default layout is read-only — use Save As', true);
+                layoutEditorSaveAs();
+                return;
+            }
             try {
                 updateStatus('Saving layout...');
                 const payload = buildFirmwarePayload();
@@ -3005,6 +3298,7 @@
                     _lastDeviceSnapshot = JSON.stringify(payload);
                     // Clear Local Draft on successful save
                     try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
+                    await fetchLayoutsKeepCurrent();
                     if (apply) setTimeout(captureScreenshot, 1500);
                 } else throw new Error();
             } catch (e) { updateStatus('Save failed', true); }
@@ -3088,7 +3382,7 @@
                     });
                     /* Convert firmware RGB565 colors → RGB888 for editor */
                     convertWidgetColors(currentLayout.widgets, rgb565to888);
-                    selectedIndex = -1;
+                    selectedIndex = -1; selectedIndices = new Set();
                     history = [JSON.stringify(currentLayout)];
                     historyIndex = 0;
                     renderEditor();

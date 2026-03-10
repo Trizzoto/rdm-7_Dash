@@ -813,14 +813,6 @@ void set_rpm_value(int rpm) {
 				lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_PANEL,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
-			if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
-				lv_obj_set_style_text_color(ui_Speed_Value, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-				lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
 			if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
 				lv_obj_set_style_text_color(ui_Bar_1_Label, THEME_COLOR_PANEL,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -863,15 +855,6 @@ void set_rpm_value(int rpm) {
 			if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 				lv_obj_set_style_text_color(ui_RPM_Value,
 											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
-				lv_obj_set_style_text_color(ui_Speed_Value,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-				lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
 											LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 			if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
@@ -919,15 +902,6 @@ void set_rpm_value(int rpm) {
 		// disabled
 		if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
 			lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value)) {
-			lv_obj_set_style_text_color(ui_Speed_Value,
-										THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Kmh && lv_obj_is_valid(ui_Kmh)) {
-			lv_obj_set_style_text_color(ui_Kmh, THEME_COLOR_TEXT_PRIMARY,
 										LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 		if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {

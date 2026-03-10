@@ -314,6 +314,14 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	strncpy(layout_name, name_item->valuestring, sizeof(layout_name) - 1);
 	layout_name[sizeof(layout_name) - 1] = '\0';
 
+	/* Protect the default layout from being overwritten via web editor */
+	if (strcmp(layout_name, "default") == 0) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Cannot overwrite default layout");
+		return ESP_FAIL;
+	}
+
 	// Persist raw JSON to LittleFS
 	esp_err_t err = layout_manager_save_raw(layout_name, root);
 	cJSON_Delete(root);
@@ -534,6 +542,67 @@ static const httpd_uri_t layout_set_uri = {.uri = "/api/layout/set",
 										   .handler = layout_set_handler,
 										   .user_ctx = NULL};
 
+// HTTP handler for deleting a layout JSON file
+static esp_err_t layout_delete_handler(httpd_req_t *req) {
+	char buf[128];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Failed to receive body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+	if (!cJSON_IsString(name_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name'");
+		return ESP_FAIL;
+	}
+
+	char layout_name[LAYOUT_MAX_NAME];
+	strncpy(layout_name, name_item->valuestring, sizeof(layout_name) - 1);
+	layout_name[sizeof(layout_name) - 1] = '\0';
+	cJSON_Delete(root);
+
+	/* Protect the default layout from deletion */
+	if (strcmp(layout_name, "default") == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Cannot delete default layout");
+		return ESP_FAIL;
+	}
+
+	esp_err_t err = layout_manager_delete(layout_name);
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Layout not found");
+		return ESP_FAIL;
+	}
+
+	/* If the deleted layout was the active one, switch back to default */
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active(active, sizeof(active));
+	if (strcmp(active, layout_name) == 0) {
+		layout_manager_set_active("default");
+		lv_async_call(_deferred_screen_reload, NULL);
+	}
+
+	ESP_LOGI(TAG, "Deleted layout '%s'", layout_name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
+											  .method = HTTP_POST,
+											  .handler = layout_delete_handler,
+											  .user_ctx = NULL};
+
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
 		ESP_LOGW(TAG, "Web server already running");
@@ -544,7 +613,7 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 14;
+	config.max_uri_handlers = 16;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 
@@ -566,6 +635,7 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &layout_list_uri);
 	httpd_register_uri_handler(server, &presets_list_uri);
 	httpd_register_uri_handler(server, &layout_set_uri);
+	httpd_register_uri_handler(server, &layout_delete_uri);
 	httpd_register_uri_handler(server, &layout_preview_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");

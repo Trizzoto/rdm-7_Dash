@@ -55,8 +55,6 @@ extern char previous_values[13][64]; /* last known value strings         */
 
 /* ── Widget ID constants ─────────────────────────────────────────────────── */
 #define RPM_VALUE_ID 9
-#define SPEED_VALUE_ID 10
-#define GEAR_VALUE_ID 11
 #define BAR1_VALUE_ID 12
 #define BAR2_VALUE_ID 13
 
@@ -72,12 +70,9 @@ extern char previous_values[13][64]; /* last known value strings         */
 	"Green\nLight Blue\nYellow\nOrange\nRed\nDark "                            \
 	"Blue\nPurple\nMagenta\nPink\nCustom"
 
-/* ── Additional externs for RPM / Speed / Gear ───────────────────────────── */
+/* ── Additional externs for RPM ───────────────────────────────────────────── */
 extern lv_obj_t *menu_rpm_value_label;
-extern lv_obj_t *menu_speed_value_label;
-extern lv_obj_t *menu_speed_units_label;
-extern lv_obj_t *menu_gear_value_label;
-extern lv_obj_t *ui_RPM_Value, *ui_Speed_Value, *ui_Kmh, *ui_GEAR_Value;
+extern lv_obj_t *ui_RPM_Value;
 extern int rpm_gauge_max, rpm_redline_value;
 
 /* RPM callbacks */
@@ -92,14 +87,6 @@ extern void rpm_background_switch_event_cb(lv_event_t *e);
 extern void rpm_background_color_dropdown_event_cb(lv_event_t *e);
 extern void rpm_background_threshold_roller_event_cb(lv_event_t *e);
 
-/* Speed callback */
-extern void speed_units_dropdown_event_cb(lv_event_t *e);
-
-/* Gear callbacks */
-extern void gear_ecu_dropdown_event_cb(lv_event_t *e);
-extern void create_custom_gear_values_section(lv_obj_t *parent,
-											  uint8_t gear_mode);
-extern void hide_custom_gear_values_section(void);
 
 /* ── Live preview panel timer ────────────────────────────────────────────── */
 typedef struct {
@@ -872,291 +859,6 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 						LV_EVENT_VALUE_CHANGED, NULL);
 }
 
-/* =========================================================================
- * Display tab — Speed (value_id 10)
- * ========================================================================= */
-
-static void build_display_tab_speed(lv_obj_t *tab, uint8_t value_id) {
-	(void)value_id; /* used only for config_bridge calls */
-	settings_section_t *sec =
-		settings_add_section(tab, "SPEED OPTIONS", THEME_COLOR_ACCENT_TEAL);
-	lv_obj_t *ud = settings_add_dropdown(sec, "Speed Units:", "KMH\nMPH", 0);
-	lv_dropdown_set_selected(ud, config_bridge_get_use_mph() ? 1 : 0);
-	lv_obj_add_event_cb(ud, speed_units_dropdown_event_cb,
-						LV_EVENT_VALUE_CHANGED, NULL);
-}
-
-/* =========================================================================
- * Display tab — Gear (value_id 11)
- *   Detection mode + optional custom gear values overlay.
- * ========================================================================= */
-
-/* Close callback for the custom gear values full-screen overlay */
-static void gear_overlay_close_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	lv_obj_t *ov = (lv_obj_t *)lv_event_get_user_data(e);
-	if (ov && lv_obj_is_valid(ov))
-		lv_obj_del(ov);
-}
-
-/* Context for the gear ECU dropdown — shows/hides the two edit buttons */
-typedef struct {
-	lv_obj_t *custom_btn;
-	lv_obj_t *ratio_btn;
-} gear_dd_ctx_t;
-
-static void gear_dd_ctx_free_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_DELETE)
-		return;
-	gear_dd_ctx_t *ctx = (gear_dd_ctx_t *)lv_event_get_user_data(e);
-	if (ctx)
-		lv_mem_free(ctx);
-}
-
-/* Helper: show/hide a button safely */
-static void set_btn_vis(lv_obj_t *btn, bool show) {
-	if (!btn || !lv_obj_is_valid(btn))
-		return;
-	if (show)
-		lv_obj_clear_flag(btn, LV_OBJ_FLAG_HIDDEN);
-	else
-		lv_obj_add_flag(btn, LV_OBJ_FLAG_HIDDEN);
-}
-
-/* Local gear ECU dropdown handler — updates config + shows/hides buttons */
-static void gear_ecu_modal_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
-		return;
-	gear_dd_ctx_t *ctx = (gear_dd_ctx_t *)lv_event_get_user_data(e);
-	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-	config_bridge_set_gear_detection_mode((uint8_t)sel);
-	if (ctx) {
-		set_btn_vis(ctx->custom_btn, sel == 0);
-		set_btn_vis(ctx->ratio_btn, sel == 4);
-	}
-}
-
-/* ── Speed/RPM Ratio overlay callbacks (local — no dependency on ui_Screen3) */
-
-static void tire_circ_input_cb(lv_event_t *e) {
-	lv_event_code_t code = lv_event_get_code(e);
-	if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_DEFOCUSED)
-		return;
-	config_bridge_set_tire_circumference(
-		(float)atof(lv_textarea_get_text(lv_event_get_target(e))));
-}
-
-static void final_drive_input_cb(lv_event_t *e) {
-	lv_event_code_t code = lv_event_get_code(e);
-	if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_DEFOCUSED)
-		return;
-	config_bridge_set_final_drive_ratio(
-		(float)atof(lv_textarea_get_text(lv_event_get_target(e))));
-}
-
-/* user_data: -1 = reverse, 0-9 = gear index */
-static void ratio_input_cb(lv_event_t *e) {
-	lv_event_code_t code = lv_event_get_code(e);
-	if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_DEFOCUSED)
-		return;
-	int idx = (int)(intptr_t)lv_event_get_user_data(e);
-	float val = (float)atof(lv_textarea_get_text(lv_event_get_target(e)));
-	if (idx < 0)
-		config_bridge_set_reverse_gear_ratio(val);
-	else
-		config_bridge_set_gear_ratio(idx, val);
-}
-
-/* Forward declaration — defined later in the Speed/RPM section */
-static lv_obj_t *make_overlay_hdr(lv_obj_t *ov, const char *title);
-
-/* Open a full-screen overlay hosting the custom gear value inputs */
-static void open_custom_gear_overlay(uint8_t gear_mode) {
-	lv_obj_t *ov = lv_obj_create(lv_layer_top());
-	lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
-	lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ov, lv_color_black(), 0);
-	lv_obj_set_style_bg_opa(ov, 230, 0);
-	lv_obj_set_style_border_width(ov, 0, 0);
-	lv_obj_set_style_radius(ov, 0, 0);
-
-	/* Gear value inputs use absolute positioning — create before header */
-	create_custom_gear_values_section(ov, gear_mode);
-
-	/* Header rendered last so it draws over scroll content */
-	make_overlay_hdr(ov, "CUSTOM GEAR VALUES");
-}
-
-static void gear_custom_btn_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	open_custom_gear_overlay(config_bridge_get_gear_detection_mode());
-}
-
-/* ── Speed/RPM Ratio overlay ────────────────────────────────────────────────
- */
-
-static lv_obj_t *make_overlay_hdr(lv_obj_t *ov, const char *title) {
-	lv_obj_t *ohdr = lv_obj_create(ov);
-	lv_obj_set_size(ohdr, LV_PCT(100), 48);
-	lv_obj_align(ohdr, LV_ALIGN_TOP_MID, 0, 0);
-	lv_obj_clear_flag(ohdr, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ohdr, THEME_COLOR_INPUT_BG, 0);
-	lv_obj_set_style_bg_opa(ohdr, LV_OPA_COVER, 0);
-	lv_obj_set_style_radius(ohdr, 0, 0);
-	lv_obj_set_style_border_width(ohdr, 0, 0);
-	lv_obj_set_style_border_side(ohdr, LV_BORDER_SIDE_BOTTOM, 0);
-	lv_obj_set_style_border_color(ohdr, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(ohdr, 1, 0);
-	lv_obj_set_style_pad_hor(ohdr, 14, 0);
-
-	lv_obj_t *otitle = lv_label_create(ohdr);
-	lv_label_set_text(otitle, title);
-	lv_obj_set_style_text_color(otitle, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_style_text_font(otitle, THEME_FONT_MEDIUM, 0);
-	lv_obj_align(otitle, LV_ALIGN_LEFT_MID, 0, 0);
-
-	lv_obj_t *ocls = lv_btn_create(ohdr);
-	lv_obj_set_size(ocls, 100, 34);
-	lv_obj_align(ocls, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_bg_color(ocls, THEME_COLOR_BTN_CANCEL, 0);
-	lv_obj_set_style_radius(ocls, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_border_width(ocls, 0, 0);
-	lv_obj_t *oclbl = lv_label_create(ocls);
-	lv_label_set_text(oclbl, LV_SYMBOL_CLOSE "  CLOSE");
-	lv_obj_set_style_text_font(oclbl, THEME_FONT_BODY, 0);
-	lv_obj_set_style_text_color(oclbl, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_center(oclbl);
-	lv_obj_add_event_cb(ocls, gear_overlay_close_cb, LV_EVENT_CLICKED, ov);
-	return ohdr;
-}
-
-static lv_obj_t *make_ratio_input(lv_obj_t *parent, const char *label,
-								  float value, int user_idx) {
-	/* Reuse settings_add_text_input layout: label on left, textarea on right */
-	char buf[20];
-	if (value > 0.0001f)
-		snprintf(buf, sizeof(buf), "%.3f", value);
-	else
-		buf[0] = '\0';
-
-	lv_obj_t *ta = settings_add_text_input(parent, label, "ratio", buf);
-	lv_obj_add_event_cb(ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	lv_obj_add_event_cb(ta, ratio_input_cb, LV_EVENT_VALUE_CHANGED,
-						(void *)(intptr_t)user_idx);
-	lv_obj_add_event_cb(ta, ratio_input_cb, LV_EVENT_DEFOCUSED,
-						(void *)(intptr_t)user_idx);
-	return ta;
-}
-
-static void open_speed_rpm_overlay(void) {
-	lv_obj_t *ov = lv_obj_create(lv_layer_top());
-	lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
-	lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ov, lv_color_black(), 0);
-	lv_obj_set_style_bg_opa(ov, 230, 0);
-	lv_obj_set_style_border_width(ov, 0, 0);
-	lv_obj_set_style_radius(ov, 0, 0);
-
-	/* Scrollable content area below the 48-px header */
-	lv_obj_t *scroll = lv_obj_create(ov);
-	lv_obj_set_size(scroll, LV_PCT(100), 480 - 48);
-	lv_obj_set_pos(scroll, 0, 48);
-	style_tab(scroll); /* surface bg + flex-column */
-
-	/* ── Vehicle Setup section ── */
-	settings_section_t *vs =
-		settings_add_section(scroll, "VEHICLE SETUP", THEME_COLOR_ACCENT_TEAL);
-
-	char buf[20];
-	snprintf(buf, sizeof(buf), "%.1f",
-			 config_bridge_get_tire_circumference());
-	lv_obj_t *tc =
-		settings_add_text_input(vs, "Tire Circ. (mm):", "e.g. 1980", buf);
-	lv_obj_add_event_cb(tc, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	lv_obj_add_event_cb(tc, tire_circ_input_cb, LV_EVENT_VALUE_CHANGED, NULL);
-	lv_obj_add_event_cb(tc, tire_circ_input_cb, LV_EVENT_DEFOCUSED, NULL);
-
-	snprintf(buf, sizeof(buf), "%.3f",
-			 config_bridge_get_final_drive_ratio());
-	lv_obj_t *fd =
-		settings_add_text_input(vs, "Final Drive Ratio:", "e.g. 3.420", buf);
-	lv_obj_add_event_cb(fd, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	lv_obj_add_event_cb(fd, final_drive_input_cb, LV_EVENT_VALUE_CHANGED, NULL);
-	lv_obj_add_event_cb(fd, final_drive_input_cb, LV_EVENT_DEFOCUSED, NULL);
-
-	/* ── Gear Ratios section ── */
-	settings_section_t *gr =
-		settings_add_section(scroll, "GEAR RATIOS", THEME_COLOR_ACCENT_AMBER);
-
-	/* Gears 1-10 */
-	const char *gear_names[] = {"1st:", "2nd:", "3rd:", "4th:", "5th:",
-								"6th:", "7th:", "8th:", "9th:", "10th:"};
-	for (int i = 0; i < 10; i++)
-		make_ratio_input(gr, gear_names[i], config_bridge_get_gear_ratio(i),
-						 i);
-
-	/* Header rendered last so it draws over any scroll content */
-	make_overlay_hdr(ov, "SPEED / RPM RATIO SETUP");
-}
-
-static void speed_ratio_btn_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-		return;
-	open_speed_rpm_overlay();
-}
-
-/* Helper: create a styled action button inside the gear tab */
-static lv_obj_t *make_gear_action_btn(lv_obj_t *tab, const char *label_txt) {
-	lv_obj_t *btn = lv_btn_create(tab);
-	lv_obj_set_size(btn, lv_pct(100), 38);
-	lv_obj_set_style_bg_color(btn, THEME_COLOR_ACCENT_DIM, 0);
-	lv_obj_set_style_bg_color(btn, THEME_COLOR_ACCENT, LV_STATE_PRESSED);
-	lv_obj_set_style_radius(btn, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_border_width(btn, 1, 0);
-	lv_obj_set_style_border_color(btn, THEME_COLOR_ACCENT, 0);
-	lv_obj_t *lbl = lv_label_create(btn);
-	lv_label_set_text(lbl, label_txt);
-	lv_obj_set_style_text_font(lbl, THEME_FONT_BODY, 0);
-	lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_center(lbl);
-	return btn;
-}
-
-static void build_display_tab_gear(lv_obj_t *tab) {
-	uint8_t gear_mode = config_bridge_get_gear_detection_mode();
-	settings_section_t *sec =
-		settings_add_section(tab, "GEAR DETECTION", THEME_COLOR_ACCENT_TEAL);
-
-	lv_obj_t *dd = settings_add_dropdown(
-		sec,
-		"Detection Mode:", "Custom\nMaxxECU\nHaltech\nFord\nSpeed/RPM Ratio",
-		0);
-	lv_dropdown_set_selected(dd, gear_mode);
-
-	/* "Edit Custom Values" button — visible only for Custom mode (0) */
-	lv_obj_t *cbtn =
-		make_gear_action_btn(tab, LV_SYMBOL_EDIT "  EDIT CUSTOM GEAR VALUES");
-	if (gear_mode != 0)
-		lv_obj_add_flag(cbtn, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_add_event_cb(cbtn, gear_custom_btn_cb, LV_EVENT_CLICKED, NULL);
-
-	/* "Edit Speed/RPM Ratios" button — visible only for Speed/RPM Ratio mode
-	 * (4) */
-	lv_obj_t *rbtn =
-		make_gear_action_btn(tab, LV_SYMBOL_SETTINGS "  EDIT SPEED/RPM RATIOS");
-	if (gear_mode != 4)
-		lv_obj_add_flag(rbtn, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_add_event_cb(rbtn, speed_ratio_btn_cb, LV_EVENT_CLICKED, NULL);
-
-	/* Wire dropdown: updates config + shows/hides correct button */
-	gear_dd_ctx_t *ctx = lv_mem_alloc(sizeof(gear_dd_ctx_t));
-	ctx->custom_btn = cbtn;
-	ctx->ratio_btn = rbtn;
-	lv_obj_add_event_cb(dd, gear_ecu_modal_cb, LV_EVENT_VALUE_CHANGED, ctx);
-	lv_obj_add_event_cb(dd, gear_dd_ctx_free_cb, LV_EVENT_DELETE, ctx);
-}
 
 /* =========================================================================
  * Public: config_modal_open
@@ -1179,9 +881,7 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 	uint8_t idx = value_id - 1;
 	bool is_bar = (value_id == BAR1_VALUE_ID || value_id == BAR2_VALUE_ID);
 	bool is_rpm = (value_id == RPM_VALUE_ID);
-	bool is_speed = (value_id == SPEED_VALUE_ID);
-	bool is_gear = (value_id == GEAR_VALUE_ID);
-	bool is_panel = (!is_bar && !is_rpm && !is_speed && !is_gear);
+	bool is_panel = (!is_bar && !is_rpm);
 	uint8_t bar_idx = (value_id == BAR1_VALUE_ID) ? 0 : 1;
 
 	/* ── Keyboard ───────────────────────────────────────────────────────────
@@ -1365,68 +1065,6 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
 		lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
 		lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
-
-		/* ── Speed preview
-		 * ───────────────────────────────────────────────────── */
-	} else if (is_speed) {
-		lv_obj_t *slbl = lv_label_create(prev_pane);
-		lv_label_set_text(slbl, "SPEED");
-		lv_obj_set_style_text_color(slbl, THEME_COLOR_TEXT_MUTED, 0);
-		lv_obj_set_style_text_font(slbl, THEME_FONT_DASH_LABEL, 0);
-		lv_obj_align(slbl, LV_ALIGN_CENTER, 0, -28);
-
-		const char *cspd = (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value))
-							   ? lv_label_get_text(ui_Speed_Value)
-							   : "---";
-		lv_obj_t *sval = lv_label_create(prev_pane);
-		lv_label_set_text(sval, cspd);
-		lv_obj_set_style_text_color(sval, THEME_COLOR_TEXT_PRIMARY, 0);
-		lv_obj_set_style_text_font(sval, THEME_FONT_DASH_VALUE, 0);
-		lv_obj_align(sval, LV_ALIGN_CENTER, 0, 8);
-		menu_speed_value_label = sval;
-
-		const char *cunit = (ui_Kmh && lv_obj_is_valid(ui_Kmh))
-								? lv_label_get_text(ui_Kmh)
-								: "KMH";
-		lv_obj_t *unitlbl = lv_label_create(prev_pane);
-		lv_label_set_text(unitlbl, cunit);
-		lv_obj_set_style_text_color(unitlbl, THEME_COLOR_TEXT_MUTED, 0);
-		lv_obj_set_style_text_font(unitlbl, THEME_FONT_SMALL, 0);
-		lv_obj_align(unitlbl, LV_ALIGN_CENTER, 0, 38);
-		menu_speed_units_label = unitlbl;
-
-		lv_obj_t *hint = lv_label_create(prev_pane);
-		lv_label_set_text(hint, "Units update\non change");
-		lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_GHOST, 0);
-		lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
-		lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
-
-		/* ── Gear preview
-		 * ────────────────────────────────────────────────────── */
-	} else if (is_gear) {
-		lv_obj_t *glbl = lv_label_create(prev_pane);
-		lv_label_set_text(glbl, "GEAR");
-		lv_obj_set_style_text_color(glbl, THEME_COLOR_TEXT_MUTED, 0);
-		lv_obj_set_style_text_font(glbl, THEME_FONT_DASH_LABEL, 0);
-		lv_obj_align(glbl, LV_ALIGN_CENTER, 0, -28);
-
-		const char *cg = (ui_GEAR_Value && lv_obj_is_valid(ui_GEAR_Value))
-							 ? lv_label_get_text(ui_GEAR_Value)
-							 : "-";
-		lv_obj_t *gval = lv_label_create(prev_pane);
-		lv_label_set_text(gval, cg);
-		lv_obj_set_style_text_color(gval, THEME_COLOR_TEXT_PRIMARY, 0);
-		lv_obj_set_style_text_font(gval, THEME_FONT_DASH_GEAR, 0);
-		lv_obj_align(gval, LV_ALIGN_CENTER, 0, 10);
-		menu_gear_value_label = gval;
-
-		lv_obj_t *hint = lv_label_create(prev_pane);
-		lv_label_set_text(hint, "Live CAN value");
-		lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_GHOST, 0);
-		lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
-		lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
 	}
 
 	/* =======================================================================
@@ -1454,10 +1092,6 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		snprintf(title, sizeof(title), "BAR %d SETTINGS", bar_idx + 1);
 	else if (is_rpm)
 		snprintf(title, sizeof(title), "RPM SETTINGS");
-	else if (is_speed)
-		snprintf(title, sizeof(title), "SPEED SETTINGS");
-	else if (is_gear)
-		snprintf(title, sizeof(title), "GEAR SETTINGS");
 	else
 		snprintf(title, sizeof(title), "PANEL %d SETTINGS", value_id);
 	lv_obj_t *title_lbl = lv_label_create(hdr);
@@ -1532,10 +1166,6 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		build_display_tab_bar(tab_display, value_id);
 	else if (is_rpm)
 		build_display_tab_rpm(tab_display, value_id);
-	else if (is_speed)
-		build_display_tab_speed(tab_display, value_id);
-	else if (is_gear)
-		build_display_tab_gear(tab_display);
 	else
 		build_display_tab_panel(tab_display, value_id);
 

@@ -24,7 +24,6 @@ extern lv_obj_t *g_type_dropdown[];
 extern lv_obj_t *ui_MenuScreen;
 
 #define RPM_VALUE_ID   9
-#define SPEED_VALUE_ID 10
 
 /* Bit-start options string (0..63) */
 static const char *BIT_START_OPTS =
@@ -66,8 +65,8 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     settings_section_t *sec = settings_add_section(sp, sec_title, THEME_COLOR_STATUS_CONNECTED);
 
-    /* -- Label input (panels only, not RPM / Speed) ---------------------- */
-    if (value_id != RPM_VALUE_ID && value_id != SPEED_VALUE_ID) {
+    /* -- Label input (panels only, not RPM) ------------------------------- */
+    if (value_id != RPM_VALUE_ID) {
         show_preconfig_menu(parent);
         g_label_input[idx] = settings_add_text_input(sec, "Label:", "Enter Label",
                                                       config_bridge_get_label(value_id));

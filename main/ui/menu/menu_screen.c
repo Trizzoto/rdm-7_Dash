@@ -11,7 +11,6 @@
 #include "device_settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "gear_config.h"
 #include "lvgl.h"
 #include "preset_picker.h"
 #include <stdio.h>
@@ -24,12 +23,7 @@ extern lv_obj_t *keyboard;
 extern lv_obj_t *ui_Value[];
 
 /* Global previewer references */
-lv_obj_t *custom_gear_config_button = NULL;
 lv_obj_t *menu_rpm_value_label = NULL;
-lv_obj_t *menu_speed_value_label = NULL;
-lv_obj_t *menu_speed_units_label = NULL;
-lv_obj_t *menu_gear_value_label = NULL;
-lv_obj_t *menu_gear_icon = NULL;
 lv_obj_t *menu_panel_value_labels[8] = {NULL};
 lv_obj_t *menu_panel_boxes[8] = {NULL};
 lv_obj_t *menu_panel_labels[8] = {NULL};
@@ -47,8 +41,6 @@ static void delete_old_screen_cb(lv_timer_t *t) {
 }
 
 static void clear_menu_refs(void) {
-	menu_speed_value_label = menu_speed_units_label = NULL;
-	menu_gear_value_label = menu_gear_icon = NULL;
 	for (int i = 0; i < 8; i++)
 		menu_panel_value_labels[i] = menu_panel_boxes[i] =
 			menu_panel_labels[i] = NULL;
@@ -89,15 +81,10 @@ void close_menu_event_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
 		return;
 	menu_rpm_value_label = NULL;
-	menu_speed_value_label = NULL;
-	menu_speed_units_label = NULL;
-	menu_gear_value_label = NULL;
 
 	lv_obj_t *old = lv_scr_act();
 	lv_obj_t *btn = lv_event_get_target(e);
 	lv_obj_add_state(btn, LV_STATE_DISABLED);
-
-	custom_gear_section_flush_to_config();
 
 	lv_obj_t *ind = lv_label_create(old);
 	lv_label_set_text(ind, "Saving...");
@@ -118,9 +105,6 @@ void cancel_menu_event_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
 		return;
 	menu_rpm_value_label = NULL;
-	menu_speed_value_label = NULL;
-	menu_speed_units_label = NULL;
-	menu_gear_value_label = NULL;
 
 	lv_obj_t *old = lv_scr_act();
 	lv_obj_t *btn = lv_event_get_target(e);
@@ -140,7 +124,6 @@ void cancel_menu_event_cb(lv_event_t *e) {
 void load_menu_screen_for_value(uint8_t value_id) {
 	current_value_id = value_id;
 	destroy_preconfig_menu();
-	custom_gear_config_button = NULL;
 
 	ui_MenuScreen = lv_obj_create(NULL);
 	lv_obj_set_style_bg_color(ui_MenuScreen, lv_color_black(), 0);
@@ -183,7 +166,3 @@ void create_menu_objects(lv_obj_t *parent, uint8_t value_id) {
 	create_config_controls(parent, value_id);
 }
 
-void custom_gear_config_btn_event_cb(lv_event_t *e) {
-	(void)e;
-	create_custom_gear_config_menu();
-}

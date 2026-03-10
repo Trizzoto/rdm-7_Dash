@@ -19,6 +19,8 @@ typedef struct {
 	bool       warning_low_enabled;
 	float      warning_low_threshold;
 	lv_color_t warning_low_color;
+	char       label_font[32];
+	char       value_font[32];
 	char       signal_name[32];
 	int16_t    signal_index;
 	/* LVGL object pointers (runtime only) */

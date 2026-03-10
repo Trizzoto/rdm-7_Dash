@@ -23,10 +23,8 @@ extern "C" {
  * Find the widget_t for a given value_id.
  * value_id 1-8  → WIDGET_PANEL slot 0-7
  * value_id 9    → WIDGET_RPM_BAR
- * value_id 10   → WIDGET_SPEED
- * value_id 11   → WIDGET_GEAR
- * value_id 12   → WIDGET_BAR slot 0
- * value_id 13   → WIDGET_BAR slot 1
+ * value_id 10   → WIDGET_BAR slot 0
+ * value_id 11   → WIDGET_BAR slot 1
  */
 widget_t *config_bridge_get_widget(uint8_t value_id);
 
@@ -59,11 +57,6 @@ uint8_t     config_bridge_get_decimals(uint8_t value_id);
 void        config_bridge_set_decimals(uint8_t value_id, uint8_t decimals);
 const char *config_bridge_get_custom_text(uint8_t value_id);
 void        config_bridge_set_custom_text(uint8_t value_id, const char *text);
-
-/* ── Speed-specific ───────────────────────────────────────────────────── */
-
-bool config_bridge_get_use_mph(void);
-void config_bridge_set_use_mph(bool use_mph);
 
 /* ── Bar-specific ─────────────────────────────────────────────────────── */
 
@@ -122,25 +115,6 @@ lv_color_t config_bridge_get_rpm_limiter_color(void);
 bool       config_bridge_get_rpm_background_enabled(void);
 int32_t    config_bridge_get_rpm_background_value(void);
 lv_color_t config_bridge_get_rpm_background_color(void);
-
-/* ── Gear-specific ────────────────────────────────────────────────────── */
-
-uint8_t  config_bridge_get_gear_detection_mode(void);
-void     config_bridge_set_gear_detection_mode(uint8_t mode);
-float    config_bridge_get_tire_circumference(void);
-void     config_bridge_set_tire_circumference(float val);
-float    config_bridge_get_final_drive_ratio(void);
-void     config_bridge_set_final_drive_ratio(float val);
-float    config_bridge_get_reverse_gear_ratio(void);
-void     config_bridge_set_reverse_gear_ratio(float val);
-float    config_bridge_get_gear_ratio(uint8_t idx);
-void     config_bridge_set_gear_ratio(uint8_t idx, float val);
-uint32_t config_bridge_get_gear_custom_value(uint8_t idx);
-void     config_bridge_set_gear_custom_value(uint8_t idx, uint32_t val);
-uint8_t  config_bridge_get_gear_icon_type(uint8_t idx);
-void     config_bridge_set_gear_icon_type(uint8_t idx, uint8_t type);
-uint32_t config_bridge_get_gear_icon_value(uint8_t idx);
-void     config_bridge_set_gear_icon_value(uint8_t idx, uint32_t val);
 
 /* ── Signal auto-create ───────────────────────────────────────────────── */
 

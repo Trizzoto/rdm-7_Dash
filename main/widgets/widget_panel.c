@@ -554,7 +554,8 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(hdr, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(hdr, THEME_FONT_DASH_LABEL,
+	const lv_font_t *lbl_font = widget_resolve_font(pd->label_font);
+	lv_obj_set_style_text_font(hdr, lbl_font ? lbl_font : THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(hdr, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_set_width(hdr, w->w - 10);
@@ -571,7 +572,8 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(val, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(val, THEME_FONT_DASH_VALUE,
+	const lv_font_t *val_font = widget_resolve_font(pd->value_font);
+	lv_obj_set_style_text_font(val, val_font ? val_font : THEME_FONT_DASH_VALUE,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_CENTER, 0);
 	lv_obj_set_width(val, w->w - 15);
@@ -653,6 +655,10 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "warning_low_threshold", pd->warning_low_threshold);
 		cJSON_AddNumberToObject(cfg, "warning_low_color", (int)pd->warning_low_color.full);
 	}
+	if (pd->label_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "label_font", pd->label_font);
+	if (pd->value_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "value_font", pd->value_font);
 	if (pd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", pd->signal_name);
 }
@@ -698,6 +704,17 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_color");
 	if (cJSON_IsNumber(item)) pd->warning_low_color.full = (uint32_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(pd->label_font, item->valuestring, sizeof(pd->label_font) - 1);
+		pd->label_font[sizeof(pd->label_font) - 1] = '\0';
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_font");
+	if (cJSON_IsString(item) && item->valuestring) {
+		strncpy(pd->value_font, item->valuestring, sizeof(pd->value_font) - 1);
+		pd->value_font[sizeof(pd->value_font) - 1] = '\0';
+	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)

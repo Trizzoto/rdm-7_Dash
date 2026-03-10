@@ -12,6 +12,8 @@ extern "C" {
 typedef struct {
 	uint8_t  value_idx;
 	uint8_t  decimals;
+	char     font[32];
+	char     static_text[64];
 	char     signal_name[32];
 	int16_t  signal_index;
 } text_data_t;
@@ -19,8 +21,7 @@ typedef struct {
 /**
  * Create a text widget instance.
  *
- * @param value_idx  Value slot 0-12 to bind to (panel 0-7, RPM, Speed, Gear,
- *                   BAR1, BAR2).
+ * @param value_idx  Value slot 0-10 to bind to (panel 0-7, RPM, BAR1, BAR2).
  * @return           Heap-allocated widget_t*, caller must call w->destroy(w).
  */
 widget_t *widget_text_create_instance(uint8_t value_idx);

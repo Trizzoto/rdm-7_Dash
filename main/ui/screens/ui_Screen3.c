@@ -17,11 +17,9 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "widgets/widget_bar.h"
-#include "widgets/widget_gear.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
 #include "widgets/widget_rpm_bar.h"
-#include "widgets/widget_speed.h"
 #include "widgets/widget_warning.h"
 #include <stdio.h>
 #include <string.h>
@@ -175,7 +173,6 @@ void ui_Screen3_screen_init(void) {
 	if (!timers_created) {
 		lv_timer_create(check_rpm_color_update, 500, NULL);
 		lv_timer_create(check_warning_timeouts, 50, NULL);
-		lv_timer_create(speed_rpm_gear_update_timer_cb, 200, NULL);
 		indicator_animation_timer =
 			lv_timer_create(indicator_animation_timer_cb, 350, NULL);
 		lv_timer_pause(indicator_animation_timer);
@@ -193,10 +190,6 @@ void ui_Screen3_screen_init(void) {
 	rpm_bar_gauge = NULL;
 	ui_RPM_Value = NULL;
 	ui_RPM_Label = NULL;
-	ui_Speed_Value = NULL;
-	ui_Kmh = NULL;
-	ui_GEAR_Value = NULL;
-	ui_GEAR_Icon = NULL;
 	ui_Panel9 = NULL;
 	ui_Bar_1 = NULL;
 	ui_Bar_2 = NULL;
@@ -211,11 +204,6 @@ void ui_Screen3_screen_init(void) {
 	/* Click zones for special widgets — only installed if the widget exists */
 	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
 		create_transparent_click_zone(ui_Screen3, ui_RPM_Value, RPM_VALUE_ID);
-	if (ui_Speed_Value && lv_obj_is_valid(ui_Speed_Value))
-		create_transparent_click_zone(ui_Screen3, ui_Speed_Value,
-									  SPEED_VALUE_ID);
-	if (ui_GEAR_Value && lv_obj_is_valid(ui_GEAR_Value))
-		create_transparent_click_zone(ui_Screen3, ui_GEAR_Value, GEAR_VALUE_ID);
 	if (ui_Bar_1 && lv_obj_is_valid(ui_Bar_1))
 		create_transparent_click_zone(ui_Screen3, ui_Bar_1, BAR1_VALUE_ID);
 	if (ui_Bar_2 && lv_obj_is_valid(ui_Bar_2))
@@ -271,10 +259,6 @@ void ui_Screen3_preview_layout(cJSON *root) {
 	rpm_redline_zone = NULL;
 	ui_RPM_Value = NULL;
 	ui_RPM_Label = NULL;
-	ui_Speed_Value = NULL;
-	ui_Kmh = NULL;
-	ui_GEAR_Value = NULL;
-	ui_GEAR_Icon = NULL;
 	ui_Panel9 = NULL;
 	ui_Bar_1 = NULL;
 	ui_Bar_2 = NULL;

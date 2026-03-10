@@ -10,8 +10,6 @@
 #include "widgets/widget_panel.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_rpm_bar.h"
-#include "widgets/widget_speed.h"
-#include "widgets/widget_gear.h"
 #include "widgets/widget_text.h"
 #include "widgets/widget_registry.h"
 #include "esp_log.h"
@@ -23,13 +21,11 @@ static const char *TAG = "cfg_bridge";
 /* ── Internal helpers ──────────────────────────────────────────────────── */
 
 widget_t *config_bridge_get_widget(uint8_t value_id) {
-	if (value_id < 1 || value_id > 13) return NULL;
+	if (value_id < 1 || value_id > 11) return NULL;
 	if (value_id <= 8)  return widget_registry_find_by_type_and_slot(WIDGET_PANEL, value_id - 1);
 	if (value_id == 9)  return widget_registry_find_by_type_and_slot(WIDGET_RPM_BAR, 0);
-	if (value_id == 10) return widget_registry_find_by_type_and_slot(WIDGET_SPEED, 0);
-	if (value_id == 11) return widget_registry_find_by_type_and_slot(WIDGET_GEAR, 0);
-	if (value_id == 12) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 0);
-	if (value_id == 13) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 1);
+	if (value_id == 10) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 0);
+	if (value_id == 11) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 1);
 	return NULL;
 }
 
@@ -40,8 +36,6 @@ static const char *_get_signal_name(widget_t *w) {
 		case WIDGET_PANEL:   return ((panel_data_t *)w->type_data)->signal_name;
 		case WIDGET_BAR:     return ((bar_data_t *)w->type_data)->signal_name;
 		case WIDGET_RPM_BAR: return ((rpm_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_SPEED:   return ((speed_data_t *)w->type_data)->signal_name;
-		case WIDGET_GEAR:    return ((gear_data_t *)w->type_data)->signal_name;
 		case WIDGET_TEXT:    return ((text_data_t *)w->type_data)->signal_name;
 		default: return "";
 	}
@@ -53,8 +47,6 @@ static int16_t *_get_signal_index_ptr(widget_t *w) {
 		case WIDGET_PANEL:   return &((panel_data_t *)w->type_data)->signal_index;
 		case WIDGET_BAR:     return &((bar_data_t *)w->type_data)->signal_index;
 		case WIDGET_RPM_BAR: return &((rpm_bar_data_t *)w->type_data)->signal_index;
-		case WIDGET_SPEED:   return &((speed_data_t *)w->type_data)->signal_index;
-		case WIDGET_GEAR:    return &((gear_data_t *)w->type_data)->signal_index;
 		case WIDGET_TEXT:    return &((text_data_t *)w->type_data)->signal_index;
 		default: return NULL;
 	}
@@ -66,8 +58,6 @@ static char *_get_signal_name_buf(widget_t *w) {
 		case WIDGET_PANEL:   return ((panel_data_t *)w->type_data)->signal_name;
 		case WIDGET_BAR:     return ((bar_data_t *)w->type_data)->signal_name;
 		case WIDGET_RPM_BAR: return ((rpm_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_SPEED:   return ((speed_data_t *)w->type_data)->signal_name;
-		case WIDGET_GEAR:    return ((gear_data_t *)w->type_data)->signal_name;
 		case WIDGET_TEXT:    return ((text_data_t *)w->type_data)->signal_name;
 		default: return NULL;
 	}
@@ -215,7 +205,6 @@ uint8_t config_bridge_get_decimals(uint8_t value_id) {
 	switch (w->type) {
 		case WIDGET_PANEL: return ((panel_data_t *)w->type_data)->decimals;
 		case WIDGET_BAR:   return ((bar_data_t *)w->type_data)->decimals;
-		case WIDGET_SPEED: return ((speed_data_t *)w->type_data)->decimals;
 		default: return 0;
 	}
 }
@@ -226,7 +215,6 @@ void config_bridge_set_decimals(uint8_t value_id, uint8_t decimals) {
 	switch (w->type) {
 		case WIDGET_PANEL: ((panel_data_t *)w->type_data)->decimals = decimals; break;
 		case WIDGET_BAR:   ((bar_data_t *)w->type_data)->decimals = decimals; break;
-		case WIDGET_SPEED: ((speed_data_t *)w->type_data)->decimals = decimals; break;
 		default: break;
 	}
 }
@@ -247,20 +235,6 @@ void config_bridge_set_custom_text(uint8_t value_id, const char *text) {
 		strncpy(pd->custom_text, text, sizeof(pd->custom_text) - 1);
 		pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
 	}
-}
-
-/* ── Speed-specific ────────────────────────────────────────────────────── */
-
-bool config_bridge_get_use_mph(void) {
-	widget_t *w = config_bridge_get_widget(SPEED_VALUE_ID);
-	if (!w || !w->type_data) return false;
-	return ((speed_data_t *)w->type_data)->use_mph;
-}
-
-void config_bridge_set_use_mph(bool use_mph) {
-	widget_t *w = config_bridge_get_widget(SPEED_VALUE_ID);
-	if (!w || !w->type_data) return;
-	((speed_data_t *)w->type_data)->use_mph = use_mph;
 }
 
 /* ── Bar-specific ──────────────────────────────────────────────────────── */
@@ -465,98 +439,3 @@ lv_color_t config_bridge_get_rpm_background_color(void) {
 	return rd ? rd->background_color : lv_color_hex(0x000000);
 }
 
-/* ── Gear-specific ─────────────────────────────────────────────────────── */
-
-static gear_data_t *_get_gear_data(void) {
-	widget_t *w = config_bridge_get_widget(GEAR_VALUE_ID);
-	if (!w || !w->type_data || w->type != WIDGET_GEAR) return NULL;
-	return (gear_data_t *)w->type_data;
-}
-
-uint8_t config_bridge_get_gear_detection_mode(void) {
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->detection_mode : 0;
-}
-
-void config_bridge_set_gear_detection_mode(uint8_t mode) {
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->detection_mode = mode;
-}
-
-float config_bridge_get_tire_circumference(void) {
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->tire_circumference_mm : 2000.0f;
-}
-
-void config_bridge_set_tire_circumference(float val) {
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->tire_circumference_mm = val;
-}
-
-float config_bridge_get_final_drive_ratio(void) {
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->final_drive_ratio : 3.73f;
-}
-
-void config_bridge_set_final_drive_ratio(float val) {
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->final_drive_ratio = val;
-}
-
-float config_bridge_get_reverse_gear_ratio(void) {
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->reverse_gear_ratio : 3.0f;
-}
-
-void config_bridge_set_reverse_gear_ratio(float val) {
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->reverse_gear_ratio = val;
-}
-
-float config_bridge_get_gear_ratio(uint8_t idx) {
-	if (idx >= 10) return 0;
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->gear_ratios[idx] : 0;
-}
-
-void config_bridge_set_gear_ratio(uint8_t idx, float val) {
-	if (idx >= 10) return;
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->gear_ratios[idx] = val;
-}
-
-uint32_t config_bridge_get_gear_custom_value(uint8_t idx) {
-	if (idx >= 14) return 0;
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->custom_values[idx] : 0;
-}
-
-void config_bridge_set_gear_custom_value(uint8_t idx, uint32_t val) {
-	if (idx >= 14) return;
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->custom_values[idx] = val;
-}
-
-uint8_t config_bridge_get_gear_icon_type(uint8_t idx) {
-	if (idx >= 7) return 0;
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->custom_icon_types[idx] : 0;
-}
-
-void config_bridge_set_gear_icon_type(uint8_t idx, uint8_t type) {
-	if (idx >= 7) return;
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->custom_icon_types[idx] = type;
-}
-
-uint32_t config_bridge_get_gear_icon_value(uint8_t idx) {
-	if (idx >= 7) return 0;
-	gear_data_t *gd = _get_gear_data();
-	return gd ? gd->custom_icon_values[idx] : 0;
-}
-
-void config_bridge_set_gear_icon_value(uint8_t idx, uint32_t val) {
-	if (idx >= 7) return;
-	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->custom_icon_values[idx] = val;
-}
