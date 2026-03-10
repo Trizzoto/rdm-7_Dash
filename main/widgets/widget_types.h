@@ -42,10 +42,6 @@ typedef struct widget_t widget_t;
 /** Called once to build LVGL objects on the given parent. */
 typedef void (*widget_create_fn)       (widget_t *w, lv_obj_t *parent);
 
-/** Deliver a new data frame to the widget (same pointer types as existing
- *  async update functions: panel_update_t*, rpm_update_t*, etc.). */
-typedef void (*widget_update_fn)       (widget_t *w, void *data);
-
 /** Resize the widget's root container.  Phase 3 will apply to LVGL objects. */
 typedef void (*widget_resize_fn)       (widget_t *w, uint16_t new_w, uint16_t new_h);
 
@@ -75,7 +71,6 @@ struct widget_t {
 
     /* vtable */
     widget_create_fn        create;
-    widget_update_fn        update;
     widget_resize_fn        resize;
     widget_open_settings_fn open_settings;
     widget_to_json_fn       to_json;

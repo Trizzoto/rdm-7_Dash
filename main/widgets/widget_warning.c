@@ -1,6 +1,6 @@
 #include "widget_warning.h"
+#include "widget_panel.h"
 #include "can/can_decode.h"
-#include "can/can_dispatch.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -11,7 +11,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -19,7 +18,7 @@
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "widget_dispatcher.h"
+#include "ui/dashboard.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -36,6 +35,20 @@ typedef struct {
 	char       signal_name[32];
 	int16_t    signal_index;
 } warning_data_t;
+
+/* ── Helper: look up warning_data_t by slot ───────────────────────────────── */
+static warning_data_t *_get_warning_data_by_slot(uint8_t slot) {
+	if (slot >= 8) return NULL;
+	widget_t **widgets = dashboard_get_widgets();
+	uint8_t count = dashboard_get_widget_count();
+	for (uint8_t i = 0; i < count; i++) {
+		if (widgets[i] && widgets[i]->type == WIDGET_WARNING) {
+			warning_data_t *wd = (warning_data_t *)widgets[i]->type_data;
+			if (wd && wd->slot == slot) return wd;
+		}
+	}
+	return NULL;
+}
 
 /* forward declarations */
 static void free_warning_idx_event_cb(lv_event_t *e);
@@ -74,8 +87,8 @@ void warning_high_threshold_event_cb(lv_event_t *e) {
 		lv_obj_t *textarea = lv_event_get_target(e);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		const char *txt = lv_textarea_get_text(textarea);
-		values_config[value_id - 1].warning_high_threshold = atof(txt);
-		values_config[value_id - 1].warning_high_enabled = true;
+		/* value_id is 1-based panel slot (1-8) */
+		widget_panel_set_warning_high(value_id - 1, (float)atof(txt), true);
 	}
 }
 
@@ -84,8 +97,7 @@ void warning_low_threshold_event_cb(lv_event_t *e) {
 		lv_obj_t *textarea = lv_event_get_target(e);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		const char *txt = lv_textarea_get_text(textarea);
-		values_config[value_id - 1].warning_low_threshold = atof(txt);
-		values_config[value_id - 1].warning_low_enabled = true;
+		widget_panel_set_warning_low(value_id - 1, (float)atof(txt), true);
 	}
 }
 
@@ -94,8 +106,8 @@ void warning_high_color_event_cb(lv_event_t *e) {
 		lv_obj_t *dropdown = lv_event_get_target(e);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		uint16_t selected = lv_dropdown_get_selected(dropdown);
-		values_config[value_id - 1].warning_high_color =
-			selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
+		lv_color_t c = selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
+		widget_panel_set_warning_high_color(value_id - 1, c);
 	}
 }
 
@@ -104,8 +116,8 @@ void warning_low_color_event_cb(lv_event_t *e) {
 		lv_obj_t *dropdown = lv_event_get_target(e);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
 		uint16_t selected = lv_dropdown_get_selected(dropdown);
-		values_config[value_id - 1].warning_low_color =
-			selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
+		lv_color_t c = selected == 0 ? THEME_COLOR_RED : THEME_COLOR_BLUE_DARK;
+		widget_panel_set_warning_low_color(value_id - 1, c);
 	}
 }
 
@@ -288,55 +300,37 @@ static void save_warning_config_cb(lv_event_t *e) {
 		}
 	}
 
-	// Update warning configuration
-	warning_configs[warning_idx].can_id = can_id;
-	warning_configs[warning_idx].bit_position = bit_pos;
-	warning_configs[warning_idx].endianess = endianess;
-	if (label_text) {
-		strncpy(warning_configs[warning_idx].label, label_text,
-				sizeof(warning_configs[warning_idx].label) - 1);
-		warning_configs[warning_idx]
-			.label[sizeof(warning_configs[warning_idx].label) - 1] = '\0';
-	}
-
-	// Handle highlighted color selection
-	if (inputs[4]) {
-		uint8_t selected_color = lv_dropdown_get_selected(inputs[4]);
-		switch (selected_color) {
-		case 0:
-			warning_configs[warning_idx].active_color = THEME_COLOR_GREEN;
-			break; // Green
-		case 1:
-			warning_configs[warning_idx].active_color = THEME_COLOR_BLUE_PURE;
-			break; // Blue
-		case 2:
-			warning_configs[warning_idx].active_color = THEME_COLOR_ORANGE_WEB;
-			break; // Orange
-		case 3:
-			warning_configs[warning_idx].active_color = THEME_COLOR_RED;
-			break; // Red
-		case 4:
-			warning_configs[warning_idx].active_color = THEME_COLOR_YELLOW;
-			break; // Yellow
-		default:
-			warning_configs[warning_idx].active_color = THEME_COLOR_GREEN;
-			break;
+	// Update warning type_data
+	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	if (wd) {
+		if (label_text) {
+			strncpy(wd->label, label_text, sizeof(wd->label) - 1);
+			wd->label[sizeof(wd->label) - 1] = '\0';
 		}
-	}
 
-	// Save toggle mode setting
-	if (inputs[5]) {
-		bool was_momentary = warning_configs[warning_idx].is_momentary;
-		warning_configs[warning_idx].is_momentary =
-			(lv_dropdown_get_selected(inputs[5]) == 1);
+		// Handle highlighted color selection
+		if (inputs[4]) {
+			uint8_t selected_color = lv_dropdown_get_selected(inputs[4]);
+			switch (selected_color) {
+			case 0: wd->active_color = THEME_COLOR_GREEN; break;
+			case 1: wd->active_color = THEME_COLOR_BLUE_PURE; break;
+			case 2: wd->active_color = THEME_COLOR_ORANGE_WEB; break;
+			case 3: wd->active_color = THEME_COLOR_RED; break;
+			case 4: wd->active_color = THEME_COLOR_YELLOW; break;
+			default: wd->active_color = THEME_COLOR_GREEN; break;
+			}
+		}
 
-		// If mode changed, reset state and previous_bit_state
-		if (was_momentary != warning_configs[warning_idx].is_momentary) {
-			warning_configs[warning_idx].current_state = false;
-			previous_bit_states[warning_idx] =
-				false; // Reset previous bit state for toggle mode
-			// Update UI to reflect the reset state
-			update_warning_ui_immediate(warning_idx);
+		// Save toggle mode setting
+		if (inputs[5]) {
+			bool was_momentary = wd->is_momentary;
+			wd->is_momentary = (lv_dropdown_get_selected(inputs[5]) == 1);
+
+			if (was_momentary != wd->is_momentary) {
+				wd->current_state = false;
+				previous_bit_states[warning_idx] = false;
+				update_warning_ui_immediate(warning_idx);
+			}
 		}
 	}
 
@@ -351,21 +345,19 @@ static void save_warning_config_cb(lv_event_t *e) {
 	printf("  CAN ID: 0x%X\n", can_id);
 	printf("  Bit Position: %d\n", bit_pos);
 	printf("  Label: %s\n", label_text ? label_text : "");
-	printf("  Highlight Color: %06X\n",
-		   warning_configs[warning_idx].active_color.full);
-	printf("  Mode: %s\n",
-		   warning_configs[warning_idx].is_momentary ? "Momentary" : "Toggle");
+	if (wd) {
+		printf("  Highlight Color: %06X\n", wd->active_color.full);
+		printf("  Mode: %s\n", wd->is_momentary ? "Momentary" : "Toggle");
+	}
 
 	// Update the label on Screen3 dynamically
-	if (warning_labels[warning_idx]) {
-		lv_label_set_text(warning_labels[warning_idx],
-						  warning_configs[warning_idx].label);
+	if (warning_labels[warning_idx] && wd) {
+		lv_label_set_text(warning_labels[warning_idx], wd->label);
 	}
 
 	// Clean up
 	lv_mem_free(inputs);
 	lv_mem_free(save_data);
-	config_store_save_warnings(warning_configs, 8);
 
 	// Return to Screen3
 	lv_scr_load(ui_Screen3);
@@ -404,17 +396,17 @@ void update_warning_ui(void *param) {
 		return;
 	}
 
-	lv_color_t new_color = warning_configs[warning_idx].current_state
-							   ? warning_configs[warning_idx].active_color
-							   : THEME_COLOR_INACTIVE; // Default "off" color.
+	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	bool state = wd ? wd->current_state : false;
+	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
+	lv_color_t new_color = state ? active : THEME_COLOR_INACTIVE;
 
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	// Also update the warning label visibility
 	if (warning_labels[warning_idx] &&
 		lv_obj_is_valid(warning_labels[warning_idx])) {
-		if (warning_configs[warning_idx].current_state) {
+		if (state) {
 			lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
 		} else {
 			lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
@@ -430,14 +422,15 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 		lv_obj_get_screen(warning_circles[warning_idx]) == NULL) {
 		return;
 	}
-	lv_color_t new_color = warning_configs[warning_idx].current_state
-							   ? warning_configs[warning_idx].active_color
-							   : THEME_COLOR_INACTIVE;
+	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	bool state = wd ? wd->current_state : false;
+	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
+	lv_color_t new_color = state ? active : THEME_COLOR_INACTIVE;
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (warning_labels[warning_idx] &&
 		lv_obj_is_valid(warning_labels[warning_idx])) {
-		if (warning_configs[warning_idx].current_state) {
+		if (state) {
 			lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
 		} else {
 			lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
@@ -527,8 +520,9 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_clear_flag(preview_circle, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preview_circle, 100,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(preview_circle,
-							  warning_configs[warning_idx].active_color,
+	warning_data_t *wd_cfg = _get_warning_data_by_slot(warning_idx);
+	lv_color_t preview_color = wd_cfg ? wd_cfg->active_color : THEME_COLOR_RED;
+	lv_obj_set_style_bg_color(preview_circle, preview_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(preview_circle, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -546,7 +540,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_x(preview_label, warning_positions[warning_idx].x);
 	lv_obj_set_y(preview_label, -112); // Same y-position as in Screen3
 	lv_obj_set_align(preview_label, LV_ALIGN_CENTER);
-	lv_label_set_text(preview_label, warning_configs[warning_idx].label);
+	lv_label_set_text(preview_label, wd_cfg ? wd_cfg->label : "Warning");
 	lv_obj_set_style_text_color(preview_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(preview_label, 255,
@@ -597,7 +591,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 				 -47); // Was 73, now -47
 	lv_obj_add_event_cb(input_objects[3], keyboard_event_cb, LV_EVENT_ALL,
 						NULL);
-	lv_textarea_set_text(input_objects[3], warning_configs[warning_idx].label);
+	lv_textarea_set_text(input_objects[3], wd_cfg ? wd_cfg->label : "Warning");
 
 	// CAN ID input (moved down)
 	lv_obj_t *can_id_label = lv_label_create(inputs_container);
@@ -616,8 +610,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_add_event_cb(input_objects[0], keyboard_event_cb, LV_EVENT_ALL,
 						NULL);
 	char can_id_text[32];
-	snprintf(can_id_text, sizeof(can_id_text), "%X",
-			 warning_configs[warning_idx].can_id);
+	snprintf(can_id_text, sizeof(can_id_text), "%X", 0); /* CAN ID now in signal */
 	lv_textarea_set_text(input_objects[0], can_id_text);
 
 	// Bit position dropdown
@@ -638,8 +631,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 		"48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63");
 	lv_obj_set_width(input_objects[1], 120);
 	lv_obj_align(input_objects[1], LV_ALIGN_CENTER, -180, 33);
-	lv_dropdown_set_selected(input_objects[1],
-							 warning_configs[warning_idx].bit_position);
+	lv_dropdown_set_selected(input_objects[1], 0); /* bit pos now in signal */
 
 	// Highlighted color dropdown
 	lv_obj_t *color_label = lv_label_create(inputs_container);
@@ -657,7 +649,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_align(input_objects[4], LV_ALIGN_CENTER, -180, 73);
 
 	// Set the current color selection based on the saved configuration
-	lv_color_t current_color = warning_configs[warning_idx].active_color;
+	lv_color_t current_color = wd_cfg ? wd_cfg->active_color : THEME_COLOR_GREEN;
 	uint8_t selected_color = 0; // Default to Green
 	if (current_color.full == THEME_COLOR_BLUE_PURE.full)
 		selected_color = 1; // Blue
@@ -687,7 +679,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_width(input_objects[5], 120);
 	lv_obj_align(input_objects[5], LV_ALIGN_CENTER, -180, 113);
 	lv_dropdown_set_selected(input_objects[5],
-							 warning_configs[warning_idx].is_momentary ? 1 : 0);
+							 (wd_cfg && wd_cfg->is_momentary) ? 1 : 0);
 
 	// Invert Toggle (below Toggle Mode on the left)
 	lv_obj_t *invert_toggle_label = lv_label_create(inputs_container);
@@ -702,7 +694,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_size(invert_toggle_switch, 50, 25);
 
 	// Set switch state based on configuration
-	if (warning_configs[warning_idx].invert_toggle) {
+	if (wd_cfg && wd_cfg->invert_toggle) {
 		lv_obj_add_state(invert_toggle_switch, LV_STATE_CHECKED);
 	} else {
 		lv_obj_clear_state(invert_toggle_switch, LV_STATE_CHECKED);
@@ -842,21 +834,15 @@ static void invert_warning_toggle_event_cb(lv_event_t *e) {
 		return;
 
 	uint8_t warning_idx = *warning_idx_ptr;
-	bool new_invert_toggle = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
-	bool old_invert_toggle = warning_configs[warning_idx].invert_toggle;
+	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	if (!wd) return;
 
-	// If the invert state changed, we need to flip the current warning state
-	// to reflect the inversion immediately (works both ways: on->off and
-	// off->on)
+	bool new_invert_toggle = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
+	bool old_invert_toggle = wd->invert_toggle;
+
 	if (new_invert_toggle != old_invert_toggle) {
-		// Flip the current state to reflect the inversion change
-		// This works both ways: enabling invert flips once, disabling flips
-		// back
-		warning_configs[warning_idx].current_state =
-			!warning_configs[warning_idx].current_state;
-		// Also flip the previous bit state so toggle mode works correctly
+		wd->current_state = !wd->current_state;
 		previous_bit_states[warning_idx] = !previous_bit_states[warning_idx];
-		// Update the UI immediately
 		update_warning_ui_immediate(warning_idx);
 
 		ESP_LOGI("WARNING",
@@ -864,13 +850,10 @@ static void invert_warning_toggle_event_cb(lv_event_t *e) {
 				 "flipped to %s",
 				 warning_idx, old_invert_toggle ? "enabled" : "disabled",
 				 new_invert_toggle ? "enabled" : "disabled",
-				 warning_configs[warning_idx].current_state ? "ON" : "OFF");
+				 wd->current_state ? "ON" : "OFF");
 	}
 
-	warning_configs[warning_idx].invert_toggle = new_invert_toggle;
-
-	// Save configuration to NVS
-	config_store_save_warnings(warning_configs, 8);
+	wd->invert_toggle = new_invert_toggle;
 
 	ESP_LOGI("WARNING", "Invert toggle %s for warning %d",
 			 new_invert_toggle ? "enabled" : "disabled", warning_idx);
@@ -918,7 +901,8 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_y(warning_labels[i], -112);
 	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
 	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
-	const char *saved_label = warning_configs[i].label;
+	warning_data_t *wd_label = _get_warning_data_by_slot(i);
+	const char *saved_label = wd_label ? wd_label->label : NULL;
 	if (saved_label && saved_label[0] != '\0') {
 		lv_label_set_text(warning_labels[i], saved_label);
 	} else {
@@ -970,19 +954,8 @@ void widget_warning_create(lv_obj_t *parent) {
 }
 
 void init_warning_configs(void) {
-	for (int i = 0; i < 8; i++) {
-		warning_configs[i].can_id = 0x000;
-		warning_configs[i].bit_position = 0;
-		warning_configs[i].endianess = 1;
-		warning_configs[i].active_color = THEME_COLOR_RED;
-		char buf[32];
-		snprintf(buf, sizeof(buf), "Warning %d", i + 1);
-		strncpy(warning_configs[i].label, buf,
-				sizeof(warning_configs[i].label) - 1);
-		warning_configs[i].is_momentary = true;
-		warning_configs[i].current_state = false;
-		warning_configs[i].invert_toggle = false;
-	}
+	/* Legacy stub — warning state now lives in warning_data_t (type_data). */
+	(void)0;
 }
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
@@ -995,7 +968,7 @@ static void _warning_on_signal(float value, bool is_stale, void *user_data) {
 	if (slot >= 8) return;
 	bool bit_on = !is_stale && (value != 0.0f);
 	if (wd->invert_toggle) bit_on = !bit_on;
-	warning_configs[slot].current_state = bit_on;
+	wd->current_state = bit_on;
 	update_warning_ui_immediate(slot);
 }
 
@@ -1008,10 +981,6 @@ static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (wd && wd->signal_index >= 0)
 		signal_subscribe(wd->signal_index, _warning_on_signal, w);
-}
-static void _warning_update(widget_t *w, void *data) {
-	(void)w;
-	update_warning_ui(data);
 }
 static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (w->root && lv_obj_is_valid(w->root))
@@ -1083,14 +1052,12 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	if (!wd) wd = calloc(1, sizeof(warning_data_t));
 	if (!wd) { free(w); return NULL; }
 
-	/* Bridge from global config */
 	uint8_t s = slot < 8 ? slot : 0;
 	wd->slot = s;
-	wd->active_color = warning_configs[s].active_color;
-	strncpy(wd->label, warning_configs[s].label, sizeof(wd->label) - 1);
-	wd->label[sizeof(wd->label) - 1] = '\0';
-	wd->is_momentary = warning_configs[s].is_momentary;
-	wd->invert_toggle = warning_configs[s].invert_toggle;
+	wd->active_color = THEME_COLOR_RED;
+	snprintf(wd->label, sizeof(wd->label), "Warning %u", s + 1);
+	wd->is_momentary = true;
+	wd->invert_toggle = false;
 	wd->current_state = false;
 	wd->signal_index = -1;
 
@@ -1103,7 +1070,6 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	snprintf(w->id, sizeof(w->id), "warning_%u", s);
 
 	w->create = _warning_create;
-	w->update = _warning_update;
 	w->resize = _warning_resize;
 	w->open_settings = _warning_open_settings;
 	w->to_json = _warning_to_json;
@@ -1111,4 +1077,14 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	w->destroy = _warning_destroy;
 
 	return w;
+}
+
+uint8_t widget_warning_get_slot(const widget_t *w) {
+	if (!w || w->type != WIDGET_WARNING || !w->type_data) return 0;
+	return ((const warning_data_t *)w->type_data)->slot;
+}
+
+bool widget_warning_has_signal(const widget_t *w) {
+	if (!w || w->type != WIDGET_WARNING || !w->type_data) return false;
+	return ((const warning_data_t *)w->type_data)->signal_index >= 0;
 }

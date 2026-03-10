@@ -1,7 +1,6 @@
 #pragma once
 
 #include "esp_err.h"
-#include "ui_Screen3.h"
 #include "device_settings.h"
 
 #ifdef __cplusplus
@@ -15,29 +14,14 @@ extern "C" {
  */
 esp_err_t config_store_init(void);
 
-/* ── Values (13 CAN widget slots) ──────────────────────────────────────── */
-
-/**
- * @brief Persist the 13 value-widget configs (CAN signal, display, alert
- *        settings) plus their labels and the global RPM gauge/redline values
- *        to NVS.
- *
- * @param cfg   Pointer to values_config array (must hold at least @p count entries)
- * @param count Number of entries to save (typically MAX_VALUES = 13)
- */
+/* ── Legacy stubs (no-op — config is now persisted via JSON layout) ─────── */
+/* These exist only for compile-compatibility with widget files that still
+ * call them.  They will be removed once all widget files are updated. */
+#include "ui_Screen3.h"
 esp_err_t config_store_save_values(const value_config_t *cfg, uint8_t count);
-
-/**
- * @brief Load the 13 value-widget configs from NVS into @p cfg.  Also
- *        restores labels and RPM globals.
- */
 esp_err_t config_store_load_values(value_config_t *cfg, uint8_t count);
-
-/* ── Warnings (8 warning-light slots) ──────────────────────────────────── */
 esp_err_t config_store_save_warnings(const warning_config_t *cfg, uint8_t count);
 esp_err_t config_store_load_warnings(warning_config_t *cfg, uint8_t count);
-
-/* ── Indicators (2 turn-signal slots) ──────────────────────────────────── */
 esp_err_t config_store_save_indicators(const indicator_config_t *cfg, uint8_t count);
 esp_err_t config_store_load_indicators(indicator_config_t *cfg, uint8_t count);
 

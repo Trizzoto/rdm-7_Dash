@@ -7,8 +7,8 @@
 #include <string.h>
 #include "device_settings.h"
 #include <stdlib.h>
+#include "config_bridge.h"
 
-extern value_config_t values_config[13];
 extern uint8_t current_value_id;
 
 /* Widget arrays exposed for live-refresh after preset selection */
@@ -21,7 +21,6 @@ extern lv_obj_t *g_scale_input[];
 extern lv_obj_t *g_offset_input[];
 extern lv_obj_t *g_decimals_dropdown[];
 extern lv_obj_t *g_type_dropdown[];
-extern char label_texts[13][64];
 
 // Forward declarations
 static void delayed_version_event_cb(lv_timer_t * timer);
@@ -555,21 +554,20 @@ static void id_dropdown_event_cb(lv_event_t * e)
 
     if (!found) return;
 
-    // 3) Update the values_config
-    uint8_t idx = (current_value_id <= 13) ? (current_value_id - 1) : 0;
-    values_config[idx].can_id = (uint32_t)strtol(found->can_id, NULL, 16);
-    values_config[idx].endianess    = found->endianess;
-    values_config[idx].bit_start    = found->bit_start;
-    values_config[idx].bit_length   = found->bit_length;
-    values_config[idx].scale        = found->scale;
-    values_config[idx].value_offset = found->value_offset;
-    values_config[idx].decimals     = found->decimals;
-    values_config[idx].is_signed    = found->is_signed;
-    values_config[idx].enabled      = true;
+    // 3) Update via config_bridge (value_id is 1-based)
+    uint8_t vid = (current_value_id <= 13) ? current_value_id : 1;
+    uint8_t idx = vid - 1;
+    config_bridge_set_can_id(vid, (uint32_t)strtol(found->can_id, NULL, 16));
+    config_bridge_set_endian(vid, found->endianess);
+    config_bridge_set_bit_start(vid, found->bit_start);
+    config_bridge_set_bit_length(vid, found->bit_length);
+    config_bridge_set_scale(vid, found->scale);
+    config_bridge_set_offset(vid, found->value_offset);
+    config_bridge_set_decimals(vid, found->decimals);
+    config_bridge_set_is_signed(vid, found->is_signed);
 
-    // Also set the label_texts array
-    strncpy(label_texts[idx], found->label, sizeof(label_texts[idx]) - 1);
-    label_texts[idx][sizeof(label_texts[idx]) - 1] = '\0';
+    // Also set the label
+    config_bridge_set_label(vid, found->label);
 
     // Print debug
     printf("Auto-populated panel #%d => label=%s, CAN=%s, bit_start=%d, bit_len=%d, scale=%.3f\n",
@@ -881,19 +879,18 @@ static void apply_click_cb(lv_event_t *e)
     if (!st || st->sel_sig < 0) return;
 
     const preconfig_item_t *it = &preconfig_items[st->sel_sig];
-    uint8_t idx = st->value_id - 1;
+    uint8_t vid = st->value_id;
+    uint8_t idx = vid - 1;
 
-    values_config[idx].can_id       = (uint32_t)strtol(it->can_id, NULL, 16);
-    values_config[idx].endianess    = it->endianess;
-    values_config[idx].bit_start    = it->bit_start;
-    values_config[idx].bit_length   = it->bit_length;
-    values_config[idx].scale        = it->scale;
-    values_config[idx].value_offset = it->value_offset;
-    values_config[idx].decimals     = it->decimals;
-    values_config[idx].is_signed    = it->is_signed;
-    values_config[idx].enabled      = true;
-    strncpy(label_texts[idx], it->label, sizeof(label_texts[idx]) - 1);
-    label_texts[idx][sizeof(label_texts[idx]) - 1] = '\0';
+    config_bridge_set_can_id(vid, (uint32_t)strtol(it->can_id, NULL, 16));
+    config_bridge_set_endian(vid, it->endianess);
+    config_bridge_set_bit_start(vid, it->bit_start);
+    config_bridge_set_bit_length(vid, it->bit_length);
+    config_bridge_set_scale(vid, it->scale);
+    config_bridge_set_offset(vid, it->value_offset);
+    config_bridge_set_decimals(vid, it->decimals);
+    config_bridge_set_is_signed(vid, it->is_signed);
+    config_bridge_set_label(vid, it->label);
 
     if (g_label_input[idx])         lv_textarea_set_text(g_label_input[idx], it->label);
     if (g_can_id_input[idx])        lv_textarea_set_text(g_can_id_input[idx], it->can_id);

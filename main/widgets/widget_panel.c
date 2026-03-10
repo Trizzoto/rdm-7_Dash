@@ -1,6 +1,5 @@
 #include "widget_panel.h"
 #include "can/can_decode.h"
-#include "can/can_dispatch.h"
 #include "driver/twai.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -9,7 +8,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -17,7 +15,7 @@
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "widget_dispatcher.h"
+#include "ui/dashboard.h"
 #include "widget_types.h"
 #include <math.h>
 #include <stdbool.h>
@@ -26,6 +24,13 @@
 #include <string.h>
 #include "esp_heap_caps.h"
 #include "signal.h"
+
+/* Async update payload for lv_async_call(update_panel_ui, ...) */
+typedef struct {
+	uint8_t panel_index;
+	char    value_str[32];
+	double  final_value;
+} panel_update_t;
 
 uint64_t last_panel_can_received[8] = {0};
 
@@ -63,6 +68,47 @@ typedef struct {
 	lv_obj_t  *custom_text_label;
 } panel_data_t;
 
+/* ── Helper: look up panel_data_t by slot ────────────────────────────────── */
+static panel_data_t *_get_panel_data_by_slot(uint8_t slot) {
+	if (slot >= 8) return NULL;
+	widget_t **widgets = dashboard_get_widgets();
+	uint8_t count = dashboard_get_widget_count();
+	for (uint8_t i = 0; i < count; i++) {
+		if (widgets[i] && widgets[i]->type == WIDGET_PANEL) {
+			panel_data_t *pd = (panel_data_t *)widgets[i]->type_data;
+			if (pd && pd->slot == slot) return pd;
+		}
+	}
+	return NULL;
+}
+
+/* ── Public setters for panel warning thresholds (called from widget_warning.c) ── */
+void widget_panel_set_warning_high(uint8_t slot, float threshold, bool enabled) {
+	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	if (!pd) return;
+	pd->warning_high_threshold = threshold;
+	pd->warning_high_enabled = enabled;
+}
+
+void widget_panel_set_warning_low(uint8_t slot, float threshold, bool enabled) {
+	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	if (!pd) return;
+	pd->warning_low_threshold = threshold;
+	pd->warning_low_enabled = enabled;
+}
+
+void widget_panel_set_warning_high_color(uint8_t slot, lv_color_t color) {
+	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	if (!pd) return;
+	pd->warning_high_color = color;
+}
+
+void widget_panel_set_warning_low_color(uint8_t slot, lv_color_t color) {
+	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	if (!pd) return;
+	pd->warning_low_color = color;
+}
+
 void update_panel_ui(void *param) {
 	panel_update_t *update = (panel_update_t *)param;
 	if (!update)
@@ -81,6 +127,9 @@ void update_panel_ui(void *param) {
 		lv_label_set_text(menu_panel_value_labels[i], update->value_str);
 	}
 
+	// Look up panel_data_t for threshold checks
+	panel_data_t *pd = _get_panel_data_by_slot(i);
+
 	// Also update menu panel box border effects if menu is visible
 	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
 		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
@@ -90,22 +139,17 @@ void update_panel_ui(void *param) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
 										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_high_enabled &&
-				   update->final_value >
-					   values_config[i].warning_high_threshold) {
-			// High warning threshold exceeded
+		} else if (pd && pd->warning_high_enabled &&
+				   update->final_value > pd->warning_high_threshold) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  values_config[i].warning_high_color,
+										  pd->warning_high_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_low_enabled &&
-				   update->final_value <
-					   values_config[i].warning_low_threshold) {
-			// Low warning threshold exceeded
+		} else if (pd && pd->warning_low_enabled &&
+				   update->final_value < pd->warning_low_threshold) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  values_config[i].warning_low_color,
+										  pd->warning_low_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
-			// No thresholds exceeded, use default color
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
 										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -124,22 +168,17 @@ void update_panel_ui(void *param) {
 		if (strcmp(update->value_str, "---") == 0) {
 			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_high_enabled &&
-				   update->final_value >
-					   values_config[i].warning_high_threshold) {
-			// High warning threshold exceeded
+		} else if (pd && pd->warning_high_enabled &&
+				   update->final_value > pd->warning_high_threshold) {
 			lv_obj_set_style_border_color(ui_Box[i],
-										  values_config[i].warning_high_color,
+										  pd->warning_high_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_low_enabled &&
-				   update->final_value <
-					   values_config[i].warning_low_threshold) {
-			// Low warning threshold exceeded
+		} else if (pd && pd->warning_low_enabled &&
+				   update->final_value < pd->warning_low_threshold) {
 			lv_obj_set_style_border_color(ui_Box[i],
-										  values_config[i].warning_low_color,
+										  pd->warning_low_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
-			// No thresholds exceeded, use default color
 			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
@@ -158,6 +197,7 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 							   double final_value) {
 	if (i >= 8)
 		return;
+	panel_data_t *pd = _get_panel_data_by_slot(i);
 	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]) &&
 		lv_obj_get_screen(ui_Value[i]) != NULL) {
 		lv_label_set_text(ui_Value[i], value_str);
@@ -174,15 +214,15 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
 										  THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_high_enabled &&
-				   final_value > values_config[i].warning_high_threshold) {
+		} else if (pd && pd->warning_high_enabled &&
+				   final_value > pd->warning_high_threshold) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  values_config[i].warning_high_color,
+										  pd->warning_high_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_low_enabled &&
-				   final_value < values_config[i].warning_low_threshold) {
+		} else if (pd && pd->warning_low_enabled &&
+				   final_value < pd->warning_low_threshold) {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  values_config[i].warning_low_color,
+										  pd->warning_low_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
 			lv_obj_set_style_border_color(menu_panel_boxes[i],
@@ -199,15 +239,15 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 		if (strcmp(value_str, "---") == 0) {
 			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_high_enabled &&
-				   final_value > values_config[i].warning_high_threshold) {
+		} else if (pd && pd->warning_high_enabled &&
+				   final_value > pd->warning_high_threshold) {
 			lv_obj_set_style_border_color(ui_Box[i],
-										  values_config[i].warning_high_color,
+										  pd->warning_high_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (values_config[i].warning_low_enabled &&
-				   final_value < values_config[i].warning_low_threshold) {
+		} else if (pd && pd->warning_low_enabled &&
+				   final_value < pd->warning_low_threshold) {
 			lv_obj_set_style_border_color(ui_Box[i],
-										  values_config[i].warning_low_color,
+										  pd->warning_low_color,
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		} else {
 			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
@@ -353,7 +393,10 @@ void widget_panel_create(lv_obj_t *parent) {
 	for (uint8_t i = 0; i < 8; i++) {
 		/* ── Header label (already inside box) ──────────────────────── */
 		ui_Label[i] = lv_label_create(ui_Box[i]);
-		lv_label_set_text(ui_Label[i], label_texts[i]);
+		{
+			panel_data_t *fpd = _get_panel_data_by_slot(i);
+			lv_label_set_text(ui_Label[i], fpd ? fpd->label : "---");
+		}
 		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Label[i], 255,
@@ -396,24 +439,26 @@ void widget_panel_create(lv_obj_t *parent) {
 
 		/* ── Custom unit text — also a child of ui_Box[i] ───────────── */
 		ui_CustomText[i] = lv_label_create(ui_Box[i]);
-		lv_label_set_text(ui_CustomText[i], values_config[i].custom_text);
-		lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_opa(ui_CustomText[i], 255,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_font(ui_CustomText[i], THEME_FONT_BODY,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_align(ui_CustomText[i], LV_TEXT_ALIGN_RIGHT,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_width(ui_CustomText[i], 60);
-		lv_label_set_long_mode(ui_CustomText[i], LV_LABEL_LONG_CLIP);
-		/* Relative position inside box: was box_pos + (41,32), so offset is
-		 * simply (41, 32) */
-		lv_obj_set_x(ui_CustomText[i], 41);
-		lv_obj_set_y(ui_CustomText[i], 32);
-		lv_obj_set_align(ui_CustomText[i], LV_ALIGN_CENTER);
-		if (strlen(values_config[i].custom_text) == 0)
-			lv_obj_add_flag(ui_CustomText[i], LV_OBJ_FLAG_HIDDEN);
+		{
+			panel_data_t *fpd2 = _get_panel_data_by_slot(i);
+			const char *ct = (fpd2 && fpd2->custom_text[0]) ? fpd2->custom_text : "";
+			lv_label_set_text(ui_CustomText[i], ct);
+			lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_text_opa(ui_CustomText[i], 255,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_text_font(ui_CustomText[i], THEME_FONT_BODY,
+									   LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_text_align(ui_CustomText[i], LV_TEXT_ALIGN_RIGHT,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_width(ui_CustomText[i], 60);
+			lv_label_set_long_mode(ui_CustomText[i], LV_LABEL_LONG_CLIP);
+			lv_obj_set_x(ui_CustomText[i], 41);
+			lv_obj_set_y(ui_CustomText[i], 32);
+			lv_obj_set_align(ui_CustomText[i], LV_ALIGN_CENTER);
+			if (ct[0] == '\0')
+				lv_obj_add_flag(ui_CustomText[i], LV_OBJ_FLAG_HIDDEN);
+		}
 	}
 }
 
@@ -536,10 +581,6 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 		signal_subscribe(pd->signal_index, _panel_on_signal, w);
 }
 
-static void _panel_update(widget_t *w, void *data) {
-	(void)w;
-	update_panel_ui(data);
-}
 static void _panel_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (!w->root || !lv_obj_is_valid(w->root))
 		return;
@@ -644,20 +685,8 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 
 	pd->slot = slot < 8 ? slot : 0;
 	pd->signal_index = -1;
-
-	/* Bridge: populate from current global config so runtime behaviour
-	 * is unchanged while we still have the global arrays. */
-	if (pd->slot < 8) {
-		strncpy(pd->label, label_texts[pd->slot], sizeof(pd->label) - 1);
-		strncpy(pd->custom_text, values_config[pd->slot].custom_text, sizeof(pd->custom_text) - 1);
-		pd->decimals = values_config[pd->slot].decimals;
-		pd->warning_high_enabled = values_config[pd->slot].warning_high_enabled;
-		pd->warning_high_threshold = values_config[pd->slot].warning_high_threshold;
-		pd->warning_high_color = values_config[pd->slot].warning_high_color;
-		pd->warning_low_enabled = values_config[pd->slot].warning_low_enabled;
-		pd->warning_low_threshold = values_config[pd->slot].warning_low_threshold;
-		pd->warning_low_color = values_config[pd->slot].warning_low_color;
-	}
+	/* Defaults — actual config comes from _from_json() when loading layouts */
+	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
 
 	w->type = WIDGET_PANEL;
 	w->x = s_panel_default_x[pd->slot];
@@ -668,7 +697,6 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	snprintf(w->id, sizeof(w->id), "panel_%u", slot);
 
 	w->create = _panel_create;
-	w->update = _panel_update;
 	w->resize = _panel_resize;
 	w->open_settings = _panel_open_settings;
 	w->to_json = _panel_to_json;
@@ -678,47 +706,12 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	return w;
 }
 
-void widget_panel_sync_from_legacy(widget_t *w, const value_config_t *cfg,
-                                   const char *label_text) {
-	if (!w || w->type != WIDGET_PANEL || !w->type_data) return;
-	panel_data_t *pd = (panel_data_t *)w->type_data;
-	if (label_text) {
-		strncpy(pd->label, label_text, sizeof(pd->label) - 1);
-		pd->label[sizeof(pd->label) - 1] = '\0';
-	}
-	if (!cfg) return;
-	strncpy(pd->custom_text, cfg->custom_text, sizeof(pd->custom_text) - 1);
-	pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
-	pd->decimals = cfg->decimals;
-	pd->warning_high_enabled = cfg->warning_high_enabled;
-	pd->warning_high_threshold = cfg->warning_high_threshold;
-	pd->warning_high_color = cfg->warning_high_color;
-	pd->warning_low_enabled = cfg->warning_low_enabled;
-	pd->warning_low_threshold = cfg->warning_low_threshold;
-	pd->warning_low_color = cfg->warning_low_color;
-}
-
 uint8_t widget_panel_get_slot(const widget_t *w) {
 	if (!w || w->type != WIDGET_PANEL || !w->type_data) return 0;
 	return ((const panel_data_t *)w->type_data)->slot;
 }
 
-void widget_panel_sync_to_legacy(const widget_t *w, value_config_t *cfg,
-                                 char *label_out, size_t label_size) {
-	if (!w || w->type != WIDGET_PANEL || !w->type_data) return;
-	const panel_data_t *pd = (const panel_data_t *)w->type_data;
-	if (label_out && label_size > 0) {
-		strncpy(label_out, pd->label, label_size - 1);
-		label_out[label_size - 1] = '\0';
-	}
-	if (!cfg) return;
-	strncpy(cfg->custom_text, pd->custom_text, sizeof(cfg->custom_text) - 1);
-	cfg->custom_text[sizeof(cfg->custom_text) - 1] = '\0';
-	cfg->decimals = pd->decimals;
-	cfg->warning_high_enabled = pd->warning_high_enabled;
-	cfg->warning_high_threshold = pd->warning_high_threshold;
-	cfg->warning_high_color = pd->warning_high_color;
-	cfg->warning_low_enabled = pd->warning_low_enabled;
-	cfg->warning_low_threshold = pd->warning_low_threshold;
-	cfg->warning_low_color = pd->warning_low_color;
+bool widget_panel_has_signal(const widget_t *w) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data) return false;
+	return ((const panel_data_t *)w->type_data)->signal_index >= 0;
 }

@@ -1,9 +1,9 @@
 /*
- * ui_Screen3.c — Dashboard coordinator (≤200 lines).
+ * ui_Screen3.c — Dashboard coordinator.
  *
- * Owns all global config/data arrays and LVGL object arrays shared across
- * modules.  All widget rendering, CAN dispatch, and config menus live in
- * main/widgets/.
+ * Owns LVGL object arrays and UI-level state shared across modules.
+ * All widget rendering and signal dispatch are handled by the widget
+ * system and signal registry.
  */
 
 #include "ui/screens/ui_Screen3.h"
@@ -11,14 +11,12 @@
 #include "device_settings.h"
 #include "esp_log.h"
 #include "lvgl.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "widgets/widget_bar.h"
-#include "widgets/widget_dispatcher.h"
 #include "widgets/widget_gear.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
@@ -51,7 +49,8 @@ lv_obj_t *g_offset_input[MAX_VALUES];
 lv_obj_t *g_decimals_dropdown[MAX_VALUES];
 lv_obj_t *g_type_dropdown[MAX_VALUES];
 
-/* ── Shared config data ─────────────────────────────────────────────────── */
+/* ── Legacy config data (transitional — will be removed once config modal
+ *    reads/writes directly to widget type_data + signal registry) ─────── */
 int rpm_gauge_max = 7000;
 int rpm_redline_value = 6000;
 value_config_t values_config[13];
@@ -64,7 +63,6 @@ char label_texts[13][64] = {
 	"PANEL 8", "RPM",	  "SPEED",	 "GEAR",	"BAR 1",   "BAR 2"};
 char value_offset_texts[13][64] = {"0", "0", "0", "0", "0", "0", "0",
 								   "0", "0", "0", "0", "0", "0"};
-uint8_t endianess[13] = {1};
 char previous_values[13][64] = {0};
 bool reset_can_tracking = false;
 
@@ -171,10 +169,6 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 void ui_Screen3_screen_init(void) {
 	init_styles();
 	init_common_style();
-	init_values_config_defaults();
-	init_warning_configs();
-	config_store_load_values(values_config, MAX_VALUES);
-	config_store_load_warnings(warning_configs, 8);
 
 	ui_Screen3 = lv_obj_create(NULL);
 	lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
@@ -190,7 +184,6 @@ void ui_Screen3_screen_init(void) {
 	if (!timers_created) {
 		lv_timer_create(check_rpm_color_update, 500, NULL);
 		lv_timer_create(check_warning_timeouts, 50, NULL);
-		lv_timer_create(check_can_timeouts, 1000, NULL);
 		lv_timer_create(speed_rpm_gear_update_timer_cb, 200, NULL);
 		indicator_animation_timer =
 			lv_timer_create(indicator_animation_timer_cb, 350, NULL);
@@ -271,13 +264,6 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_clear_flag(ui_RDM_Logo_Text, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_add_event_cb(ui_RDM_Logo_Text, device_settings_longpress_cb,
 						LV_EVENT_LONG_PRESSED, NULL);
-
-	/* Set initial CAN-indicator states */
-	for (int i = 0; i < 2; i++) {
-		if (indicator_configs[i].input_source == 1) {
-			indicator_configs[i].current_state = false;
-		}
-	}
 }
 
 void ui_Screen3_preview_layout(cJSON *root) {

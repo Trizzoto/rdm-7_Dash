@@ -2,13 +2,11 @@
  * can_manager.c — TWAI peripheral lifecycle and CAN receive task.
  *
  * Owns all TWAI hardware configuration, the acceptance filter, and the
- * simplified receive task that acquires the LVGL mutex once per frame and
- * delegates all routing to can_dispatch_process_frame().
+ * simplified receive task that enqueues frames for the LVGL task to
+ * process via signal_dispatch_frame().
  */
 #include "can_manager.h"
-#include "can_dispatch.h"
 #include "signal.h"
-#include "ui/screens/ui_Screen3.h" /* warning_configs, indicator_configs, values_config */
 
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -82,19 +80,30 @@ static void can_receive_task(void *pvParameter) {
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
-void build_twai_filter_from_configs(twai_filter_config_t *out_filter) {
-	uint32_t ids[8 + 2 + 13];
+void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
+	uint16_t sig_count = signal_get_count();
+	if (sig_count == 0) {
+		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+		return;
+	}
+
+	/* Collect unique CAN IDs from the signal registry */
+	uint32_t ids[MAX_SIGNALS];
 	int count = 0;
 
-	for (int i = 0; i < 8; i++)
-		if (warning_configs[i].can_id != 0)
-			ids[count++] = warning_configs[i].can_id & 0x7FFu;
-	for (int i = 0; i < 2; i++)
-		if (indicator_configs[i].can_id != 0)
-			ids[count++] = indicator_configs[i].can_id & 0x7FFu;
-	for (int i = 0; i < 13; i++)
-		if (values_config[i].enabled && values_config[i].can_id != 0)
-			ids[count++] = values_config[i].can_id & 0x7FFu;
+	for (uint16_t i = 0; i < sig_count; i++) {
+		signal_t *sig = signal_get_by_index(i);
+		if (!sig || sig->can_id == 0)
+			continue;
+		uint32_t sid = sig->can_id & 0x7FFu;
+		/* Deduplicate */
+		bool dup = false;
+		for (int j = 0; j < count; j++) {
+			if (ids[j] == sid) { dup = true; break; }
+		}
+		if (!dup && count < MAX_SIGNALS)
+			ids[count++] = sid;
+	}
 
 	if (count == 0) {
 		*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
@@ -128,7 +137,7 @@ void reconfigure_can_filter(void) {
 		canTaskHandle = NULL;
 	}
 
-	build_twai_filter_from_configs(&f_config);
+	build_twai_filter_from_signals(&f_config);
 
 	twai_stop();
 	vTaskDelay(pdMS_TO_TICKS(50));
@@ -167,8 +176,7 @@ void can_init(void) {
 		break;
 	}
 
-	rebuild_can_dispatch();
-	build_twai_filter_from_configs(&f_config);
+	build_twai_filter_from_signals(&f_config);
 
 	if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK)
 		ESP_LOGI(TAG, "TWAI driver installed");
@@ -248,8 +256,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	twai_driver_uninstall();
 	vTaskDelay(pdMS_TO_TICKS(100));
 
-	rebuild_can_dispatch();
-	build_twai_filter_from_configs(&f_config);
+	build_twai_filter_from_signals(&f_config);
 
 	if (twai_driver_install(&g_config, &g_t_config, &f_config) != ESP_OK) {
 		ESP_LOGE(TAG, "TWAI driver install failed after bitrate change");
@@ -287,8 +294,6 @@ void can_process_queued_frames(void) {
 		   xQueueReceive(s_can_queue, &msg, 0) == pdTRUE) {
 		/* Signal-centric decode: notify all signal subscribers */
 		signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
-		/* Legacy CAN dispatch: keeps working for widgets not yet on signals */
-		can_dispatch_process_frame(&msg);
 		processed++;
 	}
 }

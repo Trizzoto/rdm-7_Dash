@@ -31,14 +31,11 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "ota_handler.h"
-#include "screens/ui_Screen3.h"
 #include "sdkconfig.h"
 #include "sdmmc_cmd.h"
-#include "storage/config_store.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "ui_Screen1.h"
 #include "web_server.h"
 #include <errno.h>
 #include <math.h>
@@ -141,10 +138,8 @@ void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 lv_disp_drv_t disp_drv;
 lv_disp_draw_buf_t draw_buf;
 
-/* CAN subsystem — TWAI hardware, dispatch table, receive task */
-#include "can/can_dispatch.h"
+/* CAN subsystem — TWAI hardware, receive task */
 #include "can/can_manager.h"
-#include "ui/screens/ui_Screen3.h"
 
 // PWM configuration for GPIO16
 #define LEDC_TIMER LEDC_TIMER_0
@@ -381,14 +376,6 @@ void test_sd_card_write() {
 	ESP_LOGI("SD_CARD", "File written successfully: %s", file_path);
 }
 
-extern warning_config_t warning_configs[8];
-extern indicator_config_t indicator_configs[2]; // Left and Right indicators
-#define RPM_VALUE_ID 9
-#define SPEED_VALUE_ID 10
-#define GEAR_VALUE_ID 11
-#define BAR1_VALUE_ID 12
-#define BAR2_VALUE_ID 13
-
 void init_nvs(void) {
 	esp_err_t err = nvs_flash_init();
 	if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -403,22 +390,6 @@ void init_nvs(void) {
 		ESP_LOGE(TAG, "Failed to initialize device ID system: %s",
 				 esp_err_to_name(err));
 	}
-}
-
-void save_warning_configs_to_nvs(void) {
-	config_store_save_warnings(warning_configs, 8);
-}
-
-void load_warning_configs_from_nvs(void) {
-	config_store_load_warnings(warning_configs, 8);
-}
-
-void save_indicator_configs_to_nvs(void) {
-	config_store_save_indicators(indicator_configs, 2);
-}
-
-void load_indicator_configs_from_nvs(void) {
-	config_store_load_indicators(indicator_configs, 2);
 }
 
 static void init_pwm(void) {
@@ -798,13 +769,6 @@ void app_main(void) {
 	ESP_LOGI(TAG, "Turning on LCD backlight now that black screen is rendered");
 	gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
 #endif
-
-	// Load indicator configs BEFORE starting CAN task so they're available when
-	// CAN data arrives
-	ESP_LOGI(TAG,
-			 "Initializing and loading indicator configurations from NVS...");
-	init_indicator_configs();
-	load_indicator_configs_from_nvs();
 
 	wire_inputs_init();
 	ESP_LOGI(TAG, "Indicator wire inputs (GPIO %d left, %d right) initialized",

@@ -2,7 +2,6 @@ idf_component_register(
     SRCS 
         "main.c"
         "can/can_decode.c"
-        "can/can_dispatch.c"
         "can/can_manager.c"
         "storage/config_store.c"
         "io/wire_inputs.c"
@@ -25,6 +24,7 @@ idf_component_register(
         "ui/components/ui_comp.c"
         "ui/components/ui_comp_hook.c"
         "ui/components/ui_comp_slider2.c"
+        "ui/config_bridge.c"
         "ui/callbacks/ui_callbacks.c"
         "ui/menu/gear_config.c"
         "ui/menu/config_modal.c"
@@ -42,7 +42,6 @@ idf_component_register(
         "widgets/widget_meter.c"
         "widgets/widget_rpm_bar.c"
         "widgets/widget_registry.c"
-        "widgets/widget_dispatcher.c"
         "widgets/widget_types.c"
         "widgets/signal.c"
         "layout/layout_manager.c"

@@ -4,7 +4,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl_helpers.h"
-#include "ui/screens/ui_Screen3.h"   /* indicator_configs[], indicator_apply_analog_state() */
+
+/* indicator_apply_analog_state() is declared in widget_indicator.h and
+ * also in ui_Screen3.h.  It internally checks each indicator's
+ * input_source, so we always call it and let it skip CAN-mode channels. */
+extern void indicator_apply_analog_state(bool left_on, bool right_on);
 
 void wire_inputs_init(void)
 {
@@ -27,18 +31,12 @@ void wire_inputs_task(void *pvParam)
     vTaskDelay(pdMS_TO_TICKS(100));
 
     for (;;) {
-        /* Only drive wire-mode indicators; CAN-mode channels are handled by
-           the CAN receive task via indicator_apply_analog_state(). */
-        if (indicator_configs[0].input_source == 0 ||
-            indicator_configs[1].input_source == 0) {
+        bool left_on  = (gpio_get_level(WIRE_INPUT_LEFT_GPIO)  == 1);
+        bool right_on = (gpio_get_level(WIRE_INPUT_RIGHT_GPIO) == 1);
 
-            bool left_on  = (gpio_get_level(WIRE_INPUT_LEFT_GPIO)  == 1);
-            bool right_on = (gpio_get_level(WIRE_INPUT_RIGHT_GPIO) == 1);
-
-            if (example_lvgl_lock(pdMS_TO_TICKS(20))) {
-                indicator_apply_analog_state(left_on, right_on);
-                example_lvgl_unlock();
-            }
+        if (example_lvgl_lock(pdMS_TO_TICKS(20))) {
+            indicator_apply_analog_state(left_on, right_on);
+            example_lvgl_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(50)); /* 20 Hz poll rate */
     }

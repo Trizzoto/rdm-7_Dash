@@ -1,6 +1,5 @@
 #include "widget_gear.h"
 #include "can/can_decode.h"
-#include "can/can_dispatch.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -11,20 +10,26 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
+#include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "widget_dispatcher.h"
+#include "widget_speed.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Async update payload for lv_async_call(update_gear_ui, ...) */
+typedef struct {
+	char     gear_str[32];
+	uint32_t raw_value;
+} gear_update_t;
 
 typedef struct {
 	uint8_t  detection_mode;     /* 0=Custom, 1=MaxxECU, 2=Haltech, 3=Ford, 4=Speed/RPM */
@@ -38,6 +43,18 @@ typedef struct {
 	char     signal_name[32];
 	int16_t  signal_index;
 } gear_data_t;
+
+/* ── Helper: look up gear_data_t ───────────────────────────────────────── */
+static gear_data_t *_get_gear_data(void) {
+	widget_t **widgets = dashboard_get_widgets();
+	uint8_t count = dashboard_get_widget_count();
+	for (uint8_t i = 0; i < count; i++) {
+		if (widgets[i] && widgets[i]->type == WIDGET_GEAR) {
+			return (gear_data_t *)widgets[i]->type_data;
+		}
+	}
+	return NULL;
+}
 
 uint64_t last_gear_can_received = 0;
 
@@ -54,17 +71,18 @@ static lv_obj_t *speed_rpm_reverse_ratio_input = NULL; // Reverse gear ratio
 static lv_obj_t *speed_rpm_gear_ratio_inputs[10] = {
 	NULL}; // Gear ratios for 1-10
 static bool should_show_gear_icon(uint32_t raw_value) {
+	gear_data_t *gd = _get_gear_data();
+	if (!gd) return false;
+
 	// Check if custom gear mode is enabled
-	if (values_config[GEAR_VALUE_ID - 1].gear_detection_mode != 0) {
+	if (gd->detection_mode != 0) {
 		return false; // Only custom mode supports icons
 	}
 
 	// Check each custom icon value
 	for (int i = 0; i < 7; i++) {
-		uint32_t icon_value =
-			values_config[GEAR_VALUE_ID - 1].custom_icon_values[i];
-		uint8_t icon_type =
-			values_config[GEAR_VALUE_ID - 1].custom_icon_types[i];
+		uint32_t icon_value = gd->custom_icon_values[i];
+		uint8_t icon_type = gd->custom_icon_types[i];
 
 		// Check if this icon is KEY type (1) and is configured (not UINT32_MAX)
 		// Allow 0 as a valid configured value
@@ -172,8 +190,9 @@ void update_gear_ui_immediate(const char *gear_str, uint32_t raw_value) {
 	}
 }
 void speed_rpm_gear_update_timer_cb(lv_timer_t *timer) {
+	gear_data_t *gd = _get_gear_data();
 	// Only calculate gear if Speed/RPM Ratio mode is selected
-	if (values_config[GEAR_VALUE_ID - 1].gear_detection_mode != 4) {
+	if (!gd || gd->detection_mode != 4) {
 		return;
 	}
 
@@ -223,13 +242,13 @@ void speed_rpm_gear_update_timer_cb(lv_timer_t *timer) {
 
 	// Convert speed to km/h if it's in MPH
 	float speed_kmh = current_speed;
-	if (values_config[SPEED_VALUE_ID - 1].use_mph) {
+	if (widget_speed_get_use_mph()) {
 		speed_kmh = current_speed / 0.621371f; // Convert MPH to KMH
 	}
 
 	// Get configuration
-	float tire_circ_mm = values_config[GEAR_VALUE_ID - 1].tire_circumference_mm;
-	float final_drive = values_config[GEAR_VALUE_ID - 1].final_drive_ratio;
+	float tire_circ_mm = gd->tire_circumference_mm;
+	float final_drive = gd->final_drive_ratio;
 
 	// Safety check for configuration
 	if (tire_circ_mm <= 0 || final_drive <= 0) {
@@ -254,7 +273,7 @@ void speed_rpm_gear_update_timer_cb(lv_timer_t *timer) {
 							   // reverse, 0 = neutral, 1-10 = forward gears)
 
 	// Check reverse gear first
-	float reverse_ratio = values_config[GEAR_VALUE_ID - 1].reverse_gear_ratio;
+	float reverse_ratio = gd->reverse_gear_ratio;
 	if (reverse_ratio > 0.001f) {
 		float diff = fabsf(current_ratio - reverse_ratio);
 		float tolerance = reverse_ratio * 0.25f;
@@ -272,7 +291,7 @@ void speed_rpm_gear_update_timer_cb(lv_timer_t *timer) {
 
 	// Check forward gears (1-10)
 	for (int i = 0; i < 10; i++) {
-		float gear_ratio = values_config[GEAR_VALUE_ID - 1].gear_ratios[i];
+		float gear_ratio = gd->gear_ratios[i];
 
 		// Skip gears with 0 ratio (not configured)
 		if (gear_ratio <= 0.001f) {
@@ -343,12 +362,12 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 	extern void hide_custom_gear_values_section(void);
 	extern void create_speed_rpm_ratio_config_menu(void);
 
+	gear_data_t *gd = _get_gear_data();
+
 	if (selected == 0) {
 		// ========== CUSTOM ==========
 		printf("Gear ECU Presets: Custom (overriding device settings)\n");
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 0;
-		// Keep existing CAN ID settings for custom mode
-		// Custom mode overrides device settings - save this choice
+		if (gd) gd->detection_mode = 0;
 
 		// Show custom gear values section - use ui_MenuScreen if available,
 		// otherwise current screen
@@ -356,214 +375,89 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 			(ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen)) ? ui_MenuScreen
 															  : lv_scr_act();
 		create_custom_gear_values_section(parent_screen, 0);
-		config_store_save_values(values_config, MAX_VALUES);
 		ESP_LOGI("MENU",
 				 "Gear ECU set to Custom mode - device settings overridden");
 	} else if (selected == 1) {
 		// ========== MAXXECU ==========
 		printf("Gear ECU Presets: MaxxECU\n");
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 1;
+		if (gd) gd->detection_mode = 1;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
-		values_config[GEAR_VALUE_ID - 1].can_id = 536;	// 0x218
-		values_config[GEAR_VALUE_ID - 1].endianess = 1; // Little Endian
-		values_config[GEAR_VALUE_ID - 1].bit_start = 0;
-		values_config[GEAR_VALUE_ID - 1].bit_length = 16;
-		values_config[GEAR_VALUE_ID - 1].scale = 1.0f;
-		values_config[GEAR_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[GEAR_VALUE_ID - 1].decimals = 0;
-		values_config[GEAR_VALUE_ID - 1].is_signed =
-			true; // MaxxECU uses signed values (-1 for reverse)
-
-		// Update UI fields for GEAR (ID=11 => index=10)
-		if (g_can_id_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%u",
-					 values_config[GEAR_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_endian_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_endian_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].endianess);
-		}
-
-		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_start_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_start);
-		}
-
-		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_length - 1);
-		}
-
-		if (g_scale_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_offset_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_decimals_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1],
-									 values_config[GEAR_VALUE_ID - 1].decimals);
-		}
+		/* CAN config is now signal-based; UI fields are informational only */
+		if (g_can_id_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], "536");
+		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 1);
+		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 0);
+		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 15);
+		if (g_scale_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
+		if (g_offset_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], "0");
+		if (g_decimals_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1], 0);
 	} else if (selected == 2) {
 		// ========== HALTECH ==========
 		printf("Gear ECU Presets: Haltech\n");
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 2;
+		if (gd) gd->detection_mode = 2;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
-		// Note: Haltech doesn't have a standard gear CAN ID in the preconfig
-		// Users will need to configure manually or we can add a common one
-		values_config[GEAR_VALUE_ID - 1].can_id =
-			0x370; // Common Haltech gear CAN ID
-		values_config[GEAR_VALUE_ID - 1].endianess = 0; // Big Endian
-		values_config[GEAR_VALUE_ID - 1].bit_start = 16;
-		values_config[GEAR_VALUE_ID - 1].bit_length = 16;
-		values_config[GEAR_VALUE_ID - 1].scale = 1.0f;
-		values_config[GEAR_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[GEAR_VALUE_ID - 1].decimals = 0;
-
-		// Update UI fields similarly
-		if (g_can_id_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%u",
-					 values_config[GEAR_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_endian_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_endian_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].endianess);
-		}
-
-		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_start_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_start);
-		}
-
-		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_length - 1);
-		}
-
-		if (g_scale_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_offset_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_decimals_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1],
-									 values_config[GEAR_VALUE_ID - 1].decimals);
-		}
+		if (g_can_id_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], "880");
+		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 0);
+		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 16);
+		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 15);
+		if (g_scale_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
+		if (g_offset_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], "0");
+		if (g_decimals_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1], 0);
 	} else if (selected == 3) {
 		// ========== FORD ==========
 		printf("Gear ECU Presets: Ford BA/BF/FG\n");
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 3;
+		if (gd) gd->detection_mode = 3;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
-		values_config[GEAR_VALUE_ID - 1].can_id = 0x3E9; // Ford gear CAN ID
-		values_config[GEAR_VALUE_ID - 1].endianess = 1;	 // Little Endian
-		values_config[GEAR_VALUE_ID - 1].bit_start = 4;
-		values_config[GEAR_VALUE_ID - 1].bit_length = 4;
-		values_config[GEAR_VALUE_ID - 1].scale = 1.0f;
-		values_config[GEAR_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[GEAR_VALUE_ID - 1].decimals = 0;
-
-		// Update UI fields for GEAR (ID=11 => index=10)
-		if (g_can_id_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%u",
-					 values_config[GEAR_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_endian_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_endian_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].endianess);
-		}
-
-		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_start_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_start);
-		}
-
-		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[GEAR_VALUE_ID - 1],
-				values_config[GEAR_VALUE_ID - 1].bit_length - 1);
-		}
-
-		if (g_scale_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_offset_input[GEAR_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[GEAR_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], buf);
-		}
-
-		if (g_decimals_dropdown[GEAR_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1],
-									 values_config[GEAR_VALUE_ID - 1].decimals);
-		}
+		if (g_can_id_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_can_id_input[GEAR_VALUE_ID - 1], "1001");
+		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 1);
+		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 4);
+		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 3);
+		if (g_scale_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
+		if (g_offset_input[GEAR_VALUE_ID - 1])
+			lv_textarea_set_text(g_offset_input[GEAR_VALUE_ID - 1], "0");
+		if (g_decimals_dropdown[GEAR_VALUE_ID - 1])
+			lv_dropdown_set_selected(g_decimals_dropdown[GEAR_VALUE_ID - 1], 0);
 	} else if (selected == 4) {
 		// ========== SPEED/RPM RATIO ==========
 		printf(
 			"Gear ECU Presets: Speed/RPM Ratio (calculated gear estimation)\n");
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode = 4;
+		if (gd) gd->detection_mode = 4;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
 
-		// This mode doesn't use CAN for gear - it calculates from speed and RPM
-		// The CAN processing sections will skip gear when in this mode
-
 		// Open the Speed/RPM Ratio configuration menu
 		create_speed_rpm_ratio_config_menu();
 
-		config_store_save_values(values_config, MAX_VALUES);
 		ESP_LOGI("MENU",
 				 "Gear ECU set to Speed/RPM Ratio mode - opens configuration");
 		return; // Exit early since we're opening a new menu
 	}
 
-	// Save configuration to NVS immediately (moved outside custom check)
-	config_store_save_values(values_config, MAX_VALUES);
 	ESP_LOGI(
 		"MENU", "Gear ECU preset changed to: %s (saved to NVS)",
 		selected == 0
@@ -629,9 +523,6 @@ void custom_gear_can_id_event_cb(lv_event_t *e) {
 	// Store the CAN ID
 	// This function is deprecated - custom gear values are now handled in
 	// menu_screen.c
-
-	// Save to NVS
-	config_store_save_values(values_config, MAX_VALUES);
 
 	// Log the change
 	const char *gear_names[] = {"P", "R", "N", "D", "1", "2", "3",
@@ -743,32 +634,35 @@ void custom_gear_back_btn_event_cb(lv_event_t *e) {
 // Custom gear save button event callback
 void custom_gear_save_btn_event_cb(lv_event_t *e) {
 	ESP_LOGI("GEAR", "Saving custom gear configuration");
-	config_store_save_values(values_config, MAX_VALUES);
+	/* Config now lives in gear_data_t; will be persisted via layout JSON */
 	load_menu_screen_for_value(GEAR_VALUE_ID);
 }
 
 void speed_rpm_tire_circumference_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
-	values_config[GEAR_VALUE_ID - 1].tire_circumference_mm = atof(text);
+	gear_data_t *gd = _get_gear_data();
+	if (gd) gd->tire_circumference_mm = atof(text);
 	ESP_LOGI("GEAR", "Tire circumference set to: %.2f mm",
-			 values_config[GEAR_VALUE_ID - 1].tire_circumference_mm);
+			 gd ? gd->tire_circumference_mm : 0.0f);
 }
 
 void speed_rpm_final_drive_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
-	values_config[GEAR_VALUE_ID - 1].final_drive_ratio = atof(text);
+	gear_data_t *gd = _get_gear_data();
+	if (gd) gd->final_drive_ratio = atof(text);
 	ESP_LOGI("GEAR", "Final drive ratio set to: %.3f",
-			 values_config[GEAR_VALUE_ID - 1].final_drive_ratio);
+			 gd ? gd->final_drive_ratio : 0.0f);
 }
 
 void speed_rpm_reverse_ratio_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
-	values_config[GEAR_VALUE_ID - 1].reverse_gear_ratio = atof(text);
+	gear_data_t *gd = _get_gear_data();
+	if (gd) gd->reverse_gear_ratio = atof(text);
 	ESP_LOGI("GEAR", "Reverse gear ratio set to: %.3f",
-			 values_config[GEAR_VALUE_ID - 1].reverse_gear_ratio);
+			 gd ? gd->reverse_gear_ratio : 0.0f);
 }
 
 void speed_rpm_gear_ratio_event_cb(lv_event_t *e) {
@@ -791,9 +685,10 @@ void speed_rpm_gear_ratio_event_cb(lv_event_t *e) {
 
 	if (gear_index >= 0) {
 		const char *text = lv_textarea_get_text(textarea);
-		values_config[GEAR_VALUE_ID - 1].gear_ratios[gear_index] = atof(text);
+		gear_data_t *gd = _get_gear_data();
+		if (gd) gd->gear_ratios[gear_index] = atof(text);
 		ESP_LOGI("GEAR", "Gear %d ratio set to: %.3f", gear_index + 1,
-				 values_config[GEAR_VALUE_ID - 1].gear_ratios[gear_index]);
+				 gd ? gd->gear_ratios[gear_index] : 0.0f);
 	}
 }
 
@@ -804,7 +699,7 @@ void speed_rpm_ratio_back_btn_event_cb(lv_event_t *e) {
 
 void speed_rpm_ratio_save_btn_event_cb(lv_event_t *e) {
 	ESP_LOGI("GEAR", "Saving Speed/RPM Ratio configuration");
-	config_store_save_values(values_config, MAX_VALUES);
+	/* Config now lives in gear_data_t; will be persisted via layout JSON */
 	load_menu_screen_for_value(GEAR_VALUE_ID);
 }
 
@@ -846,9 +741,10 @@ void create_speed_rpm_ratio_config_menu(void) {
 					 LV_PART_MAIN);
 	lv_obj_clear_flag(speed_rpm_tire_circumference_input,
 					  LV_OBJ_FLAG_SCROLLABLE); // Remove scrolling
+	gear_data_t *gd_menu = _get_gear_data();
 	char tire_buf[16];
 	snprintf(tire_buf, sizeof(tire_buf), "%.1f",
-			 values_config[GEAR_VALUE_ID - 1].tire_circumference_mm);
+			 gd_menu ? gd_menu->tire_circumference_mm : 0.0f);
 	lv_textarea_set_text(speed_rpm_tire_circumference_input, tire_buf);
 	lv_obj_add_event_cb(speed_rpm_tire_circumference_input,
 						speed_rpm_tire_circumference_event_cb,
@@ -872,7 +768,7 @@ void create_speed_rpm_ratio_config_menu(void) {
 					  LV_OBJ_FLAG_SCROLLABLE); // Remove scrolling
 	char final_drive_buf[16];
 	snprintf(final_drive_buf, sizeof(final_drive_buf), "%.3f",
-			 values_config[GEAR_VALUE_ID - 1].final_drive_ratio);
+			 gd_menu ? gd_menu->final_drive_ratio : 0.0f);
 	lv_textarea_set_text(speed_rpm_final_drive_input, final_drive_buf);
 	lv_obj_add_event_cb(speed_rpm_final_drive_input,
 						speed_rpm_final_drive_event_cb, LV_EVENT_VALUE_CHANGED,
@@ -913,7 +809,7 @@ void create_speed_rpm_ratio_config_menu(void) {
 			// Set current value
 			char reverse_buf[16];
 			snprintf(reverse_buf, sizeof(reverse_buf), "%.3f",
-					 values_config[GEAR_VALUE_ID - 1].reverse_gear_ratio);
+					 gd_menu ? gd_menu->reverse_gear_ratio : 0.0f);
 			lv_textarea_set_text(speed_rpm_reverse_ratio_input, reverse_buf);
 
 			// Add event callbacks
@@ -942,7 +838,7 @@ void create_speed_rpm_ratio_config_menu(void) {
 			// Set current value
 			char ratio_buf[16];
 			snprintf(ratio_buf, sizeof(ratio_buf), "%.3f",
-					 values_config[GEAR_VALUE_ID - 1].gear_ratios[gear_index]);
+					 gd_menu ? gd_menu->gear_ratios[gear_index] : 0.0f);
 			lv_textarea_set_text(speed_rpm_gear_ratio_inputs[gear_index],
 								 ratio_buf);
 
@@ -1066,10 +962,6 @@ static void _gear_create(widget_t *w, lv_obj_t *parent) {
 	if (gd && gd->signal_index >= 0)
 		signal_subscribe(gd->signal_index, _gear_on_signal, w);
 }
-static void _gear_update(widget_t *w, void *data) {
-	(void)w;
-	update_gear_ui(data);
-}
 static void _gear_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
 	w->h = nh;
@@ -1107,9 +999,6 @@ static void _gear_to_json(widget_t *w, cJSON *out) {
 		}
 		if (gd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", gd->signal_name);
-	} else {
-		uint8_t idx = GEAR_VALUE_ID - 1;
-		cJSON_AddNumberToObject(cfg, "detection_mode", values_config[idx].gear_detection_mode);
 	}
 }
 static void _gear_from_json(widget_t *w, cJSON *in) {
@@ -1187,16 +1076,14 @@ widget_t *widget_gear_create_instance(void) {
 	if (!gd) gd = calloc(1, sizeof(gear_data_t));
 	if (!gd) { free(w); return NULL; }
 
-	/* Bridge from global config */
-	uint8_t idx = GEAR_VALUE_ID - 1;
-	gd->detection_mode = values_config[idx].gear_detection_mode;
-	memcpy(gd->custom_values, values_config[idx].gear_custom_values, sizeof(gd->custom_values));
-	memcpy(gd->gear_ratios, values_config[idx].gear_ratios, sizeof(gd->gear_ratios));
-	gd->tire_circumference_mm = values_config[idx].tire_circumference_mm;
-	gd->final_drive_ratio = values_config[idx].final_drive_ratio;
-	gd->reverse_gear_ratio = values_config[idx].reverse_gear_ratio;
-	memcpy(gd->custom_icon_types, values_config[idx].custom_icon_types, sizeof(gd->custom_icon_types));
-	memcpy(gd->custom_icon_values, values_config[idx].custom_icon_values, sizeof(gd->custom_icon_values));
+	gd->detection_mode = 0;   /* default: Custom */
+	memset(gd->custom_values, 0, sizeof(gd->custom_values));
+	memset(gd->gear_ratios, 0, sizeof(gd->gear_ratios));
+	gd->tire_circumference_mm = 0.0f;
+	gd->final_drive_ratio = 0.0f;
+	gd->reverse_gear_ratio = 0.0f;
+	memset(gd->custom_icon_types, 0, sizeof(gd->custom_icon_types));
+	for (int i = 0; i < 7; i++) gd->custom_icon_values[i] = UINT32_MAX;
 	gd->signal_index = -1;
 
 	w->type = WIDGET_GEAR;
@@ -1208,7 +1095,6 @@ widget_t *widget_gear_create_instance(void) {
 	snprintf(w->id, sizeof(w->id), "gear_0");
 
 	w->create = _gear_create;
-	w->update = _gear_update;
 	w->resize = _gear_resize;
 	w->open_settings = _gear_open_settings;
 	w->to_json = _gear_to_json;
@@ -1218,28 +1104,3 @@ widget_t *widget_gear_create_instance(void) {
 	return w;
 }
 
-void widget_gear_sync_from_legacy(widget_t *w, const value_config_t *cfg) {
-	if (!w || w->type != WIDGET_GEAR || !w->type_data || !cfg) return;
-	gear_data_t *gd = (gear_data_t *)w->type_data;
-	gd->detection_mode = cfg->gear_detection_mode;
-	memcpy(gd->custom_values, cfg->gear_custom_values, sizeof(gd->custom_values));
-	memcpy(gd->gear_ratios, cfg->gear_ratios, sizeof(gd->gear_ratios));
-	gd->tire_circumference_mm = cfg->tire_circumference_mm;
-	gd->final_drive_ratio = cfg->final_drive_ratio;
-	gd->reverse_gear_ratio = cfg->reverse_gear_ratio;
-	memcpy(gd->custom_icon_types, cfg->custom_icon_types, sizeof(gd->custom_icon_types));
-	memcpy(gd->custom_icon_values, cfg->custom_icon_values, sizeof(gd->custom_icon_values));
-}
-
-void widget_gear_sync_to_legacy(const widget_t *w, value_config_t *cfg) {
-	if (!w || w->type != WIDGET_GEAR || !w->type_data || !cfg) return;
-	const gear_data_t *gd = (const gear_data_t *)w->type_data;
-	cfg->gear_detection_mode = gd->detection_mode;
-	memcpy(cfg->gear_custom_values, gd->custom_values, sizeof(cfg->gear_custom_values));
-	memcpy(cfg->gear_ratios, gd->gear_ratios, sizeof(cfg->gear_ratios));
-	cfg->tire_circumference_mm = gd->tire_circumference_mm;
-	cfg->final_drive_ratio = gd->final_drive_ratio;
-	cfg->reverse_gear_ratio = gd->reverse_gear_ratio;
-	memcpy(cfg->custom_icon_types, gd->custom_icon_types, sizeof(cfg->custom_icon_types));
-	memcpy(cfg->custom_icon_values, gd->custom_icon_values, sizeof(cfg->custom_icon_values));
-}

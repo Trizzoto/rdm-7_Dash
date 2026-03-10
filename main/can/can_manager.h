@@ -11,8 +11,8 @@
 
 /**
  * Initialise the TWAI hardware only (no receive task).
- * Loads the saved bitrate from NVS, builds the dispatch table and acceptance
- * filter, installs the driver, and starts the peripheral.
+ * Loads the saved bitrate from NVS, builds the acceptance filter from
+ * the signal registry, installs the driver, and starts the peripheral.
  *
  * Call early in app_main — before the LVGL mutex exists.
  */
@@ -26,16 +26,17 @@ void can_start_task(void);
 
 /**
  * Stop the CAN receive task, uninstall the TWAI driver, rebuild the
- * acceptance filter from current config, reinstall, restart, and
- * re-create the task.  Call after any change to CAN IDs in config.
+ * acceptance filter from the signal registry, reinstall, restart, and
+ * re-create the task.  Call after any change to signal CAN IDs.
  */
 void reconfigure_can_filter(void);
 
 /**
- * Compute a hardware acceptance filter from the current warning /
- * indicator / value CAN IDs.  Writes result into *out_filter.
+ * Compute a hardware acceptance filter from the signal registry.
+ * Iterates all registered signals and builds a mask that passes
+ * all their CAN IDs.  Writes result into *out_filter.
  */
-void build_twai_filter_from_configs(twai_filter_config_t *out_filter);
+void build_twai_filter_from_signals(twai_filter_config_t *out_filter);
 
 /**
  * Temporarily adjust the CAN receive task's FreeRTOS priority.
@@ -56,7 +57,7 @@ void can_change_bitrate(uint8_t bitrate_index);
 
 /**
  * @brief Drain any pending CAN frames from the internal FreeRTOS queue and
- *        dispatch them to the widget layer.
+ *        dispatch them to the widget layer via signal_dispatch_frame().
  *
  * This function is *LVGL-thread only*: it must be called from a context that
  * already holds the LVGL mutex (see example_lvgl_lock/example_lvgl_unlock in

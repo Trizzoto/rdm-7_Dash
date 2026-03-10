@@ -1,6 +1,5 @@
 #pragma once
 #include "lvgl.h"
-#include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
 #ifdef __cplusplus
 extern "C" {
@@ -54,10 +53,6 @@ extern lv_obj_t *ui_Gear_Label;
  * @return Heap-allocated widget_t *, caller must eventually call w->destroy(w).
  */
 widget_t *widget_gear_create_instance(void);
-
-void widget_gear_sync_from_legacy(widget_t *w, const value_config_t *cfg);
-
-void widget_gear_sync_to_legacy(const widget_t *w, value_config_t *cfg);
 
 #ifdef __cplusplus
 }

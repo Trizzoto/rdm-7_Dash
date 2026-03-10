@@ -2,7 +2,6 @@
 #include "esp_heap_caps.h"
 #include "signal.h"
 #include "can/can_decode.h"
-#include "can/can_dispatch.h"
 #include "driver/twai.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -11,16 +10,16 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
+#include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
+#include "ui/config_bridge.h"
 #include "widget_bar.h"
-#include "widget_dispatcher.h"
 #include "widget_panel.h"
 #include <math.h>
 #include <stdbool.h>
@@ -69,6 +68,18 @@ typedef struct {
 	int16_t  signal_index;
 } rpm_bar_data_t;
 
+/* ── Helper: look up rpm_bar_data_t ────────────────────────────────────── */
+static rpm_bar_data_t *_get_rpm_bar_data(void) {
+	widget_t **widgets = dashboard_get_widgets();
+	uint8_t count = dashboard_get_widget_count();
+	for (uint8_t i = 0; i < count; i++) {
+		if (widgets[i] && widgets[i]->type == WIDGET_RPM_BAR) {
+			return (rpm_bar_data_t *)widgets[i]->type_data;
+		}
+	}
+	return NULL;
+}
+
 static int current_canbus_rpm = 0; // Store the current CAN bus RPM value
 
 // CAN timeout tracking
@@ -105,179 +116,58 @@ void rpm_ecu_dropdown_event_cb(lv_event_t *e) {
 	if (selected == 0) {
 		// ========== CUSTOM ==========
 		printf("ECU Presets: Custom (no changes)\n");
-		// Do nothing, or set defaults if you prefer
-	} else if (selected == 1) {
-		// ========== MAXXECU ==========
-		printf("ECU Presets: MaxxECU\n");
-		values_config[RPM_VALUE_ID - 1].can_id = 520; // 0x208
-		values_config[RPM_VALUE_ID - 1].endianess =
-			1; // 0=Big,1=Little (check your usage)
-		values_config[RPM_VALUE_ID - 1].bit_start = 0;
-		values_config[RPM_VALUE_ID - 1].bit_length = 16;
-		values_config[RPM_VALUE_ID - 1].scale = 1.0f;
-		values_config[RPM_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[RPM_VALUE_ID - 1].decimals = 0;
-
-		// Now update the UI fields for RPM (ID=9 => index=8)
-		// --------------------------------------------------
-		if (g_can_id_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%u",
-					 values_config[RPM_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		// Endianness: your dropdown presumably has "Big Endian\nLittle Endian"
-		// 0 => Big, 1 => Little
-		if (g_endian_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_endian_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].endianess);
-		}
-
-		// Bit start
-		if (g_bit_start_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_bit_start_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].bit_start);
-		}
-
-		// Bit length (the dropdown might list 1..64, so we subtract 1 for
-		// zero-based index)
-		if (g_bit_length_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[RPM_VALUE_ID - 1],
-				values_config[RPM_VALUE_ID - 1].bit_length - 1);
-		}
-
-		// Scale
-		if (g_scale_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		// Value offset
-		if (g_offset_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		// Decimals
-		if (g_decimals_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].decimals);
-		}
-	} else if (selected == 2) {
-		// ========== HALTECH ==========
-		printf("ECU Presets: Haltech\n");
-		values_config[RPM_VALUE_ID - 1].can_id = 360; // 0x209
-		values_config[RPM_VALUE_ID - 1].endianess = 0;
-		values_config[RPM_VALUE_ID - 1].bit_start = 0;
-		values_config[RPM_VALUE_ID - 1].bit_length = 16;
-		values_config[RPM_VALUE_ID - 1].scale = 1.0f;
-		values_config[RPM_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[RPM_VALUE_ID - 1].decimals = 0;
-
-		// Update UI fields similarly
-		// --------------------------------------------------
-		if (g_can_id_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%u",
-					 values_config[RPM_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_endian_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_endian_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].endianess);
-		}
-
-		if (g_bit_start_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_bit_start_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].bit_start);
-		}
-
-		if (g_bit_length_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[RPM_VALUE_ID - 1],
-				values_config[RPM_VALUE_ID - 1].bit_length - 1);
-		}
-
-		if (g_scale_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_offset_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_decimals_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].decimals);
-		}
-	} else if (selected == 3) {
-		// ========== FORD BA/BF/FG ==========
-		printf("ECU Presets: Ford BA/BF/FG\n");
-		values_config[RPM_VALUE_ID - 1].can_id = 0x3E8; // 1000 decimal
-		values_config[RPM_VALUE_ID - 1].endianess = 1;	// Little Endian
-		values_config[RPM_VALUE_ID - 1].bit_start = 0;
-		values_config[RPM_VALUE_ID - 1].bit_length = 16;
-		values_config[RPM_VALUE_ID - 1].scale = 0.25f;
-		values_config[RPM_VALUE_ID - 1].value_offset = 0.0f;
-		values_config[RPM_VALUE_ID - 1].decimals = 2;
-
-		// Update UI fields
-		// --------------------------------------------------
-		if (g_can_id_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%X",
-					 values_config[RPM_VALUE_ID - 1].can_id);
-			lv_textarea_set_text(g_can_id_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_endian_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_endian_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].endianess);
-		}
-
-		if (g_bit_start_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_bit_start_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].bit_start);
-		}
-
-		if (g_bit_length_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(
-				g_bit_length_dropdown[RPM_VALUE_ID - 1],
-				values_config[RPM_VALUE_ID - 1].bit_length - 1);
-		}
-
-		if (g_scale_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].scale);
-			lv_textarea_set_text(g_scale_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_offset_input[RPM_VALUE_ID - 1]) {
-			char buf[16];
-			snprintf(buf, sizeof(buf), "%g",
-					 values_config[RPM_VALUE_ID - 1].value_offset);
-			lv_textarea_set_text(g_offset_input[RPM_VALUE_ID - 1], buf);
-		}
-
-		if (g_decimals_dropdown[RPM_VALUE_ID - 1]) {
-			lv_dropdown_set_selected(g_decimals_dropdown[RPM_VALUE_ID - 1],
-									 values_config[RPM_VALUE_ID - 1].decimals);
-		}
+		return;
 	}
+
+	/* Preset CAN parameters: can_id, endian, bit_start, bit_length, scale, offset, decimals */
+	uint32_t can_id = 0;
+	uint8_t endian = 1, bit_start = 0, bit_length = 16, decimals = 0;
+	float scale = 1.0f, offset = 0.0f;
+	const char *name = "Custom";
+
+	if (selected == 1) {
+		name = "MaxxECU"; can_id = 0x208; endian = 1;
+		scale = 1.0f; offset = 0.0f; decimals = 0;
+	} else if (selected == 2) {
+		name = "Haltech"; can_id = 0x168; endian = 0;
+		scale = 1.0f; offset = 0.0f; decimals = 0;
+	} else if (selected == 3) {
+		name = "Ford BA/BF/FG"; can_id = 0x3E8; endian = 1;
+		scale = 0.25f; offset = 0.0f; decimals = 2;
+	}
+
+	printf("ECU Presets: %s\n", name);
+
+	/* Write to signal registry via config_bridge */
+	config_bridge_set_can_id(RPM_VALUE_ID, can_id);
+	config_bridge_set_endian(RPM_VALUE_ID, endian);
+	config_bridge_set_bit_start(RPM_VALUE_ID, bit_start);
+	config_bridge_set_bit_length(RPM_VALUE_ID, bit_length);
+	config_bridge_set_scale(RPM_VALUE_ID, scale);
+	config_bridge_set_offset(RPM_VALUE_ID, offset);
+	config_bridge_set_decimals(RPM_VALUE_ID, decimals);
+
+	/* Update UI form controls to reflect the preset */
+	char hex_buf[16];
+	snprintf(hex_buf, sizeof(hex_buf), "%X", can_id);
+	if (g_can_id_input[RPM_VALUE_ID - 1])
+		lv_textarea_set_text(g_can_id_input[RPM_VALUE_ID - 1], hex_buf);
+	if (g_endian_dropdown[RPM_VALUE_ID - 1])
+		lv_dropdown_set_selected(g_endian_dropdown[RPM_VALUE_ID - 1], endian);
+	if (g_bit_start_dropdown[RPM_VALUE_ID - 1])
+		lv_dropdown_set_selected(g_bit_start_dropdown[RPM_VALUE_ID - 1], bit_start);
+	if (g_bit_length_dropdown[RPM_VALUE_ID - 1])
+		lv_dropdown_set_selected(g_bit_length_dropdown[RPM_VALUE_ID - 1], bit_length - 1);
+	char scale_buf[16];
+	snprintf(scale_buf, sizeof(scale_buf), "%g", scale);
+	if (g_scale_input[RPM_VALUE_ID - 1])
+		lv_textarea_set_text(g_scale_input[RPM_VALUE_ID - 1], scale_buf);
+	char offset_buf[16];
+	snprintf(offset_buf, sizeof(offset_buf), "%g", offset);
+	if (g_offset_input[RPM_VALUE_ID - 1])
+		lv_textarea_set_text(g_offset_input[RPM_VALUE_ID - 1], offset_buf);
+	if (g_decimals_dropdown[RPM_VALUE_ID - 1])
+		lv_dropdown_set_selected(g_decimals_dropdown[RPM_VALUE_ID - 1], decimals);
 }
 
 void rpm_color_dropdown_event_cb(lv_event_t *e) {
@@ -324,7 +214,8 @@ void rpm_color_dropdown_event_cb(lv_event_t *e) {
 	// Don't update colors when real limiter effect is active to avoid conflicts
 	// with flashing
 	rpm_color_needs_update = true;
-	values_config[RPM_VALUE_ID - 1].rpm_bar_color = new_rpm_color;
+		rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->bar_color = new_rpm_color;
 }
 
 void check_rpm_color_update(lv_timer_t *timer) {
@@ -373,7 +264,8 @@ void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e) {
 	}
 
 	// Update configuration
-	values_config[RPM_VALUE_ID - 1].rpm_limiter_effect = effect_type;
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->limiter_effect = effect_type;
 }
 
 void rpm_limiter_roller_event_cb(lv_event_t *e) {
@@ -384,44 +276,27 @@ void rpm_limiter_roller_event_cb(lv_event_t *e) {
 		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
-	values_config[RPM_VALUE_ID - 1].rpm_limiter_value = rpm_value;
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->limiter_value = rpm_value;
 }
 
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (!rd && selected != 9) return;
 
 	switch (selected) {
-	case 0: // Green
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_GREEN;
-		break;
-	case 1: // Light Blue
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_CYAN;
-		break;
-	case 2: // Yellow
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_YELLOW;
-		break;
-	case 3: // Orange
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_ORANGE;
-		break;
-	case 4: // Red
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_RED;
-		break;
-	case 5: // Dark Blue
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_BLUE;
-		break;
-	case 6: // Purple
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_PURPLE;
-		break;
-	case 7: // Magenta
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_MAGENTA;
-		break;
-	case 8: // Pink
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color = THEME_COLOR_PINK;
-		break;
-	case 9: // Custom
-		create_limiter_color_wheel_popup();
-		break;
+	case 0: rd->limiter_color = THEME_COLOR_GREEN; break;
+	case 1: rd->limiter_color = THEME_COLOR_CYAN; break;
+	case 2: rd->limiter_color = THEME_COLOR_YELLOW; break;
+	case 3: rd->limiter_color = THEME_COLOR_ORANGE; break;
+	case 4: rd->limiter_color = THEME_COLOR_RED; break;
+	case 5: rd->limiter_color = THEME_COLOR_BLUE; break;
+	case 6: rd->limiter_color = THEME_COLOR_PURPLE; break;
+	case 7: rd->limiter_color = THEME_COLOR_MAGENTA; break;
+	case 8: rd->limiter_color = THEME_COLOR_PINK; break;
+	case 9: create_limiter_color_wheel_popup(); break;
 	}
 }
 
@@ -430,7 +305,8 @@ void rpm_background_switch_event_cb(lv_event_t *e) {
 	bool is_checked = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
 
 	// Update configuration
-	values_config[RPM_VALUE_ID - 1].rpm_background_enabled = is_checked;
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->background_enabled = is_checked;
 }
 
 void rpm_background_color_dropdown_event_cb(lv_event_t *e) {
@@ -476,7 +352,8 @@ void rpm_background_color_dropdown_event_cb(lv_event_t *e) {
 	}
 
 	// Update configuration
-	values_config[RPM_VALUE_ID - 1].rpm_background_color = new_background_color;
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->background_color = new_background_color;
 }
 
 void rpm_background_threshold_roller_event_cb(lv_event_t *e) {
@@ -487,12 +364,16 @@ void rpm_background_threshold_roller_event_cb(lv_event_t *e) {
 		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
-	values_config[RPM_VALUE_ID - 1].rpm_background_value = threshold_value;
+	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	if (rd) rd->background_value = threshold_value;
 }
 
 static void update_menu_rpm_value_text(int rpm_value) {
 	// Update the RPM value text in menu screen during demos
-	if (menu_rpm_value_label && lv_obj_is_valid(menu_rpm_value_label)) {
+	// Guard: menu must be the active screen and label must be valid
+	if (menu_rpm_value_label && ui_MenuScreen &&
+		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen &&
+		lv_obj_is_valid(menu_rpm_value_label)) {
 		// Apply same 102.3% scaling to the actual RPM value for consistency
 		int display_rpm_value = (int)((float)rpm_value * 1.0229f);
 		char rpm_text[16];
@@ -533,7 +414,10 @@ static void color_wheel_ok_event_cb(lv_event_t *e) {
 	// Apply the selected color from the color wheel
 	new_rpm_color = selected_custom_color;
 	rpm_color_needs_update = true;
-	values_config[RPM_VALUE_ID - 1].rpm_bar_color = selected_custom_color;
+	{
+		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		if (rd) rd->bar_color = selected_custom_color;
+	}
 
 	// Close the popup
 	if (color_wheel_popup) {
@@ -555,8 +439,10 @@ static void color_wheel_cancel_event_cb(lv_event_t *e) {
 // RPM Background color wheel popup event callbacks
 static void rpm_background_color_wheel_ok_event_cb(lv_event_t *e) {
 	// Apply the selected color from the color wheel
-	values_config[RPM_VALUE_ID - 1].rpm_background_color =
-		selected_rpm_background_custom_color;
+	{
+		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		if (rd) rd->background_color = selected_rpm_background_custom_color;
+	}
 
 	// Close the popup
 	if (rpm_background_color_wheel_popup) {
@@ -624,8 +510,8 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_align(rpm_background_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current background color
-	lv_color_t current_color =
-		values_config[RPM_VALUE_ID - 1].rpm_background_color;
+	rpm_bar_data_t *rd_bg = _get_rpm_bar_data();
+	lv_color_t current_color = rd_bg ? rd_bg->background_color : THEME_COLOR_GREEN;
 	lv_colorwheel_set_rgb(rpm_background_color_wheel, current_color);
 	selected_rpm_background_custom_color = current_color;
 
@@ -706,7 +592,8 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_align(color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current RPM color
-	lv_color_t current_color = values_config[RPM_VALUE_ID - 1].rpm_bar_color;
+	rpm_bar_data_t *rd_cw = _get_rpm_bar_data();
+	lv_color_t current_color = rd_cw ? rd_cw->bar_color : THEME_COLOR_GREEN;
 	lv_colorwheel_set_rgb(color_wheel, current_color);
 	selected_custom_color = current_color;
 
@@ -757,8 +644,10 @@ static lv_color_t selected_limiter_custom_color;
 // Limiter color wheel popup event callbacks
 static void limiter_color_wheel_ok_event_cb(lv_event_t *e) {
 	// Apply the selected color from the color wheel
-	values_config[RPM_VALUE_ID - 1].rpm_limiter_color =
-		selected_limiter_custom_color;
+	{
+		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		if (rd) rd->limiter_color = selected_limiter_custom_color;
+	}
 
 	// Limiter circles color update removed - only bar flash effect is
 	// supported
@@ -826,8 +715,8 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_align(limiter_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current limiter color
-	lv_color_t current_color =
-		values_config[RPM_VALUE_ID - 1].rpm_limiter_color;
+	rpm_bar_data_t *rd_lc = _get_rpm_bar_data();
+	lv_color_t current_color = rd_lc ? rd_lc->limiter_color : THEME_COLOR_RED;
 	lv_colorwheel_set_rgb(limiter_color_wheel, current_color);
 	selected_limiter_custom_color = current_color;
 
@@ -893,9 +782,9 @@ void set_rpm_value(int rpm) {
 
 	// Check if we should activate RPM background effect based on
 	// real RPM
-	if (values_config[RPM_VALUE_ID - 1].rpm_background_enabled) {
-		int32_t background_threshold =
-			values_config[RPM_VALUE_ID - 1].rpm_background_value;
+	rpm_bar_data_t *rd_bg = _get_rpm_bar_data();
+	if (rd_bg && rd_bg->background_enabled) {
+		int32_t background_threshold = rd_bg->background_value;
 
 		// Add hysteresis for background effect too: activate at
 		// threshold, deactivate at threshold - 200 RPM
@@ -920,7 +809,7 @@ void set_rpm_value(int rpm) {
 			if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
 				lv_obj_set_style_bg_color(
 					ui_Screen3,
-					values_config[RPM_VALUE_ID - 1].rpm_background_color,
+					rd_bg->background_color,
 					LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 
@@ -1126,6 +1015,12 @@ void update_redline_position(void) {
 		   rpm_redline_value, redline_percentage * 100, redline_rpm_position,
 		   redline_width);
 }
+/* Async update payload for lv_async_call(update_rpm_ui, ...) */
+typedef struct {
+	char rpm_str[32];
+	int  rpm_value;
+} rpm_update_t;
+
 void update_rpm_ui(void *param) {
 	rpm_update_t *r_upd = (rpm_update_t *)param;
 
@@ -1155,7 +1050,8 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value) {
 	update_menu_rpm_value_text(rpm_value);
 }
 void create_rpm_bar_gauge(lv_obj_t *container) {
-	lv_color_t saved_color = values_config[RPM_VALUE_ID - 1].rpm_bar_color;
+	rpm_bar_data_t *rd_bar = _get_rpm_bar_data();
+	lv_color_t saved_color = rd_bar ? rd_bar->bar_color : THEME_COLOR_GREEN;
 
 	/* Panel9 — color indicator square at left edge.
 	 * Inside the 800x55 container, center-relative: (-373, 0). */
@@ -1419,10 +1315,6 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	if (rbd && rbd->signal_index >= 0)
 		signal_subscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 }
-static void _rpm_bar_update(widget_t *w, void *data) {
-	(void)w;
-	update_rpm_ui(data);
-}
 static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
 	w->h = nh;
@@ -1510,18 +1402,17 @@ widget_t *widget_rpm_bar_create_instance(void) {
 
 	rd->signal_index = -1;
 
-	/* Bridge current globals into type_data */
-	rd->gauge_max = rpm_gauge_max;
-	rd->redline = rpm_redline_value;
-	uint8_t idx = RPM_VALUE_ID - 1;
-	rd->bar_color = values_config[idx].rpm_bar_color;
-	rd->limiter_effect = values_config[idx].rpm_limiter_effect;
-	rd->limiter_value = values_config[idx].rpm_limiter_value;
-	rd->limiter_color = values_config[idx].rpm_limiter_color;
-	rd->lights_enabled = values_config[idx].rpm_lights_enabled;
-	rd->background_enabled = values_config[idx].rpm_background_enabled;
-	rd->background_value = values_config[idx].rpm_background_value;
-	rd->background_color = values_config[idx].rpm_background_color;
+	/* Sensible defaults */
+	rd->gauge_max = 8000;
+	rd->redline = 6500;
+	rd->bar_color = lv_color_hex(0x00FF00);  /* green */
+	rd->limiter_effect = 0;
+	rd->limiter_value = 7500;
+	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */
+	rd->lights_enabled = false;
+	rd->background_enabled = false;
+	rd->background_value = 0;
+	rd->background_color = lv_color_hex(0x000000);
 
 	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;
@@ -1534,7 +1425,6 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	snprintf(w->id, sizeof(w->id), "rpm_bar_0");
 
 	w->create = _rpm_bar_create;
-	w->update = _rpm_bar_update;
 	w->resize = _rpm_bar_resize;
 	w->open_settings = _rpm_bar_open_settings;
 	w->to_json = _rpm_bar_to_json;
@@ -1544,34 +1434,3 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	return w;
 }
 
-void widget_rpm_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg,
-                                     int gauge_max, int redline) {
-	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !cfg) return;
-	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
-	rd->gauge_max = gauge_max;
-	rd->redline = redline;
-	rd->bar_color = cfg->rpm_bar_color;
-	rd->limiter_effect = cfg->rpm_limiter_effect;
-	rd->limiter_value = cfg->rpm_limiter_value;
-	rd->limiter_color = cfg->rpm_limiter_color;
-	rd->lights_enabled = cfg->rpm_lights_enabled;
-	rd->background_enabled = cfg->rpm_background_enabled;
-	rd->background_value = cfg->rpm_background_value;
-	rd->background_color = cfg->rpm_background_color;
-}
-
-void widget_rpm_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg,
-                                   int *gauge_max_out, int *redline_out) {
-	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !cfg) return;
-	const rpm_bar_data_t *rd = (const rpm_bar_data_t *)w->type_data;
-	if (gauge_max_out) *gauge_max_out = rd->gauge_max;
-	if (redline_out) *redline_out = rd->redline;
-	cfg->rpm_bar_color = rd->bar_color;
-	cfg->rpm_limiter_effect = rd->limiter_effect;
-	cfg->rpm_limiter_value = rd->limiter_value;
-	cfg->rpm_limiter_color = rd->limiter_color;
-	cfg->rpm_lights_enabled = rd->lights_enabled;
-	cfg->rpm_background_enabled = rd->background_enabled;
-	cfg->rpm_background_value = rd->background_value;
-	cfg->rpm_background_color = rd->background_color;
-}

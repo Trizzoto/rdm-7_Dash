@@ -9,10 +9,9 @@
 #include "preset_picker.h"
 #include "../callbacks/ui_callbacks.h"
 #include "esp_log.h"
-#include "storage/config_store.h"
+#include "config_bridge.h"
 
 extern const lv_img_dsc_t Smart_Car_Key;
-extern value_config_t values_config[];
 
 #define GEAR_VALUE_ID 11
 
@@ -45,10 +44,10 @@ static void custom_icon_type_dropdown_event_cb(lv_event_t *e)
     if (icon_index < 0 || icon_index >= 7) return;
 
     uint16_t selected = lv_dropdown_get_selected(dropdown);
-    values_config[GEAR_VALUE_ID - 1].custom_icon_types[icon_index] = selected;
+    config_bridge_set_gear_icon_type(icon_index, selected);
 
     if (selected == 0)
-        values_config[GEAR_VALUE_ID - 1].custom_icon_values[icon_index] = UINT32_MAX;
+        config_bridge_set_gear_icon_value(icon_index, UINT32_MAX);
 
     if (custom_icon_images[icon_index] && lv_obj_is_valid(custom_icon_images[icon_index])) {
         if (selected == 1)
@@ -60,7 +59,7 @@ static void custom_icon_type_dropdown_event_cb(lv_event_t *e)
             lv_obj_is_valid(custom_icon_inputs[icon_index]))
             lv_textarea_set_text(custom_icon_inputs[icon_index], "");
     }
-    config_store_save_values(values_config, 13);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     ESP_LOGI("GEAR", "Custom icon %d type: %d", icon_index, selected);
 }
 
@@ -73,8 +72,8 @@ static void custom_icon_input_event_cb(lv_event_t *e)
     }
     if (idx < 0) return;
     uint32_t v = parse_hex_or_dec(lv_textarea_get_text(ta));
-    values_config[GEAR_VALUE_ID - 1].custom_icon_values[idx] = v;
-    config_store_save_values(values_config, 13);
+    config_bridge_set_gear_icon_value(idx, v);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     ESP_LOGI("GEAR", "Custom icon %d value: %u", idx, v);
 }
 
@@ -87,8 +86,8 @@ static void custom_gear_value_input_event_cb(lv_event_t *e)
     }
     if (idx < 0) return;
     uint32_t v = parse_hex_or_dec(lv_textarea_get_text(ta));
-    values_config[GEAR_VALUE_ID - 1].gear_custom_values[idx] = v;
-    config_store_save_values(values_config, 13);
+    config_bridge_set_gear_custom_value(idx, v);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     const char *names[] = {"P","R","N","D","1","2","3","4","5","6","7","8","9","10"};
     ESP_LOGI("GEAR", "Gear %s = %u", names[idx], v);
 }
@@ -101,13 +100,13 @@ void custom_gear_section_flush_to_config(void)
 {
     for (int i = 0; i < 14; i++) {
         if (custom_gear_value_inputs[i] && lv_obj_is_valid(custom_gear_value_inputs[i]))
-            values_config[GEAR_VALUE_ID - 1].gear_custom_values[i] =
-                parse_hex_or_dec(lv_textarea_get_text(custom_gear_value_inputs[i]));
+            config_bridge_set_gear_custom_value(i,
+                parse_hex_or_dec(lv_textarea_get_text(custom_gear_value_inputs[i])));
     }
     for (int i = 0; i < 7; i++) {
         if (custom_icon_inputs[i] && lv_obj_is_valid(custom_icon_inputs[i]))
-            values_config[GEAR_VALUE_ID - 1].custom_icon_values[i] =
-                parse_hex_or_dec(lv_textarea_get_text(custom_icon_inputs[i]));
+            config_bridge_set_gear_icon_value(i,
+                parse_hex_or_dec(lv_textarea_get_text(custom_icon_inputs[i])));
     }
 }
 
@@ -181,7 +180,7 @@ void create_custom_gear_values_section(lv_obj_t *parent, uint8_t gear_mode)
         lv_obj_clear_flag(custom_gear_value_inputs[i], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_style(custom_gear_value_inputs[i], cs, LV_PART_MAIN);
 
-        uint32_t gv = values_config[GEAR_VALUE_ID - 1].gear_custom_values[i];
+        uint32_t gv = config_bridge_get_gear_custom_value(i);
         if (gv != UINT32_MAX) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%u", gv);
@@ -202,7 +201,7 @@ void create_custom_gear_values_section(lv_obj_t *parent, uint8_t gear_mode)
         lv_obj_set_size(custom_icon_type_dropdowns[i], 60, 25);
         lv_obj_set_pos(custom_icon_type_dropdowns[i], col3_x, y_pos - 2);
         lv_obj_add_style(custom_icon_type_dropdowns[i], cs, LV_PART_MAIN);
-        uint8_t icon_type = values_config[GEAR_VALUE_ID - 1].custom_icon_types[i];
+        uint8_t icon_type = config_bridge_get_gear_icon_type(i);
         lv_dropdown_set_selected(custom_icon_type_dropdowns[i], icon_type);
         lv_obj_add_event_cb(custom_icon_type_dropdowns[i], custom_icon_type_dropdown_event_cb,
                             LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)i);
@@ -224,7 +223,7 @@ void create_custom_gear_values_section(lv_obj_t *parent, uint8_t gear_mode)
         lv_obj_clear_flag(custom_icon_inputs[i], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_style(custom_icon_inputs[i], cs, LV_PART_MAIN);
 
-        uint32_t iv = values_config[GEAR_VALUE_ID - 1].custom_icon_values[i];
+        uint32_t iv = config_bridge_get_gear_icon_value(i);
         if (iv != UINT32_MAX) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%u", iv);

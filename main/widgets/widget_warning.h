@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +53,12 @@ widget_t *widget_warning_create_instance(uint8_t slot);
 
 /** Reset all warning circle LVGL pointers (call before re-creating layout). */
 void widget_warning_reset(void);
+
+/** Return the slot (0-7) from a warning widget's type_data. */
+uint8_t widget_warning_get_slot(const widget_t *w);
+
+/** Return true if this warning widget is bound to a signal. */
+bool widget_warning_has_signal(const widget_t *w);
 
 #ifdef __cplusplus
 }

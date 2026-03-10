@@ -53,12 +53,14 @@ uint64_t *widget_panel_get_last_can_time(uint8_t idx);
  */
 widget_t *widget_panel_create_instance(uint8_t slot);
 
-void widget_panel_sync_from_legacy(widget_t *w, const value_config_t *cfg,
-                                   const char *label_text);
-
 uint8_t widget_panel_get_slot(const widget_t *w);
-void widget_panel_sync_to_legacy(const widget_t *w, value_config_t *cfg,
-                                 char *label_out, size_t label_size);
+bool widget_panel_has_signal(const widget_t *w);
+
+/** Set panel warning thresholds from config callbacks. */
+void widget_panel_set_warning_high(uint8_t slot, float threshold, bool enabled);
+void widget_panel_set_warning_low(uint8_t slot, float threshold, bool enabled);
+void widget_panel_set_warning_high_color(uint8_t slot, lv_color_t color);
+void widget_panel_set_warning_low_color(uint8_t slot, lv_color_t color);
 
 #ifdef __cplusplus
 }

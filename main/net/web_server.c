@@ -32,6 +32,45 @@ static httpd_handle_t server = NULL;
 extern bool example_lvgl_lock(int timeout_ms);
 extern void example_lvgl_unlock(void);
 
+/* ── Deferred screen reload (runs on LVGL task via lv_async_call) ────────── */
+
+static void _deferred_screen_reload(void *arg) {
+	(void)arg;
+	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+	ui_Screen3_screen_init();
+	lv_scr_load(ui_Screen3);
+	if (old && old != ui_Screen3)
+		lv_obj_del(old);
+}
+
+/* Pending preview JSON — guarded by atomic pointer swap. Only one preview
+ * can be pending at a time; newer previews replace older ones. */
+static char *s_pending_preview_json = NULL;
+
+static void _set_pending_preview(char *json) {
+	char *old = s_pending_preview_json;
+	s_pending_preview_json = json;
+	free(old); /* free previous if the LVGL task hasn't consumed it yet */
+}
+
+static void _deferred_preview_apply(void *arg) {
+	(void)arg;
+	char *json = s_pending_preview_json;
+	s_pending_preview_json = NULL;
+	if (!json) return;
+
+	cJSON *root = cJSON_Parse(json);
+	free(json);
+	if (!root) return;
+
+	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+	ui_Screen3_preview_layout(root);
+	lv_scr_load(ui_Screen3);
+	if (old && old != ui_Screen3)
+		lv_obj_del(old);
+	cJSON_Delete(root);
+}
+
 // HTTP handler for the main page (serves embedded web/index.html)
 static esp_err_t index_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "text/html");
@@ -98,11 +137,19 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	// Snapshot current widgets from the dashboard/registry
+	// Must hold LVGL mutex — widgets live on the LVGL task's core
+	if (!example_lvgl_lock(1000)) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"LVGL busy");
+		return ESP_FAIL;
+	}
+
 	widget_t **widgets = dashboard_get_widgets();
 	uint8_t count = dashboard_get_widget_count();
 
 	cJSON *root = layout_manager_build_json(layout_name, widgets, count);
+	example_lvgl_unlock();
+
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to build layout JSON");
@@ -284,15 +331,9 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			return ESP_FAIL;
 		}
 
-		// Reload Screen3 layout under LVGL lock to apply changes live
-		if (example_lvgl_lock(1000)) {
-			lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-			ui_Screen3_screen_init();
-			lv_scr_load(ui_Screen3);
-			if (old && old != ui_Screen3)
-				lv_obj_del(old);
-			example_lvgl_unlock();
-		}
+		// Defer heavy screen rebuild to the LVGL task to avoid
+		// holding the mutex for 100-500ms and blocking other handlers.
+		lv_async_call(_deferred_screen_reload, NULL);
 	}
 
 	httpd_resp_set_type(req, "application/json");
@@ -341,17 +382,17 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	// Apply live under LVGL lock
-	if (example_lvgl_lock(1000)) {
-		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-		ui_Screen3_preview_layout(root);
-		lv_scr_load(ui_Screen3);
-		if (old && old != ui_Screen3)
-			lv_obj_del(old);
-		example_lvgl_unlock();
-	}
-
+	/* Stash the JSON string for deferred apply on the LVGL task.
+	 * The previous pending preview (if any) is freed here. */
+	char *json_copy = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
+	if (!json_copy) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Failed to serialize preview JSON");
+		return ESP_FAIL;
+	}
+	_set_pending_preview(json_copy);
+	lv_async_call(_deferred_preview_apply, NULL);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
 
@@ -481,14 +522,7 @@ static esp_err_t layout_set_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (example_lvgl_lock(1000)) {
-		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-		ui_Screen3_screen_init();
-		lv_scr_load(ui_Screen3);
-		if (old && old != ui_Screen3)
-			lv_obj_del(old);
-		example_lvgl_unlock();
-	}
+	lv_async_call(_deferred_screen_reload, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");

@@ -8,6 +8,7 @@
 #include "../ui.h"
 #include "preset_picker.h"
 #include "../callbacks/ui_callbacks.h"
+#include "config_bridge.h"
 
 /* External input-widget arrays written by this function */
 extern lv_obj_t *g_label_input[];
@@ -20,8 +21,6 @@ extern lv_obj_t *g_offset_input[];
 extern lv_obj_t *g_decimals_dropdown[];
 extern lv_obj_t *g_type_dropdown[];
 
-extern value_config_t values_config[];
-extern char label_texts[13][64];
 extern lv_obj_t *ui_MenuScreen;
 
 #define RPM_VALUE_ID   9
@@ -71,7 +70,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
     if (value_id != RPM_VALUE_ID && value_id != SPEED_VALUE_ID) {
         show_preconfig_menu(parent);
         g_label_input[idx] = settings_add_text_input(sec, "Label:", "Enter Label",
-                                                      label_texts[value_id - 1]);
+                                                      config_bridge_get_label(value_id));
         lv_obj_add_event_cb(g_label_input[idx], keyboard_event_cb, LV_EVENT_ALL, NULL);
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_label_input[idx], label_input_event_cb, LV_EVENT_VALUE_CHANGED, p);
@@ -80,7 +79,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- CAN ID ---------------------------------------------------------- */
     char can_id_str[16];
-    snprintf(can_id_str, sizeof(can_id_str), "%X", values_config[idx].can_id);
+    snprintf(can_id_str, sizeof(can_id_str), "%X", config_bridge_get_can_id(value_id));
     g_can_id_input[idx] = settings_add_text_input(sec, "CAN ID (0x):", "CAN ID hex", can_id_str);
     lv_obj_add_event_cb(g_can_id_input[idx], keyboard_event_cb, LV_EVENT_ALL, NULL);
     {
@@ -93,7 +92,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
     g_endian_dropdown[idx] = settings_add_dropdown(sec, "Endian:",
                                                     "Big Endian\nLittle Endian", 0);
     lv_dropdown_set_selected(g_endian_dropdown[idx],
-                             values_config[idx].endianess == BIG_ENDIAN_ORDER ? 0 : 1);
+                             config_bridge_get_endian(value_id) == BIG_ENDIAN_ORDER ? 0 : 1);
     {
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_endian_dropdown[idx], endianess_roller_event_cb, LV_EVENT_VALUE_CHANGED, p);
@@ -102,7 +101,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Bit start ------------------------------------------------------- */
     g_bit_start_dropdown[idx] = settings_add_dropdown(sec, "Bit Start:", BIT_START_OPTS, 0);
-    lv_dropdown_set_selected(g_bit_start_dropdown[idx], values_config[idx].bit_start);
+    lv_dropdown_set_selected(g_bit_start_dropdown[idx], config_bridge_get_bit_start(value_id));
     {
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_bit_start_dropdown[idx], bit_start_roller_event_cb, LV_EVENT_VALUE_CHANGED, p);
@@ -111,7 +110,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Bit length ------------------------------------------------------ */
     g_bit_length_dropdown[idx] = settings_add_dropdown(sec, "Bit Length:", BIT_LEN_OPTS, 0);
-    lv_dropdown_set_selected(g_bit_length_dropdown[idx], values_config[idx].bit_length - 1);
+    lv_dropdown_set_selected(g_bit_length_dropdown[idx], config_bridge_get_bit_length(value_id) - 1);
     {
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_bit_length_dropdown[idx], bit_length_roller_event_cb, LV_EVENT_VALUE_CHANGED, p);
@@ -120,7 +119,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Scale ----------------------------------------------------------- */
     char scale_str[16];
-    snprintf(scale_str, sizeof(scale_str), "%.6g", values_config[idx].scale);
+    snprintf(scale_str, sizeof(scale_str), "%.6g", (double)config_bridge_get_scale(value_id));
     g_scale_input[idx] = settings_add_text_input(sec, "Scale:", "Scale factor", scale_str);
     lv_obj_add_event_cb(g_scale_input[idx], keyboard_event_cb, LV_EVENT_ALL, NULL);
     {
@@ -131,7 +130,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Value offset ---------------------------------------------------- */
     char offset_str[16];
-    snprintf(offset_str, sizeof(offset_str), "%.6g", values_config[idx].value_offset);
+    snprintf(offset_str, sizeof(offset_str), "%.6g", (double)config_bridge_get_offset(value_id));
     g_offset_input[idx] = settings_add_text_input(sec, "Offset:", "Value Offset", offset_str);
     lv_obj_add_event_cb(g_offset_input[idx], keyboard_event_cb, LV_EVENT_ALL, NULL);
     {
@@ -142,7 +141,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Decimals -------------------------------------------------------- */
     g_decimals_dropdown[idx] = settings_add_dropdown(sec, "Decimals:", "0\n1\n2\n3", 0);
-    lv_dropdown_set_selected(g_decimals_dropdown[idx], values_config[idx].decimals);
+    lv_dropdown_set_selected(g_decimals_dropdown[idx], config_bridge_get_decimals(value_id));
     {
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_decimals_dropdown[idx], decimal_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, p);
@@ -151,7 +150,7 @@ void create_config_controls(lv_obj_t *parent, uint8_t value_id)
 
     /* -- Type ------------------------------------------------------------ */
     g_type_dropdown[idx] = settings_add_dropdown(sec, "Type:", "Unsigned\nSigned", 0);
-    lv_dropdown_set_selected(g_type_dropdown[idx], values_config[idx].is_signed ? 1 : 0);
+    lv_dropdown_set_selected(g_type_dropdown[idx], config_bridge_get_is_signed(value_id) ? 1 : 0);
     {
         uint8_t *p = id_alloc(value_id);
         lv_obj_add_event_cb(g_type_dropdown[idx], type_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, p);

@@ -6,7 +6,6 @@
  * no heap allocation, no global string arrays.
  */
 #include "widget_text.h"
-#include "widget_dispatcher.h"
 #include "widget_types.h"
 #include "ui/theme.h"
 #include "cJSON.h"
@@ -67,17 +66,6 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	text_data_t *td2 = (text_data_t *)w->type_data;
 	if (td2 && td2->signal_index >= 0)
 		signal_subscribe(td2->signal_index, _text_on_signal, w);
-}
-
-static void _text_update(widget_t *w, void *data) {
-	text_update_t *tud = (text_update_t *)data;
-	if (!tud || !w || !w->root || !lv_obj_is_valid(w->root))
-		return;
-	text_data_t *td = (text_data_t *)w->type_data;
-	uint8_t bound_idx = td ? td->value_idx : 0;
-	if (tud->value_idx != bound_idx)
-		return;
-	lv_label_set_text(w->root, tud->value_str);
 }
 
 static void _text_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -160,7 +148,6 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	snprintf(w->id, sizeof(w->id), "text_%u", td->value_idx);
 
 	w->create = _text_create;
-	w->update = _text_update;
 	w->resize = _text_resize;
 	w->open_settings = _text_open_settings;
 	w->to_json = _text_to_json;
@@ -168,4 +155,14 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	w->destroy = _text_destroy;
 
 	return w;
+}
+
+uint8_t widget_text_get_value_idx(const widget_t *w) {
+	if (!w || w->type != WIDGET_TEXT || !w->type_data) return 0;
+	return ((const text_data_t *)w->type_data)->value_idx;
+}
+
+bool widget_text_has_signal(const widget_t *w) {
+	if (!w || w->type != WIDGET_TEXT || !w->type_data) return false;
+	return ((const text_data_t *)w->type_data)->signal_index >= 0;
 }

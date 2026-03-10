@@ -16,6 +16,7 @@
 #include "../screens/ui_Screen3.h"
 #include "../settings/settings_panel.h"
 #include "../theme.h"
+#include "config_bridge.h"
 #include "menu_screen.h"
 #include "preset_picker.h"
 #include <stdio.h>
@@ -32,8 +33,7 @@ extern lv_obj_t *g_scale_input[];
 extern lv_obj_t *g_offset_input[];
 extern lv_obj_t *g_decimals_dropdown[];
 extern lv_obj_t *g_type_dropdown[];
-extern value_config_t values_config[];
-extern char label_texts[13][64];
+/* values_config[] and label_texts[] replaced by config_bridge API */
 extern lv_obj_t *keyboard;
 extern lv_obj_t *config_bars[];
 extern lv_obj_t *ui_MenuScreen;
@@ -243,7 +243,8 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 		settings_add_section(tab, "CAN BUS SIGNAL", THEME_COLOR_ACCENT);
 
 	char can_id_str[16];
-	snprintf(can_id_str, sizeof(can_id_str), "%X", values_config[idx].can_id);
+	snprintf(can_id_str, sizeof(can_id_str), "%X",
+			 config_bridge_get_can_id(value_id));
 	g_can_id_input[idx] =
 		settings_add_text_input(sec, "CAN ID (0x):", "hex", can_id_str);
 	lv_obj_add_event_cb(g_can_id_input[idx], keyboard_event_cb, LV_EVENT_ALL,
@@ -260,7 +261,7 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 		settings_add_dropdown(sec, "Endian:", "Big Endian\nLittle Endian", 0);
 	lv_dropdown_set_selected(
 		g_endian_dropdown[idx],
-		values_config[idx].endianess == BIG_ENDIAN_ORDER ? 0 : 1);
+		config_bridge_get_endian(value_id) == BIG_ENDIAN_ORDER ? 0 : 1);
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_endian_dropdown[idx], endianess_roller_event_cb,
@@ -272,7 +273,7 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 	g_bit_start_dropdown[idx] =
 		settings_add_dropdown(sec, "Bit Start:", BIT_START_OPTS, 0);
 	lv_dropdown_set_selected(g_bit_start_dropdown[idx],
-							 values_config[idx].bit_start);
+							 config_bridge_get_bit_start(value_id));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_bit_start_dropdown[idx],
@@ -285,7 +286,7 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 	g_bit_length_dropdown[idx] =
 		settings_add_dropdown(sec, "Bit Length:", BIT_LEN_OPTS, 0);
 	lv_dropdown_set_selected(g_bit_length_dropdown[idx],
-							 values_config[idx].bit_length - 1);
+							 config_bridge_get_bit_length(value_id) - 1);
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_bit_length_dropdown[idx],
@@ -296,7 +297,8 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	char scale_str[16];
-	snprintf(scale_str, sizeof(scale_str), "%.6g", values_config[idx].scale);
+	snprintf(scale_str, sizeof(scale_str), "%.6g",
+			 config_bridge_get_scale(value_id));
 	g_scale_input[idx] =
 		settings_add_text_input(sec, "Scale:", "factor", scale_str);
 	lv_obj_add_event_cb(g_scale_input[idx], keyboard_event_cb, LV_EVENT_ALL,
@@ -311,7 +313,7 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 
 	char offset_str[16];
 	snprintf(offset_str, sizeof(offset_str), "%.6g",
-			 values_config[idx].value_offset);
+			 config_bridge_get_offset(value_id));
 	g_offset_input[idx] =
 		settings_add_text_input(sec, "Offset:", "value offset", offset_str);
 	lv_obj_add_event_cb(g_offset_input[idx], keyboard_event_cb, LV_EVENT_ALL,
@@ -327,7 +329,7 @@ static void build_can_tab(lv_obj_t *tab, uint8_t value_id) {
 	g_type_dropdown[idx] =
 		settings_add_dropdown(sec, "Data Type:", "Unsigned\nSigned", 0);
 	lv_dropdown_set_selected(g_type_dropdown[idx],
-							 values_config[idx].is_signed ? 1 : 0);
+							 config_bridge_get_is_signed(value_id) ? 1 : 0);
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_type_dropdown[idx], type_dropdown_event_cb,
@@ -346,8 +348,8 @@ static void build_display_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	settings_section_t *sec =
 		settings_add_section(tab, "DISPLAY OPTIONS", THEME_COLOR_ACCENT_TEAL);
 
-	g_label_input[idx] =
-		settings_add_text_input(sec, "Label:", "panel label", label_texts[idx]);
+	g_label_input[idx] = settings_add_text_input(
+		sec, "Label:", "panel label", config_bridge_get_label(value_id));
 	lv_obj_add_event_cb(g_label_input[idx], keyboard_event_cb, LV_EVENT_ALL,
 						NULL);
 	{
@@ -358,8 +360,9 @@ static void build_display_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 							LV_EVENT_DELETE, p);
 	}
 
-	lv_obj_t *du = settings_add_text_input(sec, "Display Unit:", "suffix",
-										   values_config[idx].custom_text);
+	lv_obj_t *du = settings_add_text_input(
+		sec, "Display Unit:", "suffix",
+		config_bridge_get_custom_text(value_id));
 	lv_obj_add_event_cb(du, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	{
 		uint8_t *p = id_alloc(value_id);
@@ -371,7 +374,7 @@ static void build_display_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	g_decimals_dropdown[idx] =
 		settings_add_dropdown(sec, "Decimals:", "0\n1\n2\n3", 0);
 	lv_dropdown_set_selected(g_decimals_dropdown[idx],
-							 values_config[idx].decimals);
+							 config_bridge_get_decimals(value_id));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_decimals_dropdown[idx], decimal_dropdown_event_cb,
@@ -391,8 +394,8 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	settings_section_t *sec =
 		settings_add_section(tab, "DISPLAY OPTIONS", THEME_COLOR_ACCENT_TEAL);
 
-	g_label_input[idx] =
-		settings_add_text_input(sec, "Label:", "bar label", label_texts[idx]);
+	g_label_input[idx] = settings_add_text_input(
+		sec, "Label:", "bar label", config_bridge_get_label(value_id));
 	lv_obj_add_event_cb(g_label_input[idx], keyboard_event_cb, LV_EVENT_ALL,
 						NULL);
 	{
@@ -406,7 +409,7 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	g_decimals_dropdown[idx] =
 		settings_add_dropdown(sec, "Decimals:", "0\n1\n2\n3", 0);
 	lv_dropdown_set_selected(g_decimals_dropdown[idx],
-							 values_config[idx].decimals);
+							 config_bridge_get_decimals(value_id));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(g_decimals_dropdown[idx], decimal_dropdown_event_cb,
@@ -416,10 +419,12 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	char buf[16];
-	snprintf(buf, sizeof(buf), "%d", values_config[idx].bar_min);
+	snprintf(buf, sizeof(buf), "%d",
+			 (int)config_bridge_get_bar_min(value_id));
 	lv_obj_t *bmin = settings_add_text_input(sec, "Min Value:", "min", buf);
 	lv_obj_add_event_cb(bmin, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	snprintf(buf, sizeof(buf), "%d", values_config[idx].bar_max);
+	snprintf(buf, sizeof(buf), "%d",
+			 (int)config_bridge_get_bar_max(value_id));
 	lv_obj_t *bmax = settings_add_text_input(sec, "Max Value:", "max", buf);
 	lv_obj_add_event_cb(bmax, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	{
@@ -431,7 +436,7 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	lv_obj_t *sv = settings_add_switch(
-		sec, "Show Value:", values_config[idx].show_bar_value);
+		sec, "Show Value:", config_bridge_get_show_bar_value(value_id));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(sv, show_value_switch_event_cb,
@@ -440,7 +445,7 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	lv_obj_t *iv = settings_add_switch(
-		sec, "Invert Value:", values_config[idx].invert_bar_value);
+		sec, "Invert Value:", config_bridge_get_invert_bar_value(value_id));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(iv, invert_value_switch_event_cb,
@@ -449,7 +454,7 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	/* ── Fuel Sender ── */
-	bool fs_on = values_config[idx].fuel_sender;
+	bool fs_on = config_bridge_get_fuel_sender(value_id);
 	lv_obj_t *fss = settings_add_switch(sec, "Fuel Sender:", fs_on);
 
 	/* Sub-container — hidden when fuel sender is off */
@@ -473,7 +478,8 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	settings_section_t *fs_sec = fs_box; /* treat as inline section */
 
 	char vb[12];
-	snprintf(vb, sizeof(vb), "%.2f", values_config[idx].fuel_sender_empty_v);
+	snprintf(vb, sizeof(vb), "%.2f",
+			 config_bridge_get_fuel_sender_empty_v(value_id));
 	lv_obj_t *fs_ei =
 		settings_add_text_input(fs_sec, "Empty Voltage:", "V", vb);
 	lv_obj_add_event_cb(fs_ei, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -484,7 +490,8 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 		lv_obj_add_event_cb(fs_ei, free_value_id_event_cb, LV_EVENT_DELETE, p);
 	}
 
-	snprintf(vb, sizeof(vb), "%.2f", values_config[idx].fuel_sender_full_v);
+	snprintf(vb, sizeof(vb), "%.2f",
+			 config_bridge_get_fuel_sender_full_v(value_id));
 	lv_obj_t *fs_fi = settings_add_text_input(fs_sec, "Full Voltage:", "V", vb);
 	lv_obj_add_event_cb(fs_fi, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	{
@@ -500,14 +507,14 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 
 	char fb[20];
 	snprintf(fb, sizeof(fb), "Filter: %d%%",
-			 values_config[idx].fuel_sender_filter);
+			 config_bridge_get_fuel_sender_filter(value_id));
 	lv_obj_t *fs_flbl = settings_add_info_row(fs_sec, "Filter:", fb);
 
 	lv_obj_t *fs_sl = lv_slider_create(fs_box);
 	lv_obj_set_width(fs_sl, lv_pct(94));
 	lv_obj_set_height(fs_sl, 12);
 	lv_slider_set_range(fs_sl, 0, 100);
-	lv_slider_set_value(fs_sl, values_config[idx].fuel_sender_filter,
+	lv_slider_set_value(fs_sl, config_bridge_get_fuel_sender_filter(value_id),
 						LV_ANIM_OFF);
 	lv_obj_set_style_bg_color(fs_sl, THEME_COLOR_ACCENT,
 							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -584,8 +591,9 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 
 static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	uint8_t idx = value_id - 1;
-	bool has_warnings = (values_config[idx].warning_high_threshold != 0.0f ||
-						 values_config[idx].warning_low_threshold != 0.0f);
+	bool has_warnings =
+		(config_bridge_get_warning_high_threshold(value_id) != 0.0f ||
+		 config_bridge_get_warning_low_threshold(value_id) != 0.0f);
 
 	settings_section_t *sec =
 		settings_add_section(tab, "WARNING SETTINGS", THEME_COLOR_ACCENT_AMBER);
@@ -615,7 +623,7 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 
 	char buf[20];
 	snprintf(buf, sizeof(buf), "%.2f",
-			 values_config[idx].warning_high_threshold);
+			 config_bridge_get_warning_high_threshold(value_id));
 	lv_obj_t *wh = settings_add_text_input(ws, "Range High:", "value", buf);
 	lv_obj_add_event_cb(wh, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	{
@@ -626,10 +634,11 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	lv_obj_t *whc = settings_add_dropdown(ws, "High Colour:", "Red\nBlue", 0);
-	lv_dropdown_set_selected(whc, values_config[idx].warning_high_color.full ==
-										  THEME_COLOR_RED.full
-									  ? 0
-									  : 1);
+	lv_dropdown_set_selected(
+		whc, config_bridge_get_warning_high_color(value_id).full ==
+					 THEME_COLOR_RED.full
+				 ? 0
+				 : 1);
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(whc, warning_high_color_event_cb,
@@ -638,7 +647,7 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	snprintf(buf, sizeof(buf), "%.2f",
-			 values_config[idx].warning_low_threshold);
+			 config_bridge_get_warning_low_threshold(value_id));
 	lv_obj_t *wl = settings_add_text_input(ws, "Range Low:", "value", buf);
 	lv_obj_add_event_cb(wl, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	{
@@ -649,10 +658,11 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	lv_obj_t *wlc = settings_add_dropdown(ws, "Low Colour:", "Red\nBlue", 0);
-	lv_dropdown_set_selected(wlc, values_config[idx].warning_low_color.full ==
-										  THEME_COLOR_RED.full
-									  ? 0
-									  : 1);
+	lv_dropdown_set_selected(
+		wlc, config_bridge_get_warning_low_color(value_id).full ==
+					 THEME_COLOR_RED.full
+				 ? 0
+				 : 1);
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(wlc, warning_low_color_event_cb,
@@ -667,8 +677,8 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 
 static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	uint8_t idx = value_id - 1;
-	bool has_warnings =
-		(values_config[idx].bar_low != 0 || values_config[idx].bar_high != 0);
+	bool has_warnings = (config_bridge_get_bar_low(value_id) != 0 ||
+						 config_bridge_get_bar_high(value_id) != 0);
 
 	settings_section_t *sec =
 		settings_add_section(tab, "BAR THRESHOLDS", THEME_COLOR_ACCENT_AMBER);
@@ -696,7 +706,8 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	settings_section_t *ws = warn_box;
 	char buf[16];
 
-	snprintf(buf, sizeof(buf), "%d", values_config[idx].bar_low);
+	snprintf(buf, sizeof(buf), "%d",
+			 (int)config_bridge_get_bar_low(value_id));
 	lv_obj_t *blow =
 		settings_add_text_input(ws, "Low Threshold:", "value", buf);
 	lv_obj_add_event_cb(blow, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -707,7 +718,8 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 		lv_obj_add_event_cb(blow, free_value_id_event_cb, LV_EVENT_DELETE, p);
 	}
 
-	snprintf(buf, sizeof(buf), "%d", values_config[idx].bar_high);
+	snprintf(buf, sizeof(buf), "%d",
+			 (int)config_bridge_get_bar_high(value_id));
 	lv_obj_t *bhigh =
 		settings_add_text_input(ws, "High Threshold:", "value", buf);
 	lv_obj_add_event_cb(bhigh, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -719,8 +731,8 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	}
 
 	lv_obj_t *blc = settings_add_dropdown(ws, "Low Colour:", BAR_COLOR_OPTS, 0);
-	lv_dropdown_set_selected(blc,
-							 bar_color_idx(values_config[idx].bar_low_color));
+	lv_dropdown_set_selected(
+		blc, bar_color_idx(config_bridge_get_bar_low_color(value_id)));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(blc, bar_low_color_event_cb, LV_EVENT_VALUE_CHANGED,
@@ -730,8 +742,8 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 
 	lv_obj_t *bhc =
 		settings_add_dropdown(ws, "High Colour:", BAR_COLOR_OPTS, 0);
-	lv_dropdown_set_selected(bhc,
-							 bar_color_idx(values_config[idx].bar_high_color));
+	lv_dropdown_set_selected(
+		bhc, bar_color_idx(config_bridge_get_bar_high_color(value_id)));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(bhc, bar_high_color_event_cb,
@@ -742,7 +754,7 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	lv_obj_t *brc =
 		settings_add_dropdown(ws, "In-Range Colour:", BAR_COLOR_OPTS, 0);
 	lv_dropdown_set_selected(
-		brc, bar_color_idx(values_config[idx].bar_in_range_color));
+		brc, bar_color_idx(config_bridge_get_bar_in_range_color(value_id)));
 	{
 		uint8_t *p = id_alloc(value_id);
 		lv_obj_add_event_cb(brc, bar_in_range_color_event_cb,
@@ -757,7 +769,7 @@ static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
  * ========================================================================= */
 
 static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
-	uint8_t idx = value_id - 1;
+	(void)value_id; /* used only for config_bridge calls */
 
 	/* ── Gauge & Colour ── */
 	settings_section_t *sec =
@@ -785,8 +797,8 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 						NULL);
 
 	lv_obj_t *rc = settings_add_dropdown(sec, "RPM Colour:", RPM_COLOR_OPTS, 0);
-	lv_dropdown_set_selected(rc,
-							 rpm_color_idx(values_config[idx].rpm_bar_color));
+	lv_dropdown_set_selected(
+		rc, rpm_color_idx(config_bridge_get_rpm_bar_color()));
 	lv_obj_add_event_cb(rc, rpm_color_dropdown_event_cb, LV_EVENT_VALUE_CHANGED,
 						NULL);
 
@@ -799,14 +811,14 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 		"None\nBar Flash\nBar & Circles Flash\nCircles Flash\nBar Solid\nBar & "
 		"Circles Solid\nCircles Solid",
 		0);
-	uint8_t eff = values_config[idx].rpm_limiter_effect;
+	uint8_t eff = config_bridge_get_rpm_limiter_effect();
 	lv_dropdown_set_selected(
 		le, eff < 8 ? ((uint8_t[]){0, 0, 1, 2, 3, 4, 5, 6})[eff] : 0);
 	lv_obj_add_event_cb(le, rpm_limiter_effect_dropdown_event_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
 
 	lv_obj_t *lr = settings_add_dropdown(lim, "Limiter RPM:", RPM_OPTS, 0);
-	int32_t lv = values_config[idx].rpm_limiter_value;
+	int32_t lv = config_bridge_get_rpm_limiter_value();
 	lv_dropdown_set_selected(lr, (lv >= 3000 && lv <= 12000) ? (lv - 3000) / 200
 															 : 0);
 	lv_obj_add_event_cb(lr, rpm_limiter_roller_event_cb, LV_EVENT_VALUE_CHANGED,
@@ -815,7 +827,7 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 	lv_obj_t *lc =
 		settings_add_dropdown(lim, "Limiter Colour:", RPM_COLOR_OPTS, 0);
 	lv_dropdown_set_selected(
-		lc, rpm_color_idx(values_config[idx].rpm_limiter_color));
+		lc, rpm_color_idx(config_bridge_get_rpm_limiter_color()));
 	lv_obj_add_event_cb(lc, rpm_limiter_color_dropdown_event_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -823,7 +835,7 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 	settings_section_t *light =
 		settings_add_section(tab, "LIGHTING", THEME_COLOR_ACCENT);
 
-	bool bg_on = values_config[idx].rpm_background_enabled;
+	bool bg_on = config_bridge_get_rpm_background_enabled();
 	lv_obj_t *bgsw = settings_add_switch(light, "RPM Background:", bg_on);
 	lv_obj_add_event_cb(bgsw, rpm_background_switch_event_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
@@ -849,12 +861,12 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
 	lv_obj_t *bgc =
 		settings_add_dropdown(bgs, "Background Colour:", RPM_COLOR_OPTS, 0);
 	lv_dropdown_set_selected(
-		bgc, rpm_color_idx(values_config[idx].rpm_background_color));
+		bgc, rpm_color_idx(config_bridge_get_rpm_background_color()));
 	lv_obj_add_event_cb(bgc, rpm_background_color_dropdown_event_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
 
 	lv_obj_t *bgt = settings_add_dropdown(bgs, "Background RPM:", RPM_OPTS, 0);
-	int32_t bv = values_config[idx].rpm_background_value;
+	int32_t bv = config_bridge_get_rpm_background_value();
 	lv_dropdown_set_selected(
 		bgt, (bv >= 3000 && bv <= 12000) ? (bv - 3000) / 200 : 0);
 	lv_obj_add_event_cb(bgt, rpm_background_threshold_roller_event_cb,
@@ -866,11 +878,11 @@ static void build_display_tab_rpm(lv_obj_t *tab, uint8_t value_id) {
  * ========================================================================= */
 
 static void build_display_tab_speed(lv_obj_t *tab, uint8_t value_id) {
-	uint8_t idx = value_id - 1;
+	(void)value_id; /* used only for config_bridge calls */
 	settings_section_t *sec =
 		settings_add_section(tab, "SPEED OPTIONS", THEME_COLOR_ACCENT_TEAL);
 	lv_obj_t *ud = settings_add_dropdown(sec, "Speed Units:", "KMH\nMPH", 0);
-	lv_dropdown_set_selected(ud, values_config[idx].use_mph ? 1 : 0);
+	lv_dropdown_set_selected(ud, config_bridge_get_use_mph() ? 1 : 0);
 	lv_obj_add_event_cb(ud, speed_units_dropdown_event_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
 }
@@ -919,7 +931,7 @@ static void gear_ecu_modal_cb(lv_event_t *e) {
 		return;
 	gear_dd_ctx_t *ctx = (gear_dd_ctx_t *)lv_event_get_user_data(e);
 	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-	values_config[GEAR_VALUE_ID - 1].gear_detection_mode = (uint8_t)sel;
+	config_bridge_set_gear_detection_mode((uint8_t)sel);
 	if (ctx) {
 		set_btn_vis(ctx->custom_btn, sel == 0);
 		set_btn_vis(ctx->ratio_btn, sel == 4);
@@ -932,16 +944,16 @@ static void tire_circ_input_cb(lv_event_t *e) {
 	lv_event_code_t code = lv_event_get_code(e);
 	if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_DEFOCUSED)
 		return;
-	values_config[GEAR_VALUE_ID - 1].tire_circumference_mm =
-		(float)atof(lv_textarea_get_text(lv_event_get_target(e)));
+	config_bridge_set_tire_circumference(
+		(float)atof(lv_textarea_get_text(lv_event_get_target(e))));
 }
 
 static void final_drive_input_cb(lv_event_t *e) {
 	lv_event_code_t code = lv_event_get_code(e);
 	if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_DEFOCUSED)
 		return;
-	values_config[GEAR_VALUE_ID - 1].final_drive_ratio =
-		(float)atof(lv_textarea_get_text(lv_event_get_target(e)));
+	config_bridge_set_final_drive_ratio(
+		(float)atof(lv_textarea_get_text(lv_event_get_target(e))));
 }
 
 /* user_data: -1 = reverse, 0-9 = gear index */
@@ -952,9 +964,9 @@ static void ratio_input_cb(lv_event_t *e) {
 	int idx = (int)(intptr_t)lv_event_get_user_data(e);
 	float val = (float)atof(lv_textarea_get_text(lv_event_get_target(e)));
 	if (idx < 0)
-		values_config[GEAR_VALUE_ID - 1].reverse_gear_ratio = val;
+		config_bridge_set_reverse_gear_ratio(val);
 	else
-		values_config[GEAR_VALUE_ID - 1].gear_ratios[idx] = val;
+		config_bridge_set_gear_ratio(idx, val);
 }
 
 /* Forward declaration — defined later in the Speed/RPM section */
@@ -980,8 +992,7 @@ static void open_custom_gear_overlay(uint8_t gear_mode) {
 static void gear_custom_btn_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
 		return;
-	open_custom_gear_overlay(
-		values_config[GEAR_VALUE_ID - 1].gear_detection_mode);
+	open_custom_gear_overlay(config_bridge_get_gear_detection_mode());
 }
 
 /* ── Speed/RPM Ratio overlay ────────────────────────────────────────────────
@@ -1041,8 +1052,6 @@ static lv_obj_t *make_ratio_input(lv_obj_t *parent, const char *label,
 }
 
 static void open_speed_rpm_overlay(void) {
-	value_config_t *cfg = &values_config[GEAR_VALUE_ID - 1];
-
 	lv_obj_t *ov = lv_obj_create(lv_layer_top());
 	lv_obj_set_size(ov, LV_PCT(100), LV_PCT(100));
 	lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
@@ -1062,14 +1071,16 @@ static void open_speed_rpm_overlay(void) {
 		settings_add_section(scroll, "VEHICLE SETUP", THEME_COLOR_ACCENT_TEAL);
 
 	char buf[20];
-	snprintf(buf, sizeof(buf), "%.1f", cfg->tire_circumference_mm);
+	snprintf(buf, sizeof(buf), "%.1f",
+			 config_bridge_get_tire_circumference());
 	lv_obj_t *tc =
 		settings_add_text_input(vs, "Tire Circ. (mm):", "e.g. 1980", buf);
 	lv_obj_add_event_cb(tc, keyboard_event_cb, LV_EVENT_ALL, NULL);
 	lv_obj_add_event_cb(tc, tire_circ_input_cb, LV_EVENT_VALUE_CHANGED, NULL);
 	lv_obj_add_event_cb(tc, tire_circ_input_cb, LV_EVENT_DEFOCUSED, NULL);
 
-	snprintf(buf, sizeof(buf), "%.3f", cfg->final_drive_ratio);
+	snprintf(buf, sizeof(buf), "%.3f",
+			 config_bridge_get_final_drive_ratio());
 	lv_obj_t *fd =
 		settings_add_text_input(vs, "Final Drive Ratio:", "e.g. 3.420", buf);
 	lv_obj_add_event_cb(fd, keyboard_event_cb, LV_EVENT_ALL, NULL);
@@ -1084,7 +1095,8 @@ static void open_speed_rpm_overlay(void) {
 	const char *gear_names[] = {"1st:", "2nd:", "3rd:", "4th:", "5th:",
 								"6th:", "7th:", "8th:", "9th:", "10th:"};
 	for (int i = 0; i < 10; i++)
-		make_ratio_input(gr, gear_names[i], cfg->gear_ratios[i], i);
+		make_ratio_input(gr, gear_names[i], config_bridge_get_gear_ratio(i),
+						 i);
 
 	/* Header rendered last so it draws over any scroll content */
 	make_overlay_hdr(ov, "SPEED / RPM RATIO SETUP");
@@ -1114,7 +1126,7 @@ static lv_obj_t *make_gear_action_btn(lv_obj_t *tab, const char *label_txt) {
 }
 
 static void build_display_tab_gear(lv_obj_t *tab) {
-	uint8_t gear_mode = values_config[GEAR_VALUE_ID - 1].gear_detection_mode;
+	uint8_t gear_mode = config_bridge_get_gear_detection_mode();
 	settings_section_t *sec =
 		settings_add_section(tab, "GEAR DETECTION", THEME_COLOR_ACCENT_TEAL);
 
@@ -1239,7 +1251,7 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		menu_panel_boxes[idx] = pbox;
 
 		lv_obj_t *plbl = lv_label_create(pbox);
-		lv_label_set_text(plbl, label_texts[idx]);
+		lv_label_set_text(plbl, config_bridge_get_label(value_id));
 		lv_obj_set_style_text_color(plbl, THEME_COLOR_TEXT_MUTED, 0);
 		lv_obj_set_style_text_font(plbl, THEME_FONT_DASH_LABEL, 0);
 		lv_obj_align(plbl, LV_ALIGN_TOP_MID, 0, 2);
@@ -1278,7 +1290,7 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		 */
 	} else if (is_bar) {
 		lv_obj_t *bar_lbl = lv_label_create(prev_pane);
-		lv_label_set_text(bar_lbl, label_texts[idx]);
+		lv_label_set_text(bar_lbl, config_bridge_get_label(value_id));
 		lv_obj_set_style_text_color(bar_lbl, THEME_COLOR_TEXT_MUTED, 0);
 		lv_obj_set_style_text_font(bar_lbl, THEME_FONT_BODY, 0);
 		lv_obj_align(bar_lbl, LV_ALIGN_CENTER, 0, -36);
@@ -1288,16 +1300,17 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		menu_bar_objects[bar_idx] = config_bars[idx] = pbar;
 		lv_obj_set_size(pbar, PREV_W - 20, 22);
 		lv_obj_align(pbar, LV_ALIGN_CENTER, 0, -8);
-		int bar_min = values_config[idx].bar_min;
-		int bar_max = values_config[idx].bar_max;
+		int bar_min = (int)config_bridge_get_bar_min(value_id);
+		int bar_max = (int)config_bridge_get_bar_max(value_id);
 		lv_bar_set_range(pbar, bar_min, bar_max);
 		lv_bar_set_value(pbar, bar_min + (bar_max - bar_min) / 2, LV_ANIM_OFF);
 		lv_obj_set_style_bg_color(pbar, THEME_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(pbar, THEME_RADIUS_SMALL,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(pbar, values_config[idx].bar_in_range_color,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_color(
+			pbar, config_bridge_get_bar_in_range_color(value_id),
+			LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(pbar, THEME_RADIUS_SMALL,
 								LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
@@ -1342,7 +1355,7 @@ void config_modal_open(lv_obj_t *screen, uint8_t value_id) {
 		lv_obj_t *swatch = lv_obj_create(prev_pane);
 		lv_obj_set_size(swatch, PREV_W - 20, 6);
 		lv_obj_align(swatch, LV_ALIGN_CENTER, 0, 38);
-		lv_obj_set_style_bg_color(swatch, values_config[idx].rpm_bar_color, 0);
+		lv_obj_set_style_bg_color(swatch, config_bridge_get_rpm_bar_color(), 0);
 		lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
 		lv_obj_set_style_radius(swatch, 3, 0);
 		lv_obj_set_style_border_width(swatch, 0, 0);

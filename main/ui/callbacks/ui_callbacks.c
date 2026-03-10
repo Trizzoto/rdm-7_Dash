@@ -7,8 +7,8 @@
 #include "../screens/ui_Screen3.h"
 #include "../screens/ui_wifi.h"
 #include "../ui.h"
+#include "config_bridge.h"
 #include "esp_log.h"
-#include "storage/config_store.h"
 
 // External references to global variables from ui_Screen3.c
 extern lv_obj_t * g_label_input[];
@@ -21,8 +21,7 @@ extern lv_obj_t * g_offset_input[];
 extern lv_obj_t * g_decimals_dropdown[];
 extern lv_obj_t * g_type_dropdown[];
 
-extern value_config_t values_config[];
-extern char label_texts[13][64];
+/* values_config[] and label_texts[] replaced by config_bridge API */
 extern lv_obj_t* ui_MenuScreen;
 extern lv_obj_t* keyboard;
 
@@ -47,8 +46,8 @@ extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 #define BAR1_VALUE_ID  12
 #define BAR2_VALUE_ID  13
 
-// External function references
-extern void print_value_config(uint8_t value_id);
+// Legacy debug helper (was in widget_dispatcher.c, now removed)
+static inline void print_value_config(uint8_t value_id) { (void)value_id; }
 
 // Placeholder functions - you will move the actual implementations here
 void label_input_event_cb(lv_event_t * e) {
@@ -61,13 +60,12 @@ void label_input_event_cb(lv_event_t * e) {
 
         // Handle regular panels (1-8) and gear
         if ((value_id >= 1 && value_id <= 8) || (value_id == GEAR_VALUE_ID)) {
-            strncpy(label_texts[value_id - 1], txt, sizeof(label_texts[value_id - 1]));
-            label_texts[value_id - 1][sizeof(label_texts[value_id - 1]) - 1] = '\0';
+            config_bridge_set_label(value_id, txt);
 
             if(value_id == GEAR_VALUE_ID && ui_Gear_Label) {
-                lv_label_set_text(ui_Gear_Label, label_texts[value_id - 1]);
+                lv_label_set_text(ui_Gear_Label, config_bridge_get_label(value_id));
             } else if (ui_Label[value_id - 1]) {
-                lv_label_set_text(ui_Label[value_id - 1], label_texts[value_id - 1]);
+                lv_label_set_text(ui_Label[value_id - 1], config_bridge_get_label(value_id));
             }
             
             // Also update menu preview label if it exists and menu is visible
@@ -83,8 +81,7 @@ void label_input_event_cb(lv_event_t * e) {
         }
         // Handle bar labels
         else if (value_id == BAR1_VALUE_ID && ui_Bar_1_Label) {
-            strncpy(label_texts[value_id - 1], txt, sizeof(label_texts[value_id - 1]));
-            label_texts[value_id - 1][sizeof(label_texts[value_id - 1]) - 1] = '\0';
+            config_bridge_set_label(value_id, txt);
             lv_label_set_text(ui_Bar_1_Label, txt);
             
             // Also update menu preview bar label if it exists and menu is visible
@@ -96,8 +93,7 @@ void label_input_event_cb(lv_event_t * e) {
             }
         }
         else if (value_id == BAR2_VALUE_ID && ui_Bar_2_Label) {
-            strncpy(label_texts[value_id - 1], txt, sizeof(label_texts[value_id - 1]));
-            label_texts[value_id - 1][sizeof(label_texts[value_id - 1]) - 1] = '\0';
+            config_bridge_set_label(value_id, txt);
             lv_label_set_text(ui_Bar_2_Label, txt);
             
             // Also update menu preview bar label if it exists and menu is visible
@@ -121,7 +117,7 @@ void bit_start_roller_event_cb(lv_event_t * e) {
 
         // Get the selected option index - these are dropdown widgets, not rollers
         uint8_t selected_bit_start = lv_dropdown_get_selected(dropdown);
-        values_config[value_id - 1].bit_start = selected_bit_start;
+        config_bridge_set_bit_start(value_id, selected_bit_start);
 
         printf("Updated Bit Start for Value #%d to %d\n", value_id, selected_bit_start);
         print_value_config(value_id);
@@ -138,7 +134,7 @@ void bit_length_roller_event_cb(lv_event_t * e) {
 
         // Get the selected option index and adjust for 1-based length - these are dropdown widgets, not rollers
         uint8_t selected_bit_length = lv_dropdown_get_selected(dropdown) + 1;
-        values_config[value_id - 1].bit_length = selected_bit_length;
+        config_bridge_set_bit_length(value_id, selected_bit_length);
 
         printf("Updated Bit Length for Value #%d to %d\n", value_id, selected_bit_length);
         print_value_config(value_id);
@@ -155,7 +151,7 @@ void decimal_dropdown_event_cb(lv_event_t * e) {
 
     // 0 => "0", 1 => "1", 2 => "2"
     uint8_t selected = lv_dropdown_get_selected(dropdown);
-    values_config[value_id - 1].decimals = selected;
+    config_bridge_set_decimals(value_id, selected);
 
     printf("Updated Decimals for Value #%d to %d\n", value_id, selected);
     print_value_config(value_id);
@@ -619,7 +615,7 @@ void endianess_roller_event_cb(lv_event_t * e) {
         if (value_id < 1 || value_id > 13) return;
 
         // Update the configuration
-        values_config[value_id - 1].endianess = (selected == 0) ? BIG_ENDIAN_ORDER : LITTLE_ENDIAN_ORDER;
+        config_bridge_set_endian(value_id, (selected == 0) ? BIG_ENDIAN_ORDER : LITTLE_ENDIAN_ORDER);
 
         printf("Updated Endianess for Value #%d to %s\n",
                value_id,
@@ -641,7 +637,7 @@ void value_offset_input_event_cb(lv_event_t * e) {
         value_offset_texts[value_id -1][sizeof(value_offset_texts[value_id -1]) - 1] = '\0'; 
 
         float entered_offset = atof(txt);
-        values_config[value_id - 1].value_offset = entered_offset;
+        config_bridge_set_offset(value_id, entered_offset);
 
         printf("Updated Value Offset for Value #%d to %f\n", value_id, entered_offset);
         print_value_config(value_id);
@@ -677,8 +673,7 @@ void can_id_input_event_cb(lv_event_t * e) {
         uint32_t entered_can_id = strtoul(buffer, NULL, 16);
 
         // 3) Store the numeric ID in your config
-        values_config[value_id - 1].can_id = entered_can_id;
-        values_config[value_id - 1].enabled = (entered_can_id != 0);
+        config_bridge_set_can_id(value_id, entered_can_id);
 
         printf("Updated CAN ID for Value #%d to 0x%X (decimal: %u)\n",
                value_id, entered_can_id, entered_can_id);
@@ -699,7 +694,7 @@ void scale_input_event_cb(lv_event_t * e) {
         if (entered_scale == 0.0f) {
             entered_scale = 1.0f;
         }
-        values_config[value_id - 1].scale = entered_scale;
+        config_bridge_set_scale(value_id, entered_scale);
         printf("Updated Scale for Value #%d to %f\n", value_id, entered_scale);
         print_value_config(value_id);
     }
@@ -712,10 +707,10 @@ void type_dropdown_event_cb(lv_event_t * e) {
         if(value_id < 1 || value_id > 13) return;
 
         uint8_t selected = lv_dropdown_get_selected(dropdown);
-        values_config[value_id - 1].is_signed = (selected == 1);
+        config_bridge_set_is_signed(value_id, (selected == 1));
 
-        printf("Updated Type for Value #%d to %s\n", value_id, 
-               values_config[value_id - 1].is_signed ? "Signed" : "Unsigned");
+        printf("Updated Type for Value #%d to %s\n", value_id,
+               config_bridge_get_is_signed(value_id) ? "Signed" : "Unsigned");
         print_value_config(value_id);
     }
 }
@@ -727,12 +722,13 @@ void speed_units_dropdown_event_cb(lv_event_t *e)
 {
     lv_obj_t *dd = lv_event_get_target(e);
     uint16_t sel = lv_dropdown_get_selected(dd);
-    values_config[SPEED_VALUE_ID - 1].use_mph = (sel == 1);
-    if (ui_Kmh) lv_label_set_text(ui_Kmh, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
+    config_bridge_set_use_mph(sel == 1);
+    bool use_mph = config_bridge_get_use_mph();
+    if (ui_Kmh) lv_label_set_text(ui_Kmh, use_mph ? "mph" : "k/mh");
     if (menu_speed_units_label && lv_obj_is_valid(menu_speed_units_label))
-        lv_label_set_text(menu_speed_units_label, values_config[SPEED_VALUE_ID - 1].use_mph ? "mph" : "k/mh");
-    config_store_save_values(values_config, 13);
-    ESP_LOGI("MENU", "Speed units: %s", values_config[SPEED_VALUE_ID - 1].use_mph ? "MPH" : "KMH");
+        lv_label_set_text(menu_speed_units_label, use_mph ? "mph" : "k/mh");
+    /* Config persisted via dashboard_persist_layout() on menu close */
+    ESP_LOGI("MENU", "Speed units: %s", use_mph ? "MPH" : "KMH");
 }
 
 /* =========================================================================
@@ -743,13 +739,13 @@ void show_value_switch_event_cb(lv_event_t *e)
     lv_obj_t *sw = lv_event_get_target(e);
     uint8_t vid = *(uint8_t *)lv_event_get_user_data(e);
     bool show = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    values_config[vid - 1].show_bar_value = show;
+    config_bridge_set_show_bar_value(vid, show);
     lv_obj_t *target = (vid == BAR1_VALUE_ID) ? ui_Bar_1_Value : ui_Bar_2_Value;
     if (target && lv_obj_is_valid(target)) {
         if (show) lv_obj_clear_flag(target, LV_OBJ_FLAG_HIDDEN);
         else       lv_obj_add_flag(target,   LV_OBJ_FLAG_HIDDEN);
     }
-    config_store_save_values(values_config, 13);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     ESP_LOGI("BAR", "Show value %s for bar %d", show ? "on" : "off", vid);
 }
 
@@ -758,8 +754,8 @@ void invert_value_switch_event_cb(lv_event_t *e)
     lv_obj_t *sw = lv_event_get_target(e);
     uint8_t vid = *(uint8_t *)lv_event_get_user_data(e);
     bool inv = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    values_config[vid - 1].invert_bar_value = inv;
-    config_store_save_values(values_config, 13);
+    config_bridge_set_invert_bar_value(vid, inv);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     ESP_LOGI("BAR", "Invert %s for bar %d", inv ? "on" : "off", vid);
 }
 
@@ -772,22 +768,18 @@ void custom_text_input_event_cb(lv_event_t *e)
     if (!id_ptr) return;
     uint8_t vid = *id_ptr;
     const char *text = lv_textarea_get_text(lv_event_get_target(e));
-    if (text) {
-        strncpy(values_config[vid - 1].custom_text, text, sizeof(values_config[vid - 1].custom_text) - 1);
-        values_config[vid - 1].custom_text[sizeof(values_config[vid - 1].custom_text) - 1] = '\0';
-    } else {
-        values_config[vid - 1].custom_text[0] = '\0';
-    }
+    config_bridge_set_custom_text(vid, text ? text : "");
     uint8_t panel_idx = vid - 1;
+    const char *custom = config_bridge_get_custom_text(vid);
     if (panel_idx < 8 && ui_CustomText[panel_idx] && lv_obj_is_valid(ui_CustomText[panel_idx])) {
-        lv_label_set_text(ui_CustomText[panel_idx], values_config[panel_idx].custom_text);
-        if (strlen(values_config[panel_idx].custom_text) == 0)
+        lv_label_set_text(ui_CustomText[panel_idx], custom);
+        if (strlen(custom) == 0)
             lv_obj_add_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
         else
             lv_obj_clear_flag(ui_CustomText[panel_idx], LV_OBJ_FLAG_HIDDEN);
     }
-    config_store_save_values(values_config, 13);
-    ESP_LOGI("PANEL", "Custom text '%s' for panel %d", values_config[vid - 1].custom_text, vid);
+    /* Config persisted via dashboard_persist_layout() on menu close */
+    ESP_LOGI("PANEL", "Custom text '%s' for panel %d", custom, vid);
 }
 
 /* =========================================================================
@@ -800,8 +792,8 @@ void fs_empty_v_input_event_cb(lv_event_t *e)
     if (!id) return;
     float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
     v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
-    values_config[*id - 1].fuel_sender_empty_v = v;
-    config_store_save_values(values_config, 13);
+    config_bridge_set_fuel_sender_empty_v(*id, v);
+    /* Config persisted via dashboard_persist_layout() on menu close */
 }
 
 void fs_full_v_input_event_cb(lv_event_t *e)
@@ -811,8 +803,8 @@ void fs_full_v_input_event_cb(lv_event_t *e)
     if (!id) return;
     float v = atof(lv_textarea_get_text(lv_event_get_target(e)));
     v = (v < 0.0f) ? 0.0f : (v > 3.3f) ? 3.3f : v;
-    values_config[*id - 1].fuel_sender_full_v = v;
-    config_store_save_values(values_config, 13);
+    config_bridge_set_fuel_sender_full_v(*id, v);
+    /* Config persisted via dashboard_persist_layout() on menu close */
 }
 
 /* =========================================================================
@@ -825,7 +817,7 @@ void fs_empty_btn_event_cb(lv_event_t *e)
     if (!id) return;
     fuel_sender_capture_empty(*id);
     char vbuf[12];
-    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_empty_v);
+    snprintf(vbuf, sizeof(vbuf), "%.2f", config_bridge_get_fuel_sender_empty_v(*id));
     lv_obj_t *screen = lv_obj_get_screen(lv_event_get_target(e));
     uint32_t cnt = lv_obj_get_child_cnt(screen);
     for (uint32_t i = 0; i < cnt; i++) {
@@ -844,7 +836,7 @@ void fs_full_btn_event_cb(lv_event_t *e)
     if (!id) return;
     fuel_sender_capture_full(*id);
     char vbuf[12];
-    snprintf(vbuf, sizeof(vbuf), "%.2f", values_config[*id - 1].fuel_sender_full_v);
+    snprintf(vbuf, sizeof(vbuf), "%.2f", config_bridge_get_fuel_sender_full_v(*id));
     lv_obj_t *screen = lv_obj_get_screen(lv_event_get_target(e));
     uint32_t cnt = lv_obj_get_child_cnt(screen);
     for (uint32_t i = 0; i < cnt; i++) {
@@ -888,11 +880,11 @@ void fs_filter_slider_event_cb(lv_event_t *e)
     fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
     if (!ctx) return;
     int32_t val = lv_slider_get_value(lv_event_get_target(e));
-    values_config[ctx->value_id - 1].fuel_sender_filter = (uint8_t)val;
+    config_bridge_set_fuel_sender_filter(ctx->value_id, (uint8_t)val);
     char fbuf[24];
     snprintf(fbuf, sizeof(fbuf), "Filter: %d%%", (int)val);
     lv_label_set_text(ctx->filter_label, fbuf);
-    if (code == LV_EVENT_RELEASED) config_store_save_values(values_config, 13);
+    if (code == LV_EVENT_RELEASED) { /* Config persisted via dashboard_persist_layout() on menu close */ }
 }
 
 void fuel_sender_switch_event_cb(lv_event_t *e)
@@ -901,7 +893,7 @@ void fuel_sender_switch_event_cb(lv_event_t *e)
     fuel_sender_ctx_t *ctx = (fuel_sender_ctx_t *)lv_event_get_user_data(e);
     if (!ctx) return;
     bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    values_config[ctx->value_id - 1].fuel_sender = on;
+    config_bridge_set_fuel_sender(ctx->value_id, on);
 #define FS_SHOW(o) if ((o) && lv_obj_is_valid(o)) lv_obj_clear_flag((o), LV_OBJ_FLAG_HIDDEN)
 #define FS_HIDE(o) if ((o) && lv_obj_is_valid(o)) lv_obj_add_flag((o),   LV_OBJ_FLAG_HIDDEN)
     if (on) {
@@ -915,7 +907,7 @@ void fuel_sender_switch_event_cb(lv_event_t *e)
     }
 #undef FS_SHOW
 #undef FS_HIDE
-    config_store_save_values(values_config, 13);
+    /* Config persisted via dashboard_persist_layout() on menu close */
     ESP_LOGI("BAR", "Fuel sender %s for bar %d", on ? "on" : "off", ctx->value_id);
 }
 

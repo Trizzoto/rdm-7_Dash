@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 extern void device_settings_longpress_cb(lv_event_t *e);
-extern void build_twai_filter_from_configs(twai_filter_config_t *out_filter);
+extern void build_twai_filter_from_signals(twai_filter_config_t *out_filter);
 
 // Style functions
 void init_common_style(void);
@@ -50,6 +50,11 @@ extern lv_obj_t *brightness_bar;
 
 typedef enum { BIG_ENDIAN_ORDER = 0, LITTLE_ENDIAN_ORDER = 1 } endian_t;
 
+/*
+ * Legacy config structs — kept for compatibility with config modal UI.
+ * The canonical source of truth is now widget type_data + signal registry.
+ * These will be removed in a future cleanup pass.
+ */
 typedef struct {
 	bool enabled;
 	uint32_t can_id;
@@ -71,65 +76,69 @@ typedef struct {
 	bool warning_high_enabled;
 	bool warning_low_enabled;
 	lv_color_t rpm_bar_color;
-	bool use_gps_for_speed;        // DEPRECATED - kept for NVS compatibility
-	bool use_mph;                  // true for MPH, false for KMH
-	uint8_t gear_detection_mode;   // 0=Custom, 1=MaxxECU, 2=Haltech, 3=Ford, 4=Speed/RPM Ratio
-	uint32_t gear_custom_values[14]; // Custom values for P, R, N, D, 1-10
-	uint8_t custom_icon_types[7];  // Icon type: 0=None, 1=KEY
-	uint32_t custom_icon_values[7]; // CAN values that trigger each custom icon
-	float tire_circumference_mm;   // Tire circumference in mm
-	float final_drive_ratio;       // Final drive/differential ratio
-	float reverse_gear_ratio;      // Reverse gear ratio
-	float gear_ratios[10];         // Gear ratios for gears 1-10
-	uint8_t rpm_limiter_effect;    // 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined
-	int32_t rpm_limiter_value;     // RPM limit value
-	lv_color_t rpm_limiter_color;  // Limiter effect color
-	bool rpm_lights_enabled;       // Enable/disable RPM lights feature
-	bool rpm_background_enabled;   // Enable/disable RPM background color change
-	int32_t rpm_background_value;  // RPM threshold for background change
-	lv_color_t rpm_background_color; // Background color when RPM exceeds threshold
-	lv_color_t bar_low_color;      // Color when value is below bar_low
-	lv_color_t bar_high_color;     // Color when value is above bar_high
-	lv_color_t bar_in_range_color; // Color when value is between bar_low and bar_high
-	bool show_bar_value;           // Show/hide numeric value display on Screen 3
-	bool invert_bar_value;         // Invert bar display (100 becomes 0, etc.)
-	bool fuel_sender;              // Enable fuel sender input mapping for this bar
-	float fuel_sender_empty_v;     // ADC voltage that represents 0% (empty tank)
-	float fuel_sender_full_v;      // ADC voltage that represents 100% (full tank)
-	uint8_t fuel_sender_filter;    // EMA smoothing 0 (off) – 100 (max)
-	char custom_text[32];          // Custom text for panel display
+	bool use_gps_for_speed;
+	bool use_mph;
+	uint8_t gear_detection_mode;
+	uint32_t gear_custom_values[14];
+	uint8_t custom_icon_types[7];
+	uint32_t custom_icon_values[7];
+	float tire_circumference_mm;
+	float final_drive_ratio;
+	float reverse_gear_ratio;
+	float gear_ratios[10];
+	uint8_t rpm_limiter_effect;
+	int32_t rpm_limiter_value;
+	lv_color_t rpm_limiter_color;
+	bool rpm_lights_enabled;
+	bool rpm_background_enabled;
+	int32_t rpm_background_value;
+	lv_color_t rpm_background_color;
+	lv_color_t bar_low_color;
+	lv_color_t bar_high_color;
+	lv_color_t bar_in_range_color;
+	bool show_bar_value;
+	bool invert_bar_value;
+	bool fuel_sender;
+	float fuel_sender_empty_v;
+	float fuel_sender_full_v;
+	uint8_t fuel_sender_filter;
+	char custom_text[32];
 } value_config_t;
 
 extern value_config_t values_config[13];
 
 typedef struct {
-	uint32_t can_id;		 // CAN ID to monitor
-	uint8_t bit_position;	 // Which bit to check (0-63)
-	uint8_t endianess;		 // 0 = Big Endian, 1 = Little Endian
-	lv_color_t active_color; // Color when warning is active
-	char label[32];			 // Warning label text
-	bool is_momentary;		 // true for momentary, false for toggle
-	bool current_state;		 // tracks current toggle state
-	bool invert_toggle; // Invert CAN bus activation (1 becomes 0, 0 becomes 1)
+	uint32_t can_id;
+	uint8_t bit_position;
+	uint8_t endianess;
+	lv_color_t active_color;
+	char label[32];
+	bool is_momentary;
+	bool current_state;
+	bool invert_toggle;
 } warning_config_t;
 
 typedef struct {
-	uint32_t can_id;		// CAN ID to monitor
-	uint8_t bit_position;	// Which bit to check (0-63)
-	bool is_momentary;		// true for momentary, false for toggle
-	bool current_state;		// tracks current toggle state
-	bool animation_enabled; // true to flash when active, false for solid
-	uint8_t input_source;	// 0 = Wire, 1 = CAN BUS
+	uint32_t can_id;
+	uint8_t bit_position;
+	bool is_momentary;
+	bool current_state;
+	bool animation_enabled;
+	uint8_t input_source;
 } indicator_config_t;
 
 extern warning_config_t warning_configs[8];
-extern indicator_config_t indicator_configs[2]; /* Left and Right indicators */
+extern indicator_config_t indicator_configs[2];
 extern uint8_t current_value_id;
 
 extern char label_texts[13][64];
 extern char value_offset_texts[13][64];
 extern char previous_values[13][64];
 extern bool reset_can_tracking;
+
+/* RPM configuration globals */
+extern int rpm_gauge_max;
+extern int rpm_redline_value;
 
 /* LVGL UI objects — defined in ui_Screen3.c */
 extern lv_obj_t *ui_Label[13];
@@ -142,10 +151,6 @@ extern lv_obj_t *rpm_redline_zone;
 extern lv_obj_t *keyboard;
 extern lv_timer_t *menu_button_hide_timer;
 
-/* RPM configuration globals */
-extern int rpm_gauge_max;
-extern int rpm_redline_value;
-
 /* RPM tick-mark rendering objects (defined in widget_rpm_bar.c) */
 extern int num_rpm_lines;
 extern lv_obj_t *rpm_labels[MAX_RPM_LINES];
@@ -153,8 +158,6 @@ extern lv_obj_t *rpm_lines[MAX_RPM_LINES * 2];
 
 /* Shared LVGL style */
 extern lv_style_t common_style;
-
-void init_values_config_defaults(void);
 
 // Initialize UI Screen3
 void ui_Screen3_screen_init(void);
@@ -168,9 +171,6 @@ void create_limiter_color_wheel_popup(void);
 void create_bar_low_color_wheel_popup(uint8_t value_id);
 void create_bar_high_color_wheel_popup(uint8_t value_id);
 void create_bar_in_range_color_wheel_popup(uint8_t value_id);
-
-// Rebuild CAN ID -> indices dispatch mapping (warnings/indicators/values)
-void rebuild_can_dispatch(void);
 
 // Bar update struct shared between ui_Screen3.c and main.c
 #ifndef BAR_UPDATE_T_DEFINED

@@ -547,54 +547,328 @@
             background: #333;
         }
 
-        /* Signal Editor */
-        .sig-row {
-            display: grid;
-            grid-template-columns: 1fr 70px 40px 40px 50px 50px 24px;
-            gap: 4px;
-            margin-bottom: 4px;
+        /* Signal Sidebar List (compact, right sidebar) */
+        .sig-list-item {
+            display: flex;
             align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #ccc;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: background 0.15s;
+        }
+        .sig-list-item:hover { background: rgba(58,134,255,0.08); }
+        .sig-list-item .sig-dot {
+            width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+        }
+        .sig-list-item .sig-dot.bound { background: #00c853; box-shadow: 0 0 4px rgba(0,200,83,0.4); }
+        .sig-list-item .sig-dot.unbound { background: #555; }
+        .sig-list-item .sig-info { flex: 1; min-width: 0; }
+        .sig-list-item .sig-name {
+            font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            display: block; line-height: 1.3;
+        }
+        .sig-list-item .sig-meta {
+            font-size: 10px; color: #666; font-family: monospace; line-height: 1.2;
+        }
+        .sig-list-empty {
+            padding: 16px 12px;
+            text-align: center;
+            color: #555;
+            font-size: 11px;
+            line-height: 1.5;
         }
 
-        .sig-row input,
-        .sig-row select {
-            width: 100%;
-            background: #1a1a1a;
+        /* Signal Manager Modal */
+        #signalModal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.75);
+            backdrop-filter: blur(6px);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .signal-modal-content {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            width: 860px;
+            max-height: 620px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        }
+        .signal-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .signal-modal-header span {
+            font-weight: 700;
+            font-size: 15px;
+            color: #fff;
+        }
+        .signal-modal-header .close-btn {
+            background: none; border: none; color: #666; font-size: 22px;
+            cursor: pointer; padding: 0 4px; line-height: 1;
+            transition: color 0.15s;
+        }
+        .signal-modal-header .close-btn:hover { color: #fff; }
+        .signal-modal-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0,0,0,0.12);
+        }
+        .signal-modal-toolbar .sig-search {
+            flex: 1;
+            background: var(--bg);
             border: 1px solid var(--border);
             color: #fff;
-            padding: 3px 4px;
-            font-size: 11px;
-            border-radius: 2px;
+            padding: 7px 12px 7px 32px;
+            border-radius: 6px;
+            font-size: 12px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23666' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: 10px center;
         }
-
-        .sig-row input:focus {
+        .signal-modal-toolbar .sig-search:focus {
             border-color: var(--accent);
             outline: none;
         }
-
-        .sig-row input.invalid {
-            border-color: #f44;
+        .signal-table-wrap {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
         }
-
-        .sig-hdr {
+        .signal-table-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: #555;
+        }
+        .signal-table-empty .empty-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
+        .signal-table-empty p { margin: 4px 0; font-size: 13px; }
+        .signal-table-empty .hint { font-size: 11px; color: #444; }
+        .signal-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .signal-table th {
+            position: sticky;
+            top: 0;
+            background: #222;
+            color: #777;
             font-size: 10px;
-            color: #666;
             font-weight: 700;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
+            text-align: left;
+            padding: 7px 8px;
+            border-bottom: 2px solid var(--border);
+            z-index: 1;
+            white-space: nowrap;
         }
-
-        .sig-del {
-            cursor: pointer;
-            color: #c00;
+        .signal-table td {
+            padding: 3px 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            vertical-align: middle;
+        }
+        .signal-table tbody tr { transition: background 0.1s; }
+        .signal-table tbody tr:hover td { background: rgba(58,134,255,0.06); }
+        .signal-table input[type="text"],
+        .signal-table input[type="number"] {
+            width: 100%;
+            background: transparent;
+            border: 1px solid transparent;
+            color: #ddd;
+            padding: 5px 7px;
+            font-size: 12px;
+            border-radius: 4px;
+            box-sizing: border-box;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .signal-table input:hover { border-color: var(--border); background: rgba(0,0,0,0.2); }
+        .signal-table input:focus { border-color: var(--accent); outline: none; background: var(--bg); }
+        .signal-table input.invalid { border-color: #f44 !important; background: rgba(255,68,68,0.08) !important; }
+        .signal-table .col-status { width: 24px; text-align: center; }
+        .signal-table .col-name { min-width: 130px; }
+        .signal-table .col-canid { width: 80px; }
+        .signal-table .col-bit { width: 60px; }
+        .signal-table .col-scale { width: 72px; }
+        .signal-table .col-toggle { width: 52px; text-align: center; }
+        .signal-table .col-actions { width: 36px; text-align: center; }
+        .sig-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            padding: 3px 7px;
+            border-radius: 4px;
+            font-size: 10px;
             font-weight: 700;
-            text-align: center;
-            font-size: 14px;
+            cursor: pointer;
+            user-select: none;
+            border: 1px solid transparent;
+            transition: all 0.15s;
+        }
+        .sig-toggle.on {
+            background: rgba(58,134,255,0.2);
+            border-color: rgba(58,134,255,0.4);
+            color: var(--accent);
+        }
+        .sig-toggle.off {
+            background: transparent;
+            border-color: var(--border);
+            color: #555;
+        }
+        .sig-toggle:hover { border-color: #888; }
+        .sig-del-btn {
+            background: none;
+            border: none;
+            color: #555;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 2px 6px;
             line-height: 1;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        .sig-del-btn:hover { color: #f44; background: rgba(255,68,68,0.1); }
+        .sig-bound-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+        }
+        .sig-bound-dot.active { background: #00c853; box-shadow: 0 0 5px rgba(0,200,83,0.5); }
+        .sig-bound-dot.inactive { background: #333; }
+        .signal-modal-footer {
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border);
+            background: rgba(0,0,0,0.08);
+        }
+        .signal-modal-footer .sig-count {
+            font-size: 11px;
+            color: #666;
         }
 
-        .sig-del:hover {
-            color: #f00;
+        /* Inspector signal card */
+        .signal-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-top: 6px;
         }
+        .signal-card .sc-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #777;
+            padding: 2px 0;
+        }
+        .signal-card .sc-val { color: #ccc; font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 11px; }
+        .signal-card .sc-badges { display: flex; gap: 4px; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); }
+        .signal-card .sc-badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .sc-badge.signed { background: rgba(255,152,0,0.12); color: #ffb74d; border: 1px solid rgba(255,152,0,0.25); }
+        .sc-badge.unsigned { background: rgba(100,100,100,0.1); color: #777; border: 1px solid rgba(100,100,100,0.2); }
+        .sc-badge.le { background: rgba(0,200,83,0.1); color: #69f0ae; border: 1px solid rgba(0,200,83,0.25); }
+        .sc-badge.be { background: rgba(156,39,176,0.1); color: #ce93d8; border: 1px solid rgba(156,39,176,0.25); }
+
+        /* Preset Picker (embedded inside Signal Manager) */
+        .preset-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1.5fr;
+            flex: 1;
+            min-height: 0;
+        }
+        .preset-col {
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+        }
+        .preset-col:last-child { border-right: none; }
+        .preset-col-header {
+            padding: 6px 10px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #666;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 0; z-index: 1;
+        }
+        .preset-col-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #ccc;
+            transition: background 0.15s;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .preset-col-item:hover { background: rgba(255,255,255,0.06); }
+        .preset-col-item.active {
+            background: var(--accent);
+            color: #fff;
+            font-weight: 600;
+        }
+        .preset-col-item .preset-detail {
+            font-size: 10px;
+            color: #888;
+            margin-top: 2px;
+            font-family: monospace;
+        }
+        .preset-col-item.active .preset-detail { color: rgba(255,255,255,0.7); }
+        /* Signal Manager view toggle */
+        .sig-view-body { display: none; flex: 1; min-height: 0; flex-direction: column; }
+        .sig-view-body.active { display: flex; }
+        .preset-selection-bar {
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            border-top: 1px solid var(--border);
+            background: rgba(0,0,0,0.08);
+            flex-shrink: 0;
+        }
+        .preset-selection-bar .selection-text {
+            font-size: 12px;
+            color: #888;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .preset-selection-bar .selection-text.has-sel { color: var(--accent); }
+
+        /* Color swatch field */
+        .color-field-wrap {
+            display: flex; gap: 8px; align-items: center;
+        }
+        .color-field-wrap input[type="color"] {
+            width: 32px; height: 28px; padding: 0;
+            border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+        }
+        .color-field-wrap input[type="text"] { flex: 1; }
     </style>
 </head>
 
@@ -605,6 +879,80 @@
         <button onclick="discardDraft()"
             style="background:transparent; border:1px solid #000; color:#000;">Discard</button>
     </div>
+    <!-- Signal Manager Modal (includes Preset Picker as second view) -->
+    <div id="signalModal" onclick="closeSignalManager()">
+        <div class="signal-modal-content" onclick="event.stopPropagation()">
+            <div class="signal-modal-header">
+                <span>Signal Manager</span>
+                <button class="close-btn" onclick="closeSignalManager()">&times;</button>
+            </div>
+
+            <!-- View 1: Signal Table -->
+            <div class="sig-view-body active" id="sigViewSignals">
+                <div class="signal-modal-toolbar">
+                    <input type="text" class="sig-search" id="signalSearchInput" placeholder="Search signals by name or CAN ID..." oninput="renderSignalTable()">
+                    <button class="btn" style="font-size:12px; padding:6px 14px;" onclick="addSignal()">+ New Signal</button>
+                    <button class="btn btn-secondary" style="font-size:12px; padding:6px 14px;" onclick="switchSignalView('presets')">ECU Presets</button>
+                </div>
+                <div class="signal-table-wrap">
+                    <div id="signalTableEmpty" class="signal-table-empty" style="display:none;">
+                        <div class="empty-icon">~</div>
+                        <p>No signals defined</p>
+                        <p class="hint">Click <b>+ New Signal</b> to create one manually,<br>or switch to <b>ECU Presets</b> to import from a preset database.</p>
+                    </div>
+                    <table class="signal-table" id="signalTableEl">
+                        <thead>
+                            <tr>
+                                <th class="col-status" title="Bound to widget"></th>
+                                <th class="col-name">Signal Name</th>
+                                <th class="col-canid">CAN ID</th>
+                                <th class="col-bit">Start</th>
+                                <th class="col-bit">Length</th>
+                                <th class="col-scale">Scale</th>
+                                <th class="col-scale">Offset</th>
+                                <th class="col-toggle">Signed</th>
+                                <th class="col-toggle">Endian</th>
+                                <th class="col-actions"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="signalTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- View 2: ECU Preset Browser -->
+            <div class="sig-view-body" id="sigViewPresets">
+                <div class="signal-modal-toolbar" style="border-bottom: 1px solid var(--border);">
+                    <button class="btn btn-secondary" style="font-size:12px; padding:5px 12px;" onclick="switchSignalView('signals')">&larr; Back to Signals</button>
+                    <span style="font-size:12px; color:#888; flex:1;">Select an ECU, version, then a signal to import.</span>
+                </div>
+                <div class="preset-columns" style="flex:1; min-height:0; border-bottom:none;">
+                    <div class="preset-col">
+                        <div class="preset-col-header">ECU</div>
+                        <div id="presetColEcu"></div>
+                    </div>
+                    <div class="preset-col">
+                        <div class="preset-col-header">Version</div>
+                        <div id="presetColVersion"></div>
+                    </div>
+                    <div class="preset-col">
+                        <div class="preset-col-header">Signal</div>
+                        <div id="presetColChannel"></div>
+                    </div>
+                </div>
+                <div class="preset-selection-bar">
+                    <span id="presetSelText" class="selection-text">Select an ECU, version, then signal</span>
+                    <button class="btn" id="presetApplyBtn" disabled onclick="applySelectedPreset()">Add Signal</button>
+                </div>
+            </div>
+
+            <div class="signal-modal-footer">
+                <span class="sig-count" id="signalCount">0 signals</span>
+                <button class="btn" onclick="closeSignalManager()">Done</button>
+            </div>
+        </div>
+    </div>
+
     <div id="helpModal" onclick="this.style.display='none'">
         <div class="modal-content" onclick="event.stopPropagation()">
             <h2>Keyboard Shortcuts</h2>
@@ -670,15 +1018,6 @@
                 <!-- Will be populated by JS -->
             </div>
 
-            <div class="sidebar-header" style="border-top: 1px solid var(--border);">Signals</div>
-            <div style="padding:8px; overflow-y:auto; max-height:200px;">
-                <div class="sig-row sig-hdr">
-                    <span>Name</span><span>CAN ID</span><span>Start</span><span>Len</span><span>Scale</span><span>Ofs</span><span></span>
-                </div>
-                <div id="sigList"></div>
-                <button class="btn btn-secondary" style="width:100%; margin-top:6px; font-size:11px;" onclick="addSignal()">+ Add Signal</button>
-            </div>
-
             <div class="sidebar-header" style="border-top: 1px solid var(--border);">Dashboard</div>
             <div class="inspector-group">
                 <button class="btn btn-secondary" style="width:100%" onclick="layoutEditorNew()">New Layout...</button>
@@ -713,11 +1052,18 @@
             </div>
         </main>
 
-        <!-- Right Sidebar: Inspector -->
+        <!-- Right Sidebar: Inspector + Signals -->
         <aside class="sidebar sidebar-right">
             <div class="sidebar-header">Properties</div>
-            <div id="inspectorContent" class="inspector-group">
+            <div id="inspectorContent" class="inspector-group" style="flex:0 1 auto; overflow-y:auto;">
                 <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
+            </div>
+            <div class="sidebar-header" style="border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+                <span>Signals</span>
+                <button class="btn" style="font-size:10px; padding:2px 8px; margin-right:4px;" onclick="openSignalManager()">Manage</button>
+            </div>
+            <div id="sigList" style="overflow-y:auto; flex:1 1 0; min-height:80px;">
+                <!-- Compact signal list populated by renderSignals() -->
             </div>
         </aside>
     </div>
@@ -750,41 +1096,199 @@
             }
         }
 
+        /* ── Preset Picker Modal ──────────────────────────────── */
+        let _presetPickerWidgetIdx = -1;
+        let _presetPickerSelection = null; // { ecu, version, preset }
+
+        function switchSignalView(view) {
+            document.getElementById('sigViewSignals').classList.toggle('active', view === 'signals');
+            document.getElementById('sigViewPresets').classList.toggle('active', view === 'presets');
+            if (view === 'presets') _initPresetColumns();
+            if (view === 'signals') renderSignalTable();
+        }
+
+        function _initPresetColumns() {
+            _presetPickerSelection = null;
+            document.getElementById('presetApplyBtn').disabled = true;
+            const selText = document.getElementById('presetSelText');
+            selText.textContent = 'Select an ECU, version, then signal';
+            selText.classList.remove('has-sel');
+
+            const ecus = [...new Set(globalPresets.map(p => p.ecu))].sort();
+            document.getElementById('presetColEcu').innerHTML = ecus.map(e =>
+                `<div class="preset-col-item" onclick="presetPickEcu(this, '${e.replace(/'/g, "\\'")}')">${e}</div>`
+            ).join('');
+            document.getElementById('presetColVersion').innerHTML = '';
+            document.getElementById('presetColChannel').innerHTML = '';
+        }
+
+        function openPresetPicker(widgetIdx) {
+            /* Open the signal manager and switch to presets view */
+            _presetPickerWidgetIdx = widgetIdx !== undefined ? widgetIdx : selectedIndex;
+            openSignalManager();
+            switchSignalView('presets');
+        }
+
+        function presetPickEcu(el, ecu) {
+            _presetPickerSelection = { ecu, version: null, preset: null };
+            el.parentElement.querySelectorAll('.preset-col-item').forEach(e => e.classList.remove('active'));
+            el.classList.add('active');
+
+            const versions = [...new Set(globalPresets.filter(p => p.ecu === ecu).map(p => p.version))].sort();
+            document.getElementById('presetColVersion').innerHTML = versions.map(v =>
+                `<div class="preset-col-item" onclick="presetPickVersion(this, '${v.replace(/'/g, "\\'")}')">${v}</div>`
+            ).join('');
+            document.getElementById('presetColChannel').innerHTML = '';
+            document.getElementById('presetApplyBtn').disabled = true;
+            const selText = document.getElementById('presetSelText');
+            selText.textContent = ecu;
+            selText.classList.remove('has-sel');
+        }
+
+        function presetPickVersion(el, version) {
+            _presetPickerSelection.version = version;
+            _presetPickerSelection.preset = null;
+            el.parentElement.querySelectorAll('.preset-col-item').forEach(e => e.classList.remove('active'));
+            el.classList.add('active');
+
+            const channels = globalPresets.filter(p => p.ecu === _presetPickerSelection.ecu && p.version === version);
+            document.getElementById('presetColChannel').innerHTML = channels.map((ch, i) => {
+                const gIdx = globalPresets.indexOf(ch);
+                const hexId = ch.can_id ? '0x' + parseInt(ch.can_id, 16).toString(16).toUpperCase().padStart(3, '0') : '---';
+                const detailParts = [`ID: ${hexId}`];
+                if (ch.bit_start !== undefined) detailParts.push(`bit ${ch.bit_start}:${ch.bit_len || 16}`);
+                if (ch.scale && ch.scale !== 1) detailParts.push(`x${ch.scale}`);
+                return `<div class="preset-col-item" onclick="presetPickChannel(this, ${gIdx})">` +
+                    `<div>${ch.label}</div>` +
+                    `<div class="preset-detail">${detailParts.join(' | ')}</div>` +
+                    `</div>`;
+            }).join('');
+            document.getElementById('presetApplyBtn').disabled = true;
+            const selText = document.getElementById('presetSelText');
+            selText.textContent = `${_presetPickerSelection.ecu} \u203A ${version}`;
+            selText.classList.remove('has-sel');
+        }
+
+        function presetPickChannel(el, globalIdx) {
+            _presetPickerSelection.preset = globalPresets[globalIdx];
+            el.parentElement.querySelectorAll('.preset-col-item').forEach(e => e.classList.remove('active'));
+            el.classList.add('active');
+            document.getElementById('presetApplyBtn').disabled = false;
+            const p = _presetPickerSelection.preset;
+            const selText = document.getElementById('presetSelText');
+            selText.textContent = `${_presetPickerSelection.ecu} \u203A ${_presetPickerSelection.version} \u203A ${p.label}`;
+            selText.classList.add('has-sel');
+        }
+
+        function applySelectedPreset() {
+            if (!_presetPickerSelection || !_presetPickerSelection.preset) return;
+            if (_presetPickerWidgetIdx === -1) {
+                _createSignalFromPreset(_presetPickerSelection.preset);
+            } else {
+                applyPresetToWidget(_presetPickerSelection.preset, _presetPickerWidgetIdx);
+            }
+            /* Switch back to signals view to show the new signal */
+            switchSignalView('signals');
+            /* Reset selection for next use */
+            _presetPickerSelection = null;
+            document.getElementById('presetApplyBtn').disabled = true;
+            document.getElementById('presetSelText').textContent = 'Select an ECU, version, then signal';
+            document.getElementById('presetSelText').classList.remove('has-sel');
+        }
+
+        function _createSignalFromPreset(preset) {
+            const sigName = preset.label.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+            if (!currentLayout.signals) currentLayout.signals = [];
+            pushHistory();
+            const existingIdx = currentLayout.signals.findIndex(s => s.name === sigName);
+            const sigObj = {
+                name: sigName,
+                can_id: parseInt(preset.can_id, 16),
+                bit_start: preset.bit_start || 0,
+                bit_length: preset.bit_len || 16,
+                scale: preset.scale || 1.0,
+                offset: preset.offset || 0.0,
+                is_signed: preset.is_signed || false,
+                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+            };
+            if (existingIdx >= 0) {
+                currentLayout.signals[existingIdx] = sigObj;
+            } else {
+                currentLayout.signals.push(sigObj);
+            }
+            renderSignalTable();
+            renderSignals();
+            updateInspector();
+            updateStatus(`Created signal "${sigName}" from preset`);
+        }
+
+        function applyPresetToWidget(preset, widgetIdx) {
+            if (widgetIdx === undefined || widgetIdx === -1) widgetIdx = selectedIndex;
+            if (widgetIdx === -1) return;
+
+            pushHistory();
+            const w = currentLayout.widgets[widgetIdx];
+
+            // 1) Set label from preset for widgets that support it
+            if (['panel', 'bar', 'warning'].includes(w.type)) {
+                w.config.label = preset.label;
+            }
+
+            // 2) Widget-specific display config from preset
+            if (w.type === 'bar') {
+                if (preset.bar_min !== undefined) w.config.bar_min = preset.bar_min;
+                if (preset.bar_max !== undefined) w.config.bar_max = preset.bar_max;
+            } else if (w.type === 'panel') {
+                if (preset.decimals !== undefined) w.config.decimals = preset.decimals;
+            } else if (w.type === 'meter') {
+                if (preset.bar_min !== undefined) w.config.min = preset.bar_min;
+                if (preset.bar_max !== undefined) w.config.max = preset.bar_max;
+            } else if (w.type === 'rpm_bar') {
+                if (preset.bar_max !== undefined) w.config.rpm_max = preset.bar_max;
+            } else if (w.type === 'text') {
+                if (preset.decimals !== undefined) w.config.decimals = preset.decimals;
+            } else if (w.type === 'speed') {
+                if (preset.decimals !== undefined) w.config.decimals = preset.decimals;
+            }
+
+            // 2) Create/update signal from preset CAN data
+            const sigName = preset.label.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
+            if (!currentLayout.signals) currentLayout.signals = [];
+            const existingIdx = currentLayout.signals.findIndex(s => s.name === sigName);
+            const sigObj = {
+                name: sigName,
+                can_id: parseInt(preset.can_id, 16),
+                bit_start: preset.bit_start || 0,
+                bit_length: preset.bit_len || 16,
+                scale: preset.scale || 1.0,
+                offset: preset.offset || 0.0,
+                is_signed: preset.is_signed || false,
+                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+            };
+            if (existingIdx >= 0) {
+                currentLayout.signals[existingIdx] = sigObj;
+            } else {
+                currentLayout.signals.push(sigObj);
+            }
+
+            // 3) Bind widget to signal
+            w.signal = sigName;
+
+            // 4) Update UI
+            renderSignalTable();
+            renderSignals();
+            renderEditor();
+            updateInspector();
+            updateStatus(`Applied ${preset.label} \u2192 signal "${sigName}"`);
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* Legacy applyPreset for backwards compat (called from old dropdowns if any) */
         function applyPreset(presetIndex) {
             if (selectedIndex === -1 || presetIndex === "") return;
             const preset = globalPresets[parseInt(presetIndex)];
             if (!preset) return;
-
-            pushHistory();
-            const w = currentLayout.widgets[selectedIndex];
-
-            w.config.can_id = parseInt(preset.can_id, 16);
-            w.config.bit_start = preset.bit_start || 0;
-            w.config.bit_len = preset.bit_len || 16;
-            w.config.scale = preset.scale || 1.0;
-            w.config.offset = preset.offset || 0.0;
-            w.config.is_signed = preset.is_signed || false;
-            w.config.is_big_endian = preset.is_big_endian !== undefined ? preset.is_big_endian : true;
-            w.config.decimals = preset.decimals || 0;
-
-            if (w.type === 'bar') {
-                if (preset.bar_min !== undefined) w.config.bar_min = preset.bar_min;
-                if (preset.bar_max !== undefined) w.config.bar_max = preset.bar_max;
-                updateStatus(`Applied ${preset.label} to Bar`);
-            } else if (w.type === 'panel') {
-                w.config.label = preset.label;
-                updateStatus(`Applied ${preset.label} to Panel`);
-            } else if (w.type === 'text') {
-                updateStatus(`Applied ${preset.label} to Text`);
-            } else if (w.type === 'meter') {
-                if (preset.bar_min !== undefined) w.config.min = preset.bar_min;
-                if (preset.bar_max !== undefined) w.config.max = preset.bar_max;
-                updateStatus(`Applied ${preset.label} to Meter`);
-            }
-
-            renderEditor();
-            updateInspector();
-            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            applyPresetToWidget(preset, selectedIndex);
         }
 
         let isDragging = false;
@@ -858,64 +1362,71 @@
             "rpm_bar": {
                 icon: "RPM", defW: 800, defH: 55, fixedY: -213,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
-                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
                     { name: "rpm_max", label: "RPM Max", type: "number", def: 7000 },
-                    { name: "redline", label: "Redline RPM", type: "number", def: 6000 }
+                    { name: "redline", label: "Redline RPM", type: "number", def: 6000 },
+                    { name: "rpm_bar_color", label: "Bar Color", type: "color", def: 0x00FF00 },
+                    { name: "rpm_limiter_effect", label: "Limiter Effect", type: "select", options: [
+                        { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar+Circles" },
+                        { v: 3, l: "Circles" }, { v: 4, l: "Bar Solid" }, { v: 5, l: "Bar+Circles Solid" },
+                        { v: 6, l: "Circles Solid" }
+                    ], def: 0 },
+                    { name: "rpm_limiter_value", label: "Limiter RPM", type: "number", def: 7000 },
+                    { name: "rpm_limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000 },
+                    { name: "rpm_lights_enabled", label: "RPM Lights", type: "checkbox", def: false },
+                    { name: "rpm_background_enabled", label: "Background Enabled", type: "checkbox", def: false },
+                    { name: "rpm_background_value", label: "Background RPM", type: "number", def: 0 },
+                    { name: "rpm_background_color", label: "Background Color", type: "color", def: 0x333333 }
                 ]
             },
             "speed": {
                 icon: "SPD", defW: 120, defH: 50,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
-                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
+                    { name: "use_mph", label: "Use MPH", type: "checkbox", def: false }
                 ]
             },
             "gear": {
                 icon: "GR", defW: 90, defH: 90,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 8 },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                    { name: "gear_detection_mode", label: "Detection Mode", type: "select", options: [
+                        { v: 0, l: "Custom" }, { v: 1, l: "MaxxECU" }, { v: 2, l: "Haltech" },
+                        { v: 3, l: "Ford" }, { v: 4, l: "Speed\u00F7RPM Ratio" }
+                    ], def: 0 },
+                    { name: "tire_circumference_mm", label: "Tire Circ. (mm)", type: "number", def: 0 },
+                    { name: "final_drive_ratio", label: "Final Drive Ratio", type: "number", def: 0 },
+                    { name: "reverse_gear_ratio", label: "Reverse Ratio", type: "number", def: 0 },
+                    { name: "gear_ratios", label: "Gear Ratios (1-10, comma sep.)", type: "text", def: "" },
+                    { name: "gear_custom_values", label: "Custom Values (P,R,N,D,1-10)", type: "text", def: "" }
                 ]
             },
             "panel": {
                 icon: "PNL", defW: 155, defH: 92,
                 fields: [
                     { name: "label", label: "Header Label", type: "text", def: "" },
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale Factor", type: "number", def: 1.0 },
-                    { name: "offset", label: "Value Offset", type: "number", def: 0.0 },
                     { name: "decimals", label: "Decimals", type: "number", def: 0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                    { name: "warning_high_threshold", label: "Warn High Threshold", type: "number", def: 0 },
+                    { name: "warning_high_color", label: "Warn High Color", type: "color", def: 0xFF0000 },
+                    { name: "warning_low_threshold", label: "Warn Low Threshold", type: "number", def: 0 },
+                    { name: "warning_low_color", label: "Warn Low Color", type: "color", def: 0x0000FF }
                 ]
             },
             "bar": {
                 icon: "BAR", defW: 300, defH: 30,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale Factor", type: "number", def: 1.0 },
-                    { name: "offset", label: "Value Offset", type: "number", def: 0.0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
+                    { name: "label", label: "Label", type: "text", def: "" },
                     { name: "bar_min", label: "Min Value", type: "number", def: 0 },
-                    { name: "bar_max", label: "Max Value", type: "number", def: 100 }
+                    { name: "bar_max", label: "Max Value", type: "number", def: 100 },
+                    { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false },
+                    { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false },
+                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0 },
+                    { name: "bar_high", label: "High Threshold", type: "number", def: 0 },
+                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF },
+                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000 },
+                    { name: "bar_in_range_color", label: "In-Range Color", type: "color", def: 0x00FF00 },
+                    { name: "fuel_sender", label: "Fuel Sender Mode", type: "checkbox", def: false },
+                    { name: "fuel_sender_empty_v", label: "Fuel Empty (V)", type: "number", def: 0 },
+                    { name: "fuel_sender_full_v", label: "Fuel Full (V)", type: "number", def: 5.0 },
+                    { name: "fuel_sender_filter", label: "Fuel EMA Filter (0-100)", type: "number", def: 50 }
                 ]
             },
             "indicator": {
@@ -923,43 +1434,28 @@
                 fields: [
                     { name: "side", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0 },
                     { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0 },
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_position", label: "Bit Position", type: "number", def: 0 },
-                    { name: "animation", label: "Anim Enabled", type: "checkbox", def: true }
+                    { name: "animation", label: "Anim Enabled", type: "checkbox", def: true },
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: false }
                 ]
             },
             "warning": {
                 icon: "WRN", defW: 25, defH: 25,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_position", label: "Bit Position", type: "select", options: Array.from({ length: 64 }, (_, i) => i), def: 0 },
                     { name: "label", label: "Label", type: "text", def: "" },
-                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: true }
+                    { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000 },
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: true },
+                    { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false }
                 ]
             },
             "text": {
                 icon: "TXT", defW: 100, defH: 30,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
-                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
-                    { name: "decimals", label: "Decimals", type: "number", def: 0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true }
+                    { name: "decimals", label: "Decimals", type: "number", def: 0 }
                 ]
             },
             "meter": {
                 icon: "MTR", defW: 300, defH: 300,
                 fields: [
-                    { name: "can_id", label: "CAN ID (Hex)", type: "hex", def: 0x0 },
-                    { name: "bit_start", label: "Bit Start", type: "number", def: 0 },
-                    { name: "bit_len", label: "Bit Length", type: "number", def: 16 },
-                    { name: "scale", label: "Scale", type: "number", def: 1.0 },
-                    { name: "offset", label: "Offset", type: "number", def: 0.0 },
-                    { name: "is_signed", label: "Signed", type: "checkbox", def: false },
-                    { name: "is_big_endian", label: "Big Endian", type: "checkbox", def: true },
                     { name: "min", label: "Min Value", type: "number", def: 0 },
                     { name: "max", label: "Max Value", type: "number", def: 100 },
                     { name: "start_angle", label: "Start angle", type: "number", def: 135 },
@@ -1566,6 +2062,19 @@
         }
 
         let previewTimer = null;
+        function buildFirmwarePayload() {
+            const payload = JSON.parse(JSON.stringify(currentLayout));
+            (payload.widgets || []).forEach(w => {
+                if (!w.config) w.config = {};
+                if (w.signal) {
+                    w.config.signal_name = w.signal;
+                } else {
+                    delete w.config.signal_name;
+                }
+            });
+            return payload;
+        }
+
         function triggerPreview() {
             if (previewTimer) clearTimeout(previewTimer);
             previewTimer = setTimeout(async () => {
@@ -1573,7 +2082,7 @@
                     await fetch('/api/layout/preview', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(currentLayout)
+                        body: JSON.stringify(buildFirmwarePayload())
                     });
                 } catch (e) { }
             }, 100); // 100ms debounce
@@ -1608,14 +2117,33 @@
                 </div>
 
                 <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
-                <div class="field" style="margin-bottom:8px;">
+                <div class="field" style="margin-bottom:4px;">
                     <label style="color:var(--accent); font-weight:bold;">Signal Binding</label>
-                    <select onchange="assignSignal(this.value)" ${disabledAttr}>
-                        <option value="">-- None --</option>
-                        ${(currentLayout.signals || []).map(s => `<option value="${s.name}" ${w.signal === s.name ? 'selected' : ''}>${s.name}</option>`).join('')}
-                    </select>
-                    <div style="font-size:10px; color:#666; margin-top:2px;">Bind widget to a CAN signal for live data.</div>
+                    <div style="display:flex; gap:4px;">
+                        <select onchange="assignSignal(this.value)" style="flex:1;" ${disabledAttr}>
+                            <option value="">-- None --</option>
+                            ${(currentLayout.signals || []).map(s => {
+                                const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
+                                return `<option value="${s.name}" ${w.signal === s.name ? 'selected' : ''}>${s.name}  [${hexId}]</option>`;
+                            }).join('')}
+                        </select>
+                        <button class="btn btn-secondary" style="font-size:10px; padding:2px 6px; white-space:nowrap;" onclick="openSignalManager()" title="Open Signal Manager" ${disabledAttr}>Edit</button>
+                    </div>
                 </div>
+                ${(() => {
+                    if (!w.signal) return '<div style="font-size:10px; color:#666; margin-bottom:8px;">No signal bound. Select one above or use a preset.</div>';
+                    const sig = (currentLayout.signals || []).find(s => s.name === w.signal);
+                    if (!sig) return '<div style="font-size:10px; color:#f44; margin-bottom:8px;">Signal "' + w.signal + '" not found!</div>';
+                    const hexId = '0x' + sig.can_id.toString(16).toUpperCase().padStart(3, '0');
+                    return '<div class="signal-card">' +
+                        '<div class="sc-row"><span>CAN ID</span><span class="sc-val">' + hexId + ' (' + sig.can_id + ')</span></div>' +
+                        '<div class="sc-row"><span>Bits</span><span class="sc-val">' + sig.bit_start + ':' + sig.bit_length + '</span></div>' +
+                        '<div class="sc-row"><span>Scale / Offset</span><span class="sc-val">' + sig.scale + ' / ' + sig.offset + '</span></div>' +
+                        '<div class="sc-badges">' +
+                        '<span class="sc-badge ' + (sig.is_signed ? 'signed' : 'unsigned') + '">' + (sig.is_signed ? 'Signed' : 'Unsigned') + '</span>' +
+                        '<span class="sc-badge ' + (sig.is_little_endian ? 'le' : 'be') + '">' + (sig.is_little_endian ? 'Little-Endian' : 'Big-Endian') + '</span>' +
+                        '</div></div>';
+                })()}
                 <hr style="border:0; border-top:1px solid var(--border); margin:12px 0;">
                 <div class="sidebar-header" style="background:none; border:none; padding:0; margin-bottom:8px;">Config</div>
             `;
@@ -1623,12 +2151,8 @@
             if (['bar', 'panel', 'text', 'meter', 'rpm_bar', 'speed', 'gear'].includes(w.type)) {
                 html += `
                     <div class="field" style="margin-bottom:16px;">
-                        <label style="color:var(--accent); font-weight:bold;">Preset Picker</label>
-                        <select onchange="applyPreset(this.value)" ${disabledAttr}>
-                            <option value="">-- Select a Preset --</option>
-                            ${globalPresets.map((p, i) => `<option value="${i}">${p.ecu} ${p.version} - ${p.label}</option>`).join('')}
-                        </select>
-                        <div style="font-size:10px; color:#666; margin-top:2px;">Selecting a preset auto-fills CAN configurations.</div>
+                        <button class="btn btn-secondary" style="width:100%; font-size:12px;" onclick="openPresetPicker(${selectedIndex})" ${disabledAttr}>Browse ECU Presets...</button>
+                        <div style="font-size:10px; color:#666; margin-top:2px;">Import a signal from a known ECU and bind it to this widget.</div>
                     </div>
                 `;
             }
@@ -1648,17 +2172,34 @@
                     html += `</select>`;
                 } else if (f.type === 'checkbox') {
                     html += `<input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" style="width:auto; height:auto; margin-top:4px;" ${disabledAttr}>`;
+                } else if (f.type === 'color') {
+                    const colorHex = Number(val || 0).toString(16).toUpperCase().padStart(6, '0');
+                    html += `<div class="color-field-wrap">
+                        <input type="color" value="#${colorHex}"
+                               oninput="document.getElementById('clr_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', parseInt('0x' + this.value.substring(1).toUpperCase()), false)"
+                               ${disabledAttr}>
+                        <input type="text" id="clr_${f.name}" value="0x${colorHex}"
+                               oninput="
+                                  let v = parseInt(this.value);
+                                  if(!isNaN(v)){
+                                      let h=v.toString(16).padStart(6,'0');
+                                      this.previousElementSibling.value='#'+h;
+                                      updateWidgetConfigField('${f.name}', v, false);
+                                  }
+                               "
+                               ${disabledAttr}>
+                    </div>`;
                 } else if (f.type === 'hex') {
                     const hexStr = Number(val).toString(16).toUpperCase().padStart(6, '0');
                     const hexDisplay = "0x" + hexStr;
                     const colorVal = "#" + hexStr;
 
                     html += `<div style="display:flex; gap:8px; align-items:center;">
-                        <input type="color" value="${colorVal}" 
-                               oninput="document.getElementById('hex_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', '0x' + this.value.substring(1).toUpperCase(), true)" 
-                               ${disabledAttr} 
+                        <input type="color" value="${colorVal}"
+                               oninput="document.getElementById('hex_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', '0x' + this.value.substring(1).toUpperCase(), true)"
+                               ${disabledAttr}
                                style="width:32px; height:28px; padding:0; border:1px solid var(--border); border-radius:4px; cursor:pointer;" title="Visual Color Picker">
-                        <input type="text" id="hex_${f.name}" value="${hexDisplay}" 
+                        <input type="text" id="hex_${f.name}" value="${hexDisplay}"
                                oninput="
                                   try {
                                       let cleaned = this.value.replace('0x', '');
@@ -1667,7 +2208,7 @@
                                       }
                                   } catch(e) {}
                                   updateWidgetConfigField('${f.name}', this.value, true);
-                               " 
+                               "
                                ${disabledAttr} style="flex:1;">
                     </div>`;
                 } else {
@@ -1685,10 +2226,21 @@
         function assignSignal(sigName) {
             if (selectedIndex === -1) return;
             pushHistory();
+            const w = currentLayout.widgets[selectedIndex];
             if (sigName) {
-                currentLayout.widgets[selectedIndex].signal = sigName;
+                w.signal = sigName;
+                /* Auto-set label from signal name for widgets that have a label field */
+                if (['panel', 'bar', 'warning'].includes(w.type)) {
+                    if (!w.config) w.config = {};
+                    const cur = (w.config.label || '').trim();
+                    /* Only auto-fill if label is empty or a generic default */
+                    if (!cur || /^(BAR[12]|Panel|Warning|)$/i.test(cur)) {
+                        /* Convert SIGNAL_NAME to readable: replace _ with space, title-case */
+                        w.config.label = sigName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    }
+                }
             } else {
-                delete currentLayout.widgets[selectedIndex].signal;
+                delete w.signal;
             }
             renderEditor();
             updateInspector();
@@ -1808,7 +2360,21 @@
             document.getElementById('draftToast').style.display = 'none';
         }
 
-        /* ── Signal Editor ────────────────────────────────────────────── */
+        /* ── Signal Manager ───────────────────────────────────────────── */
+
+        function openSignalManager() {
+            document.getElementById('signalSearchInput').value = '';
+            renderSignalTable();
+            switchSignalView('signals');
+            document.getElementById('signalModal').style.display = 'flex';
+        }
+
+        function closeSignalManager() {
+            document.getElementById('signalModal').style.display = 'none';
+            renderSignals();
+            renderEditor();
+            updateInspector();
+        }
 
         function addSignal() {
             if (!currentLayout.signals) currentLayout.signals = [];
@@ -1821,40 +2387,127 @@
                 name: name, can_id: 0, bit_start: 0, bit_length: 16,
                 scale: 1, offset: 0, is_signed: false, is_little_endian: true
             });
+            renderSignalTable();
             renderSignals();
-            updateInspector(); /* refresh signal dropdown in inspector */
+            updateInspector();
         }
 
         function renderSignals() {
             const sigs = currentLayout.signals || [];
             const c = document.getElementById('sigList');
-            c.innerHTML = '';
-            sigs.forEach((s, i) => {
-                const r = document.createElement('div');
-                r.className = 'sig-row';
-                r.innerHTML =
-                    `<input value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" placeholder="Name">` +
-                    `<input type="number" value="${s.can_id}" onchange="updateSignalField(${i},'can_id',+this.value)" title="CAN ID (decimal)">` +
-                    `<input type="number" value="${s.bit_start}" onchange="updateSignalField(${i},'bit_start',+this.value)">` +
-                    `<input type="number" value="${s.bit_length}" onchange="updateSignalField(${i},'bit_length',+this.value)">` +
-                    `<input type="number" value="${s.scale}" step="0.01" onchange="updateSignalField(${i},'scale',+this.value)">` +
-                    `<input type="number" value="${s.offset}" step="0.01" onchange="updateSignalField(${i},'offset',+this.value)">` +
-                    `<span class="sig-del" onclick="deleteSignal(${i})" title="Delete">&times;</span>`;
-                c.appendChild(r);
-            });
+            if (!c) return;
+            const boundNames = new Set((currentLayout.widgets || []).filter(w => w.signal).map(w => w.signal));
+            if (sigs.length === 0) {
+                c.innerHTML = '<div class="sig-list-empty">No signals yet.<br>Click <b>Manage</b> to add signals.</div>';
+                return;
+            }
+            c.innerHTML = sigs.map(s => {
+                const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
+                const bound = boundNames.has(s.name);
+                const endStr = s.is_little_endian ? 'LE' : 'BE';
+                return `<div class="sig-list-item" onclick="openSignalManager()" title="${s.name}\nCAN ${hexId} | Bits ${s.bit_start}:${s.bit_length} | ${endStr}">` +
+                    `<span class="sig-dot ${bound ? 'bound' : 'unbound'}"></span>` +
+                    `<div class="sig-info">` +
+                    `<span class="sig-name">${s.name}</span>` +
+                    `<span class="sig-meta">${hexId} | ${s.bit_start}:${s.bit_length}</span>` +
+                    `</div>` +
+                    `</div>`;
+            }).join('');
+        }
+
+        function renderSignalTable() {
+            const sigs = currentLayout.signals || [];
+            const filter = (document.getElementById('signalSearchInput')?.value || '').toLowerCase();
+            const boundNames = new Set((currentLayout.widgets || []).filter(w => w.signal).map(w => w.signal));
+            const tbody = document.getElementById('signalTableBody');
+            const emptyEl = document.getElementById('signalTableEmpty');
+            const tableEl = document.getElementById('signalTableEl');
+            if (!tbody) return;
+
+            /* Show empty state */
+            if (sigs.length === 0 && !filter) {
+                if (emptyEl) emptyEl.style.display = 'block';
+                if (tableEl) tableEl.style.display = 'none';
+                const countEl = document.getElementById('signalCount');
+                if (countEl) countEl.textContent = '0 signals';
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+            if (tableEl) tableEl.style.display = '';
+
+            const filtered = sigs.map((s, i) => ({ s, i })).filter(({ s }) =>
+                !filter || s.name.toLowerCase().includes(filter) ||
+                ('0x' + s.can_id.toString(16)).toLowerCase().includes(filter) ||
+                s.can_id.toString().includes(filter)
+            );
+
+            tbody.innerHTML = filtered.map(({ s, i }) => {
+                const bound = boundNames.has(s.name);
+                const boundWidgets = bound ? (currentLayout.widgets || []).filter(w => w.signal === s.name).map(w => w.id).join(', ') : '';
+                const boundTitle = bound ? `Bound to: ${boundWidgets}` : 'Not bound to any widget';
+                return `<tr>` +
+                    `<td class="col-status"><span class="sig-bound-dot ${bound ? 'active' : 'inactive'}" title="${boundTitle}"></span></td>` +
+                    `<td class="col-name"><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"></td>` +
+                    `<td class="col-canid"><input type="text" value="0x${s.can_id.toString(16).toUpperCase().padStart(3,'0')}" onchange="updateSignalCanId(${i},this)" title="Hex CAN ID (0x000-0x7FF)" spellcheck="false" style="font-family:monospace;"></td>` +
+                    `<td class="col-bit"><input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)"></td>` +
+                    `<td class="col-bit"><input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)"></td>` +
+                    `<td class="col-scale"><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"></td>` +
+                    `<td class="col-scale"><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"></td>` +
+                    `<td class="col-toggle"><span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_signed')" title="${s.is_signed ? 'Signed (click to toggle)' : 'Unsigned (click to toggle)'}">${s.is_signed ? 'S' : 'U'}</span></td>` +
+                    `<td class="col-toggle"><span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_little_endian')" title="${s.is_little_endian ? 'Little-Endian / Intel (click to toggle)' : 'Big-Endian / Motorola (click to toggle)'}">${s.is_little_endian ? 'LE' : 'BE'}</span></td>` +
+                    `<td class="col-actions"><button class="sig-del-btn" onclick="deleteSignal(${i})" title="Delete signal">&times;</button></td>` +
+                    `</tr>`;
+            }).join('');
+
+            const countEl = document.getElementById('signalCount');
+            if (countEl) {
+                let text = sigs.length + ' signal' + (sigs.length !== 1 ? 's' : '');
+                if (filter && filtered.length !== sigs.length) text += ` (${filtered.length} match${filtered.length !== 1 ? 'es' : ''})`;
+                countEl.textContent = text;
+            }
+        }
+
+        function toggleSignalBool(idx, field) {
+            const sigs = currentLayout.signals || [];
+            if (idx >= sigs.length) return;
+            pushHistory();
+            sigs[idx][field] = !sigs[idx][field];
+            renderSignalTable();
+        }
+
+        function updateSignalCanId(idx, inputEl) {
+            const raw = inputEl.value.trim();
+            let val;
+            if (raw.toLowerCase().startsWith('0x')) {
+                val = parseInt(raw, 16);
+            } else {
+                val = parseInt(raw, 16); /* treat bare input as hex too */
+            }
+            if (isNaN(val) || val < 0 || val > 0x7FF) {
+                inputEl.classList.add('invalid');
+                updateStatus('CAN ID must be 0x000-0x7FF', true);
+                return;
+            }
+            inputEl.classList.remove('invalid');
+            inputEl.value = '0x' + val.toString(16).toUpperCase().padStart(3, '0');
+            updateSignalField(idx, 'can_id', val);
         }
 
         function updateSignalField(idx, field, val) {
             const sigs = currentLayout.signals || [];
             if (idx >= sigs.length) return;
             if (field === 'name') {
-                /* Duplicate name prevention */
+                if (!val || !val.trim()) { updateStatus('Signal name cannot be empty', true); return; }
+                val = val.trim();
                 const dup = sigs.some((s, i) => i !== idx && s.name === val);
-                if (dup) { updateStatus('Duplicate signal name!', true); return; }
-                /* CAN ID range not applicable to name */
+                if (dup) { updateStatus(`Duplicate signal name "${val}"`, true); return; }
             }
-            if (field === 'can_id' && (val < 0 || val > 0x7FF)) {
-                updateStatus('CAN ID must be 0x000–0x7FF', true);
+            if (field === 'bit_start' && (val < 0 || val > 63)) {
+                updateStatus('Bit start must be 0-63', true);
+                return;
+            }
+            if (field === 'bit_length' && (val < 1 || val > 64)) {
+                updateStatus('Bit length must be 1-64', true);
                 return;
             }
             /* Update widget bindings if signal was renamed */
@@ -1866,7 +2519,9 @@
             }
             pushHistory();
             sigs[idx][field] = val;
+            renderSignalTable();
             if (field === 'name') {
+                renderSignals();
                 renderEditor();
                 updateInspector();
             }
@@ -1874,13 +2529,18 @@
 
         function deleteSignal(idx) {
             if (!currentLayout.signals) return;
-            const removedName = currentLayout.signals[idx].name;
+            const sig = currentLayout.signals[idx];
+            const boundWidgets = (currentLayout.widgets || []).filter(w => w.signal === sig.name);
+            if (boundWidgets.length > 0) {
+                if (!confirm(`Signal "${sig.name}" is bound to ${boundWidgets.length} widget(s). Delete anyway?`)) return;
+            }
             pushHistory();
             currentLayout.signals.splice(idx, 1);
             /* Clear any widget bindings to this signal */
             (currentLayout.widgets || []).forEach(w => {
-                if (w.signal === removedName) delete w.signal;
+                if (w.signal === sig.name) delete w.signal;
             });
+            renderSignalTable();
             renderSignals();
             renderEditor();
             updateInspector();
@@ -1927,13 +2587,24 @@
 
         async function loadLayout(name) {
             try {
-                const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
+                /* Fetch live in-memory state first; fall back to raw file */
+                let response = await fetch('/api/layout/current');
+                if (!response.ok) {
+                    response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
+                }
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
                 if (!currentLayout.signals) currentLayout.signals = [];
+                /* Bridge firmware→web: config.signal_name → w.signal */
+                (currentLayout.widgets || []).forEach(w => {
+                    if (w.config && w.config.signal_name && !w.signal) {
+                        w.signal = w.config.signal_name;
+                    }
+                });
                 selectedIndex = -1;
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
+                _lastDeviceSnapshot = JSON.stringify(currentLayout);
                 renderEditor();
                 renderSignals();
                 updateInspector();
@@ -1945,14 +2616,19 @@
         async function saveActiveLayout(apply) {
             try {
                 updateStatus('Saving layout...');
+                const payload = buildFirmwarePayload();
                 const url = apply ? '/api/layout/save' : '/api/layout/save?apply=0';
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(currentLayout)
+                    body: JSON.stringify(payload)
                 });
                 if (response.ok) {
                     updateStatus('Saved successfully');
+                    // Mark current state as the baseline for sync
+                    history = [JSON.stringify(currentLayout)];
+                    historyIndex = 0;
+                    _lastDeviceSnapshot = JSON.stringify(payload);
                     // Clear Local Draft on successful save
                     try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
                     if (apply) setTimeout(captureScreenshot, 1500);
@@ -1995,6 +2671,54 @@
         }
 
         layoutSelect.onchange = () => loadLayout(layoutSelect.value);
+
+        /* ── Live sync: poll device for changes every 3s ──────────────── */
+        let _lastDeviceSnapshot = '';
+        let _syncTimer = null;
+
+        function hasUnsavedEdits() {
+            if (!history.length) return false;
+            return JSON.stringify(currentLayout) !== history[0];
+        }
+
+        async function syncFromDevice() {
+            try {
+                const resp = await fetch('/api/layout/current');
+                if (!resp.ok) return;
+                const deviceLayout = await resp.json();
+                const deviceSnap = JSON.stringify(deviceLayout);
+
+                /* No change on device side → nothing to do */
+                if (deviceSnap === _lastDeviceSnapshot) return;
+                _lastDeviceSnapshot = deviceSnap;
+
+                /* Check if our editor state matches what the device has */
+                const editorSnap = JSON.stringify(buildFirmwarePayload());
+                if (deviceSnap === editorSnap) return; /* already in sync */
+
+                if (!hasUnsavedEdits()) {
+                    /* No unsaved web edits → silently reload from device */
+                    currentLayout = deviceLayout;
+                    if (!currentLayout.signals) currentLayout.signals = [];
+                    (currentLayout.widgets || []).forEach(w => {
+                        if (w.config && w.config.signal_name && !w.signal) {
+                            w.signal = w.config.signal_name;
+                        }
+                    });
+                    selectedIndex = -1;
+                    history = [JSON.stringify(currentLayout)];
+                    historyIndex = 0;
+                    renderEditor();
+                    renderSignals();
+                    updateInspector();
+                    updateStatus('Synced from device');
+                } else {
+                    updateStatus('Device settings changed — reload to sync', true);
+                }
+            } catch (e) { /* offline or error, skip */ }
+        }
+
+        _syncTimer = setInterval(syncFromDevice, 3000);
 
         /* Start */
         initPalette();

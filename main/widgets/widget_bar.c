@@ -1,6 +1,5 @@
 #include "widget_bar.h"
 #include "can/can_decode.h"
-#include "can/can_dispatch.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -11,7 +10,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "storage/config_store.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -19,7 +17,7 @@
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "widget_dispatcher.h"
+#include "ui/dashboard.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -28,6 +26,7 @@
 
 typedef struct {
 	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
+	char     label[32];
 	int32_t  bar_min;
 	int32_t  bar_max;
 	int32_t  bar_low;
@@ -45,6 +44,25 @@ typedef struct {
 	char     signal_name[32];
 	int16_t  signal_index;
 } bar_data_t;
+
+/* ── Helpers: look up bar_data_t by slot or value_id ──────────────────────── */
+static bar_data_t *_get_bar_data_by_slot(uint8_t slot) {
+	if (slot >= 2) return NULL;
+	widget_t **widgets = dashboard_get_widgets();
+	uint8_t count = dashboard_get_widget_count();
+	for (uint8_t i = 0; i < count; i++) {
+		if (widgets[i] && widgets[i]->type == WIDGET_BAR) {
+			bar_data_t *bd = (bar_data_t *)widgets[i]->type_data;
+			if (bd && bd->slot == slot) return bd;
+		}
+	}
+	return NULL;
+}
+
+static bar_data_t *_get_bar_data_by_value_id(uint8_t value_id) {
+	uint8_t slot = (value_id == BAR1_VALUE_ID) ? 0 : 1;
+	return _get_bar_data_by_slot(slot);
+}
 
 uint64_t last_bar_can_received[2] = {0, 0};
 float previous_bar_values[2] = {0, 0};
@@ -72,31 +90,19 @@ void bar_range_input_event_cb(lv_event_t *e) {
 		lv_obj_t *textarea = lv_event_get_target(e);
 		const char *txt = lv_textarea_get_text(textarea);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
+		bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+		if (!bd) return;
 
-		bool is_min = lv_obj_get_user_data(textarea) !=
-					  NULL; // Check if this is min input
+		bool is_min = lv_obj_get_user_data(textarea) != NULL;
 		int32_t value = atoi(txt);
+		lv_obj_t *bar_obj = (value_id == BAR1_VALUE_ID) ? ui_Bar_1 : ui_Bar_2;
 
-		if (value_id == BAR1_VALUE_ID) {
-			if (is_min) {
-				values_config[value_id - 1].bar_min = value;
-				lv_bar_set_range(ui_Bar_1, value,
-								 values_config[value_id - 1].bar_max);
-			} else {
-				values_config[value_id - 1].bar_max = value;
-				lv_bar_set_range(ui_Bar_1, values_config[value_id - 1].bar_min,
-								 value);
-			}
-		} else if (value_id == BAR2_VALUE_ID) {
-			if (is_min) {
-				values_config[value_id - 1].bar_min = value;
-				lv_bar_set_range(ui_Bar_2, value,
-								 values_config[value_id - 1].bar_max);
-			} else {
-				values_config[value_id - 1].bar_max = value;
-				lv_bar_set_range(ui_Bar_2, values_config[value_id - 1].bar_min,
-								 value);
-			}
+		if (is_min) {
+			bd->bar_min = value;
+			lv_bar_set_range(bar_obj, value, bd->bar_max);
+		} else {
+			bd->bar_max = value;
+			lv_bar_set_range(bar_obj, bd->bar_min, value);
 		}
 	}
 }
@@ -106,33 +112,25 @@ void bar_low_value_event_cb(lv_event_t *e) {
 	const char *txt = lv_textarea_get_text(ta);
 	int low_val = atoi(txt);
 
-	// Retrieve value_id from the event's user data
 	uint8_t *id_ptr = lv_event_get_user_data(e);
 	uint8_t value_id = *id_ptr;
+	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	if (!bd) return;
 
-	// Update the configuration structure (make sure 'bar_low' is a valid field)
-	values_config[value_id - 1].bar_low = low_val;
+	bd->bar_low = low_val;
 
-	// Retrieve the preview bar pointer (stored in the config_bars[] global
-	// array)
 	lv_obj_t *menu_bar = config_bars[value_id - 1];
 	if (menu_bar) {
 		int current_val = lv_bar_get_value(menu_bar);
 		if (current_val < low_val) {
-			// Use configured low color
-			lv_obj_set_style_bg_color(menu_bar,
-									  values_config[value_id - 1].bar_low_color,
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_low_color,
 									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		} else if (current_val > values_config[value_id - 1].bar_high) {
-			// Use configured high color
-			lv_obj_set_style_bg_color(
-				menu_bar, values_config[value_id - 1].bar_high_color,
-				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		} else if (current_val > bd->bar_high) {
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_high_color,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else {
-			// Use configured in-range color
-			lv_obj_set_style_bg_color(
-				menu_bar, values_config[value_id - 1].bar_in_range_color,
-				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_in_range_color,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
 	}
 }
@@ -142,32 +140,25 @@ void bar_high_value_event_cb(lv_event_t *e) {
 	const char *txt = lv_textarea_get_text(ta);
 	int high_val = atoi(txt);
 
-	// Retrieve value_id from the event's user data
 	uint8_t *id_ptr = lv_event_get_user_data(e);
 	uint8_t value_id = *id_ptr;
+	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	if (!bd) return;
 
-	// Update the configuration structure with the new bar high threshold
-	values_config[value_id - 1].bar_high = high_val;
+	bd->bar_high = high_val;
 
-	// Retrieve the preview bar pointer from the global config_bars array
 	lv_obj_t *menu_bar = config_bars[value_id - 1];
 	if (menu_bar) {
 		int current_val = lv_bar_get_value(menu_bar);
-		if (current_val < values_config[value_id - 1].bar_low) {
-			// Use configured low color
-			lv_obj_set_style_bg_color(menu_bar,
-									  values_config[value_id - 1].bar_low_color,
+		if (current_val < bd->bar_low) {
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_low_color,
 									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else if (current_val > high_val) {
-			// Use configured high color
-			lv_obj_set_style_bg_color(
-				menu_bar, values_config[value_id - 1].bar_high_color,
-				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_high_color,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else {
-			// Use configured in-range color
-			lv_obj_set_style_bg_color(
-				menu_bar, values_config[value_id - 1].bar_in_range_color,
-				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_color(menu_bar, bd->bar_in_range_color,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
 	}
 }
@@ -179,109 +170,66 @@ void create_limiter_color_wheel_popup(void);
 void bar_low_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
+	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
 	switch (selected) {
-	case 0:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_BLUE_DARK;
-		break; // Blue
-	case 1:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_RED;
-		break; // Red
-	case 2:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_GREEN_BRIGHT;
-		break; // Green
-	case 3:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_YELLOW;
-		break; // Yellow
-	case 4:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_ORANGE;
-		break; // Orange
-	case 5:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_PURPLE;
-		break; // Purple
-	case 6:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_CYAN;
-		break; // Cyan
-	case 7:
-		values_config[value_id - 1].bar_low_color = THEME_COLOR_MAGENTA;
-		break; // Magenta
-	case 8:	   // Custom color - open color wheel popup
+	case 0: bd->bar_low_color = THEME_COLOR_BLUE_DARK; break;
+	case 1: bd->bar_low_color = THEME_COLOR_RED; break;
+	case 2: bd->bar_low_color = THEME_COLOR_GREEN_BRIGHT; break;
+	case 3: bd->bar_low_color = THEME_COLOR_YELLOW; break;
+	case 4: bd->bar_low_color = THEME_COLOR_ORANGE; break;
+	case 5: bd->bar_low_color = THEME_COLOR_PURPLE; break;
+	case 6: bd->bar_low_color = THEME_COLOR_CYAN; break;
+	case 7: bd->bar_low_color = THEME_COLOR_MAGENTA; break;
+	case 8:
 		create_bar_low_color_wheel_popup(value_id);
-		return; // Don't update color yet, wait for color wheel selection
+		return;
 	}
 }
 
 void bar_high_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
+	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
 	switch (selected) {
-	case 0:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_BLUE_DARK;
-		break; // Blue
-	case 1:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_RED;
-		break; // Red
-	case 2:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_GREEN_BRIGHT;
-		break; // Green
-	case 3:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_YELLOW;
-		break; // Yellow
-	case 4:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_ORANGE;
-		break; // Orange
-	case 5:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_PURPLE;
-		break; // Purple
-	case 6:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_CYAN;
-		break; // Cyan
-	case 7:
-		values_config[value_id - 1].bar_high_color = THEME_COLOR_MAGENTA;
-		break; // Magenta
-	case 8:	   // Custom color - open color wheel popup
+	case 0: bd->bar_high_color = THEME_COLOR_BLUE_DARK; break;
+	case 1: bd->bar_high_color = THEME_COLOR_RED; break;
+	case 2: bd->bar_high_color = THEME_COLOR_GREEN_BRIGHT; break;
+	case 3: bd->bar_high_color = THEME_COLOR_YELLOW; break;
+	case 4: bd->bar_high_color = THEME_COLOR_ORANGE; break;
+	case 5: bd->bar_high_color = THEME_COLOR_PURPLE; break;
+	case 6: bd->bar_high_color = THEME_COLOR_CYAN; break;
+	case 7: bd->bar_high_color = THEME_COLOR_MAGENTA; break;
+	case 8:
 		create_bar_high_color_wheel_popup(value_id);
-		return; // Don't update color yet, wait for color wheel selection
+		return;
 	}
 }
 
 void bar_in_range_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
+	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
 	switch (selected) {
-	case 0:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_BLUE_DARK;
-		break; // Blue
-	case 1:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_RED;
-		break; // Red
-	case 2:
-		values_config[value_id - 1].bar_in_range_color =
-			THEME_COLOR_GREEN_BRIGHT;
-		break; // Green
-	case 3:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_YELLOW;
-		break; // Yellow
-	case 4:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_ORANGE;
-		break; // Orange
-	case 5:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_PURPLE;
-		break; // Purple
-	case 6:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_CYAN;
-		break; // Cyan
-	case 7:
-		values_config[value_id - 1].bar_in_range_color = THEME_COLOR_MAGENTA;
-		break; // Magenta
-	case 8:	   // Custom color - open color wheel popup
+	case 0: bd->bar_in_range_color = THEME_COLOR_BLUE_DARK; break;
+	case 1: bd->bar_in_range_color = THEME_COLOR_RED; break;
+	case 2: bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT; break;
+	case 3: bd->bar_in_range_color = THEME_COLOR_YELLOW; break;
+	case 4: bd->bar_in_range_color = THEME_COLOR_ORANGE; break;
+	case 5: bd->bar_in_range_color = THEME_COLOR_PURPLE; break;
+	case 6: bd->bar_in_range_color = THEME_COLOR_CYAN; break;
+	case 7: bd->bar_in_range_color = THEME_COLOR_MAGENTA; break;
+	case 8:
 		create_bar_in_range_color_wheel_popup(value_id);
-		return; // Don't update color yet, wait for color wheel selection
+		return;
 	}
 }
 
@@ -289,9 +237,8 @@ void bar_in_range_color_event_cb(lv_event_t *e) {
 // supported
 
 static void bar_low_color_wheel_ok_event_cb(lv_event_t *e) {
-	// Apply the selected color from the color wheel
-	values_config[bar_low_color_value_id - 1].bar_low_color =
-		selected_bar_low_custom_color;
+	bar_data_t *bd = _get_bar_data_by_value_id(bar_low_color_value_id);
+	if (bd) bd->bar_low_color = selected_bar_low_custom_color;
 
 	// Close the popup
 	if (bar_low_color_wheel_popup) {
@@ -317,9 +264,8 @@ static void bar_low_color_wheel_value_changed_cb(lv_event_t *e) {
 }
 
 static void bar_high_color_wheel_ok_event_cb(lv_event_t *e) {
-	// Apply the selected color from the color wheel
-	values_config[bar_high_color_value_id - 1].bar_high_color =
-		selected_bar_high_custom_color;
+	bar_data_t *bd = _get_bar_data_by_value_id(bar_high_color_value_id);
+	if (bd) bd->bar_high_color = selected_bar_high_custom_color;
 
 	// Close the popup
 	if (bar_high_color_wheel_popup) {
@@ -345,9 +291,8 @@ static void bar_high_color_wheel_value_changed_cb(lv_event_t *e) {
 }
 
 static void bar_in_range_color_wheel_ok_event_cb(lv_event_t *e) {
-	// Apply the selected color from the color wheel
-	values_config[bar_in_range_color_value_id - 1].bar_in_range_color =
-		selected_bar_in_range_custom_color;
+	bar_data_t *bd = _get_bar_data_by_value_id(bar_in_range_color_value_id);
+	if (bd) bd->bar_in_range_color = selected_bar_in_range_custom_color;
 
 	// Close the popup
 	if (bar_in_range_color_wheel_popup) {
@@ -414,7 +359,8 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_low_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar low color
-	lv_color_t current_color = values_config[value_id - 1].bar_low_color;
+	bar_data_t *bd_low = _get_bar_data_by_value_id(value_id);
+	lv_color_t current_color = bd_low ? bd_low->bar_low_color : THEME_COLOR_BLUE_DARK;
 	lv_colorwheel_set_rgb(bar_low_color_wheel, current_color);
 	selected_bar_low_custom_color = current_color;
 
@@ -502,7 +448,8 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_high_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar high color
-	lv_color_t current_color = values_config[value_id - 1].bar_high_color;
+	bar_data_t *bd_high = _get_bar_data_by_value_id(value_id);
+	lv_color_t current_color = bd_high ? bd_high->bar_high_color : THEME_COLOR_RED;
 	lv_colorwheel_set_rgb(bar_high_color_wheel, current_color);
 	selected_bar_high_custom_color = current_color;
 
@@ -591,7 +538,8 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_in_range_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar in-range color
-	lv_color_t current_color = values_config[value_id - 1].bar_in_range_color;
+	bar_data_t *bd_ir = _get_bar_data_by_value_id(value_id);
+	lv_color_t current_color = bd_ir ? bd_ir->bar_in_range_color : THEME_COLOR_GREEN_BRIGHT;
 	lv_colorwheel_set_rgb(bar_in_range_color_wheel, current_color);
 	selected_bar_in_range_custom_color = current_color;
 
@@ -637,33 +585,33 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 
 void update_bar_ui(void *param) {
 	bar_update_t *upd = (bar_update_t *)param;
-	// Select the appropriate bar object (assuming bar_index 0 means ui_Bar_1
-	// and 1 means ui_Bar_2)
 	lv_obj_t *bar_obj = (upd->bar_index == 0) ? ui_Bar_1 : ui_Bar_2;
 
-	// Check if the bar object is still valid.
 	if (bar_obj == NULL || !lv_obj_is_valid(bar_obj) ||
 		lv_obj_get_screen(bar_obj) == NULL) {
 		free(upd);
 		return;
 	}
 
+	bar_data_t *bd = _get_bar_data_by_slot(upd->bar_index);
 	lv_bar_set_value(bar_obj, upd->bar_value, LV_ANIM_OFF);
 
-	// Use configured colors instead of hardcoded values
 	lv_color_t new_color;
-	if (upd->final_value < values_config[upd->config_index].bar_low) {
-		new_color = values_config[upd->config_index].bar_low_color;
-	} else if (upd->final_value > values_config[upd->config_index].bar_high) {
-		new_color = values_config[upd->config_index].bar_high_color;
+	if (bd) {
+		if (upd->final_value < bd->bar_low) {
+			new_color = bd->bar_low_color;
+		} else if (upd->final_value > bd->bar_high) {
+			new_color = bd->bar_high_color;
+		} else {
+			new_color = bd->bar_in_range_color;
+		}
 	} else {
-		new_color = values_config[upd->config_index].bar_in_range_color;
+		new_color = THEME_COLOR_GREEN_BRIGHT;
 	}
 
 	lv_obj_set_style_bg_color(bar_obj, new_color,
 							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	// Also update menu preview bar if it exists, is valid, and menu is visible
 	lv_obj_t *menu_bar = menu_bar_objects[upd->bar_index];
 	if (menu_bar && lv_obj_is_valid(menu_bar) && ui_MenuScreen &&
 		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
@@ -672,43 +620,21 @@ void update_bar_ui(void *param) {
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
 
-	// Update Bar numeric value displays (only if show_bar_value is enabled)
-	if (upd->bar_index == 0 && ui_Bar_1_Value &&
-		lv_obj_is_valid(ui_Bar_1_Value) &&
-		values_config[upd->config_index].show_bar_value) {
+	bool show_val = bd ? bd->show_bar_value : false;
+	int decimals = bd ? bd->decimals : 0;
+	lv_obj_t *val_label = (upd->bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
+	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
 		if (upd->is_timeout) {
 			strcpy(value_str, "---");
 		} else {
-			// Format the value based on decimals configuration
-			int decimals = values_config[upd->config_index].decimals;
 			if (decimals == 0) {
-				snprintf(value_str, sizeof(value_str), "%d",
-						 (int)upd->final_value);
+				snprintf(value_str, sizeof(value_str), "%d", (int)upd->final_value);
 			} else {
-				snprintf(value_str, sizeof(value_str), "%.*f", decimals,
-						 upd->final_value);
+				snprintf(value_str, sizeof(value_str), "%.*f", decimals, upd->final_value);
 			}
 		}
-		lv_label_set_text(ui_Bar_1_Value, value_str);
-	} else if (upd->bar_index == 1 && ui_Bar_2_Value &&
-			   lv_obj_is_valid(ui_Bar_2_Value) &&
-			   values_config[upd->config_index].show_bar_value) {
-		char value_str[16];
-		if (upd->is_timeout) {
-			strcpy(value_str, "---");
-		} else {
-			// Format the value based on decimals configuration
-			int decimals = values_config[upd->config_index].decimals;
-			if (decimals == 0) {
-				snprintf(value_str, sizeof(value_str), "%d",
-						 (int)upd->final_value);
-			} else {
-				snprintf(value_str, sizeof(value_str), "%.*f", decimals,
-						 upd->final_value);
-			}
-		}
-		lv_label_set_text(ui_Bar_2_Value, value_str);
+		lv_label_set_text(val_label, value_str);
 	}
 
 	free(upd);
@@ -717,49 +643,40 @@ void update_bar_ui(void *param) {
 // Immediate (no-alloc, no-async) bar update
 void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 							 double final_value, int config_index) {
+	(void)config_index; /* legacy parameter — now unused */
 	lv_obj_t *bar_obj = (bar_index == 0) ? ui_Bar_1 : ui_Bar_2;
 	if (bar_obj == NULL || !lv_obj_is_valid(bar_obj) ||
 		lv_obj_get_screen(bar_obj) == NULL) {
 		return;
 	}
+	bar_data_t *bd = _get_bar_data_by_slot((uint8_t)bar_index);
 	lv_bar_set_value(bar_obj, bar_value, LV_ANIM_OFF);
 	lv_color_t new_color;
-	if (final_value < values_config[config_index].bar_low) {
-		new_color = values_config[config_index].bar_low_color;
-	} else if (final_value > values_config[config_index].bar_high) {
-		new_color = values_config[config_index].bar_high_color;
+	if (bd) {
+		if (final_value < bd->bar_low) {
+			new_color = bd->bar_low_color;
+		} else if (final_value > bd->bar_high) {
+			new_color = bd->bar_high_color;
+		} else {
+			new_color = bd->bar_in_range_color;
+		}
 	} else {
-		new_color = values_config[config_index].bar_in_range_color;
+		new_color = THEME_COLOR_GREEN_BRIGHT;
 	}
 	lv_obj_set_style_bg_color(bar_obj, new_color,
 							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	// Update Bar numeric value displays (only if show_bar_value is enabled)
-	if (bar_index == 0 && ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value) &&
-		values_config[config_index].show_bar_value) {
+	bool show_val = bd ? bd->show_bar_value : false;
+	int decimals = bd ? bd->decimals : 0;
+	lv_obj_t *val_label = (bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
+	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
-		// Format the value based on decimals configuration
-		int decimals = values_config[config_index].decimals;
 		if (decimals == 0) {
 			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
 		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", decimals,
-					 final_value);
+			snprintf(value_str, sizeof(value_str), "%.*f", decimals, final_value);
 		}
-		lv_label_set_text(ui_Bar_1_Value, value_str);
-	} else if (bar_index == 1 && ui_Bar_2_Value &&
-			   lv_obj_is_valid(ui_Bar_2_Value) &&
-			   values_config[config_index].show_bar_value) {
-		char value_str[16];
-		// Format the value based on decimals configuration
-		int decimals = values_config[config_index].decimals;
-		if (decimals == 0) {
-			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
-		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", decimals,
-					 final_value);
-		}
-		lv_label_set_text(ui_Bar_2_Value, value_str);
+		lv_label_set_text(val_label, value_str);
 	}
 
 	lv_obj_t *menu_bar = menu_bar_objects[bar_index];
@@ -772,16 +689,13 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 }
 
 void widget_bar_create(lv_obj_t *parent) {
-	if (values_config[BAR1_VALUE_ID - 1].bar_max <=
-		values_config[BAR1_VALUE_ID - 1].bar_min) {
-		values_config[BAR1_VALUE_ID - 1].bar_min = 0;
-		values_config[BAR1_VALUE_ID - 1].bar_max = 100;
-	}
+	bar_data_t *bd1 = _get_bar_data_by_slot(0);
+	int32_t b1_min = bd1 ? bd1->bar_min : 0;
+	int32_t b1_max = bd1 ? bd1->bar_max : 100;
+	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100; }
 	ui_Bar_1 = lv_bar_create(parent);
-	lv_bar_set_range(ui_Bar_1, values_config[BAR1_VALUE_ID - 1].bar_min,
-					 values_config[BAR1_VALUE_ID - 1].bar_max);
-	lv_bar_set_value(ui_Bar_1, values_config[BAR1_VALUE_ID - 1].bar_min,
-					 LV_ANIM_OFF);
+	lv_bar_set_range(ui_Bar_1, b1_min, b1_max);
+	lv_bar_set_value(ui_Bar_1, b1_min, LV_ANIM_OFF);
 	lv_obj_set_width(ui_Bar_1, 300);
 	lv_obj_set_height(ui_Bar_1, 30);
 	lv_obj_set_x(ui_Bar_1, -240);
@@ -805,7 +719,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_x(ui_Bar_1_Label, -240);
 	lv_obj_set_y(ui_Bar_1_Label, 181);
 	lv_obj_set_align(ui_Bar_1_Label, LV_ALIGN_CENTER);
-	lv_label_set_text(ui_Bar_1_Label, label_texts[BAR1_VALUE_ID - 1]);
+	lv_label_set_text(ui_Bar_1_Label, (bd1 && bd1->label[0]) ? bd1->label : "BAR1");
 	lv_obj_set_style_text_color(ui_Bar_1_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_1_Label, THEME_FONT_DASH_LABEL,
@@ -824,19 +738,16 @@ void widget_bar_create(lv_obj_t *parent) {
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_Bar_1_Value, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	if (!values_config[BAR1_VALUE_ID - 1].show_bar_value)
+	if (!(bd1 && bd1->show_bar_value))
 		lv_obj_add_flag(ui_Bar_1_Value, LV_OBJ_FLAG_HIDDEN);
 
-	if (values_config[BAR2_VALUE_ID - 1].bar_max <=
-		values_config[BAR2_VALUE_ID - 1].bar_min) {
-		values_config[BAR2_VALUE_ID - 1].bar_min = 0;
-		values_config[BAR2_VALUE_ID - 1].bar_max = 100;
-	}
+	bar_data_t *bd2 = _get_bar_data_by_slot(1);
+	int32_t b2_min = bd2 ? bd2->bar_min : 0;
+	int32_t b2_max = bd2 ? bd2->bar_max : 100;
+	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100; }
 	ui_Bar_2 = lv_bar_create(parent);
-	lv_bar_set_range(ui_Bar_2, values_config[BAR2_VALUE_ID - 1].bar_min,
-					 values_config[BAR2_VALUE_ID - 1].bar_max);
-	lv_bar_set_value(ui_Bar_2, values_config[BAR2_VALUE_ID - 1].bar_min,
-					 LV_ANIM_OFF);
+	lv_bar_set_range(ui_Bar_2, b2_min, b2_max);
+	lv_bar_set_value(ui_Bar_2, b2_min, LV_ANIM_OFF);
 	lv_obj_set_width(ui_Bar_2, 300);
 	lv_obj_set_height(ui_Bar_2, 30);
 	lv_obj_set_x(ui_Bar_2, 240);
@@ -860,7 +771,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_x(ui_Bar_2_Label, 240);
 	lv_obj_set_y(ui_Bar_2_Label, 181);
 	lv_obj_set_align(ui_Bar_2_Label, LV_ALIGN_CENTER);
-	lv_label_set_text(ui_Bar_2_Label, label_texts[BAR2_VALUE_ID - 1]);
+	lv_label_set_text(ui_Bar_2_Label, (bd2 && bd2->label[0]) ? bd2->label : "BAR2");
 	lv_obj_set_style_text_color(ui_Bar_2_Label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_2_Label, THEME_FONT_DASH_LABEL,
@@ -879,7 +790,7 @@ void widget_bar_create(lv_obj_t *parent) {
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_Bar_2_Value, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	if (!values_config[BAR2_VALUE_ID - 1].show_bar_value)
+	if (!(bd2 && bd2->show_bar_value))
 		lv_obj_add_flag(ui_Bar_2_Value, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -896,14 +807,12 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
 	uint8_t bar_index = bd->slot;
-	uint8_t vid = (bar_index == 0) ? BAR1_VALUE_ID : BAR2_VALUE_ID;
-	int config_index = vid - 1;
 	if (is_stale) {
-		update_bar_ui_immediate(bar_index, 0, 0.0, config_index);
+		update_bar_ui_immediate(bar_index, 0, 0.0, 0);
 		return;
 	}
 	int32_t bar_value = (int32_t)value;
-	update_bar_ui_immediate(bar_index, bar_value, (double)value, config_index);
+	update_bar_ui_immediate(bar_index, bar_value, (double)value, 0);
 }
 
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
@@ -917,10 +826,6 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (bd && bd->signal_index >= 0)
 		signal_subscribe(bd->signal_index, _bar_on_signal, w);
-}
-static void _bar_update(widget_t *w, void *data) {
-	(void)w;
-	update_bar_ui(data);
 }
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (w->root && lv_obj_is_valid(w->root))
@@ -936,6 +841,8 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 	if (!cfg) return;
 	if (bd) {
 		cJSON_AddNumberToObject(cfg, "slot", bd->slot);
+		if (bd->label[0] != '\0')
+			cJSON_AddStringToObject(cfg, "label", bd->label);
 		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
 		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
 		cJSON_AddNumberToObject(cfg, "bar_low", bd->bar_low);
@@ -965,6 +872,9 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
 	if (cJSON_IsNumber(item)) bd->slot = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
+	if (cJSON_IsString(item) && item->valuestring)
+		strncpy(bd->label, item->valuestring, sizeof(bd->label) - 1);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_min");
 	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
@@ -1020,24 +930,13 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	if (!bd) bd = calloc(1, sizeof(bar_data_t));
 	if (!bd) { free(w); return NULL; }
 
-	/* Bridge from global config */
+	/* Defaults — actual config comes from _from_json() */
 	bd->slot = slot & 1;
-	uint8_t vid = (bd->slot == 0) ? BAR1_VALUE_ID : BAR2_VALUE_ID;
-	uint8_t idx = vid - 1;
-	bd->bar_min = values_config[idx].bar_min;
-	bd->bar_max = values_config[idx].bar_max;
-	bd->bar_low = values_config[idx].bar_low;
-	bd->bar_high = values_config[idx].bar_high;
-	bd->bar_low_color = values_config[idx].bar_low_color;
-	bd->bar_high_color = values_config[idx].bar_high_color;
-	bd->bar_in_range_color = values_config[idx].bar_in_range_color;
-	bd->show_bar_value = values_config[idx].show_bar_value;
-	bd->invert_bar_value = values_config[idx].invert_bar_value;
-	bd->fuel_sender = values_config[idx].fuel_sender;
-	bd->fuel_sender_empty_v = values_config[idx].fuel_sender_empty_v;
-	bd->fuel_sender_full_v = values_config[idx].fuel_sender_full_v;
-	bd->fuel_sender_filter = values_config[idx].fuel_sender_filter;
-	bd->decimals = values_config[idx].decimals;
+	snprintf(bd->label, sizeof(bd->label), "BAR%d", (slot & 1) + 1);
+	bd->bar_max = 100;
+	bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
+	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
+	bd->bar_high_color = THEME_COLOR_RED;
 	bd->signal_index = -1;
 
 	w->type = WIDGET_BAR;
@@ -1049,7 +948,6 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	snprintf(w->id, sizeof(w->id), "bar_%u", slot & 1);
 
 	w->create = _bar_create;
-	w->update = _bar_update;
 	w->resize = _bar_resize;
 	w->open_settings = _bar_open_settings;
 	w->to_json = _bar_to_json;
@@ -1059,45 +957,12 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	return w;
 }
 
-void widget_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg) {
-	if (!w || w->type != WIDGET_BAR || !w->type_data || !cfg) return;
-	bar_data_t *bd = (bar_data_t *)w->type_data;
-	bd->bar_min = cfg->bar_min;
-	bd->bar_max = cfg->bar_max;
-	bd->bar_low = cfg->bar_low;
-	bd->bar_high = cfg->bar_high;
-	bd->bar_low_color = cfg->bar_low_color;
-	bd->bar_high_color = cfg->bar_high_color;
-	bd->bar_in_range_color = cfg->bar_in_range_color;
-	bd->show_bar_value = cfg->show_bar_value;
-	bd->invert_bar_value = cfg->invert_bar_value;
-	bd->fuel_sender = cfg->fuel_sender;
-	bd->fuel_sender_empty_v = cfg->fuel_sender_empty_v;
-	bd->fuel_sender_full_v = cfg->fuel_sender_full_v;
-	bd->fuel_sender_filter = cfg->fuel_sender_filter;
-	bd->decimals = cfg->decimals;
-}
-
 uint8_t widget_bar_get_slot(const widget_t *w) {
 	if (!w || w->type != WIDGET_BAR || !w->type_data) return 0;
 	return ((const bar_data_t *)w->type_data)->slot;
 }
 
-void widget_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg) {
-	if (!w || w->type != WIDGET_BAR || !w->type_data || !cfg) return;
-	const bar_data_t *bd = (const bar_data_t *)w->type_data;
-	cfg->bar_min = bd->bar_min;
-	cfg->bar_max = bd->bar_max;
-	cfg->bar_low = bd->bar_low;
-	cfg->bar_high = bd->bar_high;
-	cfg->bar_low_color = bd->bar_low_color;
-	cfg->bar_high_color = bd->bar_high_color;
-	cfg->bar_in_range_color = bd->bar_in_range_color;
-	cfg->show_bar_value = bd->show_bar_value;
-	cfg->invert_bar_value = bd->invert_bar_value;
-	cfg->fuel_sender = bd->fuel_sender;
-	cfg->fuel_sender_empty_v = bd->fuel_sender_empty_v;
-	cfg->fuel_sender_full_v = bd->fuel_sender_full_v;
-	cfg->fuel_sender_filter = bd->fuel_sender_filter;
-	cfg->decimals = bd->decimals;
+bool widget_bar_has_signal(const widget_t *w) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data) return false;
+	return ((const bar_data_t *)w->type_data)->signal_index >= 0;
 }

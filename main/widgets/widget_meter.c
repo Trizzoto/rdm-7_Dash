@@ -123,9 +123,7 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 
 	/* Add ID label (e.g. "RPM") below the value */
 	md->id_label = lv_label_create(m);
-	uint8_t idx = md->value_idx;
-	extern char label_texts[13][64];
-	lv_label_set_text(md->id_label, label_texts[idx]);
+	lv_label_set_text(md->id_label, md->signal_name[0] != '\0' ? md->signal_name : w->id);
 	lv_obj_set_style_text_font(md->id_label, THEME_FONT_SMALL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(md->id_label, THEME_COLOR_TEXT_MUTED,
@@ -139,27 +137,6 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		signal_subscribe(md->signal_index, _meter_on_signal, w);
 
 	ESP_LOGI(TAG, "_meter_create: DONE");
-}
-
-static void _meter_update(widget_t *w, void *data) {
-	meter_data_t *md = (meter_data_t *)w->type_data;
-	if (!md || !w->root || !lv_obj_is_valid(w->root) || !data)
-		return;
-
-	int32_t raw = *(int32_t *)data;
-	int32_t v = raw;
-	if (v < md->min)
-		v = md->min;
-	if (v > md->max)
-		v = md->max;
-
-	lv_meter_set_indicator_value(md->meter, md->needle, v);
-
-	if (md->value_label && lv_obj_is_valid(md->value_label)) {
-		char buf[16];
-		snprintf(buf, sizeof(buf), "%d", (int)v);
-		lv_label_set_text(md->value_label, buf);
-	}
 }
 
 static void _meter_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -273,7 +250,6 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	snprintf(w->id, sizeof(w->id), "meter_%u", md->value_idx);
 
 	w->create = _meter_create;
-	w->update = _meter_update;
 	w->resize = _meter_resize;
 	w->open_settings = _meter_open_settings;
 	w->to_json = _meter_to_json;

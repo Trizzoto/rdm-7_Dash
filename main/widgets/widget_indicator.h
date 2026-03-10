@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,6 +46,12 @@ widget_t *widget_indicator_create_instance(uint8_t slot);
 
 /** Reset all indicator LVGL pointers (call before re-creating layout). */
 void widget_indicator_reset(void);
+
+/** Return the slot (0=left, 1=right) from an indicator widget's type_data. */
+uint8_t widget_indicator_get_slot(const widget_t *w);
+
+/** Return true if this indicator widget is bound to a signal. */
+bool widget_indicator_has_signal(const widget_t *w);
 
 #ifdef __cplusplus
 }

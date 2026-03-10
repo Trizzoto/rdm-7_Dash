@@ -14,13 +14,11 @@
 #include "gear_config.h"
 #include "lvgl.h"
 #include "preset_picker.h"
-#include "storage/config_store.h"
 #include <stdio.h>
 #include <string.h>
 
 /* Externs not already covered by the headers above */
 extern void reconfigure_can_filter(void);
-/* Removed limiter demo extern */
 extern char previous_values[13][64];
 extern lv_obj_t *keyboard;
 extern lv_obj_t *ui_Value[];
@@ -107,13 +105,9 @@ void close_menu_event_cb(lv_event_t *e) {
 	lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_refr_now(NULL);
 
-	config_store_save_values(values_config, MAX_VALUES);
-
-	/* Phase 4: also persist widget config into JSON layout on LittleFS.
-	 * This syncs values_config → type_data → JSON automatically. */
+	/* Persist widget config into JSON layout on LittleFS */
 	dashboard_persist_layout();
 
-	rebuild_can_dispatch();
 	reconfigure_can_filter();
 	vTaskDelay(pdMS_TO_TICKS(50));
 	lv_obj_del(ind);
@@ -138,7 +132,6 @@ void cancel_menu_event_cb(lv_event_t *e) {
 	lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_refr_now(NULL);
 
-	config_store_load_values(values_config, MAX_VALUES);
 	vTaskDelay(pdMS_TO_TICKS(200));
 	lv_obj_del(ind);
 	do_screen_transition(old, btn);
@@ -174,8 +167,9 @@ void create_menu_objects(lv_obj_t *parent, uint8_t value_id) {
 	lv_obj_set_style_border_color(menu_panel_boxes[idx], THEME_COLOR_PANEL,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
+	/* Use a generic label for now — widget type_data holds the real label */
 	menu_panel_labels[idx] =
-		make_panel_lbl(menu_panel_boxes[idx], label_texts[idx],
+		make_panel_lbl(menu_panel_boxes[idx], "---",
 					   THEME_FONT_DASH_LABEL, -28, 145);
 
 	const char *cur = (ui_Value[idx] && lv_obj_is_valid(ui_Value[idx]))

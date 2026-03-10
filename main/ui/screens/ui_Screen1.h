@@ -11,7 +11,6 @@ void update_panel_value_from_can(uint32_t panel_index);
 extern int selected_signals[NUM_PANELS];  // Declare the selected_signals array for sharing between files
 
 void update_panel_value(int panel, float value);  // Declaration of the update function
-void process_can_message(const twai_message_t *message);
 void init_can_to_panel_map();
 
 // Add other function declarations here...

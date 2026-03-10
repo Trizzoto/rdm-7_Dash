@@ -1,6 +1,5 @@
 #pragma once
 #include "lvgl.h"
-#include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
 #ifdef __cplusplus
 extern "C" {
@@ -61,12 +60,6 @@ uint64_t *widget_rpm_bar_get_last_can_time(void);
  * @return Heap-allocated widget_t *, caller must eventually call w->destroy(w).
  */
 widget_t *widget_rpm_bar_create_instance(void);
-
-void widget_rpm_bar_sync_from_legacy(widget_t *w, const value_config_t *cfg,
-                                     int gauge_max, int redline);
-
-void widget_rpm_bar_sync_to_legacy(const widget_t *w, value_config_t *cfg,
-                                   int *gauge_max_out, int *redline_out);
 
 #ifdef __cplusplus
 }
