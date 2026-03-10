@@ -25,21 +25,6 @@ static const char *TAG = "widget_meter";
 #define METER_DEFAULT_W 140
 #define METER_DEFAULT_H 140
 
-typedef struct {
-	uint8_t value_idx;
-	int32_t min;
-	int32_t max;
-	int16_t start_angle;
-	int16_t end_angle;
-	lv_obj_t *meter;
-	lv_meter_scale_t *scale;
-	lv_meter_indicator_t *needle;
-	lv_obj_t *value_label;
-	lv_obj_t *id_label;
-	char     signal_name[32];
-	int16_t  signal_index;
-} meter_data_t;
-
 static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	meter_data_t *md = (meter_data_t *)w->type_data;
@@ -234,6 +219,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->value_idx = (value_idx < 13) ? value_idx : 0;
 	md->min = 0;
 	md->max = 100;
+
 	md->start_angle = 135;
 	md->end_angle = 45;
 	md->meter = NULL;
@@ -242,6 +228,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->signal_index = -1;
 
 	w->type = WIDGET_METER;
+	w->slot = md->value_idx;
 	w->x = 0;
 	w->y = 0;
 	w->w = METER_DEFAULT_W;

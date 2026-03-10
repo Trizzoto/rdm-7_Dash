@@ -2,7 +2,6 @@
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
-#include "signal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -10,6 +9,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
+#include "signal.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
@@ -25,24 +25,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 /* Async update payload for lv_async_call(update_gear_ui, ...) */
 typedef struct {
-	char     gear_str[32];
+	char gear_str[32];
 	uint32_t raw_value;
 } gear_update_t;
-
-typedef struct {
-	uint8_t  detection_mode;     /* 0=Custom, 1=MaxxECU, 2=Haltech, 3=Ford, 4=Speed/RPM */
-	uint32_t custom_values[14];  /* P, R, N, D, 1-10 */
-	float    gear_ratios[10];    /* Ratios for gears 1-10 */
-	float    tire_circumference_mm;
-	float    final_drive_ratio;
-	float    reverse_gear_ratio;
-	uint8_t  custom_icon_types[7];
-	uint32_t custom_icon_values[7];
-	char     signal_name[32];
-	int16_t  signal_index;
-} gear_data_t;
 
 /* ── Helper: look up gear_data_t ───────────────────────────────────────── */
 static gear_data_t *_get_gear_data(void) {
@@ -72,7 +60,8 @@ static lv_obj_t *speed_rpm_gear_ratio_inputs[10] = {
 	NULL}; // Gear ratios for 1-10
 static bool should_show_gear_icon(uint32_t raw_value) {
 	gear_data_t *gd = _get_gear_data();
-	if (!gd) return false;
+	if (!gd)
+		return false;
 
 	// Check if custom gear mode is enabled
 	if (gd->detection_mode != 0) {
@@ -367,7 +356,8 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 	if (selected == 0) {
 		// ========== CUSTOM ==========
 		printf("Gear ECU Presets: Custom (overriding device settings)\n");
-		if (gd) gd->detection_mode = 0;
+		if (gd)
+			gd->detection_mode = 0;
 
 		// Show custom gear values section - use ui_MenuScreen if available,
 		// otherwise current screen
@@ -380,7 +370,8 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 	} else if (selected == 1) {
 		// ========== MAXXECU ==========
 		printf("Gear ECU Presets: MaxxECU\n");
-		if (gd) gd->detection_mode = 1;
+		if (gd)
+			gd->detection_mode = 1;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
@@ -390,9 +381,11 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
 			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 1);
 		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 0);
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1],
+									 0);
 		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 15);
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1],
+									 15);
 		if (g_scale_input[GEAR_VALUE_ID - 1])
 			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
 		if (g_offset_input[GEAR_VALUE_ID - 1])
@@ -402,7 +395,8 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 	} else if (selected == 2) {
 		// ========== HALTECH ==========
 		printf("Gear ECU Presets: Haltech\n");
-		if (gd) gd->detection_mode = 2;
+		if (gd)
+			gd->detection_mode = 2;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
@@ -411,9 +405,11 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
 			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 0);
 		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 16);
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1],
+									 16);
 		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 15);
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1],
+									 15);
 		if (g_scale_input[GEAR_VALUE_ID - 1])
 			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
 		if (g_offset_input[GEAR_VALUE_ID - 1])
@@ -423,7 +419,8 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 	} else if (selected == 3) {
 		// ========== FORD ==========
 		printf("Gear ECU Presets: Ford BA/BF/FG\n");
-		if (gd) gd->detection_mode = 3;
+		if (gd)
+			gd->detection_mode = 3;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
@@ -432,9 +429,11 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		if (g_endian_dropdown[GEAR_VALUE_ID - 1])
 			lv_dropdown_set_selected(g_endian_dropdown[GEAR_VALUE_ID - 1], 1);
 		if (g_bit_start_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1], 4);
+			lv_dropdown_set_selected(g_bit_start_dropdown[GEAR_VALUE_ID - 1],
+									 4);
 		if (g_bit_length_dropdown[GEAR_VALUE_ID - 1])
-			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1], 3);
+			lv_dropdown_set_selected(g_bit_length_dropdown[GEAR_VALUE_ID - 1],
+									 3);
 		if (g_scale_input[GEAR_VALUE_ID - 1])
 			lv_textarea_set_text(g_scale_input[GEAR_VALUE_ID - 1], "1");
 		if (g_offset_input[GEAR_VALUE_ID - 1])
@@ -445,7 +444,8 @@ void gear_ecu_dropdown_event_cb(lv_event_t *e) {
 		// ========== SPEED/RPM RATIO ==========
 		printf(
 			"Gear ECU Presets: Speed/RPM Ratio (calculated gear estimation)\n");
-		if (gd) gd->detection_mode = 4;
+		if (gd)
+			gd->detection_mode = 4;
 
 		// Hide custom gear values section
 		hide_custom_gear_values_section();
@@ -642,7 +642,8 @@ void speed_rpm_tire_circumference_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
 	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->tire_circumference_mm = atof(text);
+	if (gd)
+		gd->tire_circumference_mm = atof(text);
 	ESP_LOGI("GEAR", "Tire circumference set to: %.2f mm",
 			 gd ? gd->tire_circumference_mm : 0.0f);
 }
@@ -651,7 +652,8 @@ void speed_rpm_final_drive_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
 	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->final_drive_ratio = atof(text);
+	if (gd)
+		gd->final_drive_ratio = atof(text);
 	ESP_LOGI("GEAR", "Final drive ratio set to: %.3f",
 			 gd ? gd->final_drive_ratio : 0.0f);
 }
@@ -660,7 +662,8 @@ void speed_rpm_reverse_ratio_event_cb(lv_event_t *e) {
 	lv_obj_t *textarea = lv_event_get_target(e);
 	const char *text = lv_textarea_get_text(textarea);
 	gear_data_t *gd = _get_gear_data();
-	if (gd) gd->reverse_gear_ratio = atof(text);
+	if (gd)
+		gd->reverse_gear_ratio = atof(text);
 	ESP_LOGI("GEAR", "Reverse gear ratio set to: %.3f",
 			 gd ? gd->reverse_gear_ratio : 0.0f);
 }
@@ -686,7 +689,8 @@ void speed_rpm_gear_ratio_event_cb(lv_event_t *e) {
 	if (gear_index >= 0) {
 		const char *text = lv_textarea_get_text(textarea);
 		gear_data_t *gd = _get_gear_data();
-		if (gd) gd->gear_ratios[gear_index] = atof(text);
+		if (gd)
+			gd->gear_ratios[gear_index] = atof(text);
 		ESP_LOGI("GEAR", "Gear %d ratio set to: %.3f", gear_index + 1,
 				 gd ? gd->gear_ratios[gear_index] : 0.0f);
 	}
@@ -917,7 +921,7 @@ void widget_gear_create(lv_obj_t *parent) {
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(ui_GEAR_Value, LV_TEXT_ALIGN_CENTER,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_transform_zoom(ui_GEAR_Value, 210,
+	lv_obj_set_style_transform_zoom(ui_GEAR_Value, 255,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	ui_GEAR_Icon = lv_img_create(parent);
@@ -955,7 +959,27 @@ static void _gear_on_signal(float value, bool is_stale, void *user_data) {
 
 static void _gear_create(widget_t *w, lv_obj_t *parent) {
 	widget_gear_create(parent);
-	w->root = NULL; /* gear uses multiple labels; no single root container */
+	w->root = ui_Gear_Panel;
+
+	/* Reposition all gear objects to match w->x, w->y from JSON.
+	 * Default hardcoded offsets relative to the panel center (0,180):
+	 *   label  y-28, value y+18, icon y+14                        */
+	if (ui_Gear_Panel && lv_obj_is_valid(ui_Gear_Panel)) {
+		lv_obj_set_pos(ui_Gear_Panel, w->x, w->y);
+		lv_obj_set_size(ui_Gear_Panel, w->w, w->h);
+	}
+	if (ui_Gear_Label && lv_obj_is_valid(ui_Gear_Label)) {
+		lv_obj_set_x(ui_Gear_Label, w->x);
+		lv_obj_set_y(ui_Gear_Label, w->y - 28);
+	}
+	if (ui_GEAR_Value && lv_obj_is_valid(ui_GEAR_Value)) {
+		lv_obj_set_x(ui_GEAR_Value, w->x);
+		lv_obj_set_y(ui_GEAR_Value, w->y + 18);
+	}
+	if (ui_GEAR_Icon && lv_obj_is_valid(ui_GEAR_Icon)) {
+		lv_obj_set_x(ui_GEAR_Icon, w->x);
+		lv_obj_set_y(ui_GEAR_Icon, w->y + 14);
+	}
 
 	/* Subscribe to signal if bound */
 	gear_data_t *gd = (gear_data_t *)w->type_data;
@@ -971,31 +995,39 @@ static void _gear_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
 	gear_data_t *gd = (gear_data_t *)w->type_data;
 	cJSON *cfg = cJSON_AddObjectToObject(out, "config");
-	if (!cfg) return;
+	if (!cfg)
+		return;
 	if (gd) {
 		cJSON_AddNumberToObject(cfg, "detection_mode", gd->detection_mode);
-		cJSON_AddNumberToObject(cfg, "tire_circumference_mm", gd->tire_circumference_mm);
-		cJSON_AddNumberToObject(cfg, "final_drive_ratio", gd->final_drive_ratio);
-		cJSON_AddNumberToObject(cfg, "reverse_gear_ratio", gd->reverse_gear_ratio);
+		cJSON_AddNumberToObject(cfg, "tire_circumference_mm",
+								gd->tire_circumference_mm);
+		cJSON_AddNumberToObject(cfg, "final_drive_ratio",
+								gd->final_drive_ratio);
+		cJSON_AddNumberToObject(cfg, "reverse_gear_ratio",
+								gd->reverse_gear_ratio);
 		cJSON *ratios = cJSON_AddArrayToObject(cfg, "gear_ratios");
 		if (ratios) {
 			for (int i = 0; i < 10; i++)
-				cJSON_AddItemToArray(ratios, cJSON_CreateNumber(gd->gear_ratios[i]));
+				cJSON_AddItemToArray(ratios,
+									 cJSON_CreateNumber(gd->gear_ratios[i]));
 		}
 		cJSON *cv = cJSON_AddArrayToObject(cfg, "custom_values");
 		if (cv) {
 			for (int i = 0; i < 14; i++)
-				cJSON_AddItemToArray(cv, cJSON_CreateNumber(gd->custom_values[i]));
+				cJSON_AddItemToArray(cv,
+									 cJSON_CreateNumber(gd->custom_values[i]));
 		}
 		cJSON *cit = cJSON_AddArrayToObject(cfg, "custom_icon_types");
 		if (cit) {
 			for (int i = 0; i < 7; i++)
-				cJSON_AddItemToArray(cit, cJSON_CreateNumber(gd->custom_icon_types[i]));
+				cJSON_AddItemToArray(
+					cit, cJSON_CreateNumber(gd->custom_icon_types[i]));
 		}
 		cJSON *civ = cJSON_AddArrayToObject(cfg, "custom_icon_values");
 		if (civ) {
 			for (int i = 0; i < 7; i++)
-				cJSON_AddItemToArray(civ, cJSON_CreateNumber(gd->custom_icon_values[i]));
+				cJSON_AddItemToArray(
+					civ, cJSON_CreateNumber(gd->custom_icon_values[i]));
 		}
 		if (gd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", gd->signal_name);
@@ -1004,57 +1036,72 @@ static void _gear_to_json(widget_t *w, cJSON *out) {
 static void _gear_from_json(widget_t *w, cJSON *in) {
 	widget_base_from_json(w, in);
 	gear_data_t *gd = (gear_data_t *)w->type_data;
-	if (!gd) return;
+	if (!gd)
+		return;
 	cJSON *cfg = cJSON_GetObjectItemCaseSensitive(in, "config");
-	if (!cfg) return;
+	if (!cfg)
+		return;
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "detection_mode");
-	if (cJSON_IsNumber(item)) gd->detection_mode = (uint8_t)item->valueint;
+	if (cJSON_IsNumber(item))
+		gd->detection_mode = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "tire_circumference_mm");
-	if (cJSON_IsNumber(item)) gd->tire_circumference_mm = (float)item->valuedouble;
+	if (cJSON_IsNumber(item))
+		gd->tire_circumference_mm = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "final_drive_ratio");
-	if (cJSON_IsNumber(item)) gd->final_drive_ratio = (float)item->valuedouble;
+	if (cJSON_IsNumber(item))
+		gd->final_drive_ratio = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "reverse_gear_ratio");
-	if (cJSON_IsNumber(item)) gd->reverse_gear_ratio = (float)item->valuedouble;
+	if (cJSON_IsNumber(item))
+		gd->reverse_gear_ratio = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "gear_ratios");
 	if (cJSON_IsArray(item)) {
 		int count = cJSON_GetArraySize(item);
-		if (count > 10) count = 10;
+		if (count > 10)
+			count = 10;
 		for (int i = 0; i < count; i++) {
 			cJSON *r = cJSON_GetArrayItem(item, i);
-			if (cJSON_IsNumber(r)) gd->gear_ratios[i] = (float)r->valuedouble;
+			if (cJSON_IsNumber(r))
+				gd->gear_ratios[i] = (float)r->valuedouble;
 		}
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_values");
 	if (cJSON_IsArray(item)) {
 		int count = cJSON_GetArraySize(item);
-		if (count > 14) count = 14;
+		if (count > 14)
+			count = 14;
 		for (int i = 0; i < count; i++) {
 			cJSON *v = cJSON_GetArrayItem(item, i);
-			if (cJSON_IsNumber(v)) gd->custom_values[i] = (uint32_t)v->valueint;
+			if (cJSON_IsNumber(v))
+				gd->custom_values[i] = (uint32_t)v->valueint;
 		}
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_icon_types");
 	if (cJSON_IsArray(item)) {
 		int count = cJSON_GetArraySize(item);
-		if (count > 7) count = 7;
+		if (count > 7)
+			count = 7;
 		for (int i = 0; i < count; i++) {
 			cJSON *v = cJSON_GetArrayItem(item, i);
-			if (cJSON_IsNumber(v)) gd->custom_icon_types[i] = (uint8_t)v->valueint;
+			if (cJSON_IsNumber(v))
+				gd->custom_icon_types[i] = (uint8_t)v->valueint;
 		}
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_icon_values");
 	if (cJSON_IsArray(item)) {
 		int count = cJSON_GetArraySize(item);
-		if (count > 7) count = 7;
+		if (count > 7)
+			count = 7;
 		for (int i = 0; i < count; i++) {
 			cJSON *v = cJSON_GetArrayItem(item, i);
-			if (cJSON_IsNumber(v)) gd->custom_icon_values[i] = (uint32_t)v->valueint;
+			if (cJSON_IsNumber(v))
+				gd->custom_icon_values[i] = (uint32_t)v->valueint;
 		}
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(gd->signal_name, item->valuestring, sizeof(gd->signal_name) - 1);
+		strncpy(gd->signal_name, item->valuestring,
+				sizeof(gd->signal_name) - 1);
 		gd->signal_name[sizeof(gd->signal_name) - 1] = '\0';
 	}
 
@@ -1072,21 +1119,28 @@ widget_t *widget_gear_create_instance(void) {
 	if (!w)
 		return NULL;
 
-	gear_data_t *gd = heap_caps_calloc(1, sizeof(gear_data_t), MALLOC_CAP_SPIRAM);
-	if (!gd) gd = calloc(1, sizeof(gear_data_t));
-	if (!gd) { free(w); return NULL; }
+	gear_data_t *gd =
+		heap_caps_calloc(1, sizeof(gear_data_t), MALLOC_CAP_SPIRAM);
+	if (!gd)
+		gd = calloc(1, sizeof(gear_data_t));
+	if (!gd) {
+		free(w);
+		return NULL;
+	}
 
-	gd->detection_mode = 0;   /* default: Custom */
+	gd->detection_mode = 0; /* default: Custom */
 	memset(gd->custom_values, 0, sizeof(gd->custom_values));
 	memset(gd->gear_ratios, 0, sizeof(gd->gear_ratios));
 	gd->tire_circumference_mm = 0.0f;
 	gd->final_drive_ratio = 0.0f;
 	gd->reverse_gear_ratio = 0.0f;
 	memset(gd->custom_icon_types, 0, sizeof(gd->custom_icon_types));
-	for (int i = 0; i < 7; i++) gd->custom_icon_values[i] = UINT32_MAX;
+	for (int i = 0; i < 7; i++)
+		gd->custom_icon_values[i] = UINT32_MAX;
 	gd->signal_index = -1;
 
 	w->type = WIDGET_GEAR;
+	w->slot = 0;
 	w->x = 0;
 	w->y = 180;
 	w->w = 90;
@@ -1103,4 +1157,3 @@ widget_t *widget_gear_create_instance(void) {
 
 	return w;
 }
-

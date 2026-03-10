@@ -2,14 +2,22 @@
 #include "lvgl.h"
 #include "widget_types.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* ── Per-instance state for text widget ────────────────────────────────── */
+typedef struct {
+	uint8_t  value_idx;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+} text_data_t;
+
 /**
- * Create a text widget instance. Uses widget_t vtable with w->update
- * matching the CAN dispatch signature: w->update(w, text_update_t*).
+ * Create a text widget instance.
  *
  * @param value_idx  Value slot 0-12 to bind to (panel 0-7, RPM, Speed, Gear,
  *                   BAR1, BAR2).

@@ -1,9 +1,26 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Per-instance state for RPM bar widget ─────────────────────────────── */
+typedef struct {
+	int32_t  gauge_max;
+	int32_t  redline;
+	lv_color_t bar_color;
+	uint8_t  limiter_effect;   /* 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined */
+	int32_t  limiter_value;
+	lv_color_t limiter_color;
+	bool     lights_enabled;
+	bool     background_enabled;
+	int32_t  background_value;
+	lv_color_t background_color;
+	char     signal_name[32];
+	int16_t  signal_index;
+} rpm_bar_data_t;
 
 /** Create the RPM widget container with bar gauge, redline, tick marks, Panel9.
  *  Returns the container lv_obj_t so the caller can set w->root. */

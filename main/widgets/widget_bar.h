@@ -2,9 +2,36 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Per-instance state for bar widgets ────────────────────────────────── */
+typedef struct {
+	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
+	char     label[32];
+	int32_t  bar_min;
+	int32_t  bar_max;
+	int32_t  bar_low;
+	int32_t  bar_high;
+	lv_color_t bar_low_color;
+	lv_color_t bar_high_color;
+	lv_color_t bar_in_range_color;
+	bool     show_bar_value;
+	bool     invert_bar_value;
+	bool     fuel_sender;
+	float    fuel_sender_empty_v;
+	float    fuel_sender_full_v;
+	uint8_t  fuel_sender_filter;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+	/* LVGL object pointers (runtime only, per-instance) */
+	lv_obj_t *bar_obj;
+	lv_obj_t *label_obj;
+	lv_obj_t *value_obj;
+} bar_data_t;
 
 /* previous_bar_values is also used by widget_dispatcher; expose it */
 extern float previous_bar_values[2];

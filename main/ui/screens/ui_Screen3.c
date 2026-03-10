@@ -49,18 +49,9 @@ lv_obj_t *g_offset_input[MAX_VALUES];
 lv_obj_t *g_decimals_dropdown[MAX_VALUES];
 lv_obj_t *g_type_dropdown[MAX_VALUES];
 
-/* ── Legacy config data (transitional — will be removed once config modal
- *    reads/writes directly to widget type_data + signal registry) ─────── */
 int rpm_gauge_max = 7000;
 int rpm_redline_value = 6000;
-value_config_t values_config[13];
-warning_config_t warning_configs[8];
-indicator_config_t indicator_configs[2];
 uint8_t current_value_id;
-
-char label_texts[13][64] = {
-	"PANEL 1", "PANEL 2", "PANEL 3", "PANEL 4", "PANEL 5", "PANEL 6", "PANEL 7",
-	"PANEL 8", "RPM",	  "SPEED",	 "GEAR",	"BAR 1",   "BAR 2"};
 char value_offset_texts[13][64] = {"0", "0", "0", "0", "0", "0", "0",
 								   "0", "0", "0", "0", "0", "0"};
 char previous_values[13][64] = {0};

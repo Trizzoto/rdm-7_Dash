@@ -1,135 +1,35 @@
 /**
  * config_bridge.c — Bridge between value_id-based config modal and
  * widget type_data + signal registry.
- *
- * Duplicates type_data struct layouts (they are private to each widget .c).
- * These MUST stay in sync with the originals.
  */
 
 #include "config_bridge.h"
-#include "ui/dashboard.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widgets/signal.h"
 #include "widgets/widget_types.h"
+#include "widgets/widget_panel.h"
+#include "widgets/widget_bar.h"
+#include "widgets/widget_rpm_bar.h"
+#include "widgets/widget_speed.h"
+#include "widgets/widget_gear.h"
+#include "widgets/widget_text.h"
+#include "widgets/widget_registry.h"
 #include "esp_log.h"
 #include <string.h>
 #include <stdio.h>
 
 static const char *TAG = "cfg_bridge";
 
-/* ── Mirror struct layouts (keep in sync with widget .c files) ──────────── */
-
-typedef struct {
-	uint8_t    slot;
-	char       label[64];
-	char       custom_text[32];
-	uint8_t    decimals;
-	bool       warning_high_enabled;
-	float      warning_high_threshold;
-	lv_color_t warning_high_color;
-	bool       warning_low_enabled;
-	float      warning_low_threshold;
-	lv_color_t warning_low_color;
-	char       signal_name[32];
-	int16_t    signal_index;
-	lv_obj_t  *box;
-	lv_obj_t  *header_label;
-	lv_obj_t  *value_label;
-	lv_obj_t  *custom_text_label;
-} cb_panel_data_t;
-
-typedef struct {
-	uint8_t    slot;
-	int32_t    bar_min;
-	int32_t    bar_max;
-	int32_t    bar_low;
-	int32_t    bar_high;
-	lv_color_t bar_low_color;
-	lv_color_t bar_high_color;
-	lv_color_t bar_in_range_color;
-	bool       show_bar_value;
-	bool       invert_bar_value;
-	bool       fuel_sender;
-	float      fuel_sender_empty_v;
-	float      fuel_sender_full_v;
-	uint8_t    fuel_sender_filter;
-	uint8_t    decimals;
-	char       signal_name[32];
-	int16_t    signal_index;
-} cb_bar_data_t;
-
-typedef struct {
-	int32_t    gauge_max;
-	int32_t    redline;
-	lv_color_t bar_color;
-	uint8_t    limiter_effect;
-	int32_t    limiter_value;
-	lv_color_t limiter_color;
-	bool       lights_enabled;
-	bool       background_enabled;
-	int32_t    background_value;
-	lv_color_t background_color;
-	char       signal_name[32];
-	int16_t    signal_index;
-} cb_rpm_bar_data_t;
-
-typedef struct {
-	bool       use_mph;
-	uint8_t    decimals;
-	char       signal_name[32];
-	int16_t    signal_index;
-	lv_obj_t  *speed_label;
-	lv_obj_t  *units_label;
-} cb_speed_data_t;
-
-typedef struct {
-	uint8_t    detection_mode;
-	uint32_t   custom_values[14];
-	float      gear_ratios[10];
-	float      tire_circumference_mm;
-	float      final_drive_ratio;
-	float      reverse_gear_ratio;
-	uint8_t    custom_icon_types[7];
-	uint32_t   custom_icon_values[7];
-	char       signal_name[32];
-	int16_t    signal_index;
-} cb_gear_data_t;
-
-typedef struct {
-	uint8_t    value_idx;
-	uint8_t    decimals;
-	char       signal_name[32];
-	int16_t    signal_index;
-} cb_text_data_t;
-
 /* ── Internal helpers ──────────────────────────────────────────────────── */
-
-static widget_t *_find_widget_by_type_and_slot(widget_type_t type, uint8_t slot) {
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (!widgets[i] || widgets[i]->type != type) continue;
-		if (type == WIDGET_PANEL) {
-			cb_panel_data_t *pd = (cb_panel_data_t *)widgets[i]->type_data;
-			if (pd && pd->slot == slot) return widgets[i];
-		} else if (type == WIDGET_BAR) {
-			cb_bar_data_t *bd = (cb_bar_data_t *)widgets[i]->type_data;
-			if (bd && bd->slot == slot) return widgets[i];
-		} else {
-			return widgets[i]; /* singleton */
-		}
-	}
-	return NULL;
-}
 
 widget_t *config_bridge_get_widget(uint8_t value_id) {
 	if (value_id < 1 || value_id > 13) return NULL;
-	if (value_id <= 8)  return _find_widget_by_type_and_slot(WIDGET_PANEL, value_id - 1);
-	if (value_id == 9)  return _find_widget_by_type_and_slot(WIDGET_RPM_BAR, 0);
-	if (value_id == 10) return _find_widget_by_type_and_slot(WIDGET_SPEED, 0);
-	if (value_id == 11) return _find_widget_by_type_and_slot(WIDGET_GEAR, 0);
-	if (value_id == 12) return _find_widget_by_type_and_slot(WIDGET_BAR, 0);
-	if (value_id == 13) return _find_widget_by_type_and_slot(WIDGET_BAR, 1);
+	if (value_id <= 8)  return widget_registry_find_by_type_and_slot(WIDGET_PANEL, value_id - 1);
+	if (value_id == 9)  return widget_registry_find_by_type_and_slot(WIDGET_RPM_BAR, 0);
+	if (value_id == 10) return widget_registry_find_by_type_and_slot(WIDGET_SPEED, 0);
+	if (value_id == 11) return widget_registry_find_by_type_and_slot(WIDGET_GEAR, 0);
+	if (value_id == 12) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 0);
+	if (value_id == 13) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 1);
 	return NULL;
 }
 
@@ -137,12 +37,12 @@ widget_t *config_bridge_get_widget(uint8_t value_id) {
 static const char *_get_signal_name(widget_t *w) {
 	if (!w || !w->type_data) return "";
 	switch (w->type) {
-		case WIDGET_PANEL:   return ((cb_panel_data_t *)w->type_data)->signal_name;
-		case WIDGET_BAR:     return ((cb_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_RPM_BAR: return ((cb_rpm_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_SPEED:   return ((cb_speed_data_t *)w->type_data)->signal_name;
-		case WIDGET_GEAR:    return ((cb_gear_data_t *)w->type_data)->signal_name;
-		case WIDGET_TEXT:    return ((cb_text_data_t *)w->type_data)->signal_name;
+		case WIDGET_PANEL:   return ((panel_data_t *)w->type_data)->signal_name;
+		case WIDGET_BAR:     return ((bar_data_t *)w->type_data)->signal_name;
+		case WIDGET_RPM_BAR: return ((rpm_bar_data_t *)w->type_data)->signal_name;
+		case WIDGET_SPEED:   return ((speed_data_t *)w->type_data)->signal_name;
+		case WIDGET_GEAR:    return ((gear_data_t *)w->type_data)->signal_name;
+		case WIDGET_TEXT:    return ((text_data_t *)w->type_data)->signal_name;
 		default: return "";
 	}
 }
@@ -150,12 +50,12 @@ static const char *_get_signal_name(widget_t *w) {
 static int16_t *_get_signal_index_ptr(widget_t *w) {
 	if (!w || !w->type_data) return NULL;
 	switch (w->type) {
-		case WIDGET_PANEL:   return &((cb_panel_data_t *)w->type_data)->signal_index;
-		case WIDGET_BAR:     return &((cb_bar_data_t *)w->type_data)->signal_index;
-		case WIDGET_RPM_BAR: return &((cb_rpm_bar_data_t *)w->type_data)->signal_index;
-		case WIDGET_SPEED:   return &((cb_speed_data_t *)w->type_data)->signal_index;
-		case WIDGET_GEAR:    return &((cb_gear_data_t *)w->type_data)->signal_index;
-		case WIDGET_TEXT:    return &((cb_text_data_t *)w->type_data)->signal_index;
+		case WIDGET_PANEL:   return &((panel_data_t *)w->type_data)->signal_index;
+		case WIDGET_BAR:     return &((bar_data_t *)w->type_data)->signal_index;
+		case WIDGET_RPM_BAR: return &((rpm_bar_data_t *)w->type_data)->signal_index;
+		case WIDGET_SPEED:   return &((speed_data_t *)w->type_data)->signal_index;
+		case WIDGET_GEAR:    return &((gear_data_t *)w->type_data)->signal_index;
+		case WIDGET_TEXT:    return &((text_data_t *)w->type_data)->signal_index;
 		default: return NULL;
 	}
 }
@@ -163,12 +63,12 @@ static int16_t *_get_signal_index_ptr(widget_t *w) {
 static char *_get_signal_name_buf(widget_t *w) {
 	if (!w || !w->type_data) return NULL;
 	switch (w->type) {
-		case WIDGET_PANEL:   return ((cb_panel_data_t *)w->type_data)->signal_name;
-		case WIDGET_BAR:     return ((cb_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_RPM_BAR: return ((cb_rpm_bar_data_t *)w->type_data)->signal_name;
-		case WIDGET_SPEED:   return ((cb_speed_data_t *)w->type_data)->signal_name;
-		case WIDGET_GEAR:    return ((cb_gear_data_t *)w->type_data)->signal_name;
-		case WIDGET_TEXT:    return ((cb_text_data_t *)w->type_data)->signal_name;
+		case WIDGET_PANEL:   return ((panel_data_t *)w->type_data)->signal_name;
+		case WIDGET_BAR:     return ((bar_data_t *)w->type_data)->signal_name;
+		case WIDGET_RPM_BAR: return ((rpm_bar_data_t *)w->type_data)->signal_name;
+		case WIDGET_SPEED:   return ((speed_data_t *)w->type_data)->signal_name;
+		case WIDGET_GEAR:    return ((gear_data_t *)w->type_data)->signal_name;
+		case WIDGET_TEXT:    return ((text_data_t *)w->type_data)->signal_name;
 		default: return NULL;
 	}
 }
@@ -295,7 +195,7 @@ const char *config_bridge_get_label(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data) return "";
 	if (w->type == WIDGET_PANEL)
-		return ((cb_panel_data_t *)w->type_data)->label;
+		return ((panel_data_t *)w->type_data)->label;
 	return "";
 }
 
@@ -303,7 +203,7 @@ void config_bridge_set_label(uint8_t value_id, const char *label) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || !label) return;
 	if (w->type == WIDGET_PANEL) {
-		cb_panel_data_t *pd = (cb_panel_data_t *)w->type_data;
+		panel_data_t *pd = (panel_data_t *)w->type_data;
 		strncpy(pd->label, label, sizeof(pd->label) - 1);
 		pd->label[sizeof(pd->label) - 1] = '\0';
 	}
@@ -313,9 +213,9 @@ uint8_t config_bridge_get_decimals(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data) return 0;
 	switch (w->type) {
-		case WIDGET_PANEL: return ((cb_panel_data_t *)w->type_data)->decimals;
-		case WIDGET_BAR:   return ((cb_bar_data_t *)w->type_data)->decimals;
-		case WIDGET_SPEED: return ((cb_speed_data_t *)w->type_data)->decimals;
+		case WIDGET_PANEL: return ((panel_data_t *)w->type_data)->decimals;
+		case WIDGET_BAR:   return ((bar_data_t *)w->type_data)->decimals;
+		case WIDGET_SPEED: return ((speed_data_t *)w->type_data)->decimals;
 		default: return 0;
 	}
 }
@@ -324,9 +224,9 @@ void config_bridge_set_decimals(uint8_t value_id, uint8_t decimals) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data) return;
 	switch (w->type) {
-		case WIDGET_PANEL: ((cb_panel_data_t *)w->type_data)->decimals = decimals; break;
-		case WIDGET_BAR:   ((cb_bar_data_t *)w->type_data)->decimals = decimals; break;
-		case WIDGET_SPEED: ((cb_speed_data_t *)w->type_data)->decimals = decimals; break;
+		case WIDGET_PANEL: ((panel_data_t *)w->type_data)->decimals = decimals; break;
+		case WIDGET_BAR:   ((bar_data_t *)w->type_data)->decimals = decimals; break;
+		case WIDGET_SPEED: ((speed_data_t *)w->type_data)->decimals = decimals; break;
 		default: break;
 	}
 }
@@ -335,7 +235,7 @@ const char *config_bridge_get_custom_text(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data) return "";
 	if (w->type == WIDGET_PANEL)
-		return ((cb_panel_data_t *)w->type_data)->custom_text;
+		return ((panel_data_t *)w->type_data)->custom_text;
 	return "";
 }
 
@@ -343,7 +243,7 @@ void config_bridge_set_custom_text(uint8_t value_id, const char *text) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || !text) return;
 	if (w->type == WIDGET_PANEL) {
-		cb_panel_data_t *pd = (cb_panel_data_t *)w->type_data;
+		panel_data_t *pd = (panel_data_t *)w->type_data;
 		strncpy(pd->custom_text, text, sizeof(pd->custom_text) - 1);
 		pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
 	}
@@ -354,13 +254,13 @@ void config_bridge_set_custom_text(uint8_t value_id, const char *text) {
 bool config_bridge_get_use_mph(void) {
 	widget_t *w = config_bridge_get_widget(SPEED_VALUE_ID);
 	if (!w || !w->type_data) return false;
-	return ((cb_speed_data_t *)w->type_data)->use_mph;
+	return ((speed_data_t *)w->type_data)->use_mph;
 }
 
 void config_bridge_set_use_mph(bool use_mph) {
 	widget_t *w = config_bridge_get_widget(SPEED_VALUE_ID);
 	if (!w || !w->type_data) return;
-	((cb_speed_data_t *)w->type_data)->use_mph = use_mph;
+	((speed_data_t *)w->type_data)->use_mph = use_mph;
 }
 
 /* ── Bar-specific ──────────────────────────────────────────────────────── */
@@ -368,12 +268,12 @@ void config_bridge_set_use_mph(bool use_mph) {
 #define BAR_GETTER(field, defval) \
 	widget_t *w = config_bridge_get_widget(value_id); \
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return defval; \
-	return ((cb_bar_data_t *)w->type_data)->field;
+	return ((bar_data_t *)w->type_data)->field;
 
 #define BAR_SETTER(field) \
 	widget_t *w = config_bridge_get_widget(value_id); \
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return; \
-	((cb_bar_data_t *)w->type_data)->field = val;
+	((bar_data_t *)w->type_data)->field = val;
 
 int32_t config_bridge_get_bar_min(uint8_t value_id) { BAR_GETTER(bar_min, 0) }
 int32_t config_bridge_get_bar_max(uint8_t value_id) { BAR_GETTER(bar_max, 100) }
@@ -401,63 +301,63 @@ void config_bridge_set_fuel_sender_filter(uint8_t value_id, uint8_t val) { BAR_S
 float config_bridge_get_warning_high_threshold(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return 0;
-	return ((cb_panel_data_t *)w->type_data)->warning_high_threshold;
+	return ((panel_data_t *)w->type_data)->warning_high_threshold;
 }
 
 float config_bridge_get_warning_low_threshold(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return 0;
-	return ((cb_panel_data_t *)w->type_data)->warning_low_threshold;
+	return ((panel_data_t *)w->type_data)->warning_low_threshold;
 }
 
 lv_color_t config_bridge_get_warning_high_color(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return lv_color_hex(0xFF0000);
-	return ((cb_panel_data_t *)w->type_data)->warning_high_color;
+	return ((panel_data_t *)w->type_data)->warning_high_color;
 }
 
 lv_color_t config_bridge_get_warning_low_color(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return lv_color_hex(0x0000FF);
-	return ((cb_panel_data_t *)w->type_data)->warning_low_color;
+	return ((panel_data_t *)w->type_data)->warning_low_color;
 }
 
 bool config_bridge_get_warning_high_enabled(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return false;
-	return ((cb_panel_data_t *)w->type_data)->warning_high_enabled;
+	return ((panel_data_t *)w->type_data)->warning_high_enabled;
 }
 
 bool config_bridge_get_warning_low_enabled(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return false;
-	return ((cb_panel_data_t *)w->type_data)->warning_low_enabled;
+	return ((panel_data_t *)w->type_data)->warning_low_enabled;
 }
 
 void config_bridge_set_warning_high_threshold(uint8_t value_id, float val) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return;
-	((cb_panel_data_t *)w->type_data)->warning_high_threshold = val;
-	((cb_panel_data_t *)w->type_data)->warning_high_enabled = true;
+	((panel_data_t *)w->type_data)->warning_high_threshold = val;
+	((panel_data_t *)w->type_data)->warning_high_enabled = true;
 }
 
 void config_bridge_set_warning_low_threshold(uint8_t value_id, float val) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return;
-	((cb_panel_data_t *)w->type_data)->warning_low_threshold = val;
-	((cb_panel_data_t *)w->type_data)->warning_low_enabled = true;
+	((panel_data_t *)w->type_data)->warning_low_threshold = val;
+	((panel_data_t *)w->type_data)->warning_low_enabled = true;
 }
 
 void config_bridge_set_warning_high_color(uint8_t value_id, lv_color_t color) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return;
-	((cb_panel_data_t *)w->type_data)->warning_high_color = color;
+	((panel_data_t *)w->type_data)->warning_high_color = color;
 }
 
 void config_bridge_set_warning_low_color(uint8_t value_id, lv_color_t color) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_PANEL) return;
-	((cb_panel_data_t *)w->type_data)->warning_low_color = color;
+	((panel_data_t *)w->type_data)->warning_low_color = color;
 }
 
 /* ── Bar alert-specific ────────────────────────────────────────────────── */
@@ -465,198 +365,198 @@ void config_bridge_set_warning_low_color(uint8_t value_id, lv_color_t color) {
 int32_t config_bridge_get_bar_low(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return 0;
-	return ((cb_bar_data_t *)w->type_data)->bar_low;
+	return ((bar_data_t *)w->type_data)->bar_low;
 }
 
 int32_t config_bridge_get_bar_high(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return 0;
-	return ((cb_bar_data_t *)w->type_data)->bar_high;
+	return ((bar_data_t *)w->type_data)->bar_high;
 }
 
 lv_color_t config_bridge_get_bar_low_color(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return lv_color_hex(0x0000FF);
-	return ((cb_bar_data_t *)w->type_data)->bar_low_color;
+	return ((bar_data_t *)w->type_data)->bar_low_color;
 }
 
 lv_color_t config_bridge_get_bar_high_color(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return lv_color_hex(0xFF0000);
-	return ((cb_bar_data_t *)w->type_data)->bar_high_color;
+	return ((bar_data_t *)w->type_data)->bar_high_color;
 }
 
 lv_color_t config_bridge_get_bar_in_range_color(uint8_t value_id) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return lv_color_hex(0x00FF00);
-	return ((cb_bar_data_t *)w->type_data)->bar_in_range_color;
+	return ((bar_data_t *)w->type_data)->bar_in_range_color;
 }
 
 void config_bridge_set_bar_low(uint8_t value_id, int32_t val) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return;
-	((cb_bar_data_t *)w->type_data)->bar_low = val;
+	((bar_data_t *)w->type_data)->bar_low = val;
 }
 
 void config_bridge_set_bar_high(uint8_t value_id, int32_t val) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return;
-	((cb_bar_data_t *)w->type_data)->bar_high = val;
+	((bar_data_t *)w->type_data)->bar_high = val;
 }
 
 void config_bridge_set_bar_low_color(uint8_t value_id, lv_color_t color) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return;
-	((cb_bar_data_t *)w->type_data)->bar_low_color = color;
+	((bar_data_t *)w->type_data)->bar_low_color = color;
 }
 
 void config_bridge_set_bar_high_color(uint8_t value_id, lv_color_t color) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return;
-	((cb_bar_data_t *)w->type_data)->bar_high_color = color;
+	((bar_data_t *)w->type_data)->bar_high_color = color;
 }
 
 void config_bridge_set_bar_in_range_color(uint8_t value_id, lv_color_t color) {
 	widget_t *w = config_bridge_get_widget(value_id);
 	if (!w || !w->type_data || w->type != WIDGET_BAR) return;
-	((cb_bar_data_t *)w->type_data)->bar_in_range_color = color;
+	((bar_data_t *)w->type_data)->bar_in_range_color = color;
 }
 
 /* ── RPM-specific ──────────────────────────────────────────────────────── */
 
-static cb_rpm_bar_data_t *_get_rpm_data(void) {
+static rpm_bar_data_t *_get_rpm_data(void) {
 	widget_t *w = config_bridge_get_widget(RPM_VALUE_ID);
 	if (!w || !w->type_data || w->type != WIDGET_RPM_BAR) return NULL;
-	return (cb_rpm_bar_data_t *)w->type_data;
+	return (rpm_bar_data_t *)w->type_data;
 }
 
 lv_color_t config_bridge_get_rpm_bar_color(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->bar_color : lv_color_hex(0x00FF00);
 }
 
 uint8_t config_bridge_get_rpm_limiter_effect(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->limiter_effect : 0;
 }
 
 int32_t config_bridge_get_rpm_limiter_value(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->limiter_value : 7500;
 }
 
 lv_color_t config_bridge_get_rpm_limiter_color(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->limiter_color : lv_color_hex(0xFF0000);
 }
 
 bool config_bridge_get_rpm_background_enabled(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->background_enabled : false;
 }
 
 int32_t config_bridge_get_rpm_background_value(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->background_value : 0;
 }
 
 lv_color_t config_bridge_get_rpm_background_color(void) {
-	cb_rpm_bar_data_t *rd = _get_rpm_data();
+	rpm_bar_data_t *rd = _get_rpm_data();
 	return rd ? rd->background_color : lv_color_hex(0x000000);
 }
 
 /* ── Gear-specific ─────────────────────────────────────────────────────── */
 
-static cb_gear_data_t *_get_gear_data(void) {
+static gear_data_t *_get_gear_data(void) {
 	widget_t *w = config_bridge_get_widget(GEAR_VALUE_ID);
 	if (!w || !w->type_data || w->type != WIDGET_GEAR) return NULL;
-	return (cb_gear_data_t *)w->type_data;
+	return (gear_data_t *)w->type_data;
 }
 
 uint8_t config_bridge_get_gear_detection_mode(void) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->detection_mode : 0;
 }
 
 void config_bridge_set_gear_detection_mode(uint8_t mode) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->detection_mode = mode;
 }
 
 float config_bridge_get_tire_circumference(void) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->tire_circumference_mm : 2000.0f;
 }
 
 void config_bridge_set_tire_circumference(float val) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->tire_circumference_mm = val;
 }
 
 float config_bridge_get_final_drive_ratio(void) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->final_drive_ratio : 3.73f;
 }
 
 void config_bridge_set_final_drive_ratio(float val) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->final_drive_ratio = val;
 }
 
 float config_bridge_get_reverse_gear_ratio(void) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->reverse_gear_ratio : 3.0f;
 }
 
 void config_bridge_set_reverse_gear_ratio(float val) {
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->reverse_gear_ratio = val;
 }
 
 float config_bridge_get_gear_ratio(uint8_t idx) {
 	if (idx >= 10) return 0;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->gear_ratios[idx] : 0;
 }
 
 void config_bridge_set_gear_ratio(uint8_t idx, float val) {
 	if (idx >= 10) return;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->gear_ratios[idx] = val;
 }
 
 uint32_t config_bridge_get_gear_custom_value(uint8_t idx) {
 	if (idx >= 14) return 0;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->custom_values[idx] : 0;
 }
 
 void config_bridge_set_gear_custom_value(uint8_t idx, uint32_t val) {
 	if (idx >= 14) return;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->custom_values[idx] = val;
 }
 
 uint8_t config_bridge_get_gear_icon_type(uint8_t idx) {
 	if (idx >= 7) return 0;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->custom_icon_types[idx] : 0;
 }
 
 void config_bridge_set_gear_icon_type(uint8_t idx, uint8_t type) {
 	if (idx >= 7) return;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->custom_icon_types[idx] = type;
 }
 
 uint32_t config_bridge_get_gear_icon_value(uint8_t idx) {
 	if (idx >= 7) return 0;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	return gd ? gd->custom_icon_values[idx] : 0;
 }
 
 void config_bridge_set_gear_icon_value(uint8_t idx, uint32_t val) {
 	if (idx >= 7) return;
-	cb_gear_data_t *gd = _get_gear_data();
+	gear_data_t *gd = _get_gear_data();
 	if (gd) gd->custom_icon_values[idx] = val;
 }

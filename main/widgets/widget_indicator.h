@@ -7,6 +7,17 @@
 extern "C" {
 #endif
 
+/* ── Per-instance state for indicator widgets ──────────────────────────── */
+typedef struct {
+	uint8_t  slot;              /* 0=left, 1=right */
+	uint8_t  input_source;      /* 0=Wire, 1=CAN */
+	bool     animation_enabled;
+	bool     is_momentary;
+	bool     current_state;     /* runtime only -- NOT serialized */
+	char     signal_name[32];
+	int16_t  signal_index;
+} indicator_data_t;
+
 /* --- API -----------------------------------------------------------------*/
 /** Create indicator images and transparent touch areas on parent. */
 void widget_indicator_create(lv_obj_t *parent);
@@ -25,9 +36,6 @@ void indicator_apply_analog_state(bool left_on, bool right_on);
 
 /** LVGL timer callback for indicator blink animation. */
 void indicator_animation_timer_cb(lv_timer_t *timer);
-
-/** Initialise indicator_configs[] to safe defaults. Call before NVS load. */
-void init_indicator_configs(void);
 
 /** Create the full-screen indicator configuration editor. */
 void create_indicator_config_menu(uint8_t indicator_idx);

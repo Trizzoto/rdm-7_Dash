@@ -2,9 +2,31 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Per-instance state for panel widgets ──────────────────────────────── */
+typedef struct {
+	uint8_t    slot;
+	char       label[64];
+	char       custom_text[32];
+	uint8_t    decimals;
+	bool       warning_high_enabled;
+	float      warning_high_threshold;
+	lv_color_t warning_high_color;
+	bool       warning_low_enabled;
+	float      warning_low_threshold;
+	lv_color_t warning_low_color;
+	char       signal_name[32];
+	int16_t    signal_index;
+	/* LVGL object pointers (runtime only) */
+	lv_obj_t  *box;
+	lv_obj_t  *header_label;
+	lv_obj_t  *value_label;
+	lv_obj_t  *custom_text_label;
+} panel_data_t;
 
 /** Initialise shared LVGL styles (box_style, common_style). Call once at boot.
  */

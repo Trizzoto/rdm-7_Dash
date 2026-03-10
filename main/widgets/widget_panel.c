@@ -47,27 +47,6 @@ static const lv_coord_t value_positions[8][2] = {
 static const lv_coord_t box_positions[8][2] = {
 	{-312, -26}, {-146, -26}, {-312, 82}, {-146, 82},
 	{146, -26},	 {312, -26},  {146, 82},  {312, 82}};
-/* ── panel_data_t: per-instance state replacing raw slot cast ────────────── */
-typedef struct {
-	uint8_t    slot;
-	char       label[64];
-	char       custom_text[32];
-	uint8_t    decimals;
-	bool       warning_high_enabled;
-	float      warning_high_threshold;
-	lv_color_t warning_high_color;
-	bool       warning_low_enabled;
-	float      warning_low_threshold;
-	lv_color_t warning_low_color;
-	char       signal_name[32];
-	int16_t    signal_index;
-	/* LVGL object pointers (runtime only) */
-	lv_obj_t  *box;
-	lv_obj_t  *header_label;
-	lv_obj_t  *value_label;
-	lv_obj_t  *custom_text_label;
-} panel_data_t;
-
 /* ── Helper: look up panel_data_t by slot ────────────────────────────────── */
 static panel_data_t *_get_panel_data_by_slot(uint8_t slot) {
 	if (slot >= 8) return NULL;
@@ -483,16 +462,67 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	if (!pd) return;
 	uint8_t slot = pd->slot;
 	if (slot >= 8) return;
-	if (is_stale) {
-		update_panel_ui_immediate(slot, "---", 0.0);
-		return;
-	}
+
+	const char *display_str;
 	char buf[32];
-	if (pd->decimals == 0)
-		snprintf(buf, sizeof(buf), "%d", (int)value);
-	else
-		snprintf(buf, sizeof(buf), "%.*f", pd->decimals, (double)value);
-	update_panel_ui_immediate(slot, buf, (double)value);
+	if (is_stale) {
+		display_str = "---";
+	} else {
+		if (pd->decimals == 0)
+			snprintf(buf, sizeof(buf), "%d", (int)value);
+		else
+			snprintf(buf, sizeof(buf), "%.*f", pd->decimals, (double)value);
+		display_str = buf;
+	}
+
+	double final_value = is_stale ? 0.0 : (double)value;
+
+	/* Update this widget's own LVGL objects directly (per-instance pointers).
+	 * This is the authoritative path — avoids cross-talk via global arrays
+	 * if two panels share a slot due to misconfiguration. */
+	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
+		lv_label_set_text(pd->value_label, display_str);
+	}
+	if (pd->box && lv_obj_is_valid(pd->box)) {
+		lv_color_t border_color = THEME_COLOR_PANEL;
+		if (!is_stale && pd->warning_high_enabled &&
+			final_value > pd->warning_high_threshold) {
+			border_color = pd->warning_high_color;
+		} else if (!is_stale && pd->warning_low_enabled &&
+				   final_value < pd->warning_low_threshold) {
+			border_color = pd->warning_low_color;
+		}
+		lv_obj_set_style_border_color(pd->box, border_color,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(pd->box, 3,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(pd->box, 255,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Update menu panel preview if the menu screen is active */
+	if (slot < 8 && menu_panel_value_labels[slot] &&
+		lv_obj_is_valid(menu_panel_value_labels[slot]) && ui_MenuScreen &&
+		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+		lv_label_set_text(menu_panel_value_labels[slot], display_str);
+	}
+	if (slot < 8 && menu_panel_boxes[slot] &&
+		lv_obj_is_valid(menu_panel_boxes[slot]) && ui_MenuScreen &&
+		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+		lv_color_t mc = THEME_COLOR_PANEL;
+		if (!is_stale && pd->warning_high_enabled &&
+			final_value > pd->warning_high_threshold)
+			mc = pd->warning_high_color;
+		else if (!is_stale && pd->warning_low_enabled &&
+				 final_value < pd->warning_low_threshold)
+			mc = pd->warning_low_color;
+		lv_obj_set_style_border_color(menu_panel_boxes[slot], mc,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(menu_panel_boxes[slot], 3,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(menu_panel_boxes[slot], 255,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 }
 
 static void _panel_create(widget_t *w, lv_obj_t *parent) {
@@ -503,78 +533,90 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 		return;
 
 	/* Create single box for this slot */
-	ui_Box[slot] = lv_obj_create(parent);
-	lv_obj_set_size(ui_Box[slot], w->w, w->h);
-	lv_obj_set_pos(ui_Box[slot], w->x, w->y);
-	lv_obj_set_align(ui_Box[slot], LV_ALIGN_CENTER);
-	lv_obj_clear_flag(ui_Box[slot], LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_clip_corner(ui_Box[slot], true,
+	lv_obj_t *box = lv_obj_create(parent);
+	lv_obj_set_size(box, w->w, w->h);
+	lv_obj_set_pos(box, w->x, w->y);
+	lv_obj_set_align(box, LV_ALIGN_CENTER);
+	lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_clip_corner(box, true,
 								 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_style(ui_Box[slot], &box_style,
+	lv_obj_add_style(box, &box_style,
 					 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_event_cb(ui_Box[slot], screen3_touch_event_cb, LV_EVENT_PRESSED,
+	lv_obj_add_event_cb(box, screen3_touch_event_cb, LV_EVENT_PRESSED,
 						NULL);
-	lv_obj_add_event_cb(ui_Box[slot], screen3_touch_event_cb,
+	lv_obj_add_event_cb(box, screen3_touch_event_cb,
 						LV_EVENT_RELEASED, NULL);
 
 	/* Header label */
-	ui_Label[slot] = lv_label_create(ui_Box[slot]);
-	lv_label_set_text(ui_Label[slot], pd->label);
-	lv_obj_set_style_text_color(ui_Label[slot], THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_t *hdr = lv_label_create(box);
+	lv_label_set_text(hdr, pd->label);
+	lv_obj_set_style_text_color(hdr, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_opa(ui_Label[slot], 255,
+	lv_obj_set_style_text_opa(hdr, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Label[slot], THEME_FONT_DASH_LABEL,
+	lv_obj_set_style_text_font(hdr, THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(ui_Label[slot], LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_width(ui_Label[slot], w->w - 10);
-	lv_label_set_long_mode(ui_Label[slot], LV_LABEL_LONG_CLIP);
-	lv_coord_t relative_y = label_positions[slot][1] - box_positions[slot][1];
-	lv_obj_set_x(ui_Label[slot], 0);
-	lv_obj_set_y(ui_Label[slot], relative_y);
-	lv_obj_set_align(ui_Label[slot], LV_ALIGN_CENTER);
+	lv_obj_set_style_text_align(hdr, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_width(hdr, w->w - 10);
+	lv_label_set_long_mode(hdr, LV_LABEL_LONG_CLIP);
+	lv_obj_set_x(hdr, 0);
+	lv_obj_set_y(hdr, -28);
+	lv_obj_set_align(hdr, LV_ALIGN_CENTER);
 
 	/* Value label */
-	ui_Value[slot] = lv_label_create(ui_Box[slot]);
-	lv_label_set_text(ui_Value[slot], "---");
-	strcpy(previous_values[slot], "---");
-	lv_obj_set_style_text_color(ui_Value[slot], THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_t *val = lv_label_create(box);
+	lv_label_set_text(val, "---");
+	if (slot < 13) strcpy(previous_values[slot], "---");
+	lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_opa(ui_Value[slot], 255,
+	lv_obj_set_style_text_opa(val, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_Value[slot], THEME_FONT_DASH_VALUE,
+	lv_obj_set_style_text_font(val, THEME_FONT_DASH_VALUE,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(ui_Value[slot], LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_width(ui_Value[slot], w->w - 15);
-	lv_label_set_long_mode(ui_Value[slot], LV_LABEL_LONG_CLIP);
-	lv_coord_t val_rel_y = value_positions[slot][1] - box_positions[slot][1];
-	lv_obj_set_x(ui_Value[slot], 0);
-	lv_obj_set_y(ui_Value[slot], val_rel_y);
-	lv_obj_set_align(ui_Value[slot], LV_ALIGN_CENTER);
+	lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_width(val, w->w - 15);
+	lv_label_set_long_mode(val, LV_LABEL_LONG_CLIP);
+	lv_obj_set_x(val, 0);
+	lv_obj_set_y(val, 9);
+	lv_obj_set_align(val, LV_ALIGN_CENTER);
 
 	/* Click zone */
-	create_transparent_click_zone(ui_Box[slot], ui_Value[slot], slot + 1);
+	create_transparent_click_zone(box, val, slot + 1);
 
 	/* Custom unit text */
-	ui_CustomText[slot] = lv_label_create(ui_Box[slot]);
-	lv_label_set_text(ui_CustomText[slot], pd->custom_text);
-	lv_obj_set_style_text_color(ui_CustomText[slot], THEME_COLOR_TEXT_MUTED,
+	lv_obj_t *ctxt = lv_label_create(box);
+	lv_label_set_text(ctxt, pd->custom_text);
+	lv_obj_set_style_text_color(ctxt, THEME_COLOR_TEXT_MUTED,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_opa(ui_CustomText[slot], 255,
+	lv_obj_set_style_text_opa(ctxt, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(ui_CustomText[slot], THEME_FONT_BODY,
+	lv_obj_set_style_text_font(ctxt, THEME_FONT_BODY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(ui_CustomText[slot], LV_TEXT_ALIGN_RIGHT,
+	lv_obj_set_style_text_align(ctxt, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_width(ui_CustomText[slot], 60);
-	lv_label_set_long_mode(ui_CustomText[slot], LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(ui_CustomText[slot], 41);
-	lv_obj_set_y(ui_CustomText[slot], 32);
-	lv_obj_set_align(ui_CustomText[slot], LV_ALIGN_CENTER);
+	lv_obj_set_width(ctxt, 60);
+	lv_label_set_long_mode(ctxt, LV_LABEL_LONG_CLIP);
+	lv_obj_set_x(ctxt, 41);
+	lv_obj_set_y(ctxt, 32);
+	lv_obj_set_align(ctxt, LV_ALIGN_CENTER);
 	if (strlen(pd->custom_text) == 0)
-		lv_obj_add_flag(ui_CustomText[slot], LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(ctxt, LV_OBJ_FLAG_HIDDEN);
 
-	w->root = ui_Box[slot];
+	/* Store per-instance pointers so signal callback uses the right objects */
+	pd->box = box;
+	pd->header_label = hdr;
+	pd->value_label = val;
+	pd->custom_text_label = ctxt;
+
+	/* Also assign to global arrays for backward compat (config modal, RPM limiter) */
+	if (slot < 8) {
+		ui_Box[slot] = box;
+		ui_Label[slot] = hdr;
+		ui_Value[slot] = val;
+		ui_CustomText[slot] = ctxt;
+	}
+
+	w->root = box;
 
 	/* Subscribe to signal if bound */
 	if (pd->signal_index >= 0)
@@ -623,7 +665,10 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
-	if (cJSON_IsNumber(item)) pd->slot = (uint8_t)item->valueint;
+	if (cJSON_IsNumber(item)) {
+		pd->slot = (uint8_t)item->valueint;
+		w->slot = pd->slot;
+	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
 	if (cJSON_IsString(item) && item->valuestring)
@@ -689,6 +734,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
 
 	w->type = WIDGET_PANEL;
+	w->slot = pd->slot;
 	w->x = s_panel_default_x[pd->slot];
 	w->y = s_panel_default_y[pd->slot];
 	w->w = 155;

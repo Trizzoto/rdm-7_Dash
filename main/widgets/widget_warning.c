@@ -25,17 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-	uint8_t    slot;
-	lv_color_t active_color;
-	char       label[32];
-	bool       is_momentary;
-	bool       invert_toggle;
-	bool       current_state;     /* runtime only -- NOT serialized */
-	char       signal_name[32];
-	int16_t    signal_index;
-} warning_data_t;
-
 /* ── Helper: look up warning_data_t by slot ───────────────────────────────── */
 static warning_data_t *_get_warning_data_by_slot(uint8_t slot) {
 	if (slot >= 8) return NULL;
@@ -953,10 +942,6 @@ void widget_warning_create(lv_obj_t *parent) {
 	}
 }
 
-void init_warning_configs(void) {
-	/* Legacy stub — warning state now lives in warning_data_t (type_data). */
-	(void)0;
-}
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
@@ -1016,7 +1001,10 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (!cfg) return;
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
-	if (cJSON_IsNumber(item)) wd->slot = (uint8_t)item->valueint;
+	if (cJSON_IsNumber(item)) {
+		wd->slot = (uint8_t)item->valueint;
+		w->slot = wd->slot;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "active_color");
 	if (cJSON_IsNumber(item)) wd->active_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
@@ -1062,6 +1050,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->signal_index = -1;
 
 	w->type = WIDGET_WARNING;
+	w->slot = s;
 	w->x = 0;
 	w->y = 0;
 	w->w = 15;

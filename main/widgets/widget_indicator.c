@@ -24,16 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-	uint8_t  slot;              /* 0=left, 1=right */
-	uint8_t  input_source;      /* 0=Wire, 1=CAN */
-	bool     animation_enabled;
-	bool     is_momentary;
-	bool     current_state;     /* runtime only -- NOT serialized */
-	char     signal_name[32];
-	int16_t  signal_index;
-} indicator_data_t;
-
 /* ── Helper: look up indicator_data_t by slot ─────────────────────────────── */
 static indicator_data_t *_get_indicator_data_by_slot(uint8_t slot) {
 	if (slot >= 2) return NULL;
@@ -897,10 +887,6 @@ void widget_indicator_create(lv_obj_t *parent) {
 	widget_indicator_create_one(parent, 1);
 }
 
-void init_indicator_configs(void) {
-	/* Legacy stub — indicator state now lives in indicator_data_t (type_data). */
-	(void)0;
-}
 
 /* ── Phase 2: widget_t factory
  * ───────────────────────────────────────────── */
@@ -958,7 +944,10 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (!cfg) return;
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
-	if (cJSON_IsNumber(item)) id->slot = (uint8_t)item->valueint;
+	if (cJSON_IsNumber(item)) {
+		id->slot = (uint8_t)item->valueint;
+		w->slot = id->slot;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "input_source");
 	if (cJSON_IsNumber(item)) id->input_source = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "animation");
@@ -1002,6 +991,7 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	id->signal_index = -1;
 
 	w->type = WIDGET_INDICATOR;
+	w->slot = s;
 	w->x = s_indicator_default_x[s];
 	w->y = -133;
 	w->w = 50;

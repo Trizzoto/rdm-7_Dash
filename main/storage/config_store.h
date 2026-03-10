@@ -7,24 +7,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Initialise the config store.  Call after nvs_flash_init() but before
- *        any other config_store function.  Currently a no-op placeholder for
- *        future caching / validation logic.
- */
-esp_err_t config_store_init(void);
-
-/* ── Legacy stubs (no-op — config is now persisted via JSON layout) ─────── */
-/* These exist only for compile-compatibility with widget files that still
- * call them.  They will be removed once all widget files are updated. */
-#include "ui_Screen3.h"
-esp_err_t config_store_save_values(const value_config_t *cfg, uint8_t count);
-esp_err_t config_store_load_values(value_config_t *cfg, uint8_t count);
-esp_err_t config_store_save_warnings(const warning_config_t *cfg, uint8_t count);
-esp_err_t config_store_load_warnings(warning_config_t *cfg, uint8_t count);
-esp_err_t config_store_save_indicators(const indicator_config_t *cfg, uint8_t count);
-esp_err_t config_store_load_indicators(indicator_config_t *cfg, uint8_t count);
-
 /* ── Brightness dimmer ──────────────────────────────────────────────────── */
 esp_err_t config_store_save_dimmer(const brightness_dimmer_config_t *cfg);
 esp_err_t config_store_load_dimmer(brightness_dimmer_config_t *cfg);

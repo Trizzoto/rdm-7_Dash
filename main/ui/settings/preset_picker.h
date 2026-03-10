@@ -30,8 +30,8 @@ void destroy_preconfig_menu(void);
 
 /**
  * Open a full-screen preset picker overlay on lv_layer_top().
- * When the user selects a preset it updates values_config[value_id-1]
- * and the global g_*_input / g_*_dropdown widget arrays in-place.
+ * When the user selects a preset it updates the widget type_data via
+ * config_bridge and the global g_*_input / g_*_dropdown widget arrays in-place.
  * @param parent_screen  The current active screen (used for context only).
  * @param value_id       1-13  — which config slot to populate.
  */

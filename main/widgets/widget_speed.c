@@ -24,15 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-	bool     use_mph;
-	uint8_t  decimals;
-	char     signal_name[32];
-	int16_t  signal_index;
-	lv_obj_t *speed_label;
-	lv_obj_t *units_label;
-} speed_data_t;
-
 /* ── Helper: look up speed_data_t ──────────────────────────────────────── */
 static speed_data_t *_get_speed_data(void) {
 	widget_t **widgets = dashboard_get_widgets();
@@ -216,6 +207,7 @@ widget_t *widget_speed_create_instance(void) {
 	sd->signal_index = -1;
 
 	w->type = WIDGET_SPEED;
+	w->slot = 0;
 	w->x = 0;
 	w->y = 30;
 	w->w = 120;

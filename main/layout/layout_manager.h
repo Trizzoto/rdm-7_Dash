@@ -32,6 +32,9 @@ extern "C" {
 /* Maximum JSON file size we'll read or accept (in bytes). */
 #define LAYOUT_MAX_FILE_BYTES 16384
 
+/* Current layout JSON schema version (single source of truth). */
+#define LAYOUT_SCHEMA_VERSION 7
+
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
 #define LFS_LAYOUT_DIR "/lfs/layouts"

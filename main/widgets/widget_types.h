@@ -67,6 +67,7 @@ struct widget_t {
     int16_t                 x, y;       /**< Layout position (pixels).         */
     uint16_t                w, h;       /**< Layout size (pixels).             */
     char                    id[16];     /**< Instance identifier string.       */
+    uint8_t                 slot;       /**< Slot index (e.g. panel 0-7).      */
     void                   *type_data;  /**< Per-instance type-specific data.  */
 
     /* vtable */

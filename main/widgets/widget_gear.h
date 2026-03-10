@@ -1,9 +1,24 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Per-instance state for gear widget ────────────────────────────────── */
+typedef struct {
+	uint8_t  detection_mode;     /* 0=Custom, 1=MaxxECU, 2=Haltech, 3=Ford, 4=Speed/RPM */
+	uint32_t custom_values[14];  /* P, R, N, D, 1-10 */
+	float    gear_ratios[10];    /* Ratios for gears 1-10 */
+	float    tire_circumference_mm;
+	float    final_drive_ratio;
+	float    reverse_gear_ratio;
+	uint8_t  custom_icon_types[7];
+	uint32_t custom_icon_values[7];
+	char     signal_name[32];
+	int16_t  signal_index;
+} gear_data_t;
 
 /** Create gear panel, value label, and custom icon on parent. */
 void widget_gear_create(lv_obj_t *parent);

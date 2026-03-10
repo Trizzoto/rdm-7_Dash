@@ -53,21 +53,6 @@ void widget_rpm_bar_clear_stale_pointers(void) {
 	s_rpm_container = NULL;
 }
 
-typedef struct {
-	int32_t  gauge_max;
-	int32_t  redline;
-	lv_color_t bar_color;
-	uint8_t  limiter_effect;   /* 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined */
-	int32_t  limiter_value;
-	lv_color_t limiter_color;
-	bool     lights_enabled;
-	bool     background_enabled;
-	int32_t  background_value;
-	lv_color_t background_color;
-	char     signal_name[32];
-	int16_t  signal_index;
-} rpm_bar_data_t;
-
 /* ── Helper: look up rpm_bar_data_t ────────────────────────────────────── */
 static rpm_bar_data_t *_get_rpm_bar_data(void) {
 	widget_t **widgets = dashboard_get_widgets();
@@ -1349,12 +1334,12 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_max");
 	if (cJSON_IsNumber(item) && item->valueint > 0) {
 		rd->gauge_max = item->valueint;
-		rpm_gauge_max = rd->gauge_max; /* sync global for legacy code */
+		rpm_gauge_max = rd->gauge_max; /* sync global for config_modal */
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "redline");
 	if (cJSON_IsNumber(item) && item->valueint >= 0) {
 		rd->redline = item->valueint;
-		rpm_redline_value = rd->redline; /* sync global */
+		rpm_redline_value = rd->redline; /* sync global for config_modal */
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_color");
 	if (cJSON_IsNumber(item)) rd->bar_color.full = (uint32_t)item->valueint;
@@ -1416,6 +1401,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 
 	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;
+	w->slot = 0;
 	/* RPM bar occupies full screen width at top.
 	 * y = -240 + 55/2 = -213 in center-origin coords. */
 	w->x = 0;

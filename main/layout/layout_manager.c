@@ -206,9 +206,8 @@ esp_err_t layout_manager_init(void) {
 
 	/* ── Ensure default layout exists and is up-to-date ─────────────────
 	 * Read default.json's schema_version.  Regenerate if missing OR if
-	 * the version is older than DEFAULT_LAYOUT_SCHEMA_VERSION so that a
+	 * the version is older than LAYOUT_SCHEMA_VERSION so that a
 	 * firmware update automatically refreshes stale position data.      */
-#define DEFAULT_LAYOUT_SCHEMA_VERSION 2
 	bool need_regen = false;
 	char default_path[80];
 	snprintf(default_path, sizeof(default_path), "%s/default.json",
@@ -231,10 +230,10 @@ esp_err_t layout_manager_init(void) {
 				ver = sv->valueint;
 			cJSON_Delete(tmp);
 		}
-		if (ver < DEFAULT_LAYOUT_SCHEMA_VERSION) {
+		if (ver < LAYOUT_SCHEMA_VERSION) {
 			need_regen = true;
 			ESP_LOGI(TAG, "default.json schema v%d < v%d — regenerating", ver,
-					 DEFAULT_LAYOUT_SCHEMA_VERSION);
+					 LAYOUT_SCHEMA_VERSION);
 		}
 	}
 
@@ -515,7 +514,7 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	if (!root)
 		return NULL;
 
-	cJSON_AddNumberToObject(root, "schema_version", 7);
+	cJSON_AddNumberToObject(root, "schema_version", LAYOUT_SCHEMA_VERSION);
 	cJSON_AddStringToObject(root, "name", name);
 
 	/* Serialise registered signals */

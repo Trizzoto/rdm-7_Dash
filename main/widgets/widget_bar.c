@@ -24,27 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
-	char     label[32];
-	int32_t  bar_min;
-	int32_t  bar_max;
-	int32_t  bar_low;
-	int32_t  bar_high;
-	lv_color_t bar_low_color;
-	lv_color_t bar_high_color;
-	lv_color_t bar_in_range_color;
-	bool     show_bar_value;
-	bool     invert_bar_value;
-	bool     fuel_sender;
-	float    fuel_sender_empty_v;
-	float    fuel_sender_full_v;
-	uint8_t  fuel_sender_filter;
-	uint8_t  decimals;
-	char     signal_name[32];
-	int16_t  signal_index;
-} bar_data_t;
-
 /* ── Helpers: look up bar_data_t by slot or value_id ──────────────────────── */
 static bar_data_t *_get_bar_data_by_slot(uint8_t slot) {
 	if (slot >= 2) return NULL;
@@ -800,28 +779,133 @@ uint64_t *widget_bar_get_last_can_time(uint8_t bar_idx) {
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
-/* bar_create() creates both BAR1 and BAR2 together; slot 0 triggers creation.
- */
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
-	uint8_t bar_index = bd->slot;
-	if (is_stale) {
-		update_bar_ui_immediate(bar_index, 0, 0.0, 0);
-		return;
+
+	double final_value = is_stale ? 0.0 : (double)value;
+	int32_t bar_value = is_stale ? 0 : (int32_t)value;
+
+	/* Update this widget's own bar via per-instance pointer */
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+		lv_bar_set_value(bd->bar_obj, bar_value, LV_ANIM_OFF);
+		lv_color_t new_color;
+		if (final_value < bd->bar_low)
+			new_color = bd->bar_low_color;
+		else if (final_value > bd->bar_high)
+			new_color = bd->bar_high_color;
+		else
+			new_color = bd->bar_in_range_color;
+		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
+								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
-	int32_t bar_value = (int32_t)value;
-	update_bar_ui_immediate(bar_index, bar_value, (double)value, 0);
+
+	/* Update this widget's own value label */
+	if (bd->value_obj && lv_obj_is_valid(bd->value_obj) && bd->show_bar_value) {
+		char value_str[16];
+		if (is_stale) {
+			strcpy(value_str, "---");
+		} else if (bd->decimals == 0) {
+			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
+		} else {
+			snprintf(value_str, sizeof(value_str), "%.*f", bd->decimals, final_value);
+		}
+		lv_label_set_text(bd->value_obj, value_str);
+	}
+
+	/* Update menu bar preview if visible */
+	uint8_t bar_index = bd->slot;
+	if (bar_index < 2) {
+		lv_obj_t *menu_bar = menu_bar_objects[bar_index];
+		if (menu_bar && lv_obj_is_valid(menu_bar) && ui_MenuScreen &&
+			lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+			lv_bar_set_value(menu_bar, bar_value, LV_ANIM_OFF);
+			lv_color_t mc;
+			if (final_value < bd->bar_low) mc = bd->bar_low_color;
+			else if (final_value > bd->bar_high) mc = bd->bar_high_color;
+			else mc = bd->bar_in_range_color;
+			lv_obj_set_style_bg_color(menu_bar, mc,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		}
+	}
 }
 
+/* ── _bar_create: create a single bar per slot, positioned by layout ──────── */
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	uint8_t slot = bd ? bd->slot : 0;
-	if (slot == 0) {
-		widget_bar_create(parent);
+
+	int32_t b_min = bd ? bd->bar_min : 0;
+	int32_t b_max = bd ? bd->bar_max : 100;
+	if (b_max <= b_min) { b_min = 0; b_max = 100; }
+
+	/* Create the bar LVGL object */
+	lv_obj_t *bar = lv_bar_create(parent);
+	lv_bar_set_range(bar, b_min, b_max);
+	lv_bar_set_value(bar, b_min, LV_ANIM_OFF);
+	lv_obj_set_width(bar, w->w);
+	lv_obj_set_height(bar, w->h);
+	lv_obj_set_align(bar, LV_ALIGN_CENTER);
+	lv_obj_set_pos(bar, w->x, w->y);
+	lv_obj_set_style_radius(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, THEME_COLOR_PANEL,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(bar, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_color(bar, THEME_COLOR_PANEL,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(bar, 5, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, THEME_COLOR_GREEN_BRIGHT,
+							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+
+	/* Create the label above the bar */
+	lv_obj_t *lbl = lv_label_create(parent);
+	lv_obj_set_align(lbl, LV_ALIGN_CENTER);
+	lv_obj_set_pos(lbl, w->x, w->y - 28);
+	lv_label_set_text(lbl, (bd && bd->label[0]) ? bd->label : (slot == 0 ? "BAR1" : "BAR2"));
+	lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(lbl, THEME_FONT_DASH_LABEL,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Create the value label to the right of the bar */
+	lv_obj_t *val = lv_label_create(parent);
+	lv_obj_set_width(val, 80);
+	lv_obj_set_height(val, LV_SIZE_CONTENT);
+	lv_obj_set_align(val, LV_ALIGN_CENTER);
+	lv_obj_set_pos(val, w->x + (w->w / 2) + 50, w->y - 28);
+	lv_label_set_text(val, "---");
+	lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(val, THEME_FONT_BODY,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (!(bd && bd->show_bar_value))
+		lv_obj_add_flag(val, LV_OBJ_FLAG_HIDDEN);
+
+	/* Store per-instance pointers for signal callback */
+	if (bd) {
+		bd->bar_obj = bar;
+		bd->label_obj = lbl;
+		bd->value_obj = val;
 	}
-	w->root = (slot == 0) ? ui_Bar_1 : ui_Bar_2;
+
+	/* Assign to slot globals so existing code (RPM limiter, callbacks) works */
+	if (slot == 0) {
+		ui_Bar_1 = bar;
+		ui_Bar_1_Label = lbl;
+		ui_Bar_1_Value = val;
+	} else {
+		ui_Bar_2 = bar;
+		ui_Bar_2_Label = lbl;
+		ui_Bar_2_Value = val;
+	}
+
+	w->root = bar;
 
 	/* Subscribe to signal if bound */
 	if (bd && bd->signal_index >= 0)
@@ -871,7 +955,10 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (!cfg) return;
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "slot");
-	if (cJSON_IsNumber(item)) bd->slot = (uint8_t)item->valueint;
+	if (cJSON_IsNumber(item)) {
+		bd->slot = (uint8_t)item->valueint;
+		w->slot = bd->slot;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
 	if (cJSON_IsString(item) && item->valuestring)
 		strncpy(bd->label, item->valuestring, sizeof(bd->label) - 1);
@@ -940,6 +1027,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->signal_index = -1;
 
 	w->type = WIDGET_BAR;
+	w->slot = slot & 1;
 	w->x = s_bar_default_x[slot & 1];
 	w->y = 209;
 	w->w = 300;

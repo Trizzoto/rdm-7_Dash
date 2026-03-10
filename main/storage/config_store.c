@@ -1,5 +1,4 @@
 #include "config_store.h"
-#include "ui/screens/ui_Screen3.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
@@ -14,58 +13,6 @@ static const char *TAG = "config_store";
 #define NS_CAN      "can_config"
 #define NS_DIMMER   "dimmer_cfg"
 #define NS_ECU      "ecu_config"
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-esp_err_t config_store_init(void)
-{
-    return ESP_OK;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
- *  LEGACY STUBS — no-op, config now persisted via JSON layout.
- *  Kept only for compile-compatibility with widget files.
- * ═══════════════════════════════════════════════════════════════════════ */
-esp_err_t config_store_save_values(const value_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_save_values: no-op (use dashboard_persist_layout)");
-    return ESP_OK;
-}
-
-esp_err_t config_store_load_values(value_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_load_values: no-op (config loaded from JSON)");
-    return ESP_OK;
-}
-
-esp_err_t config_store_save_warnings(const warning_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_save_warnings: no-op (use dashboard_persist_layout)");
-    return ESP_OK;
-}
-
-esp_err_t config_store_load_warnings(warning_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_load_warnings: no-op (config loaded from JSON)");
-    return ESP_OK;
-}
-
-esp_err_t config_store_save_indicators(const indicator_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_save_indicators: no-op (use dashboard_persist_layout)");
-    return ESP_OK;
-}
-
-esp_err_t config_store_load_indicators(indicator_config_t *cfg, uint8_t count)
-{
-    (void)cfg; (void)count;
-    ESP_LOGI(TAG, "config_store_load_indicators: no-op (config loaded from JSON)");
-    return ESP_OK;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  DIMMER

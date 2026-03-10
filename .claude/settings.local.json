@@ -12,7 +12,8 @@
       "Bash(do echo \"=== $f ===\")",
       "Read(//c/Users/ruuva/workspace/RDM-7_Dash/**)",
       "Bash(done)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(node:*)"
     ]
   }
 }

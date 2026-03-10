@@ -50,88 +50,7 @@ extern lv_obj_t *brightness_bar;
 
 typedef enum { BIG_ENDIAN_ORDER = 0, LITTLE_ENDIAN_ORDER = 1 } endian_t;
 
-/*
- * Legacy config structs — kept for compatibility with config modal UI.
- * The canonical source of truth is now widget type_data + signal registry.
- * These will be removed in a future cleanup pass.
- */
-typedef struct {
-	bool enabled;
-	uint32_t can_id;
-	uint8_t endianess;
-	uint8_t bit_start;
-	uint8_t bit_length;
-	uint8_t decimals;
-	float value_offset;
-	float scale;
-	int32_t bar_min;
-	int32_t bar_max;
-	int32_t bar_low;
-	int32_t bar_high;
-	bool is_signed;
-	float warning_high_threshold;
-	float warning_low_threshold;
-	lv_color_t warning_high_color;
-	lv_color_t warning_low_color;
-	bool warning_high_enabled;
-	bool warning_low_enabled;
-	lv_color_t rpm_bar_color;
-	bool use_gps_for_speed;
-	bool use_mph;
-	uint8_t gear_detection_mode;
-	uint32_t gear_custom_values[14];
-	uint8_t custom_icon_types[7];
-	uint32_t custom_icon_values[7];
-	float tire_circumference_mm;
-	float final_drive_ratio;
-	float reverse_gear_ratio;
-	float gear_ratios[10];
-	uint8_t rpm_limiter_effect;
-	int32_t rpm_limiter_value;
-	lv_color_t rpm_limiter_color;
-	bool rpm_lights_enabled;
-	bool rpm_background_enabled;
-	int32_t rpm_background_value;
-	lv_color_t rpm_background_color;
-	lv_color_t bar_low_color;
-	lv_color_t bar_high_color;
-	lv_color_t bar_in_range_color;
-	bool show_bar_value;
-	bool invert_bar_value;
-	bool fuel_sender;
-	float fuel_sender_empty_v;
-	float fuel_sender_full_v;
-	uint8_t fuel_sender_filter;
-	char custom_text[32];
-} value_config_t;
-
-extern value_config_t values_config[13];
-
-typedef struct {
-	uint32_t can_id;
-	uint8_t bit_position;
-	uint8_t endianess;
-	lv_color_t active_color;
-	char label[32];
-	bool is_momentary;
-	bool current_state;
-	bool invert_toggle;
-} warning_config_t;
-
-typedef struct {
-	uint32_t can_id;
-	uint8_t bit_position;
-	bool is_momentary;
-	bool current_state;
-	bool animation_enabled;
-	uint8_t input_source;
-} indicator_config_t;
-
-extern warning_config_t warning_configs[8];
-extern indicator_config_t indicator_configs[2];
 extern uint8_t current_value_id;
-
-extern char label_texts[13][64];
 extern char value_offset_texts[13][64];
 extern char previous_values[13][64];
 extern bool reset_can_tracking;
@@ -198,7 +117,6 @@ void keyboard_ready_event_cb(lv_event_t *e);
 void screen3_touch_event_cb(lv_event_t *e);
 
 // Indicator config management functions
-void init_indicator_configs(void);
 void create_indicator_config_menu(uint8_t indicator_idx);
 void update_indicator_ui(void *param);
 /** Apply analog (wire) indicator state; only updates indicators with

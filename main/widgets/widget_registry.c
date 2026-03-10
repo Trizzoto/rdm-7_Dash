@@ -53,3 +53,13 @@ widget_t *widget_registry_find_by_id(const char *id) {
 	}
 	return NULL;
 }
+
+widget_t *widget_registry_find_by_type_and_slot(widget_type_t type, uint8_t slot) {
+	for (uint8_t i = 0; i < s_count; i++) {
+		if (!s_widgets[i] || s_widgets[i]->type != type)
+			continue;
+		if (s_widgets[i]->slot == slot)
+			return s_widgets[i];
+	}
+	return NULL;
+}

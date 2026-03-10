@@ -33,7 +33,6 @@ extern lv_obj_t *g_scale_input[];
 extern lv_obj_t *g_offset_input[];
 extern lv_obj_t *g_decimals_dropdown[];
 extern lv_obj_t *g_type_dropdown[];
-/* values_config[] and label_texts[] replaced by config_bridge API */
 extern lv_obj_t *keyboard;
 extern lv_obj_t *config_bars[];
 extern lv_obj_t *ui_MenuScreen;

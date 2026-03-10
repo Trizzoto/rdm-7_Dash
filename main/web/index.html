@@ -54,7 +54,7 @@
         /* Workspace Layout */
         .workspace {
             display: grid;
-            grid-template-columns: 200px 1fr 300px;
+            grid-template-columns: 280px 1fr 300px;
             grid-template-rows: 1fr;
             flex: 1;
             min-height: 0;
@@ -1130,12 +1130,16 @@
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" onclick="switchSidebarTab('palette')">Palette</button>
                 <button class="sidebar-tab" onclick="switchSidebarTab('layers')">Layers</button>
+                <button class="sidebar-tab" onclick="switchSidebarTab('signals')">Signals</button>
             </div>
             <div class="sidebar-tab-content active" id="tabPalette" style="overflow:hidden;">
                 <div id="paletteList" style="flex:1; overflow-y:auto; min-height:0;"></div>
             </div>
             <div class="sidebar-tab-content" id="tabLayers" style="overflow:hidden;">
                 <div id="layerTree" style="flex:1; overflow-y:auto; min-height:0;"></div>
+            </div>
+            <div class="sidebar-tab-content" id="tabSignals" style="overflow:hidden;">
+                <div id="sigList" style="flex:1; overflow-y:auto; min-height:0;"></div>
             </div>
             <div class="sidebar-header" style="border-top:1px solid var(--border);">Dashboard</div>
             <div class="inspector-group" style="flex-shrink:0;">
@@ -1171,19 +1175,11 @@
             </div>
         </main>
 
-        <!-- Right Sidebar: Properties / Signals -->
+        <!-- Right Sidebar: Properties -->
         <aside class="sidebar sidebar-right">
-            <div class="sidebar-tabs">
-                <button class="sidebar-tab active" onclick="switchRightTab('properties')">Properties</button>
-                <button class="sidebar-tab" onclick="switchRightTab('signals')">Signals</button>
-            </div>
-            <div class="sidebar-tab-content active" id="tabProperties" style="overflow:hidden;">
-                <div id="inspectorContent" class="inspector-group" style="flex:1; overflow-y:auto; min-height:0;">
-                    <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
-                </div>
-            </div>
-            <div class="sidebar-tab-content" id="tabSignals" style="overflow:hidden;">
-                <div id="sigList" style="flex:1; overflow-y:auto; min-height:0;"></div>
+            <div class="sidebar-header">Properties</div>
+            <div id="inspectorContent" class="inspector-group" style="flex:1; overflow-y:auto; min-height:0;">
+                <div style="text-align:center; color:#666; padding-top:40px;">Select a widget to edit</div>
             </div>
         </aside>
     </div>
@@ -1215,14 +1211,7 @@
                 c.classList.toggle('active', c.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
         }
 
-        function switchRightTab(tabName) {
-            const right = document.querySelector('.sidebar-right');
-            if (!right) return;
-            right.querySelectorAll('.sidebar-tab').forEach(t =>
-                t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
-            right.querySelectorAll('.sidebar-tab-content').forEach(c =>
-                c.classList.toggle('active', c.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
-        }
+        /* switchRightTab removed — signals tab moved to left sidebar */
 
         async function fetchPresets() {
             try {
@@ -1509,6 +1498,40 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
+        /* ── RGB565 ↔ RGB888 color conversion ──────────────────────────────
+         * Firmware stores colors as RGB565 (16-bit lv_color_t.full).
+         * Web editor works with RGB888. Convert on load and save.        */
+        function rgb565to888(val) {
+            val = Number(val) || 0;
+            if (val > 0xFFFF) return val;          /* already RGB888 */
+            const r5 = (val >> 11) & 0x1F;
+            const g6 = (val >> 5) & 0x3F;
+            const b5 = val & 0x1F;
+            return ((r5 << 3 | r5 >> 2) << 16) |
+                   ((g6 << 2 | g6 >> 4) << 8) |
+                    (b5 << 3 | b5 >> 2);
+        }
+        function rgb888to565(val) {
+            val = Number(val) || 0;
+            const r = (val >> 16) & 0xFF;
+            const g = (val >> 8) & 0xFF;
+            const b = val & 0xFF;
+            return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+        }
+        /** Walk all color-type fields in WIDGET_DEFS and apply convertFn to widget configs */
+        function convertWidgetColors(widgets, convertFn) {
+            (widgets || []).forEach(w => {
+                if (!w.config || !w.type) return;
+                const def = WIDGET_DEFS[w.type];
+                if (!def) return;
+                def.fields.forEach(f => {
+                    if (f.type === 'color' && w.config[f.name] !== undefined) {
+                        w.config[f.name] = convertFn(w.config[f.name]);
+                    }
+                });
+            });
+        }
+
         const WIDGET_DEFS = {
             "rpm_bar": {
                 icon: "RPM", defW: 800, defH: 55, fixedY: -213,
@@ -1555,10 +1578,12 @@
                 fields: [
                     { name: "label", label: "Header Label", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
-                    { name: "warning_high_threshold", label: "Warn High Threshold", type: "number", def: 0, cat: "alerts" },
-                    { name: "warning_high_color", label: "Warn High Color", type: "color", def: 0xFF0000, cat: "alerts" },
-                    { name: "warning_low_threshold", label: "Warn Low Threshold", type: "number", def: 0, cat: "alerts" },
-                    { name: "warning_low_color", label: "Warn Low Color", type: "color", def: 0x0000FF, cat: "alerts" }
+                    { name: "warning_high_enabled", label: "High Warning", type: "checkbox", def: false, cat: "alerts", group: "high" },
+                    { name: "warning_high_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
+                    { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
+                    { name: "warning_low_enabled", label: "Low Warning", type: "checkbox", def: false, cat: "alerts", group: "low" },
+                    { name: "warning_low_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
+                    { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" }
                 ]
             },
             "bar": {
@@ -1568,12 +1593,14 @@
                     { name: "bar_min", label: "Min Value", type: "number", def: 0, cat: "data" },
                     { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data" },
                     { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
+                    { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts" },
-                    { name: "bar_high", label: "High Threshold", type: "number", def: 0, cat: "alerts" },
-                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts" },
-                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts" },
-                    { name: "bar_in_range_color", label: "In-Range Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
+                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_high", label: "High Threshold", type: "number", def: 100, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
                     { name: "fuel_sender", label: "Fuel Sender Mode", type: "checkbox", def: false, cat: "data" },
                     { name: "fuel_sender_empty_v", label: "Fuel Empty (V)", type: "number", def: 0, cat: "data" },
                     { name: "fuel_sender_full_v", label: "Fuel Full (V)", type: "number", def: 5.0, cat: "data" },
@@ -1583,7 +1610,7 @@
             "indicator": {
                 icon: "IND", defW: 50, defH: 50,
                 fields: [
-                    { name: "side", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0, cat: "data" },
+                    { name: "slot", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0, cat: "data" },
                     { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0, cat: "data" },
                     { name: "animation", label: "Anim Enabled", type: "checkbox", def: true, cat: "appearance" },
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: false, cat: "appearance" }
@@ -1901,6 +1928,40 @@
             }
         }
 
+        /** Max slot count per widget type that uses slots. */
+        const SLOT_LIMITS = { panel: 8, bar: 2, indicator: 2, warning: 8 };
+
+        /** Find next available slot for a widget type, or -1 if all taken. */
+        function nextAvailableSlot(type) {
+            const max = SLOT_LIMITS[type];
+            if (!max) return -1;
+            const used = new Set(
+                (currentLayout.widgets || [])
+                    .filter(w => w.type === type && w.config && w.config.slot !== undefined)
+                    .map(w => w.config.slot)
+            );
+            for (let i = 0; i < max; i++) {
+                if (!used.has(i)) return i;
+            }
+            return -1;
+        }
+
+        /** Assign a unique slot to a widget if its type uses slots. */
+        function assignSlot(w) {
+            if (!SLOT_LIMITS[w.type]) return;
+            if (!w.config) w.config = {};
+            const slot = nextAvailableSlot(w.type);
+            if (slot >= 0) w.config.slot = slot;
+        }
+
+        /** Strip signal binding from a cloned widget so it starts unbound,
+         *  and assign a fresh unique slot. */
+        function sanitizeClone(clone) {
+            delete clone.signal;
+            if (clone.config) delete clone.config.signal_name;
+            assignSlot(clone);
+        }
+
         function duplicateWidget() {
             if (selectedIndex === -1) return;
             pushHistory();
@@ -1909,6 +1970,7 @@
             clone.id = `w_${Date.now()}`;
             clone.x += 20; // Offset slightly so it's visible
             clone.y += 20;
+            sanitizeClone(clone);
             currentLayout.widgets.push(clone);
             selectedIndex = currentLayout.widgets.length - 1;
             renderEditor();
@@ -1947,6 +2009,7 @@
             clone.id = `${clone.type}_${Date.now().toString().slice(-4)}`;
             clone.x += 20;
             clone.y += 20;
+            sanitizeClone(clone);
             // update clipboard coordinates for consecutive pasting
             clipboardWidget.x += 20;
             clipboardWidget.y += 20;
@@ -2015,6 +2078,7 @@
                 pushHistory();
                 const clone = JSON.parse(JSON.stringify(currentLayout.widgets[index]));
                 clone.id = `w_${Date.now().toString().slice(-4)}`;
+                sanitizeClone(clone);
                 // Give it a tiny visual offset so it doesn't snap perfectly to the same coordinates immediately
                 currentLayout.widgets.push(clone);
                 selectedIndex = currentLayout.widgets.length - 1;
@@ -2226,7 +2290,20 @@
                 } else {
                     delete w.config.signal_name;
                 }
+                /* Bar: if alerts disabled, set thresholds to min/max so they never trigger */
+                if (w.type === 'bar' && !w.config.bar_alerts_enabled) {
+                    const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                    const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                    w.config.bar_low = mn;
+                    w.config.bar_high = mx;
+                    w.config.bar_low_color = 0x0000FF;
+                    w.config.bar_high_color = 0xFF0000;
+                }
+                /* Clean up web-editor-only fields */
+                delete w.config.bar_alerts_enabled;
             });
+            /* Convert RGB888 → RGB565 for firmware */
+            convertWidgetColors(payload.widgets, rgb888to565);
             return payload;
         }
 
@@ -2256,7 +2333,7 @@
             } else if (f.type === 'checkbox') {
                 html += `<input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" style="width:auto; height:auto; margin-top:4px;" ${disabledAttr}>`;
             } else if (f.type === 'color') {
-                const colorHex = Number(val || 0).toString(16).toUpperCase().padStart(6, '0');
+                const colorHex = Number(val != null ? val : 0).toString(16).toUpperCase().padStart(6, '0');
                 html += `<div class="color-field-wrap">
                     <input type="color" value="#${colorHex}"
                            oninput="document.getElementById('clr_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', parseInt('0x' + this.value.substring(1).toUpperCase()), false)"
@@ -2377,12 +2454,18 @@
                 html += `</div></details>`;
             }
 
-            /* ── Alerts Accordion (closed by default) ── */
+            /* ── Alerts Accordion (closed by default, with enable toggles) ── */
             const alertFields = def.fields.filter(f => f.cat === 'alerts');
             if (alertFields.length) {
-                html += `<details class="inspector-accordion"><summary>Alerts</summary><div class="accordion-body">`;
+                const anyEnabled = alertFields.some(f => f.type === 'checkbox' && !f.enabledBy && w.config[f.name]);
+                html += `<details class="inspector-accordion"${anyEnabled ? ' open' : ''}><summary>Alerts</summary><div class="accordion-body">`;
                 alertFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                    if (f.enabledBy) {
+                        /* Sub-field: only show when its parent toggle is on */
+                        const parentVal = w.config[f.enabledBy] !== undefined ? w.config[f.enabledBy] : false;
+                        if (!parentVal) return;
+                    }
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
                 html += `</div></details>`;
@@ -2402,7 +2485,7 @@
                     if (!w.config) w.config = {};
                     const cur = (w.config.label || '').trim();
                     /* Only auto-fill if label is empty or a generic default */
-                    if (!cur || /^(BAR[12]|Panel|Warning|)$/i.test(cur)) {
+                    if (!cur || /^(BAR[12]?|Panel\s*\d*|Warning\s*\d*|)$/i.test(cur)) {
                         /* Convert SIGNAL_NAME to readable: replace _ with space, title-case */
                         w.config.label = sigName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     }
@@ -2464,6 +2547,13 @@
             }
 
             w.config[field] = finalVal;
+
+            /* If this field is a toggle that controls sub-fields, re-render inspector */
+            if (fieldDef && fieldDef.type === 'checkbox' && !fieldDef.enabledBy) {
+                const hasChildren = def.fields.some(f => f.enabledBy === field);
+                if (hasChildren) updateInspector();
+            }
+
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
@@ -2496,6 +2586,7 @@
                 config: config
             };
             if (def.fixedY !== undefined) newWidget.locked = true;
+            assignSlot(newWidget);
             currentLayout.widgets.push(newWidget);
             selectedIndex = currentLayout.widgets.length - 1;
             renderEditor();
@@ -2667,7 +2758,7 @@
         }
 
         function navigateToSignalEdit(sigIdx) {
-            switchRightTab('signals');
+            switchSidebarTab('signals');
             expandedSignalIdx = sigIdx;
             renderSignals();
             setTimeout(() => {
@@ -2868,12 +2959,22 @@
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
                 if (!currentLayout.signals) currentLayout.signals = [];
-                /* Bridge firmware→web: config.signal_name → w.signal */
+                /* Bridge firmware→web */
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
                     }
+                    /* Infer bar_alerts_enabled from thresholds */
+                    if (w.type === 'bar' && w.config) {
+                        const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
+                        const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
+                        const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                        const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                        w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                    }
                 });
+                /* Convert firmware RGB565 colors → RGB888 for editor */
+                convertWidgetColors(currentLayout.widgets, rgb565to888);
                 selectedIndex = -1;
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
@@ -2977,7 +3078,16 @@
                         if (w.config && w.config.signal_name && !w.signal) {
                             w.signal = w.config.signal_name;
                         }
+                        if (w.type === 'bar' && w.config) {
+                            const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
+                            const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
+                            const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                            const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                            w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                        }
                     });
+                    /* Convert firmware RGB565 colors → RGB888 for editor */
+                    convertWidgetColors(currentLayout.widgets, rgb565to888);
                     selectedIndex = -1;
                     history = [JSON.stringify(currentLayout)];
                     historyIndex = 0;

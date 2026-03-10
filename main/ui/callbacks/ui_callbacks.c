@@ -21,7 +21,6 @@ extern lv_obj_t * g_offset_input[];
 extern lv_obj_t * g_decimals_dropdown[];
 extern lv_obj_t * g_type_dropdown[];
 
-/* values_config[] and label_texts[] replaced by config_bridge API */
 extern lv_obj_t* ui_MenuScreen;
 extern lv_obj_t* keyboard;
 
@@ -45,9 +44,6 @@ extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 #define GEAR_VALUE_ID  11
 #define BAR1_VALUE_ID  12
 #define BAR2_VALUE_ID  13
-
-// Legacy debug helper (was in widget_dispatcher.c, now removed)
-static inline void print_value_config(uint8_t value_id) { (void)value_id; }
 
 // Placeholder functions - you will move the actual implementations here
 void label_input_event_cb(lv_event_t * e) {
@@ -120,7 +116,6 @@ void bit_start_roller_event_cb(lv_event_t * e) {
         config_bridge_set_bit_start(value_id, selected_bit_start);
 
         printf("Updated Bit Start for Value #%d to %d\n", value_id, selected_bit_start);
-        print_value_config(value_id);
     }
 }
 
@@ -137,7 +132,6 @@ void bit_length_roller_event_cb(lv_event_t * e) {
         config_bridge_set_bit_length(value_id, selected_bit_length);
 
         printf("Updated Bit Length for Value #%d to %d\n", value_id, selected_bit_length);
-        print_value_config(value_id);
     }
 }
 
@@ -154,7 +148,6 @@ void decimal_dropdown_event_cb(lv_event_t * e) {
     config_bridge_set_decimals(value_id, selected);
 
     printf("Updated Decimals for Value #%d to %d\n", value_id, selected);
-    print_value_config(value_id);
 }
 
 // Text Input Dialog Event Handlers
@@ -620,7 +613,6 @@ void endianess_roller_event_cb(lv_event_t * e) {
         printf("Updated Endianess for Value #%d to %s\n",
                value_id,
                (selected == 0) ? "Big Endian" : "Little Endian");
-        print_value_config(value_id);
     }
 }
 
@@ -640,7 +632,6 @@ void value_offset_input_event_cb(lv_event_t * e) {
         config_bridge_set_offset(value_id, entered_offset);
 
         printf("Updated Value Offset for Value #%d to %f\n", value_id, entered_offset);
-        print_value_config(value_id);
     }
 }
 
@@ -677,7 +668,6 @@ void can_id_input_event_cb(lv_event_t * e) {
 
         printf("Updated CAN ID for Value #%d to 0x%X (decimal: %u)\n",
                value_id, entered_can_id, entered_can_id);
-        print_value_config(value_id);
     }
 }
 
@@ -696,7 +686,6 @@ void scale_input_event_cb(lv_event_t * e) {
         }
         config_bridge_set_scale(value_id, entered_scale);
         printf("Updated Scale for Value #%d to %f\n", value_id, entered_scale);
-        print_value_config(value_id);
     }
 }
 
@@ -711,7 +700,6 @@ void type_dropdown_event_cb(lv_event_t * e) {
 
         printf("Updated Type for Value #%d to %s\n", value_id,
                config_bridge_get_is_signed(value_id) ? "Signed" : "Unsigned");
-        print_value_config(value_id);
     }
 }
 

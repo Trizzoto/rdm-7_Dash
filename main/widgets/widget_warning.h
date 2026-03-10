@@ -7,13 +7,23 @@
 extern "C" {
 #endif
 
+/* ── Per-instance state for warning widgets ────────────────────────────── */
+typedef struct {
+	uint8_t    slot;
+	lv_color_t active_color;
+	char       label[32];
+	bool       is_momentary;
+	bool       invert_toggle;
+	bool       current_state;     /* runtime only -- NOT serialized */
+	char       signal_name[32];
+	int16_t    signal_index;
+} warning_data_t;
+
 /* --- Objects exposed externally ------------------------------------------*/
 /* warning_circles and warning_labels are file-scope statics in
    widget_warning.c; access is via update functions below. */
 
 /* --- API ------------------------------------------------------------------*/
-/** Initialise warning_configs[] to safe defaults. Call before NVS load. */
-void init_warning_configs(void);
 
 /** Create all 8 warning circles, labels and transparent touch zones on parent.
  */

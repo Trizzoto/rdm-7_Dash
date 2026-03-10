@@ -2,9 +2,20 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Per-instance state for speed widget ───────────────────────────────── */
+typedef struct {
+	bool     use_mph;
+	uint8_t  decimals;
+	char     signal_name[32];
+	int16_t  signal_index;
+	lv_obj_t *speed_label;
+	lv_obj_t *units_label;
+} speed_data_t;
 
 /** Create speed value label and KMH/MPH units label on parent. */
 void widget_speed_create(lv_obj_t *parent);

@@ -18,13 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-	uint8_t  value_idx;
-	uint8_t  decimals;
-	char     signal_name[32];
-	int16_t  signal_index;
-} text_data_t;
-
 static const char *TAG = "widget_text";
 
 #define TEXT_DEFAULT_W 100
@@ -140,6 +133,7 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	td->signal_index = -1;
 
 	w->type = WIDGET_TEXT;
+	w->slot = td->value_idx;
 	w->x = 0;
 	w->y = 0;
 	w->w = TEXT_DEFAULT_W;
