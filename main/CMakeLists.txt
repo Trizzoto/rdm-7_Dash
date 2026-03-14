@@ -39,6 +39,7 @@ idf_component_register(
         "widgets/widget_meter.c"
         "widgets/widget_rpm_bar.c"
         "widgets/widget_registry.c"
+        "widgets/widget_image.c"
         "widgets/widget_types.c"
         "widgets/signal.c"
         "layout/layout_manager.c"

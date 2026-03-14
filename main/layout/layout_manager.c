@@ -10,6 +10,7 @@
 #include "widget_rpm_bar.h"
 #include "widget_text.h"
 #include "widget_types.h"
+#include "widget_image.h"
 #include "widget_warning.h"
 
 #include "signal.h"
@@ -93,6 +94,8 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_TEXT;
 	if (strcmp(s, "meter") == 0)
 		return WIDGET_METER;
+	if (strcmp(s, "image") == 0)
+		return WIDGET_IMAGE;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -136,6 +139,9 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_METER:
 		w = widget_meter_create_instance(slot);
+		break;
+	case WIDGET_IMAGE:
+		w = widget_image_create_instance(slot);
 		break;
 	default:
 		return NULL;

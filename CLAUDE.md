@@ -10,7 +10,8 @@ RDM-7 Dash is an **ESP32-S3 automotive dashboard** built with **ESP-IDF** and **
 It renders a configurable widget-based dashboard on an 800×480 RGB LCD, driven by real-time
 CAN bus data via a **signal-based publish-subscribe system**. Layouts (widgets + signals)
 are stored as JSON on a LittleFS partition and can be edited via the touchscreen config modal
-or a built-in web UI served over WiFi.
+or a built-in web UI served over WiFi. Custom images can be uploaded from the web editor
+and rendered on the dashboard via the Image widget.
 
 **Target hardware:** ESP32-S3 (dual-core Xtensa LX7), 8 MB PSRAM, 8 MB flash, GT911 touch.
 
@@ -32,6 +33,7 @@ or a built-in web UI served over WiFi.
 - Include paths are set in `main/CMakeLists.txt` INCLUDE_DIRS
 - `web/index.html` is embedded via `EMBED_TXTFILES` (accessible as `index_html_start/end` symbols)
 - Compile flag: `-Wno-format` set at project level
+- **`-Werror=comment` is active** — avoid `/*` inside block comments
 
 ---
 
@@ -46,7 +48,7 @@ or a built-in web UI served over WiFi.
 | phy_init   | data   | 0x2F000    | 0x1000     | WiFi PHY calibration       |
 | ota_0      | app    | 0x30000    | 0x290000   | OTA app slot 0 (2.56 MB)  |
 | ota_1      | app    | —          | 0x290000   | OTA app slot 1 (2.56 MB)  |
-| littlefs   | data   | 0x550000   | 0x2B0000   | LittleFS (layouts, web)    |
+| littlefs   | data   | 0x550000   | 0x2B0000   | LittleFS (layouts, images) |
 
 ### Task Model (FreeRTOS)
 
@@ -81,17 +83,16 @@ main/
 │   └── can_decode.c/h              # Pure stateless bit extraction (host-testable)
 │
 ├── widgets/                        # Widget system
-│   ├── widget_types.c/h            # Core widget_t struct, vtable, size constraints
+│   ├── widget_types.c/h            # Core widget_t struct, vtable, size constraints, font resolver
 │   ├── widget_registry.c/h         # Central widget instance tracking (max 32)
-│   ├── widget_panel.c/h            # Data display boxes (8 slots)
-│   ├── widget_rpm_bar.c/h          # RPM gauge with redline zone
-│   ├── widget_speed.c/h            # Speed readout
-│   ├── widget_gear.c/h             # Gear indicator with ratio calc
-│   ├── widget_bar.c/h              # Horizontal bar graphs (2 slots)
+│   ├── widget_panel.c/h            # Data display boxes (8 slots, customizable appearance)
+│   ├── widget_rpm_bar.c/h          # RPM gauge with redline zone (singleton)
+│   ├── widget_bar.c/h              # Horizontal bar graphs (2 slots, customizable appearance)
 │   ├── widget_indicator.c/h        # Turn indicators (2 slots: left, right)
-│   ├── widget_warning.c/h          # Warning lights (8 slots)
+│   ├── widget_warning.c/h          # Warning lights (8 slots, customizable appearance)
 │   ├── widget_text.c/h             # Generic text value display
-│   ├── widget_meter.c/h            # Analog dial meter
+│   ├── widget_meter.c/h            # Analog dial meter (customizable ticks, needle, arc zones)
+│   ├── widget_image.c/h            # Image display from LittleFS (RDMIMG format)
 │   └── signal.c/h                  # Signal registry — pub/sub CAN decode layer
 │
 ├── layout/                         # Layout persistence
@@ -135,16 +136,15 @@ main/
 │   │   ├── menu_screen.c/h         # Main config menu overlay
 │   │   ├── config_modal.c/h        # CAN config modal dialog (3 tabs: Signal, Display, Alerts)
 │   │   └── gear_config.c/h         # Gear ratio configuration
-│   ├── fonts/                      # LVGL font C files (Fugaz, Manrope, Bahn, RPM)
+│   ├── fonts/                      # LVGL font C files (Fugaz, Manrope)
 │   └── images/                     # LVGL image C files
 │
 ├── net/                            # Network
-│   ├── web_server.c/h              # HTTP server on port 80
+│   ├── web_server.c/h              # HTTP server on port 80 (layout + image APIs)
 │   ├── ota_handler.c/h             # OTA firmware updates
 │   └── ota_update_dialog.c/h       # OTA progress UI
 │
 ├── web/
-│   ├── CMakeLists.txt              # Web component build
 │   └── index.html                  # Embedded main web UI (via EMBED_TXTFILES)
 │
 ├── storage/
@@ -193,14 +193,13 @@ via `devToWeb()`/`webToDev()` using `ORIGIN_X=400, ORIGIN_Y=240`.
 ```c
 typedef enum {
     WIDGET_PANEL     = 0,   // Data display boxes (max 8)
-    WIDGET_RPM_BAR   = 1,   // RPM gauge with redline
-    WIDGET_SPEED     = 2,   // Speed readout
-    WIDGET_GEAR      = 3,   // Gear indicator
-    WIDGET_BAR       = 4,   // Horizontal bar (max 2: BAR1, BAR2)
-    WIDGET_INDICATOR = 5,   // Turn indicators (max 2: left, right)
-    WIDGET_WARNING   = 6,   // Warning lights (max 8)
-    WIDGET_TEXT      = 7,   // Text value (any value slot)
-    WIDGET_METER     = 8,   // Analog dial meter
+    WIDGET_RPM_BAR   = 1,   // RPM gauge with redline (singleton)
+    WIDGET_BAR       = 2,   // Horizontal bar (max 2: BAR1, BAR2)
+    WIDGET_INDICATOR = 3,   // Turn indicators (max 2: left, right)
+    WIDGET_WARNING   = 4,   // Warning lights (max 8)
+    WIDGET_TEXT      = 5,   // Text value (any value slot)
+    WIDGET_METER     = 6,   // Analog dial meter
+    WIDGET_IMAGE     = 7,   // Image from LittleFS
     WIDGET_TYPE_COUNT
 } widget_type_t;
 ```
@@ -210,7 +209,7 @@ typedef enum {
 1. **Factory** (`widget_X_create_instance(slot)`) — allocates `widget_t`, sets vtable, allocates `type_data`, registers in registry
 2. **from_json()** — deserializes x/y/w/h and type-specific config from JSON; resolves signal name→index; does NOT create LVGL objects
 3. **create()** — builds LVGL object tree on parent; sets styles, callbacks; subscribes to signals after `w->root` is set
-4. **to_json()** — serializes widget state back to JSON
+4. **to_json()** — serializes widget state back to JSON (defaults-only: skips fields matching factory defaults)
 5. **destroy()** — frees `type_data` and `widget_t` (LVGL objects freed by parent deletion)
 
 Widget updates are **push-based** via signal callbacks (no polling/update vtable function).
@@ -243,13 +242,85 @@ struct widget_t {
 |------------|-----------|------------|
 | Panel      | 80×40     | 250×130    |
 | RPM Bar    | 300×30    | 800×80     |
-| Speed      | 60×30     | 200×80     |
-| Gear       | 50×50     | 130×130    |
 | Bar        | 120×15    | 450×50     |
 | Indicator  | 30×30     | 80×80      |
 | Warning    | 18×18     | 60×60      |
 | Text       | 40×20     | 400×100    |
-| Meter      | 80×80     | 200×200    |
+| Meter      | 80×80     | 800×800    |
+| Image      | 10×10     | 800×480    |
+
+### Widget Appearance Customization
+
+Widgets with per-instance LVGL style overrides use a **defaults-only serialization** pattern:
+- `to_json()` only writes fields that differ from factory defaults (conserves 16 KB JSON budget)
+- `from_json()` reads-if-present, else keeps factory defaults (v8 layouts load cleanly in v9)
+- `create()` applies per-instance styles via `lv_obj_set_style_*()` calls (not shared style objects)
+
+**Panel** appearance fields: `border_radius` (7), `border_width` (3), `border_color`, `bg_color`,
+`bg_opa` (255), `label_color`, `value_color`, `label_y_offset` (-28), `value_y_offset` (9)
+
+**Bar** appearance fields: `bar_bg_color`, `bar_radius` (5), `bar_border_width` (2),
+`bar_border_color`, `indicator_radius` (5), `label_color`, `value_color`
+
+**Warning** appearance fields: `inactive_color`, `border_width` (0), `border_color`,
+`radius` (100=circle), `show_label` (true), `label_color`
+*(Note: JSON key for warning border color is `"border_color_style"` to avoid collision)*
+
+**Meter** appearance fields: tick config (count, width, length, colors for major/minor),
+needle (width, color, r_mod), value/ID label (show, x/y offset, color), background (color, opa),
+3 arc color zones (enabled, start, end, color for green/yellow/red)
+
+### Font Resolution
+
+`widget_resolve_font(name)` in `widget_types.c` maps JSON font name strings to `lv_font_t*`:
+- Montserrat system fonts: `"montserrat_8"` through `"montserrat_24"`
+- Custom fonts: `"fugaz_14"`, `"fugaz_17"`, `"fugaz_28"`, `"fugaz_56"`, `"manrope_35_bold"`, `"manrope_54_bold"`
+
+---
+
+## Image System
+
+### RDMIMG Binary Format
+
+Custom binary format stored at `/lfs/images/<name>.rdmimg`:
+
+```c
+typedef struct __attribute__((packed)) {
+    uint8_t  magic[4];    // "RDMI"
+    uint16_t width;       // little-endian
+    uint16_t height;      // little-endian
+    uint8_t  cf;          // LV_IMG_CF_TRUE_COLOR_ALPHA = 5
+    uint8_t  reserved[3];
+} rdm_image_header_t;
+// Followed by width * height * 3 bytes (RGB565 + alpha)
+```
+
+- RGB565 + alpha = 3 bytes/pixel. 100×100 image ≈ 30 KB, 200×200 ≈ 120 KB
+- Max file size: 200 KB (`IMAGE_MAX_SIZE` in web_server.c)
+- Pixel data stored in PSRAM at runtime via `lv_img_dsc_t`
+
+### Browser-Side Image Conversion
+
+The web editor converts PNG/JPG to RDMIMG client-side:
+1. User picks image file → resize dialog with width/height controls and aspect ratio lock
+2. Image drawn to `<canvas>` at target dimensions → `getImageData()` for RGBA8888 pixels
+3. JavaScript converts RGBA8888 → RGB565 + alpha, prepends RDMIMG header
+4. Binary POSTed to `/api/image/upload?name=<name>`
+
+### Image Widget (`widget_image.c/h`)
+
+```c
+typedef struct {
+    char          image_name[32];   // Filename (without .rdmimg extension)
+    uint8_t       opacity;          // 0-255, default: 255
+    lv_img_dsc_t *img_dsc;          // Runtime: PSRAM-loaded descriptor
+    lv_obj_t     *img_obj;          // Runtime: LVGL image object
+} image_data_t;
+```
+
+- `create()`: Reads RDMIMG from `/lfs/images/`, validates magic, allocates PSRAM pixel buffer,
+  creates `lv_img_dsc_t` with `LV_IMG_CF_TRUE_COLOR_ALPHA`, shows placeholder if not found
+- `destroy()`: Frees PSRAM pixel data + descriptor
 
 ---
 
@@ -316,7 +387,7 @@ typedef struct {
     uint8_t  bit_start, bit_length;
     float    scale, offset;
     bool     is_signed;
-    uint8_t  endian;
+    uint8_t  endian;           // 0 = Motorola (big-endian), 1 = Intel (little-endian)
     float    current_value;
     bool     is_stale;
     uint64_t last_update_ms;
@@ -366,14 +437,15 @@ with `is_stale=true` so widgets can show fallback displays.
 
 ### What's Stored Where
 
-| Data                  | Storage          | Mechanism                              |
-|-----------------------|------------------|----------------------------------------|
-| Widget layout + signals | LittleFS JSON  | `layout_manager_save/load()` at `/lfs/layouts/` |
-| Active layout name    | NVS              | `rdm_settings_set/get_active_layout()` |
-| Brightness/dimmer     | NVS              | `config_store_save/load_dimmer()`      |
-| WiFi credentials      | NVS              | `config_store_save/load_wifi()`        |
-| CAN bitrate           | NVS              | `config_store_save/load_bitrate()`     |
-| ECU preset selection  | NVS              | `config_store_save/load_ecu_preset()`  |
+| Data                    | Storage          | Mechanism                              |
+|-------------------------|------------------|----------------------------------------|
+| Widget layout + signals | LittleFS JSON    | `layout_manager_save/load()` at `/lfs/layouts/` |
+| Uploaded images         | LittleFS binary  | `/lfs/images/<name>.rdmimg`            |
+| Active layout name      | NVS              | `rdm_settings_set/get_active_layout()` |
+| Brightness/dimmer       | NVS              | `config_store_save/load_dimmer()`      |
+| WiFi credentials        | NVS              | `config_store_save/load_wifi()`        |
+| CAN bitrate             | NVS              | `config_store_save/load_bitrate()`     |
+| ECU preset selection    | NVS              | `config_store_save/load_ecu_preset()`  |
 
 **All CAN signal config (IDs, bit fields, scale, offset) is stored in the layout JSON** —
 not in NVS. When a user edits a signal via the config modal or web UI, the change is
@@ -381,18 +453,16 @@ persisted by saving the entire layout JSON to LittleFS.
 
 ### Config Bridge (`config_bridge.c/h`)
 
-The config bridge maps **value_id** (1–13) to the corresponding widget's `type_data`
+The config bridge maps **value_id** (1–11) to the corresponding widget's `type_data`
 and signal registry entry. This is the **sole interface** used by the touchscreen config
 modal to read/write widget and signal settings.
 
 **Value ID mapping:**
-| Value ID | Widget Type  | Slot |
-|----------|-------------|------|
-| 1–8      | Panel       | 0–7  |
-| 9        | RPM Bar     | 0    |
-| 10       | Speed       | 0    |
-| 11       | Gear        | 0    |
-| 12–13    | Bar         | 0–1  |
+| Value ID | Widget Type    | Slot |
+|----------|---------------|------|
+| 1–8      | WIDGET_PANEL  | 0–7  |
+| 9        | WIDGET_RPM_BAR| —    |
+| 10–11    | WIDGET_BAR    | 0–1  |
 
 **Key functions:**
 - `config_bridge_get_widget(value_id)` — find widget_t by value_id
@@ -401,7 +471,7 @@ modal to read/write widget and signal settings.
 - Display accessors: `get/set_label()`, `get/set_decimals()`, `get/set_custom_text()`
 - Bar-specific: `get/set_bar_min/max/low/high()`, fuel sender accessors
 - RPM-specific: `get_rpm_bar_color()`, `get_rpm_limiter_*()`, `get_rpm_background_*()`
-- Gear-specific: `get_gear_detection_mode()`, `get_tire_circumference()`, ratio/custom value accessors
+- Panel alert: `get/set_warning_high/low_threshold/color/enabled()`
 
 **Note:** Config bridge includes widget headers directly and casts `type_data` to the real
 `type_data` structs (e.g., `panel_data_t`, `bar_data_t`). No mirror structs — changes to
@@ -423,9 +493,11 @@ User taps widget → config_modal_open(screen, value_id)
 
 ```
 Web editor loads → GET /api/layout/current (live in-memory state)
+  → rgb565to888() converts all color fields for browser display
   → maps config.signal_name → w.signal for web editor display
   → User edits widgets + signals in browser
   → buildFirmwarePayload() maps w.signal → config.signal_name
+  → rgb888to565() converts colors back for firmware
   → POST /api/layout/save → layout_manager_save_raw()
   → lv_async_call() defers screen reload to LVGL task
   → ui_Screen3_screen_init() → dashboard_init() → full re-creation
@@ -438,11 +510,11 @@ Shows warning if local edits are pending when device state changes.
 
 ## Layout JSON Schema
 
-### Current Schema (v8 — `LAYOUT_SCHEMA_VERSION` in `layout_manager.h`)
+### Current Schema (v9 — `LAYOUT_SCHEMA_VERSION` in `layout_manager.h`)
 
 ```json
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "name": "layout_name",
   "ecu": "MaxxECU",
   "ecu_version": "v1.3",
@@ -456,7 +528,9 @@ Shows warning if local edits are pending when device state changes.
         "slot": 0,
         "signal_name": "OilPressure",
         "label": "OIL",
-        "decimals": 1
+        "decimals": 1,
+        "border_radius": 10,
+        "bg_color": 1234
       }
     }
   ],
@@ -472,33 +546,44 @@ Shows warning if local edits are pending when device state changes.
 }
 ```
 
+**Defaults-only serialization:** Config fields matching factory defaults are omitted from
+JSON to conserve the 16 KB file size budget. `from_json()` reads-if-present, keeping
+defaults otherwise. This ensures forward compatibility — v8 layouts load cleanly in v9.
+
 ### Widget Config Fields by Type
 
-- **panel**: `slot` (0–7), `signal_name`, `label`, `custom_text`, `decimals`, warning thresholds/colors
-- **rpm_bar**: `signal_name`, `gauge_max`, `redline`, `bar_color`, limiter settings, background settings
-- **speed**: `signal_name`, `use_mph`, `decimals`
-- **gear**: `signal_name`, `detection_mode`, gear ratios, tire circumference, final drive, custom values
-- **bar**: `slot` (0–1), `signal_name`, `min`, `max`, `low`, `high`, colors, `decimals`, fuel sender settings
-- **indicator**: `slot` (0–1), `can_id`, `bit_position` (direct CAN, not signal-based)
-- **warning**: `slot` (0–7), `can_id`, `bit_position`, `active_color`, `label`, `is_momentary`, `invert_toggle`
-- **text**: `value_idx`, `signal_name`, `decimals`
-- **meter**: `slot`, `signal_name`, `min`, `max`, `start_angle`, `end_angle`
+- **panel**: `slot` (0–7), `signal_name`, `label`, `custom_text`, `decimals`, warning thresholds/colors, label/value font, appearance overrides (border, bg, label/value color, y-offsets)
+- **rpm_bar**: `signal_name`, `gauge_max`, `redline`, `bar_color`, limiter settings (effect/value/color), lights, background settings
+- **bar**: `slot` (0–1), `signal_name`, `label`, `min`, `max`, `low`, `high`, colors, `decimals`, fuel sender settings, appearance overrides (bar bg/radius/border, indicator radius, label/value color)
+- **indicator**: `slot` (0–1), `input_source` (wire/CAN), `signal_name`, `animation_enabled`, `is_momentary`
+- **warning**: `slot` (0–7), `signal_name`, `active_color`, `label`, `is_momentary`, `invert_toggle`, appearance overrides (inactive color, border, radius, show_label, label_color)
+- **text**: `value_idx`, `signal_name`, `decimals`, `static_text`, `font`
+- **meter**: `value_idx`, `signal_name`, `min`, `max`, `start_angle`, `end_angle`, tick config (minor/major count/width/length/color), needle (width/color/r_mod), value/ID label (show/offset/color), background (color/opa), 3 arc color zones (enabled/start/end/color)
+- **image**: `image_name`, `opacity` (0–255)
 
 ---
 
 ## Web Server Endpoints
 
-| Method | Path                    | Purpose                                 |
-|--------|-------------------------|-----------------------------------------|
-| GET    | `/`                     | Embedded `index.html` (main web UI)     |
-| GET    | `/screenshot`           | Display framebuffer capture              |
-| GET    | `/api/layout/current`   | Live in-memory layout JSON              |
-| GET    | `/api/layout/raw`       | Raw layout JSON file by name            |
-| POST   | `/api/layout/save`      | Save layout JSON (optional `apply=0`)   |
-| POST   | `/api/layout/preview`   | Preview layout without saving            |
-| GET    | `/api/layout/list`      | List saved layouts                       |
-| POST   | `/api/layout/set`       | Set active layout by name                |
-| GET    | `/api/presets`          | List available preset layouts            |
+| Method | Path                    | Purpose                                    |
+|--------|-------------------------|--------------------------------------------|
+| GET    | `/`                     | Embedded `index.html` (main web UI)        |
+| GET    | `/screenshot`           | Display framebuffer capture                |
+| GET    | `/api/layout/current`   | Live in-memory layout JSON                 |
+| GET    | `/api/layout/raw`       | Raw layout JSON file by name               |
+| POST   | `/api/layout/save`      | Save layout JSON (optional `apply=0`)      |
+| POST   | `/api/layout/preview`   | Preview layout without saving              |
+| GET    | `/api/layout/list`      | List saved layouts + active name           |
+| POST   | `/api/layout/set`       | Set active layout by name                  |
+| POST   | `/api/layout/delete`    | Delete layout (cannot delete "default")    |
+| GET    | `/api/presets`          | List available preset layouts              |
+| POST   | `/api/image/upload`     | Upload RDMIMG binary (`?name=<name>`, 200 KB max) |
+| GET    | `/api/image/list`       | List images with name/width/height/size    |
+| POST   | `/api/image/delete`     | Delete image file (`?name=<name>`)         |
+| GET    | `/api/image/data`       | Return raw RDMIMG binary (`?name=<name>`)  |
+
+Server config: `recv_wait_timeout=30s`, `send_wait_timeout=30s`, `max_uri_handlers=20`,
+`stack_size=8192`.
 
 ### Hot-Reload Flow
 
@@ -512,6 +597,68 @@ Web editor save → POST /api/layout/save
   → _load_signals() → widget factory + from_json + create
   → build_twai_filter_from_signals() → reconfigure CAN hardware filter
 ```
+
+---
+
+## Web Editor Architecture
+
+### WIDGET_DEFS
+
+The web editor defines widget metadata in a `WIDGET_DEFS` JavaScript object, keyed by
+type name (`"panel"`, `"rpm_bar"`, `"bar"`, `"indicator"`, `"warning"`, `"text"`,
+`"meter"`, `"image"`). Each entry specifies `displayName`, default dimensions, and a
+`fields[]` array.
+
+### Field Types
+
+The inspector `renderFieldHTML()` supports these field types:
+
+| Type           | Renders As                                              |
+|----------------|---------------------------------------------------------|
+| `text`         | `<input type="text">`                                   |
+| `number`       | `<input type="number">`                                 |
+| `color`        | Color picker + hex text input (stores RGB888 integer)   |
+| `hex`          | Color picker + hex text input (stores hex string)       |
+| `checkbox`     | Toggle switch                                           |
+| `select`       | Dropdown (`options: [{v: value, l: label}]`)            |
+| `image_picker` | Dropdown (from `/api/image/list`) + upload button       |
+
+### Field Object Schema
+
+```javascript
+{
+    name: "fieldName",           // config key in layout JSON
+    label: "Display Label",
+    type: "text|number|color|...",
+    def: defaultValue,
+    cat: "data|appearance|alerts",  // inspector section
+    enabledBy: "parentField",       // conditional visibility
+    inline: "groupName",           // inline toggle groups
+    group: "groupName"             // visual grouping
+}
+```
+
+### Color Conversion
+
+Firmware uses RGB565 (16-bit); web editor uses RGB888 (24-bit):
+- `rgb565to888(val)` — on load from device
+- `rgb888to565(val)` — before sending to device
+- `convertWidgetColors(widgets, convertFn)` — walks all `type: 'color'` fields in WIDGET_DEFS and applies conversion. New color fields added to WIDGET_DEFS are auto-converted.
+
+### buildFirmwarePayload()
+
+Prepares layout JSON for firmware:
+- Maps `w.signal` (editor binding) → `config.signal_name` (firmware field)
+- For bar widgets with disabled alerts, resets thresholds to min/max
+- Removes web-editor-only field `bar_alerts_enabled`
+- Calls `convertWidgetColors()` with `rgb888to565`
+
+### Slot Management
+
+- `SLOT_LIMITS = { panel: 8, bar: 2, indicator: 2, warning: 8 }`
+- `nextAvailableSlot(type)` finds next free slot
+- `assignSlot(w)` auto-assigns on widget creation
+- `sanitizeClone(clone)` unbinds signal and assigns fresh slot on duplicate
 
 ---
 
@@ -531,7 +678,7 @@ dashboard_init() [dashboard.c]
   → signal_registry_init()
   → widget_registry_reset()
   → lv_timer_create(signal_check_timeouts, 500ms)
-  → layout_manager_init()              # mount LittleFS
+  → layout_manager_init()              # mount LittleFS, check schema version
   → rdm_settings_get_active_layout()   # read NVS
   → layout_manager_load(name, parent)
       → signal_registry_reset()
@@ -552,6 +699,7 @@ All legacy dispatch and routing infrastructure has been deleted:
 - `values_config[]`, `warning_configs[]`, `indicator_configs[]`, `label_texts[]` globals and their type definitions from `ui_Screen3.c/h`
 - Config bridge mirror structs (`cb_*_data_t`) — replaced by direct `#include` of widget headers
 - Stubbed NVS functions (`config_store_save/load_values/warnings/indicators`)
+- Speed and Gear widgets (never implemented — removed from enum)
 
 ### Remaining Cleanup Candidates
 
@@ -575,13 +723,14 @@ In `ui_Screen3.c`:
 - Use `ESP_LOGI/W/E/D` for logging with a static `TAG` per file
 - Guard all headers with `#pragma once` or include guards
 - Use `#ifdef __cplusplus extern "C"` guards in all headers
+- **No `/*` inside block comments** (`-Werror=comment` is active)
 
 ### LVGL v8 Conventions
 
 - **NOT v9** — use `lv_obj_set_style_*` (not `lv_obj_set_style(obj, prop, val, selector)`)
 - Widget creation: `lv_obj_create(parent)`, then set size/position/style
 - **Positioning:** Always `lv_obj_set_align(obj, LV_ALIGN_CENTER)` then `lv_obj_set_pos(obj, x, y)` — coordinates are center-origin offsets
-- Styles: `lv_style_init()`, `lv_obj_add_style(obj, &style, selector)`
+- **Per-instance styling:** Use `lv_obj_set_style_*()` directly (not shared `lv_style_t`) for widget appearance overrides
 - Events: `lv_obj_add_event_cb(obj, cb, event_code, user_data)`
 - Async work: `lv_async_call(cb, data)` — defers to LVGL task loop
 - Timer: `lv_timer_create(cb, period_ms, user_data)`
@@ -591,9 +740,11 @@ In `ui_Screen3.c`:
 ### Memory
 
 - Use `heap_caps_calloc(..., MALLOC_CAP_SPIRAM)` for large allocations (PSRAM)
+- Use `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` with `malloc()` fallback for image data
 - Use standard `calloc`/`malloc` for small allocations (internal SRAM)
 - Always `free()` allocations; LVGL objects freed by parent deletion
 - Widget `type_data` is freed in `destroy()` callback
+- Image widget pixel data must be freed in `destroy()` (PSRAM-allocated)
 
 ### CAN Bus
 
@@ -608,19 +759,24 @@ In `ui_Screen3.c`:
 ## Adding a New Widget Type
 
 1. Create `main/widgets/widget_newtype.c` and `widget_newtype.h`
-2. Implement vtable functions: `create`, `resize`, `open_settings`, `to_json`, `from_json`, `destroy`
-3. In `create`: use `lv_obj_set_align(obj, LV_ALIGN_CENTER)` before `lv_obj_set_pos()`
-4. In `from_json`: resolve signal name→index via `signal_find_by_name()`
-5. In `create`: subscribe to signal via `signal_subscribe(index, callback, widget)`
-6. Implement signal callback for push-based updates (runs on LVGL task)
-7. Add factory function: `widget_t *widget_newtype_create_instance(uint8_t slot)`
-8. Add enum value to `widget_type_t` in `widget_types.h`
-9. Add size constraints to `widget_constraints[]` in `widget_types.c`
-10. Add type name to `widget_type_name()` in `widget_types.c`
-11. Register in `layout_manager.c` factory switch (in `layout_manager_load`)
-12. Add `.c` file to `main/CMakeLists.txt` SRCS list
-13. If touchscreen config needed: add value_id mapping in `config_bridge.c`
-14. Add widget type support in web editor (`main/web/index.html`)
+2. Define `newtype_data_t` struct **in the header** (so config_bridge can include it directly)
+3. Implement vtable functions: `create`, `resize`, `open_settings`, `to_json`, `from_json`, `destroy`
+4. In `create`: use `lv_obj_set_align(obj, LV_ALIGN_CENTER)` before `lv_obj_set_pos()`
+5. In `from_json`: resolve signal name→index via `signal_find_by_name()`
+6. In `create`: subscribe to signal via `signal_subscribe(index, callback, widget)`
+7. Implement signal callback for push-based updates (runs on LVGL task)
+8. In `to_json`: use defaults-only serialization (skip fields matching factory defaults)
+9. Add factory function: `widget_t *widget_newtype_create_instance(uint8_t slot)`
+10. Add enum value to `widget_type_t` in `widget_types.h` (before `WIDGET_TYPE_COUNT`)
+11. Add size constraints to `widget_constraints[]` in `widget_types.c` (order must match enum)
+12. Add type name to `widget_type_name()` in `widget_types.c`
+13. Register string→enum in `_type_from_str()` in `layout_manager.c`
+14. Register enum→factory in `_factory()` in `layout_manager.c`
+15. Add `.c` file to `main/CMakeLists.txt` SRCS list
+16. If touchscreen config needed: add value_id mapping in `config_bridge.c`
+17. Add widget type to `WIDGET_DEFS` in web editor (`main/web/index.html`)
+18. Sync `data/web/index.html` with `main/web/index.html`
+19. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if schema changes
 
 ---
 
@@ -630,7 +786,7 @@ In `ui_Screen3.c`:
 - **CAN not receiving:** Check `can_init()` called before `can_start_task()`, verify GPIO 19/20 wiring
 - **Widget not updating:** Check signal is registered in layout JSON, verify `signal_subscribe()` called in `create()`, check CAN ID matches
 - **Signal shows stale:** CAN frame not received within 2s timeout — check hardware filter includes the CAN ID (`build_twai_filter_from_signals()`)
-- **Layout not loading:** Check LittleFS mounted (`layout_manager_init()`), verify JSON schema version
+- **Layout not loading:** Check LittleFS mounted (`layout_manager_init()`), verify JSON schema version matches `LAYOUT_SCHEMA_VERSION`
 - **Crash in LVGL:** Almost always a threading issue — ensure LVGL mutex held for all `lv_*` calls
 - **Config changes lost:** Ensure `dashboard_persist_layout()` called after touchscreen edits
 - **Web/device out of sync:** Web polls every 3s — check `/api/layout/current` returns expected data
@@ -638,3 +794,7 @@ In `ui_Screen3.c`:
 - **OTA fails:** Check partition table has dual OTA banks, verify `otadata` partition exists
 - **Widget position wrong:** Ensure `lv_obj_set_align(obj, LV_ALIGN_CENTER)` is called — coordinates are center-origin
 - **Config bridge:** Uses real widget `type_data` structs directly — if widget struct fields change, config_bridge accessors may need updating
+- **Image not showing:** Check `/lfs/images/` directory exists, verify RDMIMG magic header, check PSRAM free space
+- **Image upload fails:** Check `recv_wait_timeout` (30s), verify `IMAGE_MAX_SIZE` (200 KB), check LittleFS free space
+- **Widget colors wrong after save:** Ensure `convertWidgetColors()` with correct direction (565→888 on load, 888→565 on save)
+- **New appearance field not serialized:** Check `to_json` defaults-only logic and that `from_json` reads the field

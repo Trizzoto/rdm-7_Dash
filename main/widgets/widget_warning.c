@@ -386,14 +386,16 @@ void update_warning_ui(void *param) {
 	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
-	lv_color_t new_color = state ? active : THEME_COLOR_INACTIVE;
+	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
+	lv_color_t new_color = state ? active : inactive;
 
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	if (warning_labels[warning_idx] &&
 		lv_obj_is_valid(warning_labels[warning_idx])) {
-		if (state) {
+		bool hide_label = wd && !wd->show_label;
+		if (state && !hide_label) {
 			lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
 		} else {
 			lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
@@ -412,12 +414,14 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
-	lv_color_t new_color = state ? active : THEME_COLOR_INACTIVE;
+	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
+	lv_color_t new_color = state ? active : inactive;
 	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (warning_labels[warning_idx] &&
 		lv_obj_is_valid(warning_labels[warning_idx])) {
-		if (state) {
+		bool hide_label = wd && !wd->show_label;
+		if (state && !hide_label) {
 			lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
 		} else {
 			lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
@@ -872,14 +876,21 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_y(warning_circles[i], warning_positions[i].y);
 	lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
 	lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_radius(warning_circles[i], 100,
+	warning_data_t *wd_style = _get_warning_data_by_slot(i);
+	lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(warning_circles[i], THEME_COLOR_INACTIVE,
+	lv_obj_set_style_bg_color(warning_circles[i], wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(warning_circles[i], 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(warning_circles[i], 0,
+	lv_obj_set_style_border_width(warning_circles[i], wd_style ? wd_style->border_width : 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (wd_style && wd_style->border_width > 0) {
+		lv_obj_set_style_border_color(warning_circles[i], wd_style->border_color,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(warning_circles[i], 255,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 
 	warning_labels[i] = lv_label_create(parent);
 	lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
@@ -888,6 +899,10 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_y(warning_labels[i], -112);
 	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
 	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
+	/* If show_label is false, mark the label as permanently hidden using user data */
+	if (wd_style && !wd_style->show_label) {
+		lv_obj_set_user_data(warning_labels[i], (void *)1);
+	}
 	warning_data_t *wd_label = _get_warning_data_by_slot(i);
 	const char *saved_label = wd_label ? wd_label->label : NULL;
 	if (saved_label && saved_label[0] != '\0') {
@@ -897,7 +912,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 		snprintf(label_text, sizeof(label_text), "Warning\n%d", i + 1);
 		lv_label_set_text(warning_labels[i], label_text);
 	}
-	lv_obj_set_style_text_color(warning_labels[i], THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(warning_labels[i], wd_style ? wd_style->label_color : THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(warning_labels[i], 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -989,6 +1004,19 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
 		if (wd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", wd->signal_name);
+		/* Appearance overrides — only serialize non-default values */
+		if (wd->inactive_color.full != THEME_COLOR_INACTIVE.full)
+			cJSON_AddNumberToObject(cfg, "inactive_color", (int)wd->inactive_color.full);
+		if (wd->border_width != 0)
+			cJSON_AddNumberToObject(cfg, "border_width", wd->border_width);
+		if (wd->border_color.full != lv_color_hex(0x000000).full)
+			cJSON_AddNumberToObject(cfg, "border_color_style", (int)wd->border_color.full);
+		if (wd->radius != 100)
+			cJSON_AddNumberToObject(cfg, "radius", wd->radius);
+		if (!wd->show_label)
+			cJSON_AddBoolToObject(cfg, "show_label", false);
+		if (wd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+			cJSON_AddNumberToObject(cfg, "label_color", (int)wd->label_color.full);
 	}
 }
 static void _warning_from_json(widget_t *w, cJSON *in) {
@@ -1020,6 +1048,20 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 		wd->signal_name[sizeof(wd->signal_name) - 1] = '\0';
 	}
 
+	/* Appearance overrides */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_color");
+	if (cJSON_IsNumber(item)) wd->inactive_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
+	if (cJSON_IsNumber(item)) wd->border_width = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_color_style");
+	if (cJSON_IsNumber(item)) wd->border_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "radius");
+	if (cJSON_IsNumber(item)) wd->radius = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_label");
+	if (cJSON_IsBool(item)) wd->show_label = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
+	if (cJSON_IsNumber(item)) wd->label_color.full = (uint32_t)item->valueint;
+
 	/* Resolve signal name → index */
 	if (wd->signal_name[0] != '\0')
 		wd->signal_index = signal_find_by_name(wd->signal_name);
@@ -1046,6 +1088,12 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->invert_toggle = false;
 	wd->current_state = false;
 	wd->signal_index = -1;
+	wd->inactive_color = THEME_COLOR_INACTIVE;
+	wd->border_width = 0;
+	wd->border_color = lv_color_hex(0x000000);
+	wd->radius = 100;
+	wd->show_label = true;
+	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
 
 	w->type = WIDGET_WARNING;
 	w->slot = s;

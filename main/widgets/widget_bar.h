@@ -27,6 +27,14 @@ typedef struct {
 	uint8_t  decimals;
 	char     label_font[32];
 	char     value_font[32];
+	/* ── Appearance overrides ── */
+	lv_color_t bar_bg_color;         /* default: THEME_COLOR_PANEL */
+	uint8_t    bar_radius;           /* default: 5 */
+	uint8_t    bar_border_width;     /* default: 2 */
+	lv_color_t bar_border_color;     /* default: THEME_COLOR_PANEL */
+	uint8_t    indicator_radius;     /* default: 5 */
+	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* LVGL object pointers (runtime only, per-instance) */

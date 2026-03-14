@@ -33,7 +33,7 @@ extern "C" {
 #define LAYOUT_MAX_FILE_BYTES 16384
 
 /* Current layout JSON schema version (single source of truth). */
-#define LAYOUT_SCHEMA_VERSION 8
+#define LAYOUT_SCHEMA_VERSION 9
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"

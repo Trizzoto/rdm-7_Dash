@@ -28,7 +28,9 @@
       "WebFetch(domain:192.168.4.48)",
       "Bash(start \"\" \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\main\\\\web\\\\index.html\")",
       "WebFetch(domain:)",
-      "Bash(cd C:/Users/ruuva/workspace/RDM-7_Dash && python -m http.server 8888)"
+      "Bash(cd C:/Users/ruuva/workspace/RDM-7_Dash && python -m http.server 8888)",
+      "Bash(find \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\main\\\\ui\\\\images\" -name \"*.c\" -type f | head -5 | xargs -I {} wc -l {})",
+      "Bash(du -sh \"C:/Users/ruuva/workspace/RDM-7_Dash/main/ui/images\"/* | sort -h | tail -5)"
     ]
   }
 }

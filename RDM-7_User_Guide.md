@@ -463,8 +463,6 @@ Live Preview shows you exactly what the device screen looks like in real time, d
 - **Tweaking positions:** Fine-tune widget placement while seeing real data.
 - **Verifying colours:** Check that warning thresholds are triggering correctly.
 
-> **Tip:** Turn off Live Preview when you're just arranging widgets — it uses WiFi bandwidth and can make the editor feel slightly slower.
-
 ---
 
 ## 12. On-Device Touchscreen Configuration

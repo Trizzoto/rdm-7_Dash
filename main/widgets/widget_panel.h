@@ -27,6 +27,16 @@ typedef struct {
 	bool       warning_low_apply_panel;
 	char       label_font[32];
 	char       value_font[32];
+	/* ── Appearance overrides (defaults match legacy shared box_style) ── */
+	uint8_t    border_radius;        /* default: 7 */
+	uint8_t    border_width;         /* default: 3 */
+	lv_color_t border_color;         /* default: THEME_COLOR_PANEL */
+	lv_color_t bg_color;             /* default: THEME_COLOR_BG */
+	uint8_t    bg_opa;               /* default: 255 */
+	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	int8_t     label_y_offset;       /* default: -28 */
+	int8_t     value_y_offset;       /* default: 9 */
 	char       signal_name[32];
 	int16_t    signal_index;
 	/* LVGL object pointers (runtime only) */

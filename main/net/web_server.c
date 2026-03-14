@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "cJSON.h"
 #include "display_capture.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -11,9 +12,12 @@
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/ui.h"
+#include "widgets/signal.h"
+#include <dirent.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/param.h>
+#include <sys/stat.h>
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define.
  */
@@ -603,6 +607,326 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
 											  .handler = layout_delete_handler,
 											  .user_ctx = NULL};
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Image API endpoints
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+#define LFS_IMAGE_DIR "/lfs/images"
+#define IMAGE_MAX_SIZE (1200 * 1024) /* 1200KB max — full 800x480 RDMIMG is ~1125KB */
+
+static void _ensure_image_dir(void) {
+	struct stat st;
+	if (stat(LFS_IMAGE_DIR, &st) != 0)
+		mkdir(LFS_IMAGE_DIR, 0755);
+}
+
+/* POST /api/image/upload?name=<name>
+ * Body: raw RDMIMG binary data */
+static esp_err_t image_upload_handler(httpd_req_t *req) {
+	_ensure_image_dir();
+
+	/* Extract name from query string */
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	size_t content_len = req->content_len;
+	if (content_len < 12 || content_len > IMAGE_MAX_SIZE) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+		return ESP_FAIL;
+	}
+
+	/* Allocate receive buffer in PSRAM */
+	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
+	if (!buf) {
+		buf = malloc(content_len);
+		if (!buf) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+			return ESP_FAIL;
+		}
+	}
+
+	/* Receive data in chunks */
+	size_t received = 0;
+	while (received < content_len) {
+		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
+		if (ret <= 0) {
+			free(buf);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+			return ESP_FAIL;
+		}
+		received += ret;
+	}
+
+	/* Validate RDMI magic */
+	if (memcmp(buf, "RDMI", 4) != 0) {
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid RDMIMG format");
+		return ESP_FAIL;
+	}
+
+	/* Write to LittleFS */
+	char path[80];
+	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	size_t nw = fwrite(buf, 1, received, f);
+	fclose(f);
+	free(buf);
+
+	if (nw != received) {
+		remove(path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Uploaded image '%s' (%u bytes)", name, (unsigned)received);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t image_upload_uri = {.uri = "/api/image/upload",
+											  .method = HTTP_POST,
+											  .handler = image_upload_handler,
+											  .user_ctx = NULL};
+
+/* GET /api/image/list — returns JSON array of {name, width, height, size} */
+static esp_err_t image_list_handler(httpd_req_t *req) {
+	_ensure_image_dir();
+
+	cJSON *arr = cJSON_CreateArray();
+	DIR *d = opendir(LFS_IMAGE_DIR);
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 7 || strcmp(de->d_name + flen - 7, ".rdmimg") != 0)
+				continue;
+
+			char path[80];
+			snprintf(path, sizeof(path), "%s/%s", LFS_IMAGE_DIR, de->d_name);
+
+			/* Read header to get dimensions */
+			FILE *f = fopen(path, "rb");
+			if (!f) continue;
+			uint8_t hdr[12];
+			size_t nr = fread(hdr, 1, 12, f);
+			fseek(f, 0, SEEK_END);
+			long file_size = ftell(f);
+			fclose(f);
+
+			if (nr < 12 || memcmp(hdr, "RDMI", 4) != 0)
+				continue;
+
+			uint16_t w = hdr[4] | (hdr[5] << 8);
+			uint16_t h = hdr[6] | (hdr[7] << 8);
+
+			/* Strip .rdmimg extension for name */
+			char img_name[32];
+			size_t copy = flen - 7;
+			if (copy >= sizeof(img_name)) copy = sizeof(img_name) - 1;
+			memcpy(img_name, de->d_name, copy);
+			img_name[copy] = '\0';
+
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", img_name);
+			cJSON_AddNumberToObject(obj, "width", w);
+			cJSON_AddNumberToObject(obj, "height", h);
+			cJSON_AddNumberToObject(obj, "size", file_size);
+			cJSON_AddItemToArray(arr, obj);
+		}
+		closedir(d);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(arr);
+	cJSON_Delete(arr);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t image_list_uri = {.uri = "/api/image/list",
+											.method = HTTP_GET,
+											.handler = image_list_handler,
+											.user_ctx = NULL};
+
+/* POST /api/image/delete?name=<name> */
+static esp_err_t image_delete_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	char path[80];
+	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+	if (remove(path) != 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Image not found");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Deleted image '%s'", name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t image_delete_uri = {.uri = "/api/image/delete",
+											  .method = HTTP_POST,
+											  .handler = image_delete_handler,
+											  .user_ctx = NULL};
+
+/* GET /api/image/data?name=<name> — return raw RDMIMG binary */
+static esp_err_t image_data_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	char path[80];
+	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Image not found");
+		return ESP_FAIL;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long file_size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	if (file_size <= 0 || file_size > IMAGE_MAX_SIZE) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
+		return ESP_FAIL;
+	}
+
+	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
+	if (!buf) buf = malloc(file_size);
+	if (!buf) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+
+	size_t nread = fread(buf, 1, file_size, f);
+	fclose(f);
+
+	httpd_resp_set_type(req, "application/octet-stream");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
+	free(buf);
+	return res;
+}
+
+static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
+											.method = HTTP_GET,
+											.handler = image_data_handler,
+											.user_ctx = NULL};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Signal test injection endpoint
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+typedef struct {
+	char  name[32];
+	float value;
+} signal_test_ctx_t;
+
+static void _deferred_signal_inject(void *arg) {
+	signal_test_ctx_t *ctx = (signal_test_ctx_t *)arg;
+	if (ctx) {
+		signal_inject_test_value(ctx->name, ctx->value);
+		free(ctx);
+	}
+}
+
+/* POST /api/signal/test — inject a test value into a signal.
+ * Body: {"signal_name":"RPM","value":4500} */
+static esp_err_t signal_test_handler(httpd_req_t *req) {
+	int total_len = req->content_len;
+	if (total_len <= 0 || total_len > 256) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
+		return ESP_FAIL;
+	}
+
+	char buf[257];
+	int received = 0;
+	while (received < total_len) {
+		int r = httpd_req_recv(req, buf + received, total_len - received);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Recv failed");
+			return ESP_FAIL;
+		}
+		received += r;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "signal_name");
+	cJSON *value_item = cJSON_GetObjectItemCaseSensitive(root, "value");
+	if (!cJSON_IsString(name_item) || !cJSON_IsNumber(value_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing signal_name/value");
+		return ESP_FAIL;
+	}
+
+	signal_test_ctx_t *ctx = malloc(sizeof(signal_test_ctx_t));
+	if (!ctx) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+	strncpy(ctx->name, name_item->valuestring, sizeof(ctx->name) - 1);
+	ctx->name[sizeof(ctx->name) - 1] = '\0';
+	ctx->value = (float)value_item->valuedouble;
+	cJSON_Delete(root);
+
+	lv_async_call(_deferred_signal_inject, ctx);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t signal_test_uri = {.uri = "/api/signal/test",
+											.method = HTTP_POST,
+											.handler = signal_test_handler,
+											.user_ctx = NULL};
+
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
 		ESP_LOGW(TAG, "Web server already running");
@@ -613,9 +937,11 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 16;
+	config.max_uri_handlers = 20;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
+	config.recv_wait_timeout = 30; /* 30s for image uploads */
+	config.send_wait_timeout = 30;
 
 	ESP_LOGI(TAG, "Starting web server on port %d", config.server_port);
 
@@ -637,6 +963,11 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &layout_set_uri);
 	httpd_register_uri_handler(server, &layout_delete_uri);
 	httpd_register_uri_handler(server, &layout_preview_uri);
+	httpd_register_uri_handler(server, &image_upload_uri);
+	httpd_register_uri_handler(server, &image_list_uri);
+	httpd_register_uri_handler(server, &image_delete_uri);
+	httpd_register_uri_handler(server, &image_data_uri);
+	httpd_register_uri_handler(server, &signal_test_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;

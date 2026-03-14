@@ -124,6 +124,15 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
  */
 void signal_check_timeouts(uint64_t current_time_ms);
 
+/**
+ * Inject a test value into a signal by name.  Sets current_value,
+ * clears stale, updates last_update_ms, and notifies subscribers.
+ *
+ * MUST be called on the LVGL task (same threading rules as
+ * signal_dispatch_frame).
+ */
+void signal_inject_test_value(const char *name, float value);
+
 #ifdef __cplusplus
 }
 #endif

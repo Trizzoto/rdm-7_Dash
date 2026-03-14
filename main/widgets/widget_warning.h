@@ -14,6 +14,13 @@ typedef struct {
 	char       label[32];
 	bool       is_momentary;
 	bool       invert_toggle;
+	/* ── Appearance overrides ── */
+	lv_color_t inactive_color;       /* default: THEME_COLOR_INACTIVE (0x292C29) */
+	uint8_t    border_width;         /* default: 0 */
+	lv_color_t border_color;         /* default: 0x000000 */
+	uint8_t    radius;               /* default: 100 (circle) */
+	bool       show_label;           /* default: true */
+	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	bool       current_state;     /* runtime only -- NOT serialized */
 	char       signal_name[32];
 	int16_t    signal_index;

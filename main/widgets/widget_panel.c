@@ -488,20 +488,20 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	 * if two panels share a slot due to misconfiguration. */
 	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_label_set_text(pd->value_label, display_str);
-		lv_color_t val_color = apply_value ? warn_color : THEME_COLOR_TEXT_PRIMARY;
+		lv_color_t val_color = apply_value ? warn_color : pd->value_color;
 		lv_obj_set_style_text_color(pd->value_label, val_color,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
-		lv_color_t lbl_color = apply_label ? warn_color : THEME_COLOR_TEXT_PRIMARY;
+		lv_color_t lbl_color = apply_label ? warn_color : pd->label_color;
 		lv_obj_set_style_text_color(pd->header_label, lbl_color,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (pd->box && lv_obj_is_valid(pd->box)) {
-		lv_color_t border_color = apply_panel ? warn_color : THEME_COLOR_PANEL;
-		lv_obj_set_style_border_color(pd->box, border_color,
+		lv_color_t bdr_color = apply_panel ? warn_color : pd->border_color;
+		lv_obj_set_style_border_color(pd->box, bdr_color,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(pd->box, 3,
+		lv_obj_set_style_border_width(pd->box, pd->border_width,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_opa(pd->box, 255,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -541,8 +541,16 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_clip_corner(box, true,
 								 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_style(box, &box_style,
-					 LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(box, pd->border_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(box, pd->bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(box, pd->bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_clip_corner(box, false, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_color(box, pd->border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_opa(box, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(box, pd->border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_post(box, true, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_outline_width(box, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_outline_pad(box, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_add_event_cb(box, screen3_touch_event_cb, LV_EVENT_PRESSED,
 						NULL);
 	lv_obj_add_event_cb(box, screen3_touch_event_cb,
@@ -551,7 +559,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	/* Header label */
 	lv_obj_t *hdr = lv_label_create(box);
 	lv_label_set_text(hdr, pd->label);
-	lv_obj_set_style_text_color(hdr, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(hdr, pd->label_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(hdr, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -562,14 +570,14 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_width(hdr, w->w - 10);
 	lv_label_set_long_mode(hdr, LV_LABEL_LONG_CLIP);
 	lv_obj_set_x(hdr, 0);
-	lv_obj_set_y(hdr, -28);
+	lv_obj_set_y(hdr, pd->label_y_offset);
 	lv_obj_set_align(hdr, LV_ALIGN_CENTER);
 
 	/* Value label */
 	lv_obj_t *val = lv_label_create(box);
 	lv_label_set_text(val, "---");
 	if (slot < 13) strcpy(previous_values[slot], "---");
-	lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(val, pd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(val, 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -580,7 +588,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_width(val, w->w - 15);
 	lv_label_set_long_mode(val, LV_LABEL_LONG_CLIP);
 	lv_obj_set_x(val, 0);
-	lv_obj_set_y(val, 9);
+	lv_obj_set_y(val, pd->value_y_offset);
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
 
 	/* Click zone */
@@ -668,6 +676,25 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "value_font", pd->value_font);
 	if (pd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", pd->signal_name);
+	/* Appearance overrides — only serialize non-default values */
+	if (pd->border_radius != 7)
+		cJSON_AddNumberToObject(cfg, "border_radius", pd->border_radius);
+	if (pd->border_width != 3)
+		cJSON_AddNumberToObject(cfg, "border_width", pd->border_width);
+	if (pd->border_color.full != THEME_COLOR_PANEL.full)
+		cJSON_AddNumberToObject(cfg, "border_color", (int)pd->border_color.full);
+	if (pd->bg_color.full != THEME_COLOR_BG.full)
+		cJSON_AddNumberToObject(cfg, "bg_color", (int)pd->bg_color.full);
+	if (pd->bg_opa != 255)
+		cJSON_AddNumberToObject(cfg, "bg_opa", pd->bg_opa);
+	if (pd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		cJSON_AddNumberToObject(cfg, "label_color", (int)pd->label_color.full);
+	if (pd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		cJSON_AddNumberToObject(cfg, "value_color", (int)pd->value_color.full);
+	if (pd->label_y_offset != -28)
+		cJSON_AddNumberToObject(cfg, "label_y_offset", pd->label_y_offset);
+	if (pd->value_y_offset != 9)
+		cJSON_AddNumberToObject(cfg, "value_y_offset", pd->value_y_offset);
 }
 static void _panel_from_json(widget_t *w, cJSON *in) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
@@ -745,6 +772,26 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(item) && item->valuestring)
 		strncpy(pd->signal_name, item->valuestring, sizeof(pd->signal_name) - 1);
 
+	/* Appearance overrides */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_radius");
+	if (cJSON_IsNumber(item)) pd->border_radius = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
+	if (cJSON_IsNumber(item)) pd->border_width = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
+	if (cJSON_IsNumber(item)) pd->border_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_color");
+	if (cJSON_IsNumber(item)) pd->bg_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_opa");
+	if (cJSON_IsNumber(item)) pd->bg_opa = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
+	if (cJSON_IsNumber(item)) pd->label_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
+	if (cJSON_IsNumber(item)) pd->value_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_y_offset");
+	if (cJSON_IsNumber(item)) pd->label_y_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_y_offset");
+	if (cJSON_IsNumber(item)) pd->value_y_offset = (int8_t)item->valueint;
+
 	/* Resolve signal name → index */
 	if (pd->signal_name[0] != '\0')
 		pd->signal_index = signal_find_by_name(pd->signal_name);
@@ -781,6 +828,15 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->warning_low_apply_panel = false;
 	/* Defaults — actual config comes from _from_json() when loading layouts */
 	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
+	pd->border_radius = 7;
+	pd->border_width = 3;
+	pd->border_color = THEME_COLOR_PANEL;
+	pd->bg_color = THEME_COLOR_BG;
+	pd->bg_opa = 255;
+	pd->label_color = THEME_COLOR_TEXT_PRIMARY;
+	pd->value_color = THEME_COLOR_TEXT_PRIMARY;
+	pd->label_y_offset = -28;
+	pd->value_y_offset = 9;
 
 	w->type = WIDGET_PANEL;
 	w->slot = pd->slot;

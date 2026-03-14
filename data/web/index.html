@@ -69,11 +69,20 @@
         header .title {
             display: flex;
             align-items: center;
+            gap: 8px;
         }
 
         header .title img {
             height: 28px;
             width: auto;
+        }
+
+        header .title span {
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            font-family: 'Sora', sans-serif;
         }
 
         .top-controls {
@@ -1468,6 +1477,16 @@
         }
         .color-field-wrap input[type="text"] { flex: 1; }
 
+        .image-picker-wrap {
+            display: flex; gap: 6px; align-items: center;
+        }
+        .image-picker-wrap select { flex: 1; }
+        .image-picker-wrap button {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text); font-size: 14px;
+        }
+        .image-picker-wrap button:hover { border-color: var(--accent); }
+
         /* Sidebar Tabs */
         .sidebar-tabs { display:flex; border-bottom:1px solid var(--border); background:rgba(20,20,20,0.4); flex-shrink:0; }
         .sidebar-tab { flex:1; padding:8px 4px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; text-align:center;
@@ -1889,6 +1908,9 @@
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()">New Layout...</div>
                     <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()">Save As New...</div>
                     <div class="layout-menu-sep"></div>
+                    <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()">Export .rdm Bundle</div>
+                    <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()">Import .rdm Bundle</div>
+                    <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="downloadJson(); closeLayoutMenu()">Export JSON</div>
                     <div class="layout-menu-item" onclick="importJson(); closeLayoutMenu()">Import JSON</div>
                     <div class="layout-menu-sep"></div>
@@ -1896,6 +1918,7 @@
                 </div>
             </div>
             <input type="file" id="importJsonInput" accept=".json" style="display:none">
+            <input type="file" id="importRdmInput" accept=".rdm" style="display:none">
             <div class="header-divider"></div>
             <button class="btn btn-secondary" onclick="resetView()">Reset</button>
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
@@ -2523,7 +2546,16 @@
                         { v: "fugaz_56", l: "Fugaz One 56" },
                         { v: "manrope_35_bold", l: "Manrope Bold 35" },
                         { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" }
+                    ], def: "", cat: "appearance" },
+                    { name: "border_radius", label: "Border Radius", type: "number", def: 7, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "number", def: 3, cat: "appearance" },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "bg_color", label: "Background", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "bg_opa", label: "BG Opacity", type: "number", def: 255, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "label_y_offset", label: "Label Y Offset", type: "number", def: -28, cat: "appearance" },
+                    { name: "value_y_offset", label: "Value Y Offset", type: "number", def: 9, cat: "appearance" }
                 ]
             },
             "bar": {
@@ -2572,6 +2604,13 @@
                         { v: "manrope_35_bold", l: "Manrope Bold 35" },
                         { v: "manrope_54_bold", l: "Manrope Bold 54" }
                     ], def: "", cat: "appearance" },
+                    { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "bar_radius", label: "Bar Radius", type: "number", def: 5, cat: "appearance" },
+                    { name: "bar_border_width", label: "Border Width", type: "number", def: 2, cat: "appearance" },
+                    { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "indicator_radius", label: "Fill Radius", type: "number", def: 5, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
                     { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
                     { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
@@ -2598,7 +2637,13 @@
                     { name: "label", label: "Label", type: "text", def: "", cat: "data" },
                     { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance" },
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" }
+                    { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "number", def: 0, cat: "appearance" },
+                    { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "radius", label: "Radius", type: "number", def: 100, cat: "appearance" },
+                    { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
                 ]
             },
             "text": {
@@ -2667,7 +2712,52 @@
                         { v: "fugaz_56", l: "Fugaz One 56" },
                         { v: "manrope_35_bold", l: "Manrope Bold 35" },
                         { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" }
+                    ], def: "", cat: "appearance" },
+                    { name: "minor_tick_count", label: "Minor Ticks", type: "number", def: 21, cat: "appearance" },
+                    { name: "major_tick_every", label: "Major Every N", type: "number", def: 5, cat: "appearance" },
+                    { name: "minor_tick_width", label: "Minor Tick W", type: "number", def: 2, cat: "appearance" },
+                    { name: "minor_tick_length", label: "Minor Tick L", type: "number", def: 10, cat: "appearance" },
+                    { name: "major_tick_width", label: "Major Tick W", type: "number", def: 4, cat: "appearance" },
+                    { name: "major_tick_length", label: "Major Tick L", type: "number", def: 15, cat: "appearance" },
+                    { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x888888, cat: "appearance" },
+                    { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "number", def: 0, cat: "appearance" },
+                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "number", def: 0, cat: "appearance" },
+                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "number", def: 0, cat: "appearance" },
+                    { name: "needle_width", label: "Needle Width", type: "number", def: 4, cat: "appearance" },
+                    { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "needle_r_mod", label: "Needle R Mod", type: "number", def: -10, cat: "appearance" },
+                    { name: "show_value", label: "Show Value", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "value_x_offset", label: "Value X", type: "number", def: 0, cat: "appearance" },
+                    { name: "value_y_offset", label: "Value Y", type: "number", def: 20, cat: "appearance" },
+                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "show_id_label", label: "Show ID Label", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "id_x_offset", label: "ID X", type: "number", def: 0, cat: "appearance" },
+                    { name: "id_y_offset", label: "ID Y", type: "number", def: 45, cat: "appearance" },
+                    { name: "id_label_color", label: "ID Color", type: "color", def: 0xCCCCCC, cat: "appearance" },
+                    { name: "bg_image_name", label: "BG Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "meter_bg_color", label: "BG Color", type: "color", def: 0x3D3D3D, cat: "appearance" },
+                    { name: "meter_bg_opa", label: "BG Opacity", type: "number", def: 255, cat: "appearance" },
+                    { name: "arc_zone1_enabled", label: "Zone 1", type: "checkbox", def: false, cat: "appearance", group: "zone1" },
+                    { name: "arc_zone1_start", label: "Start", type: "number", def: 0, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
+                    { name: "arc_zone1_end", label: "End", type: "number", def: 33, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
+                    { name: "arc_zone1_color", label: "Color", type: "color", def: 0x00FF00, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
+                    { name: "arc_zone2_enabled", label: "Zone 2", type: "checkbox", def: false, cat: "appearance", group: "zone2" },
+                    { name: "arc_zone2_start", label: "Start", type: "number", def: 33, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
+                    { name: "arc_zone2_end", label: "End", type: "number", def: 66, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
+                    { name: "arc_zone2_color", label: "Color", type: "color", def: 0xFFFF00, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
+                    { name: "arc_zone3_enabled", label: "Zone 3", type: "checkbox", def: false, cat: "appearance", group: "zone3" },
+                    { name: "arc_zone3_start", label: "Start", type: "number", def: 66, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" },
+                    { name: "arc_zone3_end", label: "End", type: "number", def: 100, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" },
+                    { name: "arc_zone3_color", label: "Color", type: "color", def: 0xFF0000, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" }
+                ]
+            },
+            "image": {
+                displayName: "Image", defW: 100, defH: 100,
+                fields: [
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data" },
+                    { name: "opacity", label: "Opacity (0-255)", type: "number", def: 255, cat: "appearance" }
                 ]
             }
         };
@@ -2816,7 +2906,8 @@
             indicator: '<svg viewBox="0 0 20 16"><polygon points="3,8 10,3 10,6 17,6 17,10 10,10 10,13" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
             warning:   '<svg viewBox="0 0 20 16"><polygon points="10,2 18,14 2,14" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="7" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="12" r="0.7" fill="currentColor"/></svg>',
             text:      '<svg viewBox="0 0 20 16"><text x="3" y="12" font-size="11" font-weight="bold" fill="currentColor" opacity="0.7">Aa</text></svg>',
-            meter:     '<svg viewBox="0 0 20 16"><path d="M4,13 A7,7 0 0,1 16,13" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="12" x2="7" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>'
+            meter:     '<svg viewBox="0 0 20 16"><path d="M4,13 A7,7 0 0,1 16,13" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="12" x2="7" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>',
+            image:     '<svg viewBox="0 0 20 16"><rect x="2" y="2" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="6" r="2" fill="currentColor" opacity="0.5"/><polyline points="4,13 8,9 11,11 14,7 16,10" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"/></svg>'
         };
 
         function initPalette() {
@@ -3706,6 +3797,17 @@
                            "
                            ${disabledAttr} style="flex:1;">
                 </div>`;
+            } else if (f.type === 'image_picker') {
+                html += `<div class="image-picker-wrap">
+                    <select id="imgsel_${f.name}" onchange="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>
+                        <option value="">(none)</option>
+                    </select>
+                    <button type="button" onclick="document.getElementById('imgUploadInput_${f.name}').click()" ${disabledAttr} title="Upload image" style="padding:4px 8px; cursor:pointer;">&#x2B06;</button>
+                    <input type="file" id="imgUploadInput_${f.name}" accept="image/png,image/jpeg" style="display:none" onchange="openImageResizeDialog(this, '${f.name}')">
+                    <button type="button" onclick="deleteSelectedImage('imgsel_${f.name}', '${f.name}')" ${disabledAttr} title="Delete image from device" style="padding:4px 8px; cursor:pointer; color:hsl(0,70%,60%);">&#x1F5D1;</button>
+                </div>`;
+                /* Populate dropdown async after render */
+                setTimeout(() => _populateImageSelect('imgsel_' + f.name, val), 0);
             } else {
                 html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
             }
@@ -3816,6 +3918,21 @@
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
+
+                /* Test Value slider — for widgets with a bound signal and min/max config */
+                if (w.signal && w.config.min !== undefined && w.config.max !== undefined) {
+                    const tMin = w.config.min;
+                    const tMax = w.config.max;
+                    html += `<div class="field" style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
+                        <label>Test Value</label>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <input type="range" min="${tMin}" max="${tMax}" value="${tMin}" style="flex:1"
+                                oninput="sendTestValue('${w.signal}', parseFloat(this.value)); document.getElementById('testValueReadout').textContent=this.value">
+                            <span id="testValueReadout" style="min-width:32px; text-align:right; font-size:12px;">${tMin}</span>
+                        </div>
+                    </div>`;
+                }
+
                 html += `</div></details>`;
             }
 
@@ -3896,6 +4013,19 @@
             renderEditor();
             updateInspector();
             updateStatus(sigName ? `Bound signal "${sigName}"` : 'Signal unbound');
+        }
+
+        /* ── Test value injection ── */
+        let _testValueTimer = null;
+        function sendTestValue(signalName, value) {
+            if (_testValueTimer) clearTimeout(_testValueTimer);
+            _testValueTimer = setTimeout(() => {
+                fetch('/api/signal/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ signal_name: signalName, value: value })
+                }).catch(() => {});
+            }, 50);
         }
 
         function openDataSourcePicker() {
@@ -4181,6 +4311,190 @@
             }
 
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* ─── Image picker helpers ─────────────────────────────────────── */
+
+        async function _populateImageSelect(selectId, currentVal) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            try {
+                const resp = await fetch('/api/image/list');
+                if (!resp.ok) return;
+                const images = await resp.json();
+                /* Keep the (none) option, add images */
+                images.forEach(img => {
+                    const opt = document.createElement('option');
+                    opt.value = img.name;
+                    opt.textContent = `${img.name} (${img.width}x${img.height})`;
+                    if (img.name === currentVal) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            } catch (e) { /* device offline */ }
+        }
+
+        async function deleteSelectedImage(selectId, fieldName) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            const name = sel.value;
+            if (!name) {
+                showToast('No image selected to delete', 'error');
+                return;
+            }
+            if (!confirm(`Delete image "${name}" from device storage?`)) return;
+            try {
+                const resp = await fetch(`/api/image/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
+                if (!resp.ok) throw new Error(await resp.text());
+                /* If the deleted image was assigned to this widget, clear it */
+                if (sel.value === name) {
+                    updateWidgetConfigField(fieldName, '', false);
+                }
+                /* Refresh the dropdown */
+                sel.innerHTML = '<option value="">(none)</option>';
+                await _populateImageSelect(selectId, '');
+                updateStatus(`Deleted image "${name}"`);
+                showToast(`Deleted "${name}"`, 'success');
+            } catch (e) {
+                showToast('Delete failed: ' + e.message, 'error');
+            }
+        }
+
+        function openImageResizeDialog(input, fieldName) {
+            const file = input.files[0];
+            if (!file) return;
+            input.value = '';
+
+            const img = new Image();
+            img.onload = () => {
+                const origW = img.width, origH = img.height;
+                const aspect = origW / origH;
+                const suggestedName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+
+                /* Build modal */
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML = `
+                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:320px;color:var(--text);">
+                        <h3 style="margin:0 0 12px 0;font-size:15px;">Upload Image</h3>
+                        <div style="margin-bottom:8px;font-size:13px;color:var(--text-muted);">Original: ${origW} x ${origH}</div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                            <label style="width:50px;font-size:13px;">Name:</label>
+                            <input id="imgDlgName" type="text" value="${suggestedName}" style="flex:1;" maxlength="27">
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                            <label style="width:50px;font-size:13px;">Width:</label>
+                            <input id="imgDlgW" type="number" value="${origW}" min="1" max="800" style="width:80px;">
+                            <label style="width:50px;font-size:13px;">Height:</label>
+                            <input id="imgDlgH" type="number" value="${origH}" min="1" max="480" style="width:80px;">
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+                            <label style="font-size:13px;"><input id="imgDlgLock" type="checkbox" checked> Lock aspect ratio</label>
+                        </div>
+                        <div id="imgDlgSize" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;">
+                            <button id="imgDlgCancel" style="padding:6px 14px;cursor:pointer;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">Cancel</button>
+                            <button id="imgDlgUpload" style="padding:6px 14px;cursor:pointer;background:var(--accent);border:none;border-radius:4px;color:#fff;">Upload</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+
+                const wInput = document.getElementById('imgDlgW');
+                const hInput = document.getElementById('imgDlgH');
+                const lockCb = document.getElementById('imgDlgLock');
+                const sizeInfo = document.getElementById('imgDlgSize');
+
+                function updateSizeInfo() {
+                    const w = parseInt(wInput.value) || 1;
+                    const h = parseInt(hInput.value) || 1;
+                    const bytes = 12 + w * h * 3;
+                    sizeInfo.textContent = `Output: ${w} x ${h} = ${(bytes / 1024).toFixed(1)} KB`;
+                    if (bytes > 200 * 1024) sizeInfo.style.color = '#f44';
+                    else sizeInfo.style.color = 'var(--text-muted)';
+                }
+                updateSizeInfo();
+
+                wInput.addEventListener('input', () => {
+                    if (lockCb.checked) { hInput.value = Math.round((parseInt(wInput.value) || 1) / aspect); }
+                    updateSizeInfo();
+                });
+                hInput.addEventListener('input', () => {
+                    if (lockCb.checked) { wInput.value = Math.round((parseInt(hInput.value) || 1) * aspect); }
+                    updateSizeInfo();
+                });
+
+                document.getElementById('imgDlgCancel').onclick = () => { URL.revokeObjectURL(img.src); overlay.remove(); };
+                document.getElementById('imgDlgUpload').onclick = async () => {
+                    const targetW = Math.max(1, Math.min(800, parseInt(wInput.value) || origW));
+                    const targetH = Math.max(1, Math.min(480, parseInt(hInput.value) || origH));
+                    const name = (document.getElementById('imgDlgName').value || suggestedName).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+                    overlay.remove();
+                    await doImageUpload(img, name, targetW, targetH, fieldName);
+                    URL.revokeObjectURL(img.src);
+                };
+            };
+            img.onerror = () => { URL.revokeObjectURL(img.src); alert('Failed to load image'); };
+            img.src = URL.createObjectURL(file);
+        }
+
+        async function doImageUpload(img, name, targetW, targetH, fieldName) {
+            const statusEl = document.createElement('div');
+            statusEl.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e0e0e0;padding:8px 16px;border-radius:6px;z-index:9999;border:1px solid var(--border);';
+            statusEl.textContent = `Converting ${targetW}x${targetH}...`;
+            document.body.appendChild(statusEl);
+
+            try {
+                const rdmimg = convertImageToRDMIMG(img, targetW, targetH);
+                statusEl.textContent = `Uploading ${name} (${(rdmimg.byteLength / 1024).toFixed(1)} KB)...`;
+
+                const resp = await fetch(`/api/image/upload?name=${encodeURIComponent(name)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream' },
+                    body: rdmimg
+                });
+
+                if (!resp.ok) throw new Error(await resp.text());
+
+                statusEl.textContent = 'Upload complete!';
+                updateWidgetConfigField(fieldName, name, false);
+                updateInspector();
+            } catch (e) {
+                statusEl.textContent = 'Upload failed: ' + e.message;
+                statusEl.style.borderColor = '#f44';
+            }
+            setTimeout(() => statusEl.remove(), 2500);
+        }
+
+        function convertImageToRDMIMG(img, targetW, targetH) {
+            const cvs = document.createElement('canvas');
+            cvs.width = targetW;
+            cvs.height = targetH;
+            const ctx = cvs.getContext('2d');
+            ctx.drawImage(img, 0, 0, targetW, targetH);
+            const rgba = ctx.getImageData(0, 0, targetW, targetH).data;
+
+            const pixelBytes = targetW * targetH * 3;
+            const buf = new ArrayBuffer(12 + pixelBytes);
+            const view = new DataView(buf);
+            const u8 = new Uint8Array(buf);
+
+            /* Magic "RDMI" */
+            u8[0] = 0x52; u8[1] = 0x44; u8[2] = 0x4D; u8[3] = 0x49;
+            view.setUint16(4, targetW, true);
+            view.setUint16(6, targetH, true);
+            u8[8] = 5; /* LV_IMG_CF_TRUE_COLOR_ALPHA */
+
+            let off = 12;
+            for (let i = 0; i < rgba.length; i += 4) {
+                const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2], a = rgba[i + 3];
+                const r5 = (r >> 3) & 0x1F;
+                const g6 = (g >> 2) & 0x3F;
+                const b5 = (b >> 3) & 0x1F;
+                const rgb565 = (r5 << 11) | (g6 << 5) | b5;
+                u8[off++] = rgb565 & 0xFF;
+                u8[off++] = (rgb565 >> 8) & 0xFF;
+                u8[off++] = a;
+            }
+            return buf;
         }
 
         function moveWidgetLayer(dir) {
@@ -4760,6 +5074,243 @@
             const a = document.createElement('a');
             a.href = url; a.download = `${currentLayout.name}.json`;
             a.click();
+        }
+
+        /* ── .rdm Bundle Export/Import ────────────────────────────── */
+        /*
+         * .rdm binary format:
+         *   Header (16 bytes):
+         *     [0-3]   Magic: "RDM1"
+         *     [4-5]   Version: uint16 LE = 1
+         *     [6-7]   Entry count: uint16 LE
+         *     [8-15]  Reserved (zeros)
+         *
+         *   Per entry:
+         *     [0]       Type: uint8 (0 = layout JSON, 1 = image)
+         *     [1]       Name length: uint8
+         *     [2..N]    Name: UTF-8 (name_length bytes)
+         *     [N..N+4]  Data length: uint32 LE
+         *     [N+4..]   Data: raw bytes
+         */
+
+        async function exportRdm() {
+            const name = currentLayout.name || 'layout';
+            updateStatus('Building .rdm bundle...');
+
+            /* Collect image names referenced by image and meter widgets */
+            const imageNames = new Set();
+            (currentLayout.widgets || []).forEach(w => {
+                if (!w.config) return;
+                if (w.type === 'image' && w.config.image_name)
+                    imageNames.add(w.config.image_name);
+                if (w.type === 'meter') {
+                    if (w.config.bg_image_name) imageNames.add(w.config.bg_image_name);
+                    if (w.config.needle_image_name) imageNames.add(w.config.needle_image_name);
+                }
+            });
+
+            /* Fetch image binaries from device */
+            const images = [];
+            for (const imgName of imageNames) {
+                try {
+                    const resp = await fetch(`/api/image/data?name=${encodeURIComponent(imgName)}`);
+                    if (!resp.ok) {
+                        updateStatus(`Warning: could not fetch image "${imgName}"`, true);
+                        continue;
+                    }
+                    images.push({ name: imgName, data: new Uint8Array(await resp.arrayBuffer()) });
+                } catch (e) {
+                    updateStatus(`Warning: failed to fetch image "${imgName}"`, true);
+                }
+            }
+
+            /* Serialize layout as firmware-ready JSON (RGB565, signal_name mapped) */
+            const payload = buildFirmwarePayload();
+            const layoutJson = JSON.stringify(payload, null, 2);
+            const layoutBytes = new TextEncoder().encode(layoutJson);
+
+            /* Calculate total size */
+            const entryCount = 1 + images.length;
+            let totalSize = 16; /* header */
+            /* Layout entry: 1 (type) + 1 (name len) + name.length + 4 (data len) + data.length */
+            const nameBytes = new TextEncoder().encode(name);
+            totalSize += 1 + 1 + nameBytes.length + 4 + layoutBytes.length;
+            const imageEntries = images.map(img => {
+                const nb = new TextEncoder().encode(img.name);
+                return { nameBytes: nb, data: img.data };
+            });
+            for (const entry of imageEntries) {
+                totalSize += 1 + 1 + entry.nameBytes.length + 4 + entry.data.length;
+            }
+
+            /* Build the binary */
+            const buf = new ArrayBuffer(totalSize);
+            const view = new DataView(buf);
+            const u8 = new Uint8Array(buf);
+            let off = 0;
+
+            /* Header */
+            u8[off++] = 0x52; u8[off++] = 0x44; u8[off++] = 0x4D; u8[off++] = 0x31; /* "RDM1" */
+            view.setUint16(off, 1, true); off += 2;  /* version */
+            view.setUint16(off, entryCount, true); off += 2;  /* entry count */
+            off += 8; /* reserved */
+
+            /* Layout entry */
+            u8[off++] = 0; /* type = layout */
+            u8[off++] = nameBytes.length;
+            u8.set(nameBytes, off); off += nameBytes.length;
+            view.setUint32(off, layoutBytes.length, true); off += 4;
+            u8.set(layoutBytes, off); off += layoutBytes.length;
+
+            /* Image entries */
+            for (const entry of imageEntries) {
+                u8[off++] = 1; /* type = image */
+                u8[off++] = entry.nameBytes.length;
+                u8.set(entry.nameBytes, off); off += entry.nameBytes.length;
+                view.setUint32(off, entry.data.length, true); off += 4;
+                u8.set(entry.data, off); off += entry.data.length;
+            }
+
+            /* Download */
+            const blob = new Blob([buf], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `${name}.rdm`;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            const imgMsg = images.length > 0 ? ` with ${images.length} image${images.length > 1 ? 's' : ''}` : '';
+            updateStatus(`Exported ${name}.rdm${imgMsg}`);
+            showToast(`Exported ${name}.rdm${imgMsg}`, 'success');
+        }
+
+        function importRdm() {
+            const input = document.getElementById('importRdmInput');
+            input.value = '';
+            input.onchange = async function () {
+                const file = input.files[0];
+                if (!file) return;
+
+                try {
+                    const arrayBuf = await file.arrayBuffer();
+                    const u8 = new Uint8Array(arrayBuf);
+                    const view = new DataView(arrayBuf);
+
+                    if (u8.length < 16) throw new Error('File too small');
+
+                    /* Validate magic "RDM1" */
+                    if (u8[0] !== 0x52 || u8[1] !== 0x44 || u8[2] !== 0x4D || u8[3] !== 0x31)
+                        throw new Error('Not a valid .rdm file');
+
+                    const version = view.getUint16(4, true);
+                    if (version !== 1) throw new Error(`Unsupported .rdm version: ${version}`);
+
+                    const entryCount = view.getUint16(6, true);
+                    let off = 16;
+
+                    let layoutData = null;
+                    let layoutName = '';
+                    const images = [];
+
+                    /* Parse entries */
+                    for (let i = 0; i < entryCount; i++) {
+                        if (off + 2 > u8.length) throw new Error('Truncated entry header');
+                        const entryType = u8[off++];
+                        const nameLen = u8[off++];
+                        if (off + nameLen > u8.length) throw new Error('Truncated entry name');
+                        const entryName = new TextDecoder().decode(u8.slice(off, off + nameLen));
+                        off += nameLen;
+                        if (off + 4 > u8.length) throw new Error('Truncated data length');
+                        const dataLen = view.getUint32(off, true);
+                        off += 4;
+                        if (off + dataLen > u8.length) throw new Error('Truncated entry data');
+                        const data = u8.slice(off, off + dataLen);
+                        off += dataLen;
+
+                        if (entryType === 0) {
+                            layoutData = JSON.parse(new TextDecoder().decode(data));
+                            layoutName = entryName;
+                        } else if (entryType === 1) {
+                            images.push({ name: entryName, data: data });
+                        }
+                    }
+
+                    if (!layoutData) throw new Error('No layout found in .rdm file');
+                    if (!layoutData.widgets || !Array.isArray(layoutData.widgets))
+                        throw new Error('Invalid layout: missing widgets array');
+
+                    /* Upload images to device */
+                    let uploadedCount = 0;
+                    for (const img of images) {
+                        try {
+                            updateStatus(`Uploading image "${img.name}"...`);
+                            const resp = await fetch(`/api/image/upload?name=${encodeURIComponent(img.name)}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/octet-stream' },
+                                body: img.data
+                            });
+                            if (resp.ok) uploadedCount++;
+                            else updateStatus(`Warning: failed to upload image "${img.name}"`, true);
+                        } catch (e) {
+                            updateStatus(`Warning: failed to upload image "${img.name}"`, true);
+                        }
+                    }
+
+                    /* layoutData is in firmware format (RGB565, signal_name in config).
+                     * Keep a copy for saving to device before converting for editor. */
+                    if (!layoutData.signals) layoutData.signals = [];
+                    if (!layoutData.name) layoutData.name = layoutName || 'imported';
+                    if (layoutData.name === 'default') layoutData.name = 'imported';
+                    const firmwarePayload = JSON.stringify(layoutData);
+
+                    /* Save layout to device first so it appears in the dropdown */
+                    try {
+                        updateStatus('Saving layout to device...');
+                        const saveResp = await fetch('/api/layout/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: firmwarePayload
+                        });
+                        if (!saveResp.ok) throw new Error('Save failed');
+                    } catch (e) {
+                        updateStatus('Layout imported to editor but failed to save to device', true);
+                    }
+
+                    /* Now convert to web-editor format */
+                    pushHistory();
+                    (layoutData.widgets || []).forEach(w => {
+                        if (w.config && w.config.signal_name && !w.signal)
+                            w.signal = w.config.signal_name;
+                        if (w.type === 'bar' && w.config) {
+                            const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
+                            const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
+                            const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                            const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                            w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                        }
+                    });
+                    convertWidgetColors(layoutData.widgets, rgb565to888);
+                    currentLayout = layoutData;
+                    selectedIndex = -1; selectedIndices = new Set();
+                    history = [JSON.stringify(currentLayout)];
+                    historyIndex = 0;
+                    _editingActive = false;
+                    _lastDeviceSnapshot = firmwarePayload;
+                    try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
+                    renderEditor();
+                    renderSignals();
+                    updateInspector();
+                    await fetchLayoutsKeepCurrent();
+
+                    const imgMsg = images.length > 0 ? ` + ${uploadedCount}/${images.length} images` : '';
+                    updateStatus(`Imported ${file.name}${imgMsg}`);
+                    showToast(`Imported ${file.name}${imgMsg}`, 'success');
+                } catch (err) {
+                    updateStatus('Failed to import .rdm: ' + err.message, true);
+                    showToast('Import failed: ' + err.message, 'error');
+                }
+            };
+            input.click();
         }
 
         layoutSelect.onchange = async () => {

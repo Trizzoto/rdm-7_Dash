@@ -848,15 +848,15 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_height(bar, w->h);
 	lv_obj_set_align(bar, LV_ALIGN_CENTER);
 	lv_obj_set_pos(bar, w->x, w->y);
-	lv_obj_set_style_radius(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(bar, THEME_COLOR_PANEL,
+	lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, bd->bar_bg_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(bar, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(bar, THEME_COLOR_PANEL,
+	lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_color(bar, bd->bar_border_color,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(bar, 5, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(bar, THEME_COLOR_GREEN_BRIGHT,
 							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
@@ -866,7 +866,7 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_align(lbl, LV_ALIGN_CENTER);
 	lv_obj_set_pos(lbl, w->x, w->y - 28);
 	lv_label_set_text(lbl, (bd && bd->label[0]) ? bd->label : (slot == 0 ? "BAR1" : "BAR2"));
-	lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(lbl, bd->label_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	const lv_font_t *bar_lbl_font = bd ? widget_resolve_font(bd->label_font) : NULL;
 	lv_obj_set_style_text_font(lbl, bar_lbl_font ? bar_lbl_font : THEME_FONT_DASH_LABEL,
@@ -879,7 +879,7 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
 	lv_obj_set_pos(val, w->x + (w->w / 2) + 50, w->y - 28);
 	lv_label_set_text(val, "---");
-	lv_obj_set_style_text_color(val, THEME_COLOR_TEXT_PRIMARY,
+	lv_obj_set_style_text_color(val, bd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	const lv_font_t *bar_val_font = bd ? widget_resolve_font(bd->value_font) : NULL;
 	lv_obj_set_style_text_font(val, bar_val_font ? bar_val_font : THEME_FONT_BODY,
@@ -949,6 +949,21 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "value_font", bd->value_font);
 		if (bd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", bd->signal_name);
+		/* Appearance overrides — only serialize non-default values */
+		if (bd->bar_bg_color.full != THEME_COLOR_PANEL.full)
+			cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)bd->bar_bg_color.full);
+		if (bd->bar_radius != 5)
+			cJSON_AddNumberToObject(cfg, "bar_radius", bd->bar_radius);
+		if (bd->bar_border_width != 2)
+			cJSON_AddNumberToObject(cfg, "bar_border_width", bd->bar_border_width);
+		if (bd->bar_border_color.full != THEME_COLOR_PANEL.full)
+			cJSON_AddNumberToObject(cfg, "bar_border_color", (int)bd->bar_border_color.full);
+		if (bd->indicator_radius != 5)
+			cJSON_AddNumberToObject(cfg, "indicator_radius", bd->indicator_radius);
+		if (bd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+			cJSON_AddNumberToObject(cfg, "label_color", (int)bd->label_color.full);
+		if (bd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+			cJSON_AddNumberToObject(cfg, "value_color", (int)bd->value_color.full);
 	} else {
 		cJSON_AddNumberToObject(cfg, "slot", 0);
 	}
@@ -1012,6 +1027,22 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		bd->signal_name[sizeof(bd->signal_name) - 1] = '\0';
 	}
 
+	/* Appearance overrides */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_color");
+	if (cJSON_IsNumber(item)) bd->bar_bg_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_radius");
+	if (cJSON_IsNumber(item)) bd->bar_radius = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_border_width");
+	if (cJSON_IsNumber(item)) bd->bar_border_width = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_border_color");
+	if (cJSON_IsNumber(item)) bd->bar_border_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "indicator_radius");
+	if (cJSON_IsNumber(item)) bd->indicator_radius = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
+	if (cJSON_IsNumber(item)) bd->label_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
+	if (cJSON_IsNumber(item)) bd->value_color.full = (uint32_t)item->valueint;
+
 	/* Resolve signal name → index */
 	if (bd->signal_name[0] != '\0')
 		bd->signal_index = signal_find_by_name(bd->signal_name);
@@ -1041,6 +1072,13 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
 	bd->bar_high_color = THEME_COLOR_RED;
 	bd->signal_index = -1;
+	bd->bar_bg_color = THEME_COLOR_PANEL;
+	bd->bar_radius = 5;
+	bd->bar_border_width = 2;
+	bd->bar_border_color = THEME_COLOR_PANEL;
+	bd->indicator_radius = 5;
+	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
+	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
 
 	w->type = WIDGET_BAR;
 	w->slot = slot & 1;

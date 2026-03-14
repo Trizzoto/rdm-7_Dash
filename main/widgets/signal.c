@@ -194,6 +194,27 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
     }
 }
 
+/* ── Test value injection ───────────────────────────────────────────────── */
+
+void signal_inject_test_value(const char *name, float value)
+{
+    if (!s_signals || !name) return;
+
+    int16_t idx = signal_find_by_name(name);
+    if (idx < 0) {
+        ESP_LOGW(TAG, "signal_inject_test_value: '%s' not found", name);
+        return;
+    }
+
+    signal_t *sig = &s_signals[idx];
+    uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+
+    sig->current_value  = value;
+    sig->is_stale       = false;
+    sig->last_update_ms = now_ms;
+    notify_subscribers(sig);
+}
+
 /* ── Timeout checking ───────────────────────────────────────────────────── */
 
 void signal_check_timeouts(uint64_t current_time_ms)
