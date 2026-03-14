@@ -50,7 +50,7 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_INDICATOR */ { .min_w =  30, .min_h =  30, .max_w =  80, .max_h =  80 },
     /* WIDGET_WARNING   */ { .min_w =  18, .min_h =  18, .max_w =  60, .max_h =  60 },
     /* WIDGET_TEXT      */ { .min_w =  40, .min_h =  20, .max_w = 400, .max_h = 100 },
-    /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = 200, .max_h = 200 },
+    /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = 800, .max_h = 800 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */

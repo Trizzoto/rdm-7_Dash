@@ -99,72 +99,64 @@ void update_panel_ui(void *param) {
 		lv_label_set_text(ui_Value[i], update->value_str);
 	}
 
-	// Also update menu preview if it exists, is valid, and menu is visible
 	if (menu_panel_value_labels[i] &&
 		lv_obj_is_valid(menu_panel_value_labels[i]) && ui_MenuScreen &&
 		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
 		lv_label_set_text(menu_panel_value_labels[i], update->value_str);
 	}
 
-	// Look up panel_data_t for threshold checks
 	panel_data_t *pd = _get_panel_data_by_slot(i);
 
-	// Also update menu panel box border effects if menu is visible
-	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
-		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
-		lv_scr_act() == ui_MenuScreen) {
-		// Apply same border logic as main screen panels
-		if (strcmp(update->value_str, "---") == 0) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_high_enabled &&
-				   update->final_value > pd->warning_high_threshold) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  pd->warning_high_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_low_enabled &&
-				   update->final_value < pd->warning_low_threshold) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  pd->warning_low_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		// Ensure border is visible
-		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(menu_panel_boxes[i], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Determine warning state and apply-to flags */
+	lv_color_t warn_color = {0};
+	bool a_label = false, a_value = false, a_panel = false;
+	bool is_stale = (strcmp(update->value_str, "---") == 0);
+	if (!is_stale && pd && pd->warning_high_enabled &&
+		update->final_value > pd->warning_high_threshold) {
+		warn_color = pd->warning_high_color;
+		a_label = pd->warning_high_apply_label;
+		a_value = pd->warning_high_apply_value;
+		a_panel = pd->warning_high_apply_panel;
+	} else if (!is_stale && pd && pd->warning_low_enabled &&
+			   update->final_value < pd->warning_low_threshold) {
+		warn_color = pd->warning_low_color;
+		a_label = pd->warning_low_apply_label;
+		a_value = pd->warning_low_apply_value;
+		a_panel = pd->warning_low_apply_panel;
 	}
 
-	// Update border color based on thresholds
+	/* Apply label color */
+	if (ui_Label[i] && lv_obj_is_valid(ui_Label[i]))
+		lv_obj_set_style_text_color(ui_Label[i],
+			a_label ? warn_color : THEME_COLOR_TEXT_PRIMARY,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply value color */
+	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]))
+		lv_obj_set_style_text_color(ui_Value[i],
+			a_value ? warn_color : THEME_COLOR_TEXT_PRIMARY,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply panel border */
 	if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) &&
 		lv_obj_get_screen(ui_Box[i]) != NULL) {
-		// Special case: if showing "---", always use default grey color
-		if (strcmp(update->value_str, "---") == 0) {
-			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_high_enabled &&
-				   update->final_value > pd->warning_high_threshold) {
-			lv_obj_set_style_border_color(ui_Box[i],
-										  pd->warning_high_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_low_enabled &&
-				   update->final_value < pd->warning_low_threshold) {
-			lv_obj_set_style_border_color(ui_Box[i],
-										  pd->warning_low_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else {
-			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		// Ensure border is visible
+		lv_obj_set_style_border_color(ui_Box[i],
+			a_panel ? warn_color : THEME_COLOR_PANEL,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(ui_Box[i], 3,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_opa(ui_Box[i], 255,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Menu preview panel border */
+	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
+		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
+		lv_scr_act() == ui_MenuScreen) {
+		lv_obj_set_style_border_color(menu_panel_boxes[i],
+			a_panel ? warn_color : THEME_COLOR_PANEL,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(menu_panel_boxes[i], 255,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
@@ -186,55 +178,52 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
 		lv_label_set_text(menu_panel_value_labels[i], value_str);
 	}
-	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
-		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
-		lv_scr_act() == ui_MenuScreen) {
-		if (strcmp(value_str, "---") == 0) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_high_enabled &&
-				   final_value > pd->warning_high_threshold) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  pd->warning_high_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_low_enabled &&
-				   final_value < pd->warning_low_threshold) {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  pd->warning_low_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else {
-			lv_obj_set_style_border_color(menu_panel_boxes[i],
-										  THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(menu_panel_boxes[i], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Determine warning state and apply-to flags */
+	lv_color_t wc = {0};
+	bool al = false, av = false, ap = false;
+	bool stale = (strcmp(value_str, "---") == 0);
+	if (!stale && pd && pd->warning_high_enabled &&
+		final_value > pd->warning_high_threshold) {
+		wc = pd->warning_high_color;
+		al = pd->warning_high_apply_label;
+		av = pd->warning_high_apply_value;
+		ap = pd->warning_high_apply_panel;
+	} else if (!stale && pd && pd->warning_low_enabled &&
+			   final_value < pd->warning_low_threshold) {
+		wc = pd->warning_low_color;
+		al = pd->warning_low_apply_label;
+		av = pd->warning_low_apply_value;
+		ap = pd->warning_low_apply_panel;
 	}
+
+	if (ui_Label[i] && lv_obj_is_valid(ui_Label[i]))
+		lv_obj_set_style_text_color(ui_Label[i],
+			al ? wc : THEME_COLOR_TEXT_PRIMARY,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]))
+		lv_obj_set_style_text_color(ui_Value[i],
+			av ? wc : THEME_COLOR_TEXT_PRIMARY,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) &&
 		lv_obj_get_screen(ui_Box[i]) != NULL) {
-		if (strcmp(value_str, "---") == 0) {
-			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_high_enabled &&
-				   final_value > pd->warning_high_threshold) {
-			lv_obj_set_style_border_color(ui_Box[i],
-										  pd->warning_high_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else if (pd && pd->warning_low_enabled &&
-				   final_value < pd->warning_low_threshold) {
-			lv_obj_set_style_border_color(ui_Box[i],
-										  pd->warning_low_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		} else {
-			lv_obj_set_style_border_color(ui_Box[i], THEME_COLOR_PANEL,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
+		lv_obj_set_style_border_color(ui_Box[i],
+			ap ? wc : THEME_COLOR_PANEL,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(ui_Box[i], 3,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_opa(ui_Box[i], 255,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
+		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
+		lv_scr_act() == ui_MenuScreen) {
+		lv_obj_set_style_border_color(menu_panel_boxes[i],
+			ap ? wc : THEME_COLOR_PANEL,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(menu_panel_boxes[i], 255,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 }
@@ -477,21 +466,39 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 
 	double final_value = is_stale ? 0.0 : (double)value;
 
+	/* Determine active warning color (if any) */
+	lv_color_t warn_color = {0};
+	bool apply_label = false, apply_value = false, apply_panel = false;
+	if (!is_stale && pd->warning_high_enabled &&
+		final_value > pd->warning_high_threshold) {
+		warn_color = pd->warning_high_color;
+		apply_label = pd->warning_high_apply_label;
+		apply_value = pd->warning_high_apply_value;
+		apply_panel = pd->warning_high_apply_panel;
+	} else if (!is_stale && pd->warning_low_enabled &&
+			   final_value < pd->warning_low_threshold) {
+		warn_color = pd->warning_low_color;
+		apply_label = pd->warning_low_apply_label;
+		apply_value = pd->warning_low_apply_value;
+		apply_panel = pd->warning_low_apply_panel;
+	}
+
 	/* Update this widget's own LVGL objects directly (per-instance pointers).
 	 * This is the authoritative path — avoids cross-talk via global arrays
 	 * if two panels share a slot due to misconfiguration. */
 	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_label_set_text(pd->value_label, display_str);
+		lv_color_t val_color = apply_value ? warn_color : THEME_COLOR_TEXT_PRIMARY;
+		lv_obj_set_style_text_color(pd->value_label, val_color,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
+		lv_color_t lbl_color = apply_label ? warn_color : THEME_COLOR_TEXT_PRIMARY;
+		lv_obj_set_style_text_color(pd->header_label, lbl_color,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (pd->box && lv_obj_is_valid(pd->box)) {
-		lv_color_t border_color = THEME_COLOR_PANEL;
-		if (!is_stale && pd->warning_high_enabled &&
-			final_value > pd->warning_high_threshold) {
-			border_color = pd->warning_high_color;
-		} else if (!is_stale && pd->warning_low_enabled &&
-				   final_value < pd->warning_low_threshold) {
-			border_color = pd->warning_low_color;
-		}
+		lv_color_t border_color = apply_panel ? warn_color : THEME_COLOR_PANEL;
 		lv_obj_set_style_border_color(pd->box, border_color,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(pd->box, 3,
@@ -509,15 +516,9 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	if (slot < 8 && menu_panel_boxes[slot] &&
 		lv_obj_is_valid(menu_panel_boxes[slot]) && ui_MenuScreen &&
 		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
-		lv_color_t mc = THEME_COLOR_PANEL;
-		if (!is_stale && pd->warning_high_enabled &&
-			final_value > pd->warning_high_threshold)
-			mc = pd->warning_high_color;
-		else if (!is_stale && pd->warning_low_enabled &&
-				 final_value < pd->warning_low_threshold)
-			mc = pd->warning_low_color;
-		lv_obj_set_style_border_color(menu_panel_boxes[slot], mc,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(menu_panel_boxes[slot],
+			apply_panel ? warn_color : THEME_COLOR_PANEL,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(menu_panel_boxes[slot], 3,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_opa(menu_panel_boxes[slot], 255,
@@ -649,11 +650,17 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "warning_high_enabled", true);
 		cJSON_AddNumberToObject(cfg, "warning_high_threshold", pd->warning_high_threshold);
 		cJSON_AddNumberToObject(cfg, "warning_high_color", (int)pd->warning_high_color.full);
+		cJSON_AddBoolToObject(cfg, "warning_high_apply_label", pd->warning_high_apply_label);
+		cJSON_AddBoolToObject(cfg, "warning_high_apply_value", pd->warning_high_apply_value);
+		cJSON_AddBoolToObject(cfg, "warning_high_apply_panel", pd->warning_high_apply_panel);
 	}
 	if (pd->warning_low_enabled) {
 		cJSON_AddBoolToObject(cfg, "warning_low_enabled", true);
 		cJSON_AddNumberToObject(cfg, "warning_low_threshold", pd->warning_low_threshold);
 		cJSON_AddNumberToObject(cfg, "warning_low_color", (int)pd->warning_low_color.full);
+		cJSON_AddBoolToObject(cfg, "warning_low_apply_label", pd->warning_low_apply_label);
+		cJSON_AddBoolToObject(cfg, "warning_low_apply_value", pd->warning_low_apply_value);
+		cJSON_AddBoolToObject(cfg, "warning_low_apply_panel", pd->warning_low_apply_panel);
 	}
 	if (pd->label_font[0] != '\0')
 		cJSON_AddStringToObject(cfg, "label_font", pd->label_font);
@@ -696,6 +703,15 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_color");
 	if (cJSON_IsNumber(item)) pd->warning_high_color.full = (uint32_t)item->valueint;
 
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_apply_label");
+	if (cJSON_IsBool(item)) pd->warning_high_apply_label = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_apply_value");
+	if (cJSON_IsBool(item)) pd->warning_high_apply_value = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_apply_panel");
+	if (cJSON_IsBool(item)) pd->warning_high_apply_panel = cJSON_IsTrue(item);
+
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_enabled");
 	if (cJSON_IsBool(item)) pd->warning_low_enabled = cJSON_IsTrue(item);
 
@@ -704,6 +720,15 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_color");
 	if (cJSON_IsNumber(item)) pd->warning_low_color.full = (uint32_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_apply_label");
+	if (cJSON_IsBool(item)) pd->warning_low_apply_label = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_apply_value");
+	if (cJSON_IsBool(item)) pd->warning_low_apply_value = cJSON_IsTrue(item);
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_low_apply_panel");
+	if (cJSON_IsBool(item)) pd->warning_low_apply_panel = cJSON_IsTrue(item);
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
@@ -747,6 +772,13 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 
 	pd->slot = slot < 8 ? slot : 0;
 	pd->signal_index = -1;
+	/* Warning "apply to" defaults: label + value coloured, panel border not */
+	pd->warning_high_apply_label = true;
+	pd->warning_high_apply_value = true;
+	pd->warning_high_apply_panel = false;
+	pd->warning_low_apply_label = true;
+	pd->warning_low_apply_value = true;
+	pd->warning_low_apply_panel = false;
 	/* Defaults — actual config comes from _from_json() when loading layouts */
 	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
 

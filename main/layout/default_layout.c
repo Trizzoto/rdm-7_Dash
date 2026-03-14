@@ -90,8 +90,8 @@ esp_err_t generate_default_layout(void) {
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
 
 	/* ── RPM Bar (singleton) ────────────────────────────────────────────── */
-	/* RPM bar uses LV_ALIGN_TOP_MID; x=0, y=0 keeps it at top */
-	_add_widget(arr, "rpm_bar", "rpm_bar_0", 0, 0, 800, 55, NULL);
+	/* Center-origin: y=-213 places the 55px bar at the top edge */
+	_add_widget(arr, "rpm_bar", "rpm_bar_0", 0, -213, 800, 55, NULL);
 
 	/* ── Panels (8 slots) ───────────────────────────────────────────────── */
 	for (int i = 0; i < 8; i++) {

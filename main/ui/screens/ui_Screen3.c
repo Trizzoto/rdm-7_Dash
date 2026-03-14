@@ -60,8 +60,6 @@ static uint32_t touch_press_time = 0;
 static uint32_t last_long_press_time = 0;
 static lv_obj_t *ui_Setup_Menu_Screen = NULL;
 
-/* ── Shared extern callbacks (defined elsewhere, used here) ─────────────── */
-extern void device_settings_longpress_cb(lv_event_t *e);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Coordinator-level event callbacks
@@ -123,6 +121,33 @@ static void setup_menu_close_btn_cb(lv_event_t *e) {
 	}
 }
 
+static void menu_device_settings_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+		return;
+	/* Close menu screen, then open device settings */
+	lv_obj_t *scr = ui_Setup_Menu_Screen;
+	device_settings_with_return_screen(ui_Screen3);
+	if (scr && lv_obj_is_valid(scr)) {
+		lv_obj_del_async(scr);
+		ui_Setup_Menu_Screen = NULL;
+	}
+}
+
+static lv_obj_t *_create_menu_btn(lv_obj_t *parent, const char *text,
+								  lv_color_t bg_color, lv_coord_t y_offs) {
+	lv_obj_t *btn = lv_btn_create(parent);
+	lv_obj_set_size(btn, 200, 50);
+	lv_obj_align(btn, LV_ALIGN_CENTER, 0, y_offs);
+	lv_obj_set_style_bg_color(btn, bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(btn, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_t *lbl = lv_label_create(btn);
+	lv_label_set_text(lbl, text);
+	lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_center(lbl);
+	return btn;
+}
+
 static void menu_button_clicked_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
 		return;
@@ -138,16 +163,18 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Setup_Menu_Screen, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_t *cb = lv_btn_create(ui_Setup_Menu_Screen);
-	lv_obj_set_size(cb, 100, 50);
-	lv_obj_align(cb, LV_ALIGN_BOTTOM_MID, 0, -20);
-	lv_obj_set_style_bg_color(cb, THEME_COLOR_BTN_CANCEL,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(cb, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_t *cl = lv_label_create(cb);
-	lv_label_set_text(cl, "CLOSE");
-	lv_obj_center(cl);
+
+	/* Device Settings button */
+	lv_obj_t *ds = _create_menu_btn(ui_Setup_Menu_Screen,
+									"DEVICE SETTINGS",
+									THEME_COLOR_BTN_CANCEL, -20);
+	lv_obj_add_event_cb(ds, menu_device_settings_cb, LV_EVENT_CLICKED, NULL);
+
+	/* Close button */
+	lv_obj_t *cb = _create_menu_btn(ui_Setup_Menu_Screen, "CLOSE",
+									THEME_COLOR_BTN_CANCEL, 50);
 	lv_obj_add_event_cb(cb, setup_menu_close_btn_cb, LV_EVENT_CLICKED, NULL);
+
 	lv_scr_load(ui_Setup_Menu_Screen);
 }
 
@@ -232,17 +259,6 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
 
-	/* RDM logo (long-press → device settings) */
-	ui_RDM_Logo_Text = lv_img_create(ui_Screen3);
-	lv_img_set_src(ui_RDM_Logo_Text, &ui_img_RDM_Light);
-	lv_obj_set_x(ui_RDM_Logo_Text, 0);
-	lv_obj_set_y(ui_RDM_Logo_Text, -65);
-	lv_obj_set_align(ui_RDM_Logo_Text, LV_ALIGN_CENTER);
-	lv_obj_add_flag(ui_RDM_Logo_Text,
-					LV_OBJ_FLAG_ADV_HITTEST | LV_OBJ_FLAG_CLICKABLE);
-	lv_obj_clear_flag(ui_RDM_Logo_Text, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_add_event_cb(ui_RDM_Logo_Text, device_settings_longpress_cb,
-						LV_EVENT_LONG_PRESSED, NULL);
 }
 
 void ui_Screen3_preview_layout(cJSON *root) {

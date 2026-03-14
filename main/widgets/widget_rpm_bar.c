@@ -1269,6 +1269,10 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_t *container = widget_rpm_bar_create(parent);
 	w->root = container;
 
+	/* Apply layout-defined size and position (overrides hardcoded defaults) */
+	lv_obj_set_size(container, w->w, w->h);
+	lv_obj_set_pos(container, w->x, w->y);
+
 	/* Subscribe to signal if bound */
 	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
 	if (rbd && rbd->signal_index >= 0)

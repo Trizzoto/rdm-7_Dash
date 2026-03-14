@@ -16,9 +16,15 @@ typedef struct {
 	bool       warning_high_enabled;
 	float      warning_high_threshold;
 	lv_color_t warning_high_color;
+	bool       warning_high_apply_label;
+	bool       warning_high_apply_value;
+	bool       warning_high_apply_panel;
 	bool       warning_low_enabled;
 	float      warning_low_threshold;
 	lv_color_t warning_low_color;
+	bool       warning_low_apply_label;
+	bool       warning_low_apply_value;
+	bool       warning_low_apply_panel;
 	char       label_font[32];
 	char       value_font[32];
 	char       signal_name[32];

@@ -275,8 +275,6 @@ static void save_warning_config_cb(lv_event_t *e) {
 	// Get values from inputs
 	const char *can_id_text = lv_textarea_get_text(inputs[0]);
 	uint8_t bit_pos = lv_dropdown_get_selected(inputs[1]);
-	uint8_t endianess = 1; // Default to Little Endian (not needed for warnings,
-						   // but kept for compatibility)
 	const char *label_text = lv_textarea_get_text(inputs[3]);
 
 	// Convert CAN ID from hex string to integer

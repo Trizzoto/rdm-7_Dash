@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # RDM-7 Dash — Claude Code Project Guide
 
 ## Project Overview
@@ -119,7 +123,7 @@ main/
 │   ├── screens/
 │   │   ├── ui_Screen1.c/h          # Screen 1
 │   │   ├── ui_Screen2.c            # Screen 2
-│   │   ├── ui_Screen3.c/h          # Main dashboard screen (+ LEGACY config struct defs)
+│   │   ├── ui_Screen3.c/h          # Main dashboard screen
 │   │   ├── ui_Screen4.c            # Screen 4
 │   │   ├── splash_screen.c/h       # Boot splash
 │   │   └── ui_wifi.c/h             # WiFi configuration screen
@@ -220,6 +224,7 @@ struct widget_t {
     int16_t       x, y;          // Layout position (center-origin, px)
     uint16_t      w, h;          // Layout size (px)
     char          id[16];        // Instance identifier ("panel_0", "bar_1", etc.)
+    uint8_t       slot;          // Slot index (e.g. panel 0-7)
     void         *type_data;     // Per-instance state (cast to widget-specific struct)
 
     // vtable (no update function — widgets use signal callbacks)
@@ -398,8 +403,10 @@ modal to read/write widget and signal settings.
 - RPM-specific: `get_rpm_bar_color()`, `get_rpm_limiter_*()`, `get_rpm_background_*()`
 - Gear-specific: `get_gear_detection_mode()`, `get_tire_circumference()`, ratio/custom value accessors
 
-**Important:** Config bridge defines mirror structs (`cb_panel_data_t`, `cb_bar_data_t`, etc.)
-that **MUST stay in sync** with the original `type_data` structs defined in each widget `.c` file.
+**Note:** Config bridge includes widget headers directly and casts `type_data` to the real
+`type_data` structs (e.g., `panel_data_t`, `bar_data_t`). No mirror structs — changes to
+widget `type_data` fields are immediately visible to config_bridge.
+Widget lookup uses `widget_registry_find_by_type_and_slot(type, slot)`.
 
 ### Touchscreen Config Flow
 
@@ -431,12 +438,14 @@ Shows warning if local edits are pending when device state changes.
 
 ## Layout JSON Schema
 
-### Current Schema (v3)
+### Current Schema (v8 — `LAYOUT_SCHEMA_VERSION` in `layout_manager.h`)
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 8,
   "name": "layout_name",
+  "ecu": "MaxxECU",
+  "ecu_version": "v1.3",
   "widgets": [
     {
       "type": "panel",
@@ -534,46 +543,24 @@ dashboard_init() [dashboard.c]
 
 ---
 
-## Legacy Code — Candidates for Cleanup
+## Legacy Code Status
 
-### Deleted (Phase 6 complete)
+### Fully Removed
 
-The following were fully removed during the signal system migration:
-- `can_dispatch.c/h` — O(1) CAN ID→widget routing table (replaced by signal registry)
-- `widget_dispatcher.c/h` — CAN frame→widget update routing (replaced by signal callbacks)
-- `widget_update_fn` / `w->update` vtable entry (replaced by signal subscription callbacks)
-- All `_update()` functions in widgets (replaced by `_on_signal` callbacks)
-- All `sync_from/to_legacy()` bridge functions
+All legacy dispatch and routing infrastructure has been deleted:
+- `can_dispatch.c/h`, `widget_dispatcher.c/h`, `widget_update_fn`, all `_update()` and `sync_from/to_legacy()` functions
+- `values_config[]`, `warning_configs[]`, `indicator_configs[]`, `label_texts[]` globals and their type definitions from `ui_Screen3.c/h`
+- Config bridge mirror structs (`cb_*_data_t`) — replaced by direct `#include` of widget headers
+- Stubbed NVS functions (`config_store_save/load_values/warnings/indicators`)
 
-### Still Present but Unused (refactor candidates)
+### Remaining Cleanup Candidates
 
-These are declared in `ui_Screen3.c/h` but **never read or written** by any active code:
+In `ui_Screen3.c`:
 
-| Global                         | Type                    | Status                              |
-|-------------------------------|-------------------------|-------------------------------------|
-| `values_config[13]`           | `value_config_t[]`      | Declared only, replaced by config_bridge |
-| `warning_configs[8]`          | `warning_config_t[]`    | Declared only, replaced by config_bridge |
-| `indicator_configs[2]`        | `indicator_config_t[]`  | Declared only, replaced by config_bridge |
-| `label_texts[13][64]`         | `char[][]`              | Initialized but never read          |
-| `value_offset_texts[13][64]`  | `char[][]`              | Declared only                       |
-| `previous_values[13][64]`     | `char[][]`              | Declared only                       |
-
-These can be removed along with their type definitions (`value_config_t`, `warning_config_t`,
-`indicator_config_t`) once confirmed no code references them.
-
-### Stubbed NVS Functions in `config_store.c`
-
-These functions are no-ops that log "use dashboard_persist_layout" — **never called**:
-- `config_store_save/load_values()`
-- `config_store_save/load_warnings()`
-- `config_store_save/load_indicators()`
-
-Can be deleted outright — all CAN config persistence is now via layout JSON.
-
-### Stale Comments
-
-A few comments reference deleted modules (e.g., `widget_bar.h` mentions `widget_dispatcher`,
-`widget_meter.h` mentions `can_dispatch rebuild`). These are documentation artifacts only.
+| Global                         | Status                              |
+|-------------------------------|-------------------------------------|
+| `value_offset_texts[13][64]`  | Declared/initialized, never read    |
+| `previous_values[13][64]`     | Declared, only zeroed in init       |
 
 ---
 
@@ -650,4 +637,4 @@ A few comments reference deleted modules (e.g., `widget_bar.h` mentions `widget_
 - **PSRAM allocation failure:** Check `sdkconfig` has SPIRAM enabled, reduce allocation sizes
 - **OTA fails:** Check partition table has dual OTA banks, verify `otadata` partition exists
 - **Widget position wrong:** Ensure `lv_obj_set_align(obj, LV_ALIGN_CENTER)` is called — coordinates are center-origin
-- **Config bridge mismatch:** Mirror structs in `config_bridge.c` must match widget `type_data` structs exactly
+- **Config bridge:** Uses real widget `type_data` structs directly — if widget struct fields change, config_bridge accessors may need updating

@@ -36,6 +36,10 @@ static const char *TAG = "layout_mgr";
 /* Track whether LittleFS has been mounted this boot */
 static bool s_lfs_mounted = false;
 
+/* ECU context fields from layout JSON (optional, empty = "Custom") */
+static char s_layout_ecu[32] = "";
+static char s_layout_ecu_version[32] = "";
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Internal helpers
  * ═══════════════════════════════════════════════════════════════════════════
@@ -373,6 +377,24 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		return ESP_FAIL;
 	}
 
+	/* ── Extract optional ECU context fields ── */
+	const cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+	if (cJSON_IsString(ecu_item) && ecu_item->valuestring[0]) {
+		strncpy(s_layout_ecu, ecu_item->valuestring, sizeof(s_layout_ecu) - 1);
+		s_layout_ecu[sizeof(s_layout_ecu) - 1] = '\0';
+	} else {
+		s_layout_ecu[0] = '\0';
+	}
+	const cJSON *ecu_ver_item =
+		cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+	if (cJSON_IsString(ecu_ver_item) && ecu_ver_item->valuestring[0]) {
+		strncpy(s_layout_ecu_version, ecu_ver_item->valuestring,
+				sizeof(s_layout_ecu_version) - 1);
+		s_layout_ecu_version[sizeof(s_layout_ecu_version) - 1] = '\0';
+	} else {
+		s_layout_ecu_version[0] = '\0';
+	}
+
 	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
 	signal_registry_reset();
 	_load_signals(root);
@@ -504,6 +526,12 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 
 	cJSON_AddNumberToObject(root, "schema_version", LAYOUT_SCHEMA_VERSION);
 	cJSON_AddStringToObject(root, "name", name);
+
+	/* Conditionally add ECU context if set */
+	if (s_layout_ecu[0])
+		cJSON_AddStringToObject(root, "ecu", s_layout_ecu);
+	if (s_layout_ecu_version[0])
+		cJSON_AddStringToObject(root, "ecu_version", s_layout_ecu_version);
 
 	/* Serialise registered signals */
 	_save_signals(root);
