@@ -294,6 +294,19 @@ const preconfig_item_t preconfig_items[] = {
 { "Ford", "FG",    "FUEL LEVEL %",    "320", 1, 0,  16, 0.01,     0,   1, false },
 
 
+/* ── RDM-7 Internal Sensors ──────────────────────────────────────────── */
+{ "RDM-7", "Internal", "CPU PERCENT",     "0", 1, 0, 16, 1.0,  0, 0, false },
+{ "RDM-7", "Internal", "FREE HEAP KB",    "0", 1, 0, 16, 1.0,  0, 0, false },
+{ "RDM-7", "Internal", "FREE PSRAM KB",   "0", 1, 0, 16, 1.0,  0, 0, false },
+{ "RDM-7", "Internal", "CHIP TEMP",       "0", 1, 0, 16, 1.0,  0, 1, false },
+{ "RDM-7", "Internal", "UPTIME S",        "0", 1, 0, 16, 1.0,  0, 0, false },
+{ "RDM-7", "Internal", "WIFI RSSI",       "0", 1, 0, 16, 1.0,  0, 0, true  },
+
+/* ── RDM-7 GPIO Inputs ──────────────────────────────────────────────── */
+{ "RDM-7", "GPIO",     "INDICATOR LEFT",  "0", 1, 0, 8,  1.0,  0, 0, false },
+{ "RDM-7", "GPIO",     "INDICATOR RIGHT", "0", 1, 0, 8,  1.0,  0, 0, false },
+{ "RDM-7", "GPIO",     "FUEL SENDER V",   "0", 1, 0, 16, 1.0,  0, 2, false },
+
 { NULL, NULL, NULL, NULL, 0, 0, 0, 0.0, 0, 0, false } // Keep this terminator entry at the end
 };
 
@@ -451,7 +464,6 @@ static void version_dropdown_event_cb(lv_event_t * e)
         char ecu_str[64] = {0};
         lv_dropdown_get_selected_str(ui_ECU_Input, ecu_str, sizeof(ecu_str));
         if (ecu_str[0] == '\0') {
-            printf("DEBUG: version_dropdown_event_cb - ECU string is empty\n");
             return;
         }
 
@@ -459,12 +471,9 @@ static void version_dropdown_event_cb(lv_event_t * e)
         char version_str[64] = {0};
         lv_dropdown_get_selected_str(dropdown, version_str, sizeof(version_str));
         if (version_str[0] == '\0') {
-            printf("DEBUG: version_dropdown_event_cb - Version string is empty\n");
             return;
         }
         
-        printf("DEBUG: version_dropdown_event_cb - ECU: '%s', Version: '%s'\n", ecu_str, version_str);
-
         // 3) Collect all matching labels for that ECU + version
         char* labels[256]; // Array to hold label pointers
         int label_count = 0;
@@ -506,11 +515,9 @@ static void version_dropdown_event_cb(lv_event_t * e)
         // Update the ID dropdown
         if (ui_ID_Input) {
             if (id_labels[0] != '\0') {
-                printf("DEBUG: Setting ID dropdown options: '%s'\n", id_labels);
                 lv_dropdown_set_options(ui_ID_Input, id_labels);
                 lv_dropdown_set_selected(ui_ID_Input, 0);
             } else {
-                printf("DEBUG: No ID labels found for ECU '%s' Version '%s'\n", ecu_str, version_str);
                 lv_dropdown_set_options(ui_ID_Input, "No IDs available");
             }
         }

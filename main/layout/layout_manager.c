@@ -12,6 +12,11 @@
 #include "widget_types.h"
 #include "widget_image.h"
 #include "widget_warning.h"
+#include "widget_shape_panel.h"
+#include "widget_arc.h"
+#include "widget_toggle.h"
+#include "widget_button.h"
+#include "widget_rules.h"
 
 #include "signal.h"
 
@@ -96,6 +101,14 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_METER;
 	if (strcmp(s, "image") == 0)
 		return WIDGET_IMAGE;
+	if (strcmp(s, "shape_panel") == 0)
+		return WIDGET_SHAPE_PANEL;
+	if (strcmp(s, "arc") == 0)
+		return WIDGET_ARC;
+	if (strcmp(s, "toggle") == 0)
+		return WIDGET_TOGGLE;
+	if (strcmp(s, "button") == 0)
+		return WIDGET_BUTTON;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -142,6 +155,18 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_IMAGE:
 		w = widget_image_create_instance(slot);
+		break;
+	case WIDGET_SHAPE_PANEL:
+		w = widget_shape_panel_create_instance(slot);
+		break;
+	case WIDGET_ARC:
+		w = widget_arc_create_instance(slot);
+		break;
+	case WIDGET_TOGGLE:
+		w = widget_toggle_create_instance(slot);
+		break;
+	case WIDGET_BUTTON:
+		w = widget_button_create_instance(slot);
 		break;
 	default:
 		return NULL;
@@ -438,10 +463,18 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		ESP_LOGD(TAG, "layout_load: Calling from_json for %s", w->id);
 		w->from_json(w, (cJSON *)wj);
 
+		/* Parse conditional rules from config */
+		cJSON *cfg_obj = cJSON_GetObjectItemCaseSensitive((cJSON *)wj, "config");
+		if (cfg_obj)
+			widget_rules_from_json(w, cfg_obj);
+
 		/* Build LVGL objects on the parent screen */
 		ESP_LOGD(TAG, "layout_load: Calling create for %s", w->id);
 		w->create(w, parent);
 		ESP_LOGD(TAG, "layout_load: Returned from create for %s", w->id);
+
+		/* Subscribe rule signals after create (needs w->root) */
+		widget_rules_subscribe(w);
 
 		/* Position root object if valid */
 		if (w->root && lv_obj_is_valid(w->root)) {
@@ -451,10 +484,6 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 
 		ESP_LOGD(TAG, "layout_load: loaded widget id=%s type=%d at (%d,%d)",
 				 w->id, (int)wtype, (int)w->x, (int)w->y);
-
-		/* Note: the widget_t is orphaned here until a registry is added in
-		 * Phase 4.  For now the LVGL objects are correctly positioned on
-		 * screen without a centralised registry. */
 	}
 
 	cJSON_Delete(root);
@@ -501,7 +530,13 @@ esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent) {
 		}
 
 		w->from_json(w, (cJSON *)wj);
+
+		cJSON *cfg_obj2 = cJSON_GetObjectItemCaseSensitive((cJSON *)wj, "config");
+		if (cfg_obj2)
+			widget_rules_from_json(w, cfg_obj2);
+
 		w->create(w, parent);
+		widget_rules_subscribe(w);
 
 		if (w->root && lv_obj_is_valid(w->root)) {
 			lv_obj_set_x(w->root, w->x);
@@ -552,6 +587,10 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 			continue;
 		}
 		w->to_json(w, wj);
+		/* Serialize conditional rules into the widget's config object */
+		cJSON *cfg_ser = cJSON_GetObjectItemCaseSensitive(wj, "config");
+		if (cfg_ser)
+			widget_rules_to_json(w, cfg_ser);
 		cJSON_AddItemToArray(arr, wj);
 	}
 

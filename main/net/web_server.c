@@ -12,7 +12,10 @@
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/ui.h"
+#include "widgets/font_manager.h"
 #include "widgets/signal.h"
+#include "widgets/signal_sim.h"
+#include "esp_littlefs.h"
 #include <dirent.h>
 #include <stdbool.h>
 #include <string.h>
@@ -673,6 +676,21 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* Check free space before writing */
+	size_t total_bytes = 0, used_bytes = 0;
+	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
+		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
+		if (content_len > free_bytes) {
+			free(buf);
+			char err_msg[128];
+			snprintf(err_msg, sizeof(err_msg),
+					 "Not enough storage: need %u KB, only %u KB free",
+					 (unsigned)(content_len / 1024), (unsigned)(free_bytes / 1024));
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
+			return ESP_FAIL;
+		}
+	}
+
 	/* Write to LittleFS */
 	char path[80];
 	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
@@ -852,43 +870,183 @@ static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
 											.user_ctx = NULL};
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  Signal test injection endpoint
+ *  Font management endpoints
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-typedef struct {
-	char  name[32];
-	float value;
-} signal_test_ctx_t;
+#define LFS_FONT_DIR  "/lfs/fonts"
+#define FONT_MAX_FILE_SIZE (512 * 1024)
 
-static void _deferred_signal_inject(void *arg) {
-	signal_test_ctx_t *ctx = (signal_test_ctx_t *)arg;
-	if (ctx) {
-		signal_inject_test_value(ctx->name, ctx->value);
-		free(ctx);
-	}
+static void _ensure_font_dir(void) {
+	struct stat st;
+	if (stat(LFS_FONT_DIR, &st) != 0)
+		mkdir(LFS_FONT_DIR, 0755);
 }
 
-/* POST /api/signal/test — inject a test value into a signal.
- * Body: {"signal_name":"RPM","value":4500} */
-static esp_err_t signal_test_handler(httpd_req_t *req) {
-	int total_len = req->content_len;
-	if (total_len <= 0 || total_len > 256) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
+/* POST /api/font/upload?name=<family_name>
+ * Body: raw TTF binary data */
+static esp_err_t font_upload_handler(httpd_req_t *req) {
+	_ensure_font_dir();
+
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
 		return ESP_FAIL;
 	}
 
-	char buf[257];
-	int received = 0;
-	while (received < total_len) {
-		int r = httpd_req_recv(req, buf + received, total_len - received);
-		if (r <= 0) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Recv failed");
+	size_t content_len = req->content_len;
+	if (content_len < 12 || content_len > FONT_MAX_FILE_SIZE) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
+		return ESP_FAIL;
+	}
+
+	/* Check free space */
+	size_t total_bytes = 0, used_bytes = 0;
+	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
+		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
+		if (content_len > free_bytes) {
+			char err_msg[128];
+			snprintf(err_msg, sizeof(err_msg),
+					 "Not enough storage: need %u KB, only %u KB free",
+					 (unsigned)(content_len / 1024), (unsigned)(free_bytes / 1024));
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
 			return ESP_FAIL;
 		}
-		received += r;
 	}
-	buf[received] = '\0';
+
+	/* Receive into PSRAM */
+	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
+	if (!buf) {
+		buf = malloc(content_len);
+		if (!buf) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+			return ESP_FAIL;
+		}
+	}
+
+	size_t received = 0;
+	while (received < content_len) {
+		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
+		if (ret <= 0) {
+			free(buf);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+			return ESP_FAIL;
+		}
+		received += ret;
+	}
+
+	/* Write to LittleFS */
+	char path[80];
+	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
+	FILE *f = fopen(path, "wb");
+	if (!f) {
+		free(buf);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	size_t nw = fwrite(buf, 1, received, f);
+	fclose(f);
+
+	if (nw != received) {
+		free(buf);
+		remove(path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
+		return ESP_FAIL;
+	}
+
+	/* Register in font manager */
+	font_manager_add_family(name, buf, received);
+	free(buf);
+
+	ESP_LOGI(TAG, "Uploaded font '%s' (%u bytes)", name, (unsigned)received);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t font_upload_uri = {.uri = "/api/font/upload",
+											.method = HTTP_POST,
+											.handler = font_upload_handler,
+											.user_ctx = NULL};
+
+/* GET /api/font/list — returns JSON array of font family names */
+static esp_err_t font_list_handler(httpd_req_t *req) {
+	cJSON *arr = cJSON_CreateArray();
+	uint8_t count = font_manager_family_count();
+	for (uint8_t i = 0; i < count; i++) {
+		const char *fname = font_manager_family_name(i);
+		if (fname)
+			cJSON_AddItemToArray(arr, cJSON_CreateString(fname));
+	}
+
+	char *json_str = cJSON_PrintUnformatted(arr);
+	cJSON_Delete(arr);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t font_list_uri = {.uri = "/api/font/list",
+										  .method = HTTP_GET,
+										  .handler = font_list_handler,
+										  .user_ctx = NULL};
+
+/* POST /api/font/delete?name=<family_name> */
+static esp_err_t font_delete_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!font_manager_remove_family(name)) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Deleted font '%s'", name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t font_delete_uri = {.uri = "/api/font/delete",
+											.method = HTTP_POST,
+											.handler = font_delete_handler,
+											.user_ctx = NULL};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Signal simulator endpoints
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+static void _deferred_sim_toggle(void *arg) {
+	bool enable = (bool)(uintptr_t)arg;
+	if (enable) signal_sim_start();
+	else signal_sim_stop();
+}
+
+static esp_err_t _signal_simulate_post_handler(httpd_req_t *req) {
+	char buf[64];
+	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (ret <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[ret] = '\0';
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -896,36 +1054,48 @@ static esp_err_t signal_test_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "signal_name");
-	cJSON *value_item = cJSON_GetObjectItemCaseSensitive(root, "value");
-	if (!cJSON_IsString(name_item) || !cJSON_IsNumber(value_item)) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing signal_name/value");
-		return ESP_FAIL;
-	}
-
-	signal_test_ctx_t *ctx = malloc(sizeof(signal_test_ctx_t));
-	if (!ctx) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
-	strncpy(ctx->name, name_item->valuestring, sizeof(ctx->name) - 1);
-	ctx->name[sizeof(ctx->name) - 1] = '\0';
-	ctx->value = (float)value_item->valuedouble;
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	bool en = cJSON_IsTrue(enabled);
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_signal_inject, ctx);
+	lv_async_call(_deferred_sim_toggle, (void *)(uintptr_t)en);
 
 	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+	const char *resp = en ? "{\"status\":\"ok\",\"enabled\":true}" : "{\"status\":\"ok\",\"enabled\":false}";
+	httpd_resp_sendstr(req, resp);
+	return ESP_OK;
 }
 
-static const httpd_uri_t signal_test_uri = {.uri = "/api/signal/test",
-											.method = HTTP_POST,
-											.handler = signal_test_handler,
-											.user_ctx = NULL};
+static esp_err_t _signal_simulate_get_handler(httpd_req_t *req) {
+	httpd_resp_set_type(req, "application/json");
+	const char *resp = signal_sim_is_active()
+		? "{\"enabled\":true}"
+		: "{\"enabled\":false}";
+	httpd_resp_sendstr(req, resp);
+	return ESP_OK;
+}
+
+/* GET /api/storage/info — returns total/used/free bytes for LittleFS */
+static esp_err_t storage_info_handler(httpd_req_t *req) {
+	size_t total_bytes = 0, used_bytes = 0;
+	esp_err_t err = esp_littlefs_info("littlefs", &total_bytes, &used_bytes);
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot read storage info");
+		return ESP_FAIL;
+	}
+	size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
+	char resp[128];
+	snprintf(resp, sizeof(resp),
+			 "{\"total\":%u,\"used\":%u,\"free\":%u}",
+			 (unsigned)total_bytes, (unsigned)used_bytes, (unsigned)free_bytes);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+}
+static const httpd_uri_t storage_info_uri = {
+	.uri = "/api/storage/info", .method = HTTP_GET,
+	.handler = storage_info_handler, .user_ctx = NULL
+};
 
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
@@ -937,7 +1107,7 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 20;
+	config.max_uri_handlers = 24;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -967,7 +1137,23 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &image_list_uri);
 	httpd_register_uri_handler(server, &image_delete_uri);
 	httpd_register_uri_handler(server, &image_data_uri);
-	httpd_register_uri_handler(server, &signal_test_uri);
+	httpd_register_uri_handler(server, &font_upload_uri);
+	httpd_register_uri_handler(server, &font_list_uri);
+	httpd_register_uri_handler(server, &font_delete_uri);
+	httpd_register_uri_handler(server, &storage_info_uri);
+	static const httpd_uri_t signal_simulate_post_uri = {
+		.uri = "/api/signal/simulate",
+		.method = HTTP_POST,
+		.handler = _signal_simulate_post_handler
+	};
+	httpd_register_uri_handler(server, &signal_simulate_post_uri);
+
+	static const httpd_uri_t signal_simulate_get_uri = {
+		.uri = "/api/signal/simulate",
+		.method = HTTP_GET,
+		.handler = _signal_simulate_get_handler
+	};
+	httpd_register_uri_handler(server, &signal_simulate_get_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;

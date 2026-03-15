@@ -47,29 +47,6 @@ void force_close_text_input_dialog(void);
 /* =========================================================================
  * Fuel sender context — shared between menu_screen.c and ui_callbacks.c
  * ========================================================================= */
-typedef struct {
-    uint8_t      value_id;
-    lv_obj_t    *set_label;
-    lv_obj_t    *empty_btn;
-    lv_obj_t    *full_btn;
-    lv_obj_t    *empty_input;
-    lv_obj_t    *full_input;
-    lv_obj_t    *current_label;
-    lv_timer_t  *update_timer;
-    lv_obj_t    *filter_label;
-    lv_obj_t    *filter_slider;
-} fuel_sender_ctx_t;
-
-/* Fuel sender event callbacks */
-void fuel_sender_switch_event_cb(lv_event_t *e);
-void fuel_sender_ctx_free_event_cb(lv_event_t *e);
-void fs_empty_btn_event_cb(lv_event_t *e);
-void fs_full_btn_event_cb(lv_event_t *e);
-void fs_empty_v_input_event_cb(lv_event_t *e);
-void fs_full_v_input_event_cb(lv_event_t *e);
-void fs_filter_slider_event_cb(lv_event_t *e);
-void fs_voltage_update_timer_cb(lv_timer_t *timer);
-
 /* Bar/panel event callbacks */
 void show_value_switch_event_cb(lv_event_t *e);
 void invert_value_switch_event_cb(lv_event_t *e);

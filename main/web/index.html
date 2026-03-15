@@ -345,11 +345,12 @@
         .widget-box.locked {
             border-style: dashed;
             border-color: rgba(255,255,255,0.15);
-            cursor: not-allowed;
+            pointer-events: none;
         }
 
         .widget-box.locked.selected {
             border-color: rgba(255,255,255,0.9);
+            pointer-events: none;
         }
 
         .widget-box .type-icon {
@@ -370,6 +371,11 @@
         .widget-box[data-type="warning"]  { border-color: hsl(0, 80%, 55%); }
         .widget-box[data-type="text"]     { border-color: hsl(190, 80%, 45%); }
         .widget-box[data-type="meter"]    { border-color: hsl(88, 50%, 50%); }
+        .widget-box[data-type="image"]    { border-color: hsl(280, 60%, 55%); }
+        .widget-box[data-type="shape_panel"] { border-color: hsl(220, 30%, 50%); }
+        .widget-box[data-type="arc"]      { border-color: hsl(320, 60%, 50%); }
+        .widget-box[data-type="toggle"]   { border-color: hsl(160, 70%, 45%); }
+        .widget-box[data-type="button"]   { border-color: hsl(45, 80%, 50%); }
 
         .widget-box .id-label {
             position: absolute;
@@ -743,6 +749,21 @@
 
         .layer-btn.active-state {
             color: var(--accent);
+        }
+
+        .layer-icon {
+            width: 16px;
+            height: 13px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 5px;
+        }
+
+        .layer-icon svg {
+            width: 100%;
+            height: 100%;
         }
 
         .layer-type {
@@ -1861,7 +1882,7 @@
                 <div>Copy / Paste Widget</div>
                 <div><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">C</span> / <span
                         class="kbd">V</span></div>
-                <div>Format Painter (Copy/Paste Properties)</div>
+                <div>Copy / Paste Style (Appearance)</div>
                 <div><span class="kbd">Ctrl</span>+<span class="kbd">D</span></div>
                 <div>Duplicate Widget</div>
                 <div><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Y</span></div>
@@ -1923,7 +1944,8 @@
             <button class="btn btn-secondary" onclick="resetView()">Reset</button>
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" onclick="captureScreenshot()">Sync</button>
-            <button class="btn btn-secondary" onclick="saveScreenshot()">Screenshot</button>
+            <div class="header-divider"></div>
+            <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min→max for visual testing">Simulate</button>
             <div class="header-divider"></div>
             <button class="btn" onclick="saveActiveLayout()">Apply</button>
         </div>
@@ -1939,17 +1961,15 @@
         <!-- Main Stage -->
         <main class="main-stage" style="flex-direction:column; padding:0;">
             <div class="align-bar" style="width:100%">
-                <button class="align-btn" onclick="alignWidget('left')" title="Align Left Edge"><svg viewBox="0 0 14 14"><line x1="2" y1="1" x2="2" y2="13" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="4" width="8" height="6" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('left-quarter')" title="Align Left Quarter"><svg viewBox="0 0 14 14"><line x1="4.5" y1="1" x2="4.5" y2="13" stroke="currentColor" stroke-width="1" stroke-dasharray="2 1.5"/><rect x="2" y="4" width="5" height="6" rx="1" fill="currentColor" opacity="0.35"/></svg></button>
+                <button class="align-btn" onclick="alignWidget('left')" title="Align Left"><svg viewBox="0 0 14 14"><line x1="2" y1="1" x2="2" y2="13" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="4" width="8" height="6" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
                 <button class="align-btn" onclick="alignWidget('center')" title="Align Center X"><svg viewBox="0 0 14 14"><line x1="7" y1="1" x2="7" y2="13" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="4" width="8" height="6" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('right-quarter')" title="Align Right Quarter"><svg viewBox="0 0 14 14"><line x1="9.5" y1="1" x2="9.5" y2="13" stroke="currentColor" stroke-width="1" stroke-dasharray="2 1.5"/><rect x="7" y="4" width="5" height="6" rx="1" fill="currentColor" opacity="0.35"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('right')" title="Align Right Edge"><svg viewBox="0 0 14 14"><line x1="12" y1="1" x2="12" y2="13" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="4" width="8" height="6" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
+                <button class="align-btn" onclick="alignWidget('right')" title="Align Right"><svg viewBox="0 0 14 14"><line x1="12" y1="1" x2="12" y2="13" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="4" width="8" height="6" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
+                <button class="align-btn" onclick="distributeWidgets('x')" title="Distribute Horizontally"><svg viewBox="0 0 14 14"><line x1="1" y1="1" x2="1" y2="13" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="13" y1="1" x2="13" y2="13" stroke="currentColor" stroke-width="1" opacity="0.4"/><rect x="2.5" y="5" width="2.5" height="4" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="5.75" y="5" width="2.5" height="4" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="9" y="5" width="2.5" height="4" rx="0.5" fill="currentColor" opacity="0.5"/></svg></button>
                 <div class="align-sep"></div>
-                <button class="align-btn" onclick="alignWidget('top')" title="Align Top Edge"><svg viewBox="0 0 14 14"><line x1="1" y1="2" x2="13" y2="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="4" width="6" height="8" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('top-quarter')" title="Align Top Quarter"><svg viewBox="0 0 14 14"><line x1="1" y1="4.5" x2="13" y2="4.5" stroke="currentColor" stroke-width="1" stroke-dasharray="2 1.5"/><rect x="4" y="2" width="6" height="5" rx="1" fill="currentColor" opacity="0.35"/></svg></button>
+                <button class="align-btn" onclick="alignWidget('top')" title="Align Top"><svg viewBox="0 0 14 14"><line x1="1" y1="2" x2="13" y2="2" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="4" width="6" height="8" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
                 <button class="align-btn" onclick="alignWidget('middle')" title="Align Center Y"><svg viewBox="0 0 14 14"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="3" width="6" height="8" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('bottom-quarter')" title="Align Bottom Quarter"><svg viewBox="0 0 14 14"><line x1="1" y1="9.5" x2="13" y2="9.5" stroke="currentColor" stroke-width="1" stroke-dasharray="2 1.5"/><rect x="4" y="7" width="6" height="5" rx="1" fill="currentColor" opacity="0.35"/></svg></button>
-                <button class="align-btn" onclick="alignWidget('bottom')" title="Align Bottom Edge"><svg viewBox="0 0 14 14"><line x1="1" y1="12" x2="13" y2="12" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="2" width="6" height="8" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
+                <button class="align-btn" onclick="alignWidget('bottom')" title="Align Bottom"><svg viewBox="0 0 14 14"><line x1="1" y1="12" x2="13" y2="12" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="2" width="6" height="8" rx="1" fill="currentColor" opacity="0.5"/></svg></button>
+                <button class="align-btn" onclick="distributeWidgets('y')" title="Distribute Vertically"><svg viewBox="0 0 14 14"><line x1="1" y1="1" x2="13" y2="1" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="1" y1="13" x2="13" y2="13" stroke="currentColor" stroke-width="1" opacity="0.4"/><rect x="5" y="2.5" width="4" height="2.5" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="5" y="5.75" width="4" height="2.5" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="5" y="9" width="4" height="2.5" rx="0.5" fill="currentColor" opacity="0.5"/></svg></button>
             </div>
             <div style="flex:1; display:flex; align-items:center; justify-content:center; width:100%; overflow:hidden;"
                 id="workspaceViewport">
@@ -1995,6 +2015,7 @@
     <footer>
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
         <div id="widgetCount">0 widgets, 0 signals</div>
+        <div id="storageInfo" style="font-size:10px; color:var(--text-muted);"></div>
         <div>800x480 &middot; <span id="widgetCoords">(0, 0)</span></div>
         <div style="margin-left:auto; display:flex; align-items:center; gap:6px;">
             <button class="zoom-btn" onclick="zoomBy(-0.1)" title="Zoom Out">&minus;</button>
@@ -2017,6 +2038,8 @@
         let _dragAnchorStart = { x: 0, y: 0 };
         let globalPresets = [];
         let expandedSignalIdx = -1;
+        let _cachedImageList = [];
+        let _cachedFontList = [];
 
         function switchSidebarTab(tabName) {
             const left = document.querySelector('.workspace > .sidebar:not(.sidebar-right)');
@@ -2311,6 +2334,24 @@
             try { localStorage.setItem('rdm7_draft', snap); } catch (e) { }
         }
 
+        function _restoreSelection(oldWidgets) {
+            /* Preserve selection across undo/redo by matching widget IDs */
+            const selectedIds = new Set();
+            selectedIndices.forEach(i => {
+                if (oldWidgets[i]) selectedIds.add(oldWidgets[i].id);
+            });
+            selectedIndices = new Set();
+            selectedIndex = -1;
+            if (selectedIds.size > 0) {
+                (currentLayout.widgets || []).forEach((w, i) => {
+                    if (selectedIds.has(w.id)) {
+                        selectedIndices.add(i);
+                        selectedIndex = i;
+                    }
+                });
+            }
+        }
+
         function undo() {
             if (historyIndex >= 0) {
                 let currentStr = JSON.stringify(currentLayout);
@@ -2320,8 +2361,9 @@
                 }
                 historyIndex--;
                 if (historyIndex >= 0) {
+                    const oldWidgets = currentLayout.widgets || [];
                     currentLayout = JSON.parse(history[historyIndex]);
-                    selectedIndex = -1; selectedIndices = new Set(); // clear selection to avoid out of bounds
+                    _restoreSelection(oldWidgets);
                 } else {
                     return;
                 }
@@ -2335,8 +2377,9 @@
         function redo() {
             if (historyIndex < history.length - 1) {
                 historyIndex++;
+                const oldWidgets = currentLayout.widgets || [];
                 currentLayout = JSON.parse(history[historyIndex]);
-                selectedIndex = -1; selectedIndices = new Set();
+                _restoreSelection(oldWidgets);
                 renderEditor();
                 renderSignals();
                 updateInspector();
@@ -2470,8 +2513,84 @@
                         w.config[f.name] = convertFn(w.config[f.name]);
                     }
                 });
+                /* Convert colors in rule overrides (object format: {fieldName: value}) */
+                const colorFieldNames = new Set(def.fields.filter(f => f.type === 'color').map(f => f.name));
+                (w.config.rules || []).forEach(rule => {
+                    const ov = rule.overrides;
+                    if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+                        Object.keys(ov).forEach(key => {
+                            if (colorFieldNames.has(key) && ov[key] !== undefined) {
+                                ov[key] = convertFn(ov[key]);
+                            }
+                        });
+                    }
+                });
             });
         }
+
+        /* Built-in compiled font families with fixed sizes */
+        const BUILTIN_FONT_FAMILIES = [
+            { name: "Montserrat", sizes: [8,10,12,14,16,18,20,22,24],
+              toValue: (s) => `montserrat_${s}` },
+            { name: "Fugaz One", sizes: [14,17,28,56],
+              toValue: (s) => `fugaz_${s}` },
+            { name: "Manrope Bold", sizes: [35,54],
+              toValue: (s) => s === 35 ? 'manrope_35_bold' : 'manrope_54_bold' }
+        ];
+
+        /* Build FONT_OPTIONS dynamically (built-in + uploaded custom fonts) */
+        function buildFontOptions() {
+            const opts = [{ v: "", l: "Default" }];
+            BUILTIN_FONT_FAMILIES.forEach(fam => {
+                fam.sizes.forEach(s => opts.push({ v: fam.toValue(s), l: `${fam.name} ${s}` }));
+            });
+            (_cachedFontList || []).forEach(fname => {
+                [14, 18, 24, 32, 48, 64].forEach(s => {
+                    opts.push({ v: `${fname}:${s}`, l: `${fname} ${s}` });
+                });
+            });
+            return opts;
+        }
+
+        /* Parse a font value into {family, size} or null */
+        function parseFontValue(val) {
+            if (!val) return null;
+            const colon = val.indexOf(':');
+            if (colon > 0) return { family: val.substring(0, colon), size: parseInt(val.substring(colon + 1)) || 14, custom: true };
+            /* Legacy built-in: figure out family + size */
+            for (const fam of BUILTIN_FONT_FAMILIES) {
+                for (const s of fam.sizes) {
+                    if (fam.toValue(s) === val) return { family: fam.name, size: s, custom: false };
+                }
+            }
+            return null;
+        }
+
+        /* Get all available font family names (built-in + custom) */
+        function getFontFamilies() {
+            const families = [{ name: '', label: 'Default', custom: false }];
+            BUILTIN_FONT_FAMILIES.forEach(f => families.push({ name: f.name, label: f.name, custom: false }));
+            (_cachedFontList || []).forEach(f => families.push({ name: f, label: f, custom: true }));
+            return families;
+        }
+
+        /* Get available sizes for a font family */
+        function getFontSizes(familyName) {
+            for (const fam of BUILTIN_FONT_FAMILIES) {
+                if (fam.name === familyName) return fam.sizes;
+            }
+            return null; /* custom font: free-form size */
+        }
+
+        /* Build the stored font value from family + size */
+        function buildFontValue(familyName, size) {
+            if (!familyName) return '';
+            for (const fam of BUILTIN_FONT_FAMILIES) {
+                if (fam.name === familyName) return fam.toValue(size);
+            }
+            return `${familyName}:${size}`;
+        }
+
 
         const WIDGET_DEFS = {
             "rpm_bar": {
@@ -2489,7 +2608,7 @@
                     { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" },
                     { name: "lights_enabled", label: "RPM Lights", type: "checkbox", def: false, cat: "appearance" },
                     { name: "background_enabled", label: "Background Enabled", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "background_value", label: "Background RPM", type: "number", def: 0, cat: "appearance" },
+                    { name: "background_value", label: "Background RPM", type: "stepper", min: 0, max: 20000, def: 0, cat: "appearance" },
                     { name: "background_color", label: "Background Color", type: "color", def: 0x333333, cat: "appearance" }
                 ]
             },
@@ -2500,62 +2619,30 @@
                     { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "warning_high_enabled", label: "High Warning", type: "checkbox", def: false, cat: "alerts", group: "high" },
-                    { name: "warning_high_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
+                    { name: "warning_high_threshold", label: "Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                     { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                     { name: "warning_high_apply_panel", label: "Panel", type: "checkbox", def: false, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                     { name: "warning_low_enabled", label: "Low Warning", type: "checkbox", def: false, cat: "alerts", group: "low" },
-                    { name: "warning_low_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
+                    { name: "warning_low_threshold", label: "Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
                     { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
                     { name: "warning_low_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                     { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                     { name: "warning_low_apply_panel", label: "Panel", type: "checkbox", def: false, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
-                    { name: "label_font", label: "Label Font", type: "select", options: [
-                        { v: "", l: "Default (Label)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
-                    { name: "value_font", label: "Value Font", type: "select", options: [
-                        { v: "", l: "Default (Value)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
-                    { name: "border_radius", label: "Border Radius", type: "number", def: 7, cat: "appearance" },
-                    { name: "border_width", label: "Border Width", type: "number", def: 3, cat: "appearance" },
+                    { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
+                    { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
+                    { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 7, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 3, cat: "appearance" },
                     { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
                     { name: "bg_color", label: "Background", type: "color", def: 0x000000, cat: "appearance" },
-                    { name: "bg_opa", label: "BG Opacity", type: "number", def: 255, cat: "appearance" },
+                    { name: "bg_opa", label: "BG Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "label_y_offset", label: "Label Y Offset", type: "number", def: -28, cat: "appearance" },
-                    { name: "value_y_offset", label: "Value Y Offset", type: "number", def: 9, cat: "appearance" }
+                    { name: "label_y_offset", label: "Label Y Offset", type: "stepper", min: -100, max: 100, def: -28, cat: "appearance" },
+                    { name: "value_y_offset", label: "Value Y Offset", type: "stepper", min: -100, max: 100, def: 9, cat: "appearance" },
+                    { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", min: -100, max: 100, def: 41, cat: "appearance" },
+                    { name: "custom_text_y_offset", label: "Unit Text Y", type: "stepper", min: -100, max: 100, def: 32, cat: "appearance" }
                 ]
             },
             "bar": {
@@ -2568,58 +2655,20 @@
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                     { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
-                    { name: "label_font", label: "Label Font", type: "select", options: [
-                        { v: "", l: "Default (Label)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
-                    { name: "value_font", label: "Value Font", type: "select", options: [
-                        { v: "", l: "Default (Value)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
+                    { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
+                    { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                     { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
-                    { name: "bar_radius", label: "Bar Radius", type: "number", def: 5, cat: "appearance" },
-                    { name: "bar_border_width", label: "Border Width", type: "number", def: 2, cat: "appearance" },
+                    { name: "bar_radius", label: "Bar Radius", type: "stepper", min: 0, max: 50, def: 5, cat: "appearance" },
+                    { name: "bar_border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 2, cat: "appearance" },
                     { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
-                    { name: "indicator_radius", label: "Fill Radius", type: "number", def: 5, cat: "appearance" },
+                    { name: "indicator_radius", label: "Fill Radius", type: "stepper", min: 0, max: 50, def: 5, cat: "appearance" },
                     { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
-                    { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_low", label: "Low Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
                     { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
-                    { name: "bar_high", label: "High Threshold", type: "number", def: 100, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
-                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
-                    { name: "fuel_sender", label: "Fuel Sender Mode", type: "checkbox", def: false, cat: "data" },
-                    { name: "fuel_sender_empty_v", label: "Fuel Empty (V)", type: "number", def: 0, cat: "data" },
-                    { name: "fuel_sender_full_v", label: "Fuel Full (V)", type: "number", def: 5.0, cat: "data" },
-                    { name: "fuel_sender_filter", label: "Fuel EMA Filter (0-100)", type: "number", def: 50, cat: "data" }
+                    { name: "bar_high", label: "High Threshold", type: "stepper", min: -99999, max: 99999, def: 100, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" }
                 ]
             },
             "indicator": {
@@ -2639,9 +2688,9 @@
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                     { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance" },
-                    { name: "border_width", label: "Border Width", type: "number", def: 0, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
-                    { name: "radius", label: "Radius", type: "number", def: 100, cat: "appearance" },
+                    { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
                     { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance" },
                     { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
                 ]
@@ -2651,23 +2700,8 @@
                 fields: [
                     { name: "static_text", label: "Static Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
-                    { name: "font", label: "Font", type: "select", options: [
-                        { v: "", l: "Default (Montserrat 14)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" }
+                    { name: "font", label: "Font", type: "font", def: "", cat: "appearance" },
+                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
                 ]
             },
             "meter": {
@@ -2677,87 +2711,96 @@
                     { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
                     { name: "start_angle", label: "Start angle", type: "number", def: 135, cat: "data" },
                     { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" },
-                    { name: "label_font", label: "Label Font", type: "select", options: [
-                        { v: "", l: "Default (Label)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
-                    { name: "value_font", label: "Value Font", type: "select", options: [
-                        { v: "", l: "Default (Value)" },
-                        { v: "montserrat_8", l: "Montserrat 8" },
-                        { v: "montserrat_10", l: "Montserrat 10" },
-                        { v: "montserrat_12", l: "Montserrat 12" },
-                        { v: "montserrat_14", l: "Montserrat 14" },
-                        { v: "montserrat_16", l: "Montserrat 16" },
-                        { v: "montserrat_18", l: "Montserrat 18" },
-                        { v: "montserrat_20", l: "Montserrat 20" },
-                        { v: "montserrat_22", l: "Montserrat 22" },
-                        { v: "montserrat_24", l: "Montserrat 24" },
-                        { v: "fugaz_14", l: "Fugaz One 14" },
-                        { v: "fugaz_17", l: "Fugaz One 17" },
-                        { v: "fugaz_28", l: "Fugaz One 28" },
-                        { v: "fugaz_56", l: "Fugaz One 56" },
-                        { v: "manrope_35_bold", l: "Manrope Bold 35" },
-                        { v: "manrope_54_bold", l: "Manrope Bold 54" }
-                    ], def: "", cat: "appearance" },
-                    { name: "minor_tick_count", label: "Minor Ticks", type: "number", def: 21, cat: "appearance" },
-                    { name: "major_tick_every", label: "Major Every N", type: "number", def: 5, cat: "appearance" },
-                    { name: "minor_tick_width", label: "Minor Tick W", type: "number", def: 2, cat: "appearance" },
-                    { name: "minor_tick_length", label: "Minor Tick L", type: "number", def: 10, cat: "appearance" },
-                    { name: "major_tick_width", label: "Major Tick W", type: "number", def: 4, cat: "appearance" },
-                    { name: "major_tick_length", label: "Major Tick L", type: "number", def: 15, cat: "appearance" },
-                    { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x888888, cat: "appearance" },
+                    { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance" },
+                    { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
+                    { name: "border_opa", label: "Border Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "scale_padding", label: "Scale Padding", type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
+                    { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 0, max: 100, def: 21, cat: "appearance" },
+                    { name: "minor_tick_width", label: "Tick Width", type: "stepper", min: 1, max: 20, def: 2, cat: "appearance" },
+                    { name: "minor_tick_length", label: "Tick Length", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
+                    { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x888888, cat: "appearance" },
+                    { name: "major_tick_every", label: "Major Tick Every", type: "stepper", min: 1, max: 50, def: 5, cat: "appearance" },
+                    { name: "major_tick_width", label: "Major Tick Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
+                    { name: "major_tick_length", label: "Major Tick Length", type: "stepper", min: 1, max: 50, def: 15, cat: "appearance" },
                     { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "label_gap", label: "Label Gap", type: "stepper", min: -20, max: 50, def: 10, cat: "appearance" },
+                    { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance" },
                     { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "number", def: 0, cat: "appearance" },
-                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "number", def: 0, cat: "appearance" },
-                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "number", def: 0, cat: "appearance" },
-                    { name: "needle_width", label: "Needle Width", type: "number", def: 4, cat: "appearance" },
+                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
+                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
+                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance" },
+                    { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "needle_r_mod", label: "Needle R Mod", type: "number", def: -10, cat: "appearance" },
-                    { name: "show_value", label: "Show Value", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "value_x_offset", label: "Value X", type: "number", def: 0, cat: "appearance" },
-                    { name: "value_y_offset", label: "Value Y", type: "number", def: 20, cat: "appearance" },
-                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "show_id_label", label: "Show ID Label", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "id_x_offset", label: "ID X", type: "number", def: 0, cat: "appearance" },
-                    { name: "id_y_offset", label: "ID Y", type: "number", def: 45, cat: "appearance" },
-                    { name: "id_label_color", label: "ID Color", type: "color", def: 0xCCCCCC, cat: "appearance" },
-                    { name: "bg_image_name", label: "BG Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "meter_bg_color", label: "BG Color", type: "color", def: 0x3D3D3D, cat: "appearance" },
-                    { name: "meter_bg_opa", label: "BG Opacity", type: "number", def: 255, cat: "appearance" },
-                    { name: "arc_zone1_enabled", label: "Zone 1", type: "checkbox", def: false, cat: "appearance", group: "zone1" },
-                    { name: "arc_zone1_start", label: "Start", type: "number", def: 0, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
-                    { name: "arc_zone1_end", label: "End", type: "number", def: 33, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
-                    { name: "arc_zone1_color", label: "Color", type: "color", def: 0x00FF00, cat: "appearance", group: "zone1", enabledBy: "arc_zone1_enabled" },
-                    { name: "arc_zone2_enabled", label: "Zone 2", type: "checkbox", def: false, cat: "appearance", group: "zone2" },
-                    { name: "arc_zone2_start", label: "Start", type: "number", def: 33, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
-                    { name: "arc_zone2_end", label: "End", type: "number", def: 66, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
-                    { name: "arc_zone2_color", label: "Color", type: "color", def: 0xFFFF00, cat: "appearance", group: "zone2", enabledBy: "arc_zone2_enabled" },
-                    { name: "arc_zone3_enabled", label: "Zone 3", type: "checkbox", def: false, cat: "appearance", group: "zone3" },
-                    { name: "arc_zone3_start", label: "Start", type: "number", def: 66, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" },
-                    { name: "arc_zone3_end", label: "End", type: "number", def: 100, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" },
-                    { name: "arc_zone3_color", label: "Color", type: "color", def: 0xFF0000, cat: "appearance", group: "zone3", enabledBy: "arc_zone3_enabled" }
+                    { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" }
                 ]
             },
             "image": {
                 displayName: "Image", defW: 100, defH: 100,
                 fields: [
                     { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data" },
-                    { name: "opacity", label: "Opacity (0-255)", type: "number", def: 255, cat: "appearance" }
+                    { name: "opacity", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" }
+                ]
+            },
+            "shape_panel": {
+                displayName: "Shape Panel", defW: 200, defH: 100,
+                fields: [
+                    { name: "bg_color", label: "Background", type: "color", def: 0x1A1A1A, cat: "appearance" },
+                    { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
+                    { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 200, def: 10, cat: "appearance" },
+                    { name: "shadow_width", label: "Shadow Width", type: "stepper", min: 0, max: 50, def: 0, cat: "appearance" },
+                    { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", min: 0, max: 255, def: 128, cat: "appearance" },
+                    { name: "shadow_ofs_x", label: "Shadow X", type: "stepper", min: -100, max: 100, def: 0, cat: "appearance" },
+                    { name: "shadow_ofs_y", label: "Shadow Y", type: "stepper", min: -100, max: 100, def: 0, cat: "appearance" }
+                ]
+            },
+            "arc": {
+                displayName: "Arc Shape", defW: 200, defH: 200,
+                fields: [
+                    { name: "start_angle", label: "Start Angle", type: "number", def: 135, cat: "data" },
+                    { name: "end_angle", label: "End Angle", type: "number", def: 45, cat: "data" },
+                    { name: "arc_width", label: "Arc Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
+                    { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance" },
+                    { name: "bg_arc_width", label: "Track Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
+                    { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" }
+                ]
+            },
+            "toggle": {
+                displayName: "Toggle Switch", defW: 80, defH: 40,
+                fields: [
+                    { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                    { name: "signal_on_threshold", label: "ON Threshold", type: "number", def: 0.5, cat: "data" },
+                    { name: "tx_can_id", label: "TX CAN ID", type: "number", def: 0, cat: "data" },
+                    { name: "tx_on_data", label: "ON Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,1", cat: "data" },
+                    { name: "tx_on_dlc", label: "ON DLC", type: "number", def: 8, cat: "data" },
+                    { name: "tx_off_data", label: "OFF Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,0", cat: "data" },
+                    { name: "tx_off_dlc", label: "OFF DLC", type: "number", def: 8, cat: "data" },
+                    { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 5, cat: "appearance" }
+                ]
+            },
+            "button": {
+                displayName: "Button", defW: 100, defH: 40,
+                fields: [
+                    { name: "label", label: "Label", type: "text", def: "BTN", cat: "data" },
+                    { name: "tx_can_id", label: "TX CAN ID", type: "number", def: 0, cat: "data" },
+                    { name: "tx_press_data", label: "Press Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,1", cat: "data" },
+                    { name: "tx_press_dlc", label: "Press DLC", type: "number", def: 8, cat: "data" },
+                    { name: "tx_release_data", label: "Release Data (bytes)", type: "text", def: "", cat: "data" },
+                    { name: "tx_release_dlc", label: "Release DLC", type: "number", def: 0, cat: "data" },
+                    { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance" },
+                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance" },
+                    { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 5, cat: "appearance" },
+                    { name: "font", label: "Font", type: "font", def: "", cat: "appearance" }
                 ]
             }
         };
@@ -2907,7 +2950,11 @@
             warning:   '<svg viewBox="0 0 20 16"><polygon points="10,2 18,14 2,14" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="7" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="12" r="0.7" fill="currentColor"/></svg>',
             text:      '<svg viewBox="0 0 20 16"><text x="3" y="12" font-size="11" font-weight="bold" fill="currentColor" opacity="0.7">Aa</text></svg>',
             meter:     '<svg viewBox="0 0 20 16"><path d="M4,13 A7,7 0 0,1 16,13" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="12" x2="7" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>',
-            image:     '<svg viewBox="0 0 20 16"><rect x="2" y="2" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="6" r="2" fill="currentColor" opacity="0.5"/><polyline points="4,13 8,9 11,11 14,7 16,10" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"/></svg>'
+            image:       '<svg viewBox="0 0 20 16"><rect x="2" y="2" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="6" r="2" fill="currentColor" opacity="0.5"/><polyline points="4,13 8,9 11,11 14,7 16,10" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"/></svg>',
+            shape_panel: '<svg viewBox="0 0 20 16"><rect x="2" y="3" width="16" height="10" rx="2" fill="currentColor" opacity="0.3" stroke="currentColor" stroke-width="1.2"/></svg>',
+            arc:         '<svg viewBox="0 0 20 16"><path d="M4,14 A8,8 0 0,1 16,14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M6,12 A5.5,5.5 0 0,1 14,12" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>',
+            toggle:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="13" cy="8" r="2.5" fill="currentColor" opacity="0.6"/></svg>',
+            button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>'
         };
 
         function initPalette() {
@@ -2972,7 +3019,7 @@
                 }
 
                 box.onmousedown = (e) => {
-                    if (e.button !== 0 || w.locked) return; // Only start drag on left click or if unlocked
+                    if (e.button !== 0) return;
                     startDrag(e, index);
                 };
 
@@ -3042,10 +3089,19 @@
                     }
                 };
 
+                const LAYER_TYPE_COLORS = {
+                    panel: 'hsl(152,55%,45%)', rpm_bar: 'hsl(14,90%,55%)', bar: 'hsl(38,100%,55%)',
+                    indicator: 'hsl(54,90%,55%)', warning: 'hsl(0,80%,55%)', text: 'hsl(190,80%,45%)',
+                    meter: 'hsl(88,50%,50%)', image: 'hsl(280,60%,55%)',
+                    shape_panel: 'hsl(220,30%,50%)', arc: 'hsl(320,60%,50%)',
+                    toggle: 'hsl(160,70%,45%)', button: 'hsl(45,80%,50%)'
+                };
                 const label = (defs[w.type] && defs[w.type].displayName) || w.type;
+                const layerIcon = PALETTE_ICONS[w.type] || '';
+                const iconColor = LAYER_TYPE_COLORS[w.type] || 'var(--text-muted)';
                 const typeInfo = document.createElement('span');
-                typeInfo.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-                typeInfo.innerHTML = `<span class="layer-type">${label}</span><span class="layer-id">${w.id}</span>`;
+                typeInfo.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center;';
+                typeInfo.innerHTML = `<span class="layer-icon" style="color:${iconColor}">${layerIcon}</span><span class="layer-type">${label}</span><span class="layer-id">${w.id}</span>`;
 
                 const controls = document.createElement('div');
                 controls.className = 'layer-controls';
@@ -3118,22 +3174,43 @@
             const indices = selectedIndices.size > 0 ? [...selectedIndices] : (selectedIndex >= 0 ? [selectedIndex] : []);
             if (indices.length === 0) return;
             pushHistory();
+            /* Use first selected widget's position as the anchor for center/middle */
+            const anchor = currentLayout.widgets[indices[0]];
             indices.forEach(i => {
                 const w = currentLayout.widgets[i];
                 if (!w) return;
                 switch (dir) {
-                    case 'left':           w.x = -400 + Math.round(w.w / 2); break;
-                    case 'left-quarter':   w.x = -200; break;
-                    case 'center':         w.x = 0; break;
-                    case 'right-quarter':  w.x = 200; break;
-                    case 'right':          w.x = 400 - Math.round(w.w / 2); break;
-                    case 'top':            w.y = -240 + Math.round(w.h / 2); break;
-                    case 'top-quarter':    w.y = -120; break;
-                    case 'middle':         w.y = 0; break;
-                    case 'bottom-quarter': w.y = 120; break;
-                    case 'bottom':         w.y = 240 - Math.round(w.h / 2); break;
+                    case 'left':   w.x = -400 + Math.round(w.w / 2); break;
+                    case 'center': w.x = anchor.x; break;
+                    case 'right':  w.x = 400 - Math.round(w.w / 2); break;
+                    case 'top':    w.y = -240 + Math.round(w.h / 2); break;
+                    case 'middle': w.y = anchor.y; break;
+                    case 'bottom': w.y = 240 - Math.round(w.h / 2); break;
                 }
             });
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function distributeWidgets(axis) {
+            const indices = selectedIndices.size > 1 ? [...selectedIndices] : [];
+            if (indices.length < 3) return; /* need 3+ widgets to distribute */
+            pushHistory();
+            const widgets = indices.map(i => currentLayout.widgets[i]).filter(Boolean);
+            if (axis === 'x') {
+                widgets.sort((a, b) => a.x - b.x);
+                const first = widgets[0].x;
+                const last = widgets[widgets.length - 1].x;
+                const step = (last - first) / (widgets.length - 1);
+                widgets.forEach((w, i) => { w.x = Math.round(first + step * i); });
+            } else {
+                widgets.sort((a, b) => a.y - b.y);
+                const first = widgets[0].y;
+                const last = widgets[widgets.length - 1].y;
+                const step = (last - first) / (widgets.length - 1);
+                widgets.forEach((w, i) => { w.y = Math.round(first + step * i); });
+            }
             renderEditor();
             updateInspector();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
@@ -3620,8 +3697,8 @@
                 isResizing = false;
                 guideX.style.display = 'none';
                 guideY.style.display = 'none';
-                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
                 updateInspector();
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
             }
         };
 
@@ -3630,8 +3707,8 @@
 
             if (e.ctrlKey || e.metaKey) {
                 if (e.shiftKey) {
-                    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyProperties(); return; }
-                    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteProperties(); return; }
+                    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyStyle(); return; }
+                    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteStyle(); return; }
                     if (e.key === 's' || e.key === 'S') { e.preventDefault(); openSignalManager(); return; }
                 } else {
                     if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyToClipboard(); return; }
@@ -3671,44 +3748,55 @@
 
             if (changed) {
                 e.preventDefault();
-                // Nudging intentionally bypasses the 5px snap for pixel-perfect positioning
                 renderEditor();
                 updateInspector();
                 if (document.getElementById('livePreviewToggle').checked) triggerPreview();
             }
         };
 
-        function copyProperties() {
+        function copyStyle() {
             if (selectedIndex === -1) return;
             const w = currentLayout.widgets[selectedIndex];
-            clipboardProperties = JSON.parse(JSON.stringify(w.config));
-            updateStatus('Properties Copied');
+            const def = WIDGET_DEFS[w.type];
+            if (!def) return;
+            const style = {};
+            def.fields.filter(f => f.cat === 'appearance').forEach(f => {
+                if (w.config[f.name] !== undefined) style[f.name] = w.config[f.name];
+            });
+            clipboardProperties = { _type: w.type, style };
+            updateStatus('Style Copied');
+            showToast('Style copied', 'success');
         }
 
-        function pasteProperties() {
-            if (selectedIndex === -1 || !clipboardProperties) return;
+        function pasteStyle() {
+            if (selectedIndex === -1 || !clipboardProperties || !clipboardProperties.style) return;
             pushHistory();
-            const w = currentLayout.widgets[selectedIndex];
-
-            // Only paste properties that the target widget definition supports
-            const def = WIDGET_DEFS[w.type];
-            if (def && def.fields) {
-                def.fields.forEach(f => {
-                    if (clipboardProperties[f.name] !== undefined) {
-                        w.config[f.name] = clipboardProperties[f.name];
+            const indices = selectedIndices.size > 0 ? [...selectedIndices] : [selectedIndex];
+            indices.forEach(i => {
+                const w = currentLayout.widgets[i];
+                if (!w) return;
+                const def = WIDGET_DEFS[w.type];
+                if (!def) return;
+                const appearNames = new Set(def.fields.filter(f => f.cat === 'appearance').map(f => f.name));
+                Object.keys(clipboardProperties.style).forEach(key => {
+                    if (appearNames.has(key)) {
+                        w.config[key] = clipboardProperties.style[key];
                     }
                 });
-            }
-
+            });
             renderEditor();
             updateInspector();
-            updateStatus('Properties Pasted');
+            updateStatus('Style Pasted');
+            showToast(`Style pasted to ${indices.length} widget${indices.length > 1 ? 's' : ''}`, 'success');
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
         let previewTimer = null;
         function buildFirmwarePayload() {
             const payload = JSON.parse(JSON.stringify(currentLayout));
+            /* Convert RGB888 → RGB565 BEFORE rules are converted to array format
+             * (convertWidgetColors handles object-format rule overrides) */
+            convertWidgetColors(payload.widgets, rgb888to565);
             (payload.widgets || []).forEach(w => {
                 if (!w.config) w.config = {};
                 if (w.signal) {
@@ -3727,9 +3815,36 @@
                 }
                 /* Clean up web-editor-only fields */
                 delete w.config.bar_alerts_enabled;
+                /* Convert TX data strings to byte arrays for toggle/button */
+                ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
+                    if (typeof w.config[key] === 'string' && w.config[key].length > 0) {
+                        w.config[key] = w.config[key].split(',').map(s => parseInt(s.trim(), 10) || 0);
+                    }
+                });
+                /* Convert rule overrides from object {field: value} to firmware array [{field, type, value}] */
+                if (w.config.rules) {
+                    const def = WIDGET_DEFS[w.type];
+                    const fieldMap = {};
+                    if (def) def.fields.forEach(f => { fieldMap[f.name] = f; });
+                    w.config.rules.forEach(rule => {
+                        const ov = rule.overrides;
+                        if (ov && typeof ov === 'object' && !Array.isArray(ov)) {
+                            const arr = [];
+                            Object.keys(ov).forEach(fieldName => {
+                                const fDef = fieldMap[fieldName];
+                                let vtype = 'number';
+                                if (fDef) {
+                                    if (fDef.type === 'color') vtype = 'color';
+                                    else if (fDef.type === 'checkbox') vtype = 'bool';
+                                    else if (fDef.type === 'text' || fDef.type === 'image_picker' || fDef.type === 'font') vtype = 'string';
+                                }
+                                arr.push({ field: fieldName, type: vtype, value: ov[fieldName] });
+                            });
+                            rule.overrides = arr;
+                        }
+                    });
+                }
             });
-            /* Convert RGB888 → RGB565 for firmware */
-            convertWidgetColors(payload.widgets, rgb888to565);
             return payload;
         }
 
@@ -3808,6 +3923,53 @@
                 </div>`;
                 /* Populate dropdown async after render */
                 setTimeout(() => _populateImageSelect('imgsel_' + f.name, val), 0);
+            } else if (f.type === 'font') {
+                const parsed = parseFontValue(val);
+                const families = getFontFamilies();
+                const selFamily = parsed ? (parsed.custom ? parsed.family : parsed.family) : '';
+                const selSize = parsed ? parsed.size : 14;
+                const uid = f.name + '_' + Math.random().toString(36).substring(2, 7);
+
+                html += `<div style="display:flex; gap:4px; align-items:center;">`;
+                html += `<select id="fontFam_${uid}" style="flex:1;" onchange="_onFontFamilyChange('${uid}', '${f.name}')" ${disabledAttr}>`;
+                html += `<option value="">Default</option>`;
+                BUILTIN_FONT_FAMILIES.forEach(fam => {
+                    html += `<option value="${fam.name}" ${selFamily === fam.name ? 'selected' : ''}>${fam.name}</option>`;
+                });
+                (_cachedFontList || []).forEach(fname => {
+                    html += `<option value="${fname}" ${selFamily === fname ? 'selected' : ''}>${fname}</option>`;
+                });
+                html += `</select>`;
+
+                /* Size: either dropdown for built-in or number input for custom */
+                const builtinSizes = selFamily ? getFontSizes(selFamily) : null;
+                if (builtinSizes) {
+                    html += `<select id="fontSize_${uid}" style="width:58px;" onchange="_onFontSizeChange('${uid}', '${f.name}')" ${disabledAttr}>`;
+                    builtinSizes.forEach(s => {
+                        html += `<option value="${s}" ${s === selSize ? 'selected' : ''}>${s}</option>`;
+                    });
+                    html += `</select>`;
+                } else if (selFamily) {
+                    html += `<input type="number" id="fontSize_${uid}" value="${selSize}" min="8" max="128" style="width:58px;" onchange="_onFontSizeChange('${uid}', '${f.name}')" ${disabledAttr}>`;
+                } else {
+                    html += `<span id="fontSize_${uid}"></span>`;
+                }
+
+                html += `<button type="button" onclick="openFontUploadDialog()" title="Upload font" style="padding:4px 6px; cursor:pointer; font-size:11px;" ${disabledAttr}>+</button>`;
+                html += `</div>`;
+            } else if (f.type === 'stepper') {
+                const sMin = f.min != null ? f.min : -9999;
+                const sMax = f.max != null ? f.max : 9999;
+                html += `<div style="display:flex; gap:4px; align-items:center;">
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var sl=btn.nextElementSibling; var ni=sl.nextElementSibling; var v=Math.max(${sMin}, parseInt(sl.value)-1); sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&lt;</button>
+                    <input type="range" min="${sMin}" max="${sMax}" value="${val}" style="flex:1"
+                        oninput="this.nextElementSibling.value=this.value; updateWidgetConfigField('${f.name}', parseInt(this.value), true)" ${disabledAttr}>
+                    <input type="number" value="${val}" min="${sMin}" max="${sMax}" style="width:48px; text-align:center; font-size:11px; font-family:'JetBrains Mono',monospace; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:2px 4px;"
+                        oninput="(function(ni){var v=parseInt(ni.value); if(!isNaN(v)){v=Math.max(${sMin},Math.min(${sMax},v)); ni.previousElementSibling.value=v; updateWidgetConfigField('${f.name}',v,true);}})(this)" ${disabledAttr}>
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=Math.min(${sMax}, parseInt(sl.value)+1); sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
+                </div>`;
             } else {
                 html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
             }
@@ -3877,8 +4039,8 @@
                 <div class="field"><label>Y</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${disabledAttr}></div>
             </div>`;
             html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                <div class="field"><label>W</label><input type="number" value="${w.w}" oninput="updateWidgetField('w', parseInt(this.value), true)" ${disabledAttr}></div>
-                <div class="field"><label>H</label><input type="number" value="${w.h}" oninput="updateWidgetField('h', parseInt(this.value), true)" ${disabledAttr}></div>
+                <div class="field"><label>W</label><input type="number" value="${w.w}" onchange="updateWidgetField('w', parseInt(this.value), true)" oninput="updateWidgetFieldDeferred('w', parseInt(this.value))" ${disabledAttr}></div>
+                <div class="field"><label>H</label><input type="number" value="${w.h}" onchange="updateWidgetField('h', parseInt(this.value), true)" oninput="updateWidgetFieldDeferred('h', parseInt(this.value))" ${disabledAttr}></div>
             </div>`;
             html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;">
                 <button class="btn btn-secondary" style="font-size:11px" onclick="moveWidgetLayer('up')" ${disabledAttr}>Bring Forward</button>
@@ -3889,7 +4051,7 @@
 
             /* ── Data Accordion (open by default) ── */
             const dataFields = def.fields.filter(f => f.cat === 'data');
-            const hasSignalBinding = !['indicator'].includes(w.type); /* most widgets can bind */
+            const hasSignalBinding = !['indicator', 'shape_panel', 'arc', 'button'].includes(w.type);
             if (dataFields.length || hasSignalBinding) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
                 /* Signal binding UI */
@@ -3919,19 +4081,6 @@
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
 
-                /* Test Value slider — for widgets with a bound signal and min/max config */
-                if (w.signal && w.config.min !== undefined && w.config.max !== undefined) {
-                    const tMin = w.config.min;
-                    const tMax = w.config.max;
-                    html += `<div class="field" style="margin-top:8px; padding-top:8px; border-top:1px solid #444;">
-                        <label>Test Value</label>
-                        <div style="display:flex; gap:6px; align-items:center;">
-                            <input type="range" min="${tMin}" max="${tMax}" value="${tMin}" style="flex:1"
-                                oninput="sendTestValue('${w.signal}', parseFloat(this.value)); document.getElementById('testValueReadout').textContent=this.value">
-                            <span id="testValueReadout" style="min-width:32px; text-align:right; font-size:12px;">${tMin}</span>
-                        </div>
-                    </div>`;
-                }
 
                 html += `</div></details>`;
             }
@@ -3987,6 +4136,96 @@
                 html += `</div></details>`;
             }
 
+            /* ── Rules Accordion (conditional overrides — full appearance clone) ── */
+            const rules = w.config.rules || [];
+            html += `<details class="inspector-accordion"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
+            html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
+            rules.forEach((rule, ri) => {
+                const sigNames = (currentLayout.signals || []).map(s => s.name);
+                const opOptions = ['>','<','>=','<=','==','!=','range'];
+                const overrides = rule.overrides || {};
+                const overrideCount = Object.keys(overrides).length;
+                html += `<details class="inspector-accordion" style="border:1px solid #555; border-radius:6px; margin-bottom:6px;"><summary style="padding:6px 8px;">
+                    <span style="font-size:11px; font-weight:600;">Rule ${ri+1}</span>
+                    ${overrideCount ? `<span class="badge" style="background:#e67e22;">${overrideCount}</span>` : ''}
+                    <button class="btn btn-secondary" style="font-size:10px; padding:1px 6px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%); float:right;" onclick="event.stopPropagation(); removeRule(${ri})" ${disabledAttr}>Remove</button>
+                </summary><div class="accordion-body" style="padding:6px;">`;
+                /* Condition: IF signal op threshold */
+                html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin-bottom:4px;">IF</div>`;
+                html += `<div class="field"><label>Signal</label><select onchange="updateRule(${ri},'signal_name',this.value)" ${disabledAttr}>
+                    <option value="">--</option>`;
+                sigNames.forEach(sn => { html += `<option value="${sn}" ${rule.signal_name===sn?'selected':''}>${sn}</option>`; });
+                html += `</select></div>`;
+                html += `<div style="display:grid; grid-template-columns:auto 1fr; gap:4px;">`;
+                html += `<div class="field"><label>Op</label><select onchange="updateRule(${ri},'op',this.value)" style="width:60px;" ${disabledAttr}>`;
+                opOptions.forEach(op => { html += `<option value="${op}" ${rule.op===op?'selected':''}>${op}</option>`; });
+                html += `</select></div>`;
+                if (rule.op === 'range') {
+                    html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+                        <div class="field"><label>Min</label><input type="number" value="${rule.range_min||0}" onchange="updateRule(${ri},'range_min',parseFloat(this.value))" ${disabledAttr}></div>
+                        <div class="field"><label>Max</label><input type="number" value="${rule.range_max||0}" onchange="updateRule(${ri},'range_max',parseFloat(this.value))" ${disabledAttr}></div>
+                    </div>`;
+                } else {
+                    html += `<div class="field"><label>Value</label><input type="number" value="${rule.threshold||0}" onchange="updateRule(${ri},'threshold',parseFloat(this.value))" ${disabledAttr}></div>`;
+                }
+                html += `</div>`;
+                /* THEN: full appearance fields */
+                html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin:8px 0 4px;">THEN change:</div>`;
+                appearFields.forEach(f => {
+                    if (f.enabledBy) {
+                        const parentVal = (overrides[f.enabledBy] !== undefined) ? overrides[f.enabledBy] : (w.config[f.enabledBy] !== undefined ? w.config[f.enabledBy] : false);
+                        if (!parentVal) return;
+                    }
+                    const isOverridden = overrides.hasOwnProperty(f.name);
+                    const val = isOverridden ? overrides[f.name] : (w.config[f.name] !== undefined ? w.config[f.name] : f.def);
+                    const borderStyle = isOverridden ? 'border-left: 3px solid #e67e22; padding-left: 5px;' : '';
+                    html += `<div class="field" style="${borderStyle}"><label>${f.label}</label>`;
+                    const ruleHandler = `updateRuleField(${ri}, '${f.name}', %%VAL%%)`;
+                    if (f.type === 'select') {
+                        const allNumeric = f.options.every(opt => { const v = typeof opt === 'object' ? opt.v : opt; return v === '' || typeof v === 'number' || !isNaN(Number(v)); });
+                        html += `<select onchange="updateRuleField(${ri}, '${f.name}', ${allNumeric} ? Number(this.value) : this.value)" ${disabledAttr}>`;
+                        f.options.forEach(opt => {
+                            const v = typeof opt === 'object' ? opt.v : opt;
+                            const l = typeof opt === 'object' ? opt.l : opt;
+                            html += `<option value="${v}" ${v == val ? 'selected' : ''}>${l}</option>`;
+                        });
+                        html += `</select>`;
+                    } else if (f.type === 'checkbox') {
+                        html += `<label class="toggle-switch"><input type="checkbox" ${val ? 'checked' : ''} onchange="updateRuleField(${ri}, '${f.name}', this.checked)" ${disabledAttr}><span class="toggle-track"></span></label>`;
+                    } else if (f.type === 'color') {
+                        const cHex = Number(val != null ? val : 0).toString(16).toUpperCase().padStart(6, '0');
+                        html += `<div class="color-field-wrap">
+                            <input type="color" value="#${cHex}"
+                                oninput="document.getElementById('rclr_${ri}_${f.name}').value='0x'+this.value.substring(1).toUpperCase(); updateRuleField(${ri},'${f.name}',parseInt('0x'+this.value.substring(1).toUpperCase()))"
+                                ${disabledAttr}>
+                            <input type="text" id="rclr_${ri}_${f.name}" value="0x${cHex}"
+                                oninput="let v=parseInt(this.value); if(!isNaN(v)){let h=v.toString(16).padStart(6,'0'); this.previousElementSibling.value='#'+h; updateRuleField(${ri},'${f.name}',v);}"
+                                ${disabledAttr}>
+                        </div>`;
+                    } else if (f.type === 'image_picker') {
+                        html += `<select onchange="updateRuleField(${ri}, '${f.name}', this.value)" ${disabledAttr}><option value="">None</option>`;
+                        (_cachedImageList || []).forEach(img => {
+                            html += `<option value="${img.name}" ${val === img.name ? 'selected' : ''}>${img.name}</option>`;
+                        });
+                        html += `</select>`;
+                    } else {
+                        const isNum = (f.type === 'number' || f.type === 'stepper');
+                        const inputType = isNum ? 'number' : 'text';
+                        const parseExpr = isNum ? 'parseFloat(this.value)' : 'this.value';
+                        html += `<input type="${inputType}" value="${val !== undefined ? val : ''}" oninput="updateRuleField(${ri},'${f.name}',${parseExpr})" ${disabledAttr}>`;
+                    }
+                    html += `</div>`;
+                    if (isOverridden) {
+                        html += `<button class="btn btn-secondary" style="font-size:9px; padding:0 4px; margin:-4px 0 4px; color:#e67e22; border-color:#e67e22;" onclick="clearRuleField(${ri},'${f.name}')" ${disabledAttr}>Reset</button>`;
+                    }
+                });
+                html += `</div></details>`;
+            });
+            if (rules.length < 4) {
+                html += `<button class="btn btn-secondary" style="font-size:11px; width:100%;" onclick="addRule()" ${disabledAttr}>+ Add Rule</button>`;
+            }
+            html += `</div></details>`;
+
             inspectorContent.innerHTML = html;
             _restoreInspectorState();
         }
@@ -3996,17 +4235,15 @@
             pushHistory();
             const w = currentLayout.widgets[selectedIndex];
             if (sigName) {
-                w.signal = sigName;
-                /* Auto-set label from signal name for widgets that have a label field */
-                if (['panel', 'bar', 'warning'].includes(w.type)) {
+                /* Always update label to match signal name */
+                const def = WIDGET_DEFS[w.type];
+                if (def && def.fields.some(f => f.name === 'label')) {
                     if (!w.config) w.config = {};
-                    const cur = (w.config.label || '').trim();
-                    /* Only auto-fill if label is empty or a generic default */
-                    if (!cur || /^(BAR[12]?|Panel\s*\d*|Warning\s*\d*|)$/i.test(cur)) {
-                        /* Convert SIGNAL_NAME to readable: replace _ with space, title-case */
-                        w.config.label = sigName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                    }
+                    w.config.label = sigName.replace(/([a-z])([A-Z])/g, '$1 $2')
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, c => c.toUpperCase());
                 }
+                w.signal = sigName;
             } else {
                 delete w.signal;
             }
@@ -4015,17 +4252,84 @@
             updateStatus(sigName ? `Bound signal "${sigName}"` : 'Signal unbound');
         }
 
-        /* ── Test value injection ── */
-        let _testValueTimer = null;
-        function sendTestValue(signalName, value) {
-            if (_testValueTimer) clearTimeout(_testValueTimer);
-            _testValueTimer = setTimeout(() => {
-                fetch('/api/signal/test', {
+        /* ── Signal Simulator toggle ── */
+        let _simActive = false;
+        async function toggleSimulation() {
+            const newState = !_simActive;
+            try {
+                const resp = await fetch('/api/signal/simulate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ signal_name: signalName, value: value })
-                }).catch(() => {});
-            }, 50);
+                    body: JSON.stringify({ enabled: newState })
+                });
+                if (resp.ok) {
+                    _simActive = newState;
+                    _updateSimButton();
+                }
+            } catch (e) { showToast('Simulation toggle failed', 'error'); }
+        }
+        function _updateSimButton() {
+            const btn = document.getElementById('pillSimulate');
+            if (!btn) return;
+            if (_simActive) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+        async function _pollSimState() {
+            try {
+                const resp = await fetch('/api/signal/simulate');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    _simActive = !!data.enabled;
+                    _updateSimButton();
+                }
+            } catch (e) { /* device offline */ }
+        }
+
+        /* ── Rule manipulation functions ── */
+        function _ensureRules() {
+            if (selectedIndex === -1) return null;
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w.config) w.config = {};
+            if (!w.config.rules) w.config.rules = [];
+            return w;
+        }
+        function addRule() {
+            const w = _ensureRules(); if (!w) return;
+            pushHistory();
+            w.config.rules.push({ signal_name: '', op: '>', threshold: 0, overrides: {} });
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+        function removeRule(ri) {
+            const w = _ensureRules(); if (!w) return;
+            pushHistory();
+            w.config.rules.splice(ri, 1);
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+        function updateRule(ri, key, val) {
+            const w = _ensureRules(); if (!w || !w.config.rules[ri]) return;
+            pushHistory();
+            w.config.rules[ri][key] = val;
+            if (key === 'op') updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+        function updateRuleField(ri, fieldName, value) {
+            const w = _ensureRules(); if (!w || !w.config.rules[ri]) return;
+            pushHistory();
+            if (!w.config.rules[ri].overrides) w.config.rules[ri].overrides = {};
+            w.config.rules[ri].overrides[fieldName] = value;
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+        function clearRuleField(ri, fieldName) {
+            const w = _ensureRules(); if (!w || !w.config.rules[ri]) return;
+            pushHistory();
+            if (w.config.rules[ri].overrides) {
+                delete w.config.rules[ri].overrides[fieldName];
+            }
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
         function openDataSourcePicker() {
@@ -4266,6 +4570,36 @@
             renderSignals();
         }
 
+        /* Layout fields (x/y/w/h) that only need canvas update, not a full device preview */
+        const _layoutOnlyFields = new Set(['x', 'y', 'w', 'h']);
+
+        /* Deferred field update: updates data + canvas without rebuilding inspector (no focus loss) */
+        function updateWidgetFieldDeferred(field, val) {
+            if (selectedIndex === -1) return;
+            let finalVal = val;
+            if (field !== 'id' && (typeof val === 'number' || !isNaN(Number(val)))) {
+                finalVal = Number(val);
+            }
+            if (isNaN(finalVal)) return;
+            currentLayout.widgets[selectedIndex][field] = finalVal;
+            if (currentLayout.widgets[selectedIndex].type === 'meter' && (field === 'w' || field === 'h')) {
+                finalVal = Math.min(finalVal, 800);
+                currentLayout.widgets[selectedIndex].w = finalVal;
+                currentLayout.widgets[selectedIndex].h = finalVal;
+                /* Sync the other input without full rebuild */
+                const otherField = field === 'w' ? 'h' : 'w';
+                const inputs = inspectorContent.querySelectorAll('input[type="number"]');
+                inputs.forEach(inp => {
+                    const lbl = inp.closest('.field')?.querySelector('label');
+                    if (lbl && lbl.textContent === (otherField === 'w' ? 'W' : 'H')) {
+                        inp.value = finalVal;
+                    }
+                });
+            }
+            renderEditor();
+            /* Skip device preview for layout-only changes — canvas already shows it */
+        }
+
         function updateWidgetField(field, val, preview = false) {
             if (selectedIndex === -1) return;
             let finalVal = val;
@@ -4349,7 +4683,9 @@
                 if (sel.value === name) {
                     updateWidgetConfigField(fieldName, '', false);
                 }
-                /* Refresh the dropdown */
+                /* Refresh the dropdown + cache */
+                _refreshImageList();
+                refreshStorageInfo();
                 sel.innerHTML = '<option value="">(none)</option>';
                 await _populateImageSelect(selectId, '');
                 updateStatus(`Deleted image "${name}"`);
@@ -4455,6 +4791,8 @@
                 if (!resp.ok) throw new Error(await resp.text());
 
                 statusEl.textContent = 'Upload complete!';
+                _refreshImageList();
+                refreshStorageInfo();
                 updateWidgetConfigField(fieldName, name, false);
                 updateInspector();
             } catch (e) {
@@ -4495,6 +4833,91 @@
                 u8[off++] = a;
             }
             return buf;
+        }
+
+        /* ─── Font management ──────────────────────────────────────────────── */
+
+        async function _refreshFontList() {
+            try {
+                const resp = await fetch('/api/font/list');
+                if (resp.ok) _cachedFontList = await resp.json();
+            } catch (e) { /* device offline */ }
+        }
+
+        function _onFontFamilyChange(uid, fieldName) {
+            const famSel = document.getElementById('fontFam_' + uid);
+            if (!famSel) return;
+            const family = famSel.value;
+            if (!family) {
+                updateWidgetConfigField(fieldName, '', false);
+                updateInspector();
+                return;
+            }
+            const sizes = getFontSizes(family);
+            const defaultSize = sizes ? sizes[Math.floor(sizes.length / 2)] : 14;
+            const val = buildFontValue(family, defaultSize);
+            updateWidgetConfigField(fieldName, val, false);
+            updateInspector();
+        }
+
+        function _onFontSizeChange(uid, fieldName) {
+            const famSel = document.getElementById('fontFam_' + uid);
+            const sizeEl = document.getElementById('fontSize_' + uid);
+            if (!famSel || !sizeEl) return;
+            const family = famSel.value;
+            const size = parseInt(sizeEl.value) || 14;
+            const val = buildFontValue(family, size);
+            updateWidgetConfigField(fieldName, val, false);
+        }
+
+        function openFontUploadDialog() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.ttf';
+            input.onchange = async () => {
+                const file = input.files[0];
+                if (!file) return;
+                const name = file.name.replace(/\.ttf$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML = `
+                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:300px;color:var(--text);">
+                        <h3 style="margin:0 0 12px 0;font-size:15px;">Upload Font</h3>
+                        <div style="margin-bottom:8px;font-size:13px;color:var(--text-muted);">File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)</div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+                            <label style="width:60px;font-size:13px;">Name:</label>
+                            <input id="fontDlgName" type="text" value="${name}" style="flex:1;" maxlength="27">
+                        </div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;">
+                            <button id="fontDlgCancel" style="padding:6px 14px;cursor:pointer;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">Cancel</button>
+                            <button id="fontDlgUpload" style="padding:6px 14px;cursor:pointer;background:var(--accent);border:none;border-radius:4px;color:#fff;">Upload</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+
+                document.getElementById('fontDlgCancel').onclick = () => overlay.remove();
+                document.getElementById('fontDlgUpload').onclick = async () => {
+                    const fontName = (document.getElementById('fontDlgName').value || name).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+                    overlay.remove();
+                    try {
+                        const buf = await file.arrayBuffer();
+                        const resp = await fetch(`/api/font/upload?name=${encodeURIComponent(fontName)}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/octet-stream' },
+                            body: buf
+                        });
+                        if (!resp.ok) throw new Error(await resp.text());
+                        await _refreshFontList();
+                        refreshStorageInfo();
+                        updateInspector();
+                        showToast(`Uploaded font "${fontName}"`, 'success');
+                    } catch (e) {
+                        showToast('Font upload failed: ' + e.message, 'error');
+                    }
+                };
+            };
+            input.click();
         }
 
         function moveWidgetLayer(dir) {
@@ -4939,11 +5362,32 @@
                 }
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
+                /* Snapshot raw device JSON BEFORE any transforms for accurate poll comparison */
+                const rawDeviceSnap = JSON.stringify(currentLayout);
                 if (!currentLayout.signals) currentLayout.signals = [];
                 /* Bridge firmware→web */
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
+                    }
+                    /* Convert TX data byte arrays to comma-separated strings for editor */
+                    if (w.config) {
+                        ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
+                            if (Array.isArray(w.config[key])) {
+                                w.config[key] = w.config[key].join(',');
+                            }
+                        });
+                    }
+                    /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
+                    if (w.config && w.config.rules) {
+                        w.config.rules.forEach(rule => {
+                            if (Array.isArray(rule.overrides)) {
+                                const obj = {};
+                                rule.overrides.forEach(ov => { if (ov.field) obj[ov.field] = ov.value; });
+                                rule.overrides = obj;
+                            }
+                            if (!rule.overrides) rule.overrides = {};
+                        });
                     }
                     /* Infer bar_alerts_enabled from thresholds */
                     if (w.type === 'bar' && w.config) {
@@ -4960,7 +5404,7 @@
                 selectedIndex = -1; selectedIndices = new Set();
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
-                _lastDeviceSnapshot = JSON.stringify(currentLayout);
+                _lastDeviceSnapshot = rawDeviceSnap;
                 renderEditor();
                 renderSignals();
                 updateInspector();
@@ -5018,23 +5462,25 @@
             } catch (e) { console.error('Screenshot failed', e); }
         }
 
-        function saveScreenshot() {
-            const canvas = document.getElementById('screenshotCanvas');
-            canvas.toBlob(blob => {
-                if (!blob) { updateStatus('No screenshot to save — click Sync View first', true); return; }
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${currentLayout.name || 'dashboard'}_screenshot.png`;
-                a.click();
-                URL.revokeObjectURL(url);
-                updateStatus('Screenshot saved');
-            }, 'image/png');
-        }
 
         function updateStatus(msg, isError) {
             statusText.textContent = msg;
             connectionDot.className = `status-dot ${isError ? '' : 'online'}`;
+        }
+
+        async function refreshStorageInfo() {
+            try {
+                const resp = await fetch('/api/storage/info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                const totalKB = (info.total / 1024).toFixed(0);
+                const usedKB = (info.used / 1024).toFixed(0);
+                const freeKB = (info.free / 1024).toFixed(0);
+                const pct = ((info.used / info.total) * 100).toFixed(0);
+                const el = document.getElementById('storageInfo');
+                const color = pct > 90 ? '#f44' : pct > 75 ? '#e67e22' : 'var(--text-muted)';
+                el.innerHTML = `<span style="color:${color}">Storage: ${usedKB}/${totalKB} KB (${freeKB} KB free)</span>`;
+            } catch(e) {}
         }
 
         function showToast(msg, type = 'success') {
@@ -5358,7 +5804,7 @@
         }
 
         async function syncFromDevice() {
-            if (_editingActive) return;
+            if (_editingActive || selectedIndex >= 0) return;
             try {
                 const resp = await fetch('/api/layout/current');
                 if (!resp.ok) return;
@@ -5369,9 +5815,14 @@
                 if (deviceSnap === _lastDeviceSnapshot) return;
                 _lastDeviceSnapshot = deviceSnap;
 
-                /* Check if our editor state matches what the device has */
-                const editorSnap = JSON.stringify(buildFirmwarePayload());
-                if (deviceSnap === editorSnap) return; /* already in sync */
+                /* Lightweight check: same layout name + widget count → likely in sync.
+                 * Full JSON comparison is unreliable due to field ordering and
+                 * web-only transforms (color conversion, bar_alerts_enabled, etc.) */
+                const dw = deviceLayout.widgets || [];
+                const ew = currentLayout.widgets || [];
+                if (deviceLayout.name === currentLayout.name &&
+                    dw.length === ew.length &&
+                    dw.every((d, i) => d.id === ew[i]?.id)) return;
 
                 if (!hasUnsavedEdits()) {
                     /* No unsaved web edits → silently reload from device */
@@ -5680,10 +6131,21 @@
             });
         })();
 
+        async function _refreshImageList() {
+            try {
+                const resp = await fetch('/api/image/list');
+                if (resp.ok) _cachedImageList = await resp.json();
+            } catch (e) { /* device offline */ }
+        }
+
         /* Start */
         initPalette();
         fetchPresets().then(() => populateEcuContextSelect());
         fetchLayouts();
+        _refreshImageList();
+        _refreshFontList();
+        refreshStorageInfo();
+        _pollSimState();
         captureScreenshot();
         /* Auto zoom-to-fit on load + window resize */
         requestAnimationFrame(() => zoomToFit());

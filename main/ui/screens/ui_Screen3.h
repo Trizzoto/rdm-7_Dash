@@ -102,12 +102,9 @@ typedef struct {
 #endif
 void update_bar_ui(void *param);
 
-// Fuel sender functions (defined in main.c)
+// Fuel sender ADC (defined in main.c, used by signal_internal)
 void fuel_sender_adc_init(void);
 float fuel_sender_read_voltage(void);
-float fuel_sender_get_filtered_v(uint8_t bar_idx);
-void fuel_sender_capture_empty(uint8_t value_id);
-void fuel_sender_capture_full(uint8_t value_id);
 
 /* Coordinator-level callbacks used by widget modules */
 void value_long_press_event_cb(lv_event_t *e);

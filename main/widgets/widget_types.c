@@ -7,15 +7,35 @@
  *   - widget_base_to_json() / widget_base_from_json() shared helpers
  */
 #include "widget_types.h"
+#include "font_manager.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ─── Shared font resolver ──────────────────────────────────────────────── */
 
 const lv_font_t *widget_resolve_font(const char *name) {
 	if (!name || name[0] == '\0') return NULL;
+
+	/* New format: "Family:size" (e.g. "Fugaz:28") */
+	const char *colon = strchr(name, ':');
+	if (colon) {
+		char family[32];
+		size_t flen = (size_t)(colon - name);
+		if (flen >= sizeof(family)) flen = sizeof(family) - 1;
+		memcpy(family, name, flen);
+		family[flen] = '\0';
+		uint16_t size = (uint16_t)atoi(colon + 1);
+		if (size >= 8 && size <= 128) {
+			const lv_font_t *f = font_manager_get(family, size);
+			if (f) return f;
+		}
+		return NULL;
+	}
+
+	/* Legacy compiled font names — backward compatibility */
 	/* Montserrat system fonts */
 	if (strcmp(name, "montserrat_8") == 0)  return &lv_font_montserrat_8;
 	if (strcmp(name, "montserrat_10") == 0) return &lv_font_montserrat_10;
@@ -52,6 +72,10 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_TEXT      */ { .min_w =  40, .min_h =  20, .max_w = 400, .max_h = 100 },
     /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = 800, .max_h = 800 },
     /* WIDGET_IMAGE     */ { .min_w =  10, .min_h =  10, .max_w = 800, .max_h = 480 },
+    /* WIDGET_SHAPE_PANEL */ { .min_w = 10, .min_h = 10, .max_w = 800, .max_h = 480 },
+    /* WIDGET_ARC       */ { .min_w =  30, .min_h =  30, .max_w = 800, .max_h = 800 },
+    /* WIDGET_TOGGLE    */ { .min_w =  40, .min_h =  20, .max_w = 200, .max_h =  80 },
+    /* WIDGET_BUTTON    */ { .min_w =  40, .min_h =  20, .max_w = 300, .max_h = 100 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -67,6 +91,10 @@ const char *widget_type_name(widget_type_t type)
         "text",
         "meter",
         "image",
+        "shape_panel",
+        "arc",
+        "toggle",
+        "button",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];

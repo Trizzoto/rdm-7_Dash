@@ -1,6 +1,8 @@
 #include "ui/dashboard.h"
 #include "layout/layout_manager.h"
+#include "widgets/font_manager.h"
 #include "widgets/signal.h"
+#include "widgets/signal_internal.h"
 #include "widgets/widget_registry.h"
 
 /* Existing widget create functions — used as fallback */
@@ -66,6 +68,8 @@ void dashboard_init(lv_obj_t *parent) {
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
 
+	font_manager_reset_instances();
+	font_manager_init();
 	signal_registry_init();
 	widget_registry_reset();
 	widget_warning_reset();
@@ -98,6 +102,9 @@ void dashboard_init(lv_obj_t *parent) {
 	}
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
+
+	/* Start internal signal injection after signals are registered */
+	signal_internal_start();
 }
 
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
@@ -106,6 +113,7 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
+	font_manager_reset_instances();
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();

@@ -1071,6 +1071,51 @@ static void _warning_destroy(widget_t *w) {
 	free(w);
 }
 
+static void _warning_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	uint8_t slot = wd->slot;
+
+	/* Start from base warning_data_t values (restore defaults) */
+	lv_color_t active_color   = wd->active_color;
+	lv_color_t inactive_color = wd->inactive_color;
+	lv_color_t bdr_color      = wd->border_color;
+	uint8_t    bdr_width      = wd->border_width;
+	lv_color_t lbl_color      = wd->label_color;
+
+	/* Apply active overrides on top */
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "active_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lv_color_t c; c.full = (uint16_t)o->value.color;
+			active_color = c;
+		} else if (strcmp(o->field_name, "inactive_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lv_color_t c; c.full = (uint16_t)o->value.color;
+			inactive_color = c;
+		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bdr_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bdr_width = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "label_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lbl_color.full = (uint16_t)o->value.color;
+		}
+	}
+
+	/* Apply bg color based on current on/off state */
+	lv_color_t bg = wd->current_state ? active_color : inactive_color;
+	lv_obj_set_style_bg_color(w->root, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Apply border styles */
+	lv_obj_set_style_border_color(w->root, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(w->root, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Apply label color if label exists */
+	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot])) {
+		lv_obj_set_style_text_color(warning_labels[slot], lbl_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
 widget_t *widget_warning_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1110,6 +1155,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	w->to_json = _warning_to_json;
 	w->from_json = _warning_from_json;
 	w->destroy = _warning_destroy;
+	w->apply_overrides = _warning_apply_overrides;
 
 	return w;
 }

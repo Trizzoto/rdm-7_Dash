@@ -453,25 +453,6 @@ float fuel_sender_read_voltage(void) {
 	return (raw / 4095.0f) * 3.3f;
 }
 
-/* Capture the current voltage as the "empty" calibration point */
-void fuel_sender_capture_empty(uint8_t value_id) {
-	// TODO: Port fuel sender to independent architecture
-}
-
-/* Capture the current voltage as the "full" calibration point */
-void fuel_sender_capture_full(uint8_t value_id) {
-	// TODO: Port fuel sender to independent architecture
-}
-
-/* Background task: reads GPIO 6 and drives any fuel-sender-enabled bars */
-float fuel_sender_get_filtered_v(uint8_t bar_idx) { return 0.0f; }
-
-static void fuel_sender_task(void *pvParameters) {
-	(void)pvParameters;
-	for (;;) {
-		vTaskDelay(pdMS_TO_TICKS(1000));
-	}
-}
 
 void app_main(void) {
 	// Initialize PWM for GPIO16
@@ -794,11 +775,8 @@ void app_main(void) {
 							0);
 	ESP_LOGI(TAG, "Indicator wire task started");
 
-	/* Fuel sender – ADC on GPIO 6, drives bars when fuel_sender is enabled */
+	/* Fuel sender – ADC on GPIO 6, exposed as FUEL_SENDER_V signal */
 	fuel_sender_adc_init();
-	xTaskCreatePinnedToCore(fuel_sender_task, "fuel_sender", 3072, NULL, 3,
-							NULL, 0);
-	ESP_LOGI(TAG, "Fuel sender task started (GPIO %d)", FUEL_SENDER_GPIO);
 
 	// Allow splash screen to render and become visible
 	vTaskDelay(pdMS_TO_TICKS(200));

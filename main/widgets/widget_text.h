@@ -10,12 +10,13 @@ extern "C" {
 
 /* ── Per-instance state for text widget ────────────────────────────────── */
 typedef struct {
-	uint8_t  value_idx;
-	uint8_t  decimals;
-	char     font[32];
-	char     static_text[64];
-	char     signal_name[32];
-	int16_t  signal_index;
+	uint8_t    value_idx;
+	uint8_t    decimals;
+	char       font[32];
+	char       static_text[64];
+	char       signal_name[32];
+	int16_t    signal_index;
+	lv_color_t text_color;
 } text_data_t;
 
 /**

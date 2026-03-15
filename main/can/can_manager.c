@@ -7,6 +7,7 @@
  */
 #include "can_manager.h"
 #include "signal.h"
+#include "signal_sim.h"
 
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -279,6 +280,18 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	ESP_LOGI(TAG, "Bitrate change completed");
 }
 
+esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
+	twai_message_t msg = {0};
+	msg.identifier = can_id & 0x7FFu;
+	msg.data_length_code = dlc > 8 ? 8 : dlc;
+	if (data && dlc > 0)
+		memcpy(msg.data, data, msg.data_length_code);
+	esp_err_t ret = twai_transmit(&msg, pdMS_TO_TICKS(5));
+	if (ret != ESP_OK)
+		ESP_LOGD(TAG, "CAN TX 0x%03lX failed: %s", (unsigned long)can_id, esp_err_to_name(ret));
+	return ret;
+}
+
 void can_process_queued_frames(void) {
 	if (s_can_queue == NULL) {
 		return;
@@ -292,8 +305,10 @@ void can_process_queued_frames(void) {
 
 	while (processed < max_batch &&
 		   xQueueReceive(s_can_queue, &msg, 0) == pdTRUE) {
-		/* Signal-centric decode: notify all signal subscribers */
-		signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+		/* When simulator is active, drain queue but skip dispatch */
+		if (!signal_sim_is_active()) {
+			signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+		}
 		processed++;
 	}
 }

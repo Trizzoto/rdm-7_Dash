@@ -253,19 +253,11 @@ int32_t config_bridge_get_bar_min(uint8_t value_id) { BAR_GETTER(bar_min, 0) }
 int32_t config_bridge_get_bar_max(uint8_t value_id) { BAR_GETTER(bar_max, 100) }
 bool    config_bridge_get_show_bar_value(uint8_t value_id) { BAR_GETTER(show_bar_value, false) }
 bool    config_bridge_get_invert_bar_value(uint8_t value_id) { BAR_GETTER(invert_bar_value, false) }
-bool    config_bridge_get_fuel_sender(uint8_t value_id) { BAR_GETTER(fuel_sender, false) }
-float   config_bridge_get_fuel_sender_empty_v(uint8_t value_id) { BAR_GETTER(fuel_sender_empty_v, 0.0f) }
-float   config_bridge_get_fuel_sender_full_v(uint8_t value_id) { BAR_GETTER(fuel_sender_full_v, 3.3f) }
-uint8_t config_bridge_get_fuel_sender_filter(uint8_t value_id) { BAR_GETTER(fuel_sender_filter, 50) }
 
 void config_bridge_set_bar_min(uint8_t value_id, int32_t val) { BAR_SETTER(bar_min) }
 void config_bridge_set_bar_max(uint8_t value_id, int32_t val) { BAR_SETTER(bar_max) }
 void config_bridge_set_show_bar_value(uint8_t value_id, bool val) { BAR_SETTER(show_bar_value) }
 void config_bridge_set_invert_bar_value(uint8_t value_id, bool val) { BAR_SETTER(invert_bar_value) }
-void config_bridge_set_fuel_sender(uint8_t value_id, bool val) { BAR_SETTER(fuel_sender) }
-void config_bridge_set_fuel_sender_empty_v(uint8_t value_id, float val) { BAR_SETTER(fuel_sender_empty_v) }
-void config_bridge_set_fuel_sender_full_v(uint8_t value_id, float val) { BAR_SETTER(fuel_sender_full_v) }
-void config_bridge_set_fuel_sender_filter(uint8_t value_id, uint8_t val) { BAR_SETTER(fuel_sender_filter) }
 
 #undef BAR_GETTER
 #undef BAR_SETTER

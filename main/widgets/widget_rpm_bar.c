@@ -1343,6 +1343,54 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (rd->signal_name[0] != '\0')
 		rd->signal_index = signal_find_by_name(rd->signal_name);
 }
+static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
+	if (!rd) return;
+
+	/* Restore defaults from type_data */
+	lv_color_t bar_col = rd->bar_color;
+	lv_color_t lim_col = rd->limiter_color;
+	lv_color_t bg_col  = rd->background_color;
+
+	/* Overlay active overrides */
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "bar_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lv_color_t c; c.full = (uint16_t)o->value.color;
+			bar_col = c;
+		} else if (strcmp(o->field_name, "limiter_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lv_color_t c; c.full = (uint16_t)o->value.color;
+			lim_col = c;
+		} else if (strcmp(o->field_name, "background_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lv_color_t c; c.full = (uint16_t)o->value.color;
+			bg_col = c;
+		}
+	}
+
+	/* Apply bar indicator color */
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+		lv_obj_set_style_bg_color(rpm_bar_gauge, bar_col,
+								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, bar_col,
+									   LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
+									 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
+
+	/* Apply redline/limiter zone color */
+	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
+		lv_obj_set_style_bg_color(rpm_redline_zone, lim_col,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Apply background bar color */
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+		lv_obj_set_style_bg_color(rpm_bar_gauge, bg_col,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
 static void _rpm_bar_destroy(widget_t *w) {
 	if (w) {
 		free(w->type_data);
@@ -1394,6 +1442,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	w->to_json = _rpm_bar_to_json;
 	w->from_json = _rpm_bar_from_json;
 	w->destroy = _rpm_bar_destroy;
+	w->apply_overrides = _rpm_bar_apply_overrides;
 
 	return w;
 }

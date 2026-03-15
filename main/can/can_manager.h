@@ -68,3 +68,14 @@ void can_change_bitrate(uint8_t bitrate_index);
  * starving other LVGL work if the bus is very busy.
  */
 void can_process_queued_frames(void);
+
+/**
+ * Transmit a single CAN frame.  Thread-safe (TWAI driver handles locking).
+ * Uses a short timeout to avoid blocking the LVGL task on bus errors.
+ *
+ * @param can_id  Standard 11-bit CAN ID (0x000–0x7FF).
+ * @param data    Pointer to data bytes (up to 8).
+ * @param dlc     Data length code (0–8).
+ * @return ESP_OK on success, or an error code.
+ */
+esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);

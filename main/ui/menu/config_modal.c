@@ -49,7 +49,6 @@ extern void bar_low_color_event_cb(lv_event_t *e);
 extern void bar_high_color_event_cb(lv_event_t *e);
 extern void bar_in_range_color_event_cb(lv_event_t *e);
 extern void keyboard_ready_event_cb(lv_event_t *e);
-extern float fuel_sender_get_filtered_v(uint8_t bar_idx);
 extern lv_obj_t *ui_Value[];		 /* live value labels on Screen3    */
 extern char previous_values[13][64]; /* last known value strings         */
 
@@ -185,20 +184,6 @@ static void style_tab(lv_obj_t *tab) {
 /* ── Warnings toggle callback (Alerts tab) ──────────────────────────────── */
 
 static void warnings_toggle_cb(lv_event_t *e) {
-	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
-		return;
-	lv_obj_t *container = (lv_obj_t *)lv_event_get_user_data(e);
-	if (!container)
-		return;
-	if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED))
-		lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
-	else
-		lv_obj_add_flag(container, LV_OBJ_FLAG_HIDDEN);
-}
-
-/* ── Fuel sender toggle callback (Display tab) ──────────────────────────── */
-
-static void fuel_toggle_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
 		return;
 	lv_obj_t *container = (lv_obj_t *)lv_event_get_user_data(e);
@@ -439,136 +424,6 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 		lv_obj_add_event_cb(iv, free_value_id_event_cb, LV_EVENT_DELETE, p);
 	}
 
-	/* ── Fuel Sender ── */
-	bool fs_on = config_bridge_get_fuel_sender(value_id);
-	lv_obj_t *fss = settings_add_switch(sec, "Fuel Sender:", fs_on);
-
-	/* Sub-container — hidden when fuel sender is off */
-	lv_obj_t *fs_box = lv_obj_create(tab);
-	lv_obj_set_size(fs_box, lv_pct(100), LV_SIZE_CONTENT);
-	lv_obj_set_style_bg_color(fs_box, THEME_COLOR_SECTION_BG, 0);
-	lv_obj_set_style_bg_opa(fs_box, LV_OPA_COVER, 0);
-	lv_obj_set_style_border_color(fs_box, THEME_COLOR_BORDER, 0);
-	lv_obj_set_style_border_width(fs_box, 1, 0);
-	lv_obj_set_style_radius(fs_box, THEME_RADIUS_SMALL, 0);
-	lv_obj_set_style_pad_all(fs_box, 6, 0);
-	lv_obj_set_style_pad_row(fs_box, 4, 0);
-	lv_obj_clear_flag(fs_box, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_flex_flow(fs_box, LV_FLEX_FLOW_COLUMN);
-	if (!fs_on)
-		lv_obj_add_flag(fs_box, LV_OBJ_FLAG_HIDDEN);
-
-	lv_obj_add_event_cb(fss, fuel_toggle_cb, LV_EVENT_VALUE_CHANGED, fs_box);
-
-	/* Calibration rows inside fs_box */
-	settings_section_t *fs_sec = fs_box; /* treat as inline section */
-
-	char vb[12];
-	snprintf(vb, sizeof(vb), "%.2f",
-			 config_bridge_get_fuel_sender_empty_v(value_id));
-	lv_obj_t *fs_ei =
-		settings_add_text_input(fs_sec, "Empty Voltage:", "V", vb);
-	lv_obj_add_event_cb(fs_ei, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	{
-		uint8_t *p = id_alloc(value_id);
-		lv_obj_add_event_cb(fs_ei, fs_empty_v_input_event_cb,
-							LV_EVENT_VALUE_CHANGED, p);
-		lv_obj_add_event_cb(fs_ei, free_value_id_event_cb, LV_EVENT_DELETE, p);
-	}
-
-	snprintf(vb, sizeof(vb), "%.2f",
-			 config_bridge_get_fuel_sender_full_v(value_id));
-	lv_obj_t *fs_fi = settings_add_text_input(fs_sec, "Full Voltage:", "V", vb);
-	lv_obj_add_event_cb(fs_fi, keyboard_event_cb, LV_EVENT_ALL, NULL);
-	{
-		uint8_t *p = id_alloc(value_id);
-		lv_obj_add_event_cb(fs_fi, fs_full_v_input_event_cb,
-							LV_EVENT_VALUE_CHANGED, p);
-		lv_obj_add_event_cb(fs_fi, free_value_id_event_cb, LV_EVENT_DELETE, p);
-	}
-
-	char cv[32];
-	snprintf(cv, sizeof(cv), "%.2f V", fuel_sender_get_filtered_v(bar_idx));
-	settings_add_info_row(fs_sec, "Current Reading:", cv);
-
-	char fb[20];
-	snprintf(fb, sizeof(fb), "Filter: %d%%",
-			 config_bridge_get_fuel_sender_filter(value_id));
-	lv_obj_t *fs_flbl = settings_add_info_row(fs_sec, "Filter:", fb);
-
-	lv_obj_t *fs_sl = lv_slider_create(fs_box);
-	lv_obj_set_width(fs_sl, lv_pct(94));
-	lv_obj_set_height(fs_sl, 12);
-	lv_slider_set_range(fs_sl, 0, 100);
-	lv_slider_set_value(fs_sl, config_bridge_get_fuel_sender_filter(value_id),
-						LV_ANIM_OFF);
-	lv_obj_set_style_bg_color(fs_sl, THEME_COLOR_ACCENT,
-							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(fs_sl, THEME_COLOR_BORDER,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(fs_sl, THEME_COLOR_ACCENT,
-							  LV_PART_KNOB | LV_STATE_DEFAULT);
-
-	/* Calibrate buttons row */
-	lv_obj_t *cal_row = lv_obj_create(fs_box);
-	lv_obj_set_size(cal_row, lv_pct(100), 36);
-	lv_obj_clear_flag(cal_row, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_opa(cal_row, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(cal_row, 0, 0);
-	lv_obj_set_style_pad_all(cal_row, 0, 0);
-
-	lv_obj_t *fs_eb = lv_btn_create(cal_row);
-	lv_obj_set_size(fs_eb, 120, 30);
-	lv_obj_align(fs_eb, LV_ALIGN_LEFT_MID, 0, 0);
-	lv_obj_set_style_bg_color(fs_eb, THEME_COLOR_SCROLLBAR, 0);
-	lv_obj_set_style_radius(fs_eb, THEME_RADIUS_SMALL, 0);
-	lv_label_set_text(lv_label_create(fs_eb), "Set Empty");
-	lv_obj_set_style_text_font(lv_obj_get_child(fs_eb, 0), THEME_FONT_BODY, 0);
-	lv_obj_center(lv_obj_get_child(fs_eb, 0));
-	{
-		uint8_t *p = id_alloc(value_id);
-		lv_obj_add_event_cb(fs_eb, fs_empty_btn_event_cb, LV_EVENT_CLICKED, p);
-		lv_obj_add_event_cb(fs_eb, free_value_id_event_cb, LV_EVENT_DELETE, p);
-	}
-
-	lv_obj_t *fs_fb = lv_btn_create(cal_row);
-	lv_obj_set_size(fs_fb, 120, 30);
-	lv_obj_align(fs_fb, LV_ALIGN_RIGHT_MID, 0, 0);
-	lv_obj_set_style_bg_color(fs_fb, THEME_COLOR_SCROLLBAR, 0);
-	lv_obj_set_style_radius(fs_fb, THEME_RADIUS_SMALL, 0);
-	lv_label_set_text(lv_label_create(fs_fb), "Set Full");
-	lv_obj_set_style_text_font(lv_obj_get_child(fs_fb, 0), THEME_FONT_BODY, 0);
-	lv_obj_center(lv_obj_get_child(fs_fb, 0));
-	{
-		uint8_t *p = id_alloc(value_id);
-		lv_obj_add_event_cb(fs_fb, fs_full_btn_event_cb, LV_EVENT_CLICKED, p);
-		lv_obj_add_event_cb(fs_fb, free_value_id_event_cb, LV_EVENT_DELETE, p);
-	}
-
-	/* Build fuel sender context for timer + slider callbacks */
-	fuel_sender_ctx_t *ctx = lv_mem_alloc(sizeof(fuel_sender_ctx_t));
-	ctx->value_id = value_id;
-	ctx->set_label = NULL; /* not used in modal layout */
-	ctx->empty_btn = fs_eb;
-	ctx->full_btn = fs_fb;
-	ctx->empty_input = fs_ei;
-	ctx->full_input = fs_fi;
-	ctx->current_label = (lv_obj_t *)fs_flbl; /* reuse filter-label slot */
-	ctx->filter_label = (lv_obj_t *)fs_flbl;
-	ctx->filter_slider = fs_sl;
-	ctx->update_timer = lv_timer_create(fs_voltage_update_timer_cb, 200, ctx);
-
-	lv_obj_add_event_cb(fs_sl, fs_filter_slider_event_cb,
-						LV_EVENT_VALUE_CHANGED, ctx);
-	lv_obj_add_event_cb(fs_sl, fs_filter_slider_event_cb, LV_EVENT_RELEASED,
-						ctx);
-	lv_obj_add_event_cb(fss, fuel_sender_switch_event_cb,
-						LV_EVENT_VALUE_CHANGED, ctx);
-	lv_obj_add_event_cb(fss, fuel_sender_ctx_free_event_cb, LV_EVENT_DELETE,
-						ctx);
-
-	/* Also wire the fuel-toggle cb to show/hide fs_box via the switch */
-	lv_obj_add_event_cb(fss, fuel_toggle_cb, LV_EVENT_VALUE_CHANGED, fs_box);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -576,7 +431,6 @@ static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
  * ─────────────────────────────────────────────────────────────────────────*/
 
 static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
-	uint8_t idx = value_id - 1;
 	bool has_warnings =
 		(config_bridge_get_warning_high_threshold(value_id) != 0.0f ||
 		 config_bridge_get_warning_low_threshold(value_id) != 0.0f);
@@ -662,7 +516,6 @@ static void build_alerts_tab_panel(lv_obj_t *tab, uint8_t value_id) {
  * ─────────────────────────────────────────────────────────────────────────*/
 
 static void build_alerts_tab_bar(lv_obj_t *tab, uint8_t value_id) {
-	uint8_t idx = value_id - 1;
 	bool has_warnings = (config_bridge_get_bar_low(value_id) != 0 ||
 						 config_bridge_get_bar_high(value_id) != 0);
 

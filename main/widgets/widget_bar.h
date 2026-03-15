@@ -20,10 +20,6 @@ typedef struct {
 	lv_color_t bar_in_range_color;
 	bool     show_bar_value;
 	bool     invert_bar_value;
-	bool     fuel_sender;
-	float    fuel_sender_empty_v;
-	float    fuel_sender_full_v;
-	uint8_t  fuel_sender_filter;
 	uint8_t  decimals;
 	char     label_font[32];
 	char     value_font[32];

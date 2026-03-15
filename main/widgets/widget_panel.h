@@ -37,6 +37,8 @@ typedef struct {
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	int8_t     label_y_offset;       /* default: -28 */
 	int8_t     value_y_offset;       /* default: 9 */
+	int8_t     custom_text_x_offset; /* default: 41 */
+	int8_t     custom_text_y_offset; /* default: 32 */
 	char       signal_name[32];
 	int16_t    signal_index;
 	/* LVGL object pointers (runtime only) */

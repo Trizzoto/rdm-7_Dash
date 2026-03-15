@@ -607,8 +607,8 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_width(ctxt, 60);
 	lv_label_set_long_mode(ctxt, LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(ctxt, 41);
-	lv_obj_set_y(ctxt, 32);
+	lv_obj_set_x(ctxt, pd->custom_text_x_offset);
+	lv_obj_set_y(ctxt, pd->custom_text_y_offset);
 	lv_obj_set_align(ctxt, LV_ALIGN_CENTER);
 	if (strlen(pd->custom_text) == 0)
 		lv_obj_add_flag(ctxt, LV_OBJ_FLAG_HIDDEN);
@@ -695,6 +695,10 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "label_y_offset", pd->label_y_offset);
 	if (pd->value_y_offset != 9)
 		cJSON_AddNumberToObject(cfg, "value_y_offset", pd->value_y_offset);
+	if (pd->custom_text_x_offset != 41)
+		cJSON_AddNumberToObject(cfg, "custom_text_x_offset", pd->custom_text_x_offset);
+	if (pd->custom_text_y_offset != 32)
+		cJSON_AddNumberToObject(cfg, "custom_text_y_offset", pd->custom_text_y_offset);
 }
 static void _panel_from_json(widget_t *w, cJSON *in) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
@@ -791,6 +795,10 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) pd->label_y_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_y_offset");
 	if (cJSON_IsNumber(item)) pd->value_y_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_x_offset");
+	if (cJSON_IsNumber(item)) pd->custom_text_x_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
+	if (cJSON_IsNumber(item)) pd->custom_text_y_offset = (int8_t)item->valueint;
 
 	/* Resolve signal name → index */
 	if (pd->signal_name[0] != '\0')
@@ -801,6 +809,54 @@ static void _panel_destroy(widget_t *w) {
 		free(w->type_data);
 		free(w);
 	}
+}
+
+static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (!pd) return;
+
+	/* Start from base panel_data_t values (restore defaults) */
+	lv_color_t bg_color      = pd->bg_color;
+	uint8_t    bg_opa        = pd->bg_opa;
+	lv_color_t bdr_color     = pd->border_color;
+	uint8_t    bdr_width     = pd->border_width;
+	uint8_t    bdr_radius    = pd->border_radius;
+	lv_color_t label_color   = pd->label_color;
+	lv_color_t value_color   = pd->value_color;
+
+	/* Apply active overrides on top */
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bg_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "bg_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bg_opa = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bdr_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bdr_width = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "border_radius") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bdr_radius = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "label_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			label_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "value_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			value_color.full = (uint16_t)o->value.color;
+		}
+	}
+
+	/* Apply all styles (either overridden or restored to base) */
+	if (pd->box && lv_obj_is_valid(pd->box)) {
+		lv_obj_set_style_bg_color(pd->box, bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(pd->box, bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(pd->box, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(pd->box, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_radius(pd->box, bdr_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->header_label && lv_obj_is_valid(pd->header_label))
+		lv_obj_set_style_text_color(pd->header_label, label_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (pd->value_label && lv_obj_is_valid(pd->value_label))
+		lv_obj_set_style_text_color(pd->value_label, value_color, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 widget_t *widget_panel_create_instance(uint8_t slot) {
@@ -837,6 +893,8 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	pd->label_y_offset = -28;
 	pd->value_y_offset = 9;
+	pd->custom_text_x_offset = 41;
+	pd->custom_text_y_offset = 32;
 
 	w->type = WIDGET_PANEL;
 	w->slot = pd->slot;
@@ -853,6 +911,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	w->to_json = _panel_to_json;
 	w->from_json = _panel_from_json;
 	w->destroy = _panel_destroy;
+	w->apply_overrides = _panel_apply_overrides;
 
 	return w;
 }

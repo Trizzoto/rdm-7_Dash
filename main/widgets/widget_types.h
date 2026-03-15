@@ -21,20 +21,70 @@ extern "C" {
 /* ─── Widget type enum ──────────────────────────────────────────────────── */
 
 typedef enum {
-    WIDGET_PANEL     = 0,
-    WIDGET_RPM_BAR   = 1,
-    WIDGET_BAR       = 2,
-    WIDGET_INDICATOR = 3,
-    WIDGET_WARNING   = 4,
-    WIDGET_TEXT      = 5,
-    WIDGET_METER     = 6,
-    WIDGET_IMAGE     = 7,
+    WIDGET_PANEL       = 0,
+    WIDGET_RPM_BAR     = 1,
+    WIDGET_BAR         = 2,
+    WIDGET_INDICATOR   = 3,
+    WIDGET_WARNING     = 4,
+    WIDGET_TEXT        = 5,
+    WIDGET_METER       = 6,
+    WIDGET_IMAGE       = 7,
+    WIDGET_SHAPE_PANEL = 8,
+    WIDGET_ARC         = 9,
+    WIDGET_TOGGLE      = 10,
+    WIDGET_BUTTON      = 11,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 
 /* ─── Forward declaration ───────────────────────────────────────────────── */
 
 typedef struct widget_t widget_t;
+
+/* ─── Conditional rules ─────────────────────────────────────────────────── */
+
+#define MAX_WIDGET_RULES     4
+#define MAX_RULE_OVERRIDES   8
+#define RULE_FIELD_NAME_LEN 32
+
+typedef enum {
+    RULE_OP_GT = 0,     /* >  */
+    RULE_OP_LT,         /* <  */
+    RULE_OP_GTE,        /* >= */
+    RULE_OP_LTE,        /* <= */
+    RULE_OP_EQ,         /* == */
+    RULE_OP_NEQ,        /* != */
+    RULE_OP_RANGE,      /* between min and max */
+} rule_operator_t;
+
+typedef enum {
+    RULE_VAL_NUMBER = 0,
+    RULE_VAL_COLOR,
+    RULE_VAL_BOOL,
+    RULE_VAL_STRING,
+} rule_value_type_t;
+
+typedef struct {
+    char              field_name[RULE_FIELD_NAME_LEN];
+    rule_value_type_t value_type;
+    union {
+        float    num;
+        uint32_t color;
+        bool     flag;
+        char     str[32];
+    } value;
+} rule_override_t;
+
+typedef struct {
+    char             signal_name[32];
+    int16_t          signal_index;      /* resolved at from_json time */
+    rule_operator_t  op;
+    float            threshold;         /* for non-range ops */
+    float            range_min;         /* for RULE_OP_RANGE */
+    float            range_max;
+    rule_override_t  overrides[MAX_RULE_OVERRIDES];
+    uint8_t          override_count;
+    bool             is_active;         /* runtime: last evaluation result */
+} widget_rule_t;
 
 /* ─── Function pointer typedefs ─────────────────────────────────────────── */
 
@@ -58,6 +108,9 @@ typedef void (*widget_from_json_fn)    (widget_t *w, cJSON *in);
 /** Destroy the widget: delete LVGL objects if owned, then free(w). */
 typedef void (*widget_destroy_fn)      (widget_t *w);
 
+/** Apply rule overrides to the widget's live LVGL objects. */
+typedef void (*widget_apply_overrides_fn)(widget_t *w, const rule_override_t *overrides, uint8_t count);
+
 /* ─── Core widget struct ─────────────────────────────────────────────────── */
 
 struct widget_t {
@@ -70,12 +123,17 @@ struct widget_t {
     void                   *type_data;  /**< Per-instance type-specific data.  */
 
     /* vtable */
-    widget_create_fn        create;
-    widget_resize_fn        resize;
-    widget_open_settings_fn open_settings;
-    widget_to_json_fn       to_json;
-    widget_from_json_fn     from_json;
-    widget_destroy_fn       destroy;
+    widget_create_fn           create;
+    widget_resize_fn           resize;
+    widget_open_settings_fn    open_settings;
+    widget_to_json_fn          to_json;
+    widget_from_json_fn        from_json;
+    widget_destroy_fn          destroy;
+    widget_apply_overrides_fn  apply_overrides;  /**< NULL if widget ignores rules. */
+
+    /* Conditional rules (heap-allocated, NULL if no rules) */
+    widget_rule_t *rules;
+    uint8_t        rule_count;
 };
 
 /* ─── Size constraints ───────────────────────────────────────────────────── */

@@ -262,8 +262,11 @@ void ui_Screen3_screen_init(void) {
 }
 
 void ui_Screen3_preview_layout(cJSON *root) {
-	/* Hot-reload: tear down current screen and rebuild from JSON.
-	 * Must clear stale widget pointers BEFORE lv_obj_clean frees them. */
+	/* Build new layout on a fresh offscreen object so the active screen
+	 * stays visible until the swap in _deferred_preview_apply.
+	 * The caller is responsible for lv_scr_load + deleting the old screen. */
+
+	/* Clear stale widget pointers BEFORE creating new objects */
 	widget_rpm_bar_clear_stale_pointers();
 	for (int i = 0; i < 13; i++) {
 		ui_Label[i] = ui_Value[i] = NULL;
@@ -280,8 +283,16 @@ void ui_Screen3_preview_layout(cJSON *root) {
 	ui_Bar_2 = NULL;
 	reset_can_tracking = true;
 
-	if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
-		lv_obj_clean(ui_Screen3);
-	}
+	/* Create a new screen (offscreen — not yet loaded) */
+	ui_Screen3 = lv_obj_create(NULL);
+	lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_PRESSED,
+						NULL);
+	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_RELEASED,
+						NULL);
+
 	dashboard_apply_layout_json(ui_Screen3, root);
 }

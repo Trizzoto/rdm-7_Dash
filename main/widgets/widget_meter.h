@@ -17,8 +17,6 @@ typedef struct {
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
 	lv_meter_indicator_t *needle;
-	lv_obj_t *value_label;
-	lv_obj_t *id_label;
 	/* ── Appearance overrides ── */
 	/* Ticks */
 	uint8_t    minor_tick_count;     /* default: 21 */
@@ -43,34 +41,17 @@ typedef struct {
 	/* Background image (rendered behind meter content) */
 	char           bg_image_name[32];    /* RDMIMG name, empty = solid color bg */
 	lv_img_dsc_t  *bg_img_dsc;           /* runtime: loaded background image */
-	/* Value label */
-	bool       show_value;           /* default: true */
-	int8_t     value_x_offset;       /* default: 0 */
-	int8_t     value_y_offset;       /* default: 20 */
-	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
-	/* ID label */
-	bool       show_id_label;        /* default: true */
-	int8_t     id_x_offset;          /* default: 0 */
-	int8_t     id_y_offset;          /* default: 45 */
-	lv_color_t id_label_color;       /* default: THEME_COLOR_TEXT_MUTED */
+	/* Border */
+	lv_color_t border_color;         /* default: 0x000000 */
+	uint8_t    border_width;         /* default: 0 (no border) */
+	uint8_t    border_opa;           /* default: 255 */
 	/* Background */
 	lv_color_t meter_bg_color;       /* default: 0x3D3D3D (LVGL meter default) */
 	uint8_t    meter_bg_opa;         /* default: 255 */
-	/* Arc color zones (up to 3) */
-	bool       arc_zone1_enabled;    /* default: false */
-	int32_t    arc_zone1_start;
-	int32_t    arc_zone1_end;
-	lv_color_t arc_zone1_color;      /* default: green */
-	bool       arc_zone2_enabled;    /* default: false */
-	int32_t    arc_zone2_start;
-	int32_t    arc_zone2_end;
-	lv_color_t arc_zone2_color;      /* default: yellow */
-	bool       arc_zone3_enabled;    /* default: false */
-	int32_t    arc_zone3_start;
-	int32_t    arc_zone3_end;
-	lv_color_t arc_zone3_color;      /* default: red */
-	char     label_font[32];
-	char     value_font[32];
+	/* Scale layout */
+	uint8_t    scale_padding;        /* default: 0 — pushes tick ring inward from border */
+	int8_t     label_gap;            /* default: 10 — distance from major tick to label */
+	char       tick_label_font[32];  /* default: "" — font for tick value labels */
 	char     signal_name[32];
 	int16_t  signal_index;
 } meter_data_t;

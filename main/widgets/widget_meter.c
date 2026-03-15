@@ -32,19 +32,12 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	if (!md || !w->root || !lv_obj_is_valid(w->root)) return;
 	if (is_stale) {
 		lv_meter_set_indicator_value(md->meter, md->needle, md->min);
-		if (md->value_label && lv_obj_is_valid(md->value_label))
-			lv_label_set_text(md->value_label, "---");
 		return;
 	}
 	int32_t v = (int32_t)value;
 	if (v < md->min) v = md->min;
 	if (v > md->max) v = md->max;
 	lv_meter_set_indicator_value(md->meter, md->needle, v);
-	if (md->value_label && lv_obj_is_valid(md->value_label)) {
-		char buf[16];
-		snprintf(buf, sizeof(buf), "%d", (int)v);
-		lv_label_set_text(md->value_label, buf);
-	}
 }
 
 static void _meter_create(widget_t *w, lv_obj_t *parent) {
@@ -68,6 +61,17 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_pos(m, w->x, w->y);
 	lv_obj_set_style_bg_color(m, md->meter_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(m, md->meter_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (md->border_width > 0) {
+		lv_obj_set_style_border_color(m, md->border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(m, md->border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_opa(m, md->border_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Scale padding — always set to override theme default.
+	 * 0 = ticks flush with edge, positive = ticks pushed inward */
+	lv_obj_set_style_pad_top(m, md->scale_padding, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_bottom(m, md->scale_padding, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_left(m, md->scale_padding, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_right(m, md->scale_padding, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	/* Background image */
 	if (md->bg_image_name[0] != '\0') {
@@ -97,7 +101,15 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 							 md->minor_tick_length, md->minor_tick_color);
 	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_major_ticks");
 	lv_meter_set_scale_major_ticks(m, scale, md->major_tick_every, md->major_tick_width,
-								   md->major_tick_length, md->major_tick_color, 10);
+								   md->major_tick_length, md->major_tick_color, md->label_gap);
+
+	/* Tick label font */
+	if (md->tick_label_font[0] != '\0') {
+		const lv_font_t *tfont = widget_resolve_font(md->tick_label_font);
+		if (tfont) {
+			lv_obj_set_style_text_font(m, tfont, LV_PART_TICKS);
+		}
+	}
 
 	/* Needle: use image if configured, otherwise line.
 	 * When needle_angle_offset != 0 AND using an image needle, create a
@@ -137,48 +149,7 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	md->scale = scale;
 	md->needle = needle;
 
-	/* Arc color zones */
-	if (md->arc_zone1_enabled) {
-		lv_meter_indicator_t *arc1 = lv_meter_add_arc(m, scale, 10, md->arc_zone1_color, 0);
-		lv_meter_set_indicator_start_value(m, arc1, md->arc_zone1_start);
-		lv_meter_set_indicator_end_value(m, arc1, md->arc_zone1_end);
-	}
-	if (md->arc_zone2_enabled) {
-		lv_meter_indicator_t *arc2 = lv_meter_add_arc(m, scale, 10, md->arc_zone2_color, 0);
-		lv_meter_set_indicator_start_value(m, arc2, md->arc_zone2_start);
-		lv_meter_set_indicator_end_value(m, arc2, md->arc_zone2_end);
-	}
-	if (md->arc_zone3_enabled) {
-		lv_meter_indicator_t *arc3 = lv_meter_add_arc(m, scale, 10, md->arc_zone3_color, 0);
-		lv_meter_set_indicator_start_value(m, arc3, md->arc_zone3_start);
-		lv_meter_set_indicator_end_value(m, arc3, md->arc_zone3_end);
-	}
-
 	lv_meter_set_indicator_value(m, needle, md->min);
-
-	/* Add digital value label in the center */
-	if (md->show_value) {
-		md->value_label = lv_label_create(m);
-		lv_label_set_text(md->value_label, "0");
-		const lv_font_t *mtr_val_font = widget_resolve_font(md->value_font);
-		lv_obj_set_style_text_font(md->value_label, mtr_val_font ? mtr_val_font : THEME_FONT_DASH_RPM,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_color(md->value_label, md->value_color,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_align(md->value_label, LV_ALIGN_CENTER, md->value_x_offset, md->value_y_offset);
-	}
-
-	/* Add ID label (e.g. "RPM") below the value */
-	if (md->show_id_label) {
-		md->id_label = lv_label_create(m);
-		lv_label_set_text(md->id_label, md->signal_name[0] != '\0' ? md->signal_name : w->id);
-		const lv_font_t *mtr_lbl_font = widget_resolve_font(md->label_font);
-		lv_obj_set_style_text_font(md->id_label, mtr_lbl_font ? mtr_lbl_font : THEME_FONT_SMALL,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_color(md->id_label, md->id_label_color,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_align(md->id_label, LV_ALIGN_CENTER, md->id_x_offset, md->id_y_offset);
-	}
 
 	w->root = m;
 
@@ -211,10 +182,6 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "max", md->max);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
-	if (md->label_font[0] != '\0')
-		cJSON_AddStringToObject(cfg, "label_font", md->label_font);
-	if (md->value_font[0] != '\0')
-		cJSON_AddStringToObject(cfg, "value_font", md->value_font);
 	if (md->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
 
@@ -251,45 +218,22 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_angle_offset", md->needle_angle_offset);
 	if (md->bg_image_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "bg_image_name", md->bg_image_name);
-	if (!md->show_value)
-		cJSON_AddBoolToObject(cfg, "show_value", false);
-	if (md->value_x_offset != 0)
-		cJSON_AddNumberToObject(cfg, "value_x_offset", md->value_x_offset);
-	if (md->value_y_offset != 20)
-		cJSON_AddNumberToObject(cfg, "value_y_offset", md->value_y_offset);
-	if (md->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
-		cJSON_AddNumberToObject(cfg, "value_color", (int)md->value_color.full);
-	if (!md->show_id_label)
-		cJSON_AddBoolToObject(cfg, "show_id_label", false);
-	if (md->id_x_offset != 0)
-		cJSON_AddNumberToObject(cfg, "id_x_offset", md->id_x_offset);
-	if (md->id_y_offset != 45)
-		cJSON_AddNumberToObject(cfg, "id_y_offset", md->id_y_offset);
-	if (md->id_label_color.full != THEME_COLOR_TEXT_MUTED.full)
-		cJSON_AddNumberToObject(cfg, "id_label_color", (int)md->id_label_color.full);
+	if (md->border_width != 0)
+		cJSON_AddNumberToObject(cfg, "border_width", md->border_width);
+	if (md->border_color.full != lv_color_black().full)
+		cJSON_AddNumberToObject(cfg, "border_color", (int)md->border_color.full);
+	if (md->border_opa != 255)
+		cJSON_AddNumberToObject(cfg, "border_opa", md->border_opa);
 	if (md->meter_bg_color.full != lv_color_hex(0x3D3D3D).full)
 		cJSON_AddNumberToObject(cfg, "meter_bg_color", (int)md->meter_bg_color.full);
 	if (md->meter_bg_opa != 255)
 		cJSON_AddNumberToObject(cfg, "meter_bg_opa", md->meter_bg_opa);
-	/* Arc zones */
-	if (md->arc_zone1_enabled) {
-		cJSON_AddBoolToObject(cfg, "arc_zone1_enabled", true);
-		cJSON_AddNumberToObject(cfg, "arc_zone1_start", md->arc_zone1_start);
-		cJSON_AddNumberToObject(cfg, "arc_zone1_end", md->arc_zone1_end);
-		cJSON_AddNumberToObject(cfg, "arc_zone1_color", (int)md->arc_zone1_color.full);
-	}
-	if (md->arc_zone2_enabled) {
-		cJSON_AddBoolToObject(cfg, "arc_zone2_enabled", true);
-		cJSON_AddNumberToObject(cfg, "arc_zone2_start", md->arc_zone2_start);
-		cJSON_AddNumberToObject(cfg, "arc_zone2_end", md->arc_zone2_end);
-		cJSON_AddNumberToObject(cfg, "arc_zone2_color", (int)md->arc_zone2_color.full);
-	}
-	if (md->arc_zone3_enabled) {
-		cJSON_AddBoolToObject(cfg, "arc_zone3_enabled", true);
-		cJSON_AddNumberToObject(cfg, "arc_zone3_start", md->arc_zone3_start);
-		cJSON_AddNumberToObject(cfg, "arc_zone3_end", md->arc_zone3_end);
-		cJSON_AddNumberToObject(cfg, "arc_zone3_color", (int)md->arc_zone3_color.full);
-	}
+	if (md->scale_padding != 0)
+		cJSON_AddNumberToObject(cfg, "scale_padding", md->scale_padding);
+	if (md->label_gap != 10)
+		cJSON_AddNumberToObject(cfg, "label_gap", md->label_gap);
+	if (md->tick_label_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
 }
 
 static void _meter_from_json(widget_t *w, cJSON *in) {
@@ -318,16 +262,6 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
 		md->end_angle = (int16_t)ea_item->valueint;
-	cJSON *lf_item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
-	if (cJSON_IsString(lf_item) && lf_item->valuestring) {
-		strncpy(md->label_font, lf_item->valuestring, sizeof(md->label_font) - 1);
-		md->label_font[sizeof(md->label_font) - 1] = '\0';
-	}
-	cJSON *vf_item = cJSON_GetObjectItemCaseSensitive(cfg, "value_font");
-	if (cJSON_IsString(vf_item) && vf_item->valuestring) {
-		strncpy(md->value_font, vf_item->valuestring, sizeof(md->value_font) - 1);
-		md->value_font[sizeof(md->value_font) - 1] = '\0';
-	}
 	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
 		strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name) - 1);
@@ -378,51 +312,25 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		strncpy(md->bg_image_name, ap->valuestring, sizeof(md->bg_image_name) - 1);
 		md->bg_image_name[sizeof(md->bg_image_name) - 1] = '\0';
 	}
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_value");
-	if (cJSON_IsBool(ap)) md->show_value = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "value_x_offset");
-	if (cJSON_IsNumber(ap)) md->value_x_offset = (int8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "value_y_offset");
-	if (cJSON_IsNumber(ap)) md->value_y_offset = (int8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
-	if (cJSON_IsNumber(ap)) md->value_color.full = (uint32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_id_label");
-	if (cJSON_IsBool(ap)) md->show_id_label = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "id_x_offset");
-	if (cJSON_IsNumber(ap)) md->id_x_offset = (int8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "id_y_offset");
-	if (cJSON_IsNumber(ap)) md->id_y_offset = (int8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "id_label_color");
-	if (cJSON_IsNumber(ap)) md->id_label_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
+	if (cJSON_IsNumber(ap)) md->border_width = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
+	if (cJSON_IsNumber(ap)) md->border_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_opa");
+	if (cJSON_IsNumber(ap)) md->border_opa = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "meter_bg_color");
 	if (cJSON_IsNumber(ap)) md->meter_bg_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "meter_bg_opa");
 	if (cJSON_IsNumber(ap)) md->meter_bg_opa = (uint8_t)ap->valueint;
-	/* Arc zones */
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone1_enabled");
-	if (cJSON_IsBool(ap)) md->arc_zone1_enabled = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone1_start");
-	if (cJSON_IsNumber(ap)) md->arc_zone1_start = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone1_end");
-	if (cJSON_IsNumber(ap)) md->arc_zone1_end = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone1_color");
-	if (cJSON_IsNumber(ap)) md->arc_zone1_color.full = (uint32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone2_enabled");
-	if (cJSON_IsBool(ap)) md->arc_zone2_enabled = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone2_start");
-	if (cJSON_IsNumber(ap)) md->arc_zone2_start = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone2_end");
-	if (cJSON_IsNumber(ap)) md->arc_zone2_end = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone2_color");
-	if (cJSON_IsNumber(ap)) md->arc_zone2_color.full = (uint32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone3_enabled");
-	if (cJSON_IsBool(ap)) md->arc_zone3_enabled = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone3_start");
-	if (cJSON_IsNumber(ap)) md->arc_zone3_start = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone3_end");
-	if (cJSON_IsNumber(ap)) md->arc_zone3_end = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "arc_zone3_color");
-	if (cJSON_IsNumber(ap)) md->arc_zone3_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "scale_padding");
+	if (cJSON_IsNumber(ap)) md->scale_padding = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
+	if (cJSON_IsNumber(ap)) md->label_gap = (int8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
+	if (cJSON_IsString(ap) && ap->valuestring) {
+		strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font) - 1);
+		md->tick_label_font[sizeof(md->tick_label_font) - 1] = '\0';
+	}
 }
 
 static void _meter_destroy(widget_t *w) {
@@ -445,6 +353,69 @@ uint8_t widget_meter_get_value_idx(const widget_t *w) {
 		return 0;
 	const meter_data_t *md = (const meter_data_t *)w->type_data;
 	return md->value_idx < 13 ? md->value_idx : 0;
+}
+
+/* ── apply_overrides: live style changes driven by conditional rules ───── */
+
+static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md) return;
+	lv_obj_t *m = md->meter;
+	if (!m) return;
+
+	/* Start from base meter_data_t values (restore defaults) */
+	lv_color_t bg_color = md->meter_bg_color;
+	uint8_t bg_opa = md->meter_bg_opa;
+	lv_color_t bdr_color = md->border_color;
+	lv_coord_t bdr_width = (lv_coord_t)md->border_width;
+	uint8_t bdr_opa = md->border_opa;
+	lv_color_t ndl_color = md->needle_color;
+	lv_color_t minor_tick_c = md->minor_tick_color;
+	lv_color_t major_tick_c = md->major_tick_color;
+	bool ticks_changed = false;
+
+	/* Apply active overrides on top */
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "meter_bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bg_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "meter_bg_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bg_opa = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bdr_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bdr_width = (lv_coord_t)o->value.num;
+		} else if (strcmp(o->field_name, "border_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bdr_opa = (uint8_t)o->value.num;
+		} else if (strcmp(o->field_name, "needle_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			ndl_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "minor_tick_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			minor_tick_c.full = (uint16_t)o->value.color;
+			ticks_changed = true;
+		} else if (strcmp(o->field_name, "major_tick_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			major_tick_c.full = (uint16_t)o->value.color;
+			ticks_changed = true;
+		}
+	}
+
+	/* Apply all styles (either overridden or restored to base) */
+	lv_obj_set_style_bg_color(m, bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(m, bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_color(m, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(m, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_opa(m, bdr_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_line_color(m, ndl_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	/* Re-apply tick colors via scale API (not style-based in LVGL v8) */
+	if (ticks_changed || count == 0) {
+		if (md->scale) {
+			lv_meter_set_scale_ticks(m, md->scale, md->minor_tick_count,
+				md->minor_tick_width, md->minor_tick_length, minor_tick_c);
+			lv_meter_set_scale_major_ticks(m, md->scale, md->major_tick_every,
+				md->major_tick_width, md->major_tick_length, major_tick_c, md->label_gap);
+			lv_obj_invalidate(m);
+		}
+	}
 }
 
 widget_t *widget_meter_create_instance(uint8_t value_idx) {
@@ -483,23 +454,16 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_width = 4;
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
-	/* Value label defaults */
-	md->show_value = true;
-	md->value_x_offset = 0;
-	md->value_y_offset = 20;
-	md->value_color = THEME_COLOR_TEXT_PRIMARY;
-	/* ID label defaults */
-	md->show_id_label = true;
-	md->id_x_offset = 0;
-	md->id_y_offset = 45;
-	md->id_label_color = THEME_COLOR_TEXT_MUTED;
+	/* Border defaults */
+	md->border_color = lv_color_black();
+	md->border_width = 0;
+	md->border_opa = 255;
 	/* Background defaults */
 	md->meter_bg_color = lv_color_hex(0x3D3D3D);
 	md->meter_bg_opa = 255;
-	/* Arc zones default to disabled */
-	md->arc_zone1_color = lv_color_hex(0x00FF00);
-	md->arc_zone2_color = lv_color_hex(0xFFFF00);
-	md->arc_zone3_color = lv_color_hex(0xFF0000);
+	/* Scale layout defaults */
+	md->scale_padding = 0;
+	md->label_gap = 10;
 
 	w->type = WIDGET_METER;
 	w->slot = md->value_idx;
@@ -516,6 +480,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	w->to_json = _meter_to_json;
 	w->from_json = _meter_from_json;
 	w->destroy = _meter_destroy;
+	w->apply_overrides = _meter_apply_overrides;
 
 	return w;
 }

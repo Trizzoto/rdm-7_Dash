@@ -938,10 +938,6 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
 		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
 		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
-		cJSON_AddBoolToObject(cfg, "fuel_sender", bd->fuel_sender);
-		cJSON_AddNumberToObject(cfg, "fuel_sender_empty_v", bd->fuel_sender_empty_v);
-		cJSON_AddNumberToObject(cfg, "fuel_sender_full_v", bd->fuel_sender_full_v);
-		cJSON_AddNumberToObject(cfg, "fuel_sender_filter", bd->fuel_sender_filter);
 		cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
 		if (bd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", bd->label_font);
@@ -1001,14 +997,6 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender");
-	if (cJSON_IsBool(item)) bd->fuel_sender = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_empty_v");
-	if (cJSON_IsNumber(item)) bd->fuel_sender_empty_v = (float)item->valuedouble;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_full_v");
-	if (cJSON_IsNumber(item)) bd->fuel_sender_full_v = (float)item->valuedouble;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "fuel_sender_filter");
-	if (cJSON_IsNumber(item)) bd->fuel_sender_filter = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	if (cJSON_IsNumber(item)) bd->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
@@ -1055,6 +1043,50 @@ static void _bar_destroy(widget_t *w) {
 /* Default x offsets from screen centre for BAR1 and BAR2 */
 static const int16_t s_bar_default_x[2] = {-240, 240};
 
+/* ── apply_overrides: live style changes driven by conditional rules ───── */
+
+static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	/* Start from base bar_data_t values (restore defaults) */
+	lv_color_t bar_bg   = bd->bar_bg_color;
+	lv_color_t bar_bdr  = bd->bar_border_color;
+	lv_coord_t bar_bdrw = (lv_coord_t)bd->bar_border_width;
+	lv_color_t lbl_col  = bd->label_color;
+	lv_color_t val_col  = bd->value_color;
+
+	/* Apply active overrides on top */
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "bar_bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bar_bg.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "bar_border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bar_bdr.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "bar_border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			bar_bdrw = (lv_coord_t)o->value.num;
+		} else if (strcmp(o->field_name, "label_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			lbl_col.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "value_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			val_col.full = (uint16_t)o->value.color;
+		}
+	}
+
+	/* Apply all styles (either overridden or restored to base) */
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bd->bar_obj, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
+		lv_obj_set_style_text_color(bd->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
+		lv_obj_set_style_text_color(bd->value_obj, val_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
 widget_t *widget_bar_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1095,6 +1127,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	w->to_json = _bar_to_json;
 	w->from_json = _bar_from_json;
 	w->destroy = _bar_destroy;
+	w->apply_overrides = _bar_apply_overrides;
 
 	return w;
 }

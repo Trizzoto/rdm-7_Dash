@@ -64,19 +64,11 @@ int32_t    config_bridge_get_bar_min(uint8_t value_id);
 int32_t    config_bridge_get_bar_max(uint8_t value_id);
 bool       config_bridge_get_show_bar_value(uint8_t value_id);
 bool       config_bridge_get_invert_bar_value(uint8_t value_id);
-bool       config_bridge_get_fuel_sender(uint8_t value_id);
-float      config_bridge_get_fuel_sender_empty_v(uint8_t value_id);
-float      config_bridge_get_fuel_sender_full_v(uint8_t value_id);
-uint8_t    config_bridge_get_fuel_sender_filter(uint8_t value_id);
 
 void config_bridge_set_bar_min(uint8_t value_id, int32_t val);
 void config_bridge_set_bar_max(uint8_t value_id, int32_t val);
 void config_bridge_set_show_bar_value(uint8_t value_id, bool val);
 void config_bridge_set_invert_bar_value(uint8_t value_id, bool val);
-void config_bridge_set_fuel_sender(uint8_t value_id, bool val);
-void config_bridge_set_fuel_sender_empty_v(uint8_t value_id, float val);
-void config_bridge_set_fuel_sender_full_v(uint8_t value_id, float val);
-void config_bridge_set_fuel_sender_filter(uint8_t value_id, uint8_t val);
 
 /* ── Panel alert-specific ─────────────────────────────────────────────── */
 

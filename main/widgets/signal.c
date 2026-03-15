@@ -12,6 +12,7 @@
  */
 
 #include "widgets/signal.h"
+#include "widgets/signal_sim.h"
 #include "can/can_decode.h"
 
 #include "esp_heap_caps.h"
@@ -220,6 +221,7 @@ void signal_inject_test_value(const char *name, float value)
 void signal_check_timeouts(uint64_t current_time_ms)
 {
     if (!s_signals) return;
+    if (signal_sim_is_active()) return; /* sim keeps signals fresh */
 
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];
