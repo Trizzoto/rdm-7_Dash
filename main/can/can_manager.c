@@ -124,23 +124,33 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 	out_filter->single_filter = true;
 }
 
-void reconfigure_can_filter(void) {
-	/* Stop the receive task gracefully */
-	if (canTaskHandle != NULL) {
-		can_task_should_stop = true;
-		for (int i = 0; i < 200; i++) {
-			if (eTaskGetState(canTaskHandle) == eDeleted)
-				break;
-			vTaskDelay(pdMS_TO_TICKS(10));
-		}
-		if (eTaskGetState(canTaskHandle) != eDeleted)
-			vTaskDelete(canTaskHandle);
-		canTaskHandle = NULL;
+/** Stop the CAN receive task gracefully.  Halts the TWAI peripheral first
+ *  so twai_receive() returns immediately, then waits for the task to exit. */
+static void _stop_can_task(void) {
+	if (canTaskHandle == NULL) return;
+
+	/* Stop TWAI first so twai_receive() unblocks with ESP_ERR_INVALID_STATE */
+	twai_stop();
+	can_task_should_stop = true;
+
+	/* Wait up to 500 ms for graceful exit */
+	for (int i = 0; i < 50; i++) {
+		if (eTaskGetState(canTaskHandle) == eDeleted)
+			break;
+		vTaskDelay(pdMS_TO_TICKS(10));
 	}
+	if (eTaskGetState(canTaskHandle) != eDeleted) {
+		ESP_LOGW(TAG, "CAN task did not exit gracefully, force-deleting");
+		vTaskDelete(canTaskHandle);
+	}
+	canTaskHandle = NULL;
+}
+
+void reconfigure_can_filter(void) {
+	_stop_can_task();
 
 	build_twai_filter_from_signals(&f_config);
 
-	twai_stop();
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
 	vTaskDelay(pdMS_TO_TICKS(50));
@@ -217,18 +227,7 @@ void can_task_set_priority(UBaseType_t priority) {
 }
 
 void can_change_bitrate(uint8_t bitrate_index) {
-	/* Stop the receive task */
-	if (canTaskHandle != NULL) {
-		can_task_should_stop = true;
-		for (int i = 0; i < 200; i++) {
-			if (eTaskGetState(canTaskHandle) == eDeleted)
-				break;
-			vTaskDelay(pdMS_TO_TICKS(10));
-		}
-		if (eTaskGetState(canTaskHandle) != eDeleted)
-			vTaskDelete(canTaskHandle);
-		canTaskHandle = NULL;
-	}
+	_stop_can_task();
 
 	/* Apply new timing config */
 	switch (bitrate_index) {
@@ -251,11 +250,10 @@ void can_change_bitrate(uint8_t bitrate_index) {
 		break;
 	}
 
-	/* Uninstall, rebuild filter, reinstall */
-	twai_stop();
-	vTaskDelay(pdMS_TO_TICKS(100));
+	/* Uninstall, rebuild filter, reinstall (TWAI already stopped by _stop_can_task) */
+	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
-	vTaskDelay(pdMS_TO_TICKS(100));
+	vTaskDelay(pdMS_TO_TICKS(50));
 
 	build_twai_filter_from_signals(&f_config);
 

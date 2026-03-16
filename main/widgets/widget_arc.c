@@ -133,6 +133,9 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 static void _arc_destroy(widget_t *w) {
     if (!w) return;
     widget_rules_free(w);
+    if (w->root && lv_obj_is_valid(w->root))
+        lv_obj_del(w->root);
+    w->root = NULL;
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (d) free(d);
     free(w);

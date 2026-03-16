@@ -178,6 +178,9 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
 static void _shape_panel_destroy(widget_t *w) {
     if (!w) return;
     widget_rules_free(w);
+    if (w->root && lv_obj_is_valid(w->root))
+        lv_obj_del(w->root);
+    w->root = NULL;
     if (w->type_data) free(w->type_data);
     free(w);
 }

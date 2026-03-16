@@ -408,6 +408,16 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		return ESP_FAIL;
 	}
 
+	/* ── Validate schema version ── */
+	cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	int schema_ver = cJSON_IsNumber(sv) ? sv->valueint : 0;
+	if (schema_ver < 1 || schema_ver > LAYOUT_SCHEMA_VERSION) {
+		ESP_LOGE(TAG, "layout_load: schema v%d invalid (expected 1..%d) in %s",
+				 schema_ver, LAYOUT_SCHEMA_VERSION, path);
+		cJSON_Delete(root);
+		return ESP_FAIL;
+	}
+
 	/* ── Extract optional ECU context fields ── */
 	const cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
 	if (cJSON_IsString(ecu_item) && ecu_item->valuestring[0]) {
@@ -632,14 +642,22 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 
 	size_t len = strlen(json_str);
 	size_t nw = fwrite(json_str, 1, len, f);
-	fclose(f);
 	free(json_str);
 
 	if (nw != len) {
 		ESP_LOGE(TAG, "layout_save_raw: short write (%u/%u bytes) for %s",
 				 (unsigned)nw, (unsigned)len, path);
+		fclose(f);
 		return ESP_FAIL;
 	}
+
+	/* Explicit flush before close to ensure data reaches flash */
+	if (fflush(f) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: fflush failed for %s", path);
+		fclose(f);
+		return ESP_FAIL;
+	}
+	fclose(f);
 
 	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes)", name, path,
 			 (unsigned)len);

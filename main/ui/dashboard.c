@@ -117,11 +117,24 @@ void dashboard_init(lv_obj_t *parent) {
 
 	err = layout_manager_load(layout_name, parent);
 	if (err != ESP_OK) {
-		ESP_LOGW(TAG, "layout_manager_load('%s') failed (%s) — using fallback",
+		ESP_LOGW(TAG, "layout_manager_load('%s') failed (%s)",
 				 layout_name, esp_err_to_name(err));
+		/* Try loading "default" before using hardcoded fallback */
+		if (strcmp(layout_name, "default") != 0) {
+			ESP_LOGI(TAG, "Attempting to load 'default' layout as fallback");
+			signal_registry_reset();
+			widget_registry_reset();
+			err = layout_manager_load("default", parent);
+			if (err == ESP_OK) {
+				layout_manager_set_active("default");
+				goto loaded;
+			}
+			ESP_LOGW(TAG, "'default' also failed — using hardcoded fallback");
+		}
 		_fallback_create_all(parent);
 		return;
 	}
+loaded:
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
 

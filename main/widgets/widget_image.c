@@ -180,6 +180,9 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 static void _image_destroy(widget_t *w) {
 	if (!w) return;
 	widget_rules_free(w);
+	if (w->root && lv_obj_is_valid(w->root))
+		lv_obj_del(w->root);
+	w->root = NULL;
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (id) {
 		rdm_image_free(id->img_dsc);

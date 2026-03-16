@@ -1356,6 +1356,9 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 static void _rpm_bar_destroy(widget_t *w) {
 	if (w) {
 		widget_rules_free(w);
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_del(w->root);
+		w->root = NULL;
 		free(w->type_data);
 		free(w);
 	}

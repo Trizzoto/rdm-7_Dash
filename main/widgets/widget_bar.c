@@ -1038,6 +1038,9 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 }
 static void _bar_destroy(widget_t *w) {
 	widget_rules_free(w);
+	if (w->root && lv_obj_is_valid(w->root))
+		lv_obj_del(w->root);
+	w->root = NULL;
 	free(w->type_data);
 	free(w);
 }
