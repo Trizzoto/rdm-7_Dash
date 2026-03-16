@@ -4,6 +4,7 @@
  * Transmits CAN messages on toggle and optionally reads state from a signal.
  */
 #include "widget_toggle.h"
+#include "widget_rules.h"
 #include "can/can_manager.h"
 #include "signal.h"
 #include "cJSON.h"
@@ -289,6 +290,7 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 /* ── Destroy ────────────────────────────────────────────────────────────── */
 static void _toggle_destroy(widget_t *w) {
     if (!w) return;
+    widget_rules_free(w);
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (d) free(d);
     free(w);

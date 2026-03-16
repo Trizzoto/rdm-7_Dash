@@ -1,4 +1,5 @@
 #include "widget_panel.h"
+#include "widget_rules.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -806,6 +807,7 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 }
 static void _panel_destroy(widget_t *w) {
 	if (w) {
+		widget_rules_free(w);
 		free(w->type_data);
 		free(w);
 	}

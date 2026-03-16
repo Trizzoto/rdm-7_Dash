@@ -52,20 +52,8 @@ static void _deferred_screen_reload(void *arg) {
 		lv_obj_del(old);
 }
 
-/* Pending preview JSON — guarded by atomic pointer swap. Only one preview
- * can be pending at a time; newer previews replace older ones. */
-static char *s_pending_preview_json = NULL;
-
-static void _set_pending_preview(char *json) {
-	char *old = s_pending_preview_json;
-	s_pending_preview_json = json;
-	free(old); /* free previous if the LVGL task hasn't consumed it yet */
-}
-
 static void _deferred_preview_apply(void *arg) {
-	(void)arg;
-	char *json = s_pending_preview_json;
-	s_pending_preview_json = NULL;
+	char *json = (char *)arg;
 	if (!json) return;
 
 	cJSON *root = cJSON_Parse(json);
@@ -450,8 +438,7 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 							"Failed to serialize preview JSON");
 		return ESP_FAIL;
 	}
-	_set_pending_preview(json_copy);
-	lv_async_call(_deferred_preview_apply, NULL);
+	lv_async_call(_deferred_preview_apply, json_copy);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
 

@@ -1,4 +1,5 @@
 #include "widget_bar.h"
+#include "widget_rules.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
@@ -1036,6 +1037,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		bd->signal_index = signal_find_by_name(bd->signal_name);
 }
 static void _bar_destroy(widget_t *w) {
+	widget_rules_free(w);
 	free(w->type_data);
 	free(w);
 }

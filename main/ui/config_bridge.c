@@ -21,11 +21,11 @@ static const char *TAG = "cfg_bridge";
 /* ── Internal helpers ──────────────────────────────────────────────────── */
 
 widget_t *config_bridge_get_widget(uint8_t value_id) {
-	if (value_id < 1 || value_id > 11) return NULL;
+	if (value_id < 1 || value_id > 13) return NULL;
 	if (value_id <= 8)  return widget_registry_find_by_type_and_slot(WIDGET_PANEL, value_id - 1);
 	if (value_id == 9)  return widget_registry_find_by_type_and_slot(WIDGET_RPM_BAR, 0);
-	if (value_id == 10) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 0);
-	if (value_id == 11) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 1);
+	if (value_id == 12) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 0);
+	if (value_id == 13) return widget_registry_find_by_type_and_slot(WIDGET_BAR, 1);
 	return NULL;
 }
 

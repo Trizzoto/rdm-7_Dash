@@ -1,4 +1,5 @@
 #include "widget_rpm_bar.h"
+#include "widget_rules.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
 #include "can/can_decode.h"
@@ -1393,6 +1394,7 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 
 static void _rpm_bar_destroy(widget_t *w) {
 	if (w) {
+		widget_rules_free(w);
 		free(w->type_data);
 		free(w);
 	}

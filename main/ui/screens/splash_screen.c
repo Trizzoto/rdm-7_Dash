@@ -88,7 +88,8 @@ static bool _load_splash_layout(lv_obj_t *parent)
 
 /* ── Boot splash ─────────────────────────────────────────────────────── */
 
-static void splash_timer_cb(void *arg)
+/** Deferred callback — runs on the LVGL task via lv_async_call(). */
+static void _splash_transition_cb(void *arg)
 {
 	(void)arg;
 	/* Initialize and load the main dashboard screen */
@@ -100,12 +101,22 @@ static void splash_timer_cb(void *arg)
 		lv_obj_del(splash_screen);
 		splash_screen = NULL;
 	}
+	s_widget_count = 0;
+	memset(s_widgets, 0, sizeof(s_widgets));
+}
+
+/** esp_timer callback — runs on the esp_timer task, NOT safe for LVGL calls. */
+static void splash_timer_cb(void *arg)
+{
+	(void)arg;
+	/* Defer all LVGL work to the LVGL task */
+	lv_async_call(_splash_transition_cb, NULL);
+
+	/* Clean up the esp_timer (safe from esp_timer callback context) */
 	if (splash_timer) {
 		esp_timer_delete(splash_timer);
 		splash_timer = NULL;
 	}
-	s_widget_count = 0;
-	memset(s_widgets, 0, sizeof(s_widgets));
 }
 
 void show_splash_screen(void)

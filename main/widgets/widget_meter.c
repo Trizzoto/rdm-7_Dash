@@ -6,6 +6,7 @@
  * No double-precision math; only int32_t and clamping.
  */
 #include "widget_meter.h"
+#include "widget_rules.h"
 #include "widget_image.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -336,6 +337,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 static void _meter_destroy(widget_t *w) {
 	if (!w)
 		return;
+	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;

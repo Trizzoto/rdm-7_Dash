@@ -6,6 +6,7 @@
  * no heap allocation, no global string arrays.
  */
 #include "widget_text.h"
+#include "widget_rules.h"
 #include "widget_types.h"
 #include "ui/theme.h"
 #include "cJSON.h"
@@ -139,6 +140,7 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 }
 
 static void _text_destroy(widget_t *w) {
+	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;

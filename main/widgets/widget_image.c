@@ -8,6 +8,7 @@
  * The browser converts PNG/JPG to this format before uploading.
  */
 #include "widget_image.h"
+#include "widget_rules.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -74,14 +75,14 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 
 	if (nread != px_size) {
 		ESP_LOGE(TAG, "Short read for %s: got %u, expected %u", name, (unsigned)nread, (unsigned)px_size);
-		free(px_data);
+		heap_caps_free(px_data);
 		return NULL;
 	}
 
 	/* Allocate and fill the LVGL image descriptor */
 	lv_img_dsc_t *dsc = calloc(1, sizeof(lv_img_dsc_t));
 	if (!dsc) {
-		free(px_data);
+		heap_caps_free(px_data);
 		return NULL;
 	}
 
@@ -98,7 +99,7 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 
 void rdm_image_free(lv_img_dsc_t *dsc) {
 	if (!dsc) return;
-	free((void *)dsc->data);
+	heap_caps_free((void *)dsc->data);
 	free(dsc);
 }
 
@@ -178,10 +179,11 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 
 static void _image_destroy(widget_t *w) {
 	if (!w) return;
+	widget_rules_free(w);
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (id) {
 		rdm_image_free(id->img_dsc);
-		free(id);
+		heap_caps_free(id);
 	}
 	free(w);
 }

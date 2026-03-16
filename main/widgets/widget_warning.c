@@ -1,4 +1,5 @@
 #include "widget_warning.h"
+#include "widget_rules.h"
 #include "widget_panel.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -1067,6 +1068,7 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 		wd->signal_index = signal_find_by_name(wd->signal_name);
 }
 static void _warning_destroy(widget_t *w) {
+	widget_rules_free(w);
 	free(w->type_data);
 	free(w);
 }

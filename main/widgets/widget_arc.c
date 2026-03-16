@@ -6,6 +6,7 @@
  * No signal subscription or CAN integration.
  */
 #include "widget_arc.h"
+#include "widget_rules.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -131,6 +132,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 
 static void _arc_destroy(widget_t *w) {
     if (!w) return;
+    widget_rules_free(w);
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (d) free(d);
     free(w);

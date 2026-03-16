@@ -23,8 +23,8 @@ extern "C" {
  * Find the widget_t for a given value_id.
  * value_id 1-8  → WIDGET_PANEL slot 0-7
  * value_id 9    → WIDGET_RPM_BAR
- * value_id 10   → WIDGET_BAR slot 0
- * value_id 11   → WIDGET_BAR slot 1
+ * value_id 12   → WIDGET_BAR slot 0
+ * value_id 13   → WIDGET_BAR slot 1
  */
 widget_t *config_bridge_get_widget(uint8_t value_id);
 

@@ -1,4 +1,5 @@
 #include "widget_indicator.h"
+#include "widget_rules.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
@@ -965,6 +966,7 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 		id->signal_index = signal_find_by_name(id->signal_name);
 }
 static void _indicator_destroy(widget_t *w) {
+	widget_rules_free(w);
 	free(w->type_data);
 	free(w);
 }
