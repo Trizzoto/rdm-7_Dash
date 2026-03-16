@@ -13,6 +13,7 @@
 
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
+#include "widgets/widget_types.h"
 #include "can/can_decode.h"
 
 #include "esp_heap_caps.h"
@@ -78,7 +79,7 @@ int16_t signal_register(const char *name, uint32_t can_id,
     signal_t *sig = &s_signals[s_signal_count];
     memset(sig, 0, sizeof(signal_t));
 
-    strncpy(sig->name, name, sizeof(sig->name) - 1);
+    safe_strncpy(sig->name, name, sizeof(sig->name));
     sig->can_id     = can_id;
     sig->bit_start  = start;
     sig->bit_length = len;

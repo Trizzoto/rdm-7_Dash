@@ -2347,7 +2347,7 @@
                 history = history.slice(0, historyIndex + 1);
             }
             history.push(snap);
-            if (history.length > 20) history.shift();
+            if (history.length > 100) history.shift();
             historyIndex = history.length - 1;
 
             // Auto-Save Draft to Local Storage
@@ -2638,13 +2638,13 @@
                     { name: "label", label: "Header Label", type: "text", def: "", cat: "data" },
                     { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
-                    { name: "warning_high_enabled", label: "High Warning", type: "checkbox", def: false, cat: "alerts", group: "high" },
+                    { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "high" },
                     { name: "warning_high_threshold", label: "Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                     { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                     { name: "warning_high_apply_panel", label: "Panel", type: "checkbox", def: false, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
-                    { name: "warning_low_enabled", label: "Low Warning", type: "checkbox", def: false, cat: "alerts", group: "low" },
+                    { name: "warning_low_enabled", label: "Low Alert", type: "checkbox", def: false, cat: "alerts", group: "low" },
                     { name: "warning_low_threshold", label: "Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
                     { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
                     { name: "warning_low_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
@@ -2701,7 +2701,7 @@
                 ]
             },
             "warning": {
-                displayName: "Warning Light", defW: 25, defH: 25,
+                displayName: "Alert Light", defW: 25, defH: 25,
                 fields: [
                     { name: "label", label: "Label", type: "text", def: "", cat: "data" },
                     { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance" },
@@ -2911,12 +2911,12 @@
 
                 const copyAlertsBtn = document.createElement('div');
                 copyAlertsBtn.className = 'cm-item';
-                copyAlertsBtn.innerText = 'Copy Warnings';
+                copyAlertsBtn.innerText = 'Copy Alerts';
                 copyAlertsBtn.onclick = () => { copyWarnings(); contextMenu.style.display = 'none'; };
 
                 const pasteAlertsBtn = document.createElement('div');
                 pasteAlertsBtn.className = 'cm-item';
-                pasteAlertsBtn.innerText = 'Paste Warnings';
+                pasteAlertsBtn.innerText = 'Paste Alerts';
                 if (!_warningClipboard) { pasteAlertsBtn.style.opacity = '0.4'; pasteAlertsBtn.style.pointerEvents = 'none'; }
                 pasteAlertsBtn.onclick = () => { pasteWarnings(); contextMenu.style.display = 'none'; };
 
@@ -3448,7 +3448,7 @@
                 c.bar_low = warnings.low_threshold;
                 c.bar_low_color = warnings.low_color;
             } else {
-                updateStatus('This widget type does not support warnings', true);
+                updateStatus('This widget type does not support alerts', true);
                 return false;
             }
             return true;
@@ -3459,12 +3459,12 @@
             const w = currentLayout.widgets[selectedIndex];
             const data = _extractWarnings(w);
             if (!data) {
-                updateStatus('This widget type has no warnings to copy', true);
+                updateStatus('This widget type has no alerts to copy', true);
                 return;
             }
             _warningClipboard = data;
             const def = WIDGET_DEFS[w.type];
-            updateStatus(`Copied warnings from ${def ? def.displayName : w.type}`);
+            updateStatus(`Copied alerts from ${def ? def.displayName : w.type}`);
         }
 
         function pasteWarnings() {
@@ -3473,7 +3473,7 @@
             const w = currentLayout.widgets[selectedIndex];
             if (_applyWarnings(w, _warningClipboard)) {
                 const def = WIDGET_DEFS[w.type];
-                updateStatus(`Pasted warnings to ${def ? def.displayName : w.type}`);
+                updateStatus(`Pasted alerts to ${def ? def.displayName : w.type}`);
                 updateInspector();
                 if (document.getElementById('livePreviewToggle').checked) triggerPreview();
             }
@@ -5659,6 +5659,11 @@
                     fetch('/api/font/list')
                 ]);
 
+                if (!storageResp.ok) throw new Error(`Storage info failed: ${storageResp.status}`);
+                if (!layoutsResp.ok) throw new Error(`Layout list failed: ${layoutsResp.status}`);
+                if (!imagesResp.ok) throw new Error(`Image list failed: ${imagesResp.status}`);
+                if (!fontsResp.ok) throw new Error(`Font list failed: ${fontsResp.status}`);
+
                 const storage = await storageResp.json();
                 const layoutData = await layoutsResp.json();
                 const images = await imagesResp.json();
@@ -6175,6 +6180,9 @@
         }
 
         _syncTimer = setInterval(syncFromDevice, 3000);
+        window.addEventListener('beforeunload', () => {
+            if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
+        });
 
         /* ── ECU Context (Phase 4) ──────────────────────────────────── */
 

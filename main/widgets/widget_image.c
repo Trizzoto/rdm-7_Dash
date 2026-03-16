@@ -170,8 +170,7 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	cJSON *item;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(id->image_name, item->valuestring, sizeof(id->image_name) - 1);
-		id->image_name[sizeof(id->image_name) - 1] = '\0';
+		safe_strncpy(id->image_name, item->valuestring, sizeof(id->image_name));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opacity");
 	if (cJSON_IsNumber(item)) id->opacity = (uint8_t)item->valueint;

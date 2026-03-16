@@ -27,7 +27,7 @@
 /* Fallback for static-analyser builds that don't see layout_manager.h's define.
  */
 #ifndef LAYOUT_MAX_FILE_BYTES
-#define LAYOUT_MAX_FILE_BYTES 16384
+#define LAYOUT_MAX_FILE_BYTES 32768
 #endif
 
 /* Embedded web UI (provided by EMBED_TXTFILES in CMakeLists.txt) */
@@ -40,6 +40,15 @@ static httpd_handle_t server = NULL;
 /* LVGL lock helpers (defined in main.c) */
 extern bool example_lvgl_lock(int timeout_ms);
 extern void example_lvgl_unlock(void);
+
+/* ── Path-safety check for user-supplied names (no traversal) ──────────── */
+
+static bool _name_is_safe(const char *name) {
+	for (const char *p = name; *p; p++) {
+		if (*p == '/' || *p == '\\' || *p == '.') return false;
+	}
+	return true;
+}
 
 /* ── Deferred screen reload (runs on LVGL task via lv_async_call) ────────── */
 
@@ -538,6 +547,11 @@ static const httpd_uri_t layout_list_uri = {.uri = "/api/layout/list",
 
 static esp_err_t layout_set_handler(httpd_req_t *req) {
 	char buf[128];
+	if (req->content_len >= sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Request body too large");
+		return ESP_FAIL;
+	}
 	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
 	if (received <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
@@ -585,6 +599,11 @@ static const httpd_uri_t layout_set_uri = {.uri = "/api/layout/set",
 // HTTP handler for deleting a layout JSON file
 static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	char buf[128];
+	if (req->content_len >= sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Request body too large");
+		return ESP_FAIL;
+	}
 	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
 	if (received <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
@@ -671,6 +690,11 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 	char name[32] = {0};
 	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
 
@@ -830,6 +854,11 @@ static esp_err_t image_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
 	char path[80];
 	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
 	if (remove(path) != 0) {
@@ -858,6 +887,11 @@ static esp_err_t image_data_handler(httpd_req_t *req) {
 	char name[32] = {0};
 	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
 
@@ -929,6 +963,11 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 	char name[32] = {0};
 	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
 
@@ -1042,6 +1081,11 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 	char name[32] = {0};
 	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
 

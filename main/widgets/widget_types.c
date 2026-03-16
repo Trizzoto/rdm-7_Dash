@@ -139,7 +139,7 @@ void widget_base_from_json(widget_t *w, const cJSON *in)
     if ((item = cJSON_GetObjectItemCaseSensitive(in, "h")) && cJSON_IsNumber(item))
         w->h = (uint16_t)item->valuedouble;
     if ((item = cJSON_GetObjectItemCaseSensitive(in, "id")) && cJSON_IsString(item))
-        strncpy(w->id, item->valuestring, sizeof(w->id) - 1);
+        safe_strncpy(w->id, item->valuestring, sizeof(w->id));
 }
 
 /* ─── Widget capability queries ─────────────────────────────────────────── */

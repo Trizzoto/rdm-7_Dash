@@ -215,8 +215,7 @@ void widget_rules_from_json(widget_t *w, const cJSON *config)
         /* signal_name */
         const cJSON *sn = cJSON_GetObjectItemCaseSensitive(rule_obj, "signal_name");
         if (cJSON_IsString(sn) && sn->valuestring) {
-            strncpy(r->signal_name, sn->valuestring, sizeof(r->signal_name) - 1);
-            r->signal_name[sizeof(r->signal_name) - 1] = '\0';
+            safe_strncpy(r->signal_name, sn->valuestring, sizeof(r->signal_name));
         }
 
         /* operator */
@@ -253,9 +252,8 @@ void widget_rules_from_json(widget_t *w, const cJSON *config)
 
                 const cJSON *field = cJSON_GetObjectItemCaseSensitive(ov_obj, "field");
                 if (cJSON_IsString(field) && field->valuestring) {
-                    strncpy(ov->field_name, field->valuestring,
-                            sizeof(ov->field_name) - 1);
-                    ov->field_name[sizeof(ov->field_name) - 1] = '\0';
+                    safe_strncpy(ov->field_name, field->valuestring,
+                            sizeof(ov->field_name));
                 }
 
                 const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(ov_obj, "type");
@@ -278,9 +276,8 @@ void widget_rules_from_json(widget_t *w, const cJSON *config)
                     break;
                 case RULE_VAL_STRING:
                     if (cJSON_IsString(val) && val->valuestring) {
-                        strncpy(ov->value.str, val->valuestring,
-                                sizeof(ov->value.str) - 1);
-                        ov->value.str[sizeof(ov->value.str) - 1] = '\0';
+                        safe_strncpy(ov->value.str, val->valuestring,
+                                sizeof(ov->value.str));
                     }
                     break;
                 }

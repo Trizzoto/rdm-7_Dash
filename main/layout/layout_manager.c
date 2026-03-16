@@ -372,6 +372,80 @@ static void _save_signals(cJSON *root) {
 	}
 }
 
+/**
+ * Shared helper: reset signals, load signal definitions, then iterate the
+ * "widgets" array — calling factory → from_json → rules → create for each.
+ * Callers are responsible for file I/O, JSON parsing, and cJSON cleanup.
+ *
+ * @param root     Parsed layout JSON root (must contain "widgets" array)
+ * @param parent   LVGL parent object for widget creation
+ * @param caller   Tag string for log messages (e.g. "layout_load", "apply_json")
+ * @return ESP_OK on success, ESP_FAIL if "widgets" array is missing
+ */
+static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
+									  const char *caller) {
+	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
+	signal_registry_reset();
+	_load_signals(root);
+
+	const cJSON *widgets_arr =
+		cJSON_GetObjectItemCaseSensitive(root, "widgets");
+	if (!cJSON_IsArray(widgets_arr)) {
+		ESP_LOGE(TAG, "%s: no 'widgets' array", caller);
+		return ESP_FAIL;
+	}
+
+	const cJSON *wj = NULL;
+	cJSON_ArrayForEach(wj, widgets_arr) {
+		const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(wj, "type");
+		widget_type_t wtype = _type_from_str(
+			cJSON_IsString(type_item) ? type_item->valuestring : NULL);
+		if (wtype == WIDGET_TYPE_COUNT) {
+			ESP_LOGW(TAG, "%s: unknown widget type '%s', skipping", caller,
+					 cJSON_IsString(type_item) ? type_item->valuestring
+											   : "(null)");
+			continue;
+		}
+
+		widget_t *w = _factory(wtype, (cJSON *)wj);
+		if (!w) {
+			ESP_LOGW(TAG, "%s: factory returned NULL for type %d", caller,
+					 (int)wtype);
+			continue;
+		}
+
+		/* Restore base fields (x, y, w, h, id) and type-specific config.
+		 * Cast away const: cJSON iterator yields const ptr but our vtable
+		 * takes mutable (cJSON API doesn't propagate const internally). */
+		ESP_LOGD(TAG, "%s: Calling from_json for %s", caller, w->id);
+		w->from_json(w, (cJSON *)wj);
+
+		/* Parse conditional rules from config */
+		cJSON *cfg_obj = cJSON_GetObjectItemCaseSensitive((cJSON *)wj, "config");
+		if (cfg_obj)
+			widget_rules_from_json(w, cfg_obj);
+
+		/* Build LVGL objects on the parent screen */
+		ESP_LOGD(TAG, "%s: Calling create for %s", caller, w->id);
+		w->create(w, parent);
+		ESP_LOGD(TAG, "%s: Returned from create for %s", caller, w->id);
+
+		/* Subscribe rule signals after create (needs w->root) */
+		widget_rules_subscribe(w);
+
+		/* Position root object if valid */
+		if (w->root && lv_obj_is_valid(w->root)) {
+			lv_obj_set_x(w->root, w->x);
+			lv_obj_set_y(w->root, w->y);
+		}
+
+		ESP_LOGD(TAG, "%s: loaded widget id=%s type=%d at (%d,%d)", caller,
+				 w->id, (int)wtype, (int)w->x, (int)w->y);
+	}
+
+	return ESP_OK;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  layout_manager_load
  * ═══════════════════════════════════════════════════════════════════════════
@@ -436,67 +510,12 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		s_layout_ecu_version[0] = '\0';
 	}
 
-	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
-	signal_registry_reset();
-	_load_signals(root);
-
-	const cJSON *widgets_arr =
-		cJSON_GetObjectItemCaseSensitive(root, "widgets");
-	if (!cJSON_IsArray(widgets_arr)) {
-		ESP_LOGE(TAG, "layout_load: no 'widgets' array in %s", path);
-		cJSON_Delete(root);
-		return ESP_FAIL;
-	}
-
-	const cJSON *wj = NULL;
-	cJSON_ArrayForEach(wj, widgets_arr) {
-		const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(wj, "type");
-		widget_type_t wtype = _type_from_str(
-			cJSON_IsString(type_item) ? type_item->valuestring : NULL);
-		if (wtype == WIDGET_TYPE_COUNT) {
-			ESP_LOGW(TAG, "layout_load: unknown widget type '%s', skipping",
-					 cJSON_IsString(type_item) ? type_item->valuestring
-											   : "(null)");
-			continue;
-		}
-
-		widget_t *w = _factory(wtype, (cJSON *)wj);
-		if (!w) {
-			ESP_LOGW(TAG, "layout_load: factory returned NULL for type %d",
-					 (int)wtype);
-			continue;
-		}
-
-		/* Restore base fields (x, y, w, h, id) and type-specific config.
-		 * Cast away const: cJSON iterator yields const ptr but our vtable
-		 * takes mutable (cJSON API doesn't propagate const internally). */
-		ESP_LOGD(TAG, "layout_load: Calling from_json for %s", w->id);
-		w->from_json(w, (cJSON *)wj);
-
-		/* Parse conditional rules from config */
-		cJSON *cfg_obj = cJSON_GetObjectItemCaseSensitive((cJSON *)wj, "config");
-		if (cfg_obj)
-			widget_rules_from_json(w, cfg_obj);
-
-		/* Build LVGL objects on the parent screen */
-		ESP_LOGD(TAG, "layout_load: Calling create for %s", w->id);
-		w->create(w, parent);
-		ESP_LOGD(TAG, "layout_load: Returned from create for %s", w->id);
-
-		/* Subscribe rule signals after create (needs w->root) */
-		widget_rules_subscribe(w);
-
-		/* Position root object if valid */
-		if (w->root && lv_obj_is_valid(w->root)) {
-			lv_obj_set_x(w->root, w->x);
-			lv_obj_set_y(w->root, w->y);
-		}
-
-		ESP_LOGD(TAG, "layout_load: loaded widget id=%s type=%d at (%d,%d)",
-				 w->id, (int)wtype, (int)w->x, (int)w->y);
-	}
-
+	/* ── Instantiate signals + widgets ── */
+	esp_err_t ret = _instantiate_widgets(root, parent, "layout_load");
 	cJSON_Delete(root);
+	if (ret != ESP_OK)
+		return ret;
+
 	ESP_LOGI(TAG, "layout_load: loaded '%s' from %s", name, path);
 	return ESP_OK;
 }
@@ -509,53 +528,9 @@ esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent) {
 	if (!root || !parent)
 		return ESP_ERR_INVALID_ARG;
 
-	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
-	signal_registry_reset();
-	_load_signals(root);
-
-	const cJSON *widgets_arr =
-		cJSON_GetObjectItemCaseSensitive(root, "widgets");
-	if (!cJSON_IsArray(widgets_arr)) {
-		ESP_LOGE(TAG, "apply_json: no 'widgets' array");
-		return ESP_FAIL;
-	}
-
-	const cJSON *wj = NULL;
-	cJSON_ArrayForEach(wj, widgets_arr) {
-		const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(wj, "type");
-		widget_type_t wtype = _type_from_str(
-			cJSON_IsString(type_item) ? type_item->valuestring : NULL);
-		if (wtype == WIDGET_TYPE_COUNT) {
-			ESP_LOGW(TAG, "apply_json: unknown widget type '%s', skipping",
-					 cJSON_IsString(type_item) ? type_item->valuestring
-											   : "(null)");
-			continue;
-		}
-
-		widget_t *w = _factory(wtype, (cJSON *)wj);
-		if (!w) {
-			ESP_LOGW(TAG, "apply_json: factory returned NULL for type %d",
-					 (int)wtype);
-			continue;
-		}
-
-		w->from_json(w, (cJSON *)wj);
-
-		cJSON *cfg_obj2 = cJSON_GetObjectItemCaseSensitive((cJSON *)wj, "config");
-		if (cfg_obj2)
-			widget_rules_from_json(w, cfg_obj2);
-
-		w->create(w, parent);
-		widget_rules_subscribe(w);
-
-		if (w->root && lv_obj_is_valid(w->root)) {
-			lv_obj_set_x(w->root, w->x);
-			lv_obj_set_y(w->root, w->y);
-		}
-
-		ESP_LOGD(TAG, "apply_json: loaded widget id=%s type=%d at (%d,%d)",
-				 w->id, (int)wtype, (int)w->x, (int)w->y);
-	}
+	esp_err_t ret = _instantiate_widgets(root, parent, "apply_json");
+	if (ret != ESP_OK)
+		return ret;
 
 	ESP_LOGI(TAG, "apply_json: applied layout from cJSON");
 	return ESP_OK;

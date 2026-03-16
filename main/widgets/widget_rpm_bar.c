@@ -21,6 +21,7 @@
 #include "ui/config_bridge.h"
 #include "widget_bar.h"
 #include "widget_panel.h"
+#include "widget_registry.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -53,16 +54,10 @@ void widget_rpm_bar_clear_stale_pointers(void) {
 	s_rpm_container = NULL;
 }
 
-/* ── Helper: look up rpm_bar_data_t ────────────────────────────────────── */
-static rpm_bar_data_t *_get_rpm_bar_data(void) {
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (widgets[i] && widgets[i]->type == WIDGET_RPM_BAR) {
-			return (rpm_bar_data_t *)widgets[i]->type_data;
-		}
-	}
-	return NULL;
+/* ── Helper: look up rpm_bar_data_t via registry (singleton, slot 0) ──── */
+static rpm_bar_data_t *_lookup_rpm_bar_data(void) {
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_RPM_BAR, 0);
+	return w ? (rpm_bar_data_t *)w->type_data : NULL;
 }
 
 static int current_canbus_rpm = 0; // Store the current CAN bus RPM value
@@ -178,7 +173,7 @@ void rpm_color_dropdown_event_cb(lv_event_t *e) {
 	// Don't update colors when real limiter effect is active to avoid conflicts
 	// with flashing
 	rpm_color_needs_update = true;
-		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->bar_color = new_rpm_color;
 }
 
@@ -228,7 +223,7 @@ void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e) {
 	}
 
 	// Update configuration
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->limiter_effect = effect_type;
 }
 
@@ -240,14 +235,14 @@ void rpm_limiter_roller_event_cb(lv_event_t *e) {
 		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->limiter_value = rpm_value;
 }
 
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (!rd && selected != 9) return;
 
 	switch (selected) {
@@ -269,7 +264,7 @@ void rpm_background_switch_event_cb(lv_event_t *e) {
 	bool is_checked = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
 
 	// Update configuration
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->background_enabled = is_checked;
 }
 
@@ -316,7 +311,7 @@ void rpm_background_color_dropdown_event_cb(lv_event_t *e) {
 	}
 
 	// Update configuration
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->background_color = new_background_color;
 }
 
@@ -328,7 +323,7 @@ void rpm_background_threshold_roller_event_cb(lv_event_t *e) {
 		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	// Update configuration
-	rpm_bar_data_t *rd = _get_rpm_bar_data();
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 	if (rd) rd->background_value = threshold_value;
 }
 
@@ -379,7 +374,7 @@ static void color_wheel_ok_event_cb(lv_event_t *e) {
 	new_rpm_color = selected_custom_color;
 	rpm_color_needs_update = true;
 	{
-		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 		if (rd) rd->bar_color = selected_custom_color;
 	}
 
@@ -404,7 +399,7 @@ static void color_wheel_cancel_event_cb(lv_event_t *e) {
 static void rpm_background_color_wheel_ok_event_cb(lv_event_t *e) {
 	// Apply the selected color from the color wheel
 	{
-		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 		if (rd) rd->background_color = selected_rpm_background_custom_color;
 	}
 
@@ -474,7 +469,7 @@ void create_rpm_background_color_wheel_popup(void) {
 	lv_obj_align(rpm_background_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current background color
-	rpm_bar_data_t *rd_bg = _get_rpm_bar_data();
+	rpm_bar_data_t *rd_bg = _lookup_rpm_bar_data();
 	lv_color_t current_color = rd_bg ? rd_bg->background_color : THEME_COLOR_GREEN;
 	lv_colorwheel_set_rgb(rpm_background_color_wheel, current_color);
 	selected_rpm_background_custom_color = current_color;
@@ -556,7 +551,7 @@ void create_rpm_color_wheel_popup(void) {
 	lv_obj_align(color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current RPM color
-	rpm_bar_data_t *rd_cw = _get_rpm_bar_data();
+	rpm_bar_data_t *rd_cw = _lookup_rpm_bar_data();
 	lv_color_t current_color = rd_cw ? rd_cw->bar_color : THEME_COLOR_GREEN;
 	lv_colorwheel_set_rgb(color_wheel, current_color);
 	selected_custom_color = current_color;
@@ -609,7 +604,7 @@ static lv_color_t selected_limiter_custom_color;
 static void limiter_color_wheel_ok_event_cb(lv_event_t *e) {
 	// Apply the selected color from the color wheel
 	{
-		rpm_bar_data_t *rd = _get_rpm_bar_data();
+		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
 		if (rd) rd->limiter_color = selected_limiter_custom_color;
 	}
 
@@ -679,7 +674,7 @@ void create_limiter_color_wheel_popup(void) {
 	lv_obj_align(limiter_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current limiter color
-	rpm_bar_data_t *rd_lc = _get_rpm_bar_data();
+	rpm_bar_data_t *rd_lc = _lookup_rpm_bar_data();
 	lv_color_t current_color = rd_lc ? rd_lc->limiter_color : THEME_COLOR_RED;
 	lv_colorwheel_set_rgb(limiter_color_wheel, current_color);
 	selected_limiter_custom_color = current_color;
@@ -746,7 +741,7 @@ void set_rpm_value(int rpm) {
 
 	// Check if we should activate RPM background effect based on
 	// real RPM
-	rpm_bar_data_t *rd_bg = _get_rpm_bar_data();
+	rpm_bar_data_t *rd_bg = _lookup_rpm_bar_data();
 	if (rd_bg && rd_bg->background_enabled) {
 		int32_t background_threshold = rd_bg->background_value;
 
@@ -988,7 +983,7 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value) {
 	update_menu_rpm_value_text(rpm_value);
 }
 void create_rpm_bar_gauge(lv_obj_t *container) {
-	rpm_bar_data_t *rd_bar = _get_rpm_bar_data();
+	rpm_bar_data_t *rd_bar = _lookup_rpm_bar_data();
 	lv_color_t saved_color = rd_bar ? rd_bar->bar_color : THEME_COLOR_GREEN;
 
 	/* Panel9 — color indicator square at left edge.
@@ -1299,7 +1294,7 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) rd->background_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)
-		strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name) - 1);
+		safe_strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name));
 
 	/* Resolve signal name → index */
 	if (rd->signal_name[0] != '\0')

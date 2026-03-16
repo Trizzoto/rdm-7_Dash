@@ -1,9 +1,10 @@
 /*
  * config_modal.c -- widget-based tabbed configuration modal
  *
- * Two tabs:
- *   SIGNAL   -- CAN ID, Endian, Bit Start/Length, Scale, Offset, Data Type
- *   ALERTS   -- Thresholds + colours (only for panel / bar widgets)
+ * Tabs (widget-type dependent):
+ *   SIGNAL       -- CAN ID, Endian, Bit Start/Length, Scale, Offset, Data Type
+ *   ALERTS       -- Thresholds + colours (panel / bar only)
+ *   RPM SETTINGS -- Gauge max, redline, bar colour, limiter, background (rpm_bar only)
  *
  * All edits are written directly to the live signal_t and widget type_data.
  * Save/Cancel buttons in the footer delegate to menu_screen.c callbacks.
@@ -17,6 +18,7 @@
 #include "widgets/signal.h"
 #include "widgets/widget_panel.h"
 #include "widgets/widget_bar.h"
+#include "widgets/widget_rpm_bar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -421,11 +423,11 @@ static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
     bool has_warnings = pd->warning_high_enabled || pd->warning_low_enabled;
 
     settings_section_t *sec =
-        settings_add_section(tab, "WARNING SETTINGS", THEME_COLOR_ACCENT_AMBER);
+        settings_add_section(tab, "ALERT SETTINGS", THEME_COLOR_ACCENT_AMBER);
 
-    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Warnings:", has_warnings);
+    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Alerts:", has_warnings);
 
-    /* Sub-container hidden when warnings are off */
+    /* Sub-container hidden when alerts are off */
     lv_obj_t *warn_box = lv_obj_create(tab);
     lv_obj_set_size(warn_box, lv_pct(100), LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(warn_box, THEME_COLOR_SECTION_BG, 0);
@@ -483,7 +485,7 @@ static void build_alerts_tab_bar(lv_obj_t *tab, modal_ctx_t *ctx)
     settings_section_t *sec =
         settings_add_section(tab, "BAR THRESHOLDS", THEME_COLOR_ACCENT_AMBER);
 
-    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Warnings:", has_warnings);
+    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Alerts:", has_warnings);
 
     lv_obj_t *warn_box = lv_obj_create(tab);
     lv_obj_set_size(warn_box, lv_pct(100), LV_SIZE_CONTENT);
@@ -520,6 +522,132 @@ static void build_alerts_tab_bar(lv_obj_t *tab, modal_ctx_t *ctx)
     lv_obj_t *bhc = settings_add_dropdown(warn_box, "High Colour:", BAR_COLOR_OPTS, 0);
     lv_dropdown_set_selected(bhc, bar_color_idx(bd->bar_high_color));
     lv_obj_add_event_cb(bhc, bar_high_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
+}
+
+/* =========================================================================
+ * RPM Settings tab builder
+ * ========================================================================= */
+
+/* RPM roller options: 3000-12000 in 200-RPM steps */
+static const char *RPM_STEP_OPTS =
+    "3000\n3200\n3400\n3600\n3800\n4000\n4200\n4400\n4600\n4800\n"
+    "5000\n5200\n5400\n5600\n5800\n6000\n6200\n6400\n6600\n6800\n"
+    "7000\n7200\n7400\n7600\n7800\n8000\n8200\n8400\n8600\n8800\n"
+    "9000\n9200\n9400\n9600\n9800\n10000\n10200\n10400\n10600\n10800\n"
+    "11000\n11200\n11400\n11600\n11800\n12000";
+
+static const char *COLOR_OPTS =
+    "Green\nCyan\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nCustom...";
+
+static const char *LIMITER_EFFECT_OPTS =
+    "None\nBar Flash\nBar+Circles Flash\nCircles Flash\n"
+    "Bar Solid\nBar+Circles Solid\nCircles Solid";
+
+/** Map an RPM value (3000-12000, step 200) to a dropdown index. */
+static uint16_t _rpm_to_idx(int32_t rpm) {
+    int idx = (rpm - 3000) / 200;
+    if (idx < 0) idx = 0;
+    if (idx > 45) idx = 45;
+    return (uint16_t)idx;
+}
+
+/** Map a theme colour to the 10-entry colour dropdown index (9 = Custom). */
+static uint16_t _theme_color_idx(lv_color_t c) {
+    if (c.full == THEME_COLOR_GREEN.full)   return 0;
+    if (c.full == THEME_COLOR_CYAN.full)    return 1;
+    if (c.full == THEME_COLOR_YELLOW.full)  return 2;
+    if (c.full == THEME_COLOR_ORANGE.full)  return 3;
+    if (c.full == THEME_COLOR_RED.full)     return 4;
+    if (c.full == THEME_COLOR_BLUE.full)    return 5;
+    if (c.full == THEME_COLOR_PURPLE.full)  return 6;
+    if (c.full == THEME_COLOR_MAGENTA.full) return 7;
+    if (c.full == THEME_COLOR_PINK.full)    return 8;
+    return 9; /* Custom */
+}
+
+/** Map limiter_effect enum to dropdown index. */
+static uint16_t _limiter_effect_to_idx(uint8_t effect) {
+    switch (effect) {
+    case 0: return 0; /* None */
+    case 2: return 1; /* Bar Flash */
+    case 3: return 2; /* Bar+Circles Flash */
+    case 4: return 3; /* Circles Flash */
+    case 5: return 4; /* Bar Solid */
+    case 6: return 5; /* Bar+Circles Solid */
+    case 7: return 6; /* Circles Solid */
+    default: return 0;
+    }
+}
+
+static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+{
+    rpm_bar_data_t *rd = (rpm_bar_data_t *)ctx->widget->type_data;
+    if (!rd) return;
+
+    /* ── Gauge section ─────────────────────────────────────────────── */
+    settings_section_t *gauge_sec =
+        settings_add_section(tab, "GAUGE", THEME_COLOR_ACCENT_BLUE);
+
+    lv_obj_t *max_dd = settings_add_dropdown(gauge_sec, "Max RPM:",
+                                              RPM_STEP_OPTS, 0);
+    lv_dropdown_set_selected(max_dd, _rpm_to_idx(rd->gauge_max));
+    lv_obj_add_event_cb(max_dd, rpm_gauge_roller_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *rl_dd = settings_add_dropdown(gauge_sec, "Redline:",
+                                             RPM_STEP_OPTS, 0);
+    lv_dropdown_set_selected(rl_dd, _rpm_to_idx(rd->redline));
+    lv_obj_add_event_cb(rl_dd, rpm_redline_roller_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *col_dd = settings_add_dropdown(gauge_sec, "Bar Colour:",
+                                              COLOR_OPTS, 0);
+    lv_dropdown_set_selected(col_dd, _theme_color_idx(rd->bar_color));
+    lv_obj_add_event_cb(col_dd, rpm_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ── Limiter section ───────────────────────────────────────────── */
+    settings_section_t *lim_sec =
+        settings_add_section(tab, "LIMITER", THEME_COLOR_ACCENT_AMBER);
+
+    lv_obj_t *eff_dd = settings_add_dropdown(lim_sec, "Effect:",
+                                              LIMITER_EFFECT_OPTS, 0);
+    lv_dropdown_set_selected(eff_dd, _limiter_effect_to_idx(rd->limiter_effect));
+    lv_obj_add_event_cb(eff_dd, rpm_limiter_effect_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *lval_dd = settings_add_dropdown(lim_sec, "Trigger RPM:",
+                                               RPM_STEP_OPTS, 0);
+    lv_dropdown_set_selected(lval_dd, _rpm_to_idx(rd->limiter_value));
+    lv_obj_add_event_cb(lval_dd, rpm_limiter_roller_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *lcol_dd = settings_add_dropdown(lim_sec, "Limiter Colour:",
+                                               COLOR_OPTS, 0);
+    lv_dropdown_set_selected(lcol_dd, _theme_color_idx(rd->limiter_color));
+    lv_obj_add_event_cb(lcol_dd, rpm_limiter_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ── Background section ────────────────────────────────────────── */
+    settings_section_t *bg_sec =
+        settings_add_section(tab, "BACKGROUND", THEME_COLOR_ACCENT_TEAL);
+
+    lv_obj_t *bg_sw = settings_add_switch(bg_sec, "Enable:",
+                                           rd->background_enabled);
+    lv_obj_add_event_cb(bg_sw, rpm_background_switch_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *bg_val_dd = settings_add_dropdown(bg_sec, "Threshold RPM:",
+                                                 RPM_STEP_OPTS, 0);
+    lv_dropdown_set_selected(bg_val_dd, _rpm_to_idx(rd->background_value));
+    lv_obj_add_event_cb(bg_val_dd, rpm_background_threshold_roller_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *bg_col_dd = settings_add_dropdown(bg_sec, "Background Colour:",
+                                                 COLOR_OPTS, 0);
+    lv_dropdown_set_selected(bg_col_dd, _theme_color_idx(rd->background_color));
+    lv_obj_add_event_cb(bg_col_dd, rpm_background_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* =========================================================================
@@ -640,6 +768,12 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
             build_alerts_tab_panel(tab_alerts, ctx);
         else if (w->type == WIDGET_BAR)
             build_alerts_tab_bar(tab_alerts, ctx);
+    }
+
+    if (w->type == WIDGET_RPM_BAR) {
+        lv_obj_t *tab_rpm = lv_tabview_add_tab(tv, "  RPM SETTINGS  ");
+        style_tab(tab_rpm);
+        build_rpm_settings_tab(tab_rpm, ctx);
     }
 
     /* ── Footer ────────────────────────────────────────────────────────── */

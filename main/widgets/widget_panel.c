@@ -16,6 +16,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "ui/dashboard.h"
+#include "widget_registry.h"
 #include "widget_types.h"
 #include <math.h>
 #include <stdbool.h>
@@ -47,43 +48,35 @@ static const lv_coord_t value_positions[8][2] = {
 static const lv_coord_t box_positions[8][2] = {
 	{-312, -26}, {-146, -26}, {-312, 82}, {-146, 82},
 	{146, -26},	 {312, -26},  {146, 82},  {312, 82}};
-/* ── Helper: look up panel_data_t by slot ────────────────────────────────── */
-static panel_data_t *_get_panel_data_by_slot(uint8_t slot) {
-	if (slot >= 8) return NULL;
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (widgets[i] && widgets[i]->type == WIDGET_PANEL) {
-			panel_data_t *pd = (panel_data_t *)widgets[i]->type_data;
-			if (pd && pd->slot == slot) return pd;
-		}
-	}
-	return NULL;
+/* ── Helper: look up panel_data_t by slot via registry ─────────────────── */
+static panel_data_t *_lookup_panel_data(uint8_t slot) {
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_PANEL, slot);
+	return w ? (panel_data_t *)w->type_data : NULL;
 }
 
 /* ── Public setters for panel warning thresholds (called from widget_warning.c) ── */
 void widget_panel_set_warning_high(uint8_t slot, float threshold, bool enabled) {
-	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	panel_data_t *pd = _lookup_panel_data(slot);
 	if (!pd) return;
 	pd->warning_high_threshold = threshold;
 	pd->warning_high_enabled = enabled;
 }
 
 void widget_panel_set_warning_low(uint8_t slot, float threshold, bool enabled) {
-	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	panel_data_t *pd = _lookup_panel_data(slot);
 	if (!pd) return;
 	pd->warning_low_threshold = threshold;
 	pd->warning_low_enabled = enabled;
 }
 
 void widget_panel_set_warning_high_color(uint8_t slot, lv_color_t color) {
-	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	panel_data_t *pd = _lookup_panel_data(slot);
 	if (!pd) return;
 	pd->warning_high_color = color;
 }
 
 void widget_panel_set_warning_low_color(uint8_t slot, lv_color_t color) {
-	panel_data_t *pd = _get_panel_data_by_slot(slot);
+	panel_data_t *pd = _lookup_panel_data(slot);
 	if (!pd) return;
 	pd->warning_low_color = color;
 }
@@ -105,7 +98,7 @@ void update_panel_ui(void *param) {
 		lv_label_set_text(menu_panel_value_labels[i], update->value_str);
 	}
 
-	panel_data_t *pd = _get_panel_data_by_slot(i);
+	panel_data_t *pd = _lookup_panel_data(i);
 
 	/* Determine warning state and apply-to flags */
 	lv_color_t warn_color = {0};
@@ -168,7 +161,7 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 							   double final_value) {
 	if (i >= 8)
 		return;
-	panel_data_t *pd = _get_panel_data_by_slot(i);
+	panel_data_t *pd = _lookup_panel_data(i);
 	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]) &&
 		lv_obj_get_screen(ui_Value[i]) != NULL) {
 		lv_label_set_text(ui_Value[i], value_str);
@@ -327,7 +320,7 @@ void widget_panel_create(lv_obj_t *parent) {
 		/* ── Header label (already inside box) ──────────────────────── */
 		ui_Label[i] = lv_label_create(ui_Box[i]);
 		{
-			panel_data_t *fpd = _get_panel_data_by_slot(i);
+			panel_data_t *fpd = _lookup_panel_data(i);
 			lv_label_set_text(ui_Label[i], fpd ? fpd->label : "---");
 		}
 		lv_obj_set_style_text_color(ui_Label[i], THEME_COLOR_TEXT_PRIMARY,
@@ -369,7 +362,7 @@ void widget_panel_create(lv_obj_t *parent) {
 		/* ── Custom unit text — also a child of ui_Box[i] ───────────── */
 		ui_CustomText[i] = lv_label_create(ui_Box[i]);
 		{
-			panel_data_t *fpd2 = _get_panel_data_by_slot(i);
+			panel_data_t *fpd2 = _lookup_panel_data(i);
 			const char *ct = (fpd2 && fpd2->custom_text[0]) ? fpd2->custom_text : "";
 			lv_label_set_text(ui_CustomText[i], ct);
 			lv_obj_set_style_text_color(ui_CustomText[i], THEME_COLOR_TEXT_MUTED,
@@ -673,11 +666,11 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
 	if (cJSON_IsString(item) && item->valuestring)
-		strncpy(pd->label, item->valuestring, sizeof(pd->label) - 1);
+		safe_strncpy(pd->label, item->valuestring, sizeof(pd->label));
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text");
 	if (cJSON_IsString(item) && item->valuestring)
-		strncpy(pd->custom_text, item->valuestring, sizeof(pd->custom_text) - 1);
+		safe_strncpy(pd->custom_text, item->valuestring, sizeof(pd->custom_text));
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	if (cJSON_IsNumber(item)) pd->decimals = (uint8_t)item->valueint;
@@ -720,18 +713,16 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(pd->label_font, item->valuestring, sizeof(pd->label_font) - 1);
-		pd->label_font[sizeof(pd->label_font) - 1] = '\0';
+		safe_strncpy(pd->label_font, item->valuestring, sizeof(pd->label_font));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_font");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(pd->value_font, item->valuestring, sizeof(pd->value_font) - 1);
-		pd->value_font[sizeof(pd->value_font) - 1] = '\0';
+		safe_strncpy(pd->value_font, item->valuestring, sizeof(pd->value_font));
 	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)
-		strncpy(pd->signal_name, item->valuestring, sizeof(pd->signal_name) - 1);
+		safe_strncpy(pd->signal_name, item->valuestring, sizeof(pd->signal_name));
 
 	/* Appearance overrides */
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "border_radius");

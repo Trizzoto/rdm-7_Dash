@@ -9,6 +9,7 @@
  * (or while holding the LVGL mutex).
  */
 #include "font_manager.h"
+#include "widget_types.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -99,8 +100,7 @@ static bool _load_family_from_file(const char *name, const char *path)
 	}
 
 	font_family_t *fam = &s_families[s_family_count];
-	strncpy(fam->name, name, FONT_NAME_LEN - 1);
-	fam->name[FONT_NAME_LEN - 1] = '\0';
+	safe_strncpy(fam->name, name, FONT_NAME_LEN);
 	fam->data = buf;
 	fam->data_size = (size_t)fsize;
 	s_family_count++;
@@ -263,8 +263,7 @@ bool font_manager_add_family(const char *name, const uint8_t *data, size_t size)
 	memcpy(buf, data, size);
 
 	font_family_t *fam = &s_families[s_family_count];
-	strncpy(fam->name, name, FONT_NAME_LEN - 1);
-	fam->name[FONT_NAME_LEN - 1] = '\0';
+	safe_strncpy(fam->name, name, FONT_NAME_LEN);
 	fam->data = buf;
 	fam->data_size = size;
 	s_family_count++;

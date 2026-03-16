@@ -48,6 +48,7 @@ extern void example_lvgl_unlock(void);
  */
 static void can_receive_task(void *pvParameter) {
 	(void)pvParameter;
+	static uint32_t s_queue_drop_count = 0;
 
 	while (!can_task_should_stop) {
 		twai_message_t message;
@@ -58,7 +59,10 @@ static void can_receive_task(void *pvParameter) {
 				/* Non-blocking enqueue; drop oldest frames if the queue is
 				 * momentarily full rather than stalling the RX loop. */
 				if (xQueueSendToBack(s_can_queue, &message, 0) != pdPASS) {
-					/* Optional: add a small trace hook here if needed. */
+					s_queue_drop_count++;
+					if ((s_queue_drop_count % 100) == 1) {
+						ESP_LOGW(TAG, "CAN queue overflow (total drops: %lu)", (unsigned long)s_queue_drop_count);
+					}
 				}
 			}
 		} else if (ret == ESP_ERR_TIMEOUT) {
@@ -67,7 +71,10 @@ static void can_receive_task(void *pvParameter) {
 			ESP_LOGW(TAG, "CAN bus error, attempting recovery");
 			twai_stop();
 			vTaskDelay(pdMS_TO_TICKS(100));
-			twai_start();
+			esp_err_t start_err = twai_start();
+			if (start_err != ESP_OK) {
+				ESP_LOGE(TAG, "CAN recovery failed: %s", esp_err_to_name(start_err));
+			}
 		} else {
 			ESP_LOGW(TAG, "CAN receive error: %s", esp_err_to_name(ret));
 			vTaskDelay(pdMS_TO_TICKS(1));

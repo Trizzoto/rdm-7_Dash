@@ -19,29 +19,22 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "ui/dashboard.h"
+#include "widget_registry.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Helpers: look up bar_data_t by slot or value_id ──────────────────────── */
-static bar_data_t *_get_bar_data_by_slot(uint8_t slot) {
-	if (slot >= 2) return NULL;
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (widgets[i] && widgets[i]->type == WIDGET_BAR) {
-			bar_data_t *bd = (bar_data_t *)widgets[i]->type_data;
-			if (bd && bd->slot == slot) return bd;
-		}
-	}
-	return NULL;
+/* ── Helpers: look up bar_data_t by slot or value_id via registry ──────── */
+static bar_data_t *_lookup_bar_data(uint8_t slot) {
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_BAR, slot);
+	return w ? (bar_data_t *)w->type_data : NULL;
 }
 
-static bar_data_t *_get_bar_data_by_value_id(uint8_t value_id) {
+static bar_data_t *_lookup_bar_data_by_value_id(uint8_t value_id) {
 	uint8_t slot = (value_id == BAR1_VALUE_ID) ? 0 : 1;
-	return _get_bar_data_by_slot(slot);
+	return _lookup_bar_data(slot);
 }
 
 uint64_t last_bar_can_received[2] = {0, 0};
@@ -70,7 +63,7 @@ void bar_range_input_event_cb(lv_event_t *e) {
 		lv_obj_t *textarea = lv_event_get_target(e);
 		const char *txt = lv_textarea_get_text(textarea);
 		uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
-		bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+		bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 		if (!bd) return;
 
 		bool is_min = lv_obj_get_user_data(textarea) != NULL;
@@ -94,7 +87,7 @@ void bar_low_value_event_cb(lv_event_t *e) {
 
 	uint8_t *id_ptr = lv_event_get_user_data(e);
 	uint8_t value_id = *id_ptr;
-	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 	if (!bd) return;
 
 	bd->bar_low = low_val;
@@ -122,7 +115,7 @@ void bar_high_value_event_cb(lv_event_t *e) {
 
 	uint8_t *id_ptr = lv_event_get_user_data(e);
 	uint8_t value_id = *id_ptr;
-	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 	if (!bd) return;
 
 	bd->bar_high = high_val;
@@ -150,7 +143,7 @@ void create_limiter_color_wheel_popup(void);
 void bar_low_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
-	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
@@ -172,7 +165,7 @@ void bar_low_color_event_cb(lv_event_t *e) {
 void bar_high_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
-	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
@@ -194,7 +187,7 @@ void bar_high_color_event_cb(lv_event_t *e) {
 void bar_in_range_color_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
-	bar_data_t *bd = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(value_id);
 	if (!bd) return;
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
@@ -217,7 +210,7 @@ void bar_in_range_color_event_cb(lv_event_t *e) {
 // supported
 
 static void bar_low_color_wheel_ok_event_cb(lv_event_t *e) {
-	bar_data_t *bd = _get_bar_data_by_value_id(bar_low_color_value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(bar_low_color_value_id);
 	if (bd) bd->bar_low_color = selected_bar_low_custom_color;
 
 	// Close the popup
@@ -244,7 +237,7 @@ static void bar_low_color_wheel_value_changed_cb(lv_event_t *e) {
 }
 
 static void bar_high_color_wheel_ok_event_cb(lv_event_t *e) {
-	bar_data_t *bd = _get_bar_data_by_value_id(bar_high_color_value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(bar_high_color_value_id);
 	if (bd) bd->bar_high_color = selected_bar_high_custom_color;
 
 	// Close the popup
@@ -271,7 +264,7 @@ static void bar_high_color_wheel_value_changed_cb(lv_event_t *e) {
 }
 
 static void bar_in_range_color_wheel_ok_event_cb(lv_event_t *e) {
-	bar_data_t *bd = _get_bar_data_by_value_id(bar_in_range_color_value_id);
+	bar_data_t *bd = _lookup_bar_data_by_value_id(bar_in_range_color_value_id);
 	if (bd) bd->bar_in_range_color = selected_bar_in_range_custom_color;
 
 	// Close the popup
@@ -339,7 +332,7 @@ void create_bar_low_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_low_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar low color
-	bar_data_t *bd_low = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd_low = _lookup_bar_data_by_value_id(value_id);
 	lv_color_t current_color = bd_low ? bd_low->bar_low_color : THEME_COLOR_BLUE_DARK;
 	lv_colorwheel_set_rgb(bar_low_color_wheel, current_color);
 	selected_bar_low_custom_color = current_color;
@@ -428,7 +421,7 @@ void create_bar_high_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_high_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar high color
-	bar_data_t *bd_high = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd_high = _lookup_bar_data_by_value_id(value_id);
 	lv_color_t current_color = bd_high ? bd_high->bar_high_color : THEME_COLOR_RED;
 	lv_colorwheel_set_rgb(bar_high_color_wheel, current_color);
 	selected_bar_high_custom_color = current_color;
@@ -518,7 +511,7 @@ void create_bar_in_range_color_wheel_popup(uint8_t value_id) {
 	lv_obj_align(bar_in_range_color_wheel, LV_ALIGN_CENTER, 0, -10);
 
 	// Set initial color to current bar in-range color
-	bar_data_t *bd_ir = _get_bar_data_by_value_id(value_id);
+	bar_data_t *bd_ir = _lookup_bar_data_by_value_id(value_id);
 	lv_color_t current_color = bd_ir ? bd_ir->bar_in_range_color : THEME_COLOR_GREEN_BRIGHT;
 	lv_colorwheel_set_rgb(bar_in_range_color_wheel, current_color);
 	selected_bar_in_range_custom_color = current_color;
@@ -573,7 +566,7 @@ void update_bar_ui(void *param) {
 		return;
 	}
 
-	bar_data_t *bd = _get_bar_data_by_slot(upd->bar_index);
+	bar_data_t *bd = _lookup_bar_data(upd->bar_index);
 	lv_bar_set_value(bar_obj, upd->bar_value, LV_ANIM_OFF);
 
 	lv_color_t new_color;
@@ -629,7 +622,7 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 		lv_obj_get_screen(bar_obj) == NULL) {
 		return;
 	}
-	bar_data_t *bd = _get_bar_data_by_slot((uint8_t)bar_index);
+	bar_data_t *bd = _lookup_bar_data((uint8_t)bar_index);
 	lv_bar_set_value(bar_obj, bar_value, LV_ANIM_OFF);
 	lv_color_t new_color;
 	if (bd) {
@@ -669,7 +662,7 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 }
 
 void widget_bar_create(lv_obj_t *parent) {
-	bar_data_t *bd1 = _get_bar_data_by_slot(0);
+	bar_data_t *bd1 = _lookup_bar_data(0);
 	int32_t b1_min = bd1 ? bd1->bar_min : 0;
 	int32_t b1_max = bd1 ? bd1->bar_max : 100;
 	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100; }
@@ -721,7 +714,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	if (!(bd1 && bd1->show_bar_value))
 		lv_obj_add_flag(ui_Bar_1_Value, LV_OBJ_FLAG_HIDDEN);
 
-	bar_data_t *bd2 = _get_bar_data_by_slot(1);
+	bar_data_t *bd2 = _lookup_bar_data(1);
 	int32_t b2_min = bd2 ? bd2->bar_min : 0;
 	int32_t b2_max = bd2 ? bd2->bar_max : 100;
 	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100; }
@@ -979,7 +972,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
 	if (cJSON_IsString(item) && item->valuestring)
-		strncpy(bd->label, item->valuestring, sizeof(bd->label) - 1);
+		safe_strncpy(bd->label, item->valuestring, sizeof(bd->label));
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_min");
 	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
@@ -1002,18 +995,15 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(bd->label_font, item->valuestring, sizeof(bd->label_font) - 1);
-		bd->label_font[sizeof(bd->label_font) - 1] = '\0';
+		safe_strncpy(bd->label_font, item->valuestring, sizeof(bd->label_font));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_font");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(bd->value_font, item->valuestring, sizeof(bd->value_font) - 1);
-		bd->value_font[sizeof(bd->value_font) - 1] = '\0';
+		safe_strncpy(bd->value_font, item->valuestring, sizeof(bd->value_font));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(bd->signal_name, item->valuestring, sizeof(bd->signal_name) - 1);
-		bd->signal_name[sizeof(bd->signal_name) - 1] = '\0';
+		safe_strncpy(bd->signal_name, item->valuestring, sizeof(bd->signal_name));
 	}
 
 	/* Appearance overrides */

@@ -265,8 +265,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->end_angle = (int16_t)ea_item->valueint;
 	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
-		strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name) - 1);
-		md->signal_name[sizeof(md->signal_name) - 1] = '\0';
+		safe_strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name));
 	}
 
 	/* Resolve signal name → index */
@@ -299,8 +298,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_image_name");
 	if (cJSON_IsString(ap) && ap->valuestring) {
-		strncpy(md->needle_image_name, ap->valuestring, sizeof(md->needle_image_name) - 1);
-		md->needle_image_name[sizeof(md->needle_image_name) - 1] = '\0';
+		safe_strncpy(md->needle_image_name, ap->valuestring, sizeof(md->needle_image_name));
 	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_pivot_x");
 	if (cJSON_IsNumber(ap)) md->needle_pivot_x = (int16_t)ap->valueint;
@@ -310,8 +308,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_angle_offset = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "bg_image_name");
 	if (cJSON_IsString(ap) && ap->valuestring) {
-		strncpy(md->bg_image_name, ap->valuestring, sizeof(md->bg_image_name) - 1);
-		md->bg_image_name[sizeof(md->bg_image_name) - 1] = '\0';
+		safe_strncpy(md->bg_image_name, ap->valuestring, sizeof(md->bg_image_name));
 	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
 	if (cJSON_IsNumber(ap)) md->border_width = (uint8_t)ap->valueint;
@@ -329,8 +326,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->label_gap = (int8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
 	if (cJSON_IsString(ap) && ap->valuestring) {
-		strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font) - 1);
-		md->tick_label_font[sizeof(md->tick_label_font) - 1] = '\0';
+		safe_strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font));
 	}
 }
 

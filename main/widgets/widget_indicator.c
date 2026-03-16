@@ -19,24 +19,17 @@
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
+#include "widget_registry.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Helper: look up indicator_data_t by slot ─────────────────────────────── */
-static indicator_data_t *_get_indicator_data_by_slot(uint8_t slot) {
-	if (slot >= 2) return NULL;
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (widgets[i] && widgets[i]->type == WIDGET_INDICATOR) {
-			indicator_data_t *id = (indicator_data_t *)widgets[i]->type_data;
-			if (id && id->slot == slot) return id;
-		}
-	}
-	return NULL;
+/* ── Helper: look up indicator_data_t by slot via registry ─────────────── */
+static indicator_data_t *_lookup_indicator_data(uint8_t slot) {
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_INDICATOR, slot);
+	return w ? (indicator_data_t *)w->type_data : NULL;
 }
 
 void update_indicator_ui_immediate(uint8_t indicator_idx);
@@ -141,7 +134,7 @@ static void save_indicator_config_cb(lv_event_t *e) {
 		lv_obj_is_valid(vis->input_src_dropdown) && vis->indicator_idx < 2) {
 		uint8_t new_src =
 			(uint8_t)lv_dropdown_get_selected(vis->input_src_dropdown);
-		indicator_data_t *id = _get_indicator_data_by_slot(vis->indicator_idx);
+		indicator_data_t *id = _lookup_indicator_data(vis->indicator_idx);
 		if (id) {
 			id->input_source = new_src;
 			/* When switching to CAN BUS, turn indicator off until CAN message sets
@@ -231,7 +224,7 @@ static void indicator_toggle_mode_changed_cb(lv_event_t *e) {
 	uint8_t indicator_idx = *indicator_idx_ptr;
 	bool is_momentary = (lv_dropdown_get_selected(dropdown) == 0);
 
-	indicator_data_t *id = _get_indicator_data_by_slot(indicator_idx);
+	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	if (id) id->is_momentary = is_momentary;
 
 	printf("Indicator %d toggle mode updated to: %s\n", indicator_idx,
@@ -248,7 +241,7 @@ static void indicator_animation_changed_cb(lv_event_t *e) {
 	uint8_t indicator_idx = *indicator_idx_ptr;
 	bool is_enabled = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
 
-	indicator_data_t *id = _get_indicator_data_by_slot(indicator_idx);
+	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	if (id) id->animation_enabled = is_enabled;
 
 	printf("Indicator %d animation updated to: %s\n", indicator_idx,
@@ -346,7 +339,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 	lv_obj_clear_flag(preview_indicator, LV_OBJ_FLAG_SCROLLABLE);
 
 	// Set opacity based on current state
-	indicator_data_t *id_cfg = _get_indicator_data_by_slot(indicator_idx);
+	indicator_data_t *id_cfg = _lookup_indicator_data(indicator_idx);
 	bool cur_state = id_cfg ? id_cfg->current_state : false;
 	if (cur_state) {
 		lv_obj_set_style_opa(preview_indicator, 255,
@@ -640,7 +633,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 void update_indicator_ui_immediate(uint8_t indicator_idx) {
 	if (indicator_idx >= 2)
 		return;
-	indicator_data_t *id = _get_indicator_data_by_slot(indicator_idx);
+	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	bool current_state = id ? id->current_state : false;
 	lv_obj_t *indicator_obj =
 		(indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
@@ -672,7 +665,7 @@ void update_config_preview(uint8_t indicator_idx) {
 		lv_obj_is_valid(preview_status_text_config) &&
 		preview_indicator_idx == indicator_idx) {
 
-		indicator_data_t *id = _get_indicator_data_by_slot(indicator_idx);
+		indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 		bool state = id ? id->current_state : false;
 
 		printf("Updating config preview for indicator %d: %s\n", indicator_idx,
@@ -711,7 +704,7 @@ void update_config_preview(uint8_t indicator_idx) {
  * input_source == Wire (0). */
 void indicator_apply_analog_state(bool left_on, bool right_on) {
 	for (int i = 0; i < 2; i++) {
-		indicator_data_t *id = _get_indicator_data_by_slot(i);
+		indicator_data_t *id = _lookup_indicator_data(i);
 		if (!id || id->input_source != 0)
 			continue; /* CAN BUS or no widget - leave state to CAN */
 		bool new_state = (i == 0) ? left_on : right_on;
@@ -730,7 +723,7 @@ void update_indicator_ui(void *param) {
 	if (indicator_idx >= 2)
 		return;
 
-	indicator_data_t *id = _get_indicator_data_by_slot(indicator_idx);
+	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	bool current_state = id ? id->current_state : false;
 
 	// Check if state actually changed to avoid redundant updates
@@ -785,7 +778,7 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 
 	// Update both indicators if they're active and have animation enabled
 	for (int i = 0; i < 2; i++) {
-		indicator_data_t *id = _get_indicator_data_by_slot(i);
+		indicator_data_t *id = _lookup_indicator_data(i);
 		if (id && id->current_state) {
 			lv_obj_t *indicator_obj =
 				(i == 0) ? ui_Indicator_Left : ui_Indicator_Right;
@@ -957,8 +950,7 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) id->is_momentary = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(id->signal_name, item->valuestring, sizeof(id->signal_name) - 1);
-		id->signal_name[sizeof(id->signal_name) - 1] = '\0';
+		safe_strncpy(id->signal_name, item->valuestring, sizeof(id->signal_name));
 	}
 
 	/* Resolve signal name → index */

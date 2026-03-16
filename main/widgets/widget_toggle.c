@@ -227,14 +227,12 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
     if (cJSON_IsString(item) && item->valuestring) {
-        strncpy(d->label, item->valuestring, sizeof(d->label) - 1);
-        d->label[sizeof(d->label) - 1] = '\0';
+        safe_strncpy(d->label, item->valuestring, sizeof(d->label));
     }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
     if (cJSON_IsString(item) && item->valuestring) {
-        strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name) - 1);
-        d->signal_name[sizeof(d->signal_name) - 1] = '\0';
+        safe_strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name));
         d->signal_index = signal_find_by_name(d->signal_name);
     }
 

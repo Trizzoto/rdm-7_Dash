@@ -18,6 +18,22 @@
 extern "C" {
 #endif
 
+/* ─── String helper ─────────────────────────────────────────────────────── */
+
+/** Safe strncpy that always null-terminates.
+ *  @param dst       Destination buffer.
+ *  @param src       Source string (NULL-safe — writes empty string).
+ *  @param dst_size  Total size of dst buffer (including null terminator). */
+static inline void safe_strncpy(char *dst, const char *src, size_t dst_size) {
+    if (!dst || dst_size == 0) return;
+    if (src) {
+        strncpy(dst, src, dst_size - 1);
+        dst[dst_size - 1] = '\0';
+    } else {
+        dst[0] = '\0';
+    }
+}
+
 /* ─── Widget type enum ──────────────────────────────────────────────────── */
 
 typedef enum {

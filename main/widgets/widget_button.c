@@ -206,8 +206,7 @@ static void _button_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
     if (cJSON_IsString(item) && item->valuestring) {
-        strncpy(d->label, item->valuestring, sizeof(d->label) - 1);
-        d->label[sizeof(d->label) - 1] = '\0';
+        safe_strncpy(d->label, item->valuestring, sizeof(d->label));
     }
 
     /* CAN TX */
@@ -241,8 +240,7 @@ static void _button_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "font");
     if (cJSON_IsString(item) && item->valuestring) {
-        strncpy(d->font, item->valuestring, sizeof(d->font) - 1);
-        d->font[sizeof(d->font) - 1] = '\0';
+        safe_strncpy(d->font, item->valuestring, sizeof(d->font));
     }
 }
 
@@ -269,7 +267,7 @@ widget_t *widget_button_create_instance(uint8_t slot) {
     if (!d) { free(w); return NULL; }
 
     /* Set defaults */
-    strncpy(d->label, DEF_LABEL, sizeof(d->label) - 1);
+    safe_strncpy(d->label, DEF_LABEL, sizeof(d->label));
     d->tx_can_id       = DEF_TX_CAN_ID;
     d->tx_press_dlc    = DEF_PRESS_DLC;
     d->tx_release_dlc  = DEF_RELEASE_DLC;

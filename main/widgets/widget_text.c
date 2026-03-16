@@ -116,19 +116,16 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) td->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "static_text");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(td->static_text, item->valuestring, sizeof(td->static_text) - 1);
-		td->static_text[sizeof(td->static_text) - 1] = '\0';
+		safe_strncpy(td->static_text, item->valuestring, sizeof(td->static_text));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(td->signal_name, item->valuestring, sizeof(td->signal_name) - 1);
-		td->signal_name[sizeof(td->signal_name) - 1] = '\0';
+		safe_strncpy(td->signal_name, item->valuestring, sizeof(td->signal_name));
 	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "font");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(td->font, item->valuestring, sizeof(td->font) - 1);
-		td->font[sizeof(td->font) - 1] = '\0';
+		safe_strncpy(td->font, item->valuestring, sizeof(td->font));
 	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "text_color");

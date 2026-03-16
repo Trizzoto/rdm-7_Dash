@@ -30,7 +30,7 @@ extern "C" {
 #define LAYOUT_MAX_COUNT 16
 
 /* Maximum JSON file size we'll read or accept (in bytes). */
-#define LAYOUT_MAX_FILE_BYTES 16384
+#define LAYOUT_MAX_FILE_BYTES 32768
 
 /* Current layout JSON schema version (single source of truth). */
 #define LAYOUT_SCHEMA_VERSION 9

@@ -20,24 +20,17 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "ui/dashboard.h"
+#include "widget_registry.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* ── Helper: look up warning_data_t by slot ───────────────────────────────── */
-static warning_data_t *_get_warning_data_by_slot(uint8_t slot) {
-	if (slot >= 8) return NULL;
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
-	for (uint8_t i = 0; i < count; i++) {
-		if (widgets[i] && widgets[i]->type == WIDGET_WARNING) {
-			warning_data_t *wd = (warning_data_t *)widgets[i]->type_data;
-			if (wd && wd->slot == slot) return wd;
-		}
-	}
-	return NULL;
+/* ── Helper: look up warning_data_t by slot via registry ───────────────── */
+static warning_data_t *_lookup_warning_data(uint8_t slot) {
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_WARNING, slot);
+	return w ? (warning_data_t *)w->type_data : NULL;
 }
 
 /* forward declarations */
@@ -289,11 +282,10 @@ static void save_warning_config_cb(lv_event_t *e) {
 	}
 
 	// Update warning type_data
-	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	warning_data_t *wd = _lookup_warning_data(warning_idx);
 	if (wd) {
 		if (label_text) {
-			strncpy(wd->label, label_text, sizeof(wd->label) - 1);
-			wd->label[sizeof(wd->label) - 1] = '\0';
+			safe_strncpy(wd->label, label_text, sizeof(wd->label));
 		}
 
 		// Handle highlighted color selection
@@ -384,7 +376,7 @@ void update_warning_ui(void *param) {
 		return;
 	}
 
-	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	warning_data_t *wd = _lookup_warning_data(warning_idx);
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
@@ -412,7 +404,7 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 		lv_obj_get_screen(warning_circles[warning_idx]) == NULL) {
 		return;
 	}
-	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	warning_data_t *wd = _lookup_warning_data(warning_idx);
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
@@ -512,7 +504,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_clear_flag(preview_circle, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_radius(preview_circle, 100,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
-	warning_data_t *wd_cfg = _get_warning_data_by_slot(warning_idx);
+	warning_data_t *wd_cfg = _lookup_warning_data(warning_idx);
 	lv_color_t preview_color = wd_cfg ? wd_cfg->active_color : THEME_COLOR_RED;
 	lv_obj_set_style_bg_color(preview_circle, preview_color,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -532,7 +524,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_set_x(preview_label, warning_positions[warning_idx].x);
 	lv_obj_set_y(preview_label, -112); // Same y-position as in Screen3
 	lv_obj_set_align(preview_label, LV_ALIGN_CENTER);
-	lv_label_set_text(preview_label, wd_cfg ? wd_cfg->label : "Warning");
+	lv_label_set_text(preview_label, wd_cfg ? wd_cfg->label : "Alert");
 	lv_obj_set_style_text_color(preview_label, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(preview_label, 255,
@@ -553,7 +545,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Create title
 	lv_obj_t *title = lv_label_create(config_screen);
-	lv_label_set_text_fmt(title, "Warning %d Configuration", warning_idx + 1);
+	lv_label_set_text_fmt(title, "Alert %d Configuration", warning_idx + 1);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
@@ -568,7 +560,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Warning label input (moved to top)
 	lv_obj_t *label_text_label = lv_label_create(inputs_container);
-	lv_label_set_text(label_text_label, "Warning Label:");
+	lv_label_set_text(label_text_label, "Alert Label:");
 	lv_obj_set_width(label_text_label, 110);
 	lv_obj_set_style_text_align(label_text_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(label_text_label, LV_ALIGN_CENTER, -312,
@@ -583,7 +575,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 				 -47); // Was 73, now -47
 	lv_obj_add_event_cb(input_objects[3], keyboard_event_cb, LV_EVENT_ALL,
 						NULL);
-	lv_textarea_set_text(input_objects[3], wd_cfg ? wd_cfg->label : "Warning");
+	lv_textarea_set_text(input_objects[3], wd_cfg ? wd_cfg->label : "Alert");
 
 	// CAN ID input (moved down)
 	lv_obj_t *can_id_label = lv_label_create(inputs_container);
@@ -756,7 +748,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Warnings dropdown
 	lv_obj_t *preconfig_warning_label = lv_label_create(preconfig_container);
-	lv_label_set_text(preconfig_warning_label, "Warning:");
+	lv_label_set_text(preconfig_warning_label, "Alert:");
 	lv_obj_set_width(preconfig_warning_label, 70);
 	lv_obj_set_style_text_align(preconfig_warning_label, LV_TEXT_ALIGN_LEFT, 0);
 	lv_obj_align(preconfig_warning_label, LV_ALIGN_TOP_LEFT, 0, 110);
@@ -826,7 +818,7 @@ static void invert_warning_toggle_event_cb(lv_event_t *e) {
 		return;
 
 	uint8_t warning_idx = *warning_idx_ptr;
-	warning_data_t *wd = _get_warning_data_by_slot(warning_idx);
+	warning_data_t *wd = _lookup_warning_data(warning_idx);
 	if (!wd) return;
 
 	bool new_invert_toggle = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
@@ -877,7 +869,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_y(warning_circles[i], warning_positions[i].y);
 	lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
 	lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
-	warning_data_t *wd_style = _get_warning_data_by_slot(i);
+	warning_data_t *wd_style = _lookup_warning_data(i);
 	lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(warning_circles[i], wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE,
@@ -904,13 +896,13 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	if (wd_style && !wd_style->show_label) {
 		lv_obj_set_user_data(warning_labels[i], (void *)1);
 	}
-	warning_data_t *wd_label = _get_warning_data_by_slot(i);
+	warning_data_t *wd_label = _lookup_warning_data(i);
 	const char *saved_label = wd_label ? wd_label->label : NULL;
 	if (saved_label && saved_label[0] != '\0') {
 		lv_label_set_text(warning_labels[i], saved_label);
 	} else {
 		char label_text[20];
-		snprintf(label_text, sizeof(label_text), "Warning\n%d", i + 1);
+		snprintf(label_text, sizeof(label_text), "Alert\n%d", i + 1);
 		lv_label_set_text(warning_labels[i], label_text);
 	}
 	lv_obj_set_style_text_color(warning_labels[i], wd_style ? wd_style->label_color : THEME_COLOR_TEXT_PRIMARY,
@@ -1036,8 +1028,7 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) wd->active_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(wd->label, item->valuestring, sizeof(wd->label) - 1);
-		wd->label[sizeof(wd->label) - 1] = '\0';
+		safe_strncpy(wd->label, item->valuestring, sizeof(wd->label));
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "is_momentary");
 	if (cJSON_IsBool(item)) wd->is_momentary = cJSON_IsTrue(item);
@@ -1045,8 +1036,7 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) wd->invert_toggle = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring) {
-		strncpy(wd->signal_name, item->valuestring, sizeof(wd->signal_name) - 1);
-		wd->signal_name[sizeof(wd->signal_name) - 1] = '\0';
+		safe_strncpy(wd->signal_name, item->valuestring, sizeof(wd->signal_name));
 	}
 
 	/* Appearance overrides */
@@ -1133,7 +1123,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	uint8_t s = slot < 8 ? slot : 0;
 	wd->slot = s;
 	wd->active_color = THEME_COLOR_RED;
-	snprintf(wd->label, sizeof(wd->label), "Warning %u", s + 1);
+	snprintf(wd->label, sizeof(wd->label), "Alert %u", s + 1);
 	wd->is_momentary = true;
 	wd->invert_toggle = false;
 	wd->current_state = false;
