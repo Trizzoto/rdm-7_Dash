@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "layout/layout_manager.h"
 #include "lvgl.h"
+#include "storage/sd_manager.h"
 #include "system/rdm_settings.h"
 #include "ui/dashboard.h"
 #include "ui/screens/ui_Screen3.h"
@@ -1075,7 +1076,7 @@ static esp_err_t _signal_simulate_get_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* GET /api/storage/info — returns total/used/free bytes for LittleFS */
+/* GET /api/storage/info — returns total/used/free bytes for LittleFS + SD */
 static esp_err_t storage_info_handler(httpd_req_t *req) {
 	size_t total_bytes = 0, used_bytes = 0;
 	esp_err_t err = esp_littlefs_info("littlefs", &total_bytes, &used_bytes);
@@ -1084,17 +1085,420 @@ static esp_err_t storage_info_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 	size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
-	char resp[128];
-	snprintf(resp, sizeof(resp),
-			 "{\"total\":%u,\"used\":%u,\"free\":%u}",
-			 (unsigned)total_bytes, (unsigned)used_bytes, (unsigned)free_bytes);
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddNumberToObject(root, "total", total_bytes);
+	cJSON_AddNumberToObject(root, "used", used_bytes);
+	cJSON_AddNumberToObject(root, "free", free_bytes);
+
+	cJSON *sd_obj = cJSON_AddObjectToObject(root, "sd");
+	if (sd_manager_is_mounted()) {
+		size_t sd_total = 0, sd_used = 0, sd_free = 0;
+		if (sd_manager_get_info(&sd_total, &sd_used, &sd_free) == ESP_OK) {
+			cJSON_AddBoolToObject(sd_obj, "mounted", true);
+			cJSON_AddNumberToObject(sd_obj, "total", sd_total);
+			cJSON_AddNumberToObject(sd_obj, "used", sd_used);
+			cJSON_AddNumberToObject(sd_obj, "free", sd_free);
+		} else {
+			cJSON_AddBoolToObject(sd_obj, "mounted", false);
+		}
+	} else {
+		cJSON_AddBoolToObject(sd_obj, "mounted", false);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
 }
 static const httpd_uri_t storage_info_uri = {
 	.uri = "/api/storage/info", .method = HTTP_GET,
 	.handler = storage_info_handler, .user_ctx = NULL
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  SD Card API endpoints
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* GET /api/sd/status — SD mount status + space info */
+static esp_err_t sd_status_handler(httpd_req_t *req) {
+	cJSON *root = cJSON_CreateObject();
+	if (sd_manager_is_mounted()) {
+		cJSON_AddBoolToObject(root, "mounted", true);
+		size_t total = 0, used = 0, sd_free = 0;
+		if (sd_manager_get_info(&total, &used, &sd_free) == ESP_OK) {
+			cJSON_AddNumberToObject(root, "total", total);
+			cJSON_AddNumberToObject(root, "used", used);
+			cJSON_AddNumberToObject(root, "free", sd_free);
+		}
+	} else {
+		cJSON_AddBoolToObject(root, "mounted", false);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t sd_status_uri = {
+	.uri = "/api/sd/status", .method = HTTP_GET,
+	.handler = sd_status_handler, .user_ctx = NULL
+};
+
+/* GET /api/sd/files — list all SD files by category */
+static esp_err_t sd_files_handler(httpd_req_t *req) {
+	if (!sd_manager_is_mounted()) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
+		return ESP_FAIL;
+	}
+
+	cJSON *root = cJSON_CreateObject();
+
+	/* Layouts (*.json) */
+	cJSON *layouts = cJSON_AddArrayToObject(root, "layouts");
+	DIR *d = opendir(SD_LAYOUT_DIR);
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 5 || strcmp(de->d_name + flen - 5, ".json") != 0)
+				continue;
+			char path[96];
+			snprintf(path, sizeof(path), "%s/%s", SD_LAYOUT_DIR, de->d_name);
+			struct stat st;
+			if (stat(path, &st) != 0) continue;
+
+			char name[64];
+			size_t copy = flen - 5;
+			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
+			memcpy(name, de->d_name, copy);
+			name[copy] = '\0';
+
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", name);
+			cJSON_AddNumberToObject(obj, "size", st.st_size);
+			cJSON_AddItemToArray(layouts, obj);
+		}
+		closedir(d);
+	}
+
+	/* Images (*.rdmimg) */
+	cJSON *images = cJSON_AddArrayToObject(root, "images");
+	d = opendir(SD_IMAGE_DIR);
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 7 || strcmp(de->d_name + flen - 7, ".rdmimg") != 0)
+				continue;
+			char path[96];
+			snprintf(path, sizeof(path), "%s/%s", SD_IMAGE_DIR, de->d_name);
+
+			FILE *f = fopen(path, "rb");
+			if (!f) continue;
+			uint8_t hdr[12];
+			size_t nr = fread(hdr, 1, 12, f);
+			fseek(f, 0, SEEK_END);
+			long file_size = ftell(f);
+			fclose(f);
+			if (nr < 12 || memcmp(hdr, "RDMI", 4) != 0) continue;
+
+			uint16_t w = hdr[4] | (hdr[5] << 8);
+			uint16_t h = hdr[6] | (hdr[7] << 8);
+
+			char name[32];
+			size_t copy = flen - 7;
+			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
+			memcpy(name, de->d_name, copy);
+			name[copy] = '\0';
+
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", name);
+			cJSON_AddNumberToObject(obj, "width", w);
+			cJSON_AddNumberToObject(obj, "height", h);
+			cJSON_AddNumberToObject(obj, "size", file_size);
+			cJSON_AddItemToArray(images, obj);
+		}
+		closedir(d);
+	}
+
+	/* Fonts (*.ttf) */
+	cJSON *fonts = cJSON_AddArrayToObject(root, "fonts");
+	d = opendir(SD_FONT_DIR);
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 4 || strcmp(de->d_name + flen - 4, ".ttf") != 0)
+				continue;
+			char path[96];
+			snprintf(path, sizeof(path), "%s/%s", SD_FONT_DIR, de->d_name);
+			struct stat st;
+			if (stat(path, &st) != 0) continue;
+
+			char name[32];
+			size_t copy = flen - 4;
+			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
+			memcpy(name, de->d_name, copy);
+			name[copy] = '\0';
+
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", name);
+			cJSON_AddNumberToObject(obj, "size", st.st_size);
+			cJSON_AddItemToArray(fonts, obj);
+		}
+		closedir(d);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t sd_files_uri = {
+	.uri = "/api/sd/files", .method = HTTP_GET,
+	.handler = sd_files_handler, .user_ctx = NULL
+};
+
+/* Chunked file copy helper — 4KB buffer, safe for 8KB web server stack */
+static esp_err_t _copy_file(const char *src, const char *dst) {
+	FILE *fin = fopen(src, "rb");
+	if (!fin) return ESP_ERR_NOT_FOUND;
+
+	fseek(fin, 0, SEEK_END);
+	long file_size = ftell(fin);
+	fseek(fin, 0, SEEK_SET);
+
+	FILE *fout = fopen(dst, "wb");
+	if (!fout) {
+		fclose(fin);
+		return ESP_FAIL;
+	}
+
+	char buf[4096];
+	size_t total_written = 0;
+	while (total_written < (size_t)file_size) {
+		size_t to_read = sizeof(buf);
+		if (to_read > (size_t)file_size - total_written)
+			to_read = (size_t)file_size - total_written;
+		size_t nr = fread(buf, 1, to_read, fin);
+		if (nr == 0) break;
+		size_t nw = fwrite(buf, 1, nr, fout);
+		if (nw != nr) {
+			fclose(fin);
+			fclose(fout);
+			remove(dst);
+			return ESP_FAIL;
+		}
+		total_written += nw;
+	}
+
+	fclose(fin);
+	fclose(fout);
+	return (total_written == (size_t)file_size) ? ESP_OK : ESP_FAIL;
+}
+
+/* POST /api/sd/copy — copy file between internal <-> SD */
+static esp_err_t sd_copy_handler(httpd_req_t *req) {
+	char buf[192];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *type_item = cJSON_GetObjectItemCaseSensitive(root, "type");
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+	cJSON *dir_item  = cJSON_GetObjectItemCaseSensitive(root, "direction");
+
+	if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item) ||
+		!cJSON_IsString(dir_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Missing type/name/direction");
+		return ESP_FAIL;
+	}
+
+	const char *type = type_item->valuestring;
+	const char *name = name_item->valuestring;
+	const char *direction = dir_item->valuestring;
+
+	if (!sd_manager_is_mounted()) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
+		return ESP_FAIL;
+	}
+
+	/* Validate name (no path traversal) */
+	for (const char *p = name; *p; p++) {
+		if (*p == '/' || *p == '\\' || *p == '.') {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+			return ESP_FAIL;
+		}
+	}
+
+	/* Build source and destination paths */
+	char src[96], dst[96];
+	const char *lfs_dir = NULL, *sd_dir = NULL, *ext = NULL;
+
+	if (strcmp(type, "layout") == 0) {
+		lfs_dir = "/lfs/layouts"; sd_dir = SD_LAYOUT_DIR; ext = ".json";
+	} else if (strcmp(type, "image") == 0) {
+		lfs_dir = LFS_IMAGE_DIR; sd_dir = SD_IMAGE_DIR; ext = ".rdmimg";
+	} else if (strcmp(type, "font") == 0) {
+		lfs_dir = LFS_FONT_DIR; sd_dir = SD_FONT_DIR; ext = ".ttf";
+	} else {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid type");
+		return ESP_FAIL;
+	}
+
+	bool to_sd = (strcmp(direction, "to_sd") == 0);
+	cJSON_Delete(root);
+
+	if (to_sd) {
+		snprintf(src, sizeof(src), "%s/%s%s", lfs_dir, name, ext);
+		snprintf(dst, sizeof(dst), "%s/%s%s", sd_dir, name, ext);
+	} else if (strcmp(direction, "from_sd") == 0) {
+		snprintf(src, sizeof(src), "%s/%s%s", sd_dir, name, ext);
+		snprintf(dst, sizeof(dst), "%s/%s%s", lfs_dir, name, ext);
+
+		/* Check internal free space */
+		struct stat st;
+		if (stat(src, &st) != 0) {
+			httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Source not found");
+			return ESP_FAIL;
+		}
+		size_t lfs_total = 0, lfs_used = 0;
+		if (esp_littlefs_info("littlefs", &lfs_total, &lfs_used) == ESP_OK) {
+			size_t lfs_free = (lfs_total > lfs_used) ? (lfs_total - lfs_used) : 0;
+			if ((size_t)st.st_size > lfs_free) {
+				char err_msg[128];
+				snprintf(err_msg, sizeof(err_msg),
+						 "Not enough internal storage: need %u KB, %u KB free",
+						 (unsigned)(st.st_size / 1024), (unsigned)(lfs_free / 1024));
+				httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
+				return ESP_FAIL;
+			}
+		}
+	} else {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"direction must be 'to_sd' or 'from_sd'");
+		return ESP_FAIL;
+	}
+
+	esp_err_t err = _copy_file(src, dst);
+	if (err == ESP_ERR_NOT_FOUND) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Source file not found");
+		return ESP_FAIL;
+	}
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Copy failed");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Copied %s '%s' %s", type, name, to_sd ? "to SD" : "from SD");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t sd_copy_uri = {
+	.uri = "/api/sd/copy", .method = HTTP_POST,
+	.handler = sd_copy_handler, .user_ctx = NULL
+};
+
+/* POST /api/sd/delete — delete file from SD card */
+static esp_err_t sd_delete_handler(httpd_req_t *req) {
+	char buf[128];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *type_item = cJSON_GetObjectItemCaseSensitive(root, "type");
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+
+	if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing type/name");
+		return ESP_FAIL;
+	}
+
+	const char *type = type_item->valuestring;
+	const char *name = name_item->valuestring;
+
+	if (!sd_manager_is_mounted()) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
+		return ESP_FAIL;
+	}
+
+	for (const char *p = name; *p; p++) {
+		if (*p == '/' || *p == '\\' || *p == '.') {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+			return ESP_FAIL;
+		}
+	}
+
+	char path[96];
+	if (strcmp(type, "layout") == 0)
+		snprintf(path, sizeof(path), "%s/%s.json", SD_LAYOUT_DIR, name);
+	else if (strcmp(type, "image") == 0)
+		snprintf(path, sizeof(path), "%s/%s.rdmimg", SD_IMAGE_DIR, name);
+	else if (strcmp(type, "font") == 0)
+		snprintf(path, sizeof(path), "%s/%s.ttf", SD_FONT_DIR, name);
+	else {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid type");
+		return ESP_FAIL;
+	}
+	cJSON_Delete(root);
+
+	if (remove(path) != 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found on SD");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Deleted %s '%s' from SD", type, name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t sd_delete_uri = {
+	.uri = "/api/sd/delete", .method = HTTP_POST,
+	.handler = sd_delete_handler, .user_ctx = NULL
 };
 
 esp_err_t web_server_start(void) {
@@ -1107,7 +1511,7 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 24;
+	config.max_uri_handlers = 28;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -1141,6 +1545,10 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &font_list_uri);
 	httpd_register_uri_handler(server, &font_delete_uri);
 	httpd_register_uri_handler(server, &storage_info_uri);
+	httpd_register_uri_handler(server, &sd_status_uri);
+	httpd_register_uri_handler(server, &sd_files_uri);
+	httpd_register_uri_handler(server, &sd_copy_uri);
+	httpd_register_uri_handler(server, &sd_delete_uri);
 	static const httpd_uri_t signal_simulate_post_uri = {
 		.uri = "/api/signal/simulate",
 		.method = HTTP_POST,

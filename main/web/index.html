@@ -1907,6 +1907,18 @@
             </div>
         </div>
     </div>
+    <div id="storageModal" onclick="closeStorageManager()" style="display:none; position:fixed; inset:0; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
+        <div onclick="event.stopPropagation()" style="background:var(--panel-elevated); border:1px solid var(--border); box-shadow:var(--shadow-md); border-radius:var(--radius-lg); padding:24px; width:min(820px, 95vw); max-height:90vh; overflow-y:auto; color:var(--text);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h2 style="margin:0; font-size:15px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:white;">Storage Manager</h2>
+                <button onclick="closeStorageManager()" style="background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer;">&times;</button>
+            </div>
+            <p style="margin:0 0 16px; font-size:11px; color:var(--text-muted);">Files must be on internal storage to be used by the dashboard. Use SD card for backup and transfer.</p>
+            <div id="storageModalBody" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; min-height:200px;">
+                <div style="text-align:center; padding:40px; color:var(--text-muted);">Loading...</div>
+            </div>
+        </div>
+    </div>
     <div id="contextMenu">
         <!-- populated by js -->
     </div>
@@ -2015,7 +2027,7 @@
     <footer>
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
         <div id="widgetCount">0 widgets, 0 signals</div>
-        <div id="storageInfo" style="font-size:10px; color:var(--text-muted);"></div>
+        <div id="storageInfo" style="font-size:10px; color:var(--text-muted); cursor:pointer;" onclick="openStorageManager()" title="Click to manage storage"></div>
         <div>800x480 &middot; <span id="widgetCoords">(0, 0)</span></div>
         <div style="margin-left:auto; display:flex; align-items:center; gap:6px;">
             <button class="zoom-btn" onclick="zoomBy(-0.1)" title="Zoom Out">&minus;</button>
@@ -5468,6 +5480,164 @@
             connectionDot.className = `status-dot ${isError ? '' : 'online'}`;
         }
 
+        /* ═══ Storage Manager ═══ */
+
+        function _formatSize(bytes) {
+            if (bytes >= 1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+            return (bytes/1024).toFixed(0) + ' KB';
+        }
+
+        function _usageBarHTML(used, total) {
+            const pct = total > 0 ? ((used/total)*100).toFixed(0) : 0;
+            const color = pct > 90 ? '#f44' : pct > 75 ? '#e67e22' : 'var(--accent)';
+            return `<div style="background:var(--bg); border-radius:4px; height:8px; margin:6px 0;">
+                <div style="background:${color}; height:100%; border-radius:4px; width:${pct}%; transition:width 0.3s;"></div>
+            </div>
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:10px;">${_formatSize(used)} / ${_formatSize(total)} used (${_formatSize(total-used)} free)</div>`;
+        }
+
+        function _fileListHTML(files, type, location) {
+            if (!files || files.length === 0) return '<div style="font-size:11px; color:var(--text-muted); padding:4px 0;">No files</div>';
+            let html = '';
+            for (const f of files) {
+                const name = f.name;
+                const size = _formatSize(f.size);
+                const dims = (f.width && f.height) ? ` (${f.width}x${f.height})` : '';
+                html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:11px; border-bottom:1px solid var(--border);">
+                    <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}${dims}</span>
+                    <span style="color:var(--text-muted); margin:0 8px; white-space:nowrap;">${size}</span>`;
+                if (location === 'internal') {
+                    html += `<button onclick="_smCopyToSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px;" title="Copy to SD">→ SD</button>`;
+                } else {
+                    html += `<button onclick="_smCopyFromSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">← Int</button>`;
+                    html += `<button onclick="_smDeleteFromSD('${type}','${name}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete from SD">&times;</button>`;
+                }
+                html += `</div>`;
+            }
+            return html;
+        }
+
+        async function openStorageManager() {
+            const modal = document.getElementById('storageModal');
+            modal.style.display = 'flex';
+            await _smRefresh();
+        }
+
+        function closeStorageManager() {
+            document.getElementById('storageModal').style.display = 'none';
+        }
+
+        async function _smRefresh() {
+            const body = document.getElementById('storageModalBody');
+            body.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted); grid-column:1/-1;">Loading...</div>';
+
+            try {
+                const [storageResp, layoutsResp, imagesResp, fontsResp] = await Promise.all([
+                    fetch('/api/storage/info'),
+                    fetch('/api/layout/list'),
+                    fetch('/api/image/list'),
+                    fetch('/api/font/list')
+                ]);
+
+                const storage = await storageResp.json();
+                const layoutData = await layoutsResp.json();
+                const images = await imagesResp.json();
+                const fonts = await fontsResp.json();
+
+                const intLayouts = (layoutData.layouts || []).map(n => ({name: n, size: 0}));
+                const intImages = images || [];
+                const intFonts = (fonts || []).map(n => ({name: n, size: 0}));
+
+                let sdFiles = null;
+                let sdMounted = storage.sd && storage.sd.mounted;
+                if (sdMounted) {
+                    try {
+                        const sdResp = await fetch('/api/sd/files');
+                        if (sdResp.ok) sdFiles = await sdResp.json();
+                    } catch(e) {}
+                }
+
+                let leftHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px;">
+                    <div style="font-size:12px; font-weight:600; margin-bottom:4px;">Internal Storage</div>
+                    ${_usageBarHTML(storage.used, storage.total)}
+                    <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Layouts</div>
+                    ${_fileListHTML(intLayouts, 'layout', 'internal')}
+                    <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Images</div>
+                    ${_fileListHTML(intImages, 'image', 'internal')}
+                    <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Fonts</div>
+                    ${_fileListHTML(intFonts, 'font', 'internal')}
+                </div>`;
+
+                let rightHTML;
+                if (!sdMounted) {
+                    rightHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:12px;">
+                        No SD card detected
+                    </div>`;
+                } else {
+                    rightHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px;">
+                        <div style="font-size:12px; font-weight:600; margin-bottom:4px;">SD Card</div>
+                        ${_usageBarHTML(storage.sd.used, storage.sd.total)}
+                        <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Layouts</div>
+                        ${_fileListHTML(sdFiles ? sdFiles.layouts : [], 'layout', 'sd')}
+                        <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Images</div>
+                        ${_fileListHTML(sdFiles ? sdFiles.images : [], 'image', 'sd')}
+                        <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Fonts</div>
+                        ${_fileListHTML(sdFiles ? sdFiles.fonts : [], 'font', 'sd')}
+                    </div>`;
+                }
+
+                body.innerHTML = leftHTML + rightHTML;
+            } catch(e) {
+                body.innerHTML = '<div style="text-align:center; padding:40px; color:#f44; grid-column:1/-1;">Failed to load storage info</div>';
+            }
+        }
+
+        async function _smCopyToSD(type, name) {
+            try {
+                const resp = await fetch('/api/sd/copy', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({type, name, direction: 'to_sd'})
+                });
+                const result = await resp.json();
+                if (!resp.ok) { showToast(result.error || 'Copy failed', 'error'); return; }
+                showToast(`Copied ${name} to SD card`);
+                await _smRefresh();
+                refreshStorageInfo();
+            } catch(e) { showToast('Copy failed: ' + e.message, 'error'); }
+        }
+
+        async function _smCopyFromSD(type, name) {
+            try {
+                const resp = await fetch('/api/sd/copy', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({type, name, direction: 'from_sd'})
+                });
+                const result = await resp.json();
+                if (!resp.ok) { showToast(result.error || 'Copy failed', 'error'); return; }
+                showToast(`Copied ${name} from SD card`);
+                await _smRefresh();
+                refreshStorageInfo();
+            } catch(e) { showToast('Copy failed: ' + e.message, 'error'); }
+        }
+
+        async function _smDeleteFromSD(type, name) {
+            if (!confirm(`Delete ${name} from SD card?`)) return;
+            try {
+                const resp = await fetch('/api/sd/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({type, name})
+                });
+                const result = await resp.json();
+                if (!resp.ok) { showToast(result.error || 'Delete failed', 'error'); return; }
+                showToast(`Deleted ${name} from SD card`);
+                await _smRefresh();
+                refreshStorageInfo();
+            } catch(e) { showToast('Delete failed: ' + e.message, 'error'); }
+        }
+
         async function refreshStorageInfo() {
             try {
                 const resp = await fetch('/api/storage/info');
@@ -5479,7 +5649,14 @@
                 const pct = ((info.used / info.total) * 100).toFixed(0);
                 const el = document.getElementById('storageInfo');
                 const color = pct > 90 ? '#f44' : pct > 75 ? '#e67e22' : 'var(--text-muted)';
-                el.innerHTML = `<span style="color:${color}">Storage: ${usedKB}/${totalKB} KB (${freeKB} KB free)</span>`;
+                let html = `<span style="color:${color}">Internal: ${usedKB}/${totalKB} KB</span>`;
+                if (info.sd && info.sd.mounted) {
+                    const sdTotalMB = (info.sd.total / (1024*1024)).toFixed(1);
+                    const sdUsedMB = (info.sd.used / (1024*1024)).toFixed(1);
+                    html += ` <span style="color:var(--text-muted)">| SD: ${sdUsedMB}/${sdTotalMB} MB</span>`;
+                }
+                html += ` <span style="color:var(--accent);font-size:9px">[Manage]</span>`;
+                el.innerHTML = html;
             } catch(e) {}
         }
 

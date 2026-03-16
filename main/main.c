@@ -19,7 +19,7 @@
 #include "esp_pm.h"
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "esp_vfs_fat.h"
+#include "storage/sd_manager.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -32,7 +32,6 @@
 #include "nvs_flash.h"
 #include "ota_handler.h"
 #include "sdkconfig.h"
-#include "sdmmc_cmd.h"
 #include "ui/screens/ui_wifi.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
@@ -49,8 +48,6 @@
 // External declarations
 
 #define EXAMPLE_MAX_CHAR_SIZE 64
-#define MOUNT_POINT "/sdcard"
-sdmmc_card_t *card; // Declare globally if not done already
 
 // Define the LVGL mutex
 SemaphoreHandle_t lvgl_mux = NULL;
@@ -182,56 +179,6 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
 	return high_task_awoken == pdTRUE;
 }
 
-#define MOUNT_POINT "/sdcard"
-#define SD_MOSI 11
-#define SD_CLK 12
-#define SD_MISO 13
-#define SD_CS 4 // GPIO for CS
-
-void init_sd_card(void) {
-	esp_err_t ret;
-	sdmmc_card_t *card;
-	const char mount_point[] = MOUNT_POINT;
-	ESP_LOGI("SD_CARD", "Initializing SD card");
-
-	esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-		.format_if_mount_failed = false,
-		.max_files = 5,
-		.allocation_unit_size = 16 * 1024};
-
-	// Configure the SPI bus
-	sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-	host.max_freq_khz = 10000; // Reduced frequency for compatibility
-
-	spi_bus_config_t bus_cfg = {
-		.mosi_io_num = SD_MOSI,
-		.miso_io_num = SD_MISO,
-		.sclk_io_num = SD_CLK,
-		.max_transfer_sz = 4000,
-	};
-	ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
-	if (ret != ESP_OK) {
-		ESP_LOGE("SD_CARD", "Failed to initialize bus.");
-		return;
-	}
-
-	// Configure the SD card slot
-	sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-	slot_config.gpio_cs = SD_CS;
-	slot_config.host_id = host.slot;
-
-	// Mount the filesystem
-	ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config,
-								  &mount_config, &card);
-	if (ret != ESP_OK) {
-		ESP_LOGE("SD_CARD", "Failed to mount filesystem. Error: %s",
-				 esp_err_to_name(ret));
-		return;
-	}
-
-	ESP_LOGI("SD_CARD", "SD card mounted successfully");
-	sdmmc_card_print_info(stdout, card);
-}
 
 static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 								  lv_color_t *color_map) {
@@ -362,19 +309,6 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 	}
 }
 
-void test_sd_card_write() {
-	const char *file_path = MOUNT_POINT "/no.txt";
-	FILE *file = fopen(file_path, "w"); // Open file for writing
-	if (file == NULL) {
-		ESP_LOGE("SD_CARD", "Failed to open file for writing");
-		return;
-	}
-
-	// Write "Hello, World!" to the file
-	fprintf(file, "you suck balls\n");
-	fclose(file); // Close the file
-	ESP_LOGI("SD_CARD", "File written successfully: %s", file_path);
-}
 
 void init_nvs(void) {
 	esp_err_t err = nvs_flash_init();
@@ -785,9 +719,8 @@ void app_main(void) {
 		"Splash screen displayed, continuing with system initialization...");
 
 	// Initialize remaining components while splash is showing
-	// init_sd_card();
+	sd_manager_init();
 	init_wifi_screen();
-	// test_sd_card_write();
 
 	// Start web server (will start once WiFi is connected)
 	ESP_LOGI(TAG, "Starting web server...");

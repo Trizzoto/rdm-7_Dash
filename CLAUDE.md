@@ -10,8 +10,8 @@ RDM-7 Dash is an **ESP32-S3 automotive dashboard** built with **ESP-IDF** and **
 It renders a configurable widget-based dashboard on an 800×480 RGB LCD, driven by real-time
 CAN bus data via a **signal-based publish-subscribe system**. Layouts (widgets + signals)
 are stored as JSON on a LittleFS partition and can be edited via the touchscreen config modal
-or a built-in web UI served over WiFi. Custom images can be uploaded from the web editor
-and rendered on the dashboard via the Image widget.
+or a built-in web UI served over WiFi. Custom images and TrueType fonts can be uploaded from
+the web editor. An optional SD card provides additional storage for layouts, images, and fonts.
 
 **Target hardware:** ESP32-S3 (dual-core Xtensa LX7), 8 MB PSRAM, 8 MB flash, GT911 touch.
 
@@ -48,7 +48,7 @@ and rendered on the dashboard via the Image widget.
 | phy_init   | data   | 0x2F000    | 0x1000     | WiFi PHY calibration       |
 | ota_0      | app    | 0x30000    | 0x290000   | OTA app slot 0 (2.56 MB)  |
 | ota_1      | app    | —          | 0x290000   | OTA app slot 1 (2.56 MB)  |
-| littlefs   | data   | 0x550000   | 0x2B0000   | LittleFS (layouts, images) |
+| littlefs   | data   | 0x550000   | 0x2B0000   | LittleFS (layouts, images, fonts) |
 
 ### Task Model (FreeRTOS)
 
@@ -57,7 +57,6 @@ and rendered on the dashboard via the Image widget.
 | LVGL            | 1    | 8        | 8 KB  | Display refresh @ 70 fps (14 ms tick)  |
 | CAN RX          | 0    | 7        | 4 KB  | TWAI receive → `s_can_queue`           |
 | indicator_wire  | 0    | 3        | 2 KB  | GPIO 43/44 analog indicator polling    |
-| fuel_sender     | 0    | 3        | 3 KB  | ADC on GPIO 6 → bar widget update      |
 
 ### Threading Rules
 
@@ -83,7 +82,7 @@ main/
 │   └── can_decode.c/h              # Pure stateless bit extraction (host-testable)
 │
 ├── widgets/                        # Widget system
-│   ├── widget_types.c/h            # Core widget_t struct, vtable, size constraints, font resolver
+│   ├── widget_types.c/h            # Core widget_t struct, vtable, size constraints
 │   ├── widget_registry.c/h         # Central widget instance tracking (max 32)
 │   ├── widget_panel.c/h            # Data display boxes (8 slots, customizable appearance)
 │   ├── widget_rpm_bar.c/h          # RPM gauge with redline zone (singleton)
@@ -91,9 +90,17 @@ main/
 │   ├── widget_indicator.c/h        # Turn indicators (2 slots: left, right)
 │   ├── widget_warning.c/h          # Warning lights (8 slots, customizable appearance)
 │   ├── widget_text.c/h             # Generic text value display
-│   ├── widget_meter.c/h            # Analog dial meter (customizable ticks, needle, arc zones)
+│   ├── widget_meter.c/h            # Analog dial meter (ticks, needle, needle/bg images)
 │   ├── widget_image.c/h            # Image display from LittleFS (RDMIMG format)
-│   └── signal.c/h                  # Signal registry — pub/sub CAN decode layer
+│   ├── widget_shape_panel.c/h      # Decorative rectangle/rounded-rect with shadow
+│   ├── widget_arc.c/h              # Arc/ring progress indicator
+│   ├── widget_toggle.c/h           # Toggle switch (signal-driven + CAN TX)
+│   ├── widget_button.c/h           # Push button (CAN TX on press/release)
+│   ├── widget_rules.c/h            # Conditional rules engine (per-widget overrides)
+│   ├── signal.c/h                  # Signal registry — pub/sub CAN decode layer
+│   ├── signal_internal.c/h         # Internal signal injection timer (GPIO, ADC)
+│   ├── signal_sim.c/h              # Signal simulator for testing
+│   └── font_manager.c/h            # Dynamic TTF font loading via lv_tiny_ttf
 │
 ├── layout/                         # Layout persistence
 │   ├── layout_manager.c/h          # Load/save JSON layouts on LittleFS
@@ -104,7 +111,7 @@ main/
 │   ├── ui.c/h                      # Main UI entry, screen transitions
 │   ├── dashboard.c/h               # Dashboard coordinator — loads layout, signal timeout timer
 │   ├── config_bridge.c/h           # Value ID ↔ widget type_data + signal registry mapper
-│   ├── signals.c/h                 # Signal definitions (89 predefined signals)
+│   ├── signals.c/h                 # Signal definitions (89 predefined MaxxECU signals)
 │   ├── ui_styles.c/h               # LVGL style definitions
 │   ├── ui_helpers.c/h              # UI utility functions
 │   ├── utils.c/h                   # General utilities
@@ -136,11 +143,11 @@ main/
 │   │   ├── menu_screen.c/h         # Main config menu overlay
 │   │   ├── config_modal.c/h        # CAN config modal dialog (3 tabs: Signal, Display, Alerts)
 │   │   └── gear_config.c/h         # Gear ratio configuration
-│   ├── fonts/                      # LVGL font C files (Fugaz, Manrope)
-│   └── images/                     # LVGL image C files
+│   ├── fonts/                      # LVGL compiled font C files (Fugaz, Manrope, Bahn, RPM)
+│   └── images/                     # LVGL compiled image C files
 │
 ├── net/                            # Network
-│   ├── web_server.c/h              # HTTP server on port 80 (layout + image APIs)
+│   ├── web_server.c/h              # HTTP server on port 80 (layout, image, font, SD APIs)
 │   ├── ota_handler.c/h             # OTA firmware updates
 │   └── ota_update_dialog.c/h       # OTA progress UI
 │
@@ -148,13 +155,13 @@ main/
 │   └── index.html                  # Embedded main web UI (via EMBED_TXTFILES)
 │
 ├── storage/
-│   └── config_store.c/h            # NVS-backed persistence (brightness, WiFi, bitrate, ECU preset)
+│   ├── config_store.c/h            # NVS-backed persistence (brightness, WiFi, bitrate, ECU preset)
+│   └── sd_manager.c/h              # SD card management (SPI, optional)
 │
 ├── system/
 │   ├── device_id.c/h               # Unique device identifier
 │   ├── rdm_settings.c/h            # RDM-specific settings (active layout name in NVS)
-│   ├── display_capture.c/h         # Screenshot capture
-│   └── storage.h                   # Storage interface
+│   └── display_capture.c/h         # Screenshot capture
 │
 ├── io/
 │   └── wire_inputs.c/h             # GPIO-based analog indicator control
@@ -192,14 +199,18 @@ via `devToWeb()`/`webToDev()` using `ORIGIN_X=400, ORIGIN_Y=240`.
 
 ```c
 typedef enum {
-    WIDGET_PANEL     = 0,   // Data display boxes (max 8)
-    WIDGET_RPM_BAR   = 1,   // RPM gauge with redline (singleton)
-    WIDGET_BAR       = 2,   // Horizontal bar (max 2: BAR1, BAR2)
-    WIDGET_INDICATOR = 3,   // Turn indicators (max 2: left, right)
-    WIDGET_WARNING   = 4,   // Warning lights (max 8)
-    WIDGET_TEXT      = 5,   // Text value (any value slot)
-    WIDGET_METER     = 6,   // Analog dial meter
-    WIDGET_IMAGE     = 7,   // Image from LittleFS
+    WIDGET_PANEL       = 0,   // Data display boxes (max 8)
+    WIDGET_RPM_BAR     = 1,   // RPM gauge with redline (singleton)
+    WIDGET_BAR         = 2,   // Horizontal bar (max 2: BAR1, BAR2)
+    WIDGET_INDICATOR   = 3,   // Turn indicators (max 2: left, right)
+    WIDGET_WARNING     = 4,   // Warning lights (max 8)
+    WIDGET_TEXT        = 5,   // Text value (any value slot)
+    WIDGET_METER       = 6,   // Analog dial meter
+    WIDGET_IMAGE       = 7,   // Image from LittleFS
+    WIDGET_SHAPE_PANEL = 8,   // Decorative panel with shadow/border
+    WIDGET_ARC         = 9,   // Arc/ring progress indicator
+    WIDGET_TOGGLE      = 10,  // Toggle switch (CAN TX capable)
+    WIDGET_BUTTON      = 11,  // Push button (CAN TX capable)
     WIDGET_TYPE_COUNT
 } widget_type_t;
 ```
@@ -210,7 +221,7 @@ typedef enum {
 2. **from_json()** — deserializes x/y/w/h and type-specific config from JSON; resolves signal name→index; does NOT create LVGL objects
 3. **create()** — builds LVGL object tree on parent; sets styles, callbacks; subscribes to signals after `w->root` is set
 4. **to_json()** — serializes widget state back to JSON (defaults-only: skips fields matching factory defaults)
-5. **destroy()** — frees `type_data` and `widget_t` (LVGL objects freed by parent deletion)
+5. **destroy()** — frees `type_data`, rules, and `widget_t` (LVGL objects freed by parent deletion)
 
 Widget updates are **push-based** via signal callbacks (no polling/update vtable function).
 
@@ -226,34 +237,43 @@ struct widget_t {
     uint8_t       slot;          // Slot index (e.g. panel 0-7)
     void         *type_data;     // Per-instance state (cast to widget-specific struct)
 
-    // vtable (no update function — widgets use signal callbacks)
-    widget_create_fn        create;
-    widget_resize_fn        resize;
-    widget_open_settings_fn open_settings;
-    widget_to_json_fn       to_json;
-    widget_from_json_fn     from_json;
-    widget_destroy_fn       destroy;
+    // vtable
+    widget_create_fn           create;
+    widget_resize_fn           resize;
+    widget_open_settings_fn    open_settings;
+    widget_to_json_fn          to_json;
+    widget_from_json_fn        from_json;
+    widget_destroy_fn          destroy;
+    widget_apply_overrides_fn  apply_overrides;  // For conditional rules (NULL if unsupported)
+
+    // Conditional rules
+    widget_rule_t *rules;        // Heap-allocated array, NULL if no rules
+    uint8_t        rule_count;
 };
 ```
 
 ### Size Constraints (for editor validation)
 
-| Widget     | Min W×H   | Max W×H    |
-|------------|-----------|------------|
-| Panel      | 80×40     | 250×130    |
-| RPM Bar    | 300×30    | 800×80     |
-| Bar        | 120×15    | 450×50     |
-| Indicator  | 30×30     | 80×80      |
-| Warning    | 18×18     | 60×60      |
-| Text       | 40×20     | 400×100    |
-| Meter      | 80×80     | 800×800    |
-| Image      | 10×10     | 800×480    |
+| Widget      | Min W×H   | Max W×H    |
+|-------------|-----------|------------|
+| Panel       | 80×40     | 250×130    |
+| RPM Bar     | 300×30    | 800×80     |
+| Bar         | 120×15    | 450×50     |
+| Indicator   | 30×30     | 80×80      |
+| Warning     | 18×18     | 60×60      |
+| Text        | 40×20     | 400×100    |
+| Meter       | 80×80     | 800×800    |
+| Image       | 10×10     | 800×480    |
+| Shape Panel | 10×10     | 800×480    |
+| Arc         | 30×30     | 800×800    |
+| Toggle      | 40×20     | 200×80     |
+| Button      | 40×20     | 300×100    |
 
 ### Widget Appearance Customization
 
 Widgets with per-instance LVGL style overrides use a **defaults-only serialization** pattern:
 - `to_json()` only writes fields that differ from factory defaults (conserves 16 KB JSON budget)
-- `from_json()` reads-if-present, else keeps factory defaults (v8 layouts load cleanly in v9)
+- `from_json()` reads-if-present, else keeps factory defaults
 - `create()` applies per-instance styles via `lv_obj_set_style_*()` calls (not shared style objects)
 
 **Panel** appearance fields: `border_radius` (7), `border_width` (3), `border_color`, `bg_color`,
@@ -267,14 +287,78 @@ Widgets with per-instance LVGL style overrides use a **defaults-only serializati
 *(Note: JSON key for warning border color is `"border_color_style"` to avoid collision)*
 
 **Meter** appearance fields: tick config (count, width, length, colors for major/minor),
-needle (width, color, r_mod), value/ID label (show, x/y offset, color), background (color, opa),
-3 arc color zones (enabled, start, end, color for green/yellow/red)
+needle (width, color, r_mod), needle image (`needle_image_name`, pivot, angle offset),
+background image (`bg_image_name`), border (color, width, opa), background (color, opa),
+scale padding, label gap, tick label font
+
+**Shape Panel** appearance fields: `bg_color` (0x1A1A1A), `bg_opa` (255), `border_color` (0x2E2F2E),
+`border_width` (0), `border_radius` (10), `shadow_width` (0), `shadow_color`, `shadow_opa` (128),
+`shadow_ofs_x` (0), `shadow_ofs_y` (0)
+
+**Arc** appearance fields: `start_angle` (135), `end_angle` (45), `arc_width` (10),
+`arc_color` (0x00FF00), `bg_arc_color` (0x333333), `bg_arc_width` (10), `rounded_ends` (false)
+
+**Toggle** appearance fields: `active_color` (0x00FF00), `inactive_color` (0x555555),
+`label_color` (0xFFFFFF), `border_radius` (5)
+
+**Button** appearance fields: `bg_color` (0x333333), `text_color` (0xFFFFFF),
+`pressed_color` (0x555555), `border_radius` (5), `font`
+
+### Conditional Rules System
+
+Widgets can define per-instance rules that override config fields based on signal conditions.
+Rules are stored in the layout JSON `"rules"` array within each widget's config.
+
+```c
+typedef struct {
+    char             signal_name[32];
+    int16_t          signal_index;
+    rule_operator_t  op;              // >, <, >=, <=, ==, !=, range
+    float            threshold;       // for non-range ops
+    float            range_min, range_max;  // for RULE_OP_RANGE
+    rule_override_t  overrides[MAX_RULE_OVERRIDES];  // up to 8
+    uint8_t          override_count;
+    bool             is_active;       // runtime: last evaluation result
+} widget_rule_t;
+```
+
+Rule lifecycle:
+- `widget_rules_from_json(w, config)` — parse rules in `from_json()`
+- `widget_rules_subscribe(w)` — subscribe rule evaluation callbacks after `create()`
+- `widget_rules_to_json(w, config)` — serialize rules in `to_json()`
+- `widget_rules_free(w)` — free rule array in `destroy()`
+
+Override values can be: number, color (uint32), bool, or string. The widget's `apply_overrides`
+vtable function applies/reverts overrides when rule conditions change.
+
+---
+
+## Font System
+
+### Dynamic TTF Loading (`font_manager.c/h`)
+
+The font manager provides **dynamic TrueType font loading** via `lv_tiny_ttf`:
+
+- Scans `/lfs/fonts/` for `.ttf` files on boot
+- Two-level cache: TTF data in PSRAM (max 8 families) + rendered instances at specific sizes (max 32)
+- Thread safety: all calls must be on LVGL task or hold LVGL mutex
+- Max file size: 512 KB per TTF
+
+**API:**
+- `font_manager_init()` — scan `/lfs/fonts/` and load TTF data into PSRAM
+- `font_manager_reset_instances()` — destroy rendered instances (called on layout reload)
+- `font_manager_get(family, size)` → `lv_font_t*` — get or create font instance
+- `font_manager_add_family(name, data, size)` — add TTF from upload
+- `font_manager_remove_family(name)` — delete TTF + instances + file
 
 ### Font Resolution
 
 `widget_resolve_font(name)` in `widget_types.c` maps JSON font name strings to `lv_font_t*`:
+- **New format:** `"Family:size"` (e.g., `"Fugaz:28"`) — uses `font_manager_get()`
+- **Legacy format:** `"fugaz_28"`, `"montserrat_16"` — compiled-in system fonts
 - Montserrat system fonts: `"montserrat_8"` through `"montserrat_24"`
-- Custom fonts: `"fugaz_14"`, `"fugaz_17"`, `"fugaz_28"`, `"fugaz_56"`, `"manrope_35_bold"`, `"manrope_54_bold"`
+- Custom compiled fonts: `"fugaz_14"`, `"fugaz_17"`, `"fugaz_28"`, `"fugaz_56"`,
+  `"manrope_35_bold"`, `"manrope_54_bold"`, `"bahn_17"`, `"bahn_26"`, `"bahn_48"`, `"bahn_65"`
 
 ---
 
@@ -296,7 +380,7 @@ typedef struct __attribute__((packed)) {
 ```
 
 - RGB565 + alpha = 3 bytes/pixel. 100×100 image ≈ 30 KB, 200×200 ≈ 120 KB
-- Max file size: 200 KB (`IMAGE_MAX_SIZE` in web_server.c)
+- Max file size: 1200 KB (`IMAGE_MAX_SIZE` in web_server.c)
 - Pixel data stored in PSRAM at runtime via `lv_img_dsc_t`
 
 ### Browser-Side Image Conversion
@@ -324,6 +408,33 @@ typedef struct {
 
 ---
 
+## SD Card Support
+
+Optional SPI-attached SD card for additional storage. System runs without it if mount fails.
+
+### Hardware
+
+- MOSI: GPIO 11, CLK: GPIO 12, MISO: GPIO 13, CS: GPIO 4
+- SPI bus, max 10 MHz
+
+### Storage Paths
+
+| Path              | Purpose            |
+|-------------------|--------------------|
+| `/sdcard/layouts` | Layout JSON files  |
+| `/sdcard/images`  | RDMIMG image files |
+| `/sdcard/fonts`   | TTF font files     |
+
+### API (`sd_manager.c/h`)
+
+- `sd_manager_init()` — mount SD card (non-fatal on failure)
+- `sd_manager_is_mounted()` — check mount status
+- `sd_manager_get_info(total, used, free)` — query free space
+
+Files can be copied between LittleFS and SD card via the web API (`POST /api/sd/copy`).
+
+---
+
 ## CAN Bus Pipeline
 
 ### Data Flow
@@ -344,6 +455,13 @@ LVGL Task (core 1, 14 ms refresh)
 
 **All CAN processing is signal-centric.** There is no legacy dispatch table or widget routing —
 every CAN frame is decoded by the signal registry and pushed to subscribed widgets.
+
+### CAN TX (Toggle & Button widgets)
+
+Toggle and button widgets can **transmit** CAN frames:
+- Toggle: sends `tx_on_data` or `tx_off_data` on state change
+- Button: sends `tx_press_data` on press, optionally `tx_release_data` on release
+- TX is disabled when `tx_can_id` is 0
 
 ### CAN Decode (`can_decode.h`)
 
@@ -402,9 +520,25 @@ typedef struct {
 - `signal_registry_reset()` — clear all signals (called at top of `layout_manager_load()`)
 - `signal_register(name, can_id, start, len, scale, offset, is_signed, endian)` → index
 - `signal_find_by_name(name)` → index or -1
+- `signal_get_by_index(index)` → `signal_t*` or NULL
+- `signal_get_count()` → uint16_t
 - `signal_subscribe(index, callback, user_data)` → bool
 - `signal_dispatch_frame(can_id, data, dlc)` — called from LVGL task per CAN frame
 - `signal_check_timeouts(current_time_ms)` — mark stale after SIGNAL_TIMEOUT_MS (2000 ms)
+- `signal_inject_test_value(name, value)` — inject test value for simulation
+
+### Internal Signals (`signal_internal.c/h`)
+
+An LVGL timer (500 ms) that injects non-CAN signal values from hardware sources
+(GPIO inputs, ADC readings like fuel sender voltage). Started after layout load via
+`signal_internal_start()`.
+
+### Signal Simulator (`signal_sim.c/h`)
+
+Enables simulated signal injection for testing without CAN hardware:
+- `signal_sim_start()` / `signal_sim_stop()`
+- `signal_sim_is_active()` — check if simulation mode is active
+- Web API can inject values via `POST /api/signal/simulate`
 
 ### Widget-Signal Integration Pattern
 
@@ -441,11 +575,13 @@ with `is_stale=true` so widgets can show fallback displays.
 |-------------------------|------------------|----------------------------------------|
 | Widget layout + signals | LittleFS JSON    | `layout_manager_save/load()` at `/lfs/layouts/` |
 | Uploaded images         | LittleFS binary  | `/lfs/images/<name>.rdmimg`            |
+| Uploaded fonts          | LittleFS binary  | `/lfs/fonts/<name>.ttf`               |
 | Active layout name      | NVS              | `rdm_settings_set/get_active_layout()` |
 | Brightness/dimmer       | NVS              | `config_store_save/load_dimmer()`      |
 | WiFi credentials        | NVS              | `config_store_save/load_wifi()`        |
 | CAN bitrate             | NVS              | `config_store_save/load_bitrate()`     |
 | ECU preset selection    | NVS              | `config_store_save/load_ecu_preset()`  |
+| SD card files           | FAT on SD        | `/sdcard/layouts/`, `/sdcard/images/`, `/sdcard/fonts/` |
 
 **All CAN signal config (IDs, bit fields, scale, offset) is stored in the layout JSON** —
 not in NVS. When a user edits a signal via the config modal or web UI, the change is
@@ -469,7 +605,7 @@ modal to read/write widget and signal settings.
 - `config_bridge_ensure_signal(value_id)` — auto-create signal in registry if missing
 - Signal accessors: `get/set_can_id()`, `get/set_bit_start()`, `get/set_bit_length()`, `get/set_scale()`, `get/set_offset()`, `get/set_endian()`, `get/set_is_signed()`
 - Display accessors: `get/set_label()`, `get/set_decimals()`, `get/set_custom_text()`
-- Bar-specific: `get/set_bar_min/max/low/high()`, fuel sender accessors
+- Bar-specific: `get/set_bar_min/max/low/high()`
 - RPM-specific: `get_rpm_bar_color()`, `get_rpm_limiter_*()`, `get_rpm_background_*()`
 - Panel alert: `get/set_warning_high/low_threshold/color/enabled()`
 
@@ -530,7 +666,17 @@ Shows warning if local edits are pending when device state changes.
         "label": "OIL",
         "decimals": 1,
         "border_radius": 10,
-        "bg_color": 1234
+        "bg_color": 1234,
+        "rules": [
+          {
+            "signal": "OilPressure",
+            "op": "<",
+            "threshold": 20,
+            "overrides": [
+              { "field": "bg_color", "type": "color", "value": 63488 }
+            ]
+          }
+        ]
       }
     }
   ],
@@ -548,22 +694,28 @@ Shows warning if local edits are pending when device state changes.
 
 **Defaults-only serialization:** Config fields matching factory defaults are omitted from
 JSON to conserve the 16 KB file size budget. `from_json()` reads-if-present, keeping
-defaults otherwise. This ensures forward compatibility — v8 layouts load cleanly in v9.
+defaults otherwise. This ensures forward compatibility.
 
 ### Widget Config Fields by Type
 
 - **panel**: `slot` (0–7), `signal_name`, `label`, `custom_text`, `decimals`, warning thresholds/colors, label/value font, appearance overrides (border, bg, label/value color, y-offsets)
 - **rpm_bar**: `signal_name`, `gauge_max`, `redline`, `bar_color`, limiter settings (effect/value/color), lights, background settings
-- **bar**: `slot` (0–1), `signal_name`, `label`, `min`, `max`, `low`, `high`, colors, `decimals`, fuel sender settings, appearance overrides (bar bg/radius/border, indicator radius, label/value color)
+- **bar**: `slot` (0–1), `signal_name`, `label`, `min`, `max`, `low`, `high`, colors, `decimals`, appearance overrides (bar bg/radius/border, indicator radius, label/value color)
 - **indicator**: `slot` (0–1), `input_source` (wire/CAN), `signal_name`, `animation_enabled`, `is_momentary`
 - **warning**: `slot` (0–7), `signal_name`, `active_color`, `label`, `is_momentary`, `invert_toggle`, appearance overrides (inactive color, border, radius, show_label, label_color)
-- **text**: `value_idx`, `signal_name`, `decimals`, `static_text`, `font`
-- **meter**: `value_idx`, `signal_name`, `min`, `max`, `start_angle`, `end_angle`, tick config (minor/major count/width/length/color), needle (width/color/r_mod), value/ID label (show/offset/color), background (color/opa), 3 arc color zones (enabled/start/end/color)
+- **text**: `value_idx`, `signal_name`, `decimals`, `static_text`, `font`, `text_color`
+- **meter**: `value_idx`, `signal_name`, `min`, `max`, `start_angle`, `end_angle`, tick config (minor/major count/width/length/color), needle (width/color/r_mod), needle image (`needle_image_name`, pivot_x/y, angle_offset), background image (`bg_image_name`), border (color/width/opa), background (color/opa), `scale_padding`, `label_gap`, `tick_label_font`
 - **image**: `image_name`, `opacity` (0–255)
+- **shape_panel**: `bg_color`, `bg_opa`, `border_color`, `border_width`, `border_radius`, `shadow_width`, `shadow_color`, `shadow_opa`, `shadow_ofs_x`, `shadow_ofs_y`
+- **arc**: `signal_name`, `start_angle`, `end_angle`, `arc_width`, `arc_color`, `bg_arc_color`, `bg_arc_width`, `rounded_ends`
+- **toggle**: `label`, `signal_name`, `signal_on_threshold`, `tx_can_id`, `tx_on_data`/`tx_on_dlc`, `tx_off_data`/`tx_off_dlc`, appearance (active/inactive/label color, border_radius)
+- **button**: `label`, `tx_can_id`, `tx_press_data`/`tx_press_dlc`, `tx_release_data`/`tx_release_dlc`, appearance (bg/text/pressed color, border_radius, font)
 
 ---
 
 ## Web Server Endpoints
+
+### Layout APIs
 
 | Method | Path                    | Purpose                                    |
 |--------|-------------------------|--------------------------------------------|
@@ -577,10 +729,40 @@ defaults otherwise. This ensures forward compatibility — v8 layouts load clean
 | POST   | `/api/layout/set`       | Set active layout by name                  |
 | POST   | `/api/layout/delete`    | Delete layout (cannot delete "default")    |
 | GET    | `/api/presets`          | List available preset layouts              |
-| POST   | `/api/image/upload`     | Upload RDMIMG binary (`?name=<name>`, 200 KB max) |
+
+### Image APIs
+
+| Method | Path                    | Purpose                                    |
+|--------|-------------------------|--------------------------------------------|
+| POST   | `/api/image/upload`     | Upload RDMIMG binary (`?name=<name>`, 1200 KB max) |
 | GET    | `/api/image/list`       | List images with name/width/height/size    |
 | POST   | `/api/image/delete`     | Delete image file (`?name=<name>`)         |
 | GET    | `/api/image/data`       | Return raw RDMIMG binary (`?name=<name>`)  |
+
+### Font APIs
+
+| Method | Path                    | Purpose                                    |
+|--------|-------------------------|--------------------------------------------|
+| POST   | `/api/font/upload`      | Upload TTF binary (`?name=<family>`, 512 KB max) |
+| GET    | `/api/font/list`        | List fonts with size                       |
+| POST   | `/api/font/delete`      | Delete font (`?name=<name>`)               |
+
+### Storage & SD Card APIs
+
+| Method | Path                    | Purpose                                    |
+|--------|-------------------------|--------------------------------------------|
+| GET    | `/api/storage/info`     | LittleFS + SD card space info              |
+| GET    | `/api/sd/status`        | SD mount status + space                    |
+| GET    | `/api/sd/files`         | List SD layouts, images, fonts             |
+| POST   | `/api/sd/copy`          | Copy file between LittleFS ↔ SD (4 KB chunks) |
+| POST   | `/api/sd/delete`        | Delete SD file (`?path=<path>`)            |
+
+### Signal Simulation APIs
+
+| Method | Path                        | Purpose                                |
+|--------|-----------------------------|----------------------------------------|
+| POST   | `/api/signal/simulate`      | Inject signal value (`?name=<signal>&value=<float>`) |
+| GET    | `/api/signal/simulate`      | Check if simulation enabled            |
 
 Server config: `recv_wait_timeout=30s`, `send_wait_timeout=30s`, `max_uri_handlers=20`,
 `stack_size=8192`.
@@ -593,9 +775,10 @@ Web editor save → POST /api/layout/save
   → layout_manager_save_raw() → LittleFS
   → rdm_settings_set_active_layout() → NVS
   → lv_async_call() → ui_Screen3_screen_init()
-  → dashboard_init() → signal_registry_reset()
-  → _load_signals() → widget factory + from_json + create
+  → dashboard_init() → font_manager_reset_instances() → font_manager_init()
+  → signal_registry_reset() → _load_signals() → widget factory + from_json + create
   → build_twai_filter_from_signals() → reconfigure CAN hardware filter
+  → signal_internal_start()
 ```
 
 ---
@@ -606,8 +789,8 @@ Web editor save → POST /api/layout/save
 
 The web editor defines widget metadata in a `WIDGET_DEFS` JavaScript object, keyed by
 type name (`"panel"`, `"rpm_bar"`, `"bar"`, `"indicator"`, `"warning"`, `"text"`,
-`"meter"`, `"image"`). Each entry specifies `displayName`, default dimensions, and a
-`fields[]` array.
+`"meter"`, `"image"`, `"shape_panel"`, `"arc"`, `"toggle"`, `"button"`). Each entry
+specifies `displayName`, default dimensions, and a `fields[]` array.
 
 ### Field Types
 
@@ -617,10 +800,12 @@ The inspector `renderFieldHTML()` supports these field types:
 |----------------|---------------------------------------------------------|
 | `text`         | `<input type="text">`                                   |
 | `number`       | `<input type="number">`                                 |
+| `stepper`      | Min/max range spinners                                  |
 | `color`        | Color picker + hex text input (stores RGB888 integer)   |
 | `hex`          | Color picker + hex text input (stores hex string)       |
 | `checkbox`     | Toggle switch                                           |
 | `select`       | Dropdown (`options: [{v: value, l: label}]`)            |
+| `font`         | Font family + size selector                             |
 | `image_picker` | Dropdown (from `/api/image/list`) + upload button       |
 
 ### Field Object Schema
@@ -651,11 +836,14 @@ Prepares layout JSON for firmware:
 - Maps `w.signal` (editor binding) → `config.signal_name` (firmware field)
 - For bar widgets with disabled alerts, resets thresholds to min/max
 - Removes web-editor-only field `bar_alerts_enabled`
+- Converts TX data strings → byte arrays for toggle/button widgets
+- Transforms rule overrides from object → array format for firmware
 - Calls `convertWidgetColors()` with `rgb888to565`
 
 ### Slot Management
 
 - `SLOT_LIMITS = { panel: 8, bar: 2, indicator: 2, warning: 8 }`
+- Only these 4 widget types use slots; shape_panel, arc, toggle, button, text, meter, image do not
 - `nextAvailableSlot(type)` finds next free slot
 - `assignSlot(w)` auto-assigns on widget creation
 - `sanitizeClone(clone)` unbinds signal and assigns fresh slot on duplicate
@@ -666,49 +854,42 @@ Prepares layout JSON for firmware:
 
 ```
 app_main() [main.c]
-  → can_init()                          # TWAI hardware init (before LVGL mutex)
+  → init_pwm()                           # PWM for backlight
+  → init_nvs()                           # NVS + device ID
+  → layout_manager_init()                # Early: mount LittleFS, ensure default layout
+  → can_init()                           # TWAI hardware init (before LVGL mutex)
+  → init_display_brightness()
+  → load_ecu_preconfig()
   → display/touch init
+  → lv_init()
   → create LVGL mutex
   → xTaskCreatePinnedToCore(LVGL task, core 1)
-  → can_start_task()                    # CAN RX task on core 0
-  → indicator_wire / fuel_sender tasks
+  → wire_inputs_init()
+  → can_start_task()                     # CAN RX task on core 0
+  → ui_init()                            # Splash screen → auto-transition to dashboard
+  → wire_inputs_task (core 0)            # Indicator wire polling
+  → fuel_sender_adc_init()               # ADC for fuel sender GPIO 6
+  → sd_manager_init()                    # Mount SD card (optional)
   → web server start
 
 dashboard_init() [dashboard.c]
+  → font_manager_reset_instances()
+  → font_manager_init()                  # Scan /lfs/fonts/ for TTFs
   → signal_registry_init()
   → widget_registry_reset()
+  → widget_warning_reset()
+  → widget_indicator_reset()
   → lv_timer_create(signal_check_timeouts, 500ms)
-  → layout_manager_init()              # mount LittleFS, check schema version
-  → rdm_settings_get_active_layout()   # read NVS
+  → layout_manager_init()               # Ensure LittleFS mounted
+  → layout_manager_get_active()         # Read NVS
   → layout_manager_load(name, parent)
       → signal_registry_reset()
-      → _load_signals()                # register all signals from JSON
+      → _load_signals()                 # Register all signals from JSON
       → for each widget: factory → from_json → create
       → build_twai_filter_from_signals()
-  → fallback: _fallback_create_all()   # if load fails, default widget set
+  → signal_internal_start()             # Internal signal injection timer
+  → fallback: _fallback_create_all()    # If load fails, default widget set
 ```
-
----
-
-## Legacy Code Status
-
-### Fully Removed
-
-All legacy dispatch and routing infrastructure has been deleted:
-- `can_dispatch.c/h`, `widget_dispatcher.c/h`, `widget_update_fn`, all `_update()` and `sync_from/to_legacy()` functions
-- `values_config[]`, `warning_configs[]`, `indicator_configs[]`, `label_texts[]` globals and their type definitions from `ui_Screen3.c/h`
-- Config bridge mirror structs (`cb_*_data_t`) — replaced by direct `#include` of widget headers
-- Stubbed NVS functions (`config_store_save/load_values/warnings/indicators`)
-- Speed and Gear widgets (never implemented — removed from enum)
-
-### Remaining Cleanup Candidates
-
-In `ui_Screen3.c`:
-
-| Global                         | Status                              |
-|-------------------------------|-------------------------------------|
-| `value_offset_texts[13][64]`  | Declared/initialized, never read    |
-| `previous_values[13][64]`     | Declared, only zeroed in init       |
 
 ---
 
@@ -740,11 +921,12 @@ In `ui_Screen3.c`:
 ### Memory
 
 - Use `heap_caps_calloc(..., MALLOC_CAP_SPIRAM)` for large allocations (PSRAM)
-- Use `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` with `malloc()` fallback for image data
+- Use `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` with `malloc()` fallback for image/font data
 - Use standard `calloc`/`malloc` for small allocations (internal SRAM)
 - Always `free()` allocations; LVGL objects freed by parent deletion
 - Widget `type_data` is freed in `destroy()` callback
 - Image widget pixel data must be freed in `destroy()` (PSRAM-allocated)
+- Font instances destroyed via `lv_tiny_ttf_destroy()`, family data freed in `font_manager_shutdown()`
 
 ### CAN Bus
 
@@ -761,22 +943,24 @@ In `ui_Screen3.c`:
 1. Create `main/widgets/widget_newtype.c` and `widget_newtype.h`
 2. Define `newtype_data_t` struct **in the header** (so config_bridge can include it directly)
 3. Implement vtable functions: `create`, `resize`, `open_settings`, `to_json`, `from_json`, `destroy`
-4. In `create`: use `lv_obj_set_align(obj, LV_ALIGN_CENTER)` before `lv_obj_set_pos()`
-5. In `from_json`: resolve signal name→index via `signal_find_by_name()`
-6. In `create`: subscribe to signal via `signal_subscribe(index, callback, widget)`
-7. Implement signal callback for push-based updates (runs on LVGL task)
-8. In `to_json`: use defaults-only serialization (skip fields matching factory defaults)
-9. Add factory function: `widget_t *widget_newtype_create_instance(uint8_t slot)`
-10. Add enum value to `widget_type_t` in `widget_types.h` (before `WIDGET_TYPE_COUNT`)
-11. Add size constraints to `widget_constraints[]` in `widget_types.c` (order must match enum)
-12. Add type name to `widget_type_name()` in `widget_types.c`
-13. Register string→enum in `_type_from_str()` in `layout_manager.c`
-14. Register enum→factory in `_factory()` in `layout_manager.c`
-15. Add `.c` file to `main/CMakeLists.txt` SRCS list
-16. If touchscreen config needed: add value_id mapping in `config_bridge.c`
-17. Add widget type to `WIDGET_DEFS` in web editor (`main/web/index.html`)
-18. Sync `data/web/index.html` with `main/web/index.html`
-19. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if schema changes
+4. Optionally implement `apply_overrides` for conditional rules support
+5. In `create`: use `lv_obj_set_align(obj, LV_ALIGN_CENTER)` before `lv_obj_set_pos()`
+6. In `from_json`: resolve signal name→index via `signal_find_by_name()`, call `widget_rules_from_json(w, config)`
+7. In `create`: subscribe to signal via `signal_subscribe(index, callback, widget)`, call `widget_rules_subscribe(w)`
+8. Implement signal callback for push-based updates (runs on LVGL task)
+9. In `to_json`: use defaults-only serialization (skip fields matching factory defaults), call `widget_rules_to_json(w, config)`
+10. In `destroy`: call `widget_rules_free(w)`
+11. Add factory function: `widget_t *widget_newtype_create_instance(uint8_t slot)`
+12. Add enum value to `widget_type_t` in `widget_types.h` (before `WIDGET_TYPE_COUNT`)
+13. Add size constraints to `widget_constraints[]` in `widget_types.c` (order must match enum)
+14. Add type name to `widget_type_name()` in `widget_types.c`
+15. Register string→enum in `_type_from_str()` in `layout_manager.c`
+16. Register enum→factory in `_factory()` in `layout_manager.c`
+17. Add `.c` file to `main/CMakeLists.txt` SRCS list
+18. If touchscreen config needed: add value_id mapping in `config_bridge.c`
+19. Add widget type to `WIDGET_DEFS` in web editor (`main/web/index.html`)
+20. Sync `data/web/index.html` with `main/web/index.html`
+21. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if schema changes
 
 ---
 
@@ -795,6 +979,10 @@ In `ui_Screen3.c`:
 - **Widget position wrong:** Ensure `lv_obj_set_align(obj, LV_ALIGN_CENTER)` is called — coordinates are center-origin
 - **Config bridge:** Uses real widget `type_data` structs directly — if widget struct fields change, config_bridge accessors may need updating
 - **Image not showing:** Check `/lfs/images/` directory exists, verify RDMIMG magic header, check PSRAM free space
-- **Image upload fails:** Check `recv_wait_timeout` (30s), verify `IMAGE_MAX_SIZE` (200 KB), check LittleFS free space
+- **Image upload fails:** Check `recv_wait_timeout` (30s), verify `IMAGE_MAX_SIZE`, check LittleFS free space
 - **Widget colors wrong after save:** Ensure `convertWidgetColors()` with correct direction (565→888 on load, 888→565 on save)
 - **New appearance field not serialized:** Check `to_json` defaults-only logic and that `from_json` reads the field
+- **Font not rendering:** Check TTF file exists in `/lfs/fonts/`, verify `font_manager_init()` loaded it, check `"Family:size"` format
+- **SD card not mounting:** Check SPI GPIO wiring (11/12/13/4), `sd_manager_init()` is non-fatal — system runs without SD
+- **Rules not working:** Verify `apply_overrides` vtable is set, check `widget_rules_subscribe()` called after `create()`
+- **CAN TX not sending:** Check `tx_can_id` is non-zero in toggle/button config, verify TWAI driver is in running state

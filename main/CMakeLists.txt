@@ -4,6 +4,7 @@ idf_component_register(
         "can/can_decode.c"
         "can/can_manager.c"
         "storage/config_store.c"
+        "storage/sd_manager.c"
         "io/wire_inputs.c"
         "net/ota_handler.c"
         "net/ota_update_dialog.c"

@@ -361,7 +361,6 @@ static void build_display_tab_panel(lv_obj_t *tab, uint8_t value_id) {
 
 static void build_display_tab_bar(lv_obj_t *tab, uint8_t value_id) {
 	uint8_t idx = value_id - 1;
-	uint8_t bar_idx = (value_id == 12) ? 0 : 1;
 	settings_section_t *sec =
 		settings_add_section(tab, "DISPLAY OPTIONS", THEME_COLOR_ACCENT_TEAL);
 
