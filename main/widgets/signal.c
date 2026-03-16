@@ -204,7 +204,7 @@ void signal_inject_test_value(const char *name, float value)
 
     int16_t idx = signal_find_by_name(name);
     if (idx < 0) {
-        ESP_LOGW(TAG, "signal_inject_test_value: '%s' not found", name);
+        ESP_LOGD(TAG, "signal_inject_test_value: '%s' not found", name);
         return;
     }
 

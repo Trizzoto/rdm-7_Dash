@@ -60,7 +60,7 @@ static void can_receive_task(void *pvParameter) {
 				 * momentarily full rather than stalling the RX loop. */
 				if (xQueueSendToBack(s_can_queue, &message, 0) != pdPASS) {
 					s_queue_drop_count++;
-					if ((s_queue_drop_count % 100) == 1) {
+					if ((s_queue_drop_count % 10000) == 1) {
 						ESP_LOGW(TAG, "CAN queue overflow (total drops: %lu)", (unsigned long)s_queue_drop_count);
 					}
 				}
@@ -209,7 +209,7 @@ void can_init(void) {
 	/* Create the CAN frame queue once the driver is up.  32 entries is more
 	 * than enough for this dashboard workload and keeps RAM usage modest. */
 	if (s_can_queue == NULL) {
-		s_can_queue = xQueueCreate(32, sizeof(twai_message_t));
+		s_can_queue = xQueueCreate(64, sizeof(twai_message_t));
 		if (s_can_queue == NULL) {
 			ESP_LOGE(TAG, "Failed to create CAN RX queue");
 		}
@@ -304,7 +304,7 @@ void can_process_queued_frames(void) {
 
 	/* Drain a bounded batch of frames per call to avoid starving other LVGL
 	 * work if the bus is very busy. */
-	const int max_batch = 8;
+	const int max_batch = 32;
 	int processed = 0;
 	twai_message_t msg;
 
