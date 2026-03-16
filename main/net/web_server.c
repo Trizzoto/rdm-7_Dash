@@ -10,6 +10,7 @@
 #include "storage/sd_manager.h"
 #include "system/rdm_settings.h"
 #include "ui/dashboard.h"
+#include "ui/screens/splash_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/ui.h"
@@ -71,12 +72,37 @@ static void _deferred_preview_apply(void *arg) {
 	free(json);
 	if (!root) return;
 
-	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-	ui_Screen3_preview_layout(root);
-	lv_scr_load(ui_Screen3);
-	if (old && old != ui_Screen3)
-		lv_obj_del(old);
+	if (splash_screen_is_edit_mode()) {
+		/* Apply preview to splash screen */
+		splash_screen_apply_preview(root);
+	} else {
+		/* Apply preview to dashboard */
+		lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+		ui_Screen3_preview_layout(root);
+		lv_scr_load(ui_Screen3);
+		if (old && old != ui_Screen3)
+			lv_obj_del(old);
+	}
 	cJSON_Delete(root);
+}
+
+/* ── Splash screen reload (runs on LVGL task) ────────────────────────── */
+
+static void _deferred_splash_reload(void *arg) {
+	(void)arg;
+	splash_screen_enter_edit_mode();
+}
+
+/* ── Screen switch (runs on LVGL task) ───────────────────────────────── */
+
+static void _deferred_screen_switch_splash(void *arg) {
+	(void)arg;
+	splash_screen_enter_edit_mode();
+}
+
+static void _deferred_screen_switch_dashboard(void *arg) {
+	(void)arg;
+	splash_screen_exit_edit_mode();
 }
 
 // HTTP handler for the main page (serves embedded web/index.html)
@@ -136,10 +162,14 @@ static const httpd_uri_t screenshot_uri = {.uri = "/screenshot",
 
 // HTTP handler for exporting current layout JSON
 static esp_err_t layout_current_handler(httpd_req_t *req) {
-	// Get active layout name (for the "name" field)
+	/* Check if we're in splash edit mode */
+	bool is_splash = splash_screen_is_edit_mode();
+
 	char layout_name[LAYOUT_MAX_NAME];
-	if (rdm_settings_get_active_layout(layout_name, sizeof(layout_name)) !=
-		ESP_OK) {
+	if (is_splash) {
+		strcpy(layout_name, "_splash");
+	} else if (rdm_settings_get_active_layout(layout_name,
+	                                          sizeof(layout_name)) != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to read active layout name");
 		return ESP_FAIL;
@@ -152,8 +182,15 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	widget_t **widgets = dashboard_get_widgets();
-	uint8_t count = dashboard_get_widget_count();
+	widget_t **widgets;
+	uint8_t count;
+	if (is_splash) {
+		widgets = splash_screen_get_widgets();
+		count = splash_screen_get_widget_count();
+	} else {
+		widgets = dashboard_get_widgets();
+		count = dashboard_get_widget_count();
+	}
 
 	cJSON *root = layout_manager_build_json(layout_name, widgets, count);
 	example_lvgl_unlock();
@@ -322,8 +359,10 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	strncpy(layout_name, name_item->valuestring, sizeof(layout_name) - 1);
 	layout_name[sizeof(layout_name) - 1] = '\0';
 
+	bool is_splash = (strcmp(layout_name, "_splash") == 0);
+
 	/* Protect the default layout from being overwritten via web editor */
-	if (strcmp(layout_name, "default") == 0) {
+	if (!is_splash && strcmp(layout_name, "default") == 0) {
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Cannot overwrite default layout");
@@ -340,16 +379,20 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	}
 
 	if (apply_after_save) {
-		// Update active layout name in NVS
-		if (rdm_settings_set_active_layout(layout_name) != ESP_OK) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-								"Failed to set active layout");
-			return ESP_FAIL;
-		}
+		if (is_splash) {
+			/* Reload splash screen (don't change active dashboard layout) */
+			lv_async_call(_deferred_splash_reload, NULL);
+		} else {
+			// Update active layout name in NVS
+			if (rdm_settings_set_active_layout(layout_name) != ESP_OK) {
+				httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+									"Failed to set active layout");
+				return ESP_FAIL;
+			}
 
-		// Defer heavy screen rebuild to the LVGL task to avoid
-		// holding the mutex for 100-500ms and blocking other handlers.
-		lv_async_call(_deferred_screen_reload, NULL);
+			// Defer heavy screen rebuild to the LVGL task
+			lv_async_call(_deferred_screen_reload, NULL);
+		}
 	}
 
 	httpd_resp_set_type(req, "application/json");
@@ -436,6 +479,8 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	cJSON_AddStringToObject(root, "active", active_name);
 	cJSON *arr = cJSON_AddArrayToObject(root, "layouts");
 	for (int i = 0; i < count; i++) {
+		/* Hide system layouts (prefixed with _) from the layout list */
+		if (names[i][0] == '_') continue;
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
 	}
 
@@ -1501,6 +1546,46 @@ static const httpd_uri_t sd_delete_uri = {
 	.handler = sd_delete_handler, .user_ctx = NULL
 };
 
+/* ── Screen switch endpoint ──────────────────────────────────────────── */
+
+static esp_err_t screen_switch_handler(httpd_req_t *req) {
+	char query_buf[64];
+	esp_err_t qerr =
+		httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf));
+	if (qerr != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+		return ESP_FAIL;
+	}
+
+	const char *screen_val = strstr(query_buf, "screen=");
+	if (!screen_val) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing screen=");
+		return ESP_FAIL;
+	}
+	screen_val += 7;
+
+	if (strncmp(screen_val, "splash", 6) == 0) {
+		if (!splash_screen_is_edit_mode())
+			lv_async_call(_deferred_screen_switch_splash, NULL);
+	} else if (strncmp(screen_val, "dashboard", 9) == 0) {
+		if (splash_screen_is_edit_mode())
+			lv_async_call(_deferred_screen_switch_dashboard, NULL);
+	} else {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Invalid screen (use splash or dashboard)");
+		return ESP_FAIL;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t screen_switch_uri = {
+	.uri = "/api/screen/switch", .method = HTTP_POST,
+	.handler = screen_switch_handler, .user_ctx = NULL
+};
+
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
 		ESP_LOGW(TAG, "Web server already running");
@@ -1511,7 +1596,7 @@ esp_err_t web_server_start(void) {
 	config.server_port = WEB_SERVER_PORT;
 	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
 	config.stack_size = 8192;
-	config.max_uri_handlers = 28;
+	config.max_uri_handlers = 30;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -1549,6 +1634,7 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &sd_files_uri);
 	httpd_register_uri_handler(server, &sd_copy_uri);
 	httpd_register_uri_handler(server, &sd_delete_uri);
+	httpd_register_uri_handler(server, &screen_switch_uri);
 	static const httpd_uri_t signal_simulate_post_uri = {
 		.uri = "/api/signal/simulate",
 		.method = HTTP_POST,

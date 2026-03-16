@@ -1933,6 +1933,12 @@
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
             <input type="checkbox" id="showWidgetsToggle" checked style="display:none;">
             <div class="header-divider"></div>
+            <select id="screenModeSelect" onchange="switchScreenMode(this.value)"
+                style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;">
+                <option value="dashboard">Dashboard</option>
+                <option value="splash">Splash Screen</option>
+            </select>
+            <div class="header-divider"></div>
             <select id="layoutSelect"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;"></select>
             <div class="layout-menu-wrap">
@@ -2052,6 +2058,8 @@
         let expandedSignalIdx = -1;
         let _cachedImageList = [];
         let _cachedFontList = [];
+        let currentScreenMode = 'dashboard';
+        const SPLASH_WIDGET_TYPES = ['image', 'text', 'shape_panel'];
 
         function switchSidebarTab(tabName) {
             const left = document.querySelector('.workspace > .sidebar:not(.sidebar-right)');
@@ -2969,9 +2977,106 @@
             button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>'
         };
 
+        function setSplashUIVisibility(isSplash) {
+            /* Hide/show elements not relevant in splash mode */
+            const hide = el => { if (el) el.style.display = 'none'; };
+            const show = (el, d) => { if (el) el.style.display = d || ''; };
+            const layoutSelect = document.getElementById('layoutSelect');
+            const layoutMenuWrap = document.querySelector('.layout-menu-wrap');
+            const signalsTab = document.querySelector('.sidebar-tab-content#tabSignals');
+            const signalsTabBtn = Array.from(document.querySelectorAll('.sidebar-tab')).find(t => t.textContent.toLowerCase() === 'signals');
+            const ecuCtx = document.getElementById('ecuContextSelect');
+            const simBtn = document.getElementById('pillSimulate');
+
+            if (isSplash) {
+                hide(layoutSelect);
+                hide(layoutMenuWrap);
+                if (signalsTab) hide(signalsTab);
+                if (signalsTabBtn) hide(signalsTabBtn);
+                hide(ecuCtx);
+                hide(simBtn);
+            } else {
+                show(layoutSelect, '');
+                show(layoutMenuWrap, '');
+                if (signalsTab) show(signalsTab, '');
+                if (signalsTabBtn) show(signalsTabBtn, '');
+                show(ecuCtx, 'none'); /* ecuCtx is always hidden via inline style */
+                show(simBtn, '');
+            }
+        }
+
+        function updateSplashIndicator() {
+            let badge = document.getElementById('splashModeBadge');
+            if (currentScreenMode === 'splash') {
+                if (!badge) {
+                    badge = document.createElement('div');
+                    badge.id = 'splashModeBadge';
+                    badge.style.cssText = 'position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:100; background:hsl(270,60%,50%); color:#fff; padding:3px 12px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; pointer-events:none; opacity:0.85; font-family:"JetBrains Mono",monospace;';
+                    badge.textContent = 'SPLASH SCREEN';
+                    const container = document.querySelector('.canvas-container');
+                    if (container) container.appendChild(badge);
+                }
+            } else if (badge) {
+                badge.remove();
+            }
+        }
+
+        async function waitForScreenMode(expectedSplash, maxRetries = 10) {
+            /* Poll /api/layout/current until name matches expected mode.
+             * The screen switch uses lv_async_call so there's a brief race. */
+            for (let i = 0; i < maxRetries; i++) {
+                await new Promise(r => setTimeout(r, 50));
+                try {
+                    const r = await fetch('/api/layout/current');
+                    if (!r.ok) continue;
+                    const d = await r.json();
+                    const isSplash = (d.name || '') === '_splash';
+                    if (isSplash === expectedSplash) return true;
+                } catch (e) { /* retry */ }
+            }
+            return false;
+        }
+
+        async function switchScreenMode(mode) {
+            if (mode === currentScreenMode) return;
+            try {
+                updateStatus(`Switching to ${mode}...`);
+                const resp = await fetch(`/api/screen/switch?screen=${mode}`, { method: 'POST' });
+                if (!resp.ok) throw new Error();
+                /* Wait for device to complete the async mode switch */
+                const ready = await waitForScreenMode(mode === 'splash');
+                if (!ready) {
+                    updateStatus('Screen switch timed out — retrying...', true);
+                }
+                currentScreenMode = mode;
+                setSplashUIVisibility(mode === 'splash');
+                updateSplashIndicator();
+                initPalette();
+                /* Reset state */
+                selectedIndex = -1;
+                selectedIndices = new Set();
+                _editingActive = false;
+                _lastDeviceSnapshot = '';
+                /* Load appropriate layout */
+                if (mode === 'splash') {
+                    await loadLayout('_splash');
+                } else {
+                    await fetchLayouts();
+                }
+                setTimeout(captureScreenshot, 500);
+                updateStatus(mode === 'splash' ? 'Editing splash screen' : 'Editing dashboard');
+            } catch (e) {
+                updateStatus('Screen switch failed', true);
+                showToast('Screen switch failed', 'error');
+                /* Revert dropdown */
+                document.getElementById('screenModeSelect').value = currentScreenMode;
+            }
+        }
+
         function initPalette() {
             paletteList.innerHTML = '';
             Object.entries(WIDGET_DEFS).forEach(([type, def]) => {
+                if (currentScreenMode === 'splash' && !SPLASH_WIDGET_TYPES.includes(type)) return;
                 const item = document.createElement('div');
                 item.className = 'palette-item';
                 const icon = PALETTE_ICONS[type] || '';
@@ -5368,12 +5473,21 @@
         async function loadLayout(name) {
             try {
                 /* Fetch live in-memory state first; fall back to raw file */
+                const fetchName = currentScreenMode === 'splash' ? '_splash' : name;
                 let response = await fetch('/api/layout/current');
                 if (!response.ok) {
-                    response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
+                    response = await fetch(`/api/layout/raw?name=${encodeURIComponent(fetchName)}`);
                 }
-                if (!response.ok) throw new Error();
-                currentLayout = await response.json();
+                if (!response.ok) {
+                    if (currentScreenMode === 'splash') {
+                        /* No splash layout yet — start with empty canvas */
+                        currentLayout = { name: '_splash', widgets: [], signals: [] };
+                    } else {
+                        throw new Error();
+                    }
+                } else {
+                    currentLayout = await response.json();
+                }
                 /* Snapshot raw device JSON BEFORE any transforms for accurate poll comparison */
                 const rawDeviceSnap = JSON.stringify(currentLayout);
                 if (!currentLayout.signals) currentLayout.signals = [];
@@ -5421,19 +5535,25 @@
                 renderSignals();
                 updateInspector();
                 populateEcuContextSelect();
-                updateStatus(`Loaded ${name}`);
-                checkDraft();
+                updateStatus(currentScreenMode === 'splash' ? 'Loaded splash screen' : `Loaded ${name}`);
+                if (currentScreenMode !== 'splash') checkDraft();
             } catch (e) { updateStatus(`Error loading layout ${name}`, true); }
         }
 
         async function saveActiveLayout() {
             const payload = buildFirmwarePayload();
-            const isDefault = (currentLayout.name || '') === 'default';
+            const isSplash = currentScreenMode === 'splash';
+            const isDefault = !isSplash && (currentLayout.name || '') === 'default';
+
+            /* Splash layouts always save as _splash */
+            if (isSplash) {
+                payload.name = '_splash';
+            }
 
             try {
                 updateStatus('Applying layout...');
                 /* Default layout: apply only (don't overwrite on disk).
-                 * All others: save + apply. */
+                 * Splash and named layouts: save + apply. */
                 const url = isDefault ? '/api/layout/preview' : '/api/layout/save';
                 const response = await fetch(url, {
                     method: 'POST',
@@ -5441,14 +5561,14 @@
                     body: JSON.stringify(payload)
                 });
                 if (!response.ok) throw new Error();
-                updateStatus('Applied to device');
-                showToast('Applied to device', 'success');
+                updateStatus(isSplash ? 'Splash applied' : 'Applied to device');
+                showToast(isSplash ? 'Splash applied' : 'Applied to device', 'success');
                 _editingActive = false;
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 _lastDeviceSnapshot = JSON.stringify(payload);
                 try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
-                await fetchLayoutsKeepCurrent();
+                if (!isSplash) await fetchLayoutsKeepCurrent();
                 setTimeout(captureScreenshot, 1500);
             } catch (e) { updateStatus('Apply failed', true); showToast('Apply failed', 'error'); }
         }
@@ -5987,6 +6107,17 @@
                 if (!resp.ok) return;
                 const deviceLayout = await resp.json();
                 const deviceSnap = JSON.stringify(deviceLayout);
+
+                /* Detect device-side mode change (e.g. splash exited by boot timer) */
+                const deviceIsSplash = (deviceLayout.name || '') === '_splash';
+                const webIsSplash = currentScreenMode === 'splash';
+                if (deviceIsSplash !== webIsSplash) {
+                    currentScreenMode = deviceIsSplash ? 'splash' : 'dashboard';
+                    document.getElementById('screenModeSelect').value = currentScreenMode;
+                    setSplashUIVisibility(deviceIsSplash);
+                    updateSplashIndicator();
+                    initPalette();
+                }
 
                 /* No change on device side → nothing to do */
                 if (deviceSnap === _lastDeviceSnapshot) return;
