@@ -32,16 +32,6 @@ void init_common_style(void);
 lv_style_t *get_common_style(void);
 lv_style_t *get_box_style(void);
 
-extern lv_obj_t *g_label_input[];
-extern lv_obj_t *g_can_id_input[];
-extern lv_obj_t *g_endian_dropdown[];
-extern lv_obj_t *g_bit_start_dropdown[];
-extern lv_obj_t *g_bit_length_dropdown[];
-extern lv_obj_t *g_scale_input[];
-extern lv_obj_t *g_offset_input[];
-extern lv_obj_t *g_decimals_dropdown[];
-extern lv_obj_t *g_type_dropdown[];
-
 extern lv_obj_t *ui_MenuScreen;
 extern lv_obj_t *ui_RDM_Logo_Text;
 extern lv_obj_t *brightness_bar;
@@ -49,9 +39,6 @@ extern lv_obj_t *brightness_bar;
 typedef enum { BIG_ENDIAN_ORDER = 0, LITTLE_ENDIAN_ORDER = 1 } endian_t;
 
 extern uint8_t current_value_id;
-extern char value_offset_texts[13][64];
-extern char previous_values[13][64];
-extern bool reset_can_tracking;
 
 /* RPM configuration globals */
 extern int rpm_gauge_max;
@@ -107,7 +94,6 @@ void fuel_sender_adc_init(void);
 float fuel_sender_read_voltage(void);
 
 /* Coordinator-level callbacks used by widget modules */
-void value_long_press_event_cb(lv_event_t *e);
 void keyboard_ready_event_cb(lv_event_t *e);
 void screen3_touch_event_cb(lv_event_t *e);
 

@@ -6,7 +6,6 @@ SET(SOURCES components/ui_comp_slider2.c
     screens/ui_Screen4.c
     ui.c
     ui_preconfig.c
-    config/create_config_controls.c
     callbacks/ui_callbacks.c
     menu/menu_screen.c
     components/ui_comp_hook.c

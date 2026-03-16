@@ -72,10 +72,6 @@ void widget_panel_create(lv_obj_t *parent);
 lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x, int y,
 					   int radius, lv_color_t bg_color, int transform_angle);
 
-/** Create a transparent click zone that opens the config menu on long-press. */
-void create_transparent_click_zone(lv_obj_t *parent, lv_obj_t *target_label,
-								   uint8_t value_id);
-
 /** Immediate panel UI update (called on LVGL thread). */
 void update_panel_ui_immediate(uint8_t i, const char *value_str,
 							   double final_value);

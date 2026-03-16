@@ -1,26 +1,19 @@
-/* menu_screen.c — Phase 0B rebuild */
+/* menu_screen.c — config modal host screen */
 #include "menu_screen.h"
-#include "../callbacks/ui_callbacks.h"
-#include "../config/config_controls.h"
 #include "../dashboard.h"
 #include "../screens/ui_Screen3.h"
-#include "../settings/settings_panel.h"
 #include "../theme.h"
 #include "../ui.h"
 #include "config_modal.h"
-#include "device_settings.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
-#include "preset_picker.h"
 #include <stdio.h>
 #include <string.h>
 
 /* Externs not already covered by the headers above */
 extern void reconfigure_can_filter(void);
-extern char previous_values[13][64];
-extern lv_obj_t *keyboard;
-extern lv_obj_t *ui_Value[];
+extern void destroy_preconfig_menu(void);
 
 /* Global previewer references */
 lv_obj_t *menu_rpm_value_label = NULL;
@@ -58,21 +51,6 @@ static void do_screen_transition(lv_obj_t *old, lv_obj_t *btn) {
 	lv_timer_t *dt = lv_timer_create(delete_old_screen_cb, 300, old);
 	lv_timer_set_repeat_count(dt, 1);
 	clear_menu_refs();
-}
-
-static lv_obj_t *make_panel_lbl(lv_obj_t *box, const char *txt,
-								const lv_font_t *fnt, int y, int w) {
-	lv_obj_t *l = lv_label_create(box);
-	lv_label_set_text(l, txt);
-	lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_style_text_font(l, fnt, 0);
-	lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_set_width(l, w);
-	lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(l, 0);
-	lv_obj_set_y(l, y);
-	lv_obj_set_align(l, LV_ALIGN_CENTER);
-	return l;
 }
 
 /* ── public API ───────────────────────────────────────────────── */
@@ -121,8 +99,8 @@ void cancel_menu_event_cb(lv_event_t *e) {
 	do_screen_transition(old, btn);
 }
 
-void load_menu_screen_for_value(uint8_t value_id) {
-	current_value_id = value_id;
+void load_menu_screen_for_widget(widget_t *w) {
+	if (!w) return;
 	destroy_preconfig_menu();
 
 	ui_MenuScreen = lv_obj_create(NULL);
@@ -131,38 +109,8 @@ void load_menu_screen_for_value(uint8_t value_id) {
 	lv_obj_clear_flag(ui_MenuScreen, LV_OBJ_FLAG_SCROLLABLE);
 
 	/* All widget types now use the unified tabbed modal */
-	config_modal_open(ui_MenuScreen, value_id);
+	config_modal_open_for_widget(ui_MenuScreen, w);
 	lv_scr_load(ui_MenuScreen);
 }
 
-void create_menu_objects(lv_obj_t *parent, uint8_t value_id) {
-	uint8_t idx = value_id - 1;
-
-	menu_panel_boxes[idx] = lv_obj_create(parent);
-	lv_obj_set_size(menu_panel_boxes[idx], 155, 92);
-	lv_obj_set_align(menu_panel_boxes[idx], LV_ALIGN_TOP_LEFT);
-	lv_obj_set_pos(menu_panel_boxes[idx], 5, 5);
-	lv_obj_clear_flag(menu_panel_boxes[idx], LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_add_style(menu_panel_boxes[idx], get_box_style(),
-					 LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(menu_panel_boxes[idx], 3,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(menu_panel_boxes[idx], THEME_COLOR_PANEL,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	/* Use a generic label for now — widget type_data holds the real label */
-	menu_panel_labels[idx] =
-		make_panel_lbl(menu_panel_boxes[idx], "---",
-					   THEME_FONT_DASH_LABEL, -28, 145);
-
-	const char *cur = (ui_Value[idx] && lv_obj_is_valid(ui_Value[idx]))
-						  ? lv_label_get_text(ui_Value[idx])
-					  : (strlen(previous_values[idx]) > 0)
-						  ? previous_values[idx]
-						  : "0";
-	menu_panel_value_labels[idx] = make_panel_lbl(
-		menu_panel_boxes[idx], cur, THEME_FONT_DASH_VALUE, 9, 140);
-
-	create_config_controls(parent, value_id);
-}
 

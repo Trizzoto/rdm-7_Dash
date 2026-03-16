@@ -11,17 +11,6 @@
 
 extern uint8_t current_value_id;
 
-/* Widget arrays exposed for live-refresh after preset selection */
-extern lv_obj_t *g_label_input[];
-extern lv_obj_t *g_can_id_input[];
-extern lv_obj_t *g_endian_dropdown[];
-extern lv_obj_t *g_bit_start_dropdown[];
-extern lv_obj_t *g_bit_length_dropdown[];
-extern lv_obj_t *g_scale_input[];
-extern lv_obj_t *g_offset_input[];
-extern lv_obj_t *g_decimals_dropdown[];
-extern lv_obj_t *g_type_dropdown[];
-
 // Forward declarations
 static void delayed_version_event_cb(lv_timer_t * timer);
 
@@ -563,7 +552,6 @@ static void id_dropdown_event_cb(lv_event_t * e)
 
     // 3) Update via config_bridge (value_id is 1-based)
     uint8_t vid = (current_value_id <= 13) ? current_value_id : 1;
-    uint8_t idx = vid - 1;
     config_bridge_set_can_id(vid, (uint32_t)strtol(found->can_id, NULL, 16));
     config_bridge_set_endian(vid, found->endianess);
     config_bridge_set_bit_start(vid, found->bit_start);
@@ -583,57 +571,6 @@ static void id_dropdown_event_cb(lv_event_t * e)
 
     // 4) Update the actual UI text controls so the user sees the changes
     // Label
-    if (g_label_input[idx]) {
-        lv_textarea_set_text(g_label_input[idx], found->label);
-    }
-
-    // CAN ID - directly copy the string from preconfig
-    if (g_can_id_input[idx]) {
-        lv_textarea_set_text(g_can_id_input[idx], found->can_id);
-    }
-
-    // Endian dropdown (0 => Big, 1 => Little)
-    if (g_endian_dropdown[idx]) {
-        if (found->endianess == 0) {
-            lv_dropdown_set_selected(g_endian_dropdown[idx], 0); // Big Endian
-        } else {
-            lv_dropdown_set_selected(g_endian_dropdown[idx], 1); // Little Endian
-        }
-    }
-
-    // Bit start
-    if (g_bit_start_dropdown[idx]) {
-        lv_dropdown_set_selected(g_bit_start_dropdown[idx], found->bit_start);
-    }
-
-    // Bit length
-    if (g_bit_length_dropdown[idx]) {
-        lv_dropdown_set_selected(g_bit_length_dropdown[idx], (found->bit_length - 1));
-    }
-
-    // Scale
-    if (g_scale_input[idx]) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%.6g", found->scale);
-        lv_textarea_set_text(g_scale_input[idx], buf);
-    }
-
-    // Offset
-    if (g_offset_input[idx]) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%.6g", found->value_offset);
-        lv_textarea_set_text(g_offset_input[idx], buf);
-    }
-
-    // Decimals
-    if (g_decimals_dropdown[idx]) {
-        lv_dropdown_set_selected(g_decimals_dropdown[idx], found->decimals);
-    }
-
-    // Add type dropdown update
-    if (g_type_dropdown[idx]) {
-        lv_dropdown_set_selected(g_type_dropdown[idx], found->is_signed ? 1 : 0); // 0 = Unsigned, 1 = Signed
-    }
 }
 
 void show_preconfig_menu(lv_obj_t * parent)
@@ -887,7 +824,6 @@ static void apply_click_cb(lv_event_t *e)
 
     const preconfig_item_t *it = &preconfig_items[st->sel_sig];
     uint8_t vid = st->value_id;
-    uint8_t idx = vid - 1;
 
     config_bridge_set_can_id(vid, (uint32_t)strtol(it->can_id, NULL, 16));
     config_bridge_set_endian(vid, it->endianess);
@@ -898,22 +834,6 @@ static void apply_click_cb(lv_event_t *e)
     config_bridge_set_decimals(vid, it->decimals);
     config_bridge_set_is_signed(vid, it->is_signed);
     config_bridge_set_label(vid, it->label);
-
-    if (g_label_input[idx])         lv_textarea_set_text(g_label_input[idx], it->label);
-    if (g_can_id_input[idx])        lv_textarea_set_text(g_can_id_input[idx], it->can_id);
-    if (g_endian_dropdown[idx])     lv_dropdown_set_selected(g_endian_dropdown[idx], it->endianess ? 1 : 0);
-    if (g_bit_start_dropdown[idx])  lv_dropdown_set_selected(g_bit_start_dropdown[idx], it->bit_start);
-    if (g_bit_length_dropdown[idx]) lv_dropdown_set_selected(g_bit_length_dropdown[idx], it->bit_length - 1);
-    if (g_scale_input[idx]) {
-        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", it->scale);
-        lv_textarea_set_text(g_scale_input[idx], buf);
-    }
-    if (g_offset_input[idx]) {
-        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", it->value_offset);
-        lv_textarea_set_text(g_offset_input[idx], buf);
-    }
-    if (g_decimals_dropdown[idx])   lv_dropdown_set_selected(g_decimals_dropdown[idx], it->decimals);
-    if (g_type_dropdown[idx])       lv_dropdown_set_selected(g_type_dropdown[idx], it->is_signed ? 1 : 0);
 
     if (st->overlay && lv_obj_is_valid(st->overlay)) lv_obj_del(st->overlay);
 }

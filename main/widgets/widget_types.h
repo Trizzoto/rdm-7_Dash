@@ -161,6 +161,20 @@ void widget_base_to_json(const widget_t *w, cJSON *out);
 /** Read the base fields from a JSON object into *w.  Unknown keys are ignored. */
 void widget_base_from_json(widget_t *w, const cJSON *in);
 
+/* ─── Widget capability queries ─────────────────────────────────────────── */
+
+/** Return a pointer to the signal_name[32] buffer inside type_data, or NULL
+ *  if this widget type has no signal binding. */
+char *widget_get_signal_name_buf(widget_t *w);
+
+/** Return a pointer to the signal_index field inside type_data, or NULL
+ *  if this widget type has no signal binding. */
+int16_t *widget_get_signal_index_ptr(widget_t *w);
+
+/** Return true if the widget type supports alert/threshold configuration
+ *  (currently WIDGET_PANEL and WIDGET_BAR only). */
+bool widget_has_alert_support(widget_t *w);
+
 #ifdef __cplusplus
 }
 #endif

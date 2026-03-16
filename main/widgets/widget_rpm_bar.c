@@ -11,7 +11,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -133,27 +132,6 @@ void rpm_ecu_dropdown_event_cb(lv_event_t *e) {
 	config_bridge_set_offset(RPM_VALUE_ID, offset);
 	config_bridge_set_decimals(RPM_VALUE_ID, decimals);
 
-	/* Update UI form controls to reflect the preset */
-	char hex_buf[16];
-	snprintf(hex_buf, sizeof(hex_buf), "%X", can_id);
-	if (g_can_id_input[RPM_VALUE_ID - 1])
-		lv_textarea_set_text(g_can_id_input[RPM_VALUE_ID - 1], hex_buf);
-	if (g_endian_dropdown[RPM_VALUE_ID - 1])
-		lv_dropdown_set_selected(g_endian_dropdown[RPM_VALUE_ID - 1], endian);
-	if (g_bit_start_dropdown[RPM_VALUE_ID - 1])
-		lv_dropdown_set_selected(g_bit_start_dropdown[RPM_VALUE_ID - 1], bit_start);
-	if (g_bit_length_dropdown[RPM_VALUE_ID - 1])
-		lv_dropdown_set_selected(g_bit_length_dropdown[RPM_VALUE_ID - 1], bit_length - 1);
-	char scale_buf[16];
-	snprintf(scale_buf, sizeof(scale_buf), "%g", scale);
-	if (g_scale_input[RPM_VALUE_ID - 1])
-		lv_textarea_set_text(g_scale_input[RPM_VALUE_ID - 1], scale_buf);
-	char offset_buf[16];
-	snprintf(offset_buf, sizeof(offset_buf), "%g", offset);
-	if (g_offset_input[RPM_VALUE_ID - 1])
-		lv_textarea_set_text(g_offset_input[RPM_VALUE_ID - 1], offset_buf);
-	if (g_decimals_dropdown[RPM_VALUE_ID - 1])
-		lv_dropdown_set_selected(g_decimals_dropdown[RPM_VALUE_ID - 1], decimals);
 }
 
 void rpm_color_dropdown_event_cb(lv_event_t *e) {
@@ -1061,23 +1039,6 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_set_style_border_width(rpm_redline_zone, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Click zone */
-	lv_obj_t *rpm_click_zone = lv_obj_create(container);
-	lv_obj_set_size(rpm_click_zone, 783, 55);
-	lv_obj_align(rpm_click_zone, LV_ALIGN_TOP_MID, 9, 2);
-	lv_obj_clear_flag(rpm_click_zone, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_opa(rpm_click_zone, 0,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_opa(rpm_click_zone, 0,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_flag(rpm_click_zone, LV_OBJ_FLAG_CLICKABLE);
-
-	uint8_t *rpm_id_ptr = lv_mem_alloc(sizeof(uint8_t));
-	*rpm_id_ptr = RPM_VALUE_ID;
-	lv_obj_add_event_cb(rpm_click_zone, value_long_press_event_cb,
-						LV_EVENT_LONG_PRESSED, rpm_id_ptr);
-	lv_obj_add_event_cb(rpm_click_zone, free_value_id_event_cb, LV_EVENT_DELETE,
-						rpm_id_ptr);
 }
 
 int num_rpm_lines = 0;

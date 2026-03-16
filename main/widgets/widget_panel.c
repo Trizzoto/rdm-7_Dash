@@ -9,7 +9,6 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "ui/callbacks/ui_callbacks.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
@@ -299,41 +298,6 @@ lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x, int y,
 /////////////////////////////////////////////	ITEM CREATION
 ////////////////////////////////////////////////
 
-void create_transparent_click_zone(lv_obj_t *parent, lv_obj_t *target_label,
-								   uint8_t value_id) {
-	lv_obj_t *click_zone = lv_obj_create(parent);
-
-	// Check if this is a bar (BAR1_VALUE_ID=12 or BAR2_VALUE_ID=13) and adjust
-	// size accordingly
-	if (value_id == BAR1_VALUE_ID || value_id == BAR2_VALUE_ID) {
-		// For bars, create a click zone that covers the full bar width and
-		// height
-		lv_obj_set_size(click_zone, 300, 30); // Match the bar dimensions
-	} else {
-		// For other elements, use the standard 60x60 size
-		lv_obj_set_size(click_zone, 60, 60);
-	}
-
-	lv_obj_align_to(click_zone, target_label, LV_ALIGN_CENTER, 0, 0);
-	lv_obj_clear_flag(click_zone, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_opa(click_zone, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_opa(click_zone, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_flag(click_zone, LV_OBJ_FLAG_CLICKABLE);
-
-	// Add touch events for quick tap detection (to show menu button)
-	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_PRESSED,
-						NULL);
-	lv_obj_add_event_cb(click_zone, screen3_touch_event_cb, LV_EVENT_RELEASED,
-						NULL);
-
-	// Allocate memory to store value_id and pass it to the event callback
-	uint8_t *id_ptr = lv_mem_alloc(sizeof(uint8_t));
-	*id_ptr = value_id;
-	lv_obj_add_event_cb(click_zone, value_long_press_event_cb,
-						LV_EVENT_LONG_PRESSED, id_ptr);
-	lv_obj_add_event_cb(click_zone, free_value_id_event_cb, LV_EVENT_DELETE,
-						id_ptr);
-}
 void init_boxes_and_arcs(void) {
 	for (uint8_t i = 0; i < 8; i++) {
 		// Create Box
@@ -387,7 +351,6 @@ void widget_panel_create(lv_obj_t *parent) {
 		 * layout manager repositions ui_Box.                             */
 		ui_Value[i] = lv_label_create(ui_Box[i]);
 		lv_label_set_text(ui_Value[i], "---");
-		strcpy(previous_values[i], "---");
 		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Value[i], 255,
@@ -402,9 +365,6 @@ void widget_panel_create(lv_obj_t *parent) {
 		lv_obj_set_x(ui_Value[i], 0);
 		lv_obj_set_y(ui_Value[i], val_rel_y);
 		lv_obj_set_align(ui_Value[i], LV_ALIGN_CENTER);
-
-		/* Click zone lives inside the box so it tracks with it */
-		create_transparent_click_zone(ui_Box[i], ui_Value[i], i + 1);
 
 		/* ── Custom unit text — also a child of ui_Box[i] ───────────── */
 		ui_CustomText[i] = lv_label_create(ui_Box[i]);
@@ -577,7 +537,6 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	/* Value label */
 	lv_obj_t *val = lv_label_create(box);
 	lv_label_set_text(val, "---");
-	if (slot < 13) strcpy(previous_values[slot], "---");
 	lv_obj_set_style_text_color(val, pd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(val, 255,
@@ -591,9 +550,6 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_x(val, 0);
 	lv_obj_set_y(val, pd->value_y_offset);
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
-
-	/* Click zone */
-	create_transparent_click_zone(box, val, slot + 1);
 
 	/* Custom unit text */
 	lv_obj_t *ctxt = lv_label_create(box);

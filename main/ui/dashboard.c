@@ -12,6 +12,8 @@
 #include "widgets/widget_rpm_bar.h"
 #include "widgets/widget_warning.h"
 
+#include "ui/menu/menu_screen.h"
+
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -60,6 +62,26 @@ static void _fallback_create_all(lv_obj_t *parent) {
 	/* s_widget_count stays 0 — no widget_t handles in this path */
 }
 
+/* ── Long-press callback: opens config modal for the tapped widget ──────── */
+
+static void _widget_long_press_cb(lv_event_t *e) {
+	widget_t *w = (widget_t *)lv_event_get_user_data(e);
+	if (!w) return;
+	load_menu_screen_for_widget(w);
+}
+
+/** Register long-press config events on all signal-bound widgets. */
+static void _register_widget_long_press(void) {
+	for (uint8_t i = 0; i < s_widget_count; i++) {
+		widget_t *w = s_widgets[i];
+		if (w && w->root && widget_get_signal_name_buf(w) != NULL) {
+			lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+			lv_obj_add_event_cb(w->root, _widget_long_press_cb,
+								LV_EVENT_LONG_PRESSED, w);
+		}
+	}
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  *  dashboard_init
  * ════════════════════════════════════════════════════════════════════════════
@@ -103,6 +125,9 @@ void dashboard_init(lv_obj_t *parent) {
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
 
+	/* Register long-press config on signal-bound widgets */
+	_register_widget_long_press();
+
 	/* Start internal signal injection after signals are registered */
 	signal_internal_start();
 }
@@ -129,6 +154,7 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	} else {
 		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
 								 &s_widget_count);
+		_register_widget_long_press();
 	}
 }
 

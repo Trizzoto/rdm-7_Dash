@@ -10,6 +10,18 @@
 #include "font_manager.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
+#include "widget_panel.h"
+#include "widget_rpm_bar.h"
+#include "widget_bar.h"
+#include "widget_text.h"
+#include "widget_meter.h"
+#include "widget_indicator.h"
+#include "widget_warning.h"
+#include "widget_toggle.h"
+#include "widget_image.h"
+#include "widget_shape_panel.h"
+#include "widget_arc.h"
+#include "widget_button.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,4 +140,52 @@ void widget_base_from_json(widget_t *w, const cJSON *in)
         w->h = (uint16_t)item->valuedouble;
     if ((item = cJSON_GetObjectItemCaseSensitive(in, "id")) && cJSON_IsString(item))
         strncpy(w->id, item->valuestring, sizeof(w->id) - 1);
+}
+
+/* ─── Widget capability queries ─────────────────────────────────────────── */
+
+char *widget_get_signal_name_buf(widget_t *w)
+{
+    if (!w || !w->type_data) return NULL;
+    switch (w->type) {
+        case WIDGET_PANEL:     return ((panel_data_t *)w->type_data)->signal_name;
+        case WIDGET_RPM_BAR:   return ((rpm_bar_data_t *)w->type_data)->signal_name;
+        case WIDGET_BAR:       return ((bar_data_t *)w->type_data)->signal_name;
+        case WIDGET_TEXT:      return ((text_data_t *)w->type_data)->signal_name;
+        case WIDGET_METER:     return ((meter_data_t *)w->type_data)->signal_name;
+        case WIDGET_INDICATOR: return ((indicator_data_t *)w->type_data)->signal_name;
+        case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->signal_name;
+        case WIDGET_TOGGLE:    return ((toggle_data_t *)w->type_data)->signal_name;
+        case WIDGET_IMAGE:
+        case WIDGET_SHAPE_PANEL:
+        case WIDGET_ARC:
+        case WIDGET_BUTTON:
+        default:               return NULL;
+    }
+}
+
+int16_t *widget_get_signal_index_ptr(widget_t *w)
+{
+    if (!w || !w->type_data) return NULL;
+    switch (w->type) {
+        case WIDGET_PANEL:     return &((panel_data_t *)w->type_data)->signal_index;
+        case WIDGET_RPM_BAR:   return &((rpm_bar_data_t *)w->type_data)->signal_index;
+        case WIDGET_BAR:       return &((bar_data_t *)w->type_data)->signal_index;
+        case WIDGET_TEXT:      return &((text_data_t *)w->type_data)->signal_index;
+        case WIDGET_METER:     return &((meter_data_t *)w->type_data)->signal_index;
+        case WIDGET_INDICATOR: return &((indicator_data_t *)w->type_data)->signal_index;
+        case WIDGET_WARNING:   return &((warning_data_t *)w->type_data)->signal_index;
+        case WIDGET_TOGGLE:    return &((toggle_data_t *)w->type_data)->signal_index;
+        case WIDGET_IMAGE:
+        case WIDGET_SHAPE_PANEL:
+        case WIDGET_ARC:
+        case WIDGET_BUTTON:
+        default:               return NULL;
+    }
+}
+
+bool widget_has_alert_support(widget_t *w)
+{
+    if (!w) return false;
+    return (w->type == WIDGET_PANEL || w->type == WIDGET_BAR);
 }

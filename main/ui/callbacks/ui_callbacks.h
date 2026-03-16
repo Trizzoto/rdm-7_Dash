@@ -8,20 +8,10 @@
 extern "C" {
 #endif
 
-// Callback function declarations
-void label_input_event_cb(lv_event_t * e);
-void bit_start_roller_event_cb(lv_event_t * e);
-void bit_length_roller_event_cb(lv_event_t * e);
-void decimal_dropdown_event_cb(lv_event_t * e);
+/* Keyboard focus/defocus handler — opens the text input dialog on focus */
 void keyboard_event_cb(lv_event_t * e);
-void free_value_id_event_cb(lv_event_t * e);
-void endianess_roller_event_cb(lv_event_t * e);
-void value_offset_input_event_cb(lv_event_t * e);
-void can_id_input_event_cb(lv_event_t * e);
-void scale_input_event_cb(lv_event_t * e);
-void type_dropdown_event_cb(lv_event_t * e);
 
-// Text Input Dialog System
+/* Text Input Dialog System */
 typedef struct {
     lv_obj_t *modal;
     lv_obj_t *text_display;
@@ -44,16 +34,8 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
 void close_text_input_dialog(void);
 void force_close_text_input_dialog(void);
 
-/* =========================================================================
- * Fuel sender context — shared between menu_screen.c and ui_callbacks.c
- * ========================================================================= */
-/* Bar/panel event callbacks */
-void show_value_switch_event_cb(lv_event_t *e);
-void invert_value_switch_event_cb(lv_event_t *e);
-void custom_text_input_event_cb(lv_event_t *e);
-
 #ifdef __cplusplus
 }
 #endif
 
-#endif // UI_CALLBACKS_H 
+#endif // UI_CALLBACKS_H

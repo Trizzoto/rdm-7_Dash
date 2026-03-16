@@ -48,7 +48,7 @@ void check_warning_timeouts(lv_timer_t *timer);
 /** Create the full-screen warning configuration editor. */
 void create_warning_config_menu(uint8_t warning_idx);
 
-/* Warning-specific config callbacks exposed for config_controls.c ----------*/
+/* Warning-specific config callbacks ----------------------------------------*/
 void warning_high_threshold_event_cb(lv_event_t *e);
 void warning_low_threshold_event_cb(lv_event_t *e);
 void warning_high_color_event_cb(lv_event_t *e);

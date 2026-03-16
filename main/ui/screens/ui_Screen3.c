@@ -36,28 +36,12 @@ lv_obj_t *rpm_bar_gauge = NULL;
 lv_obj_t *rpm_redline_zone = NULL;
 lv_timer_t *menu_button_hide_timer = NULL;
 
-/* ── Config form objects (used by config_controls / config_modal) ────────── */
-lv_obj_t *g_label_input[MAX_VALUES];
-lv_obj_t *g_can_id_input[MAX_VALUES];
-lv_obj_t *g_endian_dropdown[MAX_VALUES];
-lv_obj_t *g_bit_start_dropdown[MAX_VALUES];
-lv_obj_t *g_bit_length_dropdown[MAX_VALUES];
-lv_obj_t *g_scale_input[MAX_VALUES];
-lv_obj_t *g_offset_input[MAX_VALUES];
-lv_obj_t *g_decimals_dropdown[MAX_VALUES];
-lv_obj_t *g_type_dropdown[MAX_VALUES];
-
 int rpm_gauge_max = 7000;
 int rpm_redline_value = 6000;
 uint8_t current_value_id;
-char value_offset_texts[13][64] = {"0", "0", "0", "0", "0", "0", "0",
-								   "0", "0", "0", "0", "0", "0"};
-char previous_values[13][64] = {0};
-bool reset_can_tracking = false;
 
 /* ── Coordinator-local state ────────────────────────────────────────────── */
 static uint32_t touch_press_time = 0;
-static uint32_t last_long_press_time = 0;
 static lv_obj_t *ui_Setup_Menu_Screen = NULL;
 
 
@@ -71,15 +55,6 @@ void keyboard_ready_event_cb(lv_event_t *e) {
 	lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
 }
 
-void value_long_press_event_cb(lv_event_t *e) {
-	uint32_t now = lv_tick_get();
-	if (now - last_long_press_time < 500)
-		return;
-	last_long_press_time = now;
-	uint8_t value_id = *(uint8_t *)lv_event_get_user_data(e);
-	current_value_id = value_id;
-	load_menu_screen_for_value(value_id);
-}
 
 static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
@@ -212,7 +187,6 @@ void ui_Screen3_screen_init(void) {
 		if (i < 8) {
 			ui_Box[i] = ui_CustomText[i] = NULL;
 		}
-		memset(previous_values[i], 0, sizeof(previous_values[i]));
 	}
 	rpm_bar_gauge = NULL;
 	ui_RPM_Value = NULL;
@@ -222,19 +196,10 @@ void ui_Screen3_screen_init(void) {
 	ui_Bar_2 = NULL;
 	/* Clear stale static pointers inside widget_rpm_bar module */
 	widget_rpm_bar_clear_stale_pointers();
-	reset_can_tracking = true;
 
 	/* Initialise widget layer via layout manager (loads from LittleFS JSON,
 	 * falls back to direct widget_X_create() if the file is unavailable). */
 	dashboard_init(ui_Screen3);
-
-	/* Click zones for special widgets — only installed if the widget exists */
-	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
-		create_transparent_click_zone(ui_Screen3, ui_RPM_Value, RPM_VALUE_ID);
-	if (ui_Bar_1 && lv_obj_is_valid(ui_Bar_1))
-		create_transparent_click_zone(ui_Screen3, ui_Bar_1, BAR1_VALUE_ID);
-	if (ui_Bar_2 && lv_obj_is_valid(ui_Bar_2))
-		create_transparent_click_zone(ui_Screen3, ui_Bar_2, BAR2_VALUE_ID);
 
 	/* Menu button (glassmorphism) */
 	ui_Menu_Button = lv_btn_create(ui_Screen3);
@@ -281,7 +246,6 @@ void ui_Screen3_preview_layout(cJSON *root) {
 	ui_Panel9 = NULL;
 	ui_Bar_1 = NULL;
 	ui_Bar_2 = NULL;
-	reset_can_tracking = true;
 
 	/* Create a new screen (offscreen — not yet loaded) */
 	ui_Screen3 = lv_obj_create(NULL);
