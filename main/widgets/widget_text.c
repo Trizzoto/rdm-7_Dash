@@ -129,7 +129,7 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "text_color");
-	if (cJSON_IsNumber(item)) td->text_color.full = (uint16_t)item->valuedouble;
+	if (cJSON_IsNumber(item)) td->text_color.full = (uint16_t)item->valueint;
 
 	/* Resolve signal name → index */
 	if (td->signal_name[0] != '\0')
@@ -137,6 +137,9 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 }
 
 static void _text_destroy(widget_t *w) {
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (td && td->signal_index >= 0)
+		signal_unsubscribe(td->signal_index, _text_on_signal, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);

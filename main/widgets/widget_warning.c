@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *TAG = "widget_warning";
+
 /* ── Helper: look up warning_data_t by slot via registry ───────────────── */
 static warning_data_t *_lookup_warning_data(uint8_t slot) {
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_WARNING, slot);
@@ -181,7 +183,7 @@ static void apply_preconfig_warning_cb(lv_event_t *e) {
 	warning_save_data_t *save_data =
 		(warning_save_data_t *)lv_event_get_user_data(e);
 	if (!save_data || !save_data->input_objects) {
-		printf("Error: Invalid save data for preconfig\n");
+		ESP_LOGE(TAG, "Invalid save data for preconfig");
 		return;
 	}
 
@@ -190,14 +192,14 @@ static void apply_preconfig_warning_cb(lv_event_t *e) {
 	// Get the warning dropdown from save_data
 	lv_obj_t *warning_dd = save_data->preconfig_warning_dd;
 	if (!warning_dd) {
-		printf("Error: Warning dropdown not found in save_data\n");
+		ESP_LOGE(TAG, "Warning dropdown not found in save_data");
 		return;
 	}
 
 	uint16_t selected_warning = lv_dropdown_get_selected(warning_dd);
 	if (selected_warning >=
 		sizeof(ford_babf_warnings) / sizeof(ford_babf_warnings[0])) {
-		printf("Error: Invalid warning selection\n");
+		ESP_LOGE(TAG, "Invalid warning selection");
 		return;
 	}
 
@@ -246,14 +248,14 @@ static void apply_preconfig_warning_cb(lv_event_t *e) {
 		lv_label_set_text(save_data->preview_objects[1], preconfig->label);
 	}
 
-	printf("Applied preconfig: Ford BA/BF/FG - %s\n", preconfig->label);
+	ESP_LOGI(TAG, "Applied preconfig: Ford BA/BF/FG - %s", preconfig->label);
 }
 
 static void save_warning_config_cb(lv_event_t *e) {
 	warning_save_data_t *save_data =
 		(warning_save_data_t *)lv_event_get_user_data(e);
 	if (!save_data) {
-		printf("Error: Invalid save data\n");
+		ESP_LOGE(TAG, "Invalid save data");
 		return;
 	}
 
@@ -261,7 +263,7 @@ static void save_warning_config_cb(lv_event_t *e) {
 	lv_obj_t **inputs = save_data->input_objects;
 
 	if (!inputs) {
-		printf("Error: Invalid input objects\n");
+		ESP_LOGE(TAG, "Invalid input objects");
 		lv_mem_free(save_data);
 		return;
 	}
@@ -321,13 +323,11 @@ static void save_warning_config_cb(lv_event_t *e) {
 						save_data);
 
 	// Debug output
-	printf("Warning %d configuration saved:\n", warning_idx + 1);
-	printf("  CAN ID: 0x%X\n", can_id);
-	printf("  Bit Position: %d\n", bit_pos);
-	printf("  Label: %s\n", label_text ? label_text : "");
+	ESP_LOGI(TAG, "Warning %d configuration saved: CAN ID=0x%X bit=%d label=%s",
+			 warning_idx + 1, can_id, bit_pos, label_text ? label_text : "");
 	if (wd) {
-		printf("  Highlight Color: %06X\n", wd->active_color.full);
-		printf("  Mode: %s\n", wd->is_momentary ? "Momentary" : "Toggle");
+		ESP_LOGI(TAG, "  Highlight Color: %06X  Mode: %s",
+				 (unsigned)wd->active_color.full, wd->is_momentary ? "Momentary" : "Toggle");
 	}
 
 	// Update the label on Screen3 dynamically
@@ -428,7 +428,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	// range inputs
 	lv_obj_t **input_objects = lv_mem_alloc(8 * sizeof(lv_obj_t *));
 	if (!input_objects) {
-		printf("Failed to allocate memory for input objects\n");
+		ESP_LOGE(TAG, "Failed to allocate memory for input objects");
 		return;
 	}
 	// Initialize all pointers to NULL
@@ -440,7 +440,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	lv_obj_t **preview_objects = lv_mem_alloc(2 * sizeof(lv_obj_t *));
 	if (!preview_objects) {
 		lv_mem_free(input_objects);
-		printf("Failed to allocate memory for preview objects\n");
+		ESP_LOGE(TAG, "Failed to allocate memory for preview objects");
 		return;
 	}
 	preview_objects[0] = NULL;
@@ -457,7 +457,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 	if (!save_data) {
 		lv_mem_free(input_objects);
 		lv_mem_free(preview_objects);
-		printf("Failed to allocate memory for save data\n");
+		ESP_LOGE(TAG, "Failed to allocate memory for save data");
 		return;
 	}
 	save_data->warning_idx = warning_idx;
@@ -686,6 +686,7 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Add event callback for invert toggle
 	uint8_t *invert_toggle_id_ptr = lv_mem_alloc(sizeof(uint8_t));
+	if (!invert_toggle_id_ptr) return;
 	*invert_toggle_id_ptr = warning_idx;
 	lv_obj_add_event_cb(invert_toggle_switch, invert_warning_toggle_event_cb,
 						LV_EVENT_VALUE_CHANGED, invert_toggle_id_ptr);
@@ -925,6 +926,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	uint8_t *warning_id = lv_mem_alloc(sizeof(uint8_t));
+	if (!warning_id) return;
 	*warning_id = i;
 	lv_obj_add_event_cb(touch_area, warning_longpress_cb, LV_EVENT_LONG_PRESSED,
 						warning_id);
@@ -1058,6 +1060,9 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 		wd->signal_index = signal_find_by_name(wd->signal_name);
 }
 static void _warning_destroy(widget_t *w) {
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (wd && wd->signal_index >= 0)
+		signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);

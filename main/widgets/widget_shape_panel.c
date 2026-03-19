@@ -35,7 +35,7 @@ static const char *TAG = "widget_shape_panel";
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
 static inline uint32_t _color_to_u32(lv_color_t c) {
-    return (uint32_t)((c.ch.red << 11) | (c.ch.green << 5) | c.ch.blue);
+    return (uint32_t)c.full;
 }
 
 static inline lv_color_t _u32_to_color(uint32_t v) {

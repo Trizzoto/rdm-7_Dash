@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 static const char *TAG = "widget_rules";
 
@@ -96,8 +97,8 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
                 case RULE_OP_LT:    match = (v < r->threshold);  break;
                 case RULE_OP_GTE:   match = (v >= r->threshold); break;
                 case RULE_OP_LTE:   match = (v <= r->threshold); break;
-                case RULE_OP_EQ:    match = (v == r->threshold); break;
-                case RULE_OP_NEQ:   match = (v != r->threshold); break;
+                case RULE_OP_EQ:    match = (fabsf(v - r->threshold) < 0.001f); break;
+                case RULE_OP_NEQ:   match = (fabsf(v - r->threshold) >= 0.001f); break;
                 case RULE_OP_RANGE: match = (v >= r->range_min && v <= r->range_max); break;
                 }
             }
@@ -354,6 +355,30 @@ void widget_rules_to_json(const widget_t *w, cJSON *config)
 void widget_rules_free(widget_t *w)
 {
     if (!w) return;
+
+    /* Unsubscribe rule signal callbacks before freeing.
+     * Track which signal indices we have already unsubscribed to avoid
+     * double-unsubscribe when multiple rules watch the same signal. */
+    if (w->rules && w->rule_count > 0) {
+        int16_t unsub[MAX_WIDGET_RULES];
+        uint8_t unsub_count = 0;
+
+        for (uint8_t i = 0; i < w->rule_count; i++) {
+            int16_t idx = w->rules[i].signal_index;
+            if (idx < 0) continue;
+
+            bool already = false;
+            for (uint8_t s = 0; s < unsub_count; s++) {
+                if (unsub[s] == idx) { already = true; break; }
+            }
+            if (!already) {
+                signal_unsubscribe(idx, _rule_signal_cb, w);
+                if (unsub_count < MAX_WIDGET_RULES)
+                    unsub[unsub_count++] = idx;
+            }
+        }
+    }
+
     free(w->rules);
     w->rules = NULL;
     w->rule_count = 0;

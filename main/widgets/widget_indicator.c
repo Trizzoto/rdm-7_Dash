@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const char *TAG = "widget_indicator";
+
 /* ── Helper: look up indicator_data_t by slot via registry ─────────────── */
 static indicator_data_t *_lookup_indicator_data(uint8_t slot) {
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_INDICATOR, slot);
@@ -74,12 +76,12 @@ typedef struct {
 void indicator_longpress_cb(lv_event_t *e) {
 	void *user_data = lv_event_get_user_data(e);
 	if (!user_data) {
-		printf("Error: No user data in indicator longpress callback\n");
+		ESP_LOGE(TAG, "No user data in indicator longpress callback");
 		return;
 	}
 
 	uint8_t indicator_idx = *(uint8_t *)user_data;
-	printf("Indicator longpress detected for indicator %d\n", indicator_idx);
+	ESP_LOGD(TAG, "Indicator longpress detected for indicator %d", indicator_idx);
 	create_indicator_config_menu(indicator_idx);
 }
 
@@ -149,7 +151,7 @@ static void save_indicator_config_cb(lv_event_t *e) {
 		update_indicator_ui_immediate(0);
 		update_indicator_ui_immediate(1);
 	}
-	printf("Indicator configuration completed - returning to main screen\n");
+	ESP_LOGD(TAG, "Indicator configuration completed - returning to main screen");
 
 	// Clear preview references
 	preview_indicator_config = NULL;
@@ -193,7 +195,7 @@ static void indicator_can_id_changed_cb(lv_event_t *e) {
 
 	/* CAN ID is now managed via signals — this callback is a no-op placeholder */
 	(void)indicator_idx;
-	printf("Indicator %d CAN ID field: 0x%X (managed via signal)\n", indicator_idx, can_id);
+	ESP_LOGD(TAG, "Indicator %d CAN ID field: 0x%X (managed via signal)", indicator_idx, can_id);
 }
 
 // Callback for bit position dropdown changes
@@ -209,7 +211,7 @@ static void indicator_bit_pos_changed_cb(lv_event_t *e) {
 
 	/* Bit position is now managed via signals — this callback is a no-op placeholder */
 	(void)indicator_idx;
-	printf("Indicator %d bit position field: %d (managed via signal)\n", indicator_idx,
+	ESP_LOGD(TAG, "Indicator %d bit position field: %d (managed via signal)", indicator_idx,
 		   bit_pos);
 }
 
@@ -227,7 +229,7 @@ static void indicator_toggle_mode_changed_cb(lv_event_t *e) {
 	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	if (id) id->is_momentary = is_momentary;
 
-	printf("Indicator %d toggle mode updated to: %s\n", indicator_idx,
+	ESP_LOGD(TAG, "Indicator %d toggle mode updated to: %s", indicator_idx,
 		   is_momentary ? "Momentary" : "Toggle");
 }
 
@@ -244,16 +246,16 @@ static void indicator_animation_changed_cb(lv_event_t *e) {
 	indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 	if (id) id->animation_enabled = is_enabled;
 
-	printf("Indicator %d animation updated to: %s\n", indicator_idx,
+	ESP_LOGD(TAG, "Indicator %d animation updated to: %s", indicator_idx,
 		   is_enabled ? "Enabled" : "Disabled");
 }
 
 void create_indicator_config_menu(uint8_t indicator_idx) {
-	printf("Creating indicator config menu for indicator %d\n", indicator_idx);
+	ESP_LOGD(TAG, "Creating indicator config menu for indicator %d", indicator_idx);
 
 	// Validate indicator index
 	if (indicator_idx >= 2) {
-		printf("Error: Invalid indicator index %d\n", indicator_idx);
+		ESP_LOGE(TAG, "Invalid indicator index %d", indicator_idx);
 		return;
 	}
 
@@ -459,7 +461,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 							LV_EVENT_VALUE_CHANGED, can_id_idx_ptr);
 		lv_obj_add_event_cb(can_id_input, indicator_can_id_changed_cb,
 							LV_EVENT_DEFOCUSED, can_id_idx_ptr);
-		printf("Added CAN ID callbacks for indicator %d\n", indicator_idx);
+		ESP_LOGD(TAG, "Added CAN ID callbacks for indicator %d", indicator_idx);
 	}
 
 	// Set placeholder and initial value
@@ -494,7 +496,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 		*bit_pos_idx_ptr = indicator_idx;
 		lv_obj_add_event_cb(bit_pos_dropdown, indicator_bit_pos_changed_cb,
 							LV_EVENT_VALUE_CHANGED, bit_pos_idx_ptr);
-		printf("Added bit position callback for indicator %d\n", indicator_idx);
+		ESP_LOGD(TAG, "Added bit position callback for indicator %d", indicator_idx);
 	}
 
 	lv_dropdown_set_selected(bit_pos_dropdown, 0); /* bit pos now in signal */
@@ -521,7 +523,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 		lv_obj_add_event_cb(toggle_mode_dropdown,
 							indicator_toggle_mode_changed_cb,
 							LV_EVENT_VALUE_CHANGED, toggle_mode_idx_ptr);
-		printf("Added toggle mode callback for indicator %d\n", indicator_idx);
+		ESP_LOGD(TAG, "Added toggle mode callback for indicator %d", indicator_idx);
 	}
 
 	lv_dropdown_set_selected(
@@ -548,7 +550,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 		*animation_idx_ptr = indicator_idx;
 		lv_obj_add_event_cb(animation_switch, indicator_animation_changed_cb,
 							LV_EVENT_VALUE_CHANGED, animation_idx_ptr);
-		printf("Added animation callback for indicator %d\n", indicator_idx);
+		ESP_LOGD(TAG, "Added animation callback for indicator %d", indicator_idx);
 	}
 
 	if (id_cfg && id_cfg->animation_enabled) {
@@ -668,7 +670,7 @@ void update_config_preview(uint8_t indicator_idx) {
 		indicator_data_t *id = _lookup_indicator_data(indicator_idx);
 		bool state = id ? id->current_state : false;
 
-		printf("Updating config preview for indicator %d: %s\n", indicator_idx,
+		ESP_LOGD(TAG, "Updating config preview for indicator %d: %s", indicator_idx,
 			   state ? "ACTIVE" : "INACTIVE");
 
 		// Update preview indicator opacity
@@ -740,9 +742,9 @@ void update_indicator_ui(void *param) {
 
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
 		if (current_state) {
-			printf("Indicator %d: Setting to ACTIVE\n", indicator_idx);
+			ESP_LOGD(TAG, "Indicator %d: Setting to ACTIVE", indicator_idx);
 			if (id && id->animation_enabled) {
-				printf("Indicator %d: Animation enabled - starting timer\n",
+				ESP_LOGD(TAG, "Indicator %d: Animation enabled - starting timer",
 					   indicator_idx);
 				lv_obj_set_style_opa(indicator_obj, 255,
 									 LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -751,20 +753,20 @@ void update_indicator_ui(void *param) {
 					lv_timer_resume(indicator_animation_timer);
 				}
 			} else {
-				printf("Indicator %d: Solid mode - 100%% opacity\n",
+				ESP_LOGD(TAG, "Indicator %d: Solid mode - 100%% opacity",
 					   indicator_idx);
 				lv_obj_set_style_opa(indicator_obj, 255,
 									 LV_PART_MAIN | LV_STATE_DEFAULT);
 			}
 		} else {
-			printf("Indicator %d: Setting to INACTIVE (50%% opacity)\n",
+			ESP_LOGD(TAG, "Indicator %d: Setting to INACTIVE (50%% opacity)",
 				   indicator_idx);
 			lv_obj_set_style_opa(indicator_obj, 50,
 								 LV_PART_MAIN |
 									 LV_STATE_DEFAULT); // 50% opacity (default)
 		}
 	} else {
-		printf("Indicator %d: Object is null or invalid\n", indicator_idx);
+		ESP_LOGW(TAG, "Indicator %d: Object is null or invalid", indicator_idx);
 	}
 
 	// Also update the config preview if it's visible
@@ -958,6 +960,9 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 		id->signal_index = signal_find_by_name(id->signal_name);
 }
 static void _indicator_destroy(widget_t *w) {
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (id && id->signal_index >= 0)
+		signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);

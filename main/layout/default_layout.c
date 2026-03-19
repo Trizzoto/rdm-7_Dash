@@ -58,6 +58,7 @@ static void _add_widget(cJSON *arr, const char *type_str, const char *id,
 						int16_t x, int16_t y, uint16_t w, uint16_t h,
 						cJSON *config) {
 	cJSON *wj = cJSON_CreateObject();
+	if (!wj) return;
 	cJSON_AddStringToObject(wj, "type", type_str);
 	cJSON_AddStringToObject(wj, "id", id);
 	cJSON_AddNumberToObject(wj, "x", x);

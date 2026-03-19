@@ -54,18 +54,24 @@ static bool _name_is_safe(const char *name) {
 
 /* ── Deferred screen reload (runs on LVGL task via lv_async_call) ────────── */
 
+static char *s_pending_preview_json = NULL;
+
 static void _deferred_screen_reload(void *arg) {
 	(void)arg;
 	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
 	ui_Screen3_screen_init();
 	lv_scr_load(ui_Screen3);
-	if (old && old != ui_Screen3)
+	if (old && old != ui_Screen3 && lv_obj_is_valid(old))
 		lv_obj_del(old);
 }
 
 static void _deferred_preview_apply(void *arg) {
 	char *json = (char *)arg;
 	if (!json) return;
+
+	/* Clear the pending pointer if this is the latest preview */
+	if (s_pending_preview_json == json)
+		s_pending_preview_json = NULL;
 
 	cJSON *root = cJSON_Parse(json);
 	free(json);
@@ -246,16 +252,21 @@ static esp_err_t layout_raw_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name length");
 		return ESP_FAIL;
 	}
+	char layout_name[LAYOUT_MAX_NAME];
+	memcpy(layout_name, name_val, name_len);
+	layout_name[name_len] = '\0';
+
+	/* Reject path traversal: slash, backslash, or ".." */
 	for (size_t i = 0; i < name_len; i++) {
-		if (name_val[i] == '/' || name_val[i] == '\\') {
+		if (layout_name[i] == '/' || layout_name[i] == '\\') {
 			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 			return ESP_FAIL;
 		}
 	}
-
-	char layout_name[LAYOUT_MAX_NAME];
-	memcpy(layout_name, name_val, name_len);
-	layout_name[name_len] = '\0';
+	if (strstr(layout_name, "..")) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
 
 	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
 	if (!buf) {
@@ -405,6 +416,7 @@ static const httpd_uri_t layout_save_uri = {.uri = "/api/layout/save",
 											.handler = layout_save_handler,
 											.user_ctx = NULL};
 
+
 /* POST /api/layout/preview — apply layout JSON live without saving to file. */
 static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	int total_len = req->content_len;
@@ -441,13 +453,19 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	}
 
 	/* Stash the JSON string for deferred apply on the LVGL task.
-	 * The previous pending preview (if any) is freed here. */
+	 * Free any previous pending preview that hasn't been consumed yet. */
 	char *json_copy = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
 	if (!json_copy) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to serialize preview JSON");
 		return ESP_FAIL;
+	}
+	/* If a previous preview is still pending, free it to avoid leak */
+	char *old_preview = s_pending_preview_json;
+	s_pending_preview_json = json_copy;
+	if (old_preview) {
+		free(old_preview);
 	}
 	lv_async_call(_deferred_preview_apply, json_copy);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
@@ -1436,6 +1454,10 @@ static esp_err_t _fuel_status_handler(httpd_req_t *req) {
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, json);
 	free(json);
@@ -1498,6 +1520,10 @@ static esp_err_t _signal_values_handler(httpd_req_t *req) {
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, json);
 	free(json);
@@ -1748,7 +1774,7 @@ static const httpd_uri_t sd_files_uri = {
 	.handler = sd_files_handler, .user_ctx = NULL
 };
 
-/* Chunked file copy helper — 4KB buffer, safe for 8KB web server stack */
+/* Chunked file copy helper — heap-allocated 4KB buffer */
 static esp_err_t _copy_file(const char *src, const char *dst) {
 	FILE *fin = fopen(src, "rb");
 	if (!fin) return ESP_ERR_NOT_FOUND;
@@ -1757,22 +1783,34 @@ static esp_err_t _copy_file(const char *src, const char *dst) {
 	long file_size = ftell(fin);
 	fseek(fin, 0, SEEK_SET);
 
+	if (file_size <= 0) {
+		fclose(fin);
+		return ESP_FAIL;
+	}
+
 	FILE *fout = fopen(dst, "wb");
 	if (!fout) {
 		fclose(fin);
 		return ESP_FAIL;
 	}
 
-	char buf[4096];
+	char *buf = malloc(4096);
+	if (!buf) {
+		fclose(fin);
+		fclose(fout);
+		return ESP_FAIL;
+	}
+
 	size_t total_written = 0;
 	while (total_written < (size_t)file_size) {
-		size_t to_read = sizeof(buf);
+		size_t to_read = 4096;
 		if (to_read > (size_t)file_size - total_written)
 			to_read = (size_t)file_size - total_written;
 		size_t nr = fread(buf, 1, to_read, fin);
 		if (nr == 0) break;
 		size_t nw = fwrite(buf, 1, nr, fout);
 		if (nw != nr) {
+			free(buf);
 			fclose(fin);
 			fclose(fout);
 			remove(dst);
@@ -1781,6 +1819,7 @@ static esp_err_t _copy_file(const char *src, const char *dst) {
 		total_written += nw;
 	}
 
+	free(buf);
 	fclose(fin);
 	fclose(fout);
 	return (total_written == (size_t)file_size) ? ESP_OK : ESP_FAIL;
@@ -2032,6 +2071,10 @@ static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
 	httpd_resp_sendstr(req, json);
 	free(json);
 	return ESP_OK;
@@ -2059,6 +2102,12 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	if (!example_lvgl_lock(100)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
+		return ESP_FAIL;
+	}
+
 	cJSON *j;
 	if ((j = cJSON_GetObjectItem(root, "signal_name")) && cJSON_IsString(j)) {
 		strncpy(dimmer_config.signal_name, j->valuestring,
@@ -2076,6 +2125,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	if ((j = cJSON_GetObjectItem(root, "enabled")))
 		dimmer_config.enabled = cJSON_IsTrue(j);
 
+	example_lvgl_unlock();
 	cJSON_Delete(root);
 
 	save_dimmer_config_to_nvs();
@@ -2094,6 +2144,12 @@ static const httpd_uri_t dimmer_config_post_uri = {
 	.uri = "/api/dimmer/config", .method = HTTP_POST,
 	.handler = _dimmer_config_post_handler, .user_ctx = NULL
 };
+
+/* Helper macro to log on URI registration failure */
+#define REGISTER_URI(svr, uri_ptr) do { \
+	if (httpd_register_uri_handler(svr, uri_ptr) != ESP_OK) \
+		ESP_LOGW(TAG, "Failed to register URI: %s", (uri_ptr)->uri); \
+} while(0)
 
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
@@ -2120,76 +2176,75 @@ esp_err_t web_server_start(void) {
 	}
 
 	// Register URI handlers
-	httpd_register_uri_handler(server, &index_uri);
-	httpd_register_uri_handler(server, &screenshot_uri);
-	httpd_register_uri_handler(server, &layout_current_uri);
-	httpd_register_uri_handler(server, &layout_raw_uri);
-	httpd_register_uri_handler(server, &layout_save_uri);
-	httpd_register_uri_handler(server, &layout_preview_uri);
-	httpd_register_uri_handler(server, &layout_list_uri);
-	httpd_register_uri_handler(server, &presets_list_uri);
-	httpd_register_uri_handler(server, &custom_presets_list_uri);
-	httpd_register_uri_handler(server, &custom_preset_save_uri);
-	httpd_register_uri_handler(server, &custom_preset_delete_uri);
-	httpd_register_uri_handler(server, &layout_set_uri);
-	httpd_register_uri_handler(server, &layout_delete_uri);
-	httpd_register_uri_handler(server, &layout_preview_uri);
-	httpd_register_uri_handler(server, &image_upload_uri);
-	httpd_register_uri_handler(server, &image_list_uri);
-	httpd_register_uri_handler(server, &image_delete_uri);
-	httpd_register_uri_handler(server, &image_data_uri);
-	httpd_register_uri_handler(server, &font_upload_uri);
-	httpd_register_uri_handler(server, &font_list_uri);
-	httpd_register_uri_handler(server, &font_delete_uri);
-	httpd_register_uri_handler(server, &storage_info_uri);
-	httpd_register_uri_handler(server, &sd_status_uri);
-	httpd_register_uri_handler(server, &sd_files_uri);
-	httpd_register_uri_handler(server, &sd_copy_uri);
-	httpd_register_uri_handler(server, &sd_delete_uri);
-	httpd_register_uri_handler(server, &screen_switch_uri);
-	httpd_register_uri_handler(server, &dimmer_config_get_uri);
-	httpd_register_uri_handler(server, &dimmer_config_post_uri);
+	REGISTER_URI(server, &index_uri);
+	REGISTER_URI(server, &screenshot_uri);
+	REGISTER_URI(server, &layout_current_uri);
+	REGISTER_URI(server, &layout_raw_uri);
+	REGISTER_URI(server, &layout_save_uri);
+	REGISTER_URI(server, &layout_preview_uri);
+	REGISTER_URI(server, &layout_list_uri);
+	REGISTER_URI(server, &presets_list_uri);
+	REGISTER_URI(server, &custom_presets_list_uri);
+	REGISTER_URI(server, &custom_preset_save_uri);
+	REGISTER_URI(server, &custom_preset_delete_uri);
+	REGISTER_URI(server, &layout_set_uri);
+	REGISTER_URI(server, &layout_delete_uri);
+	REGISTER_URI(server, &image_upload_uri);
+	REGISTER_URI(server, &image_list_uri);
+	REGISTER_URI(server, &image_delete_uri);
+	REGISTER_URI(server, &image_data_uri);
+	REGISTER_URI(server, &font_upload_uri);
+	REGISTER_URI(server, &font_list_uri);
+	REGISTER_URI(server, &font_delete_uri);
+	REGISTER_URI(server, &storage_info_uri);
+	REGISTER_URI(server, &sd_status_uri);
+	REGISTER_URI(server, &sd_files_uri);
+	REGISTER_URI(server, &sd_copy_uri);
+	REGISTER_URI(server, &sd_delete_uri);
+	REGISTER_URI(server, &screen_switch_uri);
+	REGISTER_URI(server, &dimmer_config_get_uri);
+	REGISTER_URI(server, &dimmer_config_post_uri);
 	static const httpd_uri_t signal_values_uri = {
 		.uri = "/api/signals/values",
 		.method = HTTP_GET,
 		.handler = _signal_values_handler
 	};
-	httpd_register_uri_handler(server, &signal_values_uri);
+	REGISTER_URI(server, &signal_values_uri);
 
 	static const httpd_uri_t signal_simulate_post_uri = {
 		.uri = "/api/signal/simulate",
 		.method = HTTP_POST,
 		.handler = _signal_simulate_post_handler
 	};
-	httpd_register_uri_handler(server, &signal_simulate_post_uri);
+	REGISTER_URI(server, &signal_simulate_post_uri);
 
 	static const httpd_uri_t signal_simulate_get_uri = {
 		.uri = "/api/signal/simulate",
 		.method = HTTP_GET,
 		.handler = _signal_simulate_get_handler
 	};
-	httpd_register_uri_handler(server, &signal_simulate_get_uri);
+	REGISTER_URI(server, &signal_simulate_get_uri);
 
 	static const httpd_uri_t fuel_status_uri = {
 		.uri = "/api/fuel/status",
 		.method = HTTP_GET,
 		.handler = _fuel_status_handler
 	};
-	httpd_register_uri_handler(server, &fuel_status_uri);
+	REGISTER_URI(server, &fuel_status_uri);
 
 	static const httpd_uri_t fuel_set_empty_uri = {
 		.uri = "/api/fuel/set-empty",
 		.method = HTTP_POST,
 		.handler = _fuel_set_empty_handler
 	};
-	httpd_register_uri_handler(server, &fuel_set_empty_uri);
+	REGISTER_URI(server, &fuel_set_empty_uri);
 
 	static const httpd_uri_t fuel_set_full_uri = {
 		.uri = "/api/fuel/set-full",
 		.method = HTTP_POST,
 		.handler = _fuel_set_full_handler
 	};
-	httpd_register_uri_handler(server, &fuel_set_full_uri);
+	REGISTER_URI(server, &fuel_set_full_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;

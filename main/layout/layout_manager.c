@@ -242,7 +242,7 @@ esp_err_t layout_manager_init(void) {
 		need_regen = true;
 		ESP_LOGI(TAG, "default.json not found — will generate");
 	} else {
-		char hdr[128];
+		char hdr[256];
 		size_t nr = fread(hdr, 1, sizeof(hdr) - 1, df);
 		fclose(df);
 		hdr[nr] = '\0';
@@ -606,6 +606,7 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	_save_signals(root);
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
+	if (!arr) { cJSON_Delete(root); return NULL; }
 	for (uint8_t i = 0; i < count; i++) {
 		widget_t *w = widgets[i];
 		if (!w || !w->to_json)

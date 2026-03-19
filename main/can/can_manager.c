@@ -30,6 +30,9 @@ static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
 static TaskHandle_t canTaskHandle = NULL;
 static volatile bool can_task_should_stop = false;
+static volatile bool s_can_task_running = false;
+
+#define CAN_TASK_PRIORITY 7
 
 /* Queue used to hand CAN frames from the TWAI RX task to the LVGL thread.
  * The LVGL thread drains this via can_process_queued_frames(), ensuring
@@ -49,6 +52,8 @@ extern void example_lvgl_unlock(void);
 static void can_receive_task(void *pvParameter) {
 	(void)pvParameter;
 	static uint32_t s_queue_drop_count = 0;
+
+	s_can_task_running = true;
 
 	while (!can_task_should_stop) {
 		twai_message_t message;
@@ -82,7 +87,7 @@ static void can_receive_task(void *pvParameter) {
 	}
 
 	ESP_LOGI(TAG, "CAN task exited gracefully");
-	can_task_should_stop = false;
+	s_can_task_running = false;
 	vTaskDelete(NULL);
 }
 
@@ -95,8 +100,10 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 		return;
 	}
 
-	/* Collect unique CAN IDs from the signal registry */
-	uint32_t ids[MAX_SIGNALS];
+	/* Collect unique CAN IDs from the signal registry.
+	 * 64 entries is plenty — standard CAN uses 11-bit IDs and typical
+	 * layouts have far fewer unique IDs than signals. */
+	uint32_t ids[64];
 	int count = 0;
 
 	for (uint16_t i = 0; i < sig_count; i++) {
@@ -109,8 +116,14 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 		for (int j = 0; j < count; j++) {
 			if (ids[j] == sid) { dup = true; break; }
 		}
-		if (!dup && count < MAX_SIGNALS)
+		if (!dup) {
+			if (count >= 64) {
+				ESP_LOGW(TAG, "Too many unique CAN IDs, accepting all");
+				*out_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+				return;
+			}
 			ids[count++] = sid;
+		}
 	}
 
 	if (count == 0) {
@@ -131,26 +144,44 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 	out_filter->single_filter = true;
 }
 
-/** Stop the CAN receive task gracefully.  Halts the TWAI peripheral first
- *  so twai_receive() returns immediately, then waits for the task to exit. */
+/** Stop the CAN receive task gracefully.  Sets the stop flag first so the
+ *  task checks it on next iteration, then halts the TWAI peripheral so
+ *  twai_receive() unblocks immediately.  Waits for the task to signal exit
+ *  via s_can_task_running rather than calling eTaskGetState() on a
+ *  potentially deleted handle. */
 static void _stop_can_task(void) {
 	if (canTaskHandle == NULL) return;
 
-	/* Stop TWAI first so twai_receive() unblocks with ESP_ERR_INVALID_STATE */
-	twai_stop();
+	/* Set stop flag BEFORE twai_stop() so the task exits cleanly on next
+	 * loop iteration instead of entering the error recovery path. */
 	can_task_should_stop = true;
+
+	/* Stop TWAI so twai_receive() unblocks with ESP_ERR_INVALID_STATE */
+	twai_stop();
 
 	/* Wait up to 500 ms for graceful exit */
 	for (int i = 0; i < 50; i++) {
-		if (eTaskGetState(canTaskHandle) == eDeleted)
+		if (!s_can_task_running)
 			break;
 		vTaskDelay(pdMS_TO_TICKS(10));
 	}
-	if (eTaskGetState(canTaskHandle) != eDeleted) {
+	if (s_can_task_running) {
 		ESP_LOGW(TAG, "CAN task did not exit gracefully, force-deleting");
 		vTaskDelete(canTaskHandle);
+		s_can_task_running = false;
 	}
 	canTaskHandle = NULL;
+	can_task_should_stop = false;
+}
+
+/** Map a bitrate index (0-3) to the corresponding TWAI timing config. */
+static twai_timing_config_t _bitrate_to_timing(uint8_t bitrate_code) {
+	switch (bitrate_code) {
+	case 0:  return (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
+	case 1:  return (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
+	case 3:  return (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
+	default: return (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
+	}
 }
 
 void reconfigure_can_filter(void) {
@@ -161,12 +192,16 @@ void reconfigure_can_filter(void) {
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
 	vTaskDelay(pdMS_TO_TICKS(50));
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK)
-		twai_start();
+	esp_err_t err = twai_driver_install(&g_config, &g_t_config, &f_config);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "twai_driver_install failed: %s", esp_err_to_name(err));
+		return;
+	}
+	twai_start();
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 7,
-							&canTaskHandle, 0);
+	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL,
+							CAN_TASK_PRIORITY, &canTaskHandle, 0);
 }
 
 void can_init(void) {
@@ -174,25 +209,9 @@ void can_init(void) {
 	uint8_t saved_bitrate = 2;
 	config_store_load_bitrate(&saved_bitrate);
 
-	switch (saved_bitrate) {
-	case 0:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 125 kbps");
-		break;
-	case 1:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 250 kbps");
-		break;
-	case 3:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 1 Mbps");
-		break;
-	default:
-	case 2:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 500 kbps");
-		break;
-	}
+	g_t_config = _bitrate_to_timing(saved_bitrate);
+	static const char *bitrate_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
+	ESP_LOGI(TAG, "CAN bitrate: %s", bitrate_labels[saved_bitrate > 3 ? 2 : saved_bitrate]);
 
 	build_twai_filter_from_signals(&f_config);
 
@@ -224,8 +243,8 @@ void can_start_task(void) {
 	else
 		ESP_LOGE(TAG, "TWAI start failed");
 
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 4,
-							&canTaskHandle, 0);
+	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL,
+							CAN_TASK_PRIORITY, &canTaskHandle, 0);
 	ESP_LOGI(TAG, "CAN receive task started");
 }
 
@@ -244,25 +263,9 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	_stop_can_task();
 
 	/* Apply new timing config */
-	switch (bitrate_index) {
-	case 0:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 125 kbps");
-		break;
-	case 1:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 250 kbps");
-		break;
-	case 3:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 1 Mbps");
-		break;
-	default:
-	case 2:
-		g_t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
-		ESP_LOGI(TAG, "CAN bitrate: 500 kbps");
-		break;
-	}
+	g_t_config = _bitrate_to_timing(bitrate_index);
+	static const char *bitrate_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
+	ESP_LOGI(TAG, "CAN bitrate: %s", bitrate_labels[bitrate_index > 3 ? 2 : bitrate_index]);
 
 	/* Uninstall, rebuild filter, reinstall (TWAI already stopped by _stop_can_task) */
 	vTaskDelay(pdMS_TO_TICKS(50));
@@ -283,9 +286,9 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	}
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	/* Recreate receive task at priority 7 (same as reconfigure_can_filter) */
+	/* Recreate receive task */
 	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
-								NULL, 7, &canTaskHandle, 0) != pdPASS) {
+								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0) != pdPASS) {
 		ESP_LOGE(TAG, "Failed to create CAN task after bitrate change");
 		canTaskHandle = NULL;
 	}

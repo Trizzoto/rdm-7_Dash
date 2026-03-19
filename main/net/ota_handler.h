@@ -19,7 +19,6 @@ typedef enum {
 } ota_status_t;
 
 // Function declarations
-esp_err_t _http_event_handler(esp_http_client_event_t *evt);
 void init_ota(void);
 void check_for_update(void);
 esp_err_t start_ota_update(void);

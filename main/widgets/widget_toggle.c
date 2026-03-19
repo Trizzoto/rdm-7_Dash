@@ -244,10 +244,10 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->tx_can_id = (uint32_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_on_dlc");
-    if (cJSON_IsNumber(item)) d->tx_on_dlc = (uint8_t)item->valueint;
+    if (cJSON_IsNumber(item)) { d->tx_on_dlc = (uint8_t)item->valueint; if (d->tx_on_dlc > 8) d->tx_on_dlc = 8; }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_off_dlc");
-    if (cJSON_IsNumber(item)) d->tx_off_dlc = (uint8_t)item->valueint;
+    if (cJSON_IsNumber(item)) { d->tx_off_dlc = (uint8_t)item->valueint; if (d->tx_off_dlc > 8) d->tx_off_dlc = 8; }
 
     /* TX data arrays */
     cJSON *arr;
@@ -288,11 +288,13 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 /* ── Destroy ────────────────────────────────────────────────────────────── */
 static void _toggle_destroy(widget_t *w) {
     if (!w) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (d && d->signal_index >= 0)
+        signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
     w->root = NULL;
-    toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (d) free(d);
     free(w);
 }

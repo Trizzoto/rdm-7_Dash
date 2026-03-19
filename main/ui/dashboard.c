@@ -156,7 +156,8 @@ loaded:
 	/* Register long-press config on signal-bound widgets */
 	_register_widget_long_press();
 
-	/* Start internal signal injection after signals are registered */
+	/* Stop any existing internal signal timer before (re-)starting */
+	signal_internal_stop();
 	signal_internal_start();
 
 	/* Subscribe brightness dimmer to its configured signal */

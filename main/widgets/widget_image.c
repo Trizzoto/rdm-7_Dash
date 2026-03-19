@@ -185,7 +185,7 @@ static void _image_destroy(widget_t *w) {
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (id) {
 		rdm_image_free(id->img_dsc);
-		heap_caps_free(id);
+		free(id);
 	}
 	free(w);
 }

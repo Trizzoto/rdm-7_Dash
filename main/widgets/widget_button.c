@@ -214,13 +214,13 @@ static void _button_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->tx_can_id = (uint32_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_press_dlc");
-    if (cJSON_IsNumber(item)) d->tx_press_dlc = (uint8_t)item->valueint;
+    if (cJSON_IsNumber(item)) { d->tx_press_dlc = (uint8_t)item->valueint; if (d->tx_press_dlc > 8) d->tx_press_dlc = 8; }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_press_data");
     _parse_byte_array(item, d->tx_press_data, 8);
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_release_dlc");
-    if (cJSON_IsNumber(item)) d->tx_release_dlc = (uint8_t)item->valueint;
+    if (cJSON_IsNumber(item)) { d->tx_release_dlc = (uint8_t)item->valueint; if (d->tx_release_dlc > 8) d->tx_release_dlc = 8; }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_release_data");
     _parse_byte_array(item, d->tx_release_data, 8);

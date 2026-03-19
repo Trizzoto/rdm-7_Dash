@@ -48,14 +48,8 @@
 
 // External declarations
 
-#define EXAMPLE_MAX_CHAR_SIZE 64
-
 // Define the LVGL mutex
 SemaphoreHandle_t lvgl_mux = NULL;
-
-#define LV_USE_ANIMATION 0
-#define LV_USE_SHADOW 0
-#define LV_USE_BLEND_MODES 0
 
 #define I2C_MASTER_SCL_IO 9 /*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO 8 /*!< GPIO number used for I2C master data  */
@@ -68,7 +62,7 @@ SemaphoreHandle_t lvgl_mux = NULL;
 #define I2C_MASTER_TIMEOUT_MS 1000
 
 #define GPIO_INPUT_IO_4 4
-#define GPIO_INPUT_PIN_SEL 1
+#define GPIO_INPUT_PIN_SEL (1ULL << GPIO_INPUT_IO_4)
 static const char *TAG = "main";
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -133,8 +127,6 @@ SemaphoreHandle_t sem_gui_ready;
 void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 				 lv_color_t *color_map);
 
-lv_disp_drv_t disp_drv;
-lv_disp_draw_buf_t draw_buf;
 
 /* CAN subsystem — TWAI hardware, receive task */
 #include "can/can_manager.h"
@@ -145,7 +137,7 @@ lv_disp_draw_buf_t draw_buf;
 #define LEDC_OUTPUT_IO 16 // Define the output GPIO
 #define LEDC_CHANNEL LEDC_CHANNEL_0
 #define LEDC_DUTY_RES LEDC_TIMER_13_BIT // Set duty resolution to 13 bits
-#define LEDC_FREQUENCY 9000				// Frequency in Hz
+#define LEDC_FREQUENCY 5000				// Frequency in Hz (matches device_settings.c)
 #define LEDC_DUTY (8191)
 
 static esp_err_t i2c_master_init(void) {
@@ -231,7 +223,7 @@ void example_lvgl_port_task(void *pvParameter) {
 
 		// Lock the mutex with shorter timeout for better responsiveness during
 		// OTA
-		if (example_lvgl_lock(pdMS_TO_TICKS(100))) {
+		if (example_lvgl_lock(100)) {
 			// Reset failure counter on successful lock
 			consecutive_failures = 0;
 
@@ -371,14 +363,21 @@ void fuel_sender_adc_init(void) {
 		.unit_id = FUEL_SENDER_ADC_UNIT,
 		.ulp_mode = ADC_ULP_MODE_DISABLE,
 	};
-	adc_oneshot_new_unit(&init_cfg, &s_fuel_sender_adc);
+	esp_err_t err = adc_oneshot_new_unit(&init_cfg, &s_fuel_sender_adc);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "ADC unit init failed: %s", esp_err_to_name(err));
+		return;
+	}
 
 	adc_oneshot_chan_cfg_t chan_cfg = {
 		.atten = FUEL_SENDER_ADC_ATTEN,
 		.bitwidth = FUEL_SENDER_ADC_BITS,
 	};
-	adc_oneshot_config_channel(s_fuel_sender_adc, FUEL_SENDER_ADC_CH,
+	err = adc_oneshot_config_channel(s_fuel_sender_adc, FUEL_SENDER_ADC_CH,
 							   &chan_cfg);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "ADC channel config failed: %s", esp_err_to_name(err));
+	}
 }
 
 /* Return the current GPIO 6 voltage (0.0 – 3.3 V) */

@@ -1027,6 +1027,9 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		bd->signal_index = signal_find_by_name(bd->signal_name);
 }
 static void _bar_destroy(widget_t *w) {
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (bd && bd->signal_index >= 0)
+		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);

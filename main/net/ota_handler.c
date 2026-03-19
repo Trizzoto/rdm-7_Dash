@@ -44,12 +44,12 @@ extern void example_lvgl_port_task(void *pvParameter);
 
 static const char *TAG = "ota_handler";
 
-static ota_status_t ota_status = OTA_IDLE;
+static volatile ota_status_t ota_status = OTA_IDLE;
 static char latest_version[16] = {0};
 static char download_url[256] = {0};
 static char *response_buffer = NULL;
 static int response_buffer_size = 0;
-static int ota_progress = 0;
+static volatile int ota_progress = 0;
 
 // Add new static variables for update information
 static int wifi_rssi = 0;
@@ -99,15 +99,19 @@ static esp_err_t validate_image_header(const esp_app_desc_t *new_app_info) {
     */
 }
 
-esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
+static esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
         case HTTP_EVENT_ON_DATA:
             if (!esp_http_client_is_chunked_response(evt->client)) {
-                response_buffer = realloc(response_buffer, response_buffer_size + evt->data_len + 1);
-                if (response_buffer == NULL) {
+                char *temp = realloc(response_buffer, response_buffer_size + evt->data_len + 1);
+                if (temp == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate memory");
+                    free(response_buffer);
+                    response_buffer = NULL;
+                    response_buffer_size = 0;
                     return ESP_FAIL;
                 }
+                response_buffer = temp;
                 memcpy(response_buffer + response_buffer_size, evt->data, evt->data_len);
                 response_buffer_size += evt->data_len;
                 response_buffer[response_buffer_size] = '\0';

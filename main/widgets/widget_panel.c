@@ -33,7 +33,7 @@ typedef struct {
 	double  final_value;
 } panel_update_t;
 
-uint64_t last_panel_can_received[8] = {0};
+static uint64_t last_panel_can_received[8] = {0};
 
 /* Shared LVGL styles — initialised by init_styles() / init_common_style() */
 lv_style_t box_style;
@@ -754,6 +754,9 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 }
 static void _panel_destroy(widget_t *w) {
 	if (w) {
+		panel_data_t *pd = (panel_data_t *)w->type_data;
+		if (pd && pd->signal_index >= 0)
+			signal_unsubscribe(pd->signal_index, _panel_on_signal, w);
 		widget_rules_free(w);
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);

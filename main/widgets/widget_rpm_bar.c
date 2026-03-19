@@ -1350,6 +1350,9 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 
 static void _rpm_bar_destroy(widget_t *w) {
 	if (w) {
+		rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
+		if (rbd && rbd->signal_index >= 0)
+			signal_unsubscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 		widget_rules_free(w);
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);

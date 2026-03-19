@@ -31,6 +31,7 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (!md || !w->root || !lv_obj_is_valid(w->root)) return;
+	if (!md->meter || !md->needle) return;
 	if (is_stale) {
 		lv_meter_set_indicator_value(md->meter, md->needle, md->min);
 		return;
@@ -48,14 +49,14 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		return;
 	}
 
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_create, parent=%p",
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_create, parent=%p",
 			 (void *)parent);
 	lv_obj_t *m = lv_meter_create(parent);
 	if (!m) {
 		ESP_LOGE(TAG, "_meter_create: lv_meter_create failed");
 		return;
 	}
-	ESP_LOGI(TAG, "_meter_create: meter created OK, m=%p", (void *)m);
+	ESP_LOGD(TAG, "_meter_create: meter created OK, m=%p", (void *)m);
 
 	lv_obj_set_size(m, (lv_coord_t)w->w, (lv_coord_t)w->h);
 	lv_obj_set_align(m, LV_ALIGN_CENTER);
@@ -79,30 +80,30 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		md->bg_img_dsc = rdm_image_load(md->bg_image_name);
 		if (md->bg_img_dsc) {
 			lv_obj_set_style_bg_img_src(m, md->bg_img_dsc, LV_PART_MAIN | LV_STATE_DEFAULT);
-			ESP_LOGI(TAG, "Meter background image '%s' loaded", md->bg_image_name);
+			ESP_LOGD(TAG, "Meter background image '%s' loaded", md->bg_image_name);
 		}
 	}
 
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_add_scale");
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_add_scale");
 	lv_meter_scale_t *scale = lv_meter_add_scale(m);
 	uint32_t angle_range =
 		(360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
 	if (angle_range == 0 && md->start_angle != md->end_angle) {
 		angle_range = 360;
 	}
-	ESP_LOGI(TAG, "_meter_create: angle_range=%u start=%d end=%d min=%d max=%d",
+	ESP_LOGD(TAG, "_meter_create: angle_range=%u start=%d end=%d min=%d max=%d",
 			 (unsigned)angle_range, (int)md->start_angle, (int)md->end_angle,
 			 (int)md->min, (int)md->max);
 
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_range");
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_set_scale_range");
 	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range,
 							 (int32_t)md->start_angle);
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_ticks");
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_set_scale_ticks");
 	if (md->minor_tick_count < 2) md->minor_tick_count = 2;
 	if (md->major_tick_every < 1) md->major_tick_every = 1;
 	lv_meter_set_scale_ticks(m, scale, md->minor_tick_count, md->minor_tick_width,
 							 md->minor_tick_length, md->minor_tick_color);
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_major_ticks");
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_set_scale_major_ticks");
 	lv_meter_set_scale_major_ticks(m, scale, md->major_tick_every, md->major_tick_width,
 								   md->major_tick_length, md->major_tick_color, md->label_gap);
 
@@ -132,9 +133,9 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
 				md->needle_scale = ns;
 				needle_target_scale = ns;
-				ESP_LOGI(TAG, "_meter_create: needle scale offset=%d", md->needle_angle_offset);
+				ESP_LOGD(TAG, "_meter_create: needle scale offset=%d", md->needle_angle_offset);
 			}
-			ESP_LOGI(TAG, "_meter_create: using needle image '%s' pivot(%d,%d)",
+			ESP_LOGD(TAG, "_meter_create: using needle image '%s' pivot(%d,%d)",
 					 md->needle_image_name, md->needle_pivot_x, md->needle_pivot_y);
 			needle = lv_meter_add_needle_img(m, needle_target_scale, md->needle_img_dsc,
 											  md->needle_pivot_x, md->needle_pivot_y);
@@ -143,11 +144,11 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 			needle = lv_meter_add_needle_line(m, scale, md->needle_width, md->needle_color, md->needle_r_mod);
 		}
 	} else {
-		ESP_LOGI(TAG, "_meter_create: using line needle");
+		ESP_LOGD(TAG, "_meter_create: using line needle");
 		needle = lv_meter_add_needle_line(m, scale, md->needle_width, md->needle_color, md->needle_r_mod);
 	}
 
-	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_indicator_value");
+	ESP_LOGD(TAG, "_meter_create: calling lv_meter_set_indicator_value");
 	md->meter = m;
 	md->scale = scale;
 	md->needle = needle;
@@ -160,7 +161,7 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	if (md->signal_index >= 0)
 		signal_subscribe(md->signal_index, _meter_on_signal, w);
 
-	ESP_LOGI(TAG, "_meter_create: DONE");
+	ESP_LOGD(TAG, "_meter_create: DONE");
 }
 
 static void _meter_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -337,11 +338,13 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 static void _meter_destroy(widget_t *w) {
 	if (!w)
 		return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (md && md->signal_index >= 0)
+		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
-	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (md) {
 		rdm_image_free(md->needle_img_dsc);
 		rdm_image_free(md->bg_img_dsc);

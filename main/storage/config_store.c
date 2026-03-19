@@ -24,14 +24,21 @@ esp_err_t config_store_save_dimmer(const brightness_dimmer_config_t *cfg)
     nvs_handle_t handle;
     if (nvs_open(NS_DIMMER, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
 
-    nvs_set_str(handle, "sig_name", cfg->signal_name);
-    nvs_set_u16(handle, "thresh",   (uint16_t)(cfg->threshold * 100.0f));
-    nvs_set_u8 (handle, "is_mom",   cfg->is_momentary ? 1 : 0);
-    nvs_set_u8 (handle, "invert",   cfg->invert        ? 1 : 0);
-    nvs_set_u8 (handle, "dim_br",   cfg->dim_brightness);
-    nvs_set_u8 (handle, "enabled",  cfg->enabled        ? 1 : 0);
+    esp_err_t err;
+    err = nvs_set_str(handle, "sig_name", cfg->signal_name);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set sig_name failed"); nvs_close(handle); return err; }
+    err = nvs_set_u16(handle, "thresh",   (uint16_t)(cfg->threshold * 100.0f));
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set thresh failed"); nvs_close(handle); return err; }
+    err = nvs_set_u8 (handle, "is_mom",   cfg->is_momentary ? 1 : 0);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set is_mom failed"); nvs_close(handle); return err; }
+    err = nvs_set_u8 (handle, "invert",   cfg->invert        ? 1 : 0);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set invert failed"); nvs_close(handle); return err; }
+    err = nvs_set_u8 (handle, "dim_br",   cfg->dim_brightness);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set dim_br failed"); nvs_close(handle); return err; }
+    err = nvs_set_u8 (handle, "enabled",  cfg->enabled        ? 1 : 0);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS set enabled failed"); nvs_close(handle); return err; }
 
-    esp_err_t err = nvs_commit(handle);
+    err = nvs_commit(handle);
     nvs_close(handle);
     return err;
 }
@@ -73,7 +80,7 @@ esp_err_t config_store_load_bitrate(uint8_t *bitrate)
 {
     if (!bitrate) return ESP_ERR_INVALID_ARG;
     nvs_handle_t handle;
-    if (nvs_open(NS_CAN, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
+    if (nvs_open(NS_CAN, NVS_READONLY, &handle) != ESP_OK) return ESP_FAIL;
     nvs_get_u8(handle, "can_bitrate", bitrate); /* keeps default if key absent */
     nvs_close(handle);
     return ESP_OK;

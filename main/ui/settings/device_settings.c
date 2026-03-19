@@ -33,6 +33,8 @@ extern char* connected_ssid;
 // Global WiFi status labels for updating
 static lv_obj_t* wifi_status_label = NULL;
 static lv_obj_t* web_status_label = NULL;
+static lv_timer_t *s_wifi_status_timer = NULL;
+static lv_obj_t* wifi_loading_dialog = NULL;
 
 // Function to refresh WiFi status displays
 static void refresh_wifi_status(void) {
@@ -101,6 +103,7 @@ static bool s_dimmer_toggle_state = false; // Toggle mode state
 static int16_t s_dimmer_signal_idx = -1;   // Cached signal index
 static lv_timer_t* brightness_preview_timer = NULL; // Timer for brightness preview demo
 static uint8_t saved_brightness_before_preview = 100; // Store brightness before preview
+static bool s_brightness_previewing = false; // Guard against capturing preview value as saved
 
 static lv_obj_t* device_settings_return_screen = NULL; // Screen to return to when closing device settings
 
@@ -272,7 +275,7 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_set_style_bg_opa(overlay, LV_OPA_50, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(overlay, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(overlay, close_dimmer_popup_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(overlay, close_dimmer_popup_cb, LV_EVENT_CLICKED, overlay);
 
     // Create popup container
     lv_obj_t* popup = lv_obj_create(overlay);
@@ -434,6 +437,7 @@ static void brightness_preview_restore_cb(lv_timer_t * timer) {
         lv_timer_del(brightness_preview_timer);
         brightness_preview_timer = NULL;
     }
+    s_brightness_previewing = false;
 }
 
 static void brightness_set_slider_cb(lv_event_t * e) {
@@ -447,9 +451,12 @@ static void brightness_set_slider_cb(lv_event_t * e) {
         lv_timer_del(brightness_preview_timer);
         brightness_preview_timer = NULL;
     }
-    
-    // Save current brightness before preview
-    saved_brightness_before_preview = current_brightness;
+
+    // Save current brightness before preview (only on first drag)
+    if (!s_brightness_previewing) {
+        saved_brightness_before_preview = current_brightness;
+        s_brightness_previewing = true;
+    }
     
     // Set brightness to preview value
     set_display_brightness(val);
@@ -523,6 +530,18 @@ static void save_dimmer_config_cb(lv_event_t * e) {
 
 // Close menu callback
 static void close_menu_event_cb(lv_event_t * e) {
+    // Delete WiFi status timer to prevent leak
+    if (s_wifi_status_timer) {
+        lv_timer_del(s_wifi_status_timer);
+        s_wifi_status_timer = NULL;
+    }
+
+    // NULL out all static LVGL pointers (screen is about to be deleted)
+    wifi_status_label = NULL;
+    web_status_label = NULL;
+    brightness_label = NULL;
+    wifi_loading_dialog = NULL;
+
     lv_obj_t * old_screen = (lv_obj_t *)lv_event_get_user_data(e);
     if (old_screen) {
         lv_scr_load(old_screen);
@@ -539,9 +558,6 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
     /* Apply the new bitrate (stops task, reinits TWAI, restarts task) */
     can_change_bitrate((uint8_t)selected);
 }
-
-// Loading dialog for WiFi
-static lv_obj_t* wifi_loading_dialog = NULL;
 
 // Timer callback to show WiFi screen after loading dialog
 static void show_wifi_screen_delayed(lv_timer_t* timer) {
@@ -560,6 +576,9 @@ static void show_wifi_screen_delayed(lv_timer_t* timer) {
 
 // WiFi button callback
 static void wifi_btn_event_cb(lv_event_t *e) {
+    // Guard against double-tap while loading dialog is already showing
+    if (wifi_loading_dialog && lv_obj_is_valid(wifi_loading_dialog)) return;
+
     // Create loading dialog immediately
     wifi_loading_dialog = lv_obj_create(lv_scr_act());
     lv_obj_set_size(wifi_loading_dialog, 300, 150);
@@ -596,44 +615,19 @@ static void wifi_btn_event_cb(lv_event_t *e) {
     lv_timer_create(show_wifi_screen_delayed, 100, NULL);
 }
 
+// OTA check task — runs off the LVGL thread so the UI stays responsive
+static void _ota_check_task(void *param) {
+    check_for_update();
+    vTaskDelete(NULL);
+}
+
 // Update button callback
 static void update_btn_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    
+
     ESP_LOGI("OTA", "Check for updates button clicked");
-    
-    // First check for updates
-    check_for_update();
-    
-    // Check the result and show appropriate dialog
-    ota_status_t status = get_ota_status();
-    switch (status) {
-        case OTA_UPDATE_AVAILABLE: {
-            ESP_LOGI("OTA", "Update available, showing dialog");
-            
-            // Get update information from OTA handler
-            const char* current_version = FIRMWARE_VERSION;
-            const char* new_version = get_latest_version();
-            const char* update_type = get_update_type_str();
-            float file_size_mb = get_update_file_size_mb();
-            const char* release_notes = get_release_notes();
-            
-            // Show the OTA update dialog
-            show_ota_update_dialog(current_version, new_version, update_type, file_size_mb, release_notes);
-            break;
-        }
-        case OTA_NO_UPDATE_AVAILABLE:
-            ESP_LOGI("OTA", "No update available");
-            // Could show a "No updates available" message
-            break;
-        case OTA_UPDATE_FAILED:
-            ESP_LOGE("OTA", "Update check failed");
-            // Could show an error message
-            break;
-        default:
-            ESP_LOGW("OTA", "Unexpected OTA status: %d", status);
-            break;
-    }
+
+    xTaskCreate(_ota_check_task, "ota_chk", 8192, NULL, 3, NULL);
 }
 
 /* ── Factory Reset ────────────────────────────────────────────────────── */
@@ -646,8 +640,6 @@ static void _factory_reset_confirm_cb(lv_event_t *e) {
     if (strcmp(btn_txt, "RESET") == 0) {
         ESP_LOGW("RESET", "User confirmed factory reset");
         config_store_factory_reset();
-        /* Brief delay so log output flushes before reboot */
-        vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     }
     /* Cancel — just close the dialog */
@@ -1028,7 +1020,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_dropdown_set_selected(bitrate_dd, saved_bitrate);
 
     // Create timer to refresh WiFi status every 2 seconds
-    lv_timer_create(refresh_wifi_status_timer_cb, 2000, NULL);
+    if (s_wifi_status_timer) {
+        lv_timer_del(s_wifi_status_timer);
+    }
+    s_wifi_status_timer = lv_timer_create(refresh_wifi_status_timer_cb, 2000, NULL);
 
     lv_scr_load(settings_screen);
 }

@@ -110,6 +110,18 @@ uint16_t signal_get_count(void);
 bool signal_subscribe(int16_t signal_index, signal_update_cb_t cb,
                       void *user_data);
 
+/**
+ * Remove a previously registered subscription.
+ *
+ * Matches on both @p cb and @p user_data (same pair passed to
+ * signal_subscribe).  Must be called before the user_data pointer is freed
+ * to prevent use-after-free in signal callbacks.
+ *
+ * @return true if a matching subscription was found and removed.
+ */
+bool signal_unsubscribe(int16_t signal_index, signal_update_cb_t cb,
+                        void *user_data);
+
 /* ── Dispatch (call from LVGL task) ────────────────────────────────────── */
 
 /**

@@ -1,4 +1,5 @@
 #include "sd_manager.h"
+#include <stdint.h>
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include "esp_log.h"
@@ -82,8 +83,8 @@ esp_err_t sd_manager_get_info(size_t *total, size_t *used, size_t *free_out) {
 
 	uint64_t used_bytes = (total_bytes > free_bytes) ? (total_bytes - free_bytes) : 0;
 
-	if (total)    *total    = (size_t)total_bytes;
-	if (used)     *used     = (size_t)used_bytes;
-	if (free_out) *free_out = (size_t)free_bytes;
+	if (total)    *total    = (total_bytes > SIZE_MAX) ? SIZE_MAX : (size_t)total_bytes;
+	if (used)     *used     = (used_bytes  > SIZE_MAX) ? SIZE_MAX : (size_t)used_bytes;
+	if (free_out) *free_out = (free_bytes  > SIZE_MAX) ? SIZE_MAX : (size_t)free_bytes;
 	return ESP_OK;
 }

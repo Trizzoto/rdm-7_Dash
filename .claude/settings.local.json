@@ -1,36 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(idf.py build:*)",
-      "Bash(cmd:*)",
-      "Bash(xargs head:*)",
-      "Bash(git checkout:*)",
-      "Bash(grep:*)",
-      "Bash(find:*)",
-      "Bash(git:*)",
-      "Bash(for f in main/widgets/widget_panel.c main/widgets/widget_bar.c main/widgets/widget_rpm_bar.c)",
-      "Bash(do echo \"=== $f ===\")",
-      "Read(//c/Users/ruuva/workspace/RDM-7_Dash/**)",
-      "Bash(done)",
-      "Bash(ls:*)",
-      "Bash(node:*)",
-      "Bash(cd \"C:/Users/ruuva/workspace/RDM-7_Dash\" && npx @anthropic-ai/claude-code@latest skill add anthropics/claude-code-skill-frontend-design)",
-      "Bash(claude skill:*)",
-      "Bash(claude plugin:*)",
-      "Bash(base64 -w0 \"main/web/RDM logo small.png\" | wc -c)",
-      "Bash(base64 -w0 \"main/web/RDM logo small.png\")",
-      "Read(//tmp/**)",
-      "Bash(cd \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\" && python -c \"\nimport re\nwith open\\('main/web/index.html', 'r', encoding='utf-8'\\) as f:\n    content = f.read\\(\\)\n\nmatches = list\\(re.finditer\\(r'class=\\\\\"title\\\\\"', content\\)\\)\nfor m in matches:\n    start = max\\(0, m.start\\(\\)-20\\)\n    end = min\\(len\\(content\\), m.end\\(\\)+100\\)\n    print\\(f'Position {m.start\\(\\)}: ...{repr\\(content[start:end]\\)}...'\\)\n\")",
-      "Bash(cd \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\" && python _transform.py)",
-      "Bash(cd \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\" && cp data/web/index.html main/web/index.html)",
-      "Bash(cd \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\" && python -c \"\nimport re\nwith open\\('main/web/index.html', 'r', encoding='utf-8'\\) as f:\n    content = f.read\\(\\)\nmatches = list\\(re.finditer\\(r'data:image/png;base64,\\([A-Za-z0-9+/=]+\\)', content\\)\\)\nfor i, m in enumerate\\(matches\\):\n    print\\(f'Match {i}: position {m.start\\(\\)}, b64 length {len\\(m.group\\(1\\)\\)}'\\)\n\")",
-      "Bash(python _transform.py)",
-      "WebFetch(domain:192.168.4.48)",
-      "Bash(start \"\" \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\main\\\\web\\\\index.html\")",
-      "WebFetch(domain:)",
-      "Bash(cd C:/Users/ruuva/workspace/RDM-7_Dash && python -m http.server 8888)",
-      "Bash(find \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\main\\\\ui\\\\images\" -name \"*.c\" -type f | head -5 | xargs -I {} wc -l {})",
-      "Bash(du -sh \"C:/Users/ruuva/workspace/RDM-7_Dash/main/ui/images\"/* | sort -h | tail -5)"
+      "*",
+      "WebSearch"
     ]
   }
 }

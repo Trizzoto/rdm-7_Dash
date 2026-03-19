@@ -2070,7 +2070,7 @@
                 <button onclick="closeStorageManager()" style="background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer;">&times;</button>
             </div>
             <p style="margin:0 0 16px; font-size:11px; color:var(--text-muted);">Files must be on internal storage to be used by the dashboard. Use SD card for backup and transfer.</p>
-            <div id="storageModalBody" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; min-height:200px;">
+            <div id="storageModalBody" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; min-height:200px; max-height:calc(90vh - 120px); overflow-y:auto;">
                 <div style="text-align:center; padding:40px; color:var(--text-muted);">Loading...</div>
             </div>
         </div>
@@ -4566,8 +4566,8 @@
                     const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                     w.config.bar_low = mn;
                     w.config.bar_high = mx;
-                    w.config.bar_low_color = 0x0000FF;
-                    w.config.bar_high_color = 0xFF0000;
+                    w.config.bar_low_color = rgb888to565(0x0000FF);
+                    w.config.bar_high_color = rgb888to565(0xFF0000);
                 }
                 /* Clean up web-editor-only fields */
                 delete w.config.bar_alerts_enabled;
@@ -4601,6 +4601,15 @@
                     });
                 }
             });
+            /* Convert web is_little_endian (bool) back to firmware endian (int) */
+            if (payload.signals) {
+                payload.signals.forEach(s => {
+                    if ('is_little_endian' in s) {
+                        s.endian = s.is_little_endian ? 1 : 0;
+                        delete s.is_little_endian;
+                    }
+                });
+            }
             return payload;
         }
 
@@ -5523,6 +5532,7 @@
             if (currentLayout.widgets[selectedIndex].type === 'meter' && (field === 'w' || field === 'h')) {
                 updateInspector();
             }
+            pushHistory();
             if (preview && document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
@@ -5550,6 +5560,7 @@
                 if (hasChildren) updateInspector();
             }
 
+            pushHistory();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
@@ -5610,7 +5621,12 @@
             img.onload = () => {
                 const origW = img.width, origH = img.height;
                 const aspect = origW / origH;
-                const suggestedName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+                /* If widget already has an image assigned to this field, default to same name (replace) */
+                let existingName = '';
+                if (selectedIndex >= 0 && currentLayout.widgets[selectedIndex]) {
+                    existingName = currentLayout.widgets[selectedIndex].config[fieldName] || '';
+                }
+                const suggestedName = existingName || file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
 
                 /* Build modal */
                 const overlay = document.createElement('div');
@@ -5686,6 +5702,11 @@
 
             try {
                 const rdmimg = convertImageToRDMIMG(img, targetW, targetH);
+
+                /* Delete existing image first to free space for the replacement */
+                statusEl.textContent = `Replacing ${name}...`;
+                try { await fetch(`/api/image/delete?name=${encodeURIComponent(name)}`, { method: 'POST' }); } catch(e) {}
+
                 statusEl.textContent = `Uploading ${name} (${(rdmimg.byteLength / 1024).toFixed(1)} KB)...`;
 
                 const resp = await fetch(`/api/image/upload?name=${encodeURIComponent(name)}`, {
@@ -5868,7 +5889,8 @@
 
         function addWidget(type) {
             /* Enforce singleton widget types */
-            if (def = WIDGET_DEFS[type], def.singleton && currentLayout.widgets.some(w => w.type === type)) {
+            const def = WIDGET_DEFS[type];
+            if (def.singleton && currentLayout.widgets.some(w => w.type === type)) {
                 updateStatus(`Only one ${def.displayName || type} allowed per layout`, true);
                 return;
             }
@@ -6429,6 +6451,13 @@
                 /* Snapshot raw device JSON BEFORE any transforms for accurate poll comparison */
                 const rawDeviceSnap = JSON.stringify(currentLayout);
                 if (!currentLayout.signals) currentLayout.signals = [];
+                /* Convert firmware endian (int) to web is_little_endian (bool) */
+                currentLayout.signals.forEach(s => {
+                    if ('endian' in s) {
+                        s.is_little_endian = s.endian === 1;
+                        delete s.endian;
+                    }
+                });
                 /* Bridge firmware→web */
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
@@ -6632,7 +6661,7 @@
                     } catch(e) {}
                 }
 
-                let leftHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px;">
+                let leftHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; overflow-y:auto; max-height:calc(90vh - 160px);">
                     <div style="font-size:12px; font-weight:600; margin-bottom:4px;">Internal Storage</div>
                     ${_usageBarHTML(storage.used, storage.total)}
                     <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Layouts</div>
@@ -6649,7 +6678,7 @@
                         No SD card detected
                     </div>`;
                 } else {
-                    rightHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px;">
+                    rightHTML = `<div style="border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; overflow-y:auto; max-height:calc(90vh - 160px);">
                         <div style="font-size:12px; font-weight:600; margin-bottom:4px;">SD Card</div>
                         ${_usageBarHTML(storage.sd.used, storage.sd.total)}
                         <div style="font-size:11px; font-weight:600; margin:8px 0 4px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em;">Layouts</div>
@@ -6925,6 +6954,11 @@
                         document.body.appendChild(statusEl);
                         try {
                             const rdmimg = convertImageToRDMIMG(tmpImg, targetW, targetH);
+
+                            /* Delete existing image first to free space for the replacement */
+                            statusEl.textContent = `Replacing ${name}...`;
+                            try { await fetch(`/api/image/delete?name=${encodeURIComponent(name)}`, { method: 'POST' }); } catch(e) {}
+
                             statusEl.textContent = `Uploading ${name} (${(rdmimg.byteLength / 1024).toFixed(1)} KB)...`;
                             const upResp = await fetch(`/api/image/upload?name=${encodeURIComponent(name)}`, {
                                 method: 'POST',
@@ -7266,9 +7300,35 @@
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
                 if (!currentLayout.signals) currentLayout.signals = [];
+                /* Convert firmware endian (int) to web is_little_endian (bool) */
+                currentLayout.signals.forEach(s => {
+                    if ('endian' in s) {
+                        s.is_little_endian = s.endian === 1;
+                        delete s.endian;
+                    }
+                });
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
+                    }
+                    /* Convert TX data byte arrays to comma-separated strings for editor */
+                    if (w.config) {
+                        ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
+                            if (Array.isArray(w.config[key])) {
+                                w.config[key] = w.config[key].join(',');
+                            }
+                        });
+                    }
+                    /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
+                    if (w.config && w.config.rules) {
+                        w.config.rules.forEach(rule => {
+                            if (Array.isArray(rule.overrides)) {
+                                const obj = {};
+                                rule.overrides.forEach(ov => { if (ov.field) obj[ov.field] = ov.value; });
+                                rule.overrides = obj;
+                            }
+                            if (!rule.overrides) rule.overrides = {};
+                        });
                     }
                     if (w.type === 'bar' && w.config) {
                         const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
@@ -7341,9 +7401,35 @@
                         ? currentLayout.widgets[selectedIndex].id : null;
                     currentLayout = deviceLayout;
                     if (!currentLayout.signals) currentLayout.signals = [];
+                    /* Convert firmware endian (int) to web is_little_endian (bool) */
+                    currentLayout.signals.forEach(s => {
+                        if ('endian' in s) {
+                            s.is_little_endian = s.endian === 1;
+                            delete s.endian;
+                        }
+                    });
                     (currentLayout.widgets || []).forEach(w => {
                         if (w.config && w.config.signal_name && !w.signal) {
                             w.signal = w.config.signal_name;
+                        }
+                        /* Convert TX data byte arrays to comma-separated strings for editor */
+                        if (w.config) {
+                            ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
+                                if (Array.isArray(w.config[key])) {
+                                    w.config[key] = w.config[key].join(',');
+                                }
+                            });
+                        }
+                        /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
+                        if (w.config && w.config.rules) {
+                            w.config.rules.forEach(rule => {
+                                if (Array.isArray(rule.overrides)) {
+                                    const obj = {};
+                                    rule.overrides.forEach(ov => { if (ov.field) obj[ov.field] = ov.value; });
+                                    rule.overrides = obj;
+                                }
+                                if (!rule.overrides) rule.overrides = {};
+                            });
                         }
                         if (w.type === 'bar' && w.config) {
                             const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;

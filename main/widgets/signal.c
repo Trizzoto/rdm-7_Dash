@@ -142,6 +142,32 @@ bool signal_subscribe(int16_t signal_index, signal_update_cb_t cb,
     return true;
 }
 
+bool signal_unsubscribe(int16_t signal_index, signal_update_cb_t cb,
+                        void *user_data)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) {
+        return false;
+    }
+
+    signal_t *sig = &s_signals[signal_index];
+
+    for (uint8_t i = 0; i < sig->subscriber_count; i++) {
+        if (sig->subscribers[i].cb == cb &&
+            sig->subscribers[i].user_data == user_data) {
+            /* Shift remaining subscribers down */
+            for (uint8_t j = i; j < sig->subscriber_count - 1; j++) {
+                sig->subscribers[j] = sig->subscribers[j + 1];
+            }
+            sig->subscriber_count--;
+            memset(&sig->subscribers[sig->subscriber_count], 0,
+                   sizeof(signal_subscriber_t));
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ── Internal: push to all subscribers ─────────────────────────────────── */
 
 static void notify_subscribers(signal_t *sig)
