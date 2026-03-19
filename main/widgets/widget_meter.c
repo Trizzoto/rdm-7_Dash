@@ -98,6 +98,8 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range,
 							 (int32_t)md->start_angle);
 	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_ticks");
+	if (md->minor_tick_count < 2) md->minor_tick_count = 2;
+	if (md->major_tick_every < 1) md->major_tick_every = 1;
 	lv_meter_set_scale_ticks(m, scale, md->minor_tick_count, md->minor_tick_width,
 							 md->minor_tick_length, md->minor_tick_color);
 	ESP_LOGI(TAG, "_meter_create: calling lv_meter_set_scale_major_ticks");
@@ -276,8 +278,10 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	cJSON *ap;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_count");
 	if (cJSON_IsNumber(ap)) md->minor_tick_count = (uint8_t)ap->valueint;
+	if (md->minor_tick_count < 2) md->minor_tick_count = 2;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_every");
 	if (cJSON_IsNumber(ap)) md->major_tick_every = (uint8_t)ap->valueint;
+	if (md->major_tick_every < 1) md->major_tick_every = 1;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_width");
 	if (cJSON_IsNumber(ap)) md->minor_tick_width = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_length");
@@ -407,9 +411,11 @@ static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	/* Re-apply tick colors via scale API (not style-based in LVGL v8) */
 	if (ticks_changed || count == 0) {
 		if (md->scale) {
-			lv_meter_set_scale_ticks(m, md->scale, md->minor_tick_count,
+			uint8_t safe_tick_count = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
+			uint8_t safe_major_every = md->major_tick_every < 1 ? 1 : md->major_tick_every;
+			lv_meter_set_scale_ticks(m, md->scale, safe_tick_count,
 				md->minor_tick_width, md->minor_tick_length, minor_tick_c);
-			lv_meter_set_scale_major_ticks(m, md->scale, md->major_tick_every,
+			lv_meter_set_scale_major_ticks(m, md->scale, safe_major_every,
 				md->major_tick_width, md->major_tick_length, major_tick_c, md->label_gap);
 			lv_obj_invalidate(m);
 		}

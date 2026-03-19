@@ -1,7 +1,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#define FIRMWARE_VERSION "1.0.4"
-#define FIRMWARE_NAME "esp32-firmware"
+#define FIRMWARE_VERSION "1.1.0"
+#define FIRMWARE_NAME "RDM-7_Dash"
 
 #endif /* VERSION_H */

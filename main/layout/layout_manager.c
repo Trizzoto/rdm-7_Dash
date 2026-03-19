@@ -19,6 +19,7 @@
 #include "widget_rules.h"
 
 #include "signal.h"
+#include "signal_internal.h"
 
 #include "cJSON.h"
 #include "esp_littlefs.h"
@@ -269,7 +270,15 @@ esp_err_t layout_manager_init(void) {
 		/* Also regenerate the RPM meter test layout to ensure it's up to date
 		 */
 		generate_rpm_meter_test_layout();
-		layout_manager_set_active("default");
+
+		/* Only set active to "default" if no layout has been chosen yet.
+		 * Otherwise the user's last-used layout would be overwritten on
+		 * every boot whenever the schema version bumps. */
+		char cur[LAYOUT_MAX_NAME] = {0};
+		if (layout_manager_get_active(cur, sizeof(cur)) != ESP_OK
+		    || strcmp(cur, "default") == 0) {
+			layout_manager_set_active("default");
+		}
 	}
 
 	return ESP_OK;
@@ -335,6 +344,26 @@ static void _load_signals(const cJSON *root) {
 			ESP_LOGW(TAG, "Failed to register signal '%s'",
 					 name_item->valuestring);
 		}
+
+		/* Check for fuel_cal object on FUEL_SENDER_V signal */
+		if (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0) {
+			const cJSON *fc = cJSON_GetObjectItemCaseSensitive(sj, "fuel_cal");
+			if (cJSON_IsObject(fc)) {
+				float empty_v = 0.5f, full_v = 3.0f, full_val = 100.0f;
+				bool en = false;
+				const cJSON *fci;
+				fci = cJSON_GetObjectItemCaseSensitive(fc, "empty_v");
+				if (cJSON_IsNumber(fci)) empty_v = (float)fci->valuedouble;
+				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_v");
+				if (cJSON_IsNumber(fci)) full_v = (float)fci->valuedouble;
+				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_value");
+				if (cJSON_IsNumber(fci)) full_val = (float)fci->valuedouble;
+				fci = cJSON_GetObjectItemCaseSensitive(fc, "enabled");
+				if (cJSON_IsBool(fci)) en = cJSON_IsTrue(fci);
+				signal_internal_set_fuel_cal(empty_v, full_v, full_val, en);
+				ESP_LOGI(TAG, "Loaded fuel_cal from FUEL_SENDER_V signal");
+			}
+		}
 	}
 
 	ESP_LOGI(TAG, "_load_signals: registered %u signals",
@@ -368,6 +397,20 @@ static void _save_signals(cJSON *root) {
 		cJSON_AddNumberToObject(sj, "offset", sig->offset);
 		cJSON_AddBoolToObject(sj, "is_signed", sig->is_signed);
 		cJSON_AddNumberToObject(sj, "endian", sig->endian);
+
+		/* Attach fuel calibration to FUEL_SENDER_V signal */
+		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {
+			fuel_cal_config_t fc;
+			signal_internal_get_fuel_cal(&fc);
+			cJSON *fc_obj = cJSON_AddObjectToObject(sj, "fuel_cal");
+			if (fc_obj) {
+				cJSON_AddNumberToObject(fc_obj, "empty_v", fc.empty_v);
+				cJSON_AddNumberToObject(fc_obj, "full_v", fc.full_v);
+				cJSON_AddNumberToObject(fc_obj, "full_value", fc.full_value);
+				cJSON_AddBoolToObject(fc_obj, "enabled", fc.enabled);
+			}
+		}
+
 		cJSON_AddItemToArray(arr, sj);
 	}
 }

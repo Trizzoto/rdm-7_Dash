@@ -152,19 +152,24 @@ static void _text_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (!td) return;
 
-	/* Restore base value */
+	/* Restore base values */
 	lv_color_t c = td->text_color;
+	const char *font_name = td->font;
 
 	/* Overlay active overrides */
 	for (uint8_t i = 0; i < count; i++) {
 		const rule_override_t *o = &ov[i];
 		if (strcmp(o->field_name, "text_color") == 0 && o->value_type == RULE_VAL_COLOR) {
 			c.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "font") == 0 && o->value_type == RULE_VAL_STRING) {
+			font_name = o->value.str;
 		}
 	}
 
 	/* Apply to LVGL object */
 	lv_obj_set_style_text_color(w->root, c, LV_PART_MAIN | LV_STATE_DEFAULT);
+	const lv_font_t *f = widget_resolve_font(font_name);
+	lv_obj_set_style_text_font(w->root, f ? f : THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 /* ── Factory ─────────────────────────────────────────────────────────────── */

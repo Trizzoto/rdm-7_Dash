@@ -13,6 +13,8 @@
 #include "widgets/widget_warning.h"
 
 #include "ui/menu/menu_screen.h"
+#include "ui/screens/ui_Screen3.h"
+#include "ui/settings/device_settings.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -70,12 +72,25 @@ static void _widget_long_press_cb(lv_event_t *e) {
 	load_menu_screen_for_widget(w);
 }
 
-/** Register long-press config events on all signal-bound widgets. */
+/** Register touch events on all widgets so the MENU button always appears
+ *  on short tap, and long-press opens the config modal for signal-bound
+ *  widgets.  Without this, clickable widgets (toggle, button, meter with
+ *  click flag, etc.) would consume touch events and block the menu. */
 static void _register_widget_long_press(void) {
 	for (uint8_t i = 0; i < s_widget_count; i++) {
 		widget_t *w = s_widgets[i];
-		if (w && w->root && widget_get_signal_name_buf(w) != NULL) {
-			lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+		if (!w || !w->root) continue;
+
+		lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+
+		/* Short-tap → show MENU button (same handler as the screen itself) */
+		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
+							LV_EVENT_PRESSED, NULL);
+		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
+							LV_EVENT_RELEASED, NULL);
+
+		/* Long-press → open config modal (only for signal-bound widgets) */
+		if (widget_get_signal_name_buf(w) != NULL) {
 			lv_obj_add_event_cb(w->root, _widget_long_press_cb,
 								LV_EVENT_LONG_PRESSED, w);
 		}
@@ -143,6 +158,9 @@ loaded:
 
 	/* Start internal signal injection after signals are registered */
 	signal_internal_start();
+
+	/* Subscribe brightness dimmer to its configured signal */
+	dimmer_subscribe();
 }
 
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {

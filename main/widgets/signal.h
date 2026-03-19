@@ -21,7 +21,7 @@ extern "C" {
 /* ── Limits ────────────────────────────────────────────────────────────── */
 
 #define MAX_SIGNALS            128
-#define MAX_SIGNAL_SUBSCRIBERS   8
+#define MAX_SIGNAL_SUBSCRIBERS   16
 #define SIGNAL_TIMEOUT_MS     2000
 
 /* ── Callback typedef ──────────────────────────────────────────────────── */

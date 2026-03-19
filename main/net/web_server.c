@@ -17,6 +17,8 @@
 #include "widgets/font_manager.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
+#include "ui/settings/device_settings.h"
+#include "storage/config_store.h"
 #include "esp_littlefs.h"
 #include <dirent.h>
 #include <stdbool.h>
@@ -496,6 +498,14 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	return res;
 }
 
+/* Round a float to remove single-precision artifacts (e.g. 0.100000005 → 0.1) */
+static double _round_float(float v) {
+	if (v == 0.0f) return 0.0;
+	char buf[24];
+	snprintf(buf, sizeof(buf), "%.6g", (double)v);
+	return strtod(buf, NULL);
+}
+
 static esp_err_t presets_list_handler(httpd_req_t *req) {
 	cJSON *root = cJSON_CreateArray();
 	for (size_t i = 0; i < preconfig_items_count; i++) {
@@ -512,9 +522,10 @@ static esp_err_t presets_list_handler(httpd_req_t *req) {
 								preconfig_items[i].bit_start);
 		cJSON_AddNumberToObject(item, "bit_length",
 								preconfig_items[i].bit_length);
-		cJSON_AddNumberToObject(item, "scale", preconfig_items[i].scale);
+		cJSON_AddNumberToObject(item, "scale",
+								_round_float(preconfig_items[i].scale));
 		cJSON_AddNumberToObject(item, "offset",
-								preconfig_items[i].value_offset);
+								_round_float(preconfig_items[i].value_offset));
 		cJSON_AddNumberToObject(item, "decimals", preconfig_items[i].decimals);
 		cJSON_AddBoolToObject(item, "is_signed", preconfig_items[i].is_signed);
 		cJSON_AddItemToArray(root, item);
@@ -539,6 +550,304 @@ static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
 											 .method = HTTP_GET,
 											 .handler = presets_list_handler,
 											 .user_ctx = NULL};
+
+/* ── Custom signal presets (stored as JSON in /lfs/presets/) ──────────── */
+
+#define LFS_PRESET_DIR "/lfs/presets"
+#define CUSTOM_PRESET_MAX_BYTES 16384
+
+static void _ensure_preset_dir(void) {
+	struct stat st;
+	if (stat(LFS_PRESET_DIR, &st) != 0)
+		mkdir(LFS_PRESET_DIR, 0755);
+}
+
+static void _sanitize_preset_filename(const char *ecu, const char *version,
+									  char *out, size_t out_len) {
+	size_t pos = 0;
+	for (const char *p = ecu; *p && pos < out_len - 6; p++) {
+		if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+			(*p >= '0' && *p <= '9'))
+			out[pos++] = *p;
+		else
+			out[pos++] = '_';
+	}
+	if (pos < out_len - 6)
+		out[pos++] = '_';
+	for (const char *p = version; *p && pos < out_len - 6; p++) {
+		if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+			(*p >= '0' && *p <= '9'))
+			out[pos++] = *p;
+		else
+			out[pos++] = '_';
+	}
+	out[pos] = '\0';
+	strncat(out, ".json", out_len - pos - 1);
+}
+
+/* GET /api/presets/custom — list all custom presets as flat signal array */
+static esp_err_t custom_presets_list_handler(httpd_req_t *req) {
+	_ensure_preset_dir();
+
+	cJSON *root = cJSON_CreateArray();
+	DIR *d = opendir(LFS_PRESET_DIR);
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 5 || strcmp(de->d_name + flen - 5, ".json") != 0)
+				continue;
+
+			char path[96];
+			snprintf(path, sizeof(path), "%s/%s", LFS_PRESET_DIR, de->d_name);
+
+			FILE *f = fopen(path, "r");
+			if (!f) continue;
+
+			fseek(f, 0, SEEK_END);
+			long file_size = ftell(f);
+			fseek(f, 0, SEEK_SET);
+
+			if (file_size <= 0 || file_size > CUSTOM_PRESET_MAX_BYTES) {
+				fclose(f);
+				continue;
+			}
+
+			char *buf = malloc(file_size + 1);
+			if (!buf) { fclose(f); continue; }
+			size_t nr = fread(buf, 1, file_size, f);
+			fclose(f);
+			buf[nr] = '\0';
+
+			cJSON *preset = cJSON_Parse(buf);
+			free(buf);
+			if (!preset) continue;
+
+			cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(preset, "ecu");
+			cJSON *ver_item = cJSON_GetObjectItemCaseSensitive(preset, "version");
+			cJSON *signals = cJSON_GetObjectItemCaseSensitive(preset, "signals");
+
+			if (!cJSON_IsString(ecu_item) || !cJSON_IsString(ver_item) ||
+				!cJSON_IsArray(signals)) {
+				cJSON_Delete(preset);
+				continue;
+			}
+
+			const char *ecu = ecu_item->valuestring;
+			const char *ver = ver_item->valuestring;
+
+			/* If no signals, emit a placeholder so the ECU still appears */
+			if (cJSON_GetArraySize(signals) == 0) {
+				cJSON *item = cJSON_CreateObject();
+				cJSON_AddStringToObject(item, "ecu", ecu);
+				cJSON_AddStringToObject(item, "version", ver);
+				cJSON_AddStringToObject(item, "label", "");
+				cJSON_AddBoolToObject(item, "_empty", 1);
+				cJSON_AddItemToArray(root, item);
+			}
+
+			cJSON *sig;
+			cJSON_ArrayForEach(sig, signals) {
+				cJSON *item = cJSON_CreateObject();
+				cJSON_AddStringToObject(item, "ecu", ecu);
+				cJSON_AddStringToObject(item, "version", ver);
+
+				cJSON *label = cJSON_GetObjectItemCaseSensitive(sig, "label");
+				cJSON_AddStringToObject(item, "label",
+					cJSON_IsString(label) ? label->valuestring : "");
+
+				cJSON *can_id = cJSON_GetObjectItemCaseSensitive(sig, "can_id");
+				cJSON_AddStringToObject(item, "can_id",
+					cJSON_IsString(can_id) ? can_id->valuestring : "0");
+
+				cJSON *endianess = cJSON_GetObjectItemCaseSensitive(sig, "endianess");
+				cJSON_AddNumberToObject(item, "endianess",
+					cJSON_IsNumber(endianess) ? endianess->valuedouble : 1);
+
+				cJSON *bit_start = cJSON_GetObjectItemCaseSensitive(sig, "bit_start");
+				cJSON_AddNumberToObject(item, "bit_start",
+					cJSON_IsNumber(bit_start) ? bit_start->valuedouble : 0);
+
+				cJSON *bit_length = cJSON_GetObjectItemCaseSensitive(sig, "bit_length");
+				cJSON_AddNumberToObject(item, "bit_length",
+					cJSON_IsNumber(bit_length) ? bit_length->valuedouble : 16);
+
+				cJSON *scale = cJSON_GetObjectItemCaseSensitive(sig, "scale");
+				cJSON_AddNumberToObject(item, "scale",
+					_round_float(cJSON_IsNumber(scale) ? (float)scale->valuedouble : 1.0f));
+
+				cJSON *offset = cJSON_GetObjectItemCaseSensitive(sig, "offset");
+				cJSON_AddNumberToObject(item, "offset",
+					_round_float(cJSON_IsNumber(offset) ? (float)offset->valuedouble : 0.0f));
+
+				cJSON *decimals = cJSON_GetObjectItemCaseSensitive(sig, "decimals");
+				cJSON_AddNumberToObject(item, "decimals",
+					cJSON_IsNumber(decimals) ? decimals->valuedouble : 0);
+
+				cJSON *is_signed = cJSON_GetObjectItemCaseSensitive(sig, "is_signed");
+				cJSON_AddBoolToObject(item, "is_signed",
+					cJSON_IsBool(is_signed) ? cJSON_IsTrue(is_signed) : false);
+
+				cJSON_AddItemToArray(root, item);
+			}
+
+			cJSON_Delete(preset);
+		}
+		closedir(d);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json_str) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Alloc failed");
+		return ESP_FAIL;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t custom_presets_list_uri = {
+	.uri = "/api/presets/custom",
+	.method = HTTP_GET,
+	.handler = custom_presets_list_handler,
+	.user_ctx = NULL};
+
+/* POST /api/presets/custom/save — save a custom preset JSON file */
+static esp_err_t custom_preset_save_handler(httpd_req_t *req) {
+	int total_len = req->content_len;
+	if (total_len <= 0 || total_len > CUSTOM_PRESET_MAX_BYTES) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid preset size");
+		return ESP_FAIL;
+	}
+
+	char *buf = malloc(total_len + 1);
+	if (!buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Out of memory");
+		return ESP_FAIL;
+	}
+
+	int received = 0;
+	while (received < total_len) {
+		int r = httpd_req_recv(req, buf + received, total_len - received);
+		if (r <= 0) {
+			free(buf);
+			if (r == HTTPD_SOCK_ERR_TIMEOUT)
+				httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Request timeout");
+			else
+				httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+									"Failed to receive body");
+			return ESP_FAIL;
+		}
+		received += r;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	free(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+	cJSON *ver_item = cJSON_GetObjectItemCaseSensitive(root, "version");
+	cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+	if (!cJSON_IsString(ecu_item) || !cJSON_IsString(ver_item) ||
+		!cJSON_IsArray(signals)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Missing ecu, version, or signals");
+		return ESP_FAIL;
+	}
+
+	char filename[80];
+	_sanitize_preset_filename(ecu_item->valuestring, ver_item->valuestring,
+							  filename, sizeof(filename));
+
+	_ensure_preset_dir();
+
+	char path[128];
+	snprintf(path, sizeof(path), "%s/%s", LFS_PRESET_DIR, filename);
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json_str) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Alloc failed");
+		return ESP_FAIL;
+	}
+
+	FILE *f = fopen(path, "w");
+	if (!f) {
+		free(json_str);
+		ESP_LOGE(TAG, "Failed to open preset file for writing: %s", path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Failed to write preset file");
+		return ESP_FAIL;
+	}
+	fputs(json_str, f);
+	fclose(f);
+	free(json_str);
+
+	ESP_LOGI(TAG, "Saved custom preset: %s", filename);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t custom_preset_save_uri = {
+	.uri = "/api/presets/custom/save",
+	.method = HTTP_POST,
+	.handler = custom_preset_save_handler,
+	.user_ctx = NULL};
+
+/* POST /api/presets/custom/delete?ecu=<name>&version=<ver> — delete a custom preset */
+static esp_err_t custom_preset_delete_handler(httpd_req_t *req) {
+	char query[128] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+
+	char ecu[64] = {0};
+	char version[32] = {0};
+	if (httpd_query_key_value(query, "ecu", ecu, sizeof(ecu)) != ESP_OK ||
+		ecu[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'ecu' parameter");
+		return ESP_FAIL;
+	}
+	if (httpd_query_key_value(query, "version", version, sizeof(version)) != ESP_OK ||
+		version[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'version' parameter");
+		return ESP_FAIL;
+	}
+
+	char filename[80];
+	_sanitize_preset_filename(ecu, version, filename, sizeof(filename));
+
+	char path[128];
+	snprintf(path, sizeof(path), "%s/%s", LFS_PRESET_DIR, filename);
+
+	if (remove(path) != 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Preset not found");
+		return ESP_FAIL;
+	}
+
+	ESP_LOGI(TAG, "Deleted custom preset: %s", filename);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t custom_preset_delete_uri = {
+	.uri = "/api/presets/custom/delete",
+	.method = HTTP_POST,
+	.handler = custom_preset_delete_handler,
+	.user_ctx = NULL};
 
 static const httpd_uri_t layout_list_uri = {.uri = "/api/layout/list",
 											.method = HTTP_GET,
@@ -1106,6 +1415,96 @@ static const httpd_uri_t font_delete_uri = {.uri = "/api/font/delete",
 											.user_ctx = NULL};
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Fuel sender calibration endpoints
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+#include "widgets/signal_internal.h"
+
+static esp_err_t _fuel_status_handler(httpd_req_t *req) {
+	fuel_cal_config_t fc;
+	signal_internal_get_fuel_cal(&fc);
+	float voltage = signal_internal_get_fuel_voltage();
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddNumberToObject(root, "voltage", voltage);
+	cJSON *cal = cJSON_AddObjectToObject(root, "cal");
+	cJSON_AddNumberToObject(cal, "empty_v", fc.empty_v);
+	cJSON_AddNumberToObject(cal, "full_v", fc.full_v);
+	cJSON_AddNumberToObject(cal, "full_value", fc.full_value);
+	cJSON_AddBoolToObject(cal, "enabled", fc.enabled);
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+static esp_err_t _fuel_set_empty_handler(httpd_req_t *req) {
+	float v = signal_internal_get_fuel_voltage();
+	fuel_cal_config_t fc;
+	signal_internal_get_fuel_cal(&fc);
+	signal_internal_set_fuel_cal(v, fc.full_v, fc.full_value, fc.enabled);
+
+	char resp[64];
+	snprintf(resp, sizeof(resp), "{\"voltage\":%.4f}", v);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, resp);
+	return ESP_OK;
+}
+
+static esp_err_t _fuel_set_full_handler(httpd_req_t *req) {
+	float v = signal_internal_get_fuel_voltage();
+	fuel_cal_config_t fc;
+	signal_internal_get_fuel_cal(&fc);
+	signal_internal_set_fuel_cal(fc.empty_v, v, fc.full_value, fc.enabled);
+
+	char resp[64];
+	snprintf(resp, sizeof(resp), "{\"voltage\":%.4f}", v);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, resp);
+	return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Signal values endpoint — returns current value for all registered signals
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+static esp_err_t _signal_values_handler(httpd_req_t *req) {
+	if (!example_lvgl_lock(500)) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
+		return ESP_FAIL;
+	}
+
+	uint16_t count = signal_get_count();
+	cJSON *root = cJSON_CreateObject();
+	cJSON *arr  = cJSON_AddArrayToObject(root, "signals");
+
+	for (uint16_t i = 0; i < count; i++) {
+		signal_t *sig = signal_get_by_index(i);
+		if (!sig || sig->name[0] == '\0') continue;
+		cJSON *obj = cJSON_CreateObject();
+		cJSON_AddStringToObject(obj, "name", sig->name);
+		cJSON_AddNumberToObject(obj, "value", sig->current_value);
+		cJSON_AddBoolToObject(obj, "stale", sig->is_stale);
+		cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
+		cJSON_AddItemToArray(arr, obj);
+	}
+
+	example_lvgl_unlock();
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  Signal simulator endpoints
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -1617,6 +2016,85 @@ static const httpd_uri_t screen_switch_uri = {
 	.handler = screen_switch_handler, .user_ctx = NULL
 };
 
+/* ── Dimmer config API ──────────────────────────────────────────────── */
+
+static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "signal_name", dimmer_config.signal_name);
+	cJSON_AddNumberToObject(root, "threshold", dimmer_config.threshold);
+	cJSON_AddBoolToObject(root, "is_momentary", dimmer_config.is_momentary);
+	cJSON_AddBoolToObject(root, "invert", dimmer_config.invert);
+	cJSON_AddNumberToObject(root, "dim_brightness", dimmer_config.dim_brightness);
+	cJSON_AddBoolToObject(root, "enabled", dimmer_config.enabled);
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+static void _deferred_dimmer_subscribe(void *arg) {
+	(void)arg;
+	dimmer_subscribe();
+}
+
+static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	char buf[256];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *j;
+	if ((j = cJSON_GetObjectItem(root, "signal_name")) && cJSON_IsString(j)) {
+		strncpy(dimmer_config.signal_name, j->valuestring,
+				sizeof(dimmer_config.signal_name) - 1);
+		dimmer_config.signal_name[sizeof(dimmer_config.signal_name) - 1] = '\0';
+	}
+	if ((j = cJSON_GetObjectItem(root, "threshold")) && cJSON_IsNumber(j))
+		dimmer_config.threshold = (float)j->valuedouble;
+	if ((j = cJSON_GetObjectItem(root, "is_momentary")))
+		dimmer_config.is_momentary = cJSON_IsTrue(j);
+	if ((j = cJSON_GetObjectItem(root, "invert")))
+		dimmer_config.invert = cJSON_IsTrue(j);
+	if ((j = cJSON_GetObjectItem(root, "dim_brightness")) && cJSON_IsNumber(j))
+		dimmer_config.dim_brightness = (uint8_t)j->valuedouble;
+	if ((j = cJSON_GetObjectItem(root, "enabled")))
+		dimmer_config.enabled = cJSON_IsTrue(j);
+
+	cJSON_Delete(root);
+
+	save_dimmer_config_to_nvs();
+	lv_async_call(_deferred_dimmer_subscribe, NULL);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t dimmer_config_get_uri = {
+	.uri = "/api/dimmer/config", .method = HTTP_GET,
+	.handler = _dimmer_config_get_handler, .user_ctx = NULL
+};
+static const httpd_uri_t dimmer_config_post_uri = {
+	.uri = "/api/dimmer/config", .method = HTTP_POST,
+	.handler = _dimmer_config_post_handler, .user_ctx = NULL
+};
+
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
 		ESP_LOGW(TAG, "Web server already running");
@@ -1650,6 +2128,9 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &layout_preview_uri);
 	httpd_register_uri_handler(server, &layout_list_uri);
 	httpd_register_uri_handler(server, &presets_list_uri);
+	httpd_register_uri_handler(server, &custom_presets_list_uri);
+	httpd_register_uri_handler(server, &custom_preset_save_uri);
+	httpd_register_uri_handler(server, &custom_preset_delete_uri);
 	httpd_register_uri_handler(server, &layout_set_uri);
 	httpd_register_uri_handler(server, &layout_delete_uri);
 	httpd_register_uri_handler(server, &layout_preview_uri);
@@ -1666,6 +2147,15 @@ esp_err_t web_server_start(void) {
 	httpd_register_uri_handler(server, &sd_copy_uri);
 	httpd_register_uri_handler(server, &sd_delete_uri);
 	httpd_register_uri_handler(server, &screen_switch_uri);
+	httpd_register_uri_handler(server, &dimmer_config_get_uri);
+	httpd_register_uri_handler(server, &dimmer_config_post_uri);
+	static const httpd_uri_t signal_values_uri = {
+		.uri = "/api/signals/values",
+		.method = HTTP_GET,
+		.handler = _signal_values_handler
+	};
+	httpd_register_uri_handler(server, &signal_values_uri);
+
 	static const httpd_uri_t signal_simulate_post_uri = {
 		.uri = "/api/signal/simulate",
 		.method = HTTP_POST,
@@ -1679,6 +2169,27 @@ esp_err_t web_server_start(void) {
 		.handler = _signal_simulate_get_handler
 	};
 	httpd_register_uri_handler(server, &signal_simulate_get_uri);
+
+	static const httpd_uri_t fuel_status_uri = {
+		.uri = "/api/fuel/status",
+		.method = HTTP_GET,
+		.handler = _fuel_status_handler
+	};
+	httpd_register_uri_handler(server, &fuel_status_uri);
+
+	static const httpd_uri_t fuel_set_empty_uri = {
+		.uri = "/api/fuel/set-empty",
+		.method = HTTP_POST,
+		.handler = _fuel_set_empty_handler
+	};
+	httpd_register_uri_handler(server, &fuel_set_empty_uri);
+
+	static const httpd_uri_t fuel_set_full_uri = {
+		.uri = "/api/fuel/set-full",
+		.method = HTTP_POST,
+		.handler = _fuel_set_full_handler
+	};
+	httpd_register_uri_handler(server, &fuel_set_full_uri);
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;

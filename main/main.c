@@ -36,6 +36,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "web_server.h"
+#include "widgets/signal_internal.h"
 #include <errno.h>
 #include <math.h>
 #include <stdbool.h>
@@ -194,6 +195,9 @@ static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 	esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
 							  offsety2 + 1, color_map);
 
+	if (lv_disp_flush_is_last(drv)) {
+		signal_internal_count_frame();
+	}
 	lv_disp_flush_ready(drv);
 }
 
@@ -214,7 +218,7 @@ TaskHandle_t lvglTaskHandle = NULL;
 void example_lvgl_port_task(void *pvParameter) {
 	ESP_LOGI(TAG, "Starting LVGL task");
 	const uint32_t refresh_period_ms =
-		14; // 70fps target (1000ms / 70fps = ~14.3ms)
+		2; // Minimal sleep — maximize CPU for LVGL rendering
 	uint32_t last_error_time = 0;
 	const uint32_t error_report_interval = 5000; // 5 seconds between error logs
 	uint32_t consecutive_failures = 0;
@@ -415,9 +419,6 @@ void app_main(void) {
 	// Initialize display brightness from saved settings
 	init_display_brightness();
 
-	// Load ECU preconfig settings from NVS
-	load_ecu_preconfig();
-
 	static lv_disp_draw_buf_t
 		disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
 	static lv_disp_drv_t disp_drv; // contains callback functions
@@ -571,51 +572,53 @@ void app_main(void) {
 	ESP_LOGI(TAG, "Initialize LVGL library");
 	lv_init();
 
-	ESP_LOGI(TAG, "Allocate separate LVGL draw buffers from PSRAM");
-	// Try for larger buffer size (1/4 of the screen) for better performance
-	size_t buf_size =
-		(EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
-	// Align buffer size to 32 bytes
-	buf_size = (buf_size + 31) & ~31;
-
-	// Try progressively smaller buffer sizes
+	/* Try internal SRAM first — much faster writes than PSRAM since
+	 * the LCD DMA is constantly reading the PSRAM framebuffer.
+	 * Internal SRAM avoids the SPI bus contention bottleneck. */
 	void *buf1 = NULL, *buf2 = NULL;
-	const size_t min_buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
+	size_t buf_size = 0;
 
-	while (buf_size >= min_buf_size) {
-		buf1 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
-		if (buf1) {
-			buf2 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
-			if (buf2)
-				break;
-			heap_caps_free(buf1);
-		}
-		buf_size = (buf_size * 3) / 4;	  // Reduce by 25%
-		buf_size = (buf_size + 31) & ~31; // Keep aligned
-	}
-
-	if (!buf1 || !buf2) {
-		ESP_LOGW(TAG,
-				 "Failed to allocate PSRAM buffers, trying internal memory");
-		// Try with internal memory
-		buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
+	/* Internal SRAM: try 40 lines, then 30 lines */
+	for (int lines = 40; lines >= 30; lines -= 10) {
+		buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
 		buf_size = (buf_size + 31) & ~31;
-
 		buf1 = heap_caps_aligned_alloc(32, buf_size,
 									   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 		if (buf1) {
-			buf2 = heap_caps_aligned_alloc(
-				32, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-			if (!buf2) {
+			buf2 = heap_caps_aligned_alloc(32, buf_size,
+										   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+			if (buf2) {
+				ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
+				break;
+			}
+			heap_caps_free(buf1);
+			buf1 = NULL;
+		}
+	}
+
+	/* Fallback: PSRAM buffers (slower due to bus contention with LCD DMA) */
+	if (!buf1 || !buf2) {
+		ESP_LOGW(TAG, "Internal SRAM insufficient, falling back to PSRAM buffers");
+		buf_size = (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
+		buf_size = (buf_size + 31) & ~31;
+		const size_t min_buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
+
+		while (buf_size >= min_buf_size) {
+			buf1 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
+			if (buf1) {
+				buf2 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
+				if (buf2) break;
 				heap_caps_free(buf1);
 				buf1 = NULL;
 			}
+			buf_size = (buf_size * 3) / 4;
+			buf_size = (buf_size + 31) & ~31;
 		}
+	}
 
-		if (!buf1 || !buf2) {
-			ESP_LOGE(TAG, "Critical: Failed to allocate LVGL buffers");
-			abort();
-		}
+	if (!buf1 || !buf2) {
+		ESP_LOGE(TAG, "Critical: Failed to allocate LVGL buffers");
+		abort();
 	}
 
 	ESP_LOGI(TAG, "LVGL buffers allocated successfully, size: %u bytes each",

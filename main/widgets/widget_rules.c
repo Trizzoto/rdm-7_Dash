@@ -78,11 +78,8 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
     if (!w || !w->rules || w->rule_count == 0) return;
     if (!w->root) return;
 
-    bool any_changed = false;
-
     for (uint8_t i = 0; i < w->rule_count; i++) {
         widget_rule_t *r = &w->rules[i];
-        bool was_active = r->is_active;
         bool match = false;
 
         /* Read this rule's own signal value (not the triggering signal) */
@@ -107,34 +104,40 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
         }
 
         r->is_active = match;
-        if (match != was_active) any_changed = true;
     }
 
-    if (any_changed && w->apply_overrides) {
-        /* Collect active overrides -- last matching rule wins per field */
-        rule_override_t merged[MAX_WIDGET_RULES * MAX_RULE_OVERRIDES];
-        uint8_t count = 0;
+    /* Always re-apply overrides on every signal update — the widget's own
+     * signal callback may reset styles to defaults on each value change,
+     * so we must re-assert active overrides every time, not just on
+     * state transitions. Pass count=0 when no rules are active to let
+     * the widget revert to its base appearance. */
+    if (!w->apply_overrides) return;
 
-        for (uint8_t i = 0; i < w->rule_count; i++) {
-            if (!w->rules[i].is_active) continue;
-            for (uint8_t j = 0; j < w->rules[i].override_count; j++) {
-                bool replaced = false;
-                for (uint8_t k = 0; k < count; k++) {
-                    if (strcmp(merged[k].field_name,
-                              w->rules[i].overrides[j].field_name) == 0) {
-                        merged[k] = w->rules[i].overrides[j];
-                        replaced = true;
-                        break;
-                    }
-                }
-                if (!replaced && count < (uint8_t)(sizeof(merged) / sizeof(merged[0]))) {
-                    merged[count++] = w->rules[i].overrides[j];
+    /* Cap merged overrides to a sane stack-safe limit — in practice no
+     * widget has more than ~20 unique appearance fields to override. */
+#define MERGED_OV_MAX 32
+    rule_override_t merged[MERGED_OV_MAX];
+    uint16_t count = 0;
+
+    for (uint8_t i = 0; i < w->rule_count; i++) {
+        if (!w->rules[i].is_active) continue;
+        for (uint8_t j = 0; j < w->rules[i].override_count; j++) {
+            bool replaced = false;
+            for (uint16_t k = 0; k < count; k++) {
+                if (strcmp(merged[k].field_name,
+                          w->rules[i].overrides[j].field_name) == 0) {
+                    merged[k] = w->rules[i].overrides[j];
+                    replaced = true;
+                    break;
                 }
             }
+            if (!replaced && count < MERGED_OV_MAX) {
+                merged[count++] = w->rules[i].overrides[j];
+            }
         }
-
-        w->apply_overrides(w, merged, count);
     }
+
+    w->apply_overrides(w, merged, (uint8_t)(count > 255 ? 255 : count));
 }
 
 /* ── Public API ───────────────────────────────────────────────────────── */

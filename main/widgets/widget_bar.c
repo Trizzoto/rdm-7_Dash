@@ -1051,6 +1051,8 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 	lv_coord_t bar_bdrw = (lv_coord_t)bd->bar_border_width;
 	lv_color_t lbl_col  = bd->label_color;
 	lv_color_t val_col  = bd->value_color;
+	const char *lbl_font_name = bd->label_font;
+	const char *val_font_name = bd->value_font;
 
 	/* Apply active overrides on top */
 	for (uint8_t i = 0; i < count; i++) {
@@ -1065,6 +1067,10 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 			lbl_col.full = (uint16_t)o->value.color;
 		} else if (strcmp(o->field_name, "value_color") == 0 && o->value_type == RULE_VAL_COLOR) {
 			val_col.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "label_font") == 0 && o->value_type == RULE_VAL_STRING) {
+			lbl_font_name = o->value.str;
+		} else if (strcmp(o->field_name, "value_font") == 0 && o->value_type == RULE_VAL_STRING) {
+			val_font_name = o->value.str;
 		}
 	}
 
@@ -1076,9 +1082,13 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 	}
 	if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
 		lv_obj_set_style_text_color(bd->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+		const lv_font_t *lf = widget_resolve_font(lbl_font_name);
+		lv_obj_set_style_text_font(bd->label_obj, lf ? lf : THEME_FONT_DASH_LABEL, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
 		lv_obj_set_style_text_color(bd->value_obj, val_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+		const lv_font_t *vf = widget_resolve_font(val_font_name);
+		lv_obj_set_style_text_font(bd->value_obj, vf ? vf : THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 }
 

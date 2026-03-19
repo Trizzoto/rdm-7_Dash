@@ -776,6 +776,8 @@ static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	uint8_t    bdr_radius    = pd->border_radius;
 	lv_color_t label_color   = pd->label_color;
 	lv_color_t value_color   = pd->value_color;
+	const char *lbl_font_name = pd->label_font;
+	const char *val_font_name = pd->value_font;
 
 	/* Apply active overrides on top */
 	for (uint8_t i = 0; i < count; i++) {
@@ -794,6 +796,10 @@ static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 			label_color.full = (uint16_t)o->value.color;
 		} else if (strcmp(o->field_name, "value_color") == 0 && o->value_type == RULE_VAL_COLOR) {
 			value_color.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "label_font") == 0 && o->value_type == RULE_VAL_STRING) {
+			lbl_font_name = o->value.str;
+		} else if (strcmp(o->field_name, "value_font") == 0 && o->value_type == RULE_VAL_STRING) {
+			val_font_name = o->value.str;
 		}
 	}
 
@@ -805,10 +811,18 @@ static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 		lv_obj_set_style_border_width(pd->box, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(pd->box, bdr_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
-	if (pd->header_label && lv_obj_is_valid(pd->header_label))
+	if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
 		lv_obj_set_style_text_color(pd->header_label, label_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	if (pd->value_label && lv_obj_is_valid(pd->value_label))
+		const lv_font_t *lf = widget_resolve_font(lbl_font_name);
+		lv_obj_set_style_text_font(pd->header_label,
+			lf ? lf : THEME_FONT_DASH_LABEL, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_obj_set_style_text_color(pd->value_label, value_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		const lv_font_t *vf = widget_resolve_font(val_font_name);
+		lv_obj_set_style_text_font(pd->value_label,
+			vf ? vf : THEME_FONT_DASH_VALUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 }
 
 widget_t *widget_panel_create_instance(uint8_t slot) {

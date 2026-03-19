@@ -24,7 +24,7 @@
 
 #define LV_MEMCPY_MEMSET_STD 1
 
-#define LV_DISP_DEF_REFR_PERIOD 10
+#define LV_DISP_DEF_REFR_PERIOD 1
 #define LV_INDEV_DEF_READ_PERIOD                                               \
 	20 // Reduced from 50ms for more responsive touch input at 70fps
 #define LV_DPI_DEF 130

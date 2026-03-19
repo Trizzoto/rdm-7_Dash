@@ -201,13 +201,13 @@ void can_init(void) {
 	else
 		ESP_LOGE(TAG, "TWAI driver install failed");
 
-	if (twai_start() == ESP_OK)
-		ESP_LOGI(TAG, "TWAI started");
-	else
-		ESP_LOGE(TAG, "TWAI start failed");
+	/* Do NOT call twai_start() here — the RX task is not running yet.
+	 * If CAN bus traffic arrives before the task drains the HW FIFO,
+	 * the TWAI ISR spins and triggers the interrupt watchdog.
+	 * twai_start() is called in can_start_task() instead. */
 
-	/* Create the CAN frame queue once the driver is up.  32 entries is more
-	 * than enough for this dashboard workload and keeps RAM usage modest. */
+	/* Create the CAN frame queue once the driver is up.  64 entries keeps
+	 * RAM usage modest while providing enough buffer. */
 	if (s_can_queue == NULL) {
 		s_can_queue = xQueueCreate(64, sizeof(twai_message_t));
 		if (s_can_queue == NULL) {
@@ -217,6 +217,13 @@ void can_init(void) {
 }
 
 void can_start_task(void) {
+	/* Start TWAI peripheral just before the RX task so there is no window
+	 * where interrupts fire without anything draining the hardware FIFO. */
+	if (twai_start() == ESP_OK)
+		ESP_LOGI(TAG, "TWAI started");
+	else
+		ESP_LOGE(TAG, "TWAI start failed");
+
 	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL, 4,
 							&canTaskHandle, 0);
 	ESP_LOGI(TAG, "CAN receive task started");

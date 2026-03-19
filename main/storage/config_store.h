@@ -15,10 +15,6 @@ esp_err_t config_store_load_dimmer(brightness_dimmer_config_t *cfg);
 esp_err_t config_store_save_bitrate(uint8_t bitrate);
 esp_err_t config_store_load_bitrate(uint8_t *bitrate);
 
-/* ── ECU preset selection ───────────────────────────────────────────────── */
-esp_err_t config_store_save_ecu_preset(uint8_t preconfig, uint8_t version);
-esp_err_t config_store_load_ecu_preset(uint8_t *preconfig, uint8_t *version);
-
 /* ── WiFi credentials ──────────────────────────────────────────────────── */
 typedef struct {
 	char ssid[33];
@@ -29,6 +25,9 @@ typedef struct {
 esp_err_t config_store_save_wifi(const wifi_credentials_t *creds);
 esp_err_t config_store_load_wifi(wifi_credentials_t *creds);
 esp_err_t config_store_clear_wifi(void);
+
+/* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
+void config_store_factory_reset(void);
 
 #ifdef __cplusplus
 }

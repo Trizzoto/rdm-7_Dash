@@ -184,6 +184,19 @@ int16_t *widget_get_signal_index_ptr(widget_t *w)
     }
 }
 
+char *widget_get_label_buf(widget_t *w)
+{
+    if (!w || !w->type_data) return NULL;
+    switch (w->type) {
+        case WIDGET_PANEL:   return ((panel_data_t *)w->type_data)->label;
+        case WIDGET_BAR:     return ((bar_data_t *)w->type_data)->label;
+        case WIDGET_WARNING: return ((warning_data_t *)w->type_data)->label;
+        case WIDGET_TOGGLE:  return ((toggle_data_t *)w->type_data)->label;
+        case WIDGET_BUTTON:  return ((button_data_t *)w->type_data)->label;
+        default:             return NULL;
+    }
+}
+
 bool widget_has_alert_support(widget_t *w)
 {
     if (!w) return false;

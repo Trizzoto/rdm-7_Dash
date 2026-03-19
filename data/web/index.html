@@ -1465,6 +1465,120 @@
             font-family: 'JetBrains Mono', monospace;
         }
         .preset-col-item.active .preset-detail { color: hsla(220, 20%, 8%, 0.6); }
+        /* Custom preset indicators */
+        .preset-custom-dot {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: hsl(210, 70%, 55%);
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+        .preset-col-item.active .preset-custom-dot { background: hsl(210, 50%, 30%); }
+        .preset-col-actions {
+            display: flex; gap: 4px; align-items: center;
+            padding: 6px 10px;
+            border-top: 1px solid var(--border);
+            background: rgba(20,20,20,0.3);
+        }
+        .preset-col-actions .btn { font-size: 10px; padding: 4px 10px; }
+        .preset-add-form {
+            padding: 8px 10px;
+            border-top: 1px solid var(--border);
+            background: rgba(20,20,20,0.5);
+        }
+        .preset-add-form input {
+            width: 100%; box-sizing: border-box;
+            background: var(--bg); border: 1px solid var(--border); color: var(--text);
+            padding: 5px 8px; font-size: 11px; font-family: 'Sora', sans-serif;
+            border-radius: var(--radius-sm); margin-bottom: 4px;
+        }
+        .preset-add-form input:focus { border-color: var(--accent); outline: none; }
+        .preset-add-form .form-row { display: flex; gap: 4px; margin-top: 4px; }
+        .preset-add-form .form-row .btn { font-size: 10px; padding: 4px 8px; flex: 1; }
+        .preset-add-signal-form {
+            padding: 10px;
+            border-top: 1px solid var(--border);
+            background: rgba(20,20,20,0.5);
+            max-height: 260px;
+            overflow-y: auto;
+        }
+        .preset-add-signal-form label {
+            display: block; font-size: 9px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted); margin-bottom: 2px; margin-top: 6px;
+        }
+        .preset-add-signal-form label:first-child { margin-top: 0; }
+        .preset-add-signal-form input, .preset-add-signal-form select {
+            width: 100%; box-sizing: border-box;
+            background: var(--bg); border: 1px solid var(--border); color: var(--text);
+            padding: 5px 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace;
+            border-radius: var(--radius-sm);
+        }
+        .preset-add-signal-form input:focus { border-color: var(--accent); outline: none; }
+        .preset-add-signal-form .form-row-inline {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+        }
+        .preset-add-signal-form .form-actions {
+            display: flex; gap: 4px; margin-top: 8px;
+        }
+        .preset-add-signal-form .form-actions .btn { font-size: 10px; padding: 4px 8px; flex: 1; }
+        .preset-sig-del {
+            background: none; border: none; color: hsl(220, 8%, 28%);
+            cursor: pointer; font-size: 13px; padding: 0 4px; line-height: 1;
+            border-radius: var(--radius-sm); transition: all 0.12s;
+            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+        }
+        .preset-sig-del:hover { color: hsl(0, 70%, 55%); background: hsla(0, 70%, 55%, 0.08); }
+        .preset-col-item.custom-sig { position: relative; padding-right: 24px; }
+        .preset-delete-ecu {
+            background: none; border: none; font-size: 11px;
+            color: hsl(0, 50%, 50%); cursor: pointer; padding: 2px 6px;
+            border-radius: var(--radius-sm); transition: all 0.12s;
+        }
+        .preset-delete-ecu:hover { color: hsl(0, 70%, 60%); background: hsla(0, 70%, 55%, 0.1); }
+        /* DBC Import Modal */
+        #dbcImportModal {
+            display: none; position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10,10,10,0.85);
+            backdrop-filter: blur(8px);
+            z-index: 2100;
+            align-items: center; justify-content: center;
+        }
+        .dbc-modal-content {
+            background: var(--panel-elevated);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-md);
+            border-radius: var(--radius-lg);
+            width: min(440px, 90vw);
+            display: flex; flex-direction: column;
+        }
+        .dbc-modal-content .signal-modal-header { border-bottom: 1px solid var(--border); }
+        .dbc-form { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+        .dbc-form label {
+            display: block; font-size: 10px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--text-muted); margin-bottom: 3px;
+        }
+        .dbc-form input[type="text"], .dbc-form input[type="file"] {
+            width: 100%; box-sizing: border-box;
+            background: var(--bg); border: 1px solid var(--border); color: var(--text);
+            padding: 7px 10px; font-size: 12px; font-family: 'Sora', sans-serif;
+            border-radius: var(--radius-sm);
+        }
+        .dbc-form input:focus { border-color: var(--accent); outline: none; }
+        .dbc-preview {
+            padding: 10px 14px; border-radius: var(--radius-sm);
+            background: var(--bg); border: 1px solid var(--border);
+            font-size: 11px; color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            min-height: 40px;
+        }
+        .dbc-footer {
+            padding: 12px 20px; display: flex; justify-content: flex-end; gap: 8px;
+            border-top: 1px solid var(--border);
+        }
         /* Signal Manager view toggle */
         .sig-view-body { display: none; flex: 1; min-height: 0; flex-direction: column; }
         .sig-view-body.active { display: flex; }
@@ -1808,6 +1922,38 @@
         </div>
     </div>
 
+    <!-- DBC Import Modal -->
+    <div id="dbcImportModal" onclick="closeDbcImportModal()">
+        <div class="dbc-modal-content" onclick="event.stopPropagation()">
+            <div class="signal-modal-header">
+                <span>Import DBC File</span>
+                <button class="close-btn" onclick="closeDbcImportModal()">&times;</button>
+            </div>
+            <div class="dbc-form">
+                <div>
+                    <label>ECU Name</label>
+                    <input type="text" id="dbcEcuName" placeholder="e.g. MyECU">
+                </div>
+                <div>
+                    <label>Version</label>
+                    <input type="text" id="dbcVersion" placeholder="e.g. v1.0">
+                </div>
+                <div>
+                    <label>DBC File</label>
+                    <input type="file" id="dbcFileInput" accept=".dbc">
+                </div>
+                <div>
+                    <label>Preview</label>
+                    <div class="dbc-preview" id="dbcPreview">Select a .dbc file to preview signals.</div>
+                </div>
+            </div>
+            <div class="dbc-footer">
+                <button class="btn btn-secondary" onclick="closeDbcImportModal()">Cancel</button>
+                <button class="btn" id="dbcImportBtn" disabled onclick="doDbcImport()">Import</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Assign Data Source Modal -->
     <div id="assignModal" onclick="closeAssignModal()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
         <div class="signal-modal-content" onclick="event.stopPropagation()" style="width:min(540px, 95vw); max-height:min(580px, 90vh);">
@@ -1818,8 +1964,14 @@
 
             <!-- Step 1: ECU Picker (shown when no ECU set) -->
             <div id="assignStepEcu" style="display:none; flex:1; overflow-y:auto; min-height:0; flex-direction:column;">
-                <div style="padding:16px 20px 8px; font-size:12px; color:var(--text-muted);">Select your ECU to see available signals:</div>
-                <div id="assignEcuList" style="flex:1; overflow-y:auto; padding:0 8px 8px;"></div>
+                <div class="signal-modal-toolbar">
+                    <input type="text" class="sig-search" id="ecuSearchInput" placeholder="Search all signals across all ECUs..." oninput="renderEcuSearch()">
+                </div>
+                <div id="ecuSearchResults" style="display:none; flex:1; overflow-y:auto; min-height:0;"></div>
+                <div id="ecuPickerList" style="flex:1; overflow-y:auto;">
+                    <div style="padding:8px 20px 4px; font-size:12px; color:var(--text-muted);">Or select your ECU to browse signals:</div>
+                    <div id="assignEcuList" style="padding:0 8px 8px;"></div>
+                </div>
             </div>
 
             <!-- Step 2: Signal List (shown when ECU is set) -->
@@ -1862,7 +2014,11 @@
             </div>
 
             <div style="padding:8px 20px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:hsla(0, 0%, 0%, 0.08); flex-shrink:0;">
-                <button id="assignFooterBtn" class="btn btn-secondary" style="font-size:11px; padding:6px 12px;" onclick="assignShowCustom()">+ New Custom Signal</button>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button id="assignFooterBtn" class="btn btn-secondary" style="font-size:11px; padding:6px 12px;" onclick="assignShowCustom()">+ New Custom Signal</button>
+                    <button class="btn btn-secondary" style="font-size:11px; padding:6px 12px;" onclick="showNewEcuForm()">+ New ECU</button>
+                    <button class="btn btn-secondary" style="font-size:11px; padding:6px 12px;" onclick="openDbcImportModal()">Import DBC</button>
+                </div>
                 <button class="btn btn-secondary" style="font-size:11px; padding:6px 12px;" onclick="closeAssignModal()">Cancel</button>
             </div>
         </div>
@@ -1953,6 +2109,8 @@
                     <div class="layout-menu-item" onclick="downloadJson(); closeLayoutMenu()">Export JSON</div>
                     <div class="layout-menu-item" onclick="importJson(); closeLayoutMenu()">Import JSON</div>
                     <div class="layout-menu-sep"></div>
+                    <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()">Dimmer Settings...</div>
+                    <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)">Delete Layout</div>
                 </div>
             </div>
@@ -1965,7 +2123,7 @@
             <div class="header-divider"></div>
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min→max for visual testing">Simulate</button>
             <div class="header-divider"></div>
-            <button class="btn" onclick="saveActiveLayout()">Apply</button>
+            <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Apply</button>
         </div>
         <!-- Hidden elements for JS compatibility -->
         <select id="ecuContextSelect" style="display:none;" onchange="onEcuContextChange(this.value)"><option value="">Custom</option></select>
@@ -2030,6 +2188,42 @@
         </aside>
     </div>
 
+    <!-- Dimmer Settings Modal -->
+    <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.6); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
+        <div style="background:var(--bg-panel); border:1px solid var(--border); border-radius:8px; padding:20px; width:380px; max-width:90vw;" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <span style="font-weight:600; font-size:14px;">Brightness Dimmer</span>
+                <button class="close-btn" onclick="closeDimmerSettings()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <label style="font-size:11px; color:var(--text-muted);">Signal Source
+                    <select id="dimSignalSelect" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;"></select>
+                </label>
+                <label style="font-size:11px; color:var(--text-muted);">Threshold
+                    <input id="dimThreshold" type="number" step="0.01" value="0.5" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                </label>
+                <div style="display:flex; gap:12px;">
+                    <label style="font-size:11px; color:var(--text-muted); flex:1;">Mode
+                        <select id="dimMode" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                            <option value="toggle">On/Off Toggle</option>
+                            <option value="momentary">Momentary</option>
+                        </select>
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; padding-top:14px;">
+                        <input id="dimInvert" type="checkbox" style="width:14px; height:14px;"> Invert
+                    </label>
+                </div>
+                <label style="font-size:11px; color:var(--text-muted);">Dim Brightness: <span id="dimBrVal">50</span>%
+                    <input id="dimBrightness" type="range" min="5" max="100" value="50" style="width:100%; margin-top:2px;" oninput="document.getElementById('dimBrVal').textContent=this.value">
+                </label>
+                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+                    <input id="dimEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled
+                </label>
+                <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveDimmerSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <footer>
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
         <div id="widgetCount">0 widgets, 0 signals</div>
@@ -2055,6 +2249,7 @@
         let _dragStartPositions = {};
         let _dragAnchorStart = { x: 0, y: 0 };
         let globalPresets = [];
+        let customPresets = [];
         let expandedSignalIdx = -1;
         let _cachedImageList = [];
         let _cachedFontList = [];
@@ -2112,9 +2307,22 @@
         async function fetchPresets() {
             try {
                 const response = await fetch('/api/presets');
+                let builtIn = [];
                 if (response.ok) {
-                    globalPresets = await response.json();
+                    builtIn = await response.json();
                 }
+                /* Fetch custom presets */
+                customPresets = [];
+                try {
+                    const cResp = await fetch('/api/presets/custom');
+                    if (cResp.ok) {
+                        const raw = await cResp.json();
+                        raw.forEach(p => p._isCustom = true);
+                        customPresets = raw;
+                    }
+                } catch (e2) { /* custom endpoint may not exist yet */ }
+                /* Filter out empty placeholders from the signal list but keep them in customPresets for ECU discovery */
+                globalPresets = [...builtIn, ...customPresets.filter(p => !p._empty)];
             } catch (e) {
                 console.error("Failed to fetch presets", e);
             }
@@ -2144,13 +2352,21 @@
             selText.textContent = 'Select an ECU, version, then signal';
             selText.classList.remove('has-sel');
 
-            const ecus = [...new Set(globalPresets.map(p => p.ecu))].sort();
-            document.getElementById('presetColEcu').innerHTML = ecus.map(e =>
-                `<div class="preset-col-item" onclick="presetPickEcu(this, '${e.replace(/'/g, "\\'")}')">${e}</div>`
-            ).join('');
+            const customEcus = new Set(customPresets.map(p => p.ecu));
+            const ecus = [...new Set([...globalPresets.map(p => p.ecu), ...customEcus])].sort();
+            document.getElementById('presetColEcu').innerHTML = ecus.map(e => {
+                const isCustom = customEcus.has(e);
+                const dot = isCustom ? '<span class="preset-custom-dot" title="Custom"></span>' : '';
+                return `<div class="preset-col-item" onclick="presetPickEcu(this, '${e.replace(/'/g, "\\'")}')">${dot}${e}</div>`;
+            }).join('') +
+            `<div class="preset-col-actions">` +
+            `<button class="btn btn-secondary" onclick="showNewEcuForm()" title="Create custom ECU preset">+ New ECU</button>` +
+            `<button class="btn btn-secondary" onclick="openDbcImportModal()" title="Import signals from DBC file">Import DBC</button>` +
+            `</div>`;
             document.getElementById('presetColVersion').innerHTML = '';
             document.getElementById('presetColChannel').innerHTML = '';
         }
+        /* (inline form state removed — using modal dialogs now) */
 
         function openPresetPicker(widgetIdx) {
             /* Open the signal manager and switch to presets view */
@@ -2164,10 +2380,20 @@
             el.parentElement.querySelectorAll('.preset-col-item').forEach(e => e.classList.remove('active'));
             el.classList.add('active');
 
-            const versions = [...new Set(globalPresets.filter(p => p.ecu === ecu).map(p => p.version))].sort();
-            document.getElementById('presetColVersion').innerHTML = versions.map(v =>
+            const isCustomEcu = customPresets.some(p => p.ecu === ecu);
+            const versions = [...new Set([
+                ...globalPresets.filter(p => p.ecu === ecu).map(p => p.version),
+                ...customPresets.filter(p => p.ecu === ecu).map(p => p.version)
+            ])].sort();
+            let versionHtml = versions.map(v =>
                 `<div class="preset-col-item" onclick="presetPickVersion(this, '${v.replace(/'/g, "\\'")}')">${v}</div>`
             ).join('');
+            if (isCustomEcu) {
+                versionHtml += `<div class="preset-col-actions" style="justify-content:flex-end;">` +
+                    `<button class="preset-delete-ecu" onclick="deleteCustomEcu('${ecu.replace(/'/g, "\\'")}')">Delete ECU</button>` +
+                    `</div>`;
+            }
+            document.getElementById('presetColVersion').innerHTML = versionHtml;
             document.getElementById('presetColChannel').innerHTML = '';
             document.getElementById('presetApplyBtn').disabled = true;
             const selText = document.getElementById('presetSelText');
@@ -2181,19 +2407,32 @@
             el.parentElement.querySelectorAll('.preset-col-item').forEach(e => e.classList.remove('active'));
             el.classList.add('active');
 
-            const channels = globalPresets.filter(p => p.ecu === _presetPickerSelection.ecu && p.version === version);
+            const selEcu = _presetPickerSelection.ecu;
+            const isCustom = customPresets.some(p => p.ecu === selEcu && p.version === version);
+            const channels = globalPresets.filter(p => p.ecu === selEcu && p.version === version)
+                .sort((a, b) => a.label.localeCompare(b.label));
             document.getElementById('presetColChannel').innerHTML = channels.map((ch, i) => {
                 const gIdx = globalPresets.indexOf(ch);
-                const hexId = ch.can_id ? '0x' + parseInt(ch.can_id, 16).toString(16).toUpperCase().padStart(3, '0') : '---';
-                const detailParts = [`ID: ${hexId}`];
-                if (ch.bit_start !== undefined) detailParts.push(`bit ${ch.bit_start}:${ch.bit_len || 16}`);
-                if (ch.scale && ch.scale !== 1) detailParts.push(`x${ch.scale}`);
-                const dragSigName = ch.label.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
-                return `<div class="preset-col-item" onclick="presetPickChannel(this, ${gIdx})" draggable="true" ondragstart="presetDragStart(event, ${gIdx})" ondragend="signalDragEnd(event)">` +
+                const chIsInternal = !ch.can_id || parseInt(ch.can_id, 16) === 0;
+                const detailParts = [];
+                if (chIsInternal) {
+                    detailParts.push('Internal');
+                } else {
+                    const hexId = '0x' + parseInt(ch.can_id, 16).toString(16).toUpperCase().padStart(3, '0');
+                    detailParts.push(`ID: ${hexId}`);
+                    if (ch.bit_start !== undefined) detailParts.push(`bit ${ch.bit_start}:${ch.bit_length || 16}`);
+                    if (ch.scale && ch.scale !== 1) detailParts.push(`x${ch.scale}`);
+                }
+                const delBtn = isCustom ? `<button class="preset-sig-del" onclick="event.stopPropagation(); deleteCustomSignal('${selEcu.replace(/'/g, "\\'")}','${version.replace(/'/g, "\\'")}','${ch.label.replace(/'/g, "\\'")}')" title="Delete signal">&times;</button>` : '';
+                const extraClass = isCustom ? ' custom-sig' : '';
+                return `<div class="preset-col-item${extraClass}" onclick="presetPickChannel(this, ${gIdx})" draggable="true" ondragstart="presetDragStart(event, ${gIdx})" ondragend="signalDragEnd(event)">` +
                     `<div>${ch.label}</div>` +
                     `<div class="preset-detail">${detailParts.join(' | ')}</div>` +
+                    delBtn +
                     `</div>`;
-            }).join('');
+            }).join('') +
+            (isCustom && channels.length === 0 ? `<div style="padding:20px 12px; text-align:center; color:var(--text-muted); font-size:12px;">No signals yet</div>` : '') +
+            (isCustom ? `<div class="preset-col-actions"><button class="btn btn-secondary" onclick="showAddSignalForm()">+ Add Signal</button></div>` : '');
             document.getElementById('presetApplyBtn').disabled = true;
             const selText = document.getElementById('presetSelText');
             selText.textContent = `${_presetPickerSelection.ecu} \u203A ${version}`;
@@ -2233,6 +2472,14 @@
             document.getElementById('presetSelText').classList.remove('has-sel');
         }
 
+        function _presetIsLittleEndian(preset) {
+            /* Custom presets use endianess (0=Motorola/BE, 1=Intel/LE) */
+            if (preset.endianess !== undefined) return preset.endianess === 1;
+            /* Built-in presets use is_big_endian boolean */
+            if (preset.is_big_endian !== undefined) return !preset.is_big_endian;
+            return false;
+        }
+
         function _createSignalFromPreset(preset) {
             const sigName = preset.label.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
             if (!currentLayout.signals) currentLayout.signals = [];
@@ -2242,11 +2489,11 @@
                 name: sigName,
                 can_id: parseInt(preset.can_id, 16),
                 bit_start: preset.bit_start || 0,
-                bit_length: preset.bit_len || 16,
+                bit_length: preset.bit_length || 16,
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+                is_little_endian: _presetIsLittleEndian(preset)
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -2296,11 +2543,11 @@
                 name: sigName,
                 can_id: parseInt(preset.can_id, 16),
                 bit_start: preset.bit_start || 0,
-                bit_length: preset.bit_len || 16,
+                bit_length: preset.bit_length || 16,
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+                is_little_endian: _presetIsLittleEndian(preset)
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -2326,6 +2573,383 @@
             const preset = globalPresets[parseInt(presetIndex)];
             if (!preset) return;
             applyPresetToWidget(preset, selectedIndex);
+        }
+
+        /* ── Custom Preset Management ──────────────────────────── */
+
+        /* ── Custom ECU/Signal Management (modal-based) ─────── */
+
+        function showNewEcuForm() {
+            /* Show a clean modal dialog for creating a custom ECU */
+            const existing = document.getElementById('customEcuModal');
+            if (existing) existing.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'customEcuModal';
+            modal.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:3000; display:flex; align-items:center; justify-content:center;';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.innerHTML = `<div class="dbc-modal-content" onclick="event.stopPropagation()" style="width:min(380px, 90vw);">
+                <div class="signal-modal-header"><span>Create Custom ECU</span><button class="close-btn" onclick="document.getElementById('customEcuModal').remove()">&times;</button></div>
+                <div class="dbc-form">
+                    <div><label>ECU Name</label><input type="text" id="newEcuName" placeholder="e.g. My Custom ECU"></div>
+                    <div><label>Version <span style="color:var(--text-muted); font-weight:normal;">(optional)</span></label><input type="text" id="newEcuVersion" placeholder="e.g. v1.0" value="v1"></div>
+                </div>
+                <div class="dbc-footer">
+                    <button class="btn btn-secondary" onclick="document.getElementById('customEcuModal').remove()">Cancel</button>
+                    <button class="btn" onclick="createCustomEcu()">Create</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            setTimeout(() => document.getElementById('newEcuName')?.focus(), 50);
+        }
+
+        async function createCustomEcu() {
+            const name = document.getElementById('newEcuName')?.value?.trim();
+            let version = document.getElementById('newEcuVersion')?.value?.trim() || 'v1';
+            if (!name) { updateStatus('ECU name is required', true); return; }
+            try {
+                const resp = await fetch('/api/presets/custom/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ecu: name, version: version, signals: [] })
+                });
+                if (!resp.ok) { updateStatus('Failed to create custom ECU', true); return; }
+                document.getElementById('customEcuModal')?.remove();
+                await fetchPresets();
+                populateEcuContextSelect();
+                /* Make sure we're on the presets view */
+                if (document.getElementById('signalModal')?.style.display !== 'none') {
+                    switchSignalView('presets');
+                }
+                _initPresetColumns();
+                _autoSelectEcuVersion(name, version);
+                updateStatus(`Created custom ECU: ${name} ${version}`);
+            } catch (e) {
+                updateStatus('Failed to create custom ECU: ' + e.message, true);
+            }
+        }
+
+        async function deleteCustomEcuVersion(ecu, version) {
+            if (!confirm(`Delete "${ecu} ${version}" and all its signals?`)) return;
+            try {
+                await fetch(`/api/presets/custom/delete?ecu=${encodeURIComponent(ecu)}&version=${encodeURIComponent(version)}`, { method: 'POST' });
+                await fetchPresets();
+                populateEcuContextSelect();
+                _initPresetColumns();
+                assignShowEcuStep();
+                updateStatus(`Deleted ${ecu} ${version}`);
+                showToast(`Deleted ${ecu} ${version}`, 'success');
+            } catch (e) {
+                updateStatus('Failed to delete: ' + e.message, true);
+            }
+        }
+
+        async function deleteCustomEcu(ecu) {
+            if (!confirm(`Delete custom ECU "${ecu}" and all its signals?`)) return;
+            const versions = [...new Set(customPresets.filter(p => p.ecu === ecu).map(p => p.version))];
+            try {
+                for (const ver of versions) {
+                    await fetch(`/api/presets/custom/delete?ecu=${encodeURIComponent(ecu)}&version=${encodeURIComponent(ver)}`, { method: 'POST' });
+                }
+                await fetchPresets();
+                populateEcuContextSelect();
+                _initPresetColumns();
+                updateStatus(`Deleted custom ECU: ${ecu}`);
+            } catch (e) {
+                updateStatus('Failed to delete custom ECU: ' + e.message, true);
+            }
+        }
+
+        function showAddSignalForm() {
+            /* Show a clean modal dialog for adding a signal to the selected custom ECU */
+            if (!_presetPickerSelection || !_presetPickerSelection.ecu || !_presetPickerSelection.version) {
+                updateStatus('Select a custom ECU and version first', true); return;
+            }
+            const existing = document.getElementById('customSigModal');
+            if (existing) existing.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'customSigModal';
+            modal.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:3000; display:flex; align-items:center; justify-content:center;';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.innerHTML = `<div class="dbc-modal-content" onclick="event.stopPropagation()" style="width:min(420px, 90vw);">
+                <div class="signal-modal-header"><span>Add Signal to ${_presetPickerSelection.ecu}</span><button class="close-btn" onclick="document.getElementById('customSigModal').remove()">&times;</button></div>
+                <div class="dbc-form">
+                    <div><label>Signal Name</label><input type="text" id="cusPreSigName" placeholder="e.g. Oil Pressure"></div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                        <div><label>CAN ID (hex)</label><input type="text" id="cusPreSigCanId" placeholder="e.g. 520" style="font-family:monospace;"></div>
+                        <div><label>Decimals</label><input type="number" id="cusPreSigDec" value="0" min="0" max="4"></div>
+                    </div>
+                    <details style="margin-top:4px;">
+                        <summary style="cursor:pointer; font-size:12px; color:var(--text-muted); user-select:none;">Advanced CAN settings</summary>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+                            <div><label>Bit Start</label><input type="number" id="cusPreSigBitStart" value="0" min="0" max="63"></div>
+                            <div><label>Bit Length</label><input type="number" id="cusPreSigBitLen" value="16" min="1" max="64"></div>
+                            <div><label>Scale</label><input type="number" id="cusPreSigScale" value="1" step="any"></div>
+                            <div><label>Offset</label><input type="number" id="cusPreSigOffset" value="0" step="any"></div>
+                            <div><label>Endianness</label><select id="cusPreSigEndian"><option value="1">LE (Intel)</option><option value="0">BE (Motorola)</option></select></div>
+                            <div><label>Signed</label><select id="cusPreSigSigned"><option value="0">Unsigned</option><option value="1">Signed</option></select></div>
+                        </div>
+                    </details>
+                </div>
+                <div class="dbc-footer">
+                    <button class="btn btn-secondary" onclick="document.getElementById('customSigModal').remove()">Cancel</button>
+                    <button class="btn" onclick="saveCustomSignal()">Add Signal</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+            setTimeout(() => document.getElementById('cusPreSigName')?.focus(), 50);
+        }
+
+        async function saveCustomSignal() {
+            if (!_presetPickerSelection || !_presetPickerSelection.ecu || !_presetPickerSelection.version) {
+                updateStatus('Select an ECU and version first', true); return;
+            }
+            const label = document.getElementById('cusPreSigName')?.value?.trim();
+            if (!label) { updateStatus('Signal name is required', true); return; }
+            const canIdRaw = (document.getElementById('cusPreSigCanId')?.value || '').trim();
+            const canId = canIdRaw.replace(/^0x/i, '') || '0';
+            const newSig = {
+                label: label,
+                can_id: canId,
+                bit_start: parseInt(document.getElementById('cusPreSigBitStart')?.value) || 0,
+                bit_length: parseInt(document.getElementById('cusPreSigBitLen')?.value) || 16,
+                scale: parseFloat(document.getElementById('cusPreSigScale')?.value) || 1,
+                offset: parseFloat(document.getElementById('cusPreSigOffset')?.value) || 0,
+                endianess: parseInt(document.getElementById('cusPreSigEndian')?.value) || 1,
+                is_signed: document.getElementById('cusPreSigSigned')?.value === '1',
+                decimals: parseInt(document.getElementById('cusPreSigDec')?.value) || 0
+            };
+            /* Collect existing signals + add new one */
+            const existingSigs = customPresets.filter(p =>
+                p.ecu === _presetPickerSelection.ecu && p.version === _presetPickerSelection.version
+            ).map(p => ({
+                label: p.label, can_id: p.can_id, bit_start: p.bit_start, bit_length: p.bit_length,
+                scale: p.scale, offset: p.offset, endianess: p.endianess,
+                is_signed: p.is_signed, decimals: p.decimals
+            }));
+            existingSigs.push(newSig);
+            try {
+                const resp = await fetch('/api/presets/custom/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ecu: _presetPickerSelection.ecu,
+                        version: _presetPickerSelection.version,
+                        signals: existingSigs
+                    })
+                });
+                if (!resp.ok) { updateStatus('Failed to save signal', true); return; }
+                document.getElementById('customSigModal')?.remove();
+                const savedEcu = _presetPickerSelection.ecu;
+                const savedVer = _presetPickerSelection.version;
+                await fetchPresets();
+                populateEcuContextSelect();
+                _initPresetColumns();
+                _autoSelectEcuVersion(savedEcu, savedVer);
+                updateStatus(`Added signal "${label}" to ${savedEcu}`);
+            } catch (e) {
+                updateStatus('Failed to save signal: ' + e.message, true);
+            }
+        }
+
+        function _autoSelectEcuVersion(ecu, ver) {
+            setTimeout(() => {
+                const ecuItems = document.getElementById('presetColEcu').querySelectorAll('.preset-col-item');
+                ecuItems.forEach(el => { if (el.textContent.trim() === ecu) el.click(); });
+                setTimeout(() => {
+                    const verItems = document.getElementById('presetColVersion').querySelectorAll('.preset-col-item');
+                    verItems.forEach(el => { if (el.textContent.trim() === ver) el.click(); });
+                }, 50);
+            }, 50);
+        }
+
+        async function deleteCustomSignal(ecu, version, label) {
+            const sigs = customPresets.filter(p =>
+                p.ecu === ecu && p.version === version && p.label !== label
+            ).map(p => ({
+                label: p.label, can_id: p.can_id, bit_start: p.bit_start, bit_length: p.bit_length,
+                scale: p.scale, offset: p.offset, endianess: p.endianess,
+                is_signed: p.is_signed, decimals: p.decimals
+            }));
+            try {
+                const resp = await fetch('/api/presets/custom/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ecu, version, signals: sigs })
+                });
+                if (!resp.ok) { updateStatus('Failed to delete signal', true); return; }
+                await fetchPresets();
+                populateEcuContextSelect();
+                _initPresetColumns();
+                _autoSelectEcuVersion(ecu, version);
+                updateStatus(`Deleted signal "${label}" from ${ecu}`);
+            } catch (e) {
+                updateStatus('Failed to delete signal: ' + e.message, true);
+            }
+        }
+
+        /* ── DBC File Import ──────────────────────────────────── */
+
+        let _parsedDbcSignals = [];
+
+        function openDbcImportModal() {
+            document.getElementById('dbcImportModal').style.display = 'flex';
+            document.getElementById('dbcEcuName').value = '';
+            document.getElementById('dbcVersion').value = '';
+            document.getElementById('dbcFileInput').value = '';
+            document.getElementById('dbcPreview').textContent = 'Select a .dbc file to preview signals.';
+            document.getElementById('dbcImportBtn').disabled = true;
+            _parsedDbcSignals = [];
+            /* Attach file change listener */
+            document.getElementById('dbcFileInput').onchange = handleDbcFileSelect;
+        }
+
+        function closeDbcImportModal() {
+            document.getElementById('dbcImportModal').style.display = 'none';
+        }
+
+        function handleDbcFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                _parsedDbcSignals = parseDbcFile(ev.target.result);
+                const preview = document.getElementById('dbcPreview');
+                if (_parsedDbcSignals.length === 0) {
+                    preview.textContent = 'No standard CAN signals found in file.';
+                } else {
+                    const msgCount = new Set(_parsedDbcSignals.map(s => s.can_id)).size;
+                    preview.innerHTML = `<b>${_parsedDbcSignals.length}</b> signals across <b>${msgCount}</b> messages (standard CAN only).` +
+                        `<br><span style="color:var(--text-muted); font-size:10px;">` +
+                        _parsedDbcSignals.slice(0, 8).map(s => s.label).join(', ') +
+                        (_parsedDbcSignals.length > 8 ? ', ...' : '') + `</span>`;
+                }
+                updateDbcImportBtnState();
+            };
+            reader.readAsText(file);
+        }
+
+        function updateDbcImportBtnState() {
+            const name = document.getElementById('dbcEcuName')?.value?.trim();
+            const ver = document.getElementById('dbcVersion')?.value?.trim();
+            document.getElementById('dbcImportBtn').disabled = !name || !ver || _parsedDbcSignals.length === 0;
+        }
+        /* Attach input listeners for DBC import ECU name/version fields */
+        (function() {
+            const n = document.getElementById('dbcEcuName');
+            const v = document.getElementById('dbcVersion');
+            if (n) n.addEventListener('input', updateDbcImportBtnState);
+            if (v) v.addEventListener('input', updateDbcImportBtnState);
+        })();
+
+        function parseDbcFile(text) {
+            const signals = [];
+            const lines = text.split('\n');
+            let currentMsgId = null;
+            let currentMsgName = '';
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+
+                /* Match BO_ lines: BO_ <CAN-ID> <MessageName>: <DLC> <SendingNode> */
+                const boMatch = line.match(/^BO_\s+(\d+)\s+(\w+)\s*:/);
+                if (boMatch) {
+                    let rawId = parseInt(boMatch[1]);
+                    /* Extended CAN IDs have bit 31 set — mask it and skip if extended */
+                    if (rawId & 0x80000000) {
+                        rawId &= 0x7FFFFFFF;
+                    }
+                    /* Skip extended frames (IDs >= 0x800 are not standard 11-bit) */
+                    if (rawId > 0x7FF) {
+                        currentMsgId = null;
+                        continue;
+                    }
+                    currentMsgId = rawId;
+                    currentMsgName = boMatch[2];
+                    continue;
+                }
+
+                /* Match SG_ lines (indented under BO_): */
+                /* SG_ <SignalName> [M|mN] : <BitStart>|<BitLength>@<ByteOrder><ValueType> (<Scale>,<Offset>) [<Min>|<Max>] "<Unit>" <Receivers> */
+                if (currentMsgId !== null) {
+                    const sgMatch = line.match(/^\s+SG_\s+(\w+)\s*(?:M|m\d+)?\s*:\s*(\d+)\|(\d+)@([01])([+-])\s*\(([^,]+),([^)]+)\)\s*\[([^|]*)\|([^\]]*)\]\s*"([^"]*)"/);
+                    if (sgMatch) {
+                        const sigName = sgMatch[1];
+                        const bitStart = parseInt(sgMatch[2]);
+                        const bitLength = parseInt(sgMatch[3]);
+                        const byteOrder = parseInt(sgMatch[4]); /* 0=Motorola, 1=Intel */
+                        const isSigned = sgMatch[5] === '-';
+                        const scale = parseFloat(sgMatch[6]);
+                        const offset = parseFloat(sgMatch[7]);
+
+                        /* Auto-calculate decimals from scale */
+                        let decimals = 0;
+                        const absScale = Math.abs(scale);
+                        if (absScale > 0 && absScale < 0.01) decimals = 3;
+                        else if (absScale < 0.1) decimals = 2;
+                        else if (absScale < 1) decimals = 1;
+
+                        /* Format label: replace underscores with spaces */
+                        const label = sigName.replace(/_/g, ' ');
+
+                        signals.push({
+                            label: label,
+                            can_id: currentMsgId.toString(16).toUpperCase(),
+                            bit_start: bitStart,
+                            bit_length: bitLength,
+                            scale: scale,
+                            offset: offset,
+                            endianess: byteOrder,
+                            is_signed: isSigned,
+                            decimals: decimals
+                        });
+                    }
+                    /* If line is not indented and not empty, end current message context */
+                    if (line.trim() && !line.match(/^\s/)) {
+                        currentMsgId = null;
+                    }
+                }
+            }
+            return signals;
+        }
+
+        async function doDbcImport() {
+            const ecu = document.getElementById('dbcEcuName')?.value?.trim();
+            const version = document.getElementById('dbcVersion')?.value?.trim();
+            if (!ecu || !version || _parsedDbcSignals.length === 0) return;
+
+            try {
+                const resp = await fetch('/api/presets/custom/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ecu: ecu,
+                        version: version,
+                        signals: _parsedDbcSignals
+                    })
+                });
+                if (!resp.ok) {
+                    updateStatus('Failed to import DBC file', true);
+                    return;
+                }
+                closeDbcImportModal();
+                await fetchPresets();
+                populateEcuContextSelect();
+                _initPresetColumns();
+                /* Auto-select the imported ECU */
+                setTimeout(() => {
+                    const ecuItems = document.getElementById('presetColEcu').querySelectorAll('.preset-col-item');
+                    ecuItems.forEach(el => { if (el.textContent.trim() === ecu) el.click(); });
+                    setTimeout(() => {
+                        const verItems = document.getElementById('presetColVersion').querySelectorAll('.preset-col-item');
+                        verItems.forEach(el => { if (el.textContent.trim() === version) el.click(); });
+                    }, 50);
+                }, 50);
+                updateStatus(`Imported ${_parsedDbcSignals.length} signals from DBC as ${ecu} ${version}`);
+            } catch (e) {
+                updateStatus('Failed to import DBC: ' + e.message, true);
+            }
         }
 
         let isDragging = false;
@@ -2521,6 +3145,11 @@
             const g = (val >> 8) & 0xFF;
             const b = val & 0xFF;
             return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+        }
+        /* Snap an RGB888 value to the nearest colour representable in RGB565.
+           This makes the web editor preview match the actual ESP32 display. */
+        function snapToRgb565(val) {
+            return rgb565to888(rgb888to565(val));
         }
         /** Walk all color-type fields in WIDGET_DEFS and apply convertFn to widget configs */
         function convertWidgetColors(widgets, convertFn) {
@@ -2738,7 +3367,7 @@
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_opa", label: "Border Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "scale_padding", label: "Scale Padding", type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
-                    { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 0, max: 100, def: 21, cat: "appearance" },
+                    { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 2, max: 100, def: 21, cat: "appearance" },
                     { name: "minor_tick_width", label: "Tick Width", type: "stepper", min: 1, max: 20, def: 2, cat: "appearance" },
                     { name: "minor_tick_length", label: "Tick Length", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
                     { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x888888, cat: "appearance" },
@@ -3088,8 +3717,18 @@
         }
 
         /* Render Logic */
+        function _updateApplyBtn() {
+            const btn = document.getElementById('applyBtn');
+            if (!btn) return;
+            const name = currentLayout.name || 'default';
+            const isDefault = name === 'default';
+            btn.textContent = isDefault ? 'Apply (preview)' : `Apply → ${name}`;
+            btn.title = isDefault ? 'Preview only — default layout cannot be overwritten' : `Save and apply to "${name}"`;
+        }
+
         function renderEditor() {
             interactionLayer.innerHTML = '';
+            _updateApplyBtn();
             /* Show colour-coded borders when viewing a layout not yet applied to device */
             interactionLayer.classList.toggle('preview-mode', _lastDeviceSnapshot === '');
             currentLayout.widgets.forEach((w, index) => {
@@ -3992,18 +4631,27 @@
             } else if (f.type === 'checkbox') {
                 html += `<label class="toggle-switch"><input type="checkbox" ${val ? 'checked' : ''} onchange="updateWidgetConfigField('${f.name}', this.checked, false)" ${disabledAttr}><span class="toggle-track"></span></label>`;
             } else if (f.type === 'color') {
-                const colorHex = Number(val != null ? val : 0).toString(16).toUpperCase().padStart(6, '0');
+                const snapped = snapToRgb565(Number(val != null ? val : 0));
+                const colorHex = snapped.toString(16).toUpperCase().padStart(6, '0');
                 html += `<div class="color-field-wrap">
                     <input type="color" value="#${colorHex}"
-                           oninput="document.getElementById('clr_${f.name}').value = '0x' + this.value.substring(1).toUpperCase(); updateWidgetConfigField('${f.name}', parseInt('0x' + this.value.substring(1).toUpperCase()), false)"
+                           oninput="
+                              let s = snapToRgb565(parseInt('0x' + this.value.substring(1)));
+                              let h = s.toString(16).toUpperCase().padStart(6,'0');
+                              this.value = '#' + h;
+                              document.getElementById('clr_${f.name}').value = '0x' + h;
+                              updateWidgetConfigField('${f.name}', s, false);
+                           "
                            ${disabledAttr}>
                     <input type="text" id="clr_${f.name}" value="0x${colorHex}"
                            oninput="
                               let v = parseInt(this.value);
                               if(!isNaN(v)){
-                                  let h=v.toString(16).padStart(6,'0');
+                                  let s = snapToRgb565(v);
+                                  let h = s.toString(16).toUpperCase().padStart(6,'0');
+                                  this.value = '0x' + h;
                                   this.previousElementSibling.value='#'+h;
-                                  updateWidgetConfigField('${f.name}', v, false);
+                                  updateWidgetConfigField('${f.name}', s, false);
                               }
                            "
                            ${disabledAttr}>
@@ -4131,10 +4779,12 @@
             updateWidgetCoords();
             _saveInspectorState();
             if (selectedIndex === -1) {
+                fuelCalStopPoll();
                 inspectorContent.innerHTML = '<div class="inspector-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><p>Click a widget on the canvas<br>or select from Layers panel</p></div>';
                 return;
             }
             if (selectedIndices.size > 1) {
+                fuelCalStopPoll();
                 inspectorContent.innerHTML = `<div style="text-align:center; color:hsl(0, 0%, 67%); padding-top:40px;">${selectedIndices.size} widgets selected<br><span style="font-size:11px;color:hsl(0, 0%, 40%);">Drag to move together &bull; Arrow keys to nudge &bull; Delete to remove</span></div>`;
                 return;
             }
@@ -4198,6 +4848,25 @@
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
 
+                /* ── Fuel Sender Calibration (inline in Data tab) ── */
+                if (w.signal === 'FUEL_SENDER_V') {
+                    const sig = (currentLayout.signals || []).find(s => s.name === 'FUEL_SENDER_V');
+                    const fc = sig && sig.fuel_cal ? sig.fuel_cal : {};
+                    const ev = fc.empty_v !== undefined ? fc.empty_v : 0.5;
+                    const fv = fc.full_v !== undefined ? fc.full_v : 3.0;
+                    const fval = fc.full_value !== undefined ? fc.full_value : 100;
+                    html += `<div class="field" style="margin-bottom:6px;"><label>Live Voltage</label><span id="fuelCalVoltage" style="font-size:12px; font-family:monospace; color:var(--text);">-- V</span></div>`;
+                    html += `<div style="display:grid; grid-template-columns:1fr auto; gap:6px; align-items:end; margin-bottom:6px;">`;
+                    html += `<div class="field"><label>Empty Voltage</label><input type="number" step="0.001" value="${ev}" onchange="updateFuelCal('empty_v', parseFloat(this.value))" ${disabledAttr}></div>`;
+                    html += `<button class="btn btn-secondary" style="font-size:10px; padding:4px 8px; height:28px;" onclick="fuelSetEmpty()" ${disabledAttr}>Set Empty</button>`;
+                    html += `</div>`;
+                    html += `<div style="display:grid; grid-template-columns:1fr auto; gap:6px; align-items:end; margin-bottom:6px;">`;
+                    html += `<div class="field"><label>Full Voltage</label><input type="number" step="0.001" value="${fv}" onchange="updateFuelCal('full_v', parseFloat(this.value))" ${disabledAttr}></div>`;
+                    html += `<button class="btn btn-secondary" style="font-size:10px; padding:4px 8px; height:28px;" onclick="fuelSetFull()" ${disabledAttr}>Set Full</button>`;
+                    html += `</div>`;
+                    html += `<div class="field"><label>Full Value</label><input type="number" step="0.1" value="${fval}" onchange="updateFuelCal('full_value', parseFloat(this.value))" ${disabledAttr}></div>`;
+                    html += `<div style="font-size:10px; color:var(--text-muted); margin-top:-2px; margin-bottom:4px;">Use 100 for percentage, or your tank capacity in litres.</div>`;
+                }
 
                 html += `</div></details>`;
             }
@@ -4325,6 +4994,34 @@
                             html += `<option value="${img.name}" ${val === img.name ? 'selected' : ''}>${img.name}</option>`;
                         });
                         html += `</select>`;
+                    } else if (f.type === 'font') {
+                        const parsed = parseFontValue(val);
+                        const selFamily = parsed ? parsed.family : '';
+                        const selSize = parsed ? parsed.size : 14;
+                        const ruid = 'rf_' + ri + '_' + f.name;
+                        html += `<div style="display:flex; gap:4px; align-items:center;">`;
+                        html += `<select id="fontFam_${ruid}" style="flex:1;" onchange="_onRuleFontFamilyChange('${ruid}', ${ri}, '${f.name}')" ${disabledAttr}>`;
+                        html += `<option value="">Default</option>`;
+                        BUILTIN_FONT_FAMILIES.forEach(fam => {
+                            html += `<option value="${fam.name}" ${selFamily === fam.name ? 'selected' : ''}>${fam.name}</option>`;
+                        });
+                        (_cachedFontList || []).forEach(fname => {
+                            html += `<option value="${fname}" ${selFamily === fname ? 'selected' : ''}>${fname}</option>`;
+                        });
+                        html += `</select>`;
+                        const builtinSizes = selFamily ? getFontSizes(selFamily) : null;
+                        if (builtinSizes) {
+                            html += `<select id="fontSize_${ruid}" style="width:58px;" onchange="_onRuleFontSizeChange('${ruid}', ${ri}, '${f.name}')" ${disabledAttr}>`;
+                            builtinSizes.forEach(s => {
+                                html += `<option value="${s}" ${s === selSize ? 'selected' : ''}>${s}</option>`;
+                            });
+                            html += `</select>`;
+                        } else if (selFamily) {
+                            html += `<input type="number" id="fontSize_${ruid}" value="${selSize}" min="8" max="128" style="width:58px;" onchange="_onRuleFontSizeChange('${ruid}', ${ri}, '${f.name}')" ${disabledAttr}>`;
+                        } else {
+                            html += `<span id="fontSize_${ruid}"></span>`;
+                        }
+                        html += `</div>`;
                     } else {
                         const isNum = (f.type === 'number' || f.type === 'stepper');
                         const inputType = isNum ? 'number' : 'text';
@@ -4338,13 +5035,18 @@
                 });
                 html += `</div></details>`;
             });
-            if (rules.length < 4) {
-                html += `<button class="btn btn-secondary" style="font-size:11px; width:100%;" onclick="addRule()" ${disabledAttr}>+ Add Rule</button>`;
-            }
+            html += `<button class="btn btn-secondary" style="font-size:11px; width:100%;" onclick="addRule()" ${disabledAttr}>+ Add Rule</button>`;
             html += `</div></details>`;
 
             inspectorContent.innerHTML = html;
             _restoreInspectorState();
+
+            /* Start/stop fuel voltage polling based on selection */
+            if (w.signal === 'FUEL_SENDER_V' && document.getElementById('fuelCalVoltage')) {
+                fuelCalStartPoll();
+            } else {
+                fuelCalStopPoll();
+            }
         }
 
         function assignSignal(sigName) {
@@ -4471,6 +5173,13 @@
             document.getElementById('assignStepSignals').style.display = 'none';
             document.getElementById('assignStepCustom').style.display = 'none';
 
+            /* Reset search state */
+            const searchInput = document.getElementById('ecuSearchInput');
+            if (searchInput) searchInput.value = '';
+            document.getElementById('ecuSearchResults').style.display = 'none';
+            document.getElementById('ecuPickerList').style.display = '';
+            setTimeout(() => { if (searchInput) searchInput.focus(); }, 50);
+
             /* Build ECU list from presets */
             const ecuMap = {};
             globalPresets.forEach(p => {
@@ -4479,13 +5188,79 @@
                 ecuMap[key].count++;
             });
             const ecus = Object.values(ecuMap).sort((a, b) => a.ecu.localeCompare(b.ecu) || a.version.localeCompare(b.version));
+            const customEcuVersions = new Set(customPresets.map(p => `${p.ecu}||${p.version}`));
             const list = document.getElementById('assignEcuList');
-            list.innerHTML = ecus.map(e =>
-                `<div class="assign-ecu-item" onclick="assignPickEcu('${e.ecu.replace(/'/g, "\\'")}','${e.version.replace(/'/g, "\\'")}')">`+
-                `<span>${e.ecu} <span class="ecu-version">${e.version}</span></span>`+
-                `<span class="ecu-version">${e.count} signals</span></div>`
-            ).join('') +
+            list.innerHTML = ecus.map(e => {
+                const isCustom = customEcuVersions.has(`${e.ecu}||${e.version}`);
+                const delBtn = isCustom
+                    ? `<button onclick="event.stopPropagation(); deleteCustomEcuVersion('${e.ecu.replace(/'/g, "\\'")}','${e.version.replace(/'/g, "\\'")}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:14px; padding:2px 6px; flex-shrink:0;" title="Delete ${e.ecu} ${e.version}">&times;</button>`
+                    : '';
+                return `<div class="assign-ecu-item" onclick="assignPickEcu('${e.ecu.replace(/'/g, "\\'")}','${e.version.replace(/'/g, "\\'")}')">`+
+                `<span>${isCustom ? '<span style="color:#4fc3f7; margin-right:4px;">&#9679;</span>' : ''}${e.ecu} <span class="ecu-version">${e.version}</span></span>`+
+                `<span style="display:flex; align-items:center; gap:4px;"><span class="ecu-version">${e.count} signals</span>${delBtn}</span></div>`;
+            }).join('') +
             `<div class="assign-ecu-item" onclick="assignPickEcu('','')"><span style="color:var(--text-muted);">Custom (skip ECU selection)</span></div>`;
+        }
+
+        function renderEcuSearch() {
+            const filter = (document.getElementById('ecuSearchInput')?.value || '').toLowerCase().trim();
+            const resultsDiv = document.getElementById('ecuSearchResults');
+            const pickerDiv = document.getElementById('ecuPickerList');
+
+            if (!filter) {
+                resultsDiv.style.display = 'none';
+                pickerDiv.style.display = '';
+                return;
+            }
+            resultsDiv.style.display = '';
+            pickerDiv.style.display = 'none';
+
+            /* Search across ALL presets regardless of current ECU context */
+            const matches = globalPresets
+                .map((p, i) => ({ preset: p, globalIdx: i }))
+                .filter(({ preset: p }) => p.label.toLowerCase().includes(filter));
+
+            if (matches.length === 0) {
+                resultsDiv.innerHTML = `<div style="text-align:center; padding:40px 20px; color:var(--text-muted);">No signals matching "${filter}" across any ECU.</div>`;
+                return;
+            }
+
+            /* Group by ECU+version for display */
+            const grouped = {};
+            matches.forEach(({ preset: p, globalIdx }) => {
+                const key = `${p.ecu} ${p.version}`;
+                if (!grouped[key]) grouped[key] = { ecu: p.ecu, version: p.version, items: [] };
+                grouped[key].items.push({ preset: p, globalIdx });
+            });
+
+            let html = `<div style="padding:8px 20px 4px; font-size:11px; color:var(--text-muted);">${matches.length} result${matches.length !== 1 ? 's' : ''} across ${Object.keys(grouped).length} ECU${Object.keys(grouped).length !== 1 ? 's' : ''}</div>`;
+            for (const key of Object.keys(grouped).sort()) {
+                const g = grouped[key];
+                html += `<div class="assign-section-header">${g.ecu} <span style="font-weight:400; color:var(--text-muted);">${g.version}</span></div>`;
+                g.items.forEach(({ preset: p, globalIdx }) => {
+                    const pIsInternal = !p.can_id || parseInt(p.can_id, 16) === 0;
+                    let meta;
+                    if (pIsInternal) {
+                        meta = 'Internal';
+                    } else {
+                        const hexId = '0x' + parseInt(p.can_id, 16).toString(16).toUpperCase().padStart(3, '0');
+                        meta = `${hexId} | bit ${p.bit_start || 0}:${p.bit_length || 16}${p.scale && p.scale !== 1 ? ' x' + p.scale : ''}`;
+                    }
+                    html += `<div class="assign-sig-item" onclick="assignPresetFromSearch(${globalIdx},'${g.ecu.replace(/'/g, "\\'")}','${g.version.replace(/'/g, "\\'")}')">`;
+                    html += `<div><span class="sig-item-name">${p.label}</span><br><span class="sig-item-meta">${meta}</span></div>`;
+                    html += `</div>`;
+                });
+            }
+            resultsDiv.innerHTML = html;
+        }
+
+        function assignPresetFromSearch(globalIdx, ecu, version) {
+            /* Set the ECU context to the selected signal's ECU */
+            pushHistory();
+            currentLayout.ecu = ecu;
+            currentLayout.ecu_version = version;
+            populateEcuContextSelect();
+            assignPresetSignal(globalIdx);
         }
 
         function assignPickEcu(ecu, version) {
@@ -4551,9 +5326,15 @@
             if (layoutSigs.length > 0) {
                 html += `<div class="assign-section-header">Layout Signals</div>`;
                 layoutSigs.forEach(s => {
-                    const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
+                    let metaText;
+                    if (s.can_id === 0) {
+                        metaText = 'Internal';
+                    } else {
+                        const hexId = '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0');
+                        metaText = `${hexId} | ${s.bit_start}:${s.bit_length}`;
+                    }
                     html += `<div class="assign-sig-item" onclick="assignExistingSignal('${s.name.replace(/'/g, "\\'")}')">`;
-                    html += `<div><span class="sig-item-name">${s.name}</span><br><span class="sig-item-meta">${hexId} | ${s.bit_start}:${s.bit_length}</span></div>`;
+                    html += `<div><span class="sig-item-name">${s.name}</span><br><span class="sig-item-meta">${metaText}</span></div>`;
                     html += `</div>`;
                 });
             }
@@ -4566,16 +5347,24 @@
             if (filter) {
                 presets = presets.filter(p => p.label.toLowerCase().includes(filter));
             }
+            presets = [...presets].sort((a, b) => a.label.localeCompare(b.label));
 
             if (presets.length > 0) {
                 const groupLabel = currentLayout.ecu ? `${currentLayout.ecu} Presets` : 'ECU Presets';
                 html += `<div class="assign-section-header">${groupLabel}</div>`;
                 presets.forEach((p, i) => {
                     const sigName = p.label.replace(/[^A-Za-z0-9_]/g, '_').toUpperCase();
-                    const hexId = p.can_id ? '0x' + parseInt(p.can_id, 16).toString(16).toUpperCase().padStart(3, '0') : '---';
+                    const pIsInternal = !p.can_id || parseInt(p.can_id, 16) === 0;
                     const gIdx = globalPresets.indexOf(p);
+                    let pMeta;
+                    if (pIsInternal) {
+                        pMeta = 'Internal';
+                    } else {
+                        const hexId = '0x' + parseInt(p.can_id, 16).toString(16).toUpperCase().padStart(3, '0');
+                        pMeta = `${hexId} | bit ${p.bit_start || 0}:${p.bit_length || 16}${p.scale && p.scale !== 1 ? ' x' + p.scale : ''}`;
+                    }
                     html += `<div class="assign-sig-item" onclick="assignPresetSignal(${gIdx})">`;
-                    html += `<div><span class="sig-item-name">${p.label}</span><br><span class="sig-item-meta">${hexId} | bit ${p.bit_start || 0}:${p.bit_len || 16}${p.scale && p.scale !== 1 ? ' x' + p.scale : ''}</span></div>`;
+                    html += `<div><span class="sig-item-name">${p.label}</span><br><span class="sig-item-meta">${pMeta}</span></div>`;
                     html += `</div>`;
                 });
             }
@@ -4604,11 +5393,11 @@
                 name: sigName,
                 can_id: parseInt(preset.can_id, 16),
                 bit_start: preset.bit_start || 0,
-                bit_length: preset.bit_len || 16,
+                bit_length: preset.bit_length || 16,
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+                is_little_endian: _presetIsLittleEndian(preset)
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -4987,6 +5776,32 @@
             updateWidgetConfigField(fieldName, val, false);
         }
 
+        function _onRuleFontFamilyChange(ruid, ri, fieldName) {
+            const famSel = document.getElementById('fontFam_' + ruid);
+            if (!famSel) return;
+            const family = famSel.value;
+            if (!family) {
+                updateRuleField(ri, fieldName, '');
+                updateInspector();
+                return;
+            }
+            const sizes = getFontSizes(family);
+            const defaultSize = sizes ? sizes[Math.floor(sizes.length / 2)] : 14;
+            const val = buildFontValue(family, defaultSize);
+            updateRuleField(ri, fieldName, val);
+            updateInspector();
+        }
+
+        function _onRuleFontSizeChange(ruid, ri, fieldName) {
+            const famSel = document.getElementById('fontFam_' + ruid);
+            const sizeEl = document.getElementById('fontSize_' + ruid);
+            if (!famSel || !sizeEl) return;
+            const family = famSel.value;
+            const size = parseInt(sizeEl.value) || 14;
+            const val = buildFontValue(family, size);
+            updateRuleField(ri, fieldName, val);
+        }
+
         function openFontUploadDialog() {
             const input = document.createElement('input');
             input.type = 'file';
@@ -5146,9 +5961,11 @@
             renderSignalTable();
             switchSignalView('signals');
             modal.style.display = 'flex';
+            signalPollStart();
         }
 
         function closeSignalManager() {
+            signalPollStop();
             document.getElementById('signalModal').style.display = 'none';
             renderSignals();
             renderEditor();
@@ -5192,7 +6009,9 @@
                 return;
             }
             c.innerHTML = sigs.map((s, i) => {
-                const hexId = s.can_id ? '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0') : '---';
+                const sIsInternal = (s.can_id === 0);
+                const hexId = sIsInternal ? null : '0x' + s.can_id.toString(16).toUpperCase().padStart(3, '0');
+                const sigMeta = sIsInternal ? 'Internal' : `${hexId} | ${s.bit_start}:${s.bit_length}`;
                 const bound = boundMap[s.name] || [];
                 const isExpanded = expandedSignalIdx === i;
                 const isHighlighted = highlightSig === s.name;
@@ -5205,29 +6024,33 @@
                 html += `<span class="sig-expand-icon">\u25B6</span>`;
                 html += `<span class="sig-dot ${bound.length ? 'bound' : 'unbound'}"></span>`;
                 html += `<div class="sig-info">`;
-                html += `<span class="sig-name">${s.name}</span>`;
-                html += `<span class="sig-meta">${hexId} | ${s.bit_start}:${s.bit_length}</span>`;
+                html += `<span class="sig-name"${sIsInternal ? ' style="color:#4fc3f7;"' : ''}>${s.name}</span>`;
+                html += `<span class="sig-meta">${sigMeta}</span>`;
                 html += `</div></div>`;
 
                 /* Expanded body with compact grouped fields */
+                const dimCan = sIsInternal ? ' style="opacity:0.3; pointer-events:none;"' : '';
                 html += `<div class="sig-card-body" onclick="event.stopPropagation()">`;
                 html += `<div class="sig-card-grid" style="grid-template-columns:1fr; gap:8px;">`;
-                html += `<input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value); renderSignals();" spellcheck="false" style="font-size:14px; font-weight:600; padding:8px;" placeholder="Signal Name">`;
-                html += `<div style="display:flex; gap:8px;">`;
-                html += `<input type="text" value="${hexId}" onchange="updateSignalCanId(${i},this); renderSignals();" spellcheck="false" style="font-family:monospace; width:80px;" title="CAN ID" placeholder="CAN ID">`;
+                html += `<input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value); renderSignals();" spellcheck="false" style="font-size:14px; font-weight:600; padding:8px;${sIsInternal ? ' color:#4fc3f7;' : ''}" placeholder="Signal Name">`;
+                if (sIsInternal) {
+                    html += `<div style="padding:4px 8px; color:#4fc3f7; font-size:12px;">Internal signal — no CAN bus configuration</div>`;
+                }
+                html += `<div style="display:flex; gap:8px;"${dimCan}>`;
+                html += `<input type="text" value="${hexId || '---'}" onchange="updateSignalCanId(${i},this); renderSignals();" spellcheck="false" style="font-family:monospace; width:80px;" title="CAN ID" placeholder="CAN ID"${sIsInternal ? ' tabindex="-1"' : ''}>`;
                 html += `<div style="display:flex; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:0 8px; flex:1;">`;
-                html += `<input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)" style="border:none; width:40px; background:transparent; padding:8px 0;" title="Start Bit">`;
+                html += `<input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)" style="border:none; width:40px; background:transparent; padding:8px 0;" title="Start Bit"${sIsInternal ? ' tabindex="-1"' : ''}>`;
                 html += `<span style="color:var(--text-muted);">:</span>`;
-                html += `<input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)" style="border:none; width:40px; background:transparent; padding:8px 0;" title="Bit Length">`;
+                html += `<input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)" style="border:none; width:40px; background:transparent; padding:8px 0;" title="Bit Length"${sIsInternal ? ' tabindex="-1"' : ''}>`;
                 html += `</div></div>`;
-                html += `<div style="display:flex; gap:8px;">`;
-                html += `<div class="field" style="flex:1"><label>Scale</label><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"></div>`;
-                html += `<div class="field" style="flex:1"><label>Offset</label><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"></div>`;
+                html += `<div style="display:flex; gap:8px;"${dimCan}>`;
+                html += `<div class="field" style="flex:1"><label>Scale</label><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"${sIsInternal ? ' tabindex="-1"' : ''}></div>`;
+                html += `<div class="field" style="flex:1"><label>Offset</label><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"${sIsInternal ? ' tabindex="-1"' : ''}></div>`;
                 html += `</div>`;
                 html += `</div>`; /* end grid */
-                html += `<div class="sig-card-toggles">`;
-                html += `<span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_signed'); renderSignals();" title="${s.is_signed ? 'Signed' : 'Unsigned'}">${s.is_signed ? 'Signed' : 'Unsigned'}</span>`;
-                html += `<span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_little_endian'); renderSignals();" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span>`;
+                html += `<div class="sig-card-toggles"${dimCan}>`;
+                html += `<span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="${sIsInternal ? '' : `toggleSignalBool(${i},'is_signed'); renderSignals();`}" title="${s.is_signed ? 'Signed' : 'Unsigned'}">${s.is_signed ? 'Signed' : 'Unsigned'}</span>`;
+                html += `<span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="${sIsInternal ? '' : `toggleSignalBool(${i},'is_little_endian'); renderSignals();`}" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span>`;
                 html += `</div>`;
 
                 /* Bound widgets */
@@ -5280,6 +6103,47 @@
             renderSignals();
         }
 
+        /* ── Live signal value polling ──────────────────────────────── */
+        let _signalLiveValues = {};   /* name → { value, stale } */
+        let _signalPollTimer = null;
+
+        async function _pollSignalValues() {
+            try {
+                const r = await fetch('/api/signals/values');
+                if (!r.ok) return;
+                const data = await r.json();
+                const map = {};
+                (data.signals || []).forEach(s => {
+                    map[s.name] = { value: s.value, stale: s.stale, can_id: s.can_id };
+                });
+                _signalLiveValues = map;
+                _updateLiveValueCells();
+            } catch(e) { /* ignore fetch errors */ }
+        }
+
+        function _updateLiveValueCells() {
+            document.querySelectorAll('.sig-live-value').forEach(el => {
+                const name = el.dataset.sigName;
+                const info = _signalLiveValues[name];
+                if (info !== undefined) {
+                    const v = info.value;
+                    const display = (Number.isInteger(v) || Math.abs(v) >= 100) ? v.toFixed(0) : v.toFixed(2);
+                    el.textContent = info.stale ? '---' : display;
+                    el.style.color = info.stale ? 'var(--text-ghost)' : '#4fc3f7';
+                }
+            });
+        }
+
+        function signalPollStart() {
+            if (_signalPollTimer) return;
+            _pollSignalValues();
+            _signalPollTimer = setInterval(_pollSignalValues, 1500);
+        }
+
+        function signalPollStop() {
+            if (_signalPollTimer) { clearInterval(_signalPollTimer); _signalPollTimer = null; }
+        }
+
         function renderSignalTable() {
             const sigs = currentLayout.signals || [];
             const filter = (document.getElementById('signalSearchInput')?.value || '').toLowerCase();
@@ -5305,7 +6169,8 @@
             const filtered = sigs.map((s, i) => ({ s, i })).filter(({ s }) =>
                 !filter || s.name.toLowerCase().includes(filter) ||
                 ('0x' + s.can_id.toString(16)).toLowerCase().includes(filter) ||
-                s.can_id.toString().includes(filter)
+                s.can_id.toString().includes(filter) ||
+                (s.can_id === 0 && 'internal'.includes(filter))
             );
 
             tbody.innerHTML = filtered.map(({ s, i }) => {
@@ -5313,16 +6178,35 @@
                 const boundWidgets = bound ? (currentLayout.widgets || []).filter(w => w.signal === s.name).map(w => w.id).join(', ') : '';
                 const boundTitle = bound ? `Bound to: ${boundWidgets}` : 'Not bound to any widget';
                 const pickBtn = isPickMode ? `<td style="width:60px;"><button class="btn" style="font-size:10px; padding:3px 8px;" onclick="pickSignalFromModal('${s.name.replace(/'/g, "\\'")}')">Select</button></td>` : '';
+                const isInternal = (s.can_id === 0);
+                const dimStyle = isInternal ? ' style="opacity:0.3; pointer-events:none;"' : '';
+
+                /* CAN ID column: show live value for internal signals, hex input for CAN */
+                let canIdCell;
+                if (isInternal) {
+                    const live = _signalLiveValues[s.name];
+                    let valText = '---';
+                    let valColor = 'var(--text-ghost)';
+                    if (live && !live.stale) {
+                        const v = live.value;
+                        valText = (Number.isInteger(v) || Math.abs(v) >= 100) ? v.toFixed(0) : v.toFixed(2);
+                        valColor = '#4fc3f7';
+                    }
+                    canIdCell = `<td class="col-canid" title="Internal signal (no CAN bus)"><span class="sig-live-value" data-sig-name="${s.name}" style="font-family:monospace; color:${valColor}; font-size:11px;">${valText}</span></td>`;
+                } else {
+                    canIdCell = `<td class="col-canid"><input type="text" value="0x${s.can_id.toString(16).toUpperCase().padStart(3,'0')}" onchange="updateSignalCanId(${i},this)" title="Hex CAN ID (0x000-0x7FF)" spellcheck="false" style="font-family:monospace;"></td>`;
+                }
+
                 return `<tr>` +
                     `<td class="col-status"><span class="sig-bound-dot ${bound ? 'active' : 'inactive'}" title="${boundTitle}"></span></td>` +
-                    `<td class="col-name"><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"></td>` +
-                    `<td class="col-canid"><input type="text" value="0x${s.can_id.toString(16).toUpperCase().padStart(3,'0')}" onchange="updateSignalCanId(${i},this)" title="Hex CAN ID (0x000-0x7FF)" spellcheck="false" style="font-family:monospace;"></td>` +
-                    `<td class="col-bit"><input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)"></td>` +
-                    `<td class="col-bit"><input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)"></td>` +
-                    `<td class="col-scale"><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"></td>` +
-                    `<td class="col-scale"><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"></td>` +
-                    `<td class="col-toggle"><span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_signed')" title="${s.is_signed ? 'Signed (click to toggle)' : 'Unsigned (click to toggle)'}">${s.is_signed ? 'S' : 'U'}</span></td>` +
-                    `<td class="col-toggle"><span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="toggleSignalBool(${i},'is_little_endian')" title="${s.is_little_endian ? 'Little-Endian / Intel (click to toggle)' : 'Big-Endian / Motorola (click to toggle)'}">${s.is_little_endian ? 'LE' : 'BE'}</span></td>` +
+                    `<td class="col-name"><input type="text" value="${s.name}" onchange="updateSignalField(${i},'name',this.value)" spellcheck="false"${isInternal ? ' style="color:#4fc3f7;"' : ''}></td>` +
+                    canIdCell +
+                    `<td class="col-bit"${dimStyle}><input type="number" value="${s.bit_start}" min="0" max="63" onchange="updateSignalField(${i},'bit_start',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
+                    `<td class="col-bit"${dimStyle}><input type="number" value="${s.bit_length}" min="1" max="64" onchange="updateSignalField(${i},'bit_length',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
+                    `<td class="col-scale"${dimStyle}><input type="number" value="${s.scale}" step="0.001" onchange="updateSignalField(${i},'scale',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
+                    `<td class="col-scale"${dimStyle}><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
+                    `<td class="col-toggle"${dimStyle}><span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="${isInternal ? '' : `toggleSignalBool(${i},'is_signed')`}" title="${s.is_signed ? 'Signed' : 'Unsigned'}">${s.is_signed ? 'S' : 'U'}</span></td>` +
+                    `<td class="col-toggle"${dimStyle}><span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="${isInternal ? '' : `toggleSignalBool(${i},'is_little_endian')`}" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span></td>` +
                     `<td class="col-actions"><button class="sig-del-btn" onclick="deleteSignal(${i})" title="Delete signal">&times;</button></td>` +
                     pickBtn +
                     `</tr>`;
@@ -5334,6 +6218,7 @@
                 if (filter && filtered.length !== sigs.length) text += ` (${filtered.length} match${filtered.length !== 1 ? 'es' : ''})`;
                 countEl.textContent = text;
             }
+
         }
 
         function toggleSignalBool(idx, field) {
@@ -5413,6 +6298,59 @@
             renderSignals();
             renderEditor();
             updateInspector();
+        }
+
+        /* ── Fuel Sender Calibration (inspector Data tab) ────────────── */
+
+        let _fuelPollTimer = null;
+
+        function fuelCalStartPoll() {
+            fuelCalStopPoll();
+            _fuelPollTimer = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/fuel/status');
+                    if (r.ok) {
+                        const d = await r.json();
+                        const el = document.getElementById('fuelCalVoltage');
+                        if (el) el.textContent = d.voltage.toFixed(3) + ' V';
+                    }
+                } catch (e) { }
+            }, 500);
+        }
+
+        function fuelCalStopPoll() {
+            if (_fuelPollTimer) { clearInterval(_fuelPollTimer); _fuelPollTimer = null; }
+        }
+
+        function updateFuelCal(field, value) {
+            const sig = (currentLayout.signals || []).find(s => s.name === 'FUEL_SENDER_V');
+            if (!sig) return;
+            pushHistory();
+            if (!sig.fuel_cal) sig.fuel_cal = { empty_v: 0.5, full_v: 3.0, full_value: 100, enabled: true };
+            sig.fuel_cal[field] = value;
+            sig.fuel_cal.enabled = true;
+        }
+
+        async function fuelSetEmpty() {
+            try {
+                const r = await fetch('/api/fuel/set-empty', { method: 'POST' });
+                if (r.ok) {
+                    const d = await r.json();
+                    updateFuelCal('empty_v', d.voltage);
+                    updateInspector();
+                }
+            } catch (e) { }
+        }
+
+        async function fuelSetFull() {
+            try {
+                const r = await fetch('/api/fuel/set-full', { method: 'POST' });
+                if (r.ok) {
+                    const d = await r.json();
+                    updateFuelCal('full_v', d.voltage);
+                    updateInspector();
+                }
+            } catch (e) { }
         }
 
         /* ── Layout Delete ───────────────────────────────────────────── */
@@ -5543,11 +6481,20 @@
         async function saveActiveLayout() {
             const payload = buildFirmwarePayload();
             const isSplash = currentScreenMode === 'splash';
-            const isDefault = !isSplash && (currentLayout.name || '') === 'default';
+            const layoutName = currentLayout.name || 'default';
+            const isDefault = !isSplash && layoutName === 'default';
 
             /* Splash layouts always save as _splash */
             if (isSplash) {
                 payload.name = '_splash';
+            }
+
+            /* Confirm which layout will be overwritten */
+            if (!isSplash && !isDefault) {
+                const deviceActive = layoutSelect.value || '';
+                if (deviceActive && deviceActive !== layoutName) {
+                    if (!confirm(`This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`)) return;
+                }
             }
 
             try {
@@ -5627,6 +6574,9 @@
                     <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}${dims}</span>
                     <span style="color:var(--text-muted); margin:0 8px; white-space:nowrap;">${size}</span>`;
                 if (location === 'internal') {
+                    if (type === 'image') {
+                        html += `<button onclick="_smEditImage('${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Resize / Crop">Edit</button>`;
+                    }
                     html += `<button onclick="_smCopyToSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px;" title="Copy to SD">→ SD</button>`;
                 } else {
                     html += `<button onclick="_smCopyFromSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">← Int</button>`;
@@ -5761,6 +6711,243 @@
                 await _smRefresh();
                 refreshStorageInfo();
             } catch(e) { showToast('Delete failed: ' + e.message, 'error'); }
+        }
+
+        function _rdmimgToCanvas(buf) {
+            const u8 = new Uint8Array(buf);
+            const view = new DataView(buf);
+            if (u8[0] !== 0x52 || u8[1] !== 0x44 || u8[2] !== 0x4D || u8[3] !== 0x49) return null;
+            const w = view.getUint16(4, true);
+            const h = view.getUint16(6, true);
+            const cvs = document.createElement('canvas');
+            cvs.width = w; cvs.height = h;
+            const ctx = cvs.getContext('2d');
+            const imgData = ctx.createImageData(w, h);
+            const px = imgData.data;
+            let off = 12;
+            for (let i = 0; i < w * h; i++) {
+                const lo = u8[off++], hi = u8[off++], a = u8[off++];
+                const rgb565 = (hi << 8) | lo;
+                px[i * 4]     = ((rgb565 >> 11) & 0x1F) << 3;
+                px[i * 4 + 1] = ((rgb565 >> 5) & 0x3F) << 2;
+                px[i * 4 + 2] = (rgb565 & 0x1F) << 3;
+                px[i * 4 + 3] = a;
+            }
+            ctx.putImageData(imgData, 0, 0);
+            return { canvas: cvs, width: w, height: h };
+        }
+
+        async function _smEditImage(name) {
+            showToast('Loading image...', 'info');
+            try {
+                const resp = await fetch(`/api/image/data?name=${encodeURIComponent(name)}`);
+                if (!resp.ok) throw new Error('Failed to fetch image');
+                const buf = await resp.arrayBuffer();
+                const decoded = _rdmimgToCanvas(buf);
+                if (!decoded) throw new Error('Invalid RDMIMG');
+
+                const origW = decoded.width, origH = decoded.height;
+                const aspect = origW / origH;
+
+                /* Crop state */
+                let cropX = 0, cropY = 0, cropW = origW, cropH = origH;
+                let cropping = false;
+
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+                overlay.innerHTML = `
+                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:380px;max-width:90vw;color:var(--text);">
+                        <h3 style="margin:0 0 12px 0;font-size:15px;">Edit Image: ${name}</h3>
+                        <div style="margin-bottom:8px;font-size:12px;color:var(--text-muted);">Current: ${origW} x ${origH}</div>
+                        <div style="margin-bottom:8px;">
+                            <div style="display:flex;gap:6px;margin-bottom:8px;">
+                                <button id="imgEditTabResize" style="padding:4px 12px;cursor:pointer;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:4px;">Resize</button>
+                                <button id="imgEditTabCrop" style="padding:4px 12px;cursor:pointer;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">Crop</button>
+                            </div>
+                        </div>
+                        <div id="imgEditResize">
+                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                                <label style="width:50px;font-size:13px;">Width:</label>
+                                <input id="imgEditW" type="number" value="${origW}" min="1" max="800" style="width:80px;">
+                                <label style="width:50px;font-size:13px;">Height:</label>
+                                <input id="imgEditH" type="number" value="${origH}" min="1" max="480" style="width:80px;">
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:13px;"><input id="imgEditLock" type="checkbox" checked> Lock aspect ratio</label>
+                            </div>
+                        </div>
+                        <div id="imgEditCrop" style="display:none;">
+                            <div style="position:relative;margin-bottom:8px;display:inline-block;background:#111;border:1px solid var(--border);">
+                                <canvas id="imgEditPreview" style="display:block;max-width:100%;cursor:crosshair;"></canvas>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                                <label style="font-size:12px;">X:</label><input id="imgCropX" type="number" value="0" min="0" max="${origW}" style="width:60px;">
+                                <label style="font-size:12px;">Y:</label><input id="imgCropY" type="number" value="0" min="0" max="${origH}" style="width:60px;">
+                                <label style="font-size:12px;">W:</label><input id="imgCropW" type="number" value="${origW}" min="1" max="${origW}" style="width:60px;">
+                                <label style="font-size:12px;">H:</label><input id="imgCropH" type="number" value="${origH}" min="1" max="${origH}" style="width:60px;">
+                            </div>
+                        </div>
+                        <div id="imgEditSize" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;">
+                            <button id="imgEditCancel" style="padding:6px 14px;cursor:pointer;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">Cancel</button>
+                            <button id="imgEditSave" style="padding:6px 14px;cursor:pointer;background:var(--accent);border:none;border-radius:4px;color:#fff;">Save</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(overlay);
+
+                let activeTab = 'resize';
+                const tabResize = document.getElementById('imgEditTabResize');
+                const tabCrop = document.getElementById('imgEditTabCrop');
+                const panelResize = document.getElementById('imgEditResize');
+                const panelCrop = document.getElementById('imgEditCrop');
+                const wInput = document.getElementById('imgEditW');
+                const hInput = document.getElementById('imgEditH');
+                const lockCb = document.getElementById('imgEditLock');
+                const sizeInfo = document.getElementById('imgEditSize');
+                const cxIn = document.getElementById('imgCropX');
+                const cyIn = document.getElementById('imgCropY');
+                const cwIn = document.getElementById('imgCropW');
+                const chIn = document.getElementById('imgCropH');
+                const previewCvs = document.getElementById('imgEditPreview');
+
+                function setTab(tab) {
+                    activeTab = tab;
+                    tabResize.style.background = tab === 'resize' ? 'var(--accent)' : 'var(--bg)';
+                    tabResize.style.color = tab === 'resize' ? '#fff' : 'var(--text)';
+                    tabResize.style.border = tab === 'resize' ? 'none' : '1px solid var(--border)';
+                    tabCrop.style.background = tab === 'crop' ? 'var(--accent)' : 'var(--bg)';
+                    tabCrop.style.color = tab === 'crop' ? '#fff' : 'var(--text)';
+                    tabCrop.style.border = tab === 'crop' ? 'none' : '1px solid var(--border)';
+                    panelResize.style.display = tab === 'resize' ? '' : 'none';
+                    panelCrop.style.display = tab === 'crop' ? '' : 'none';
+                    if (tab === 'crop') drawPreview();
+                    updateSizeInfo();
+                }
+
+                tabResize.onclick = () => setTab('resize');
+                tabCrop.onclick = () => setTab('crop');
+
+                function updateSizeInfo() {
+                    let w, h;
+                    if (activeTab === 'crop') {
+                        w = parseInt(cwIn.value) || origW;
+                        h = parseInt(chIn.value) || origH;
+                    } else {
+                        w = parseInt(wInput.value) || origW;
+                        h = parseInt(hInput.value) || origH;
+                    }
+                    const bytes = 12 + w * h * 3;
+                    sizeInfo.textContent = `Output: ${w} x ${h} = ${(bytes / 1024).toFixed(1)} KB`;
+                    sizeInfo.style.color = bytes > 200 * 1024 ? '#f44' : 'var(--text-muted)';
+                }
+
+                /* Resize tab */
+                wInput.addEventListener('input', () => {
+                    if (lockCb.checked) hInput.value = Math.round((parseInt(wInput.value) || 1) / aspect);
+                    updateSizeInfo();
+                });
+                hInput.addEventListener('input', () => {
+                    if (lockCb.checked) wInput.value = Math.round((parseInt(hInput.value) || 1) * aspect);
+                    updateSizeInfo();
+                });
+
+                /* Crop preview */
+                const scale = Math.min(350 / origW, 250 / origH, 1);
+                previewCvs.width = Math.round(origW * scale);
+                previewCvs.height = Math.round(origH * scale);
+                const pctx = previewCvs.getContext('2d');
+
+                function drawPreview() {
+                    pctx.clearRect(0, 0, previewCvs.width, previewCvs.height);
+                    pctx.globalAlpha = 0.3;
+                    pctx.drawImage(decoded.canvas, 0, 0, previewCvs.width, previewCvs.height);
+                    pctx.globalAlpha = 1.0;
+                    const cx = parseInt(cxIn.value) || 0, cy = parseInt(cyIn.value) || 0;
+                    const cw = parseInt(cwIn.value) || origW, ch = parseInt(chIn.value) || origH;
+                    pctx.drawImage(decoded.canvas, cx, cy, cw, ch,
+                        cx * scale, cy * scale, cw * scale, ch * scale);
+                    pctx.strokeStyle = '#e67e22';
+                    pctx.lineWidth = 2;
+                    pctx.setLineDash([4, 4]);
+                    pctx.strokeRect(cx * scale, cy * scale, cw * scale, ch * scale);
+                    pctx.setLineDash([]);
+                }
+
+                /* Drag to select crop region */
+                let dragStart = null;
+                previewCvs.addEventListener('mousedown', (e) => {
+                    const rect = previewCvs.getBoundingClientRect();
+                    dragStart = { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
+                });
+                previewCvs.addEventListener('mousemove', (e) => {
+                    if (!dragStart) return;
+                    const rect = previewCvs.getBoundingClientRect();
+                    const mx = (e.clientX - rect.left) / scale, my = (e.clientY - rect.top) / scale;
+                    const x1 = Math.max(0, Math.min(dragStart.x, mx));
+                    const y1 = Math.max(0, Math.min(dragStart.y, my));
+                    const x2 = Math.min(origW, Math.max(dragStart.x, mx));
+                    const y2 = Math.min(origH, Math.max(dragStart.y, my));
+                    cxIn.value = Math.round(x1); cyIn.value = Math.round(y1);
+                    cwIn.value = Math.max(1, Math.round(x2 - x1)); chIn.value = Math.max(1, Math.round(y2 - y1));
+                    drawPreview(); updateSizeInfo();
+                });
+                previewCvs.addEventListener('mouseup', () => { dragStart = null; });
+                previewCvs.addEventListener('mouseleave', () => { dragStart = null; });
+
+                [cxIn, cyIn, cwIn, chIn].forEach(el => el.addEventListener('input', () => { drawPreview(); updateSizeInfo(); }));
+
+                updateSizeInfo();
+
+                document.getElementById('imgEditCancel').onclick = () => overlay.remove();
+                document.getElementById('imgEditSave').onclick = async () => {
+                    let srcCanvas;
+                    if (activeTab === 'crop') {
+                        const cx = Math.max(0, parseInt(cxIn.value) || 0);
+                        const cy = Math.max(0, parseInt(cyIn.value) || 0);
+                        const cw = Math.max(1, Math.min(origW - cx, parseInt(cwIn.value) || origW));
+                        const ch = Math.max(1, Math.min(origH - cy, parseInt(chIn.value) || origH));
+                        srcCanvas = document.createElement('canvas');
+                        srcCanvas.width = cw; srcCanvas.height = ch;
+                        srcCanvas.getContext('2d').drawImage(decoded.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+                    } else {
+                        srcCanvas = decoded.canvas;
+                    }
+                    const targetW = activeTab === 'crop' ? srcCanvas.width : Math.max(1, Math.min(800, parseInt(wInput.value) || origW));
+                    const targetH = activeTab === 'crop' ? srcCanvas.height : Math.max(1, Math.min(480, parseInt(hInput.value) || origH));
+                    overlay.remove();
+
+                    /* Create an Image from the source canvas for convertImageToRDMIMG */
+                    const tmpImg = new Image();
+                    tmpImg.onload = async () => {
+                        const statusEl = document.createElement('div');
+                        statusEl.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e0e0e0;padding:8px 16px;border-radius:6px;z-index:9999;border:1px solid var(--border);';
+                        statusEl.textContent = `Processing ${targetW}x${targetH}...`;
+                        document.body.appendChild(statusEl);
+                        try {
+                            const rdmimg = convertImageToRDMIMG(tmpImg, targetW, targetH);
+                            statusEl.textContent = `Uploading ${name} (${(rdmimg.byteLength / 1024).toFixed(1)} KB)...`;
+                            const upResp = await fetch(`/api/image/upload?name=${encodeURIComponent(name)}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/octet-stream' },
+                                body: rdmimg
+                            });
+                            if (!upResp.ok) throw new Error(await upResp.text());
+                            statusEl.textContent = 'Saved!';
+                            showToast(`Image "${name}" updated to ${targetW}x${targetH}`, 'success');
+                            _refreshImageList();
+                            refreshStorageInfo();
+                            await _smRefresh();
+                        } catch (e) {
+                            statusEl.textContent = 'Failed: ' + e.message;
+                            statusEl.style.borderColor = '#f44';
+                        }
+                        setTimeout(() => statusEl.remove(), 2500);
+                    };
+                    tmpImg.src = srcCanvas.toDataURL();
+                };
+            } catch (e) {
+                showToast('Failed to load image: ' + e.message, 'error');
+            }
         }
 
         async function refreshStorageInfo() {
@@ -6063,6 +7250,17 @@
 
         layoutSelect.onchange = async () => {
             const name = layoutSelect.value;
+
+            /* Warn if there are unsaved edits */
+            if (hasUnsavedEdits()) {
+                const prevName = currentLayout.name || 'default';
+                if (!confirm(`You have unsaved changes to "${prevName}". Switch to "${name}" and lose them?`)) {
+                    /* Revert dropdown selection */
+                    layoutSelect.value = prevName;
+                    return;
+                }
+            }
+
             try {
                 const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
                 if (!response.ok) throw new Error();
@@ -6387,11 +7585,11 @@
                 name: sigName,
                 can_id: parseInt(preset.can_id, 16),
                 bit_start: preset.bit_start || 0,
-                bit_length: preset.bit_len || 16,
+                bit_length: preset.bit_length || 16,
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: preset.is_big_endian !== undefined ? !preset.is_big_endian : false
+                is_little_endian: _presetIsLittleEndian(preset)
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -6466,6 +7664,80 @@
         /* Auto zoom-to-fit on load + window resize */
         requestAnimationFrame(() => zoomToFit());
         window.addEventListener('resize', () => zoomToFit());
+
+        /* ── Dimmer Settings ─────────────────────────────────────────── */
+
+        const INTERNAL_SIGNALS = [
+            'INDICATOR_LEFT', 'INDICATOR_RIGHT', 'FUEL_SENDER_V',
+            'CHIP_TEMP', 'FPS', 'CPU_PERCENT', 'FREE_HEAP_KB',
+            'FREE_PSRAM_KB', 'UPTIME_S', 'WIFI_RSSI'
+        ];
+
+        async function openDimmerSettings() {
+            const modal = document.getElementById('dimmerModal');
+            modal.style.display = 'flex';
+
+            /* Populate signal dropdown */
+            const sel = document.getElementById('dimSignalSelect');
+            sel.innerHTML = '';
+            const allSigs = new Set(INTERNAL_SIGNALS);
+            (currentLayout.signals || []).forEach(s => { if (s.name) allSigs.add(s.name); });
+            allSigs.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name; opt.textContent = name;
+                sel.appendChild(opt);
+            });
+
+            /* Load current config from device */
+            try {
+                const resp = await fetch('/api/dimmer/config');
+                if (resp.ok) {
+                    const cfg = await resp.json();
+                    sel.value = cfg.signal_name || '';
+                    if (!sel.value && cfg.signal_name) {
+                        const opt = document.createElement('option');
+                        opt.value = cfg.signal_name; opt.textContent = cfg.signal_name;
+                        sel.appendChild(opt); sel.value = cfg.signal_name;
+                    }
+                    document.getElementById('dimThreshold').value = cfg.threshold;
+                    document.getElementById('dimMode').value = cfg.is_momentary ? 'momentary' : 'toggle';
+                    document.getElementById('dimInvert').checked = cfg.invert;
+                    document.getElementById('dimBrightness').value = cfg.dim_brightness;
+                    document.getElementById('dimBrVal').textContent = cfg.dim_brightness;
+                    document.getElementById('dimEnabled').checked = cfg.enabled;
+                }
+            } catch (e) { console.warn('Failed to load dimmer config', e); }
+        }
+
+        function closeDimmerSettings() {
+            document.getElementById('dimmerModal').style.display = 'none';
+        }
+
+        async function saveDimmerSettings() {
+            const body = {
+                signal_name: document.getElementById('dimSignalSelect').value,
+                threshold: parseFloat(document.getElementById('dimThreshold').value) || 0.5,
+                is_momentary: document.getElementById('dimMode').value === 'momentary',
+                invert: document.getElementById('dimInvert').checked,
+                dim_brightness: parseInt(document.getElementById('dimBrightness').value) || 50,
+                enabled: document.getElementById('dimEnabled').checked
+            };
+            try {
+                const resp = await fetch('/api/dimmer/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (resp.ok) {
+                    closeDimmerSettings();
+                    updateStatus('Dimmer settings saved');
+                } else {
+                    updateStatus('Failed to save dimmer settings', true);
+                }
+            } catch (e) {
+                updateStatus('Failed to save dimmer settings', true);
+            }
+        }
     </script>
 </body>
 

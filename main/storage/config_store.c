@@ -6,13 +6,15 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdbool.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "config_store";
 
 /* ── NVS namespace strings ────────────────────────────────────────────── */
 #define NS_CAN      "can_config"
 #define NS_DIMMER   "dimmer_cfg"
-#define NS_ECU      "ecu_config"
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  DIMMER
@@ -22,12 +24,12 @@ esp_err_t config_store_save_dimmer(const brightness_dimmer_config_t *cfg)
     nvs_handle_t handle;
     if (nvs_open(NS_DIMMER, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
 
-    nvs_set_u32(handle, "can_id",  cfg->can_id);
-    nvs_set_u8 (handle, "bit_pos", cfg->bit_position);
-    nvs_set_u8 (handle, "is_mom",  cfg->is_momentary   ? 1 : 0);
-    nvs_set_u8 (handle, "invert",  cfg->invert_toggle   ? 1 : 0);
-    nvs_set_u8 (handle, "bright",  cfg->brightness_value);
-    nvs_set_u8 (handle, "enabled", cfg->enabled          ? 1 : 0);
+    nvs_set_str(handle, "sig_name", cfg->signal_name);
+    nvs_set_u16(handle, "thresh",   (uint16_t)(cfg->threshold * 100.0f));
+    nvs_set_u8 (handle, "is_mom",   cfg->is_momentary ? 1 : 0);
+    nvs_set_u8 (handle, "invert",   cfg->invert        ? 1 : 0);
+    nvs_set_u8 (handle, "dim_br",   cfg->dim_brightness);
+    nvs_set_u8 (handle, "enabled",  cfg->enabled        ? 1 : 0);
 
     esp_err_t err = nvs_commit(handle);
     nvs_close(handle);
@@ -39,13 +41,16 @@ esp_err_t config_store_load_dimmer(brightness_dimmer_config_t *cfg)
     nvs_handle_t handle;
     if (nvs_open(NS_DIMMER, NVS_READONLY, &handle) != ESP_OK) return ESP_FAIL;
 
-    uint32_t u32; uint8_t u8;
-    if (nvs_get_u32(handle, "can_id",  &u32) == ESP_OK) cfg->can_id           = u32;
-    if (nvs_get_u8 (handle, "bit_pos", &u8)  == ESP_OK) cfg->bit_position      = u8;
-    if (nvs_get_u8 (handle, "is_mom",  &u8)  == ESP_OK) cfg->is_momentary      = (u8 == 1);
-    if (nvs_get_u8 (handle, "invert",  &u8)  == ESP_OK) cfg->invert_toggle     = (u8 == 1);
-    if (nvs_get_u8 (handle, "bright",  &u8)  == ESP_OK) cfg->brightness_value  = u8;
-    if (nvs_get_u8 (handle, "enabled", &u8)  == ESP_OK) cfg->enabled           = (u8 == 1);
+    size_t len = sizeof(cfg->signal_name);
+    if (nvs_get_str(handle, "sig_name", cfg->signal_name, &len) != ESP_OK)
+        cfg->signal_name[0] = '\0';
+
+    uint16_t u16; uint8_t u8;
+    if (nvs_get_u16(handle, "thresh",  &u16) == ESP_OK) cfg->threshold      = u16 / 100.0f;
+    if (nvs_get_u8 (handle, "is_mom",  &u8)  == ESP_OK) cfg->is_momentary   = (u8 == 1);
+    if (nvs_get_u8 (handle, "invert",  &u8)  == ESP_OK) cfg->invert         = (u8 == 1);
+    if (nvs_get_u8 (handle, "dim_br",  &u8)  == ESP_OK) cfg->dim_brightness = u8;
+    if (nvs_get_u8 (handle, "enabled", &u8)  == ESP_OK) cfg->enabled        = (u8 == 1);
 
     nvs_close(handle);
     return ESP_OK;
@@ -74,34 +79,6 @@ esp_err_t config_store_load_bitrate(uint8_t *bitrate)
     return ESP_OK;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
- *  ECU PRESET
- * ═══════════════════════════════════════════════════════════════════════ */
-esp_err_t config_store_save_ecu_preset(uint8_t preconfig, uint8_t version)
-{
-    nvs_handle_t handle;
-    if (nvs_open(NS_ECU, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
-    nvs_set_u8(handle, "ecu_preconfig", preconfig);
-    nvs_set_u8(handle, "ecu_version",   version);
-    esp_err_t err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
-}
-
-esp_err_t config_store_load_ecu_preset(uint8_t *preconfig, uint8_t *version)
-{
-    if (!preconfig || !version) return ESP_ERR_INVALID_ARG;
-    nvs_handle_t handle;
-    if (nvs_open(NS_ECU, NVS_READONLY, &handle) != ESP_OK) {
-        *preconfig = 0;
-        *version   = 0;
-        return ESP_FAIL;
-    }
-    if (nvs_get_u8(handle, "ecu_preconfig", preconfig) != ESP_OK) *preconfig = 0;
-    if (nvs_get_u8(handle, "ecu_version",   version)   != ESP_OK) *version   = 0;
-    nvs_close(handle);
-    return ESP_OK;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIFI CREDENTIALS
@@ -159,4 +136,59 @@ esp_err_t config_store_clear_wifi(void)
     nvs_close(handle);
     ESP_LOGI(TAG, "WiFi credentials cleared");
     return err;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  FACTORY RESET
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static void _erase_nvs_namespace(const char *ns)
+{
+    nvs_handle_t h;
+    if (nvs_open(ns, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_all(h);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "Erased NVS namespace '%s'", ns);
+    }
+}
+
+static void _clear_directory(const char *path)
+{
+    DIR *d = opendir(path);
+    if (!d) return;
+
+    struct dirent *ent;
+    char filepath[128];
+    int count = 0;
+
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_type != DT_REG) continue;
+        snprintf(filepath, sizeof(filepath), "%s/%s", path, ent->d_name);
+        if (unlink(filepath) == 0)
+            count++;
+        else
+            ESP_LOGW(TAG, "Failed to delete %s", filepath);
+    }
+    closedir(d);
+    ESP_LOGI(TAG, "Cleared %d files from %s", count, path);
+}
+
+void config_store_factory_reset(void)
+{
+    ESP_LOGW(TAG, "=== FACTORY RESET ===");
+
+    /* Erase all NVS namespaces used by the application */
+    _erase_nvs_namespace(NS_CAN);
+    _erase_nvs_namespace(NS_DIMMER);
+    _erase_nvs_namespace(NS_WIFI);
+    _erase_nvs_namespace("layout_mgr");
+
+    /* Clear user content from LittleFS */
+    _clear_directory("/lfs/layouts");
+    _clear_directory("/lfs/images");
+    _clear_directory("/lfs/fonts");
+    _clear_directory("/lfs/presets");
+
+    ESP_LOGW(TAG, "Factory reset complete — reboot to apply");
 }

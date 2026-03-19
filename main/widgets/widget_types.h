@@ -58,8 +58,8 @@ typedef struct widget_t widget_t;
 
 /* ─── Conditional rules ─────────────────────────────────────────────────── */
 
-#define MAX_WIDGET_RULES     4
-#define MAX_RULE_OVERRIDES   8
+#define MAX_WIDGET_RULES     16
+#define MAX_RULE_OVERRIDES   16
 #define RULE_FIELD_NAME_LEN 32
 
 typedef enum {
@@ -186,6 +186,10 @@ char *widget_get_signal_name_buf(widget_t *w);
 /** Return a pointer to the signal_index field inside type_data, or NULL
  *  if this widget type has no signal binding. */
 int16_t *widget_get_signal_index_ptr(widget_t *w);
+
+/** Return a pointer to the label buffer inside type_data, or NULL
+ *  if this widget type has no label field. */
+char *widget_get_label_buf(widget_t *w);
 
 /** Return true if the widget type supports alert/threshold configuration
  *  (currently WIDGET_PANEL and WIDGET_BAR only). */

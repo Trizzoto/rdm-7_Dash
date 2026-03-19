@@ -2,9 +2,11 @@
  * config_modal.c -- widget-based tabbed configuration modal
  *
  * Tabs (widget-type dependent):
- *   SIGNAL       -- CAN ID, Endian, Bit Start/Length, Scale, Offset, Data Type
+ *   DATA         -- Label, signal info, collapsible CAN settings
+ *   PRESETS      -- 3-column preset picker (Brand/Protocol/Channel)
  *   ALERTS       -- Thresholds + colours (panel / bar only)
  *   RPM SETTINGS -- Gauge max, redline, bar colour, limiter, background (rpm_bar only)
+ *   FUEL SETUP   -- Fuel sender calibration (only when signal is FUEL_SENDER_V)
  *
  * All edits are written directly to the live signal_t and widget type_data.
  * Save/Cancel buttons in the footer delegate to menu_screen.c callbacks.
@@ -16,9 +18,11 @@
 #include "../theme.h"
 #include "menu_screen.h"
 #include "widgets/signal.h"
+#include "widgets/signal_internal.h"
 #include "widgets/widget_panel.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_rpm_bar.h"
+#include "../settings/preset_picker.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +32,16 @@
 typedef struct {
     widget_t  *widget;
     int16_t    signal_index;   /* cached; updated if auto-created */
+    /* DATA tab control references (for refresh after preset apply) */
+    lv_obj_t  *label_ta;
+    lv_obj_t  *signal_info_lbl;
+    lv_obj_t  *can_id_ta;
+    lv_obj_t  *endian_dd;
+    lv_obj_t  *bit_start_dd;
+    lv_obj_t  *bit_len_dd;
+    lv_obj_t  *scale_ta;
+    lv_obj_t  *offset_ta;
+    lv_obj_t  *signed_dd;
 } modal_ctx_t;
 
 /* ── Layout constants ──────────────────────────────────────────────────── */
@@ -216,58 +230,214 @@ static void signed_changed_cb(lv_event_t *e)
 }
 
 /* =========================================================================
- * Signal tab builder
+ * Label changed callback
  * ========================================================================= */
 
-static void build_signal_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+static void label_changed_cb(lv_event_t *e)
 {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    char *lbl_buf = widget_get_label_buf(ctx->widget);
+    if (!lbl_buf) return;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    size_t max_len = (ctx->widget->type == WIDGET_PANEL) ? 63 : 31;
+    if (txt) {
+        strncpy(lbl_buf, txt, max_len);
+        lbl_buf[max_len] = '\0';
+    }
+}
+
+/* =========================================================================
+ * CAN settings toggle (click to expand/collapse)
+ * ========================================================================= */
+
+static void can_toggle_btn_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_obj_t *container = (lv_obj_t *)lv_event_get_user_data(e);
+    if (!container) return;
+    if (lv_obj_has_flag(container, LV_OBJ_FLAG_HIDDEN))
+        lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(container, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* =========================================================================
+ * Preset applied callback (invoked by embedded preset picker)
+ * ========================================================================= */
+
+static void preset_applied_cb(const preconfig_item_t *item, void *user_data)
+{
+    modal_ctx_t *ctx = (modal_ctx_t *)user_data;
+    if (!ctx || !item) return;
+
+    signal_t *sig = ensure_signal(ctx);
+    if (!sig) return;
+
+    /* Update signal CAN fields */
+    sig->can_id     = (uint32_t)strtol(item->can_id, NULL, 16);
+    sig->endian     = item->endianess;
+    sig->bit_start  = item->bit_start;
+    sig->bit_length = item->bit_length;
+    sig->scale      = item->scale;
+    sig->offset     = item->value_offset;
+    sig->is_signed  = item->is_signed;
+
+    /* Update signal name in widget type_data */
+    char *sig_buf = widget_get_signal_name_buf(ctx->widget);
+    if (sig_buf) {
+        strncpy(sig_buf, sig->name, 31);
+        sig_buf[31] = '\0';
+    }
+
+    /* Update widget label */
+    char *lbl_buf = widget_get_label_buf(ctx->widget);
+    if (lbl_buf) {
+        size_t max = (ctx->widget->type == WIDGET_PANEL) ? 63 : 31;
+        strncpy(lbl_buf, item->label, max);
+        lbl_buf[max] = '\0';
+    }
+
+    /* Refresh DATA tab controls */
+    if (ctx->label_ta) lv_textarea_set_text(ctx->label_ta, item->label);
+    if (ctx->signal_info_lbl) lv_label_set_text(ctx->signal_info_lbl, item->label);
+    if (ctx->can_id_ta) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%lX", (unsigned long)sig->can_id);
+        lv_textarea_set_text(ctx->can_id_ta, buf);
+    }
+    if (ctx->endian_dd)
+        lv_dropdown_set_selected(ctx->endian_dd, sig->endian ? 1 : 0);
+    if (ctx->bit_start_dd)
+        lv_dropdown_set_selected(ctx->bit_start_dd, sig->bit_start);
+    if (ctx->bit_len_dd)
+        lv_dropdown_set_selected(ctx->bit_len_dd, sig->bit_length - 1);
+    if (ctx->scale_ta) {
+        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", sig->scale);
+        lv_textarea_set_text(ctx->scale_ta, buf);
+    }
+    if (ctx->offset_ta) {
+        char buf[16]; snprintf(buf, sizeof(buf), "%.6g", sig->offset);
+        lv_textarea_set_text(ctx->offset_ta, buf);
+    }
+    if (ctx->signed_dd)
+        lv_dropdown_set_selected(ctx->signed_dd, sig->is_signed ? 1 : 0);
+}
+
+/* =========================================================================
+ * Data tab builder (Label + Signal info + collapsible CAN settings)
+ * ========================================================================= */
+
+static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+{
+    widget_t *w = ctx->widget;
     signal_t *sig = (ctx->signal_index >= 0)
                         ? signal_get_by_index((uint16_t)ctx->signal_index)
                         : NULL;
 
-    settings_section_t *sec =
-        settings_add_section(tab, "CAN BUS SIGNAL", THEME_COLOR_ACCENT);
+    /* ── Label section (only for widgets that have a label) ──────── */
+    char *lbl_buf = widget_get_label_buf(w);
+    if (lbl_buf) {
+        settings_section_t *sec_disp =
+            settings_add_section(tab, "DISPLAY", THEME_COLOR_ACCENT_TEAL);
+
+        ctx->label_ta = settings_add_text_input(sec_disp, "Label:",
+                                                 "widget label", lbl_buf);
+        lv_obj_add_event_cb(ctx->label_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        lv_obj_add_event_cb(ctx->label_ta, label_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
+    }
+
+    /* ── Data Source section ─────────────────────────────────────── */
+    settings_section_t *sec_sig =
+        settings_add_section(tab, "DATA SOURCE", THEME_COLOR_ACCENT_BLUE);
+
+    char sig_info[64] = "No signal assigned";
+    char *sig_name = widget_get_signal_name_buf(w);
+    if (sig_name && sig_name[0])
+        snprintf(sig_info, sizeof(sig_info), "%s", sig_name);
+    ctx->signal_info_lbl = settings_add_info_row(sec_sig, "Signal:", sig_info);
+
+    /* ── Collapsible CAN settings toggle button ─────────────────── */
+    lv_obj_t *can_toggle = settings_add_button(
+        sec_sig, LV_SYMBOL_DOWN "  CAN BUS SETTINGS",
+        THEME_COLOR_INPUT_BG, 0);
+
+    /* Container for CAN fields, hidden by default */
+    lv_obj_t *can_box = lv_obj_create(tab);
+    lv_obj_set_size(can_box, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(can_box, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(can_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(can_box, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(can_box, 1, 0);
+    lv_obj_set_style_radius(can_box, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_pad_all(can_box, 6, 0);
+    lv_obj_set_style_pad_row(can_box, 4, 0);
+    lv_obj_clear_flag(can_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(can_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(can_box, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_event_cb(can_toggle, can_toggle_btn_cb,
+                        LV_EVENT_CLICKED, can_box);
 
     /* CAN ID */
     char can_id_str[16] = "0";
     if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
-    lv_obj_t *can_id_ta = settings_add_text_input(sec, "CAN ID (0x):", "hex", can_id_str);
-    lv_obj_add_event_cb(can_id_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(can_id_ta, can_id_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->can_id_ta = settings_add_text_input(can_box, "CAN ID (0x):",
+                                              "hex", can_id_str);
+    lv_obj_add_event_cb(ctx->can_id_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ctx->can_id_ta, can_id_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Endian */
-    lv_obj_t *endian_dd = settings_add_dropdown(sec, "Endian:", "Big Endian\nLittle Endian", 0);
-    lv_dropdown_set_selected(endian_dd, (sig && sig->endian == 1) ? 1 : 0);
-    lv_obj_add_event_cb(endian_dd, endian_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->endian_dd = settings_add_dropdown(can_box, "Endian:",
+                                            "Big Endian\nLittle Endian", 0);
+    lv_dropdown_set_selected(ctx->endian_dd,
+                             (sig && sig->endian == 1) ? 1 : 0);
+    lv_obj_add_event_cb(ctx->endian_dd, endian_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Bit Start */
-    lv_obj_t *bs_dd = settings_add_dropdown(sec, "Bit Start:", BIT_START_OPTS, 0);
-    lv_dropdown_set_selected(bs_dd, sig ? sig->bit_start : 0);
-    lv_obj_add_event_cb(bs_dd, bit_start_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->bit_start_dd = settings_add_dropdown(can_box, "Bit Start:",
+                                               BIT_START_OPTS, 0);
+    lv_dropdown_set_selected(ctx->bit_start_dd, sig ? sig->bit_start : 0);
+    lv_obj_add_event_cb(ctx->bit_start_dd, bit_start_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Bit Length */
-    lv_obj_t *bl_dd = settings_add_dropdown(sec, "Bit Length:", BIT_LEN_OPTS, 0);
-    lv_dropdown_set_selected(bl_dd, sig ? (sig->bit_length - 1) : 7);
-    lv_obj_add_event_cb(bl_dd, bit_length_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->bit_len_dd = settings_add_dropdown(can_box, "Bit Length:",
+                                             BIT_LEN_OPTS, 0);
+    lv_dropdown_set_selected(ctx->bit_len_dd,
+                             sig ? (sig->bit_length - 1) : 7);
+    lv_obj_add_event_cb(ctx->bit_len_dd, bit_length_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Scale */
     char scale_str[16] = "1";
     if (sig) snprintf(scale_str, sizeof(scale_str), "%.6g", sig->scale);
-    lv_obj_t *scale_ta = settings_add_text_input(sec, "Scale:", "factor", scale_str);
-    lv_obj_add_event_cb(scale_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(scale_ta, scale_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->scale_ta = settings_add_text_input(can_box, "Scale:",
+                                             "factor", scale_str);
+    lv_obj_add_event_cb(ctx->scale_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ctx->scale_ta, scale_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Offset */
     char offset_str[16] = "0";
     if (sig) snprintf(offset_str, sizeof(offset_str), "%.6g", sig->offset);
-    lv_obj_t *offset_ta = settings_add_text_input(sec, "Offset:", "value offset", offset_str);
-    lv_obj_add_event_cb(offset_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(offset_ta, offset_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->offset_ta = settings_add_text_input(can_box, "Offset:",
+                                              "value offset", offset_str);
+    lv_obj_add_event_cb(ctx->offset_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ctx->offset_ta, offset_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 
     /* Data Type (signed/unsigned) */
-    lv_obj_t *type_dd = settings_add_dropdown(sec, "Data Type:", "Unsigned\nSigned", 0);
-    lv_dropdown_set_selected(type_dd, (sig && sig->is_signed) ? 1 : 0);
-    lv_obj_add_event_cb(type_dd, signed_changed_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->signed_dd = settings_add_dropdown(can_box, "Data Type:",
+                                            "Unsigned\nSigned", 0);
+    lv_dropdown_set_selected(ctx->signed_dd,
+                             (sig && sig->is_signed) ? 1 : 0);
+    lv_obj_add_event_cb(ctx->signed_dd, signed_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
 }
 
 /* =========================================================================
@@ -651,6 +821,171 @@ static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 }
 
 /* =========================================================================
+ * Fuel Setup tab (shown only when signal is FUEL_SENDER_V)
+ * ========================================================================= */
+
+typedef struct {
+    lv_timer_t *timer;
+    lv_obj_t   *voltage_lbl;
+    lv_obj_t   *empty_ta;
+    lv_obj_t   *full_ta;
+} fuel_tab_ctx_t;
+
+static void fuel_timer_cb(lv_timer_t *t)
+{
+    fuel_tab_ctx_t *fc = (fuel_tab_ctx_t *)t->user_data;
+    if (!fc || !fc->voltage_lbl) return;
+    float v = signal_internal_get_fuel_voltage();
+    lv_label_set_text_fmt(fc->voltage_lbl, "%.3f V", v);
+}
+
+static void fuel_tab_delete_cb(lv_event_t *e)
+{
+    fuel_tab_ctx_t *fc = (fuel_tab_ctx_t *)lv_event_get_user_data(e);
+    if (!fc) return;
+    if (fc->timer) lv_timer_del(fc->timer);
+    free(fc);
+}
+
+static void fuel_empty_changed_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.empty_v = (txt && txt[0]) ? (float)atof(txt) : 0.0f;
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+}
+
+static void fuel_full_changed_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.full_v = (txt && txt[0]) ? (float)atof(txt) : 0.0f;
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+}
+
+static void fuel_fullval_changed_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.full_value = (txt && txt[0]) ? (float)atof(txt) : 100.0f;
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+}
+
+static void fuel_enable_changed_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+}
+
+static void fuel_set_empty_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    fuel_tab_ctx_t *fc = (fuel_tab_ctx_t *)lv_event_get_user_data(e);
+    float v = signal_internal_get_fuel_voltage();
+
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.empty_v = v;
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+
+    if (fc && fc->empty_ta) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.3f", v);
+        lv_textarea_set_text(fc->empty_ta, buf);
+    }
+}
+
+static void fuel_set_full_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    fuel_tab_ctx_t *fc = (fuel_tab_ctx_t *)lv_event_get_user_data(e);
+    float v = signal_internal_get_fuel_voltage();
+
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+    cal.full_v = v;
+    signal_internal_set_fuel_cal(cal.empty_v, cal.full_v, cal.full_value, cal.enabled);
+
+    if (fc && fc->full_ta) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.3f", v);
+        lv_textarea_set_text(fc->full_ta, buf);
+    }
+}
+
+static void build_fuel_setup_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+{
+    (void)ctx;
+
+    fuel_tab_ctx_t *fc = calloc(1, sizeof(fuel_tab_ctx_t));
+    if (!fc) return;
+
+    /* Clean up timer + struct when tab is deleted */
+    lv_obj_add_event_cb(tab, fuel_tab_delete_cb, LV_EVENT_DELETE, fc);
+
+    fuel_cal_config_t cal;
+    signal_internal_get_fuel_cal(&cal);
+
+    /* ── Live voltage section ─────────────────────────────────────── */
+    settings_section_t *sec_live =
+        settings_add_section(tab, "LIVE READING", THEME_COLOR_ACCENT_TEAL);
+
+    float cur_v = signal_internal_get_fuel_voltage();
+    char vbuf[16];
+    snprintf(vbuf, sizeof(vbuf), "%.3f V", cur_v);
+    fc->voltage_lbl = settings_add_info_row(sec_live, "Voltage:", vbuf);
+
+    /* Start 200 ms timer for live voltage updates */
+    fc->timer = lv_timer_create(fuel_timer_cb, 200, fc);
+
+    /* ── Calibration section ──────────────────────────────────────── */
+    settings_section_t *sec_cal =
+        settings_add_section(tab, "CALIBRATION", THEME_COLOR_ACCENT_AMBER);
+
+    /* Empty voltage */
+    char ebuf[16];
+    snprintf(ebuf, sizeof(ebuf), "%.3f", cal.empty_v);
+    fc->empty_ta = settings_add_text_input(sec_cal, "Empty Voltage:", "volts", ebuf);
+    lv_obj_add_event_cb(fc->empty_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(fc->empty_ta, fuel_empty_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *set_empty_btn = settings_add_button(sec_cal, "SET EMPTY (capture current)",
+                                                    THEME_COLOR_ACCENT_DIM, 0);
+    lv_obj_add_event_cb(set_empty_btn, fuel_set_empty_cb, LV_EVENT_CLICKED, fc);
+
+    /* Full voltage */
+    char fbuf[16];
+    snprintf(fbuf, sizeof(fbuf), "%.3f", cal.full_v);
+    fc->full_ta = settings_add_text_input(sec_cal, "Full Voltage:", "volts", fbuf);
+    lv_obj_add_event_cb(fc->full_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(fc->full_ta, fuel_full_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *set_full_btn = settings_add_button(sec_cal, "SET FULL (capture current)",
+                                                   THEME_COLOR_ACCENT_DIM, 0);
+    lv_obj_add_event_cb(set_full_btn, fuel_set_full_cb, LV_EVENT_CLICKED, fc);
+
+    /* Full value (what 100% maps to) */
+    char fvbuf[16];
+    snprintf(fvbuf, sizeof(fvbuf), "%.1f", cal.full_value);
+    lv_obj_t *fv_ta = settings_add_text_input(sec_cal, "Full Value:", "100 = %, or litres", fvbuf);
+    lv_obj_add_event_cb(fv_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(fv_ta, fuel_fullval_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* Enable toggle */
+    lv_obj_t *en_sw = settings_add_switch(sec_cal, "Enable Calibration:", cal.enabled);
+    lv_obj_add_event_cb(en_sw, fuel_enable_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+/* =========================================================================
  * Public: config_modal_open_for_widget
  * ========================================================================= */
 
@@ -756,9 +1091,19 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS);
 
     /* Create tabs */
-    lv_obj_t *tab_signal = lv_tabview_add_tab(tv, "  SIGNAL  ");
-    style_tab(tab_signal);
-    build_signal_tab(tab_signal, ctx);
+    lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  DATA  ");
+    style_tab(tab_data);
+    build_data_tab(tab_data, ctx);
+
+    /* Presets tab (only for widgets that bind to a signal) */
+    if (widget_get_signal_name_buf(w)) {
+        lv_obj_t *tab_presets = lv_tabview_add_tab(tv, "  PRESETS  ");
+        lv_obj_set_style_bg_color(tab_presets, THEME_COLOR_SURFACE, 0);
+        lv_obj_set_style_bg_opa(tab_presets, LV_OPA_COVER, 0);
+        build_preset_picker_embedded(tab_presets, MODAL_W,
+                                      tab_total_h - TABBAR_H,
+                                      preset_applied_cb, ctx);
+    }
 
     if (has_alerts) {
         lv_obj_t *tab_alerts = lv_tabview_add_tab(tv, "  ALERTS  ");
@@ -774,6 +1119,14 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
         lv_obj_t *tab_rpm = lv_tabview_add_tab(tv, "  RPM SETTINGS  ");
         style_tab(tab_rpm);
         build_rpm_settings_tab(tab_rpm, ctx);
+    }
+
+    /* Fuel setup tab — only when widget's signal is FUEL_SENDER_V */
+    char *sig_name = widget_get_signal_name_buf(w);
+    if (sig_name && strcmp(sig_name, "FUEL_SENDER_V") == 0) {
+        lv_obj_t *tab_fuel = lv_tabview_add_tab(tv, "  FUEL SETUP  ");
+        style_tab(tab_fuel);
+        build_fuel_setup_tab(tab_fuel, ctx);
     }
 
     /* ── Footer ────────────────────────────────────────────────────────── */
