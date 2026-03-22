@@ -103,14 +103,13 @@ static bool _load_splash_layout(lv_obj_t *parent)
 /** Phase 2: build and show the dashboard (runs after black frame rendered). */
 static void _splash_build_dashboard(lv_timer_t *t)
 {
-	lv_obj_t *black_screen = (lv_obj_t *)t->user_data;
+	(void)t;
 
 	ui_Screen3_screen_init();
-	lv_scr_load(ui_Screen3);
 
-	/* Delete the temporary black screen */
-	if (black_screen && lv_obj_is_valid(black_screen))
-		lv_obj_del(black_screen);
+	/* Fade in from black — LVGL renders the dashboard off-screen first,
+	 * then cross-fades over 300ms. auto_del=true cleans up the black screen. */
+	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, true);
 }
 
 /** Phase 1: show a clean black screen while dashboard builds (LVGL task). */
@@ -118,24 +117,21 @@ static void _splash_transition_cb(void *arg)
 {
 	(void)arg;
 
-	/* Create a solid black screen — this renders in one fast pass */
+	/* Create a solid black screen */
 	lv_obj_t *black = lv_obj_create(NULL);
 	lv_obj_set_style_bg_color(black, lv_color_black(), 0);
 	lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
-	lv_scr_load(black);
 
-	/* Clean up splash */
-	if (splash_screen) {
-		lv_obj_del(splash_screen);
-		splash_screen = NULL;
-	}
+	/* Fade splash to black over 200ms, auto-delete splash screen */
+	splash_screen = NULL;  /* lv_scr_load_anim will delete it */
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
+	lv_scr_load_anim(black, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
 
-	/* Defer dashboard build by one LVGL frame so the black screen
-	 * renders fully before the heavy init blocks the task. */
-	lv_timer_t *t = lv_timer_create(_splash_build_dashboard, 30, black);
+	/* Build dashboard after fade-to-black completes + one extra frame
+	 * for the black screen to fully render. */
+	lv_timer_t *t = lv_timer_create(_splash_build_dashboard, 250, NULL);
 	lv_timer_set_repeat_count(t, 1);
 }
 

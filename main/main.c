@@ -449,7 +449,7 @@ void app_main(void) {
 		.psram_trans_align = 64,
 		.num_fbs = EXAMPLE_LCD_NUM_FB, // Number of frame buffers
 #if CONFIG_EXAMPLE_USE_BOUNCE_BUFFER
-		.bounce_buffer_size_px = 10 * EXAMPLE_LCD_H_RES,
+		.bounce_buffer_size_px = 20 * EXAMPLE_LCD_H_RES,
 #endif
 		.clk_src = LCD_CLK_SRC_DEFAULT,
 		.disp_gpio_num = EXAMPLE_PIN_NUM_DISP_EN,
@@ -532,22 +532,22 @@ void app_main(void) {
 	write_buf = 0x0A;
 	i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &write_buf, 1,
 							   I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-	vTaskDelay(pdMS_TO_TICKS(100)); // Use FreeRTOS delay instead of ROM delay
+	vTaskDelay(pdMS_TO_TICKS(10));
 
 	// Reset the touch screen as part of the initial setup
 	write_buf = 0x2C;
 	i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &write_buf, 1,
 							   I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-	vTaskDelay(pdMS_TO_TICKS(100)); // Use FreeRTOS delay instead of ROM delay
+	vTaskDelay(pdMS_TO_TICKS(10));
 
 	gpio_set_level(GPIO_INPUT_IO_4, 0); // Set GPIO level for reset
-	vTaskDelay(pdMS_TO_TICKS(100)); // Use FreeRTOS delay instead of ROM delay
+	vTaskDelay(pdMS_TO_TICKS(10));
 
 	// Continue with touch screen initialization
 	write_buf = 0x2E;
 	i2c_master_write_to_device(I2C_MASTER_NUM, 0x38, &write_buf, 1,
 							   I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-	vTaskDelay(pdMS_TO_TICKS(200)); // Use FreeRTOS delay instead of ROM delay
+	vTaskDelay(pdMS_TO_TICKS(30)); // GT911 needs ~10ms after reset release
 
 	esp_lcd_touch_handle_t tp = NULL;
 	esp_lcd_panel_io_handle_t tp_io_handle = NULL;
@@ -699,7 +699,7 @@ void app_main(void) {
 							EXAMPLE_LVGL_TASK_PRIORITY, &lvglTaskHandle, 1);
 
 	// Give LVGL task time to start and render the black screen
-	vTaskDelay(pdMS_TO_TICKS(100));
+	vTaskDelay(pdMS_TO_TICKS(30));
 
 	// Now turn on backlight since black screen is displayed
 #if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
@@ -733,12 +733,6 @@ void app_main(void) {
 
 	/* Fuel sender – ADC on GPIO 6, exposed as FUEL_SENDER_V signal */
 	fuel_sender_adc_init();
-
-	// Allow splash screen to render and become visible
-	vTaskDelay(pdMS_TO_TICKS(50));
-	ESP_LOGI(
-		TAG,
-		"Splash screen displayed, continuing with system initialization...");
 
 	// Initialize remaining components while splash is showing
 	sd_manager_init();

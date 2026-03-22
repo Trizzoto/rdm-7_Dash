@@ -87,22 +87,37 @@ static void _set_state(wifi_mgr_state_t new_state)
 
 /* ── Reconnect logic ─────────────────────────────────────────────────── */
 
-static void _reconnect_timer_cb(TimerHandle_t xTimer)
+/* Deferred to LVGL task — timer service task stack is too small for
+ * esp_wifi_connect() + _set_state() (malloc + lv_async_call). */
+static void _deferred_reconnect(void *arg)
 {
-    (void)xTimer;
+    (void)arg;
     if (!s_started || !s_should_reconnect) return;
 
     s_reconnect_attempts++;
-    ESP_LOGI(TAG, "Reconnect attempt %d/%d",
+    ESP_LOGI(TAG, "Reconnect attempt %d/%d (scan first)",
              s_reconnect_attempts, WIFI_RECONNECT_MAX_ATTEMPTS);
 
-    esp_err_t err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_connect failed during reconnect: %s",
-                 esp_err_to_name(err));
+    /* Load saved creds and scan first — avoids "Haven't to connect" error
+     * when the AP isn't visible yet. */
+    wifi_credentials_t creds = {0};
+    if (config_store_load_wifi(&creds) == ESP_OK && creds.ssid[0] != '\0') {
+        s_auto_connect_pending = true;
+        strncpy(s_auto_ssid, creds.ssid, sizeof(s_auto_ssid) - 1);
+        s_auto_ssid[sizeof(s_auto_ssid) - 1] = '\0';
+        strncpy(s_auto_pass, creds.password, sizeof(s_auto_pass) - 1);
+        s_auto_pass[sizeof(s_auto_pass) - 1] = '\0';
+        wifi_manager_scan();
+    } else {
+        s_should_reconnect = false;
+        _set_state(WIFI_MGR_STATE_FAILED);
     }
+}
 
-    _set_state(WIFI_MGR_STATE_CONNECTING);
+static void _reconnect_timer_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    lv_async_call(_deferred_reconnect, NULL);
 }
 
 static void _schedule_reconnect(void)
@@ -563,8 +578,11 @@ void wifi_manager_connect(const char *ssid, const char *password)
         return;
     }
 
-    /* New explicit connect — cancel any pending reconnect/auto-connect */
-    _stop_reconnect();
+    /* Cancel pending auto-connect. Preserve reconnect state if we're
+     * being called from within the reconnect flow (scan found SSID). */
+    if (!s_should_reconnect) {
+        _stop_reconnect();
+    }
     s_auto_connect_pending = false;
 
     ESP_LOGI(TAG, "Connecting to '%s'", ssid);
@@ -663,7 +681,8 @@ void wifi_manager_auto_connect(void)
     strncpy(s_auto_pass, creds.password, sizeof(s_auto_pass) - 1);
     s_auto_pass[sizeof(s_auto_pass) - 1] = '\0';
 
-    _set_state(WIFI_MGR_STATE_SCANNING);
+    /* Don't set state before calling scan — wifi_manager_scan() checks
+     * for SCANNING state and would reject the call. */
     wifi_manager_scan();
 }
 
