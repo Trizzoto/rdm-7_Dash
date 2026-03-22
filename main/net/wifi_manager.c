@@ -8,6 +8,7 @@
 #include "freertos/timers.h"
 #include "storage/config_store.h"
 #include "lvgl.h"
+#include <stdatomic.h>
 #include <string.h>
 
 static const char *TAG = "wifi_mgr";
@@ -22,7 +23,7 @@ static const char *TAG = "wifi_mgr";
 static bool             s_initialized   = false;
 static bool             s_started       = false;
 static bool             s_ap_enabled    = false;
-static wifi_mgr_state_t s_state         = WIFI_MGR_STATE_OFF;
+static _Atomic wifi_mgr_state_t s_state  = WIFI_MGR_STATE_OFF;
 
 static int              s_reconnect_attempts = 0;
 static bool             s_should_reconnect   = false;

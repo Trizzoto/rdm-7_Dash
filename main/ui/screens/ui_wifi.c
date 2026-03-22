@@ -815,8 +815,7 @@ static void _populate_scan_list(void)
             strncpy(ssid_copy, records[i].ssid, 32);
             ssid_copy[32] = '\0';
         }
-        lv_obj_add_event_cb(btn, _network_item_cb, LV_EVENT_CLICKED, ssid_copy);
-        lv_obj_add_event_cb(btn, _network_item_cb, LV_EVENT_DELETE, ssid_copy);
+        lv_obj_add_event_cb(btn, _network_item_cb, LV_EVENT_ALL, ssid_copy);
     }
 }
 
@@ -1088,14 +1087,12 @@ static void _network_item_cb(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     char *ssid = (char *)lv_event_get_user_data(e);
 
-    if (code == LV_EVENT_DELETE) {
+    if (code == LV_EVENT_CLICKED) {
+        if (!ssid) return;
+        _show_password_modal(ssid);
+    } else if (code == LV_EVENT_DELETE) {
         if (ssid) lv_mem_free(ssid);
-        return;
     }
-
-    /* LV_EVENT_CLICKED */
-    if (!ssid) return;
-    _show_password_modal(ssid);
 }
 
 static void _password_connect_cb(lv_event_t *e)

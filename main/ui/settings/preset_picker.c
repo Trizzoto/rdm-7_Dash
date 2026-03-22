@@ -449,7 +449,7 @@ static void id_dropdown_event_cb(lv_event_t * e)
 
     // 2) Find the matching record
     const preconfig_item_t * found = NULL;
-    for(int i = 0; i < preconfig_data_count; i++) {
+    for(int i = 0; i < preconfig_data_count && preconfig_items[i].ecu != NULL; i++) {
         if ((strcmp(preconfig_items[i].ecu, ecu_str) == 0) &&
             (strcmp(preconfig_items[i].version, version_str) == 0) &&
             (strcmp(preconfig_items[i].label, label_str) == 0))

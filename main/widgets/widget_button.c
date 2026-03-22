@@ -50,7 +50,7 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
 static void _btn_send(button_data_t *d, bool on) {
     if (d->tx_can_id == 0) return;
     uint8_t frame[8] = {0};
-    uint32_t val = on ? ((1u << d->tx_bit_length) - 1u) : 0u;
+    uint32_t val = on ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
     can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
     esp_err_t err = can_transmit_frame(d->tx_can_id, frame, 8);
     if (err != ESP_OK) {

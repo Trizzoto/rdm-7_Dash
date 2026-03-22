@@ -975,6 +975,8 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	*warning_id = i;
 	lv_obj_add_event_cb(touch_area, warning_longpress_cb, LV_EVENT_LONG_PRESSED,
 						warning_id);
+	lv_obj_add_event_cb(touch_area, free_warning_idx_event_cb, LV_EVENT_DELETE,
+						warning_id);
 
 	update_warning_ui_immediate(i);
 
@@ -1125,12 +1127,27 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 }
 static void _warning_destroy(widget_t *w) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
+	uint8_t slot = wd ? wd->slot : 0;
 	if (wd && wd->signal_index >= 0)
 		signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
 	widget_rules_free(w);
+	/* Label is a sibling of root (child of parent), delete explicitly */
+	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot]))
+		lv_obj_del(warning_labels[slot]);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
+	/* Clear static and global pointers */
+	if (slot < 8) {
+		warning_circles[slot] = NULL;
+		warning_labels[slot] = NULL;
+		extern lv_obj_t *ui_Warning_1, *ui_Warning_2, *ui_Warning_3, *ui_Warning_4;
+		extern lv_obj_t *ui_Warning_5, *ui_Warning_6, *ui_Warning_7, *ui_Warning_8;
+		lv_obj_t **globals[] = {&ui_Warning_1, &ui_Warning_2, &ui_Warning_3,
+								&ui_Warning_4, &ui_Warning_5, &ui_Warning_6,
+								&ui_Warning_7, &ui_Warning_8};
+		*globals[slot] = NULL;
+	}
 	if (wd) {
 		rdm_image_free(wd->img_dsc);
 		wd->img_dsc = NULL;

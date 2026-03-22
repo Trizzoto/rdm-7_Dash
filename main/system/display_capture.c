@@ -86,36 +86,9 @@ esp_err_t display_capture_screenshot(uint8_t **output_buffer, size_t *output_siz
         }
     }
     
-    // Fallback: Capture from display buffer
-    ESP_LOGW(TAG, "Snapshot method failed, trying display buffer method");
-    
-    // Access the current display buffer
-    lv_disp_t *disp = lv_disp_get_default();
-    if (disp && disp->driver && disp->driver->draw_buf) {
-        lv_disp_draw_buf_t *draw_buf = disp->driver->draw_buf;
-        
-        if (draw_buf->buf_act) {
-            // Calculate the size of the active buffer
-            uint32_t buf_pixels = draw_buf->size;
-            uint32_t buf_bytes = buf_pixels * sizeof(lv_color_t);
-            
-            if (buf_bytes <= *output_size) {
-                // Copy from the active draw buffer
-                memcpy(*output_buffer, draw_buf->buf_act, buf_bytes);
-                *output_size = buf_bytes;
-                
-                example_lvgl_unlock();
-                
-                ESP_LOGI(TAG, "Screenshot captured from draw buffer: %u pixels, %zu bytes", 
-                         buf_pixels, *output_size);
-                
-                return ESP_OK;
-            }
-        }
-    }
-    
-    // Final fallback: Fill with a pattern to show it's working
-    ESP_LOGW(TAG, "Both methods failed, creating test pattern");
+    /* Draw buffer fallback removed — it only contains a partial region,
+     * not the full screen. Fall through to test pattern. */
+    ESP_LOGW(TAG, "Snapshot method failed, creating test pattern");
     
     uint16_t *pixels = (uint16_t *)*output_buffer;
     for (int y = 0; y < CAPTURE_HEIGHT; y++) {

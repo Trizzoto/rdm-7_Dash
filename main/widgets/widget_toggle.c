@@ -114,7 +114,7 @@ static void _toggle_clicked_cb(lv_event_t *e) {
      * ON = all bits set, OFF = 0. */
     if (d->tx_can_id > 0) {
         uint8_t frame[8] = {0};
-        uint32_t val = checked ? ((1u << d->tx_bit_length) - 1u) : 0u;
+        uint32_t val = checked ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
         can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
         can_transmit_frame(d->tx_can_id, frame, 8);
     }

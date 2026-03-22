@@ -153,6 +153,7 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 }
 
 static void _text_destroy(widget_t *w) {
+	if (!w) return;
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (td && td->signal_index >= 0)
 		signal_unsubscribe(td->signal_index, _text_on_signal, w);

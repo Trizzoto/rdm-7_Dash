@@ -44,7 +44,7 @@ static volatile bool     s_suspended = false;
 static QueueHandle_t s_can_queue = NULL;
 
 /* LVGL mutex helpers — defined in main.c */
-extern bool example_lvgl_lock(uint32_t timeout_ms);
+extern bool example_lvgl_lock(int timeout_ms);
 extern void example_lvgl_unlock(void);
 
 /* ── CAN receive task ─────────────────────────────────────────────────

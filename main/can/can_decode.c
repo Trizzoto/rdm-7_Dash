@@ -9,6 +9,7 @@ int64_t can_extract_bits(const uint8_t *data, uint8_t bit_offset,
                          uint8_t bit_length, int endian, bool is_signed)
 {
     if (bit_length == 0 || bit_length > 64)  return 0;
+    if ((bit_offset + bit_length + 7) / 8 > 8) return 0; /* bounds check: must fit in 8-byte CAN frame */
 
     uint64_t value = 0;
 

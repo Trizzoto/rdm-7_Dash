@@ -28,6 +28,9 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include <dirent.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -45,6 +48,9 @@ static const char *TAG = "layout_mgr";
 
 /* Track whether LittleFS has been mounted this boot */
 static bool s_lfs_mounted = false;
+
+/* Mutex protecting file I/O and s_layout_version */
+static SemaphoreHandle_t s_layout_mutex = NULL;
 
 /* Monotonic version counter — incremented on every save or load */
 static uint32_t s_layout_version = 0;
@@ -207,6 +213,12 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
  * ═══════════════════════════════════════════════════════════════════════════
  */
 esp_err_t layout_manager_init(void) {
+	/* Create file I/O mutex once (recursive: save() calls save_raw()) */
+	if (!s_layout_mutex) {
+		s_layout_mutex = xSemaphoreCreateRecursiveMutex();
+		configASSERT(s_layout_mutex);
+	}
+
 	if (s_lfs_mounted) {
 		ESP_LOGI(TAG, "LittleFS already mounted — skipping");
 		return ESP_OK;
@@ -253,7 +265,7 @@ esp_err_t layout_manager_init(void) {
 		need_regen = true;
 		ESP_LOGI(TAG, "default.json not found — will generate");
 	} else {
-		char hdr[256];
+		char hdr[512];
 		size_t nr = fread(hdr, 1, sizeof(hdr) - 1, df);
 		fclose(df);
 		hdr[nr] = '\0';
@@ -530,6 +542,8 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	if (!name || !parent)
 		return ESP_ERR_INVALID_ARG;
 
+	xSemaphoreTakeRecursive(s_layout_mutex, portMAX_DELAY);
+
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
@@ -544,6 +558,7 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		}
 		if (!f) {
 			ESP_LOGE(TAG, "layout_load: cannot open %s", path);
+			xSemaphoreGiveRecursive(s_layout_mutex);
 			return ESP_ERR_NOT_FOUND;
 		}
 	}
@@ -552,6 +567,7 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
 	if (!buf) {
 		fclose(f);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NO_MEM;
 	}
 
@@ -564,6 +580,7 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 
 	if (!root) {
 		ESP_LOGE(TAG, "layout_load: JSON parse failed for %s", path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
 
@@ -574,6 +591,7 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		ESP_LOGE(TAG, "layout_load: schema v%d invalid (expected 1..%d) in %s",
 				 schema_ver, LAYOUT_SCHEMA_VERSION, path);
 		cJSON_Delete(root);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
 
@@ -598,12 +616,15 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	/* ── Instantiate signals + widgets ── */
 	esp_err_t ret = _instantiate_widgets(root, parent, "layout_load");
 	cJSON_Delete(root);
-	if (ret != ESP_OK)
+	if (ret != ESP_OK) {
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ret;
+	}
 
 	s_layout_version++;
 	ESP_LOGI(TAG, "layout_load: loaded '%s' from %s (version %lu)", name, path,
 			 (unsigned long)s_layout_version);
+	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
 }
 
@@ -689,9 +710,13 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	if (!name || !root)
 		return ESP_ERR_INVALID_ARG;
 
+	xSemaphoreTakeRecursive(s_layout_mutex, portMAX_DELAY);
+
 	char *json_str = cJSON_PrintUnformatted(root);
-	if (!json_str)
+	if (!json_str) {
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NO_MEM;
+	}
 
 	char path[80];
 	_make_path(name, path, sizeof(path));
@@ -704,7 +729,9 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	FILE *f = fopen(path, "w");
 	if (!f) {
 		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing", path);
+		rename(bak_path, path);
 		free(json_str);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
 
@@ -716,6 +743,9 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 		ESP_LOGE(TAG, "layout_save_raw: short write (%u/%u bytes) for %s",
 				 (unsigned)nw, (unsigned)len, path);
 		fclose(f);
+		remove(path);
+		rename(bak_path, path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
 
@@ -723,6 +753,9 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	if (fflush(f) != 0) {
 		ESP_LOGE(TAG, "layout_save_raw: fflush failed for %s", path);
 		fclose(f);
+		remove(path);
+		rename(bak_path, path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
 	fclose(f);
@@ -730,6 +763,7 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	s_layout_version++;
 	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes, version %lu)",
 			 name, path, (unsigned)len, (unsigned long)s_layout_version);
+	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
 }
 
@@ -742,12 +776,15 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
 	if (!name || !buf || buf_size == 0)
 		return ESP_ERR_INVALID_ARG;
 
+	xSemaphoreTakeRecursive(s_layout_mutex, portMAX_DELAY);
+
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
 	FILE *f = fopen(path, "r");
 	if (!f) {
 		ESP_LOGE(TAG, "layout_read_raw: cannot open %s", path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NOT_FOUND;
 	}
 
@@ -759,6 +796,7 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
 		*out_len = nread;
 
 	ESP_LOGD(TAG, "layout_read_raw: read '%s' (%u bytes)", name, (unsigned)nread);
+	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
 }
 
@@ -769,13 +807,22 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
 esp_err_t layout_manager_delete(const char *name) {
 	if (!name)
 		return ESP_ERR_INVALID_ARG;
+
+	xSemaphoreTakeRecursive(s_layout_mutex, portMAX_DELAY);
+
 	char path[80];
 	_make_path(name, path, sizeof(path));
 	if (remove(path) != 0) {
 		ESP_LOGW(TAG, "layout_delete: remove(%s) failed", path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NOT_FOUND;
 	}
+	/* Also remove backup file if it exists */
+	char bak_path[96];
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+	remove(bak_path);
 	ESP_LOGI(TAG, "layout_delete: deleted '%s'", name);
+	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
 }
 
@@ -797,6 +844,8 @@ int layout_manager_list(char names[][LAYOUT_MAX_NAME], int max_count) {
 		 * .json suffix only.  Subdirectories won't match, so this is safe. */
 		char stripped[LAYOUT_MAX_NAME];
 		if (_strip_json(de->d_name, stripped, sizeof(stripped))) {
+			if (stripped[0] == '_')
+				continue;
 			strncpy(names[count], stripped, LAYOUT_MAX_NAME - 1);
 			names[count][LAYOUT_MAX_NAME - 1] = '\0';
 			count++;

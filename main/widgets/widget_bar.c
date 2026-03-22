@@ -1119,16 +1119,35 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 }
 static void _bar_destroy(widget_t *w) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
+	uint8_t slot = bd ? bd->slot : 0;
 	if (bd && bd->signal_index >= 0)
 		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
 	widget_rules_free(w);
+	/* Label and value are siblings of root (children of parent), delete explicitly */
+	if (bd && bd->label_obj && lv_obj_is_valid(bd->label_obj))
+		lv_obj_del(bd->label_obj);
+	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
+		lv_obj_del(bd->value_obj);
 	/* In image mode, clip container is a sibling of root — delete it separately */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
+	/* Clear global pointers so stale references are not used */
+	if (slot == 0) {
+		ui_Bar_1 = NULL;
+		ui_Bar_1_Label = NULL;
+		ui_Bar_1_Value = NULL;
+	} else {
+		ui_Bar_2 = NULL;
+		ui_Bar_2_Label = NULL;
+		ui_Bar_2_Value = NULL;
+	}
 	if (bd) {
+		bd->label_obj = NULL;
+		bd->value_obj = NULL;
+		bd->bar_obj = NULL;
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
 	}

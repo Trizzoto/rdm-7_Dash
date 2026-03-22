@@ -7,6 +7,7 @@
  */
 #include "widget_meter.h"
 #include "widget_image.h"
+#include "widget_rules.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -170,6 +171,9 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	if (md->signal_index >= 0)
 		signal_subscribe(md->signal_index, _meter_on_signal, w);
 
+	/* Subscribe rules (safe no-op if no rules defined) */
+	widget_rules_subscribe(w);
+
 	ESP_LOGD(TAG, "_meter_create: DONE");
 }
 
@@ -251,6 +255,9 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "label_gap", md->label_gap);
 	if (md->tick_label_font[0] != '\0')
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
+
+	/* Rules */
+	widget_rules_to_json(w, cfg);
 }
 
 static void _meter_from_json(widget_t *w, cJSON *in) {
@@ -350,6 +357,9 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font));
 	}
+
+	/* Rules */
+	widget_rules_from_json(w, cfg);
 }
 
 static void _meter_destroy(widget_t *w) {
@@ -358,6 +368,7 @@ static void _meter_destroy(widget_t *w) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (md && md->signal_index >= 0)
 		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
+	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -374,6 +385,40 @@ uint8_t widget_meter_get_value_idx(const widget_t *w) {
 		return 0;
 	const meter_data_t *md = (const meter_data_t *)w->type_data;
 	return md->value_idx < 13 ? md->value_idx : 0;
+}
+
+static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !md->meter) return;
+
+	lv_color_t bg = md->meter_bg_color;
+	lv_color_t nc = md->needle_color;
+	lv_color_t nbc = md->needle_ball_color;
+	lv_color_t bc = md->border_color;
+
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "meter_bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bg.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "needle_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			nc.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "needle_ball_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			nbc.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+			bc.full = (uint16_t)o->value.color;
+		}
+	}
+
+	lv_obj_set_style_bg_color(md->meter, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(md->meter, nbc, LV_PART_INDICATOR);
+	if (md->border_width > 0)
+		lv_obj_set_style_border_color(md->meter, bc, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Needle color can only be applied to line needles (not image needles).
+	 * LVGL v8 doesn't expose a direct API for line needle color after creation,
+	 * so we store it for potential future use. */
+	(void)nc;
 }
 
 widget_t *widget_meter_create_instance(uint8_t value_idx) {
@@ -440,6 +485,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	w->to_json = _meter_to_json;
 	w->from_json = _meter_from_json;
 	w->destroy = _meter_destroy;
+	w->apply_overrides = _meter_apply_overrides;
 
 	return w;
 }

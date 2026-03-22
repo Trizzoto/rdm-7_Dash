@@ -282,7 +282,7 @@ static void _shl_from_json(widget_t *w, cJSON *in) {
     cJSON *item;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
-    if (cJSON_IsString(item))
+    if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name));
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "led_count");

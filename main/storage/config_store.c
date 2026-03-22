@@ -70,8 +70,9 @@ esp_err_t config_store_save_bitrate(uint8_t bitrate)
 {
     nvs_handle_t handle;
     if (nvs_open(NS_CAN, NVS_READWRITE, &handle) != ESP_OK) return ESP_FAIL;
-    nvs_set_u8(handle, "can_bitrate", bitrate);
-    esp_err_t err = nvs_commit(handle);
+    esp_err_t err = nvs_set_u8(handle, "can_bitrate", bitrate);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
     nvs_close(handle);
     return err;
 }
@@ -99,9 +100,12 @@ esp_err_t config_store_save_wifi(const wifi_credentials_t *creds)
     esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
 
-    nvs_set_str(handle, "ssid",     creds->ssid);
-    nvs_set_str(handle, "password", creds->password);
-    nvs_set_u8(handle,  "auto_con", creds->auto_connect ? 1 : 0);
+    err = nvs_set_str(handle, "ssid", creds->ssid);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_set_str(handle, "password", creds->password);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_set_u8(handle, "auto_con", creds->auto_connect ? 1 : 0);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
     err = nvs_commit(handle);
     nvs_close(handle);
     ESP_LOGI(TAG, "WiFi credentials saved for '%s'", creds->ssid);
@@ -249,7 +253,8 @@ static void _clear_directory(const char *path)
     int count = 0;
 
     while ((ent = readdir(d)) != NULL) {
-        if (ent->d_type != DT_REG) continue;
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
         snprintf(filepath, sizeof(filepath), "%s/%s", path, ent->d_name);
         if (unlink(filepath) == 0)
             count++;

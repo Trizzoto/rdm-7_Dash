@@ -1188,10 +1188,19 @@ static esp_err_t layout_rename_handler(httpd_req_t *req) {
 		if (out) {
 			FILE *fw = fopen(new_path, "w");
 			if (fw) {
-				fwrite(out, 1, strlen(out), fw);
-				fflush(fw);
-				fclose(fw);
-				remove(old_path);
+				size_t len = strlen(out);
+				size_t written = fwrite(out, 1, len, fw);
+				int close_err = fclose(fw);
+				if (written == len && close_err == 0) {
+					remove(old_path);
+				} else {
+					ESP_LOGE(TAG, "Failed to write renamed layout (wrote %u/%u, close=%d)",
+							 (unsigned)written, (unsigned)len, close_err);
+					remove(new_path);
+					free(out);
+					httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write failed");
+					return ESP_FAIL;
+				}
 			}
 			free(out);
 		}

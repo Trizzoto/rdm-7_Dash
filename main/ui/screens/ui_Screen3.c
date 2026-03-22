@@ -288,13 +288,18 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 	char active[LAYOUT_MAX_NAME];
 	layout_manager_get_active(active, sizeof(active));
 
-	char options[512] = "";
+	char options[640] = "";
 	int sel_idx = 0;
 	int opt_count = 0;
+	size_t pos = 0;
 	for (int i = 0; i < count; i++) {
 		if (names[i][0] == '_') continue;
-		if (opt_count > 0) strcat(options, "\n");
-		strcat(options, names[i]);
+		size_t nlen = strlen(names[i]);
+		if (pos + nlen + 2 > sizeof(options)) break;
+		if (opt_count > 0) options[pos++] = '\n';
+		memcpy(&options[pos], names[i], nlen);
+		pos += nlen;
+		options[pos] = '\0';
 		if (strcmp(names[i], active) == 0) sel_idx = opt_count;
 		opt_count++;
 	}
@@ -340,12 +345,17 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 	char active_splash[LAYOUT_MAX_NAME];
 	layout_manager_get_active_splash(active_splash, sizeof(active_splash));
 
-	char splash_opts[512] = "";
+	char splash_opts[640] = "";
 	int splash_sel = 0;
 	int splash_opt_count = 0;
+	size_t spos = 0;
 	for (int i = 0; i < splash_count; i++) {
-		if (splash_opt_count > 0) strcat(splash_opts, "\n");
-		strcat(splash_opts, splash_names[i]);
+		size_t slen = strlen(splash_names[i]);
+		if (spos + slen + 2 > sizeof(splash_opts)) break;
+		if (splash_opt_count > 0) splash_opts[spos++] = '\n';
+		memcpy(&splash_opts[spos], splash_names[i], slen);
+		spos += slen;
+		splash_opts[spos] = '\0';
 		if (strcmp(splash_names[i], active_splash) == 0)
 			splash_sel = splash_opt_count;
 		splash_opt_count++;

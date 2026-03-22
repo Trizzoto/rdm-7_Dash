@@ -100,6 +100,13 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
         case HTTP_EVENT_ON_DATA:
             if (!esp_http_client_is_chunked_response(evt->client)) {
+                if (response_buffer_size + evt->data_len > 64 * 1024) {
+                    ESP_LOGE(TAG, "Response buffer exceeds 64KB limit");
+                    free(response_buffer);
+                    response_buffer = NULL;
+                    response_buffer_size = 0;
+                    return ESP_FAIL;
+                }
                 char *temp = realloc(response_buffer, response_buffer_size + evt->data_len + 1);
                 if (temp == NULL) {
                     ESP_LOGE(TAG, "Failed to allocate memory");
@@ -709,36 +716,21 @@ void start_ota_update_task(void) {
     const uint32_t OTA_STACK = 8*1024;
     const uint32_t OTA_PRIORITY = 2;
 
-    /* TCB must be internal RAM (FreeRTOS kernel requirement); stack can be PSRAM */
-    StaticTask_t *task_tcb = heap_caps_calloc(1, sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    StackType_t  *task_stack = heap_caps_calloc(OTA_STACK, sizeof(StackType_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-
-    if (!task_tcb || !task_stack) {
-        ESP_LOGE(TAG, "Failed to allocate OTA task memory from PSRAM");
-        free(task_tcb);
-        free(task_stack);
-        ota_status = OTA_UPDATE_FAILED;
-        return;
-    }
-
-    TaskHandle_t handle = xTaskCreateStaticPinnedToCore(
+    BaseType_t ret = xTaskCreatePinnedToCore(
         ota_update_task,
         "ota_update",
         OTA_STACK,
         NULL,
         OTA_PRIORITY,
-        task_stack,
-        task_tcb,
+        NULL,
         0  /* core 0 — opposite of LVGL on core 1 */
     );
 
-    if (handle == NULL) {
+    if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create OTA task");
-        free(task_tcb);
-        free(task_stack);
         ota_status = OTA_UPDATE_FAILED;
     } else {
-        ESP_LOGI(TAG, "OTA task created successfully (stack in PSRAM)");
+        ESP_LOGI(TAG, "OTA task created successfully");
         ota_status = OTA_UPDATE_IN_PROGRESS;
     }
 }
