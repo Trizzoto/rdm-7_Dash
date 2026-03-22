@@ -761,7 +761,7 @@ static void update_picker_preview(picker_st_t *st, int idx)
     } else {
         const preconfig_item_t *it = &preconfig_items[idx];
         char buf[128];
-        snprintf(buf, sizeof(buf), "%s  \xc2\xb7  CAN 0x%s  \xc2\xb7  %s  \xc2\xb7  Bit %d  Len %d  \xc2\xb7  \xc3\x97%.4g",
+        snprintf(buf, sizeof(buf), "%s | CAN 0x%s | %s | Bit %d  Len %d | x%.4g",
             it->label, it->can_id,
             it->endianess ? "LE" : "BE",
             it->bit_start, it->bit_length,
@@ -1002,6 +1002,7 @@ static void _open_picker_overlay(uint8_t value_id,
     lv_obj_t *clbl = lv_label_create(close_btn);
     lv_label_set_text(clbl, LV_SYMBOL_CLOSE "  CLOSE");
     lv_obj_set_style_text_font(clbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(clbl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_center(clbl);
     lv_obj_add_event_cb(close_btn, picker_close_cb, LV_EVENT_CLICKED, overlay);
 
@@ -1059,8 +1060,8 @@ static void _open_picker_overlay(uint8_t value_id,
     lv_obj_t *albl = lv_label_create(apply_btn);
     lv_label_set_text(albl, LV_SYMBOL_OK "  APPLY PRESET");
     lv_obj_set_style_text_font(albl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_GHOST, LV_STATE_DISABLED);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_MUTED, LV_STATE_DISABLED);
     lv_obj_center(albl);
     lv_obj_add_event_cb(apply_btn, apply_click_cb, LV_EVENT_CLICKED, st);
     st->apply_btn = apply_btn;
@@ -1203,8 +1204,8 @@ void build_preset_picker_embedded(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     lv_obj_t *albl = lv_label_create(apply_btn);
     lv_label_set_text(albl, LV_SYMBOL_OK "  APPLY");
     lv_obj_set_style_text_font(albl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_GHOST, LV_STATE_DISABLED);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_MUTED, LV_STATE_DISABLED);
     lv_obj_center(albl);
     lv_obj_add_event_cb(apply_btn, apply_click_cb, LV_EVENT_CLICKED, st);
     st->apply_btn = apply_btn;

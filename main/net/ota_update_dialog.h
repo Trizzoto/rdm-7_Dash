@@ -9,7 +9,10 @@ extern "C" {
 #endif
 
 // Function declarations
-void show_ota_update_dialog(const char* current_version, const char* new_version, const char* update_type, float file_size_mb, const char* release_notes);
+void show_ota_update_dialog(const char* current_version, const char* new_version, float file_size_mb, const char* release_notes);
+void show_ota_checking_dialog(void);
+void show_ota_up_to_date_dialog(const char* current_version);
+void show_ota_check_failed_dialog(void);
 void close_ota_update_dialog(void);
 void update_ota_progress_dialog(void);
 

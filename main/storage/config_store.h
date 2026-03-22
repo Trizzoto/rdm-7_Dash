@@ -26,6 +26,24 @@ esp_err_t config_store_save_wifi(const wifi_credentials_t *creds);
 esp_err_t config_store_load_wifi(wifi_credentials_t *creds);
 esp_err_t config_store_clear_wifi(void);
 
+/* ── WiFi AP (hotspot) settings ────────────────────────────────────────── */
+typedef struct {
+	bool enabled;           /* AP enabled (default: false) */
+	char password[65];      /* AP password (default: "rdm7dash") */
+} rdm_ap_config_t;
+
+esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg);
+esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg);
+
+/* ── WiFi boot settings ───────────────────────────────────────────────── */
+typedef struct {
+	bool wifi_on_boot;      /* Start WiFi on boot (default: false) */
+	bool ap_enabled;        /* AP mode enabled (default: false) */
+} wifi_boot_config_t;
+
+esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg);
+esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

@@ -126,6 +126,12 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 			lv_obj_set_align(id->img_obj, LV_ALIGN_CENTER);
 			lv_obj_set_style_img_opa(id->img_obj, id->opacity,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
+			if (id->recolor_opa > 0) {
+				lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
+											  LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
+												  LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
 		} else {
 			/* Show placeholder text if image not found */
 			lv_obj_t *lbl = lv_label_create(cont);
@@ -158,6 +164,10 @@ static void _image_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "image_name", id->image_name);
 	if (id->opacity != 255)
 		cJSON_AddNumberToObject(cfg, "opacity", id->opacity);
+	if (id->recolor_opa != 0)
+		cJSON_AddNumberToObject(cfg, "recolor_opa", id->recolor_opa);
+	if (id->recolor.full != lv_color_black().full)
+		cJSON_AddNumberToObject(cfg, "recolor", (int)id->recolor.full);
 }
 
 static void _image_from_json(widget_t *w, cJSON *in) {
@@ -174,6 +184,10 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opacity");
 	if (cJSON_IsNumber(item)) id->opacity = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor_opa");
+	if (cJSON_IsNumber(item)) id->recolor_opa = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor");
+	if (cJSON_IsNumber(item)) id->recolor.full = (uint32_t)item->valueint;
 }
 
 static void _image_destroy(widget_t *w) {
@@ -201,6 +215,8 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	if (!id) { free(w); return NULL; }
 
 	id->opacity = 255;
+	id->recolor = lv_color_black();
+	id->recolor_opa = 0;
 
 	w->type = WIDGET_IMAGE;
 	w->slot = 0;

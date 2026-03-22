@@ -92,7 +92,7 @@ signal_t *config_bridge_ensure_signal(uint8_t value_id) {
 	char name[32];
 	snprintf(name, sizeof(name), "%s_sig", w->id);
 
-	int16_t idx = signal_register(name, 0, 0, 16, 1.0f, 0.0f, false, 1);
+	int16_t idx = signal_register(name, 0, 0, 16, 1.0f, 0.0f, false, 1, "");
 	if (idx < 0) {
 		ESP_LOGE(TAG, "Failed to register signal for value_id %d", value_id);
 		return NULL;

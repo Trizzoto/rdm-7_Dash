@@ -20,6 +20,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "storage/sd_manager.h"
+#include "storage/data_logger.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -33,6 +34,8 @@
 #include "ota_handler.h"
 #include "sdkconfig.h"
 #include "ui/screens/ui_wifi.h"
+#include "net/wifi_manager.h"
+#include "storage/config_store.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "web_server.h"
@@ -391,6 +394,23 @@ float fuel_sender_read_voltage(void) {
 }
 
 
+static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
+	(void)timer;
+	wifi_manager_start();
+	wifi_manager_auto_connect();
+
+	ESP_LOGI(TAG, "Starting web server...");
+	if (web_server_start() != ESP_OK) {
+		ESP_LOGE(TAG, "Web server failed to start!");
+	} else {
+		ESP_LOGI(TAG, "Web server started successfully!");
+		ESP_LOGI(TAG, "=== WEB INTERFACE READY ===");
+		ESP_LOGI(TAG, "Connect to WiFi hotspot '%s' → http://192.168.4.1",
+				 wifi_get_ap_ssid());
+		ESP_LOGI(TAG, "==============================");
+	}
+}
+
 void app_main(void) {
 	// Initialize PWM for GPIO16
 	init_pwm();
@@ -715,28 +735,29 @@ void app_main(void) {
 	fuel_sender_adc_init();
 
 	// Allow splash screen to render and become visible
-	vTaskDelay(pdMS_TO_TICKS(200));
+	vTaskDelay(pdMS_TO_TICKS(50));
 	ESP_LOGI(
 		TAG,
 		"Splash screen displayed, continuing with system initialization...");
 
 	// Initialize remaining components while splash is showing
 	sd_manager_init();
-	init_wifi_screen();
+	data_logger_init();
+	/* Initialize WiFi manager (creates netif, no radio start yet) */
+	wifi_manager_init();
+	wifi_ui_init();
 
-	// Start web server (will start once WiFi is connected)
-	ESP_LOGI(TAG, "Starting web server...");
-	if (web_server_start() != ESP_OK) {
-		ESP_LOGE(TAG, "Web server failed to start!");
+	/* Check if WiFi should start on boot */
+	wifi_boot_config_t boot_cfg;
+	config_store_load_wifi_boot(&boot_cfg);
+
+	if (boot_cfg.wifi_on_boot) {
+		ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");
+		/* Start WiFi with a 4-second delay to let dashboard load first */
+		lv_timer_t *wifi_boot_timer = lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
+		lv_timer_set_repeat_count(wifi_boot_timer, 1);
 	} else {
-		ESP_LOGI(TAG, "Web server started successfully!");
-		ESP_LOGI(TAG, "=== WEB INTERFACE READY ===");
-		ESP_LOGI(TAG, "Connect to your WiFi network first, then:");
-		ESP_LOGI(TAG,
-				 "Open your web browser and go to: http://[ESP32_IP_ADDRESS]");
-		ESP_LOGI(TAG, "You can see the IP address in the device settings or "
-					  "WiFi connection logs");
-		ESP_LOGI(TAG, "==============================");
+		ESP_LOGI(TAG, "WiFi disabled at boot — enable from Settings > Wi-Fi");
 	}
 
 	ESP_LOGI(TAG, "All systems initialized - splash screen will transition to "

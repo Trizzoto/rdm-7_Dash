@@ -22,6 +22,7 @@
 #include "widget_shape_panel.h"
 #include "widget_arc.h"
 #include "widget_button.h"
+#include "widget_shift_light.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,6 +89,7 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_ARC       */ { .min_w =  30, .min_h =  30, .max_w = 800, .max_h = 800 },
     /* WIDGET_TOGGLE    */ { .min_w =  40, .min_h =  20, .max_w = 200, .max_h =  80 },
     /* WIDGET_BUTTON    */ { .min_w =  40, .min_h =  20, .max_w = 300, .max_h = 100 },
+    /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = 800, .max_h =  60 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -107,6 +109,7 @@ const char *widget_type_name(widget_type_t type)
         "arc",
         "toggle",
         "button",
+        "shift_light",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];
@@ -156,6 +159,7 @@ char *widget_get_signal_name_buf(widget_t *w)
         case WIDGET_INDICATOR: return ((indicator_data_t *)w->type_data)->signal_name;
         case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->signal_name;
         case WIDGET_TOGGLE:    return ((toggle_data_t *)w->type_data)->signal_name;
+        case WIDGET_SHIFT_LIGHT: return ((shift_light_data_t *)w->type_data)->signal_name;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:
@@ -176,6 +180,7 @@ int16_t *widget_get_signal_index_ptr(widget_t *w)
         case WIDGET_INDICATOR: return &((indicator_data_t *)w->type_data)->signal_index;
         case WIDGET_WARNING:   return &((warning_data_t *)w->type_data)->signal_index;
         case WIDGET_TOGGLE:    return &((toggle_data_t *)w->type_data)->signal_index;
+        case WIDGET_SHIFT_LIGHT: return &((shift_light_data_t *)w->type_data)->signal_index;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:
@@ -201,4 +206,14 @@ bool widget_has_alert_support(widget_t *w)
 {
     if (!w) return false;
     return (w->type == WIDGET_PANEL || w->type == WIDGET_BAR);
+}
+
+bool widget_needs_data_source(widget_t *w)
+{
+    if (!w) return false;
+    /* Image just displays a file, toggle/button only TX CAN data */
+    return (w->type != WIDGET_IMAGE &&
+            w->type != WIDGET_TOGGLE &&
+            w->type != WIDGET_BUTTON &&
+            w->type != WIDGET_SHAPE_PANEL);
 }

@@ -20,6 +20,8 @@ typedef struct __attribute__((packed)) {
 typedef struct {
 	char          image_name[32];
 	uint8_t       opacity;        /* default: 255 */
+	lv_color_t    recolor;        /* default: 0x000000 (no effect at opa 0) */
+	uint8_t       recolor_opa;    /* default: 0 (disabled), 255 = full overlay */
 	lv_img_dsc_t *img_dsc;        /* runtime: PSRAM-loaded image descriptor */
 	lv_obj_t     *img_obj;        /* runtime: LVGL image object */
 } image_data_t;

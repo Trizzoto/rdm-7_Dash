@@ -55,8 +55,13 @@ typedef struct {
     bool     is_signed;
     uint8_t  endian;          /* 0 = Motorola (big), 1 = Intel (little) */
 
+    char     unit[8];           /* Display unit (e.g., "kPa", "°C") */
+
     /* Runtime state */
     float    current_value;
+    float    peak_value;        /* Highest value seen */
+    float    min_value;         /* Lowest value seen */
+    bool     tracking_active;   /* Peak/min tracking enabled */
     bool     is_stale;
     uint64_t last_update_ms;
 
@@ -82,7 +87,8 @@ void signal_registry_reset(void);
 int16_t signal_register(const char *name, uint32_t can_id,
                         uint8_t start, uint8_t len,
                         float scale, float offset,
-                        bool is_signed, uint8_t endian);
+                        bool is_signed, uint8_t endian,
+                        const char *unit);
 
 /**
  * Look up a signal by name.
@@ -144,6 +150,20 @@ void signal_check_timeouts(uint64_t current_time_ms);
  * signal_dispatch_frame).
  */
 void signal_inject_test_value(const char *name, float value);
+
+/* ── Peak/min tracking ────────────────────────────────────────────────── */
+
+/** Reset peak and min values for all signals. */
+void signal_reset_peaks(void);
+
+/** Reset peak and min values for a single signal. */
+void signal_reset_peak(int16_t signal_index);
+
+/** Get the peak (max) value recorded for a signal. Returns -FLT_MAX if none. */
+float signal_get_peak(int16_t signal_index);
+
+/** Get the min value recorded for a signal. Returns FLT_MAX if none. */
+float signal_get_min(int16_t signal_index);
 
 #ifdef __cplusplus
 }

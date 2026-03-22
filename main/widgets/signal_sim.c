@@ -94,9 +94,9 @@ static void _build_bounds(uint16_t count)
 
 static void _init_phases(uint16_t count)
 {
-    float divisor = (count > 0) ? (float)count : 1.0f;
+    /* All signals start at phase 0 so they sweep in sync */
     for (uint16_t i = 0; i < count && i < SIM_MAX_SIGNALS; i++) {
-        s_phase[i] = (float)i / divisor;
+        s_phase[i] = 0.0f;
     }
 }
 
@@ -117,6 +117,12 @@ static void _sim_timer_cb(lv_timer_t *timer)
     const float delta = (float)SIM_TIMER_PERIOD_MS / (float)SIM_CYCLE_MS;
 
     for (uint16_t i = 0; i < count; i++) {
+        signal_t *sig = signal_get_by_index(i);
+        if (!sig) continue;
+
+        /* Skip internal signals (can_id 0) — leave real sensor values */
+        if (sig->can_id == 0) continue;
+
         s_phase[i] += delta;
         if (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;
 
@@ -126,11 +132,7 @@ static void _sim_timer_cb(lv_timer_t *timer)
                     : (1.0f - s_phase[i]) * 2.0f;
 
         float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
-
-        signal_t *sig = signal_get_by_index(i);
-        if (sig) {
-            signal_inject_test_value(sig->name, value);
-        }
+        signal_inject_test_value(sig->name, value);
     }
 }
 

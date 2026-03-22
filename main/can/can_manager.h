@@ -6,6 +6,7 @@
  */
 #pragma once
 #include "driver/twai.h"
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -79,3 +80,43 @@ void can_process_queued_frames(void);
  * @return ESP_OK on success, or an error code.
  */
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
+
+/**
+ * Read CAN bus diagnostic counters from the TWAI driver.
+ * All output pointers are optional (pass NULL to skip).
+ */
+esp_err_t can_get_diagnostics(uint32_t *state, uint32_t *msgs_to_tx,
+                              uint32_t *msgs_to_rx, uint32_t *tx_error_counter,
+                              uint32_t *rx_error_counter, uint32_t *bus_error_count,
+                              uint32_t *rx_missed);
+
+/**
+ * Return the CAN ID of the most recently received frame (0 if none yet).
+ */
+uint32_t can_get_last_rx_id(void);
+
+/**
+ * Return the cumulative count of successfully received CAN frames.
+ * Incremented in the RX task; safe to read from any context.
+ */
+uint32_t can_get_rx_frame_count(void);
+
+/**
+ * Suspend normal CAN operation.  Stops the RX task and uninstalls
+ * the TWAI driver so the caller can take ownership of the peripheral
+ * (e.g. for bus scanning).
+ */
+void can_suspend(void);
+
+/**
+ * Resume normal CAN operation after can_suspend().  Rebuilds the
+ * acceptance filter, reinstalls the TWAI driver, starts the peripheral,
+ * and recreates the RX task.
+ */
+void can_resume(void);
+
+/**
+ * Return the TWAI timing config for a bitrate index.
+ * @param index  0=125k  1=250k  2=500k  3=1M
+ */
+twai_timing_config_t can_get_timing_for_bitrate(uint8_t index);

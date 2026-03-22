@@ -1,4 +1,5 @@
 #include "widget_warning.h"
+#include "widget_image.h"
 #include "widget_rules.h"
 #include "widget_panel.h"
 #include "can/can_decode.h"
@@ -376,27 +377,11 @@ void update_warning_ui(void *param) {
 		return;
 	}
 
-	warning_data_t *wd = _lookup_warning_data(warning_idx);
-	bool state = wd ? wd->current_state : false;
-	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
-	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
-	lv_color_t new_color = state ? active : inactive;
-
-	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	if (warning_labels[warning_idx] &&
-		lv_obj_is_valid(warning_labels[warning_idx])) {
-		bool hide_label = wd && !wd->show_label;
-		if (state && !hide_label) {
-			lv_obj_clear_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
-		} else {
-			lv_obj_add_flag(warning_labels[warning_idx], LV_OBJ_FLAG_HIDDEN);
-		}
-	}
+	/* Delegate to the immediate version which handles both image and circle */
+	update_warning_ui_immediate(warning_idx);
 }
 
-// Immediate warning update
+/* Immediate warning update */
 void update_warning_ui_immediate(uint8_t warning_idx) {
 	if (warning_idx >= 8)
 		return;
@@ -409,8 +394,28 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
 	lv_color_t new_color = state ? active : inactive;
-	lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	uint8_t active_opa = wd ? wd->active_opa : 255;
+	uint8_t inactive_opa = wd ? wd->inactive_opa : 80;
+	uint8_t new_opa = state ? active_opa : inactive_opa;
+
+	bool is_image = wd && wd->img_obj != NULL;
+
+	if (is_image) {
+		/* Image mode: use recolor for tinting, img_opa for opacity */
+		lv_obj_set_style_img_recolor(warning_circles[warning_idx], new_color,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(warning_circles[warning_idx], LV_OPA_COVER,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_opa(warning_circles[warning_idx], new_opa,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	} else {
+		/* Circle mode: use bg_color and bg_opa */
+		lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(warning_circles[warning_idx], new_opa,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
 	if (warning_labels[warning_idx] &&
 		lv_obj_is_valid(warning_labels[warning_idx])) {
 		bool hide_label = wd && !wd->show_label;
@@ -863,34 +868,74 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	if (warning_circles[i] != NULL)
 		return;
 
-	warning_circles[i] = lv_obj_create(parent);
-	lv_obj_set_width(warning_circles[i], 15);
-	lv_obj_set_height(warning_circles[i], 15);
-	lv_obj_set_x(warning_circles[i], warning_positions[i].x);
-	lv_obj_set_y(warning_circles[i], warning_positions[i].y);
-	lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
-	lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
 	warning_data_t *wd_style = _lookup_warning_data(i);
-	lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(warning_circles[i], wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(warning_circles[i], 255,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(warning_circles[i], wd_style ? wd_style->border_width : 0,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	if (wd_style && wd_style->border_width > 0) {
-		lv_obj_set_style_border_color(warning_circles[i], wd_style->border_color,
+	bool use_image = wd_style && wd_style->image_name[0] != '\0';
+
+	if (use_image) {
+		/* Image mode: load RDMIMG and create lv_img object */
+		wd_style->img_dsc = rdm_image_load(wd_style->image_name);
+		if (wd_style->img_dsc) {
+			warning_circles[i] = lv_img_create(parent);
+			lv_img_set_src(warning_circles[i], wd_style->img_dsc);
+			lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
+			lv_obj_set_pos(warning_circles[i], warning_positions[i].x, warning_positions[i].y);
+			/* Apply color overlay using recolor */
+			lv_color_t init_color = wd_style->inactive_color;
+			uint8_t init_opa = wd_style->inactive_opa;
+			lv_obj_set_style_img_recolor(warning_circles[i], init_color,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(warning_circles[i], LV_OPA_COVER,
+											  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_opa(warning_circles[i], init_opa,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(warning_circles[i], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
+			wd_style->img_obj = warning_circles[i];
+		} else {
+			/* Image load failed, fall back to circle mode */
+			ESP_LOGW(TAG, "Image '%s' not found for warning %d, using circle", wd_style->image_name, i);
+			use_image = false;
+		}
+	}
+
+	if (!use_image) {
+		/* Circle mode — use widget w/h if available, else default 15x15 */
+		widget_t *wt = widget_registry_find_by_type_and_slot(WIDGET_WARNING, i);
+		int16_t cw = (wt && wt->w > 0) ? wt->w : 15;
+		int16_t ch = (wt && wt->h > 0) ? wt->h : 15;
+
+		warning_circles[i] = lv_obj_create(parent);
+		lv_obj_set_size(warning_circles[i], cw, ch);
+		lv_obj_set_x(warning_circles[i], warning_positions[i].x);
+		lv_obj_set_y(warning_circles[i], warning_positions[i].y);
+		lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
+		lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_color_t init_color = wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE;
+		uint8_t init_opa = wd_style ? wd_style->inactive_opa : 80;
+		lv_obj_set_style_bg_color(warning_circles[i], init_color,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(warning_circles[i], init_opa,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(warning_circles[i], wd_style ? wd_style->border_width : 0,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (wd_style && wd_style->border_width > 0) {
+			lv_obj_set_style_border_color(warning_circles[i], wd_style->border_color,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_opa(warning_circles[i], 255,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
 	}
 
 	warning_labels[i] = lv_label_create(parent);
 	lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
 	lv_obj_set_height(warning_labels[i], LV_SIZE_CONTENT);
 	lv_obj_set_x(warning_labels[i], warning_positions[i].x);
-	lv_obj_set_y(warning_labels[i], -112);
+	/* Position label just below the circle/image */
+	{
+		int16_t obj_h = lv_obj_get_height(warning_circles[i]);
+		if (obj_h <= 0) obj_h = 15;
+		lv_obj_set_y(warning_labels[i], warning_positions[i].y + obj_h / 2 + 4);
+	}
 	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
 	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
 	/* If show_label is false, mark the label as permanently hidden using user data */
@@ -980,6 +1025,12 @@ static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
+	/* Reposition label below the resized circle */
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (wd && wd->slot < 8 && warning_labels[wd->slot] &&
+	    lv_obj_is_valid(warning_labels[wd->slot])) {
+		lv_obj_set_y(warning_labels[wd->slot], w->y + nh / 2 + 4);
+	}
 }
 static void _warning_open_settings(widget_t *w) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
@@ -1012,6 +1063,12 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddBoolToObject(cfg, "show_label", false);
 		if (wd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "label_color", (int)wd->label_color.full);
+		if (wd->image_name[0] != '\0')
+			cJSON_AddStringToObject(cfg, "image_name", wd->image_name);
+		if (wd->active_opa != 255)
+			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
+		if (wd->inactive_opa != 80)
+			cJSON_AddNumberToObject(cfg, "inactive_opa", wd->inactive_opa);
 	}
 }
 static void _warning_from_json(widget_t *w, cJSON *in) {
@@ -1054,6 +1111,13 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) wd->show_label = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
 	if (cJSON_IsNumber(item)) wd->label_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
+	if (cJSON_IsString(item) && item->valuestring)
+		safe_strncpy(wd->image_name, item->valuestring, sizeof(wd->image_name));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "active_opa");
+	if (cJSON_IsNumber(item)) wd->active_opa = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
+	if (cJSON_IsNumber(item)) wd->inactive_opa = (uint8_t)item->valueint;
 
 	/* Resolve signal name → index */
 	if (wd->signal_name[0] != '\0')
@@ -1067,6 +1131,11 @@ static void _warning_destroy(widget_t *w) {
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
+	if (wd) {
+		rdm_image_free(wd->img_dsc);
+		wd->img_dsc = NULL;
+		wd->img_obj = NULL;
+	}
 	free(w->type_data);
 	free(w);
 }
@@ -1102,13 +1171,26 @@ static void _warning_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 		}
 	}
 
-	/* Apply bg color based on current on/off state */
-	lv_color_t bg = wd->current_state ? active_color : inactive_color;
-	lv_obj_set_style_bg_color(w->root, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply color based on current on/off state */
+	lv_color_t cur_color = wd->current_state ? active_color : inactive_color;
+	uint8_t cur_opa = wd->current_state ? wd->active_opa : wd->inactive_opa;
 
-	/* Apply border styles */
-	lv_obj_set_style_border_color(w->root, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(w->root, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (wd->img_obj != NULL) {
+		/* Image mode */
+		lv_obj_set_style_img_recolor(w->root, cur_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(w->root, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_opa(w->root, cur_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	} else {
+		/* Circle mode */
+		lv_obj_set_style_bg_color(w->root, cur_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(w->root, cur_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Apply border styles (circle mode only) */
+	if (wd->img_obj == NULL) {
+		lv_obj_set_style_border_color(w->root, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(w->root, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 
 	/* Apply label color if label exists */
 	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot])) {
@@ -1139,13 +1221,18 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->radius = 100;
 	wd->show_label = true;
 	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
+	wd->image_name[0] = '\0';
+	wd->active_opa = 255;
+	wd->inactive_opa = 80;
+	wd->img_dsc = NULL;
+	wd->img_obj = NULL;
 
 	w->type = WIDGET_WARNING;
 	w->slot = s;
 	w->x = 0;
 	w->y = 0;
-	w->w = 15;
-	w->h = 15;
+	w->w = 25;
+	w->h = 25;
 	w->type_data = wd;
 	snprintf(w->id, sizeof(w->id), "warning_%u", s);
 

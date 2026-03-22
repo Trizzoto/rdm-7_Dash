@@ -21,9 +21,15 @@ typedef struct {
 	uint8_t    radius;               /* default: 100 (circle) */
 	bool       show_label;           /* default: true */
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	char       image_name[64];       /* RDMIMG name; empty = circle mode */
+	uint8_t    active_opa;           /* opacity when active (default 255) */
+	uint8_t    inactive_opa;         /* opacity when inactive (default 80) */
 	bool       current_state;     /* runtime only -- NOT serialized */
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* Runtime LVGL pointers (not serialized) */
+	lv_img_dsc_t *img_dsc;          /* loaded RDMIMG descriptor, or NULL */
+	lv_obj_t     *img_obj;          /* LVGL image object, or NULL */
 } warning_data_t;
 
 /* --- Objects exposed externally ------------------------------------------*/

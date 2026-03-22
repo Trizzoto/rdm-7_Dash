@@ -49,6 +49,7 @@ typedef enum {
     WIDGET_ARC         = 9,
     WIDGET_TOGGLE      = 10,
     WIDGET_BUTTON      = 11,
+    WIDGET_SHIFT_LIGHT = 12,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 
@@ -194,6 +195,10 @@ char *widget_get_label_buf(widget_t *w);
 /** Return true if the widget type supports alert/threshold configuration
  *  (currently WIDGET_PANEL and WIDGET_BAR only). */
 bool widget_has_alert_support(widget_t *w);
+
+/** Return true if the widget type needs a data source / signal configuration
+ *  in the config modal.  Image, toggle, and button do not. */
+bool widget_needs_data_source(widget_t *w);
 
 #ifdef __cplusplus
 }

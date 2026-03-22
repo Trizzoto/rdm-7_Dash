@@ -23,9 +23,33 @@
 #include "widgets/widget_bar.h"
 #include "widgets/widget_rpm_bar.h"
 #include "../settings/preset_picker.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ── Derive signal name from preset label ─────────────────────────────── */
+
+/**
+ * Convert a human-readable label like "Fuel Sender V" to a signal name
+ * like "FUEL_SENDER_V".  Matches the web editor's convention so that
+ * signal_internal.c can inject values by the expected name.
+ */
+static void label_to_signal_name(const char *label, char *out, size_t out_sz)
+{
+    if (!label || !out || out_sz == 0) return;
+    size_t j = 0;
+    for (size_t i = 0; label[i] && j < out_sz - 1; i++) {
+        char c = label[i];
+        if (isalnum((unsigned char)c))
+            out[j++] = (char)toupper((unsigned char)c);
+        else if (j > 0 && out[j - 1] != '_')
+            out[j++] = '_';
+    }
+    /* Trim trailing underscore */
+    if (j > 0 && out[j - 1] == '_') j--;
+    out[j] = '\0';
+}
 
 /* ── Context passed to every callback via user_data ────────────────────── */
 
@@ -78,7 +102,7 @@ static signal_t *ensure_signal(modal_ctx_t *ctx)
     char name[32];
     snprintf(name, sizeof(name), "%s_sig", ctx->widget->id);
 
-    int16_t idx = signal_register(name, 0, 0, 8, 1.0f, 0.0f, false, 1);
+    int16_t idx = signal_register(name, 0, 0, 8, 1.0f, 0.0f, false, 1, "");
     if (idx < 0) return NULL;
 
     ctx->signal_index = idx;
@@ -113,7 +137,7 @@ static void style_strip(lv_obj_t *obj, lv_coord_t w, lv_coord_t h)
 {
     lv_obj_set_size(obj, w, h);
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(obj, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_color(obj, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(obj, 0, 0);
     lv_obj_set_style_border_side(obj, LV_BORDER_SIDE_BOTTOM, 0);
@@ -275,6 +299,25 @@ static void preset_applied_cb(const preconfig_item_t *item, void *user_data)
     signal_t *sig = ensure_signal(ctx);
     if (!sig) return;
 
+    /* Derive proper signal name from the preset label so that
+     * signal_internal.c injections (by name) find the right entry. */
+    char new_name[32];
+    label_to_signal_name(item->label, new_name, sizeof(new_name));
+
+    /* If a different signal with this name already exists, switch to it
+     * instead of renaming the current one (avoids duplicate names). */
+    int16_t existing = signal_find_by_name(new_name);
+    if (existing >= 0 && existing != ctx->signal_index) {
+        sig = signal_get_by_index((uint16_t)existing);
+        ctx->signal_index = existing;
+        int16_t *idx_ptr = widget_get_signal_index_ptr(ctx->widget);
+        if (idx_ptr) *idx_ptr = existing;
+    } else if (new_name[0]) {
+        /* Rename the current signal entry */
+        strncpy(sig->name, new_name, sizeof(sig->name) - 1);
+        sig->name[sizeof(sig->name) - 1] = '\0';
+    }
+
     /* Update signal CAN fields */
     sig->can_id     = (uint32_t)strtol(item->can_id, NULL, 16);
     sig->endian     = item->endianess;
@@ -284,7 +327,7 @@ static void preset_applied_cb(const preconfig_item_t *item, void *user_data)
     sig->offset     = item->value_offset;
     sig->is_signed  = item->is_signed;
 
-    /* Update signal name in widget type_data */
+    /* Update signal name in widget type_data to match the (possibly renamed) signal */
     char *sig_buf = widget_get_signal_name_buf(ctx->widget);
     if (sig_buf) {
         strncpy(sig_buf, sig->name, 31);
@@ -349,95 +392,97 @@ static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
                             LV_EVENT_VALUE_CHANGED, ctx);
     }
 
-    /* ── Data Source section ─────────────────────────────────────── */
-    settings_section_t *sec_sig =
-        settings_add_section(tab, "DATA SOURCE", THEME_COLOR_ACCENT_BLUE);
+    /* ── Data Source section (only for widgets that receive CAN data) ── */
+    if (widget_needs_data_source(w)) {
+        settings_section_t *sec_sig =
+            settings_add_section(tab, "DATA SOURCE", THEME_COLOR_ACCENT_BLUE);
 
-    char sig_info[64] = "No signal assigned";
-    char *sig_name = widget_get_signal_name_buf(w);
-    if (sig_name && sig_name[0])
-        snprintf(sig_info, sizeof(sig_info), "%s", sig_name);
-    ctx->signal_info_lbl = settings_add_info_row(sec_sig, "Signal:", sig_info);
+        char sig_info[64] = "No signal assigned";
+        char *sig_name = widget_get_signal_name_buf(w);
+        if (sig_name && sig_name[0])
+            snprintf(sig_info, sizeof(sig_info), "%s", sig_name);
+        ctx->signal_info_lbl = settings_add_info_row(sec_sig, "Signal:", sig_info);
 
-    /* ── Collapsible CAN settings toggle button ─────────────────── */
-    lv_obj_t *can_toggle = settings_add_button(
-        sec_sig, LV_SYMBOL_DOWN "  CAN BUS SETTINGS",
-        THEME_COLOR_INPUT_BG, 0);
+        /* ── Collapsible CAN settings toggle button ─────────────────── */
+        lv_obj_t *can_toggle = settings_add_button(
+            sec_sig, LV_SYMBOL_DOWN "  CAN Bus Settings",
+            THEME_COLOR_SURFACE, 0);
 
-    /* Container for CAN fields, hidden by default */
-    lv_obj_t *can_box = lv_obj_create(tab);
-    lv_obj_set_size(can_box, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(can_box, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(can_box, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(can_box, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(can_box, 1, 0);
-    lv_obj_set_style_radius(can_box, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_pad_all(can_box, 6, 0);
-    lv_obj_set_style_pad_row(can_box, 4, 0);
-    lv_obj_clear_flag(can_box, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(can_box, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_flag(can_box, LV_OBJ_FLAG_HIDDEN);
+        /* Container for CAN fields, hidden by default */
+        lv_obj_t *can_box = lv_obj_create(tab);
+        lv_obj_set_size(can_box, lv_pct(100), LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(can_box, THEME_COLOR_SURFACE, 0);
+        lv_obj_set_style_bg_opa(can_box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(can_box, THEME_COLOR_BORDER, 0);
+        lv_obj_set_style_border_width(can_box, 1, 0);
+        lv_obj_set_style_radius(can_box, THEME_RADIUS_NORMAL, 0);
+        lv_obj_set_style_pad_all(can_box, 8, 0);
+        lv_obj_set_style_pad_row(can_box, 4, 0);
+        lv_obj_clear_flag(can_box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(can_box, LV_FLEX_FLOW_COLUMN);
+        lv_obj_add_flag(can_box, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_add_event_cb(can_toggle, can_toggle_btn_cb,
-                        LV_EVENT_CLICKED, can_box);
+        lv_obj_add_event_cb(can_toggle, can_toggle_btn_cb,
+                            LV_EVENT_CLICKED, can_box);
 
-    /* CAN ID */
-    char can_id_str[16] = "0";
-    if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
-    ctx->can_id_ta = settings_add_text_input(can_box, "CAN ID (0x):",
-                                              "hex", can_id_str);
-    lv_obj_add_event_cb(ctx->can_id_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(ctx->can_id_ta, can_id_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* CAN ID */
+        char can_id_str[16] = "0";
+        if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
+        ctx->can_id_ta = settings_add_text_input(can_box, "CAN ID (0x):",
+                                                  "hex", can_id_str);
+        lv_obj_add_event_cb(ctx->can_id_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        lv_obj_add_event_cb(ctx->can_id_ta, can_id_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Endian */
-    ctx->endian_dd = settings_add_dropdown(can_box, "Endian:",
-                                            "Big Endian\nLittle Endian", 0);
-    lv_dropdown_set_selected(ctx->endian_dd,
-                             (sig && sig->endian == 1) ? 1 : 0);
-    lv_obj_add_event_cb(ctx->endian_dd, endian_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Endian */
+        ctx->endian_dd = settings_add_dropdown(can_box, "Endian:",
+                                                "Big Endian\nLittle Endian", 0);
+        lv_dropdown_set_selected(ctx->endian_dd,
+                                 (sig && sig->endian == 1) ? 1 : 0);
+        lv_obj_add_event_cb(ctx->endian_dd, endian_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Bit Start */
-    ctx->bit_start_dd = settings_add_dropdown(can_box, "Bit Start:",
-                                               BIT_START_OPTS, 0);
-    lv_dropdown_set_selected(ctx->bit_start_dd, sig ? sig->bit_start : 0);
-    lv_obj_add_event_cb(ctx->bit_start_dd, bit_start_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Bit Start */
+        ctx->bit_start_dd = settings_add_dropdown(can_box, "Bit Start:",
+                                                   BIT_START_OPTS, 0);
+        lv_dropdown_set_selected(ctx->bit_start_dd, sig ? sig->bit_start : 0);
+        lv_obj_add_event_cb(ctx->bit_start_dd, bit_start_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Bit Length */
-    ctx->bit_len_dd = settings_add_dropdown(can_box, "Bit Length:",
-                                             BIT_LEN_OPTS, 0);
-    lv_dropdown_set_selected(ctx->bit_len_dd,
-                             sig ? (sig->bit_length - 1) : 7);
-    lv_obj_add_event_cb(ctx->bit_len_dd, bit_length_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Bit Length */
+        ctx->bit_len_dd = settings_add_dropdown(can_box, "Bit Length:",
+                                                 BIT_LEN_OPTS, 0);
+        lv_dropdown_set_selected(ctx->bit_len_dd,
+                                 sig ? (sig->bit_length - 1) : 7);
+        lv_obj_add_event_cb(ctx->bit_len_dd, bit_length_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Scale */
-    char scale_str[16] = "1";
-    if (sig) snprintf(scale_str, sizeof(scale_str), "%.6g", sig->scale);
-    ctx->scale_ta = settings_add_text_input(can_box, "Scale:",
-                                             "factor", scale_str);
-    lv_obj_add_event_cb(ctx->scale_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(ctx->scale_ta, scale_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Scale */
+        char scale_str[16] = "1";
+        if (sig) snprintf(scale_str, sizeof(scale_str), "%.6g", sig->scale);
+        ctx->scale_ta = settings_add_text_input(can_box, "Scale:",
+                                                 "factor", scale_str);
+        lv_obj_add_event_cb(ctx->scale_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        lv_obj_add_event_cb(ctx->scale_ta, scale_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Offset */
-    char offset_str[16] = "0";
-    if (sig) snprintf(offset_str, sizeof(offset_str), "%.6g", sig->offset);
-    ctx->offset_ta = settings_add_text_input(can_box, "Offset:",
-                                              "value offset", offset_str);
-    lv_obj_add_event_cb(ctx->offset_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(ctx->offset_ta, offset_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Offset */
+        char offset_str[16] = "0";
+        if (sig) snprintf(offset_str, sizeof(offset_str), "%.6g", sig->offset);
+        ctx->offset_ta = settings_add_text_input(can_box, "Offset:",
+                                                  "value offset", offset_str);
+        lv_obj_add_event_cb(ctx->offset_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
+        lv_obj_add_event_cb(ctx->offset_ta, offset_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Data Type (signed/unsigned) */
-    ctx->signed_dd = settings_add_dropdown(can_box, "Data Type:",
-                                            "Unsigned\nSigned", 0);
-    lv_dropdown_set_selected(ctx->signed_dd,
-                             (sig && sig->is_signed) ? 1 : 0);
-    lv_obj_add_event_cb(ctx->signed_dd, signed_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, ctx);
+        /* Data Type (signed/unsigned) */
+        ctx->signed_dd = settings_add_dropdown(can_box, "Data Type:",
+                                                "Unsigned\nSigned", 0);
+        lv_dropdown_set_selected(ctx->signed_dd,
+                                 (sig && sig->is_signed) ? 1 : 0);
+        lv_obj_add_event_cb(ctx->signed_dd, signed_changed_cb,
+                            LV_EVENT_VALUE_CHANGED, ctx);
+    }
 }
 
 /* =========================================================================
@@ -1016,7 +1061,8 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_set_style_border_width(modal, 1, 0);
     lv_obj_set_style_pad_all(modal, 0, 0);
     lv_obj_set_style_pad_row(modal, 0, 0);
-    lv_obj_set_style_shadow_width(modal, THEME_SHADOW_W_POPUP, 0);
+    lv_obj_set_style_shadow_width(modal, 20, 0);
+    lv_obj_set_style_shadow_ofs_y(modal, 4, 0);
     lv_obj_set_style_shadow_color(modal, lv_color_black(), 0);
     lv_obj_set_style_shadow_opa(modal, 140, 0);
 
@@ -1026,34 +1072,47 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     /* ── Header ────────────────────────────────────────────────────────── */
     lv_obj_t *hdr = lv_obj_create(modal);
     style_strip(hdr, MODAL_W, HDR_H);
+    lv_obj_set_style_bg_color(hdr, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_border_color(hdr, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_pad_left(hdr, 14, 0);
     lv_obj_set_style_pad_right(hdr, 14, 0);
 
-    char title[64];
-    snprintf(title, sizeof(title), "%s  [%s]",
-             w->id, widget_type_name(w->type));
-    /* Uppercase the title for visual consistency */
-    for (char *p = title; *p; p++) {
+    /* Title: "PANEL_0 · panel" — ID bright, type muted */
+    char id_upper[24];
+    snprintf(id_upper, sizeof(id_upper), "%s", w->id);
+    for (char *p = id_upper; *p; p++) {
         if (*p >= 'a' && *p <= 'z') *p -= 32;
     }
 
     lv_obj_t *title_lbl = lv_label_create(hdr);
-    lv_label_set_text(title_lbl, title);
+    lv_label_set_text(title_lbl, id_upper);
     lv_obj_set_style_text_color(title_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_set_style_text_font(title_lbl, THEME_FONT_MEDIUM, 0);
     lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
-    /* Close (X) button */
+    /* Type suffix in muted text */
+    char type_suffix[40];
+    snprintf(type_suffix, sizeof(type_suffix), "  %s", widget_type_name(w->type));
+    lv_obj_t *type_lbl = lv_label_create(hdr);
+    lv_label_set_text(type_lbl, type_suffix);
+    lv_obj_set_style_text_color(type_lbl, THEME_COLOR_TEXT_HINT, 0);
+    lv_obj_set_style_text_font(type_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_align_to(type_lbl, title_lbl, LV_ALIGN_OUT_RIGHT_MID, 0, 1);
+
+    /* Close (X) button — neutral secondary */
     lv_obj_t *close_btn = lv_btn_create(hdr);
-    lv_obj_set_size(close_btn, 36, 36);
+    lv_obj_set_size(close_btn, 32, 28);
     lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(close_btn, LV_OPA_80, LV_STATE_PRESSED);
     lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_border_width(close_btn, 0, 0);
+    lv_obj_set_style_border_width(close_btn, 1, 0);
+    lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(close_btn, 0, 0);
     lv_obj_t *x_lbl = lv_label_create(close_btn);
     lv_label_set_text(x_lbl, LV_SYMBOL_CLOSE);
-    lv_obj_set_style_text_color(x_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(x_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(x_lbl, THEME_FONT_SMALL, 0);
     lv_obj_center(x_lbl);
     lv_obj_add_event_cb(close_btn, cancel_menu_event_cb, LV_EVENT_CLICKED, NULL);
 
@@ -1065,38 +1124,40 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_set_style_border_width(tv, 0, 0);
     lv_obj_set_style_pad_all(tv, 0, 0);
 
-    /* Tab button styling */
+    /* Tab button styling — underline-only active, matching web UI */
     lv_obj_t *tab_btns = lv_tabview_get_tab_btns(tv);
-    lv_obj_set_style_bg_color(tab_btns, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_color(tab_btns, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(tab_btns, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(tab_btns, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(tab_btns, THEME_FONT_BODY, 0);
+    lv_obj_set_style_text_font(tab_btns, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_letter_space(tab_btns, 1, 0);
     lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_color(tab_btns, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(tab_btns, 1, 0);
 
-    lv_obj_set_style_bg_color(tab_btns, THEME_COLOR_ACCENT_DIM,
-                              LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(tab_btns, LV_OPA_COVER,
+    /* Inactive items: no bg fill, no border */
+    lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS);
+
+    /* Active tab: bright text + accent underline only (no bg fill) */
+    lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP,
                             LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(tab_btns, THEME_COLOR_TEXT_PRIMARY,
                                 LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_BOTTOM,
                                  LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(tab_btns, THEME_COLOR_ACCENT,
+    lv_obj_set_style_border_color(tab_btns, THEME_COLOR_ACCENT_BLUE,
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_border_width(tab_btns, 3,
+    lv_obj_set_style_border_width(tab_btns, 2,
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS);
 
     /* Create tabs */
     lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  DATA  ");
     style_tab(tab_data);
     build_data_tab(tab_data, ctx);
 
-    /* Presets tab (only for widgets that bind to a signal) */
-    if (widget_get_signal_name_buf(w)) {
+    /* Presets tab (only for widgets that receive CAN data) */
+    if (widget_needs_data_source(w) && widget_get_signal_name_buf(w)) {
         lv_obj_t *tab_presets = lv_tabview_add_tab(tv, "  PRESETS  ");
         lv_obj_set_style_bg_color(tab_presets, THEME_COLOR_SURFACE, 0);
         lv_obj_set_style_bg_opa(tab_presets, LV_OPA_COVER, 0);
@@ -1133,40 +1194,52 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_t *footer = lv_obj_create(modal);
     lv_obj_set_size(footer, MODAL_W, FOOTER_H);
     lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(footer, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_color(footer, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(footer, 0, 0);
     lv_obj_set_style_border_side(footer, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_color(footer, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(footer, 1, 0);
-    lv_obj_set_style_pad_all(footer, 6, 0);
-    lv_obj_set_style_pad_column(footer, 8, 0);
+    lv_obj_set_style_pad_left(footer, 8, 0);
+    lv_obj_set_style_pad_right(footer, 8, 0);
+    lv_obj_set_style_pad_top(footer, 7, 0);
+    lv_obj_set_style_pad_bottom(footer, 7, 0);
+    lv_obj_set_style_pad_column(footer, 10, 0);
 
-    lv_coord_t btn_w = (MODAL_W - 20) / 2;
+    lv_coord_t btn_w = (MODAL_W - 26) / 2;
 
+    /* Cancel — secondary style: surface bg, muted text */
     lv_obj_t *cancel_btn = lv_btn_create(footer);
-    lv_obj_set_size(cancel_btn, btn_w, FOOTER_H - 12);
+    lv_obj_set_size(cancel_btn, btn_w, FOOTER_H - 14);
     lv_obj_align(cancel_btn, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL, 0);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_border_width(cancel_btn, 0, 0);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(cancel_btn, 1, 0);
+    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
     lv_obj_t *clbl = lv_label_create(cancel_btn);
-    lv_label_set_text(clbl, LV_SYMBOL_CLOSE "  CANCEL");
-    lv_obj_set_style_text_font(clbl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(clbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_label_set_text(clbl, "CANCEL");
+    lv_obj_set_style_text_font(clbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(clbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(clbl, 1, 0);
     lv_obj_center(clbl);
     lv_obj_add_event_cb(cancel_btn, cancel_menu_event_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Save — primary style: accent bg, white text */
     lv_obj_t *save_btn = lv_btn_create(footer);
-    lv_obj_set_size(save_btn, btn_w, FOOTER_H - 12);
+    lv_obj_set_size(save_btn, btn_w, FOOTER_H - 14);
     lv_obj_align(save_btn, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_radius(save_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(save_btn, THEME_RADIUS_NORMAL, 0);
     lv_obj_set_style_border_width(save_btn, 0, 0);
+    lv_obj_set_style_shadow_width(save_btn, 0, 0);
     lv_obj_t *slbl = lv_label_create(save_btn);
     lv_label_set_text(slbl, LV_SYMBOL_SAVE "  SAVE");
-    lv_obj_set_style_text_font(slbl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(slbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(slbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(slbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_letter_space(slbl, 1, 0);
     lv_obj_center(slbl);
     lv_obj_add_event_cb(save_btn, close_menu_event_cb, LV_EVENT_CLICKED, NULL);
 }

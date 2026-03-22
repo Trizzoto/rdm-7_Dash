@@ -16,6 +16,7 @@
 #include "widget_arc.h"
 #include "widget_toggle.h"
 #include "widget_button.h"
+#include "widget_shift_light.h"
 #include "widget_rules.h"
 
 #include "signal.h"
@@ -39,9 +40,14 @@ static const char *TAG = "layout_mgr";
 /* NVS namespace + key for the active layout name */
 #define NS_LAYOUT "layout_mgr"
 #define KEY_ACTIVE "active"
+#define KEY_ACTIVE_SPLASH "active_spl"
+#define SPLASH_PREFIX "_splash_"
 
 /* Track whether LittleFS has been mounted this boot */
 static bool s_lfs_mounted = false;
+
+/* Monotonic version counter — incremented on every save or load */
+static uint32_t s_layout_version = 0;
 
 /* ECU context fields from layout JSON (optional, empty = "Custom") */
 static char s_layout_ecu[32] = "";
@@ -110,6 +116,8 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_TOGGLE;
 	if (strcmp(s, "button") == 0)
 		return WIDGET_BUTTON;
+	if (strcmp(s, "shift_light") == 0)
+		return WIDGET_SHIFT_LIGHT;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -168,6 +176,9 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_BUTTON:
 		w = widget_button_create_instance(slot);
+		break;
+	case WIDGET_SHIFT_LIGHT:
+		w = widget_shift_light_create_instance(slot);
 		break;
 	default:
 		return NULL;
@@ -281,6 +292,22 @@ esp_err_t layout_manager_init(void) {
 		}
 	}
 
+	/* ── Migrate legacy _splash.json → _splash_Default.json ──────────── */
+	{
+		char old_path[80], new_path[80];
+		snprintf(old_path, sizeof(old_path), "%s/_splash.json", LFS_LAYOUT_DIR);
+		snprintf(new_path, sizeof(new_path), "%s/_splash_Default.json",
+				 LFS_LAYOUT_DIR);
+		struct stat st_old, st_new;
+		if (stat(old_path, &st_old) == 0 && stat(new_path, &st_new) != 0) {
+			if (rename(old_path, new_path) == 0) {
+				ESP_LOGI(TAG, "Migrated _splash.json → _splash_Default.json");
+			} else {
+				ESP_LOGW(TAG, "Failed to migrate _splash.json");
+			}
+		}
+	}
+
 	return ESP_OK;
 }
 
@@ -332,10 +359,14 @@ static void _load_signals(const cJSON *root) {
 		if (cJSON_IsNumber(item))
 			endian = (uint8_t)item->valueint;
 
+		const cJSON *unit_item = cJSON_GetObjectItemCaseSensitive(sj, "unit");
+		const char *unit_str = (cJSON_IsString(unit_item) && unit_item->valuestring)
+			? unit_item->valuestring : "";
+
 		int16_t idx = signal_register(
 			name_item->valuestring, (uint32_t)can_id_item->valueint,
 			(uint8_t)start_item->valueint, (uint8_t)len_item->valueint, scale,
-			offset, is_signed, endian);
+			offset, is_signed, endian, unit_str);
 
 		if (idx >= 0) {
 			ESP_LOGD(TAG, "Registered signal '%s' → index %d",
@@ -397,6 +428,8 @@ static void _save_signals(cJSON *root) {
 		cJSON_AddNumberToObject(sj, "offset", sig->offset);
 		cJSON_AddBoolToObject(sj, "is_signed", sig->is_signed);
 		cJSON_AddNumberToObject(sj, "endian", sig->endian);
+		if (sig->unit[0] != '\0')
+			cJSON_AddStringToObject(sj, "unit", sig->unit);
 
 		/* Attach fuel calibration to FUEL_SENDER_V signal */
 		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {
@@ -502,8 +535,17 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 
 	FILE *f = fopen(path, "r");
 	if (!f) {
-		ESP_LOGE(TAG, "layout_load: cannot open %s", path);
-		return ESP_ERR_NOT_FOUND;
+		/* Try recovering from backup if primary file is missing */
+		char bak_path[96];
+		snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+		if (rename(bak_path, path) == 0) {
+			ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
+			f = fopen(path, "r");
+		}
+		if (!f) {
+			ESP_LOGE(TAG, "layout_load: cannot open %s", path);
+			return ESP_ERR_NOT_FOUND;
+		}
 	}
 
 	/* Read entire file into a heap buffer */
@@ -559,7 +601,9 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	if (ret != ESP_OK)
 		return ret;
 
-	ESP_LOGI(TAG, "layout_load: loaded '%s' from %s", name, path);
+	s_layout_version++;
+	ESP_LOGI(TAG, "layout_load: loaded '%s' from %s (version %lu)", name, path,
+			 (unsigned long)s_layout_version);
 	return ESP_OK;
 }
 
@@ -652,6 +696,11 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
+	/* Create backup of existing file before overwriting */
+	char bak_path[96];
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+	rename(path, bak_path);
+
 	FILE *f = fopen(path, "w");
 	if (!f) {
 		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing", path);
@@ -678,8 +727,9 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	}
 	fclose(f);
 
-	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes)", name, path,
-			 (unsigned)len);
+	s_layout_version++;
+	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes, version %lu)",
+			 name, path, (unsigned)len, (unsigned long)s_layout_version);
 	return ESP_OK;
 }
 
@@ -808,3 +858,75 @@ esp_err_t layout_manager_get_active(char *name_out, size_t len) {
 	}
 	return ESP_OK;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Splash layout list / active splash NVS
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+int layout_manager_list_splash(char names[][LAYOUT_MAX_NAME], int max_count) {
+	DIR *d = opendir(LFS_LAYOUT_DIR);
+	if (!d) {
+		ESP_LOGW(TAG, "list_splash: opendir(%s) failed", LFS_LAYOUT_DIR);
+		return -1;
+	}
+
+	int count = 0;
+	struct dirent *de;
+	while ((de = readdir(d)) != NULL && count < max_count) {
+		/* Match _splash_*.json */
+		if (strncmp(de->d_name, SPLASH_PREFIX, strlen(SPLASH_PREFIX)) != 0)
+			continue;
+		char stripped[LAYOUT_MAX_NAME];
+		if (!_strip_json(de->d_name, stripped, sizeof(stripped)))
+			continue;
+		/* stripped is e.g. "_splash_Default" — skip the prefix */
+		const char *bare = stripped + strlen(SPLASH_PREFIX);
+		if (bare[0] == '\0')
+			continue;
+		strncpy(names[count], bare, LAYOUT_MAX_NAME - 1);
+		names[count][LAYOUT_MAX_NAME - 1] = '\0';
+		count++;
+	}
+	closedir(d);
+	return count;
+}
+
+esp_err_t layout_manager_set_active_splash(const char *name) {
+	if (!name)
+		return ESP_ERR_INVALID_ARG;
+	nvs_handle_t h;
+	esp_err_t err = nvs_open(NS_LAYOUT, NVS_READWRITE, &h);
+	if (err != ESP_OK)
+		return err;
+	err = nvs_set_str(h, KEY_ACTIVE_SPLASH, name);
+	if (err == ESP_OK)
+		err = nvs_commit(h);
+	nvs_close(h);
+	ESP_LOGI(TAG, "set_active_splash: '%s'", name);
+	return err;
+}
+
+esp_err_t layout_manager_get_active_splash(char *name_out, size_t len) {
+	if (!name_out || len == 0)
+		return ESP_ERR_INVALID_ARG;
+
+	nvs_handle_t h;
+	esp_err_t err = nvs_open(NS_LAYOUT, NVS_READONLY, &h);
+	if (err != ESP_OK) {
+		strncpy(name_out, "Default", len - 1);
+		name_out[len - 1] = '\0';
+		return ESP_OK;
+	}
+	size_t sz = len;
+	err = nvs_get_str(h, KEY_ACTIVE_SPLASH, name_out, &sz);
+	nvs_close(h);
+
+	if (err != ESP_OK) {
+		strncpy(name_out, "Default", len - 1);
+		name_out[len - 1] = '\0';
+		return ESP_OK;
+	}
+	return ESP_OK;
+}
+
+uint32_t layout_manager_get_version(void) { return s_layout_version; }

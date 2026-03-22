@@ -39,6 +39,12 @@ bool splash_screen_has_custom(void);
 /** Check whether splash edit mode is currently active. */
 bool splash_screen_is_edit_mode(void);
 
+/** Get the bare name of the active splash (e.g. "Default", "Racing"). */
+const char *splash_screen_get_active_name(void);
+
+/** Set the active splash name in the module's memory (does NOT write NVS). */
+void splash_screen_set_active_name(const char *name);
+
 #ifdef __cplusplus
 }
 #endif

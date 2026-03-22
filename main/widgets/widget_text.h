@@ -17,6 +17,7 @@ typedef struct {
 	char       signal_name[32];
 	int16_t    signal_index;
 	lv_color_t text_color;
+	int16_t    rotation;       /* Rotation in degrees (0-359, default 0) */
 } text_data_t;
 
 /**

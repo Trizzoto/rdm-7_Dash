@@ -14,8 +14,10 @@
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
 #include "ui/menu/menu_screen.h"
+#include "ui/screens/splash_screen.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
+#include "layout/layout_manager.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
@@ -108,19 +110,72 @@ static void menu_device_settings_cb(lv_event_t *e) {
 	}
 }
 
-static lv_obj_t *_create_menu_btn(lv_obj_t *parent, const char *text,
-								  lv_color_t bg_color, lv_coord_t y_offs) {
-	lv_obj_t *btn = lv_btn_create(parent);
-	lv_obj_set_size(btn, 200, 50);
-	lv_obj_align(btn, LV_ALIGN_CENTER, 0, y_offs);
-	lv_obj_set_style_bg_color(btn, bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(btn, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_t *lbl = lv_label_create(btn);
-	lv_label_set_text(lbl, text);
-	lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_center(lbl);
-	return btn;
+/* ── Deferred layout reload (called via lv_async_call after menu closes) ── */
+
+static void _deferred_layout_reload(void *arg) {
+	(void)arg;
+	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+	ui_Screen3_screen_init();
+	if (ui_Screen3) {
+		lv_scr_load(ui_Screen3);
+		if (old && old != ui_Screen3 && lv_obj_is_valid(old))
+			lv_obj_del(old);
+	}
+}
+
+/* ── Layout dropdown change callback ── */
+static void _menu_layout_changed_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+	lv_obj_t *dd = lv_event_get_target(e);
+	char name[LAYOUT_MAX_NAME];
+	lv_dropdown_get_selected_str(dd, name, sizeof(name));
+
+	layout_manager_set_active(name);
+	ui_Setup_Menu_Screen = NULL;
+
+	/* Defer full screen reload — _deferred_layout_reload will delete
+	 * the current screen (menu) and create a fresh dashboard. */
+	lv_async_call(_deferred_layout_reload, NULL);
+}
+
+/* ── Toast label (auto-delete after delay) ── */
+static void _toast_timer_cb(lv_timer_t *t) {
+	lv_obj_t *lbl = (lv_obj_t *)t->user_data;
+	if (lbl && lv_obj_is_valid(lbl))
+		lv_obj_del(lbl);
+}
+
+/* ── Splash dropdown change callback ── */
+static void _menu_splash_changed_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+	lv_obj_t *dd = lv_event_get_target(e);
+	char name[LAYOUT_MAX_NAME];
+	lv_dropdown_get_selected_str(dd, name, sizeof(name));
+
+	layout_manager_set_active_splash(name);
+
+	/* Show brief toast confirmation */
+	lv_obj_t *scr = lv_scr_act();
+	lv_obj_t *toast = lv_label_create(scr);
+	lv_label_set_text(toast, LV_SYMBOL_OK " Splash updated");
+	lv_obj_set_style_text_color(toast, THEME_COLOR_ACCENT_TEAL, 0);
+	lv_obj_set_style_text_font(toast, THEME_FONT_SMALL, 0);
+	lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -12);
+	lv_timer_t *tt = lv_timer_create(_toast_timer_cb, 2000, toast);
+	lv_timer_set_repeat_count(tt, 1);
+}
+
+/** Style a dropdown to match the device-settings dark input look. */
+static void _style_dropdown(lv_obj_t *dd) {
+	lv_obj_set_style_bg_color(dd, THEME_COLOR_INPUT_BG, 0);
+	lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
+	lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_border_color(dd, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(dd, 1, 0);
+	lv_obj_set_style_radius(dd, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_pad_all(dd, 4, 0);
+	lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
 }
 
 static void menu_button_clicked_cb(lv_event_t *e) {
@@ -132,23 +187,203 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 		lv_timer_del(menu_button_hide_timer);
 		menu_button_hide_timer = NULL;
 	}
+
+	/* ── Full-screen backdrop ── */
 	ui_Setup_Menu_Screen = lv_obj_create(NULL);
 	lv_obj_clear_flag(ui_Setup_Menu_Screen, LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_set_style_bg_color(ui_Setup_Menu_Screen, THEME_COLOR_BG,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(ui_Setup_Menu_Screen, 255,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(ui_Setup_Menu_Screen, THEME_COLOR_BG, 0);
+	lv_obj_set_style_bg_opa(ui_Setup_Menu_Screen, LV_OPA_COVER, 0);
 
-	/* Device Settings button */
-	lv_obj_t *ds = _create_menu_btn(ui_Setup_Menu_Screen,
-									"DEVICE SETTINGS",
-									THEME_COLOR_BTN_CANCEL, -20);
+	/* ── Main container (matches device_settings style) ── */
+	lv_obj_t *container = lv_obj_create(ui_Setup_Menu_Screen);
+	lv_obj_set_size(container, 340, 380);
+	lv_obj_align(container, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_style_bg_color(container, THEME_COLOR_SURFACE, 0);
+	lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_color(container, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(container, 1, 0);
+	lv_obj_set_style_radius(container, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_pad_all(container, 0, 0);
+	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+
+	/* ── Header bar ── */
+	lv_obj_t *header = lv_obj_create(container);
+	lv_obj_set_size(header, lv_pct(100), 44);
+	lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+	lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
+	lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(header, 0, 0);
+	lv_obj_set_style_border_width(header, 1, 0);
+	lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
+	lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+	lv_obj_t *title = lv_label_create(header);
+	lv_label_set_text(title, "Menu");
+	lv_obj_align(title, LV_ALIGN_LEFT_MID, 15, 0);
+	lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+	lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+	/* Close button in header */
+	lv_obj_t *close_btn = lv_btn_create(header);
+	lv_obj_set_size(close_btn, 60, 28);
+	lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -10, 0);
+	lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
+	lv_obj_set_style_bg_opa(close_btn, LV_OPA_80, LV_STATE_PRESSED);
+	lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
+	lv_obj_set_style_border_width(close_btn, 1, 0);
+	lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_shadow_width(close_btn, 0, 0);
+	lv_obj_t *close_lbl = lv_label_create(close_btn);
+	lv_label_set_text(close_lbl, "Close");
+	lv_obj_center(close_lbl);
+	lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_add_event_cb(close_btn, setup_menu_close_btn_cb,
+						LV_EVENT_CLICKED, NULL);
+
+	/* ── Content area ── */
+	lv_obj_t *content = lv_obj_create(container);
+	lv_obj_set_size(content, lv_pct(100), 328);
+	lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 48);
+	lv_obj_set_style_bg_opa(content, 0, 0);
+	lv_obj_set_style_border_width(content, 0, 0);
+	lv_obj_set_style_pad_all(content, 14, 0);
+	lv_obj_set_style_pad_row(content, 8, 0);
+	lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+
+	/* ── Layout section card ── */
+	lv_obj_t *layout_card = lv_obj_create(content);
+	lv_obj_set_size(layout_card, 304, 100);
+	lv_obj_align(layout_card, LV_ALIGN_TOP_MID, 0, 0);
+	lv_obj_set_style_bg_color(layout_card, THEME_COLOR_SECTION_BG, 0);
+	lv_obj_set_style_bg_opa(layout_card, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(layout_card, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_border_color(layout_card, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(layout_card, 1, 0);
+	lv_obj_set_style_pad_all(layout_card, 12, 0);
+	lv_obj_clear_flag(layout_card, LV_OBJ_FLAG_SCROLLABLE);
+
+	lv_obj_t *layout_title = lv_label_create(layout_card);
+	lv_label_set_text(layout_title, "LAYOUT");
+	lv_obj_align(layout_title, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_text_font(layout_title, THEME_FONT_TINY, 0);
+	lv_obj_set_style_text_color(layout_title, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_text_letter_space(layout_title, 1, 0);
+
+	lv_obj_t *layout_sublbl = lv_label_create(layout_card);
+	lv_label_set_text(layout_sublbl, "Active dashboard");
+	lv_obj_align(layout_sublbl, LV_ALIGN_TOP_LEFT, 0, 18);
+	lv_obj_set_style_text_font(layout_sublbl, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_color(layout_sublbl, THEME_COLOR_TEXT_MUTED, 0);
+
+	lv_obj_t *layout_dd = lv_dropdown_create(layout_card);
+	lv_obj_set_size(layout_dd, 278, 32);
+	lv_obj_align(layout_dd, LV_ALIGN_TOP_LEFT, 0, 40);
+	_style_dropdown(layout_dd);
+
+	/* Populate layout dropdown */
+	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active(active, sizeof(active));
+
+	char options[512] = "";
+	int sel_idx = 0;
+	int opt_count = 0;
+	for (int i = 0; i < count; i++) {
+		if (names[i][0] == '_') continue;
+		if (opt_count > 0) strcat(options, "\n");
+		strcat(options, names[i]);
+		if (strcmp(names[i], active) == 0) sel_idx = opt_count;
+		opt_count++;
+	}
+	lv_dropdown_set_options(layout_dd, options);
+	lv_dropdown_set_selected(layout_dd, sel_idx);
+	lv_obj_add_event_cb(layout_dd, _menu_layout_changed_cb,
+						LV_EVENT_VALUE_CHANGED, NULL);
+
+	/* ── Splash section card ── */
+	lv_obj_t *splash_card = lv_obj_create(content);
+	lv_obj_set_size(splash_card, 304, 100);
+	lv_obj_align(splash_card, LV_ALIGN_TOP_MID, 0, 108);
+	lv_obj_set_style_bg_color(splash_card, THEME_COLOR_SECTION_BG, 0);
+	lv_obj_set_style_bg_opa(splash_card, LV_OPA_COVER, 0);
+	lv_obj_set_style_radius(splash_card, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_border_color(splash_card, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(splash_card, 1, 0);
+	lv_obj_set_style_pad_all(splash_card, 12, 0);
+	lv_obj_clear_flag(splash_card, LV_OBJ_FLAG_SCROLLABLE);
+
+	lv_obj_t *splash_title = lv_label_create(splash_card);
+	lv_label_set_text(splash_title, "SPLASH SCREEN");
+	lv_obj_align(splash_title, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_text_font(splash_title, THEME_FONT_TINY, 0);
+	lv_obj_set_style_text_color(splash_title, THEME_COLOR_ACCENT_TEAL, 0);
+	lv_obj_set_style_text_letter_space(splash_title, 1, 0);
+
+	lv_obj_t *splash_sublbl = lv_label_create(splash_card);
+	lv_label_set_text(splash_sublbl, "Shown on boot");
+	lv_obj_align(splash_sublbl, LV_ALIGN_TOP_LEFT, 0, 18);
+	lv_obj_set_style_text_font(splash_sublbl, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_color(splash_sublbl, THEME_COLOR_TEXT_MUTED, 0);
+
+	lv_obj_t *splash_dd = lv_dropdown_create(splash_card);
+	lv_obj_set_size(splash_dd, 278, 32);
+	lv_obj_align(splash_dd, LV_ALIGN_TOP_LEFT, 0, 40);
+	_style_dropdown(splash_dd);
+
+	/* Populate splash dropdown */
+	char splash_names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	int splash_count = layout_manager_list_splash(splash_names,
+												  LAYOUT_MAX_COUNT);
+	char active_splash[LAYOUT_MAX_NAME];
+	layout_manager_get_active_splash(active_splash, sizeof(active_splash));
+
+	char splash_opts[512] = "";
+	int splash_sel = 0;
+	int splash_opt_count = 0;
+	for (int i = 0; i < splash_count; i++) {
+		if (splash_opt_count > 0) strcat(splash_opts, "\n");
+		strcat(splash_opts, splash_names[i]);
+		if (strcmp(splash_names[i], active_splash) == 0)
+			splash_sel = splash_opt_count;
+		splash_opt_count++;
+	}
+	if (splash_opt_count > 0) {
+		lv_dropdown_set_options(splash_dd, splash_opts);
+		lv_dropdown_set_selected(splash_dd, splash_sel);
+	} else {
+		lv_dropdown_set_options(splash_dd, "(none)");
+		lv_obj_add_state(splash_dd, LV_STATE_DISABLED);
+	}
+	lv_obj_add_event_cb(splash_dd, _menu_splash_changed_cb,
+						LV_EVENT_VALUE_CHANGED, NULL);
+
+	/* ── Bottom button row ── */
+	lv_obj_t *btn_row = lv_obj_create(content);
+	lv_obj_set_size(btn_row, 304, 48);
+	lv_obj_align(btn_row, LV_ALIGN_TOP_MID, 0, 218);
+	lv_obj_set_style_bg_opa(btn_row, 0, 0);
+	lv_obj_set_style_border_width(btn_row, 0, 0);
+	lv_obj_set_style_pad_all(btn_row, 0, 0);
+	lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+	/* Device Settings button — blue accent */
+	lv_obj_t *ds = lv_btn_create(btn_row);
+	lv_obj_set_size(ds, 304, 40);
+	lv_obj_align(ds, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_style_bg_color(ds, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_bg_color(ds, THEME_COLOR_ACCENT_BLUE_PRESSED,
+							  LV_STATE_PRESSED);
+	lv_obj_set_style_radius(ds, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_shadow_width(ds, 0, 0);
+	lv_obj_t *ds_lbl = lv_label_create(ds);
+	lv_label_set_text(ds_lbl, LV_SYMBOL_SETTINGS "  Device Settings");
+	lv_obj_center(ds_lbl);
+	lv_obj_set_style_text_font(ds_lbl, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_color(ds_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
 	lv_obj_add_event_cb(ds, menu_device_settings_cb, LV_EVENT_CLICKED, NULL);
-
-	/* Close button */
-	lv_obj_t *cb = _create_menu_btn(ui_Setup_Menu_Screen, "CLOSE",
-									THEME_COLOR_BTN_CANCEL, 50);
-	lv_obj_add_event_cb(cb, setup_menu_close_btn_cb, LV_EVENT_CLICKED, NULL);
 
 	lv_scr_load(ui_Setup_Menu_Screen);
 }

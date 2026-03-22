@@ -2,23 +2,22 @@
 #define UI_WIFI_H
 
 #include "lvgl.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_wifi_types.h"
-#include "esp_netif.h"
 
-// Function declarations
-void init_wifi_screen(void);
-void show_wifi_screen(void);
-void hide_wifi_screen(void);
-void wifi_screen_delete(void);
-bool is_wifi_screen_active(void);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// Auto-connect to saved WiFi credentials (call from app_main at boot)
-void wifi_auto_connect(void);
+/* Lifecycle -- called from device_settings and main.c */
+void wifi_ui_init(void);          /* One-time init (register wifi_manager event cb) */
+void wifi_ui_show(void);          /* Create & show settings screen */
+void wifi_ui_hide(void);          /* Hide and destroy screen */
+bool wifi_ui_is_active(void);
 
-// Add extern declaration for connected_ssid
-extern char *connected_ssid;
+/* Backward compat */
+const char *wifi_get_ap_ssid(void);
 
-#endif // UI_WIFI_H
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* UI_WIFI_H */

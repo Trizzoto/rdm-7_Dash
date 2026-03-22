@@ -26,13 +26,6 @@
 #include "esp_heap_caps.h"
 #include "signal.h"
 
-/* Async update payload for lv_async_call(update_panel_ui, ...) */
-typedef struct {
-	uint8_t panel_index;
-	char    value_str[32];
-	double  final_value;
-} panel_update_t;
-
 static uint64_t last_panel_can_received[8] = {0};
 
 /* Shared LVGL styles — initialised by init_styles() / init_common_style() */
@@ -79,81 +72,6 @@ void widget_panel_set_warning_low_color(uint8_t slot, lv_color_t color) {
 	panel_data_t *pd = _lookup_panel_data(slot);
 	if (!pd) return;
 	pd->warning_low_color = color;
-}
-
-void update_panel_ui(void *param) {
-	panel_update_t *update = (panel_update_t *)param;
-	if (!update)
-		return;
-
-	uint8_t i = update->panel_index;
-	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]) &&
-		lv_obj_get_screen(ui_Value[i]) != NULL) {
-		lv_label_set_text(ui_Value[i], update->value_str);
-	}
-
-	if (menu_panel_value_labels[i] &&
-		lv_obj_is_valid(menu_panel_value_labels[i]) && ui_MenuScreen &&
-		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
-		lv_label_set_text(menu_panel_value_labels[i], update->value_str);
-	}
-
-	panel_data_t *pd = _lookup_panel_data(i);
-
-	/* Determine warning state and apply-to flags */
-	lv_color_t warn_color = {0};
-	bool a_label = false, a_value = false, a_panel = false;
-	bool is_stale = (strcmp(update->value_str, "---") == 0);
-	if (!is_stale && pd && pd->warning_high_enabled &&
-		update->final_value > pd->warning_high_threshold) {
-		warn_color = pd->warning_high_color;
-		a_label = pd->warning_high_apply_label;
-		a_value = pd->warning_high_apply_value;
-		a_panel = pd->warning_high_apply_panel;
-	} else if (!is_stale && pd && pd->warning_low_enabled &&
-			   update->final_value < pd->warning_low_threshold) {
-		warn_color = pd->warning_low_color;
-		a_label = pd->warning_low_apply_label;
-		a_value = pd->warning_low_apply_value;
-		a_panel = pd->warning_low_apply_panel;
-	}
-
-	/* Apply label color */
-	if (ui_Label[i] && lv_obj_is_valid(ui_Label[i]))
-		lv_obj_set_style_text_color(ui_Label[i],
-			a_label ? warn_color : THEME_COLOR_TEXT_PRIMARY,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
-	/* Apply value color */
-	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]))
-		lv_obj_set_style_text_color(ui_Value[i],
-			a_value ? warn_color : THEME_COLOR_TEXT_PRIMARY,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
-	/* Apply panel border */
-	if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) &&
-		lv_obj_get_screen(ui_Box[i]) != NULL) {
-		lv_obj_set_style_border_color(ui_Box[i],
-			a_panel ? warn_color : THEME_COLOR_PANEL,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(ui_Box[i], 3,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(ui_Box[i], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
-
-	/* Menu preview panel border */
-	if (menu_panel_boxes[i] && lv_obj_is_valid(menu_panel_boxes[i]) &&
-		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
-		lv_scr_act() == ui_MenuScreen) {
-		lv_obj_set_style_border_color(menu_panel_boxes[i],
-			a_panel ? warn_color : THEME_COLOR_PANEL,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(menu_panel_boxes[i], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
-
-	free(update);
 }
 
 // Immediate (no-alloc, no-async) panel update

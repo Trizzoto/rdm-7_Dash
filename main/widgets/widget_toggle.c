@@ -4,7 +4,9 @@
  * Transmits CAN messages on toggle and optionally reads state from a signal.
  */
 #include "widget_toggle.h"
+#include "widget_image.h"
 #include "widget_rules.h"
+#include "can/can_decode.h"
 #include "can/can_manager.h"
 #include "signal.h"
 #include "cJSON.h"
@@ -27,9 +29,20 @@ static const char *TAG = "widget_toggle";
 #define DEF_ACTIVE_COLOR    0x00FF00
 #define DEF_INACTIVE_COLOR  0x555555
 #define DEF_LABEL_COLOR     0xFFFFFF
-#define DEF_BORDER_RADIUS   5
+#define DEF_ACTIVE_OPA      255
+#define DEF_INACTIVE_OPA    100
 #define DEF_ON_THRESHOLD    0.5f
-#define DEF_TX_DLC          8
+#define DEF_TX_BIT_START    0
+#define DEF_TX_BIT_LENGTH   1
+#define DEF_TX_ENDIAN       1
+#define DEF_LABEL_ALIGN     1   /* center */
+#define DEF_SHOW_LABEL      true
+
+static lv_text_align_t _to_lv_align(uint8_t a) {
+    if (a == 0) return LV_TEXT_ALIGN_LEFT;
+    if (a == 2) return LV_TEXT_ALIGN_RIGHT;
+    return LV_TEXT_ALIGN_CENTER;
+}
 
 /* ── Forward declarations ───────────────────────────────────────────────── */
 static void _toggle_create(widget_t *w, lv_obj_t *parent);
@@ -38,6 +51,26 @@ static void _toggle_open_settings(widget_t *w);
 static void _toggle_to_json(widget_t *w, cJSON *out);
 static void _toggle_from_json(widget_t *w, cJSON *in);
 static void _toggle_destroy(widget_t *w);
+
+/* ── Helper: apply image styling based on current state ─────────────────── */
+static void _toggle_apply_image_state(toggle_data_t *d) {
+    if (!d->img_obj || !lv_obj_is_valid(d->img_obj)) return;
+    if (d->current_state) {
+        lv_obj_set_style_img_recolor(d->img_obj, d->active_color,
+                                     LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_recolor_opa(d->img_obj, LV_OPA_COVER,
+                                         LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_opa(d->img_obj, d->active_opa,
+                                 LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+        lv_obj_set_style_img_recolor(d->img_obj, d->inactive_color,
+                                     LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_recolor_opa(d->img_obj, LV_OPA_COVER,
+                                         LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_opa(d->img_obj, d->inactive_opa,
+                                 LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
 
 /* ── Signal callback ────────────────────────────────────────────────────── */
 static void _toggle_on_signal(float value, bool is_stale, void *user_data) {
@@ -54,6 +87,9 @@ static void _toggle_on_signal(float value, bool is_stale, void *user_data) {
         if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
             lv_obj_add_state(d->sw_obj, LV_STATE_CHECKED);
     }
+
+    /* Update image styling if in image mode */
+    _toggle_apply_image_state(d);
 }
 
 /* ── Toggle clicked event callback ──────────────────────────────────────── */
@@ -62,18 +98,29 @@ static void _toggle_clicked_cb(lv_event_t *e) {
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
 
-    lv_obj_t *sw = lv_event_get_target(e);
-    bool checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    d->current_state = checked;
-
-    /* Transmit CAN frame if TX is configured */
-    if (d->tx_can_id > 0) {
-        if (checked) {
-            can_transmit_frame(d->tx_can_id, d->tx_on_data, d->tx_on_dlc);
-        } else {
-            can_transmit_frame(d->tx_can_id, d->tx_off_data, d->tx_off_dlc);
-        }
+    bool checked;
+    if (d->img_obj) {
+        /* Image mode: manually toggle state */
+        d->current_state = !d->current_state;
+        checked = d->current_state;
+    } else {
+        /* Switch mode: read state from the switch widget */
+        lv_obj_t *sw = lv_event_get_target(e);
+        checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
+        d->current_state = checked;
     }
+
+    /* Transmit CAN frame if TX is configured.
+     * ON = all bits set, OFF = 0. */
+    if (d->tx_can_id > 0) {
+        uint8_t frame[8] = {0};
+        uint32_t val = checked ? ((1u << d->tx_bit_length) - 1u) : 0u;
+        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
+        can_transmit_frame(d->tx_can_id, frame, 8);
+    }
+
+    /* Update image styling if in image mode */
+    _toggle_apply_image_state(d);
 
     ESP_LOGI(TAG, "Toggle %s → %s", w->id, checked ? "ON" : "OFF");
 }
@@ -92,40 +139,106 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
     lv_obj_set_style_bg_opa(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(cont, d->border_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    /* Switch */
-    lv_obj_t *sw = lv_switch_create(cont);
-    d->sw_obj = sw;
+    /* Image mode: if image_name is set, create an image instead of a switch */
+    if (d->image_name[0] != '\0') {
+        lv_img_dsc_t *dsc = rdm_image_load(d->image_name);
+        d->img_dsc = dsc;
+        if (dsc) {
+            lv_obj_t *img = lv_img_create(cont);
+            lv_img_set_src(img, dsc);
+            lv_obj_set_align(img, LV_ALIGN_CENTER);
+            d->img_obj = img;
 
-    /* Style the switch: unchecked background */
-    lv_obj_set_style_bg_color(sw, d->inactive_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-    /* Style the switch: checked indicator background */
-    lv_obj_set_style_bg_color(sw, d->active_color,
-                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+            /* Apply initial color tint and opacity based on state */
+            _toggle_apply_image_state(d);
 
-    /* If a label is provided, place it beside the switch */
-    if (d->label[0] != '\0') {
-        lv_obj_t *lbl = lv_label_create(cont);
-        lv_label_set_text(lbl, d->label);
-        lv_obj_set_style_text_color(lbl, d->label_color,
-                                    LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_align(lbl, LV_ALIGN_BOTTOM_MID);
-        d->label_obj = lbl;
-        /* Place switch above center to leave room for label */
-        lv_obj_set_align(sw, LV_ALIGN_TOP_MID);
+            /* Make the image clickable to toggle state */
+            lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(img, _toggle_clicked_cb, LV_EVENT_CLICKED, w);
+        } else {
+            /* Image not found: show placeholder label */
+            lv_obj_t *lbl = lv_label_create(cont);
+            lv_label_set_text(lbl, d->image_name);
+            lv_obj_set_align(lbl, LV_ALIGN_CENTER);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888),
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        /* Label overlay on image (optional) */
+        if (d->show_label && d->label[0] != '\0') {
+            lv_obj_t *lbl = lv_label_create(cont);
+            lv_label_set_text(lbl, d->label);
+            lv_obj_set_style_text_color(lbl, d->label_color,
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_width(lbl, w->w);
+            lv_obj_set_style_text_align(lbl, _to_lv_align(d->label_align), LV_PART_MAIN | LV_STATE_DEFAULT);
+            if (d->font[0] != '\0') {
+                const lv_font_t *f = widget_resolve_font(d->font);
+                if (f) lv_obj_set_style_text_font(lbl, f, LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+            if (d->label_x != 0 || d->label_y != 0) {
+                lv_obj_set_align(lbl, LV_ALIGN_CENTER);
+                lv_obj_set_pos(lbl, d->label_x, d->label_y);
+            } else {
+                lv_obj_set_align(lbl, LV_ALIGN_BOTTOM_MID);
+            }
+            d->label_obj = lbl;
+        } else {
+            d->label_obj = NULL;
+        }
+        d->sw_obj = NULL;
     } else {
-        d->label_obj = NULL;
-        lv_obj_set_align(sw, LV_ALIGN_CENTER);
-    }
+        /* Switch mode (original behavior) */
+        lv_obj_t *sw = lv_switch_create(cont);
+        d->sw_obj = sw;
+        d->img_obj = NULL;
+        d->img_dsc = NULL;
 
-    /* Apply initial state */
-    if (d->current_state) {
-        lv_obj_add_state(sw, LV_STATE_CHECKED);
-    }
+        /* Style the switch: unchecked background */
+        lv_obj_set_style_bg_color(sw, d->inactive_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+        /* Style the switch: checked indicator background */
+        lv_obj_set_style_bg_color(sw, d->active_color,
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
 
-    /* Event callback for user toggle interaction */
-    lv_obj_add_event_cb(sw, _toggle_clicked_cb, LV_EVENT_VALUE_CHANGED, w);
+        /* If a label is provided and visible, place it beside the switch */
+        if (d->show_label && d->label[0] != '\0') {
+            lv_obj_t *lbl = lv_label_create(cont);
+            lv_label_set_text(lbl, d->label);
+            lv_obj_set_style_text_color(lbl, d->label_color,
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_width(lbl, w->w);
+            lv_obj_set_style_text_align(lbl, _to_lv_align(d->label_align), LV_PART_MAIN | LV_STATE_DEFAULT);
+            if (d->font[0] != '\0') {
+                const lv_font_t *f = widget_resolve_font(d->font);
+                if (f) lv_obj_set_style_text_font(lbl, f, LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+            if (d->label_x != 0 || d->label_y != 0) {
+                lv_obj_set_align(lbl, LV_ALIGN_CENTER);
+                lv_obj_set_pos(lbl, d->label_x, d->label_y);
+            } else {
+                lv_obj_set_align(lbl, LV_ALIGN_BOTTOM_MID);
+            }
+            d->label_obj = lbl;
+            /* Place switch above center to leave room for label */
+            if (d->label_x == 0 && d->label_y == 0) {
+                lv_obj_set_align(sw, LV_ALIGN_TOP_MID);
+            } else {
+                lv_obj_set_align(sw, LV_ALIGN_CENTER);
+            }
+        } else {
+            d->label_obj = NULL;
+            lv_obj_set_align(sw, LV_ALIGN_CENTER);
+        }
+
+        /* Apply initial state */
+        if (d->current_state) {
+            lv_obj_add_state(sw, LV_STATE_CHECKED);
+        }
+
+        /* Event callback for user toggle interaction */
+        lv_obj_add_event_cb(sw, _toggle_clicked_cb, LV_EVENT_VALUE_CHANGED, w);
+    }
 
     w->root = cont;
 
@@ -145,14 +258,6 @@ static void _toggle_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 
 /* ── Open settings (stub) ───────────────────────────────────────────────── */
 static void _toggle_open_settings(widget_t *w) { (void)w; }
-
-/* ── Helper: check if all bytes in array are zero ───────────────────────── */
-static bool _data_is_zero(const uint8_t *data, uint8_t len) {
-    for (uint8_t i = 0; i < len; i++) {
-        if (data[i] != 0) return false;
-    }
-    return true;
-}
 
 /* ── to_json (defaults-only serialization) ──────────────────────────────── */
 static void _toggle_to_json(widget_t *w, cJSON *out) {
@@ -175,40 +280,48 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "signal_on_threshold", d->signal_on_threshold);
 
     /* CAN TX */
-    if (d->tx_can_id > 0)
+    if (d->tx_can_id != 0)
         cJSON_AddNumberToObject(cfg, "tx_can_id", d->tx_can_id);
 
-    if (d->tx_on_dlc != DEF_TX_DLC)
-        cJSON_AddNumberToObject(cfg, "tx_on_dlc", d->tx_on_dlc);
+    if (d->tx_bit_start != DEF_TX_BIT_START)
+        cJSON_AddNumberToObject(cfg, "tx_bit_start", d->tx_bit_start);
 
-    if (d->tx_off_dlc != DEF_TX_DLC)
-        cJSON_AddNumberToObject(cfg, "tx_off_dlc", d->tx_off_dlc);
+    if (d->tx_bit_length != DEF_TX_BIT_LENGTH)
+        cJSON_AddNumberToObject(cfg, "tx_bit_length", d->tx_bit_length);
 
-    /* TX data arrays: only write if non-zero */
-    if (!_data_is_zero(d->tx_on_data, d->tx_on_dlc)) {
-        cJSON *arr = cJSON_AddArrayToObject(cfg, "tx_on_data");
-        for (int i = 0; i < d->tx_on_dlc; i++)
-            cJSON_AddItemToArray(arr, cJSON_CreateNumber(d->tx_on_data[i]));
-    }
-
-    if (!_data_is_zero(d->tx_off_data, d->tx_off_dlc)) {
-        cJSON *arr = cJSON_AddArrayToObject(cfg, "tx_off_data");
-        for (int i = 0; i < d->tx_off_dlc; i++)
-            cJSON_AddItemToArray(arr, cJSON_CreateNumber(d->tx_off_data[i]));
-    }
+    if (d->tx_endian != DEF_TX_ENDIAN)
+        cJSON_AddNumberToObject(cfg, "tx_endian", d->tx_endian);
 
     /* Appearance: only write if different from defaults */
-    if (lv_color_to16(d->active_color) != lv_color_to16(lv_color_hex(DEF_ACTIVE_COLOR)))
-        cJSON_AddNumberToObject(cfg, "active_color", lv_color_to16(d->active_color));
+    if (d->active_color.full != lv_color_hex(DEF_ACTIVE_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "active_color", (int)d->active_color.full);
 
-    if (lv_color_to16(d->inactive_color) != lv_color_to16(lv_color_hex(DEF_INACTIVE_COLOR)))
-        cJSON_AddNumberToObject(cfg, "inactive_color", lv_color_to16(d->inactive_color));
+    if (d->inactive_color.full != lv_color_hex(DEF_INACTIVE_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "inactive_color", (int)d->inactive_color.full);
 
-    if (lv_color_to16(d->label_color) != lv_color_to16(lv_color_hex(DEF_LABEL_COLOR)))
-        cJSON_AddNumberToObject(cfg, "label_color", lv_color_to16(d->label_color));
+    if (d->label_color.full != lv_color_hex(DEF_LABEL_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "label_color", (int)d->label_color.full);
 
-    if (d->border_radius != DEF_BORDER_RADIUS)
-        cJSON_AddNumberToObject(cfg, "border_radius", d->border_radius);
+    if (d->font[0] != '\0')
+        cJSON_AddStringToObject(cfg, "font", d->font);
+    if (d->label_align != DEF_LABEL_ALIGN)
+        cJSON_AddNumberToObject(cfg, "label_align", d->label_align);
+    if (d->label_x != 0)
+        cJSON_AddNumberToObject(cfg, "label_x", d->label_x);
+    if (d->label_y != 0)
+        cJSON_AddNumberToObject(cfg, "label_y", d->label_y);
+    if (d->show_label != DEF_SHOW_LABEL)
+        cJSON_AddBoolToObject(cfg, "show_label", d->show_label);
+
+    /* Image mode fields */
+    if (d->image_name[0] != '\0')
+        cJSON_AddStringToObject(cfg, "image_name", d->image_name);
+
+    if (d->active_opa != DEF_ACTIVE_OPA)
+        cJSON_AddNumberToObject(cfg, "active_opa", d->active_opa);
+
+    if (d->inactive_opa != DEF_INACTIVE_OPA)
+        cJSON_AddNumberToObject(cfg, "inactive_opa", d->inactive_opa);
 }
 
 /* ── from_json ──────────────────────────────────────────────────────────── */
@@ -243,46 +356,53 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_can_id");
     if (cJSON_IsNumber(item)) d->tx_can_id = (uint32_t)item->valueint;
 
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_on_dlc");
-    if (cJSON_IsNumber(item)) { d->tx_on_dlc = (uint8_t)item->valueint; if (d->tx_on_dlc > 8) d->tx_on_dlc = 8; }
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_bit_start");
+    if (cJSON_IsNumber(item)) d->tx_bit_start = (uint8_t)item->valueint;
 
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_off_dlc");
-    if (cJSON_IsNumber(item)) { d->tx_off_dlc = (uint8_t)item->valueint; if (d->tx_off_dlc > 8) d->tx_off_dlc = 8; }
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_bit_length");
+    if (cJSON_IsNumber(item)) { d->tx_bit_length = (uint8_t)item->valueint; if (d->tx_bit_length > 32) d->tx_bit_length = 32; if (d->tx_bit_length == 0) d->tx_bit_length = 1; }
 
-    /* TX data arrays */
-    cJSON *arr;
-    arr = cJSON_GetObjectItemCaseSensitive(cfg, "tx_on_data");
-    if (cJSON_IsArray(arr)) {
-        int i = 0;
-        cJSON *byte_val;
-        cJSON_ArrayForEach(byte_val, arr) {
-            if (i < 8 && cJSON_IsNumber(byte_val))
-                d->tx_on_data[i++] = (uint8_t)byte_val->valueint;
-        }
-    }
-
-    arr = cJSON_GetObjectItemCaseSensitive(cfg, "tx_off_data");
-    if (cJSON_IsArray(arr)) {
-        int i = 0;
-        cJSON *byte_val;
-        cJSON_ArrayForEach(byte_val, arr) {
-            if (i < 8 && cJSON_IsNumber(byte_val))
-                d->tx_off_data[i++] = (uint8_t)byte_val->valueint;
-        }
-    }
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_endian");
+    if (cJSON_IsNumber(item)) d->tx_endian = (uint8_t)item->valueint;
 
     /* Appearance */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "active_color");
-    if (cJSON_IsNumber(item)) d->active_color = lv_color_hex(item->valueint);
+    if (cJSON_IsNumber(item)) d->active_color.full = (uint16_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_color");
-    if (cJSON_IsNumber(item)) d->inactive_color = lv_color_hex(item->valueint);
+    if (cJSON_IsNumber(item)) d->inactive_color.full = (uint16_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
-    if (cJSON_IsNumber(item)) d->label_color = lv_color_hex(item->valueint);
+    if (cJSON_IsNumber(item)) d->label_color.full = (uint16_t)item->valueint;
 
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "border_radius");
-    if (cJSON_IsNumber(item)) d->border_radius = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "font");
+    if (cJSON_IsString(item) && item->valuestring) {
+        safe_strncpy(d->font, item->valuestring, sizeof(d->font));
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_align");
+    if (cJSON_IsNumber(item)) d->label_align = (uint8_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_x");
+    if (cJSON_IsNumber(item)) d->label_x = (int16_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_y");
+    if (cJSON_IsNumber(item)) d->label_y = (int16_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_label");
+    if (cJSON_IsBool(item)) d->show_label = cJSON_IsTrue(item);
+
+    /* Image mode fields */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
+    if (cJSON_IsString(item) && item->valuestring) {
+        safe_strncpy(d->image_name, item->valuestring, sizeof(d->image_name));
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "active_opa");
+    if (cJSON_IsNumber(item)) d->active_opa = (uint8_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
+    if (cJSON_IsNumber(item)) d->inactive_opa = (uint8_t)item->valueint;
 }
 
 /* ── Destroy ────────────────────────────────────────────────────────────── */
@@ -295,8 +415,52 @@ static void _toggle_destroy(widget_t *w) {
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
     w->root = NULL;
-    if (d) free(d);
+    if (d) {
+        rdm_image_free((lv_img_dsc_t *)d->img_dsc);
+        free(d);
+    }
     free(w);
+}
+
+/* ── Apply overrides (conditional rules) ────────────────────────────────── */
+static void _toggle_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d) return;
+
+    /* Start from base type_data values (restore defaults) */
+    lv_color_t active   = d->active_color;
+    lv_color_t inactive = d->inactive_color;
+    lv_color_t lbl_col  = d->label_color;
+
+    /* Apply active overrides on top */
+    for (uint8_t i = 0; i < count; i++) {
+        const rule_override_t *o = &ov[i];
+        if (strcmp(o->field_name, "active_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+            active.full = (uint16_t)o->value.color;
+        } else if (strcmp(o->field_name, "inactive_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+            inactive.full = (uint16_t)o->value.color;
+        } else if (strcmp(o->field_name, "label_color") == 0 && o->value_type == RULE_VAL_COLOR) {
+            lbl_col.full = (uint16_t)o->value.color;
+        }
+    }
+
+    /* Apply all styles (either overridden or restored to base) */
+    if (d->sw_obj && lv_obj_is_valid(d->sw_obj)) {
+        lv_obj_set_style_bg_color(d->sw_obj, inactive, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_color(d->sw_obj, active, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    }
+    if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
+        /* Re-apply image tint with overridden colors */
+        lv_color_t tint = d->current_state ? active : inactive;
+        lv_obj_set_style_img_recolor(d->img_obj, tint,
+                                     LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_recolor_opa(d->img_obj, LV_OPA_COVER,
+                                         LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+        lv_obj_set_style_text_color(d->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
 }
 
 /* ── Factory ────────────────────────────────────────────────────────────── */
@@ -312,12 +476,16 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     d->signal_index        = -1;
     d->signal_on_threshold = DEF_ON_THRESHOLD;
     d->tx_can_id           = 0;
-    d->tx_on_dlc           = DEF_TX_DLC;
-    d->tx_off_dlc          = DEF_TX_DLC;
+    d->tx_bit_start        = DEF_TX_BIT_START;
+    d->tx_bit_length       = DEF_TX_BIT_LENGTH;
+    d->tx_endian           = DEF_TX_ENDIAN;
     d->active_color        = lv_color_hex(DEF_ACTIVE_COLOR);
     d->inactive_color      = lv_color_hex(DEF_INACTIVE_COLOR);
     d->label_color         = lv_color_hex(DEF_LABEL_COLOR);
-    d->border_radius       = DEF_BORDER_RADIUS;
+    d->label_align         = DEF_LABEL_ALIGN;
+    d->show_label          = DEF_SHOW_LABEL;
+    d->active_opa          = DEF_ACTIVE_OPA;
+    d->inactive_opa        = DEF_INACTIVE_OPA;
     d->current_state       = false;
 
     w->type      = WIDGET_TOGGLE;
@@ -329,12 +497,13 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     w->type_data = d;
     snprintf(w->id, sizeof(w->id), "toggle_%u", slot);
 
-    w->create        = _toggle_create;
-    w->resize        = _toggle_resize;
-    w->open_settings = _toggle_open_settings;
-    w->to_json       = _toggle_to_json;
-    w->from_json     = _toggle_from_json;
-    w->destroy       = _toggle_destroy;
+    w->create           = _toggle_create;
+    w->resize           = _toggle_resize;
+    w->open_settings    = _toggle_open_settings;
+    w->to_json          = _toggle_to_json;
+    w->from_json        = _toggle_from_json;
+    w->destroy          = _toggle_destroy;
+    w->apply_overrides  = _toggle_apply_overrides;
 
     return w;
 }

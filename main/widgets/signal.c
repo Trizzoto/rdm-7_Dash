@@ -20,6 +20,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include <float.h>
 #include <string.h>
 
 static const char *TAG = "signal";
@@ -57,7 +58,8 @@ void signal_registry_reset(void)
 int16_t signal_register(const char *name, uint32_t can_id,
                         uint8_t start, uint8_t len,
                         float scale, float offset,
-                        bool is_signed, uint8_t endian)
+                        bool is_signed, uint8_t endian,
+                        const char *unit)
 {
     if (!s_signals) {
         ESP_LOGE(TAG, "signal_registry_init() not called");
@@ -88,6 +90,17 @@ int16_t signal_register(const char *name, uint32_t can_id,
     sig->is_signed  = is_signed;
     sig->endian     = endian;
     sig->is_stale   = true; /* stale until the first frame arrives */
+
+    /* Unit string */
+    if (unit && unit[0] != '\0')
+        safe_strncpy(sig->unit, unit, sizeof(sig->unit));
+    else
+        sig->unit[0] = '\0';
+
+    /* Peak/min tracking */
+    sig->peak_value      = -FLT_MAX;
+    sig->min_value       = FLT_MAX;
+    sig->tracking_active = true;
 
     int16_t idx = (int16_t)s_signal_count;
     s_signal_count++;
@@ -207,6 +220,12 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
                                        sig->endian, sig->is_signed);
         float decoded = (float)raw * sig->scale + sig->offset;
 
+        /* Update peak/min tracking */
+        if (sig->tracking_active) {
+            if (decoded > sig->peak_value) sig->peak_value = decoded;
+            if (decoded < sig->min_value)  sig->min_value  = decoded;
+        }
+
         sig->last_update_ms = now_ms;
 
         /* Only notify subscribers when the value actually changes or the
@@ -240,6 +259,13 @@ void signal_inject_test_value(const char *name, float value)
     sig->current_value  = value;
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
+
+    /* Update peak/min tracking */
+    if (sig->tracking_active) {
+        if (value > sig->peak_value) sig->peak_value = value;
+        if (value < sig->min_value)  sig->min_value  = value;
+    }
+
     notify_subscribers(sig);
 }
 
@@ -261,4 +287,37 @@ void signal_check_timeouts(uint64_t current_time_ms)
             notify_subscribers(sig);
         }
     }
+}
+
+/* ── Peak/min value tracking ───────────────────────────────────────────── */
+
+void signal_reset_peaks(void)
+{
+    if (!s_signals) return;
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        s_signals[i].peak_value = -FLT_MAX;
+        s_signals[i].min_value  = FLT_MAX;
+    }
+}
+
+void signal_reset_peak(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return;
+    s_signals[signal_index].peak_value = -FLT_MAX;
+    s_signals[signal_index].min_value  = FLT_MAX;
+}
+
+float signal_get_peak(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return -FLT_MAX;
+    return s_signals[signal_index].peak_value;
+}
+
+float signal_get_min(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return FLT_MAX;
+    return s_signals[signal_index].min_value;
 }

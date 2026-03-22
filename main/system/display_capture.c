@@ -31,8 +31,6 @@ esp_err_t display_capture_screenshot(uint8_t **output_buffer, size_t *output_siz
         return ESP_ERR_TIMEOUT;
     }
 
-    esp_err_t ret = ESP_FAIL;
-    
     // Calculate output size for full screen (RGB565 is 2 bytes per pixel)
     size_t pixel_count = CAPTURE_WIDTH * CAPTURE_HEIGHT;
     *output_size = pixel_count * CAPTURE_BYTES_PER_PIXEL;
@@ -64,18 +62,22 @@ esp_err_t display_capture_screenshot(uint8_t **output_buffer, size_t *output_siz
                 // Take snapshot
                 lv_img_dsc_t snapshot;
                 lv_res_t res = lv_snapshot_take_to_buf(screen, LV_IMG_CF_TRUE_COLOR, &snapshot, snapshot_buf, buf_size);
-                
-                if (res == LV_RES_OK) {
-                    // Copy pixel data directly (RGB565 format)
-                    memcpy(*output_buffer, snapshot_buf, *output_size);
-                    
+
+                if (res == LV_RES_OK && snapshot.data != NULL) {
+                    // Copy from snapshot.data (the actual pixel data pointer),
+                    // not snapshot_buf which may include alignment overhead
+                    size_t snap_bytes = (size_t)snapshot.header.w * snapshot.header.h * sizeof(lv_color_t);
+                    if (snap_bytes > *output_size) snap_bytes = *output_size;
+                    memcpy(*output_buffer, snapshot.data, snap_bytes);
+                    *output_size = snap_bytes;
+
                     // Clean up
                     heap_caps_free(snapshot_buf);
                     example_lvgl_unlock();
-                    
-                    ESP_LOGI(TAG, "Screenshot captured via snapshot: %dx%d pixels, %zu bytes", 
+
+                    ESP_LOGI(TAG, "Screenshot captured via snapshot: %dx%d pixels, %zu bytes",
                              snapshot.header.w, snapshot.header.h, *output_size);
-                    
+
                     return ESP_OK;
                 }
                 

@@ -353,6 +353,14 @@
             pointer-events: none;
         }
 
+        .marquee-rect {
+            position: absolute;
+            border: 1px solid rgba(100, 180, 255, 0.8);
+            background: rgba(100, 180, 255, 0.12);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
         .widget-box .type-icon {
             position: absolute; top: 2px; right: 2px;
             width: 12px; height: 10px;
@@ -376,6 +384,7 @@
         .widget-box[data-type="arc"]      { border-color: hsl(320, 60%, 50%); }
         .widget-box[data-type="toggle"]   { border-color: hsl(160, 70%, 45%); }
         .widget-box[data-type="button"]   { border-color: hsl(45, 80%, 50%); }
+        .widget-box[data-type="shift_light"] { border-color: hsl(5, 90%, 60%); }
 
         .widget-box .id-label {
             position: absolute;
@@ -395,6 +404,12 @@
             letter-spacing: 0.02em;
             opacity: 0;
             transition: opacity 0.12s;
+        }
+        .widget-box .widget-preview {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
         }
         .widget-box .widget-detail {
             opacity: 0;
@@ -1355,6 +1370,7 @@
         .signal-table .col-canid { width: 80px; }
         .signal-table .col-bit { width: 60px; }
         .signal-table .col-scale { width: 72px; }
+        .signal-table .col-unit { width: 60px; }
         .signal-table .col-toggle { width: 52px; text-align: center; }
         .signal-table .col-actions { width: 36px; text-align: center; }
         .sig-toggle {
@@ -1881,6 +1897,7 @@
                                 <th class="col-scale">Offset</th>
                                 <th class="col-toggle">Signed</th>
                                 <th class="col-toggle">Endian</th>
+                                <th class="col-unit">Unit</th>
                                 <th class="col-actions"></th>
                             </tr>
                         </thead>
@@ -2097,11 +2114,13 @@
             <div class="header-divider"></div>
             <select id="layoutSelect"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;"></select>
-            <div class="layout-menu-wrap">
+            <button class="btn btn-secondary btn-icon" onclick="deleteCurrentLayout()" title="Delete current layout" style="color:hsl(0,70%,60%); font-size:13px; padding:2px 5px;">&#215;</button>
+            <div class="layout-menu-wrap" id="layoutMenuWrap">
                 <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions">&#9776;</button>
                 <div class="layout-menu" id="layoutMenu">
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()">New Layout...</div>
                     <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()">Save As New...</div>
+                    <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()">Rename...</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()">Export .rdm Bundle</div>
                     <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()">Import .rdm Bundle</div>
@@ -2112,6 +2131,18 @@
                     <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()">Dimmer Settings...</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)">Delete Layout</div>
+                </div>
+            </div>
+            <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
+            <button id="splashDeleteBtn" class="btn btn-secondary btn-icon" onclick="splashDelete()" title="Delete current splash" style="display:none; color:hsl(0,70%,60%); font-size:13px; padding:2px 5px;">&#215;</button>
+            <div class="layout-menu-wrap" id="splashMenuWrap" style="display:none;">
+                <button class="btn btn-secondary btn-icon" onclick="toggleSplashMenu()" title="Splash actions">&#9776;</button>
+                <div class="layout-menu" id="splashMenu">
+                    <div class="layout-menu-item" onclick="splashNew(); closeSplashMenu()">New Splash...</div>
+                    <div class="layout-menu-item" onclick="splashSaveAs(); closeSplashMenu()">Save As New...</div>
+                    <div class="layout-menu-item" onclick="renameSplash(); closeSplashMenu()">Rename...</div>
+                    <div class="layout-menu-sep"></div>
+                    <div class="layout-menu-item" onclick="splashDelete(); closeSplashMenu()" style="color:hsl(0,70%,60%)">Delete Splash</div>
                 </div>
             </div>
             <input type="file" id="importJsonInput" accept=".json" style="display:none">
@@ -2189,8 +2220,8 @@
     </div>
 
     <!-- Dimmer Settings Modal -->
-    <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.6); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
-        <div style="background:var(--bg-panel); border:1px solid var(--border); border-radius:8px; padding:20px; width:380px; max-width:90vw;" onclick="event.stopPropagation()">
+    <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:380px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                 <span style="font-weight:600; font-size:14px;">Brightness Dimmer</span>
                 <button class="close-btn" onclick="closeDimmerSettings()" style="font-size:18px;">&times;</button>
@@ -2493,7 +2524,8 @@
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: _presetIsLittleEndian(preset)
+                is_little_endian: _presetIsLittleEndian(preset),
+                unit: preset.unit || ''
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -2547,7 +2579,8 @@
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: _presetIsLittleEndian(preset)
+                is_little_endian: _presetIsLittleEndian(preset),
+                unit: preset.unit || ''
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -2714,7 +2747,7 @@
                 can_id: canId,
                 bit_start: parseInt(document.getElementById('cusPreSigBitStart')?.value) || 0,
                 bit_length: parseInt(document.getElementById('cusPreSigBitLen')?.value) || 16,
-                scale: parseFloat(document.getElementById('cusPreSigScale')?.value) || 1,
+                scale: (v => isNaN(v) ? 1 : v)(parseFloat(document.getElementById('cusPreSigScale')?.value)),
                 offset: parseFloat(document.getElementById('cusPreSigOffset')?.value) || 0,
                 endianess: parseInt(document.getElementById('cusPreSigEndian')?.value) || 1,
                 is_signed: document.getElementById('cusPreSigSigned')?.value === '1',
@@ -3076,6 +3109,45 @@
             } catch (e) { updateStatus('Save As failed', true); }
         }
 
+        /** Shared firmware→web conversion for imported layouts.
+         *  Converts endian, TX data arrays, rule overrides, bar alerts, signal names, and colors. */
+        function firmwareToWebFormat(data) {
+            if (!data.signals) data.signals = [];
+            /* Convert firmware endian (int) to web is_little_endian (bool) */
+            data.signals.forEach(s => {
+                if ('endian' in s) {
+                    s.is_little_endian = s.endian === 1;
+                    delete s.endian;
+                }
+            });
+            (data.widgets || []).forEach(w => {
+                if (w.config && w.config.signal_name && !w.signal)
+                    w.signal = w.config.signal_name;
+                /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value}
+                 * MUST happen BEFORE convertWidgetColors so rule override colors get converted too */
+                if (w.config && w.config.rules) {
+                    w.config.rules.forEach(rule => {
+                        if (Array.isArray(rule.overrides)) {
+                            const obj = {};
+                            rule.overrides.forEach(ov => { if (ov.field) obj[ov.field] = ov.value; });
+                            rule.overrides = obj;
+                        }
+                        if (!rule.overrides) rule.overrides = {};
+                    });
+                }
+                /* Infer bar_alerts_enabled from thresholds */
+                if (w.type === 'bar' && w.config) {
+                    const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
+                    const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
+                    const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
+                    const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
+                    w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                }
+            });
+            /* Convert firmware RGB565 colors → RGB888 for editor (after rule overrides are in object format) */
+            convertWidgetColors(data.widgets, rgb565to888);
+        }
+
         function importJson() {
             const input = document.getElementById('importJsonInput');
             input.value = '';
@@ -3090,21 +3162,8 @@
                             updateStatus('Invalid layout JSON: missing widgets array', true);
                             return;
                         }
-                        if (!data.signals) data.signals = [];
                         pushHistory();
-                        /* Bridge firmware→web signal names */
-                        (data.widgets || []).forEach(w => {
-                            if (w.config && w.config.signal_name && !w.signal)
-                                w.signal = w.config.signal_name;
-                            if (w.type === 'bar' && w.config) {
-                                const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
-                                const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
-                                const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
-                                const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
-                                w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
-                            }
-                        });
-                        convertWidgetColors(data.widgets, rgb565to888);
+                        firmwareToWebFormat(data);
                         currentLayout = data;
                         if (!currentLayout.name) currentLayout.name = 'imported';
                         /* Prevent importing over default name */
@@ -3313,6 +3372,8 @@
                     { name: "indicator_radius", label: "Fill Radius", type: "stepper", min: 0, max: 50, def: 5, cat: "appearance" },
                     { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "bar_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
                     { name: "bar_low", label: "Low Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
                     { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
@@ -3333,10 +3394,13 @@
                 displayName: "Alert Light", defW: 25, defH: 25,
                 fields: [
                     { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "active_opa", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                     { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance" },
+                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 80, cat: "appearance" },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
                     { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
@@ -3349,6 +3413,7 @@
                 fields: [
                     { name: "static_text", label: "Static Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    { name: "rotation", label: "Rotation (°)", type: "stepper", min: 0, max: 359, def: 0, cat: "appearance" },
                     { name: "font", label: "Font", type: "font", def: "", cat: "appearance" },
                     { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
                 ]
@@ -3383,14 +3448,18 @@
                     { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance" },
                     { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" }
+                    { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" },
+                    { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", min: 0, max: 40, def: 10, cat: "appearance" },
+                    { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
                 ]
             },
             "image": {
                 displayName: "Image", defW: 100, defH: 100,
                 fields: [
                     { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data" },
-                    { name: "opacity", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" }
+                    { name: "opacity", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "recolor", label: "Color Overlay", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "recolor_opa", label: "Overlay Strength (0-255)", type: "stepper", min: 0, max: 255, def: 0, cat: "appearance" }
                 ]
             },
             "shape_panel": {
@@ -3413,43 +3482,81 @@
                 fields: [
                     { name: "start_angle", label: "Start Angle", type: "number", def: 135, cat: "data" },
                     { name: "end_angle", label: "End Angle", type: "number", def: 45, cat: "data" },
+                    { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data" },
+                    { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                     { name: "arc_width", label: "Arc Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
                     { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance" },
                     { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance" },
                     { name: "bg_arc_width", label: "Track Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
-                    { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" }
+                    { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance" }
                 ]
             },
             "toggle": {
                 displayName: "Toggle Switch", defW: 80, defH: 40,
                 fields: [
-                    { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                    { name: "label", label: "Label", type: "textarea", def: "", cat: "data" },
+                    { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "data" },
                     { name: "signal_on_threshold", label: "ON Threshold", type: "number", def: 0.5, cat: "data" },
-                    { name: "tx_can_id", label: "TX CAN ID", type: "number", def: 0, cat: "data" },
-                    { name: "tx_on_data", label: "ON Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,1", cat: "data" },
-                    { name: "tx_on_dlc", label: "ON DLC", type: "number", def: 8, cat: "data" },
-                    { name: "tx_off_data", label: "OFF Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,0", cat: "data" },
-                    { name: "tx_off_dlc", label: "OFF DLC", type: "number", def: 8, cat: "data" },
+                    { name: "tx_can_id", label: "CAN ID", type: "can_id", def: 0, cat: "data" },
+                    { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
+                    { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
+                    { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 5, cat: "appearance" }
+                    { name: "active_opa", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 100, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_label" },
+                    { name: "font", label: "Font", type: "font", def: "", cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_align", label: "Text Align", type: "select", def: 1, cat: "appearance", options: [{v:0,l:"Left"},{v:1,l:"Center"},{v:2,l:"Right"}], enabledBy: "show_label" },
+                    { name: "label_x", label: "Label X Offset", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_y", label: "Label Y Offset", type: "stepper", min: -240, max: 240, def: 0, cat: "appearance", enabledBy: "show_label" }
                 ]
             },
             "button": {
                 displayName: "Button", defW: 100, defH: 40,
                 fields: [
-                    { name: "label", label: "Label", type: "text", def: "BTN", cat: "data" },
-                    { name: "tx_can_id", label: "TX CAN ID", type: "number", def: 0, cat: "data" },
-                    { name: "tx_press_data", label: "Press Data (bytes)", type: "text", def: "0,0,0,0,0,0,0,1", cat: "data" },
-                    { name: "tx_press_dlc", label: "Press DLC", type: "number", def: 8, cat: "data" },
-                    { name: "tx_release_data", label: "Release Data (bytes)", type: "text", def: "", cat: "data" },
-                    { name: "tx_release_dlc", label: "Release DLC", type: "number", def: 0, cat: "data" },
+                    { name: "label", label: "Label", type: "textarea", def: "BTN", cat: "data" },
+                    { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "data" },
+                    { name: "latch", label: "Latch (Toggle)", type: "checkbox", def: false, cat: "data" },
+                    { name: "tx_can_id", label: "CAN ID", type: "can_id", def: 0, cat: "data" },
+                    { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
+                    { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
+                    { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
+                    { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: false, cat: "data", enabledBy: "!latch" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance" },
                     { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance" },
                     { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 5, cat: "appearance" },
-                    { name: "font", label: "Font", type: "font", def: "", cat: "appearance" }
+                    { name: "font", label: "Font", type: "font", def: "", cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_align", label: "Text Align", type: "select", def: 1, cat: "appearance", options: [{v:0,l:"Left"},{v:1,l:"Center"},{v:2,l:"Right"}], enabledBy: "show_label" },
+                    { name: "label_x", label: "Label X Offset", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_y", label: "Label Y Offset", type: "stepper", min: -240, max: 240, def: 0, cat: "appearance", enabledBy: "show_label" }
+                ]
+            },
+            "shift_light": {
+                displayName: "Shift Light", defW: 400, defH: 30,
+                fields: [
+                    { name: "signal_name", label: "Signal", type: "text", def: "", cat: "data" },
+                    { name: "led_count", label: "LED Count", type: "number", def: 8, cat: "data", min: 4, max: 16, step: 1 },
+                    { name: "range_min", label: "Range Min", type: "number", def: 4000, cat: "data" },
+                    { name: "range_max", label: "Range Max", type: "number", def: 7000, cat: "data" },
+                    { name: "flash_threshold", label: "Flash RPM", type: "number", def: 7200, cat: "data" },
+                    { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "data", min: 50, max: 1000, step: 10 },
+                    { name: "color_low", label: "Low Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "color_mid", label: "Mid Color", type: "color", def: 0xFFFF00, cat: "appearance" },
+                    { name: "color_high", label: "High Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "color_off", label: "Off Color", type: "color", def: 0x212121, cat: "appearance" },
+                    { name: "led_spacing", label: "LED Spacing", type: "stepper", def: 2, cat: "appearance", min: 0, max: 20, step: 1 },
+                    { name: "border_radius", label: "Corner Radius", type: "stepper", def: 2, cat: "appearance", min: 0, max: 50, step: 1 },
+                    { name: "led_width", label: "LED Width (0=auto)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100, step: 1 },
+                    { name: "led_height", label: "LED Height (0=auto)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100, step: 1 },
+                    { name: "fill_mode", label: "Fill Direction", type: "select", def: 0, cat: "data", options: [{v:0,l:"Left to Right"},{v:1,l:"Outside In"}] },
+                    { name: "threshold_mid", label: "Mid Threshold", type: "number", def: 0.5, cat: "thresholds", step: 0.05, min: 0, max: 1 },
+                    { name: "threshold_high", label: "High Threshold", type: "number", def: 0.8, cat: "thresholds", step: 0.05, min: 0, max: 1 }
                 ]
             }
         };
@@ -3487,13 +3594,27 @@
         let isPanning = false;
         let startPan = { x: 0, y: 0 };
 
+        /* ── Marquee (box) selection on empty canvas drag ─────────────── */
+        let _marquee = null;       /* { startX, startY, el } while active */
+        let _marqueeDiv = null;
+
         interactionLayer.onmousedown = (e) => {
-            if (e.button === 0 && e.target === interactionLayer) { // Left click only
+            if (e.button !== 0 || e.target !== interactionLayer) return;
+
+            /* If no modifier, deselect immediately; Ctrl/Shift preserve selection */
+            if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
                 selectedIndex = -1; selectedIndices = new Set();
-                renderEditor();
-                updateInspector();
-                renderSignals();
+                renderEditor(); updateInspector(); renderSignals();
             }
+
+            /* Begin marquee */
+            const rect = interactionLayer.getBoundingClientRect();
+            const sx = (e.clientX - rect.left) / zoomLevel;
+            const sy = (e.clientY - rect.top)  / zoomLevel;
+            _marqueeDiv = document.createElement('div');
+            _marqueeDiv.className = 'marquee-rect';
+            interactionLayer.appendChild(_marqueeDiv);
+            _marquee = { startX: sx, startY: sy, el: _marqueeDiv };
         };
 
         // Context Menu Setup
@@ -3603,7 +3724,8 @@
             shape_panel: '<svg viewBox="0 0 20 16"><rect x="2" y="3" width="16" height="10" rx="2" fill="currentColor" opacity="0.3" stroke="currentColor" stroke-width="1.2"/></svg>',
             arc:         '<svg viewBox="0 0 20 16"><path d="M4,14 A8,8 0 0,1 16,14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M6,12 A5.5,5.5 0 0,1 14,12" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>',
             toggle:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="13" cy="8" r="2.5" fill="currentColor" opacity="0.6"/></svg>',
-            button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>'
+            button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>',
+            shift_light: '<svg viewBox="0 0 20 16"><rect x="1" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="5" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="9" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="13" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.2"/></svg>'
         };
 
         function setSplashUIVisibility(isSplash) {
@@ -3611,15 +3733,21 @@
             const hide = el => { if (el) el.style.display = 'none'; };
             const show = (el, d) => { if (el) el.style.display = d || ''; };
             const layoutSelect = document.getElementById('layoutSelect');
-            const layoutMenuWrap = document.querySelector('.layout-menu-wrap');
+            const layoutMenuWrap = document.getElementById('layoutMenuWrap');
+            const splashSelect = document.getElementById('splashSelect');
+            const splashMenuWrap = document.getElementById('splashMenuWrap');
             const signalsTab = document.querySelector('.sidebar-tab-content#tabSignals');
             const signalsTabBtn = Array.from(document.querySelectorAll('.sidebar-tab')).find(t => t.textContent.toLowerCase() === 'signals');
             const ecuCtx = document.getElementById('ecuContextSelect');
             const simBtn = document.getElementById('pillSimulate');
 
+            const splashDeleteBtn = document.getElementById('splashDeleteBtn');
             if (isSplash) {
                 hide(layoutSelect);
                 hide(layoutMenuWrap);
+                show(splashSelect, '');
+                show(splashDeleteBtn, '');
+                show(splashMenuWrap, '');
                 if (signalsTab) hide(signalsTab);
                 if (signalsTabBtn) hide(signalsTabBtn);
                 hide(ecuCtx);
@@ -3627,6 +3755,9 @@
             } else {
                 show(layoutSelect, '');
                 show(layoutMenuWrap, '');
+                hide(splashSelect);
+                hide(splashDeleteBtn);
+                hide(splashMenuWrap);
                 if (signalsTab) show(signalsTab, '');
                 if (signalsTabBtn) show(signalsTabBtn, '');
                 show(ecuCtx, 'none'); /* ecuCtx is always hidden via inline style */
@@ -3659,7 +3790,7 @@
                     const r = await fetch('/api/layout/current');
                     if (!r.ok) continue;
                     const d = await r.json();
-                    const isSplash = (d.name || '') === '_splash';
+                    const isSplash = (d.name || '').startsWith('_splash_');
                     if (isSplash === expectedSplash) return true;
                 } catch (e) { /* retry */ }
             }
@@ -3688,7 +3819,7 @@
                 _lastDeviceSnapshot = '';
                 /* Load appropriate layout */
                 if (mode === 'splash') {
-                    await loadLayout('_splash');
+                    await fetchSplashes();
                 } else {
                     await fetchLayouts();
                 }
@@ -3699,6 +3830,124 @@
                 showToast('Screen switch failed', 'error');
                 /* Revert dropdown */
                 document.getElementById('screenModeSelect').value = currentScreenMode;
+            }
+        }
+
+        /* ── Splash management functions ──────────────────────────── */
+
+        async function fetchSplashes() {
+            try {
+                const resp = await fetch('/api/splash/list');
+                if (!resp.ok) throw new Error();
+                const data = await resp.json();
+                const sel = document.getElementById('splashSelect');
+                sel.innerHTML = '';
+                (data.splashes || []).forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s; opt.textContent = s;
+                    if (s === data.active) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                const active = sel.value || data.active || 'Default';
+                await loadLayout('_splash_' + active);
+            } catch (e) {
+                updateStatus('Error loading splash list', true);
+                /* Fallback: try loading with Default name */
+                await loadLayout('_splash_Default');
+            }
+        }
+
+        async function switchSplash(name) {
+            try {
+                updateStatus('Switching splash...');
+                const resp = await fetch('/api/splash/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (!resp.ok) throw new Error();
+                /* Wait for device to reload, then load the new splash */
+                await new Promise(r => setTimeout(r, 200));
+                await loadLayout('_splash_' + name);
+                setTimeout(captureScreenshot, 500);
+                updateStatus('Splash: ' + name);
+            } catch (e) {
+                updateStatus('Splash switch failed', true);
+                showToast('Splash switch failed', 'error');
+            }
+        }
+
+        function toggleSplashMenu() {
+            const m = document.getElementById('splashMenu');
+            m.style.display = m.style.display === 'block' ? 'none' : 'block';
+        }
+        function closeSplashMenu() {
+            document.getElementById('splashMenu').style.display = 'none';
+        }
+
+        async function splashNew() {
+            const name = prompt('New splash name:');
+            if (!name || !name.trim()) return;
+            const trimmed = name.trim();
+            /* Create an empty splash layout */
+            const payload = { name: '_splash_' + trimmed, schema_version: 10, widgets: [], signals: [] };
+            try {
+                const resp = await fetch('/api/layout/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) throw new Error();
+                await fetchSplashes();
+                /* Select the new splash */
+                const sel = document.getElementById('splashSelect');
+                sel.value = trimmed;
+                await switchSplash(trimmed);
+                showToast('Created splash: ' + trimmed, 'success');
+            } catch (e) {
+                showToast('Failed to create splash', 'error');
+            }
+        }
+
+        async function splashSaveAs() {
+            const name = prompt('Save splash as:');
+            if (!name || !name.trim()) return;
+            const trimmed = name.trim();
+            const payload = buildFirmwarePayload();
+            payload.name = '_splash_' + trimmed;
+            try {
+                const resp = await fetch('/api/layout/save?apply=0', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) throw new Error();
+                await fetchSplashes();
+                const sel = document.getElementById('splashSelect');
+                sel.value = trimmed;
+                await switchSplash(trimmed);
+                showToast('Saved splash as: ' + trimmed, 'success');
+            } catch (e) {
+                showToast('Failed to save splash', 'error');
+            }
+        }
+
+        async function splashDelete() {
+            const sel = document.getElementById('splashSelect');
+            const name = sel.value;
+            if (!name) return;
+            if (!confirm('Delete splash "' + name + '"?')) return;
+            try {
+                const resp = await fetch('/api/splash/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (!resp.ok) throw new Error();
+                await fetchSplashes();
+                showToast('Deleted splash: ' + name, 'success');
+            } catch (e) {
+                showToast('Failed to delete splash', 'error');
             }
         }
 
@@ -3750,16 +3999,11 @@
                 let customHtml = '';
                 if (w.config) {
                     const colorField = w.type === 'rpm_bar' ? 'bar_color'
-                                     : w.type === 'bar' ? 'bar_in_range_color'
                                      : w.type === 'warning' ? 'active_color' : null;
                     if (colorField && w.config[colorField] != null) {
                         const hex = Number(w.config[colorField]).toString(16).padStart(6, '0');
                         customHtml += `<div class="widget-detail" style="position:absolute;bottom:2px;right:2px;width:10px;height:10px;background:#${hex};border:1px solid hsla(0, 0%, 100%, 0.3);border-radius:2px;"></div>`;
                     }
-                }
-                if (w.type === 'panel' && w.config) {
-                    if (w.config.custom_text)
-                        customHtml += `<div class="widget-detail" style="position:absolute;bottom:2px;left:4px;font-size:9px;color:hsl(0, 0%, 67%);">${w.config.custom_text}</div>`;
                 }
 
                 const sigTag = w.signal ? ` <span style="color:hsl(120, 100%, 50%);font-size:9px;">\u2192 ${w.signal}</span>` : '';
@@ -3850,7 +4094,8 @@
                     indicator: 'hsl(54,90%,55%)', warning: 'hsl(0,80%,55%)', text: 'hsl(190,80%,45%)',
                     meter: 'hsl(88,50%,50%)', image: 'hsl(280,60%,55%)',
                     shape_panel: 'hsl(220,30%,50%)', arc: 'hsl(320,60%,50%)',
-                    toggle: 'hsl(160,70%,45%)', button: 'hsl(45,80%,50%)'
+                    toggle: 'hsl(160,70%,45%)', button: 'hsl(45,80%,50%)',
+                    shift_light: 'hsl(5,90%,60%)'
                 };
                 const label = (defs[w.type] && defs[w.type].displayName) || w.type;
                 const layerIcon = PALETTE_ICONS[w.type] || '';
@@ -3896,10 +4141,17 @@
                 item.appendChild(controls);
 
                 item.onclick = (e) => {
-                    if (e.shiftKey) {
+                    if (e.ctrlKey || e.metaKey) {
+                        /* Ctrl-click: toggle individual */
                         if (selectedIndices.has(i)) { selectedIndices.delete(i); }
                         else { selectedIndices.add(i); }
                         selectedIndex = selectedIndices.size > 0 ? [...selectedIndices][selectedIndices.size - 1] : -1;
+                    } else if (e.shiftKey && selectedIndex >= 0) {
+                        /* Shift-click: range select from last selected to this */
+                        const lo = Math.min(selectedIndex, i);
+                        const hi = Math.max(selectedIndex, i);
+                        for (let r = lo; r <= hi; r++) selectedIndices.add(r);
+                        selectedIndex = i;
                     } else {
                         selectedIndex = i;
                         selectedIndices = new Set([i]);
@@ -4012,18 +4264,24 @@
         }
 
         function assignSlot(w) {
-            if (!SLOT_LIMITS[w.type]) return;
+            if (!SLOT_LIMITS[w.type]) return true;
             if (!w.config) w.config = {};
             const slot = nextAvailableSlot(w.type);
-            if (slot >= 0) w.config.slot = slot;
+            if (slot < 0) return false;
+            w.config.slot = slot;
+            return true;
         }
 
-        /** Strip signal binding from a cloned widget so it starts unbound,
-         *  and assign a fresh unique slot. */
+        /** Strip signal binding, label, and unit from a cloned widget so it
+         *  starts unbound with default text, and assign a fresh unique slot. */
         function sanitizeClone(clone) {
             delete clone.signal;
-            if (clone.config) delete clone.config.signal_name;
-            assignSlot(clone);
+            if (clone.config) {
+                delete clone.config.signal_name;
+                delete clone.config.label;
+                delete clone.config.custom_text;
+            }
+            return assignSlot(clone);
         }
 
         function duplicateWidget() {
@@ -4034,9 +4292,13 @@
             clone.id = nextWidgetId(clone.type);
             clone.x += 20;
             clone.y += 20;
-            sanitizeClone(clone);
+            if (!sanitizeClone(clone)) {
+                showToast(`No available slots for ${clone.type}`, 'error');
+                return;
+            }
             currentLayout.widgets.push(clone);
             selectedIndex = currentLayout.widgets.length - 1;
+            selectedIndices = new Set([selectedIndex]);
             renderEditor();
             updateInspector();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
@@ -4149,7 +4411,10 @@
             clone.id = nextWidgetId(clone.type);
             clone.x += 20;
             clone.y += 20;
-            sanitizeClone(clone);
+            if (!sanitizeClone(clone)) {
+                showToast(`No available slots for ${clone.type}`, 'error');
+                return;
+            }
             // update clipboard coordinates for consecutive pasting
             clipboardWidget.x += 20;
             clipboardWidget.y += 20;
@@ -4157,6 +4422,7 @@
 
             currentLayout.widgets.push(clone);
             selectedIndex = currentLayout.widgets.length - 1;
+            selectedIndices = new Set([selectedIndex]);
             renderEditor();
             updateInspector();
             updateStatus(`Pasted ${clone.type}`);
@@ -4291,20 +4557,27 @@
             });
         })();
 
+        let _dragMoved = false;
+
         function startDrag(e, index) {
             e.stopPropagation();
-            pushHistory();
+            _dragMoved = false;
 
             if (e.altKey && !currentLayout.widgets[index].locked) {
+                pushHistory();
+                _dragMoved = true; /* already pushed */
                 const clone = JSON.parse(JSON.stringify(currentLayout.widgets[index]));
                 clone.id = `w_${Date.now().toString().slice(-4)}`;
-                sanitizeClone(clone);
+                if (!sanitizeClone(clone)) {
+                    showToast(`No available slots for ${clone.type}`, 'error');
+                    return;
+                }
                 currentLayout.widgets.push(clone);
                 const newIdx = currentLayout.widgets.length - 1;
                 selectedIndex = newIdx;
                 selectedIndices = new Set([newIdx]);
-            } else if (e.shiftKey) {
-                /* Shift-click: toggle index in multi-selection */
+            } else if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                /* Ctrl/Shift-click: toggle index in multi-selection */
                 if (selectedIndices.has(index)) {
                     selectedIndices.delete(index);
                     selectedIndex = selectedIndices.size > 0 ? [...selectedIndices][selectedIndices.size - 1] : -1;
@@ -4336,7 +4609,7 @@
 
         function startResize(e, index, handle) {
             e.stopPropagation();
-            pushHistory();
+            _dragMoved = false;
             selectedIndex = index; selectedIndices = new Set([index]);
             isResizing = true;
             resizeHandle = handle;
@@ -4347,7 +4620,27 @@
         }
 
         window.onmousemove = (e) => {
+            /* Marquee rectangle update */
+            if (_marquee) {
+                const rect = interactionLayer.getBoundingClientRect();
+                const cx = (e.clientX - rect.left) / zoomLevel;
+                const cy = (e.clientY - rect.top)  / zoomLevel;
+                const x = Math.min(_marquee.startX, cx);
+                const y = Math.min(_marquee.startY, cy);
+                const w = Math.abs(cx - _marquee.startX);
+                const h = Math.abs(cy - _marquee.startY);
+                _marquee.el.style.left   = x + 'px';
+                _marquee.el.style.top    = y + 'px';
+                _marquee.el.style.width  = w + 'px';
+                _marquee.el.style.height = h + 'px';
+                return;
+            }
+
             if (isResizing) {
+                if (!_dragMoved) {
+                    _dragMoved = true;
+                    pushHistory();
+                }
                 const w = currentLayout.widgets[selectedIndex];
                 const dx = (e.clientX - startRect.mouseX) / zoomLevel;
                 const dy = (e.clientY - startRect.mouseY) / zoomLevel;
@@ -4432,6 +4725,10 @@
             if (!snappedY) newY = Math.round(newY / SNAP_SIZE) * SNAP_SIZE;
 
             if (newX !== w.x || newY !== w.y) {
+                if (!_dragMoved) {
+                    _dragMoved = true;
+                    pushHistory();
+                }
                 /* Move all selected widgets by the same delta */
                 const dx = newX - _dragAnchorStart.x;
                 const dy = newY - _dragAnchorStart.y;
@@ -4445,7 +4742,40 @@
             }
         };
 
-        window.onmouseup = () => {
+        window.onmouseup = (e) => {
+            /* ── Finish marquee selection ────────────────────────── */
+            if (_marquee) {
+                const rect = interactionLayer.getBoundingClientRect();
+                const cx = (e.clientX - rect.left) / zoomLevel;
+                const cy = (e.clientY - rect.top)  / zoomLevel;
+                const mx1 = Math.min(_marquee.startX, cx);
+                const my1 = Math.min(_marquee.startY, cy);
+                const mx2 = Math.max(_marquee.startX, cx);
+                const my2 = Math.max(_marquee.startY, cy);
+
+                /* Only apply if dragged more than 4px (avoid accidental click) */
+                if (mx2 - mx1 > 4 || my2 - my1 > 4) {
+                    currentLayout.widgets.forEach((w, i) => {
+                        if (w.hidden) return;
+                        const wp = devToWeb(w.x, w.y);
+                        const wl = wp.x - w.w / 2;
+                        const wt = wp.y - w.h / 2;
+                        const wr = wp.x + w.w / 2;
+                        const wb = wp.y + w.h / 2;
+                        /* Check intersection with marquee rect */
+                        if (wr > mx1 && wl < mx2 && wb > my1 && wt < my2) {
+                            selectedIndices.add(i);
+                            selectedIndex = i;
+                        }
+                    });
+                }
+
+                _marquee.el.remove();
+                _marquee = null;
+                renderEditor(); updateInspector(); renderSignals();
+                return;
+            }
+
             isPanning = false;
             workspaceViewport.style.cursor = 'default';
             if (isDragging || isResizing) {
@@ -4558,7 +4888,12 @@
                 if (w.signal) {
                     w.config.signal_name = w.signal;
                 } else {
-                    delete w.config.signal_name;
+                    /* Only delete signal_name if the widget type doesn't define it as a config field */
+                    const wDef = WIDGET_DEFS[w.type];
+                    const hasSignalNameField = wDef && wDef.fields.some(f => f.name === 'signal_name');
+                    if (!hasSignalNameField) {
+                        delete w.config.signal_name;
+                    }
                 }
                 /* Bar: if alerts disabled, set thresholds to min/max so they never trigger */
                 if (w.type === 'bar' && !w.config.bar_alerts_enabled) {
@@ -4571,12 +4906,6 @@
                 }
                 /* Clean up web-editor-only fields */
                 delete w.config.bar_alerts_enabled;
-                /* Convert TX data strings to byte arrays for toggle/button */
-                ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
-                    if (typeof w.config[key] === 'string' && w.config[key].length > 0) {
-                        w.config[key] = w.config[key].split(',').map(s => parseInt(s.trim(), 10) || 0);
-                    }
-                });
                 /* Convert rule overrides from object {field: value} to firmware array [{field, type, value}] */
                 if (w.config.rules) {
                     const def = WIDGET_DEFS[w.type];
@@ -4665,6 +4994,11 @@
                            "
                            ${disabledAttr}>
                 </div>`;
+            } else if (f.type === 'can_id') {
+                const hexVal = val ? '0x' + Number(val).toString(16).toUpperCase().padStart(3, '0') : '0x';
+                html += `<input type="text" value="${hexVal}" placeholder="0x" spellcheck="false" style="font-family:'JetBrains Mono',monospace; width:90px;"
+                           oninput="(function(el){let v=el.value.trim(); if(!v.startsWith('0x')&&!v.startsWith('0X')){v='0x'+v.replace(/^0[xX]?/,'')} let n=parseInt(v,16); if(!isNaN(n)){updateWidgetConfigField('${f.name}',n,true)} else if(v==='0x'||v==='0X'){updateWidgetConfigField('${f.name}',0,true)}})(this)"
+                           ${disabledAttr}>`;
             } else if (f.type === 'hex') {
                 const hexStr = Number(val).toString(16).toUpperCase().padStart(6, '0');
                 const hexDisplay = "0x" + hexStr;
@@ -4744,6 +5078,9 @@
                     <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
                         onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=Math.min(${sMax}, parseInt(sl.value)+1); sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
                 </div>`;
+            } else if (f.type === 'textarea') {
+                const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                html += `<textarea rows="3" style="resize:vertical; width:100%; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:4px 6px; font-family:inherit;" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>${escaped}</textarea>`;
             } else {
                 html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
             }
@@ -4827,7 +5164,7 @@
 
             /* ── Data Accordion (open by default) ── */
             const dataFields = def.fields.filter(f => f.cat === 'data');
-            const hasSignalBinding = !['indicator', 'shape_panel', 'arc', 'button'].includes(w.type);
+            const hasSignalBinding = !['indicator', 'shape_panel', 'button', 'image', 'toggle'].includes(w.type);
             if (dataFields.length || hasSignalBinding) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
                 /* Signal binding UI */
@@ -4852,8 +5189,41 @@
                         html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
                     }
                 }
+                /* ── Per-widget test control ── */
+                const _testSig = _getWidgetSignalName(w);
+                if (_testSig) {
+                    const isToggle = TOGGLE_TEST_TYPES.has(w.type);
+                    const activeVal = _testValues[_testSig];
+                    const isActive = activeVal !== undefined;
+                    if (isToggle) {
+                        const checked = isActive && activeVal > 0 ? 'checked' : '';
+                        html += `<div style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                            <span style="font-size:11px; color:var(--text-muted); flex:1;">Test</span>
+                            <label class="switch" style="margin:0;"><input type="checkbox" ${checked} onchange="if(this.checked){setTestValue('${_testSig}',1)}else{clearTestValue('${_testSig}')}"><span class="slider round"></span></label>
+                        </div>`;
+                    } else {
+                        const b = _getTestBounds(w);
+                        const curVal = isActive ? activeVal : b.min;
+                        html += `<div style="margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                                <span style="font-size:11px; color:var(--text-muted); flex:1;">Test Value</span>
+                                <span id="testValNum" style="font-size:12px; font-family:monospace; color:${isActive ? 'var(--accent)' : 'var(--text-muted)'}; min-width:40px; text-align:right;">${isActive ? curVal : '\u2014'}</span>
+                                ${isActive ? `<button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;" onclick="clearTestValue('${_testSig}');updateInspector()" title="Stop test">\u2715</button>` : ''}
+                            </div>
+                            <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${curVal}" style="width:100%; accent-color:var(--accent);"
+                                oninput="setTestValue('${_testSig}',parseFloat(this.value));document.getElementById('testValNum').textContent=this.value;document.getElementById('testValNum').style.color='var(--accent)'">
+                        </div>`;
+                    }
+                }
+
                 dataFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
+                    if (f.enabledBy) {
+                        const negate = f.enabledBy.startsWith('!');
+                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
+                        const parentVal = w.config[key] !== undefined ? w.config[key] : false;
+                        if (negate ? parentVal : !parentVal) return;
+                    }
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
 
@@ -4892,9 +5262,23 @@
                 appearFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     if (f.enabledBy) {
-                        const parentVal = w.config[f.enabledBy] !== undefined ? w.config[f.enabledBy] : false;
-                        if (!parentVal) return;
+                        const negate = f.enabledBy.startsWith('!');
+                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
+                        const parentVal = w.config[key] !== undefined ? w.config[key] : false;
+                        if (negate ? parentVal : !parentVal) return;
                     }
+                    html += renderFieldHTML(f, val, disabledAttr);
+                });
+                html += `</div></details>`;
+            }
+
+            /* ── Thresholds Accordion (closed by default) ── */
+            const thresholdFields = def.fields.filter(f => f.cat === 'thresholds');
+            if (thresholdFields.length) {
+                html += `<details class="inspector-accordion"><summary>Thresholds</summary><div class="accordion-body">`;
+                html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">Set where color transitions occur (0 = first LED, 1 = last LED).</div>`;
+                thresholdFields.forEach(f => {
+                    const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     html += renderFieldHTML(f, val, disabledAttr);
                 });
                 html += `</div></details>`;
@@ -4910,8 +5294,10 @@
                 alertFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
                     if (f.enabledBy) {
-                        const parentVal = w.config[f.enabledBy] !== undefined ? w.config[f.enabledBy] : false;
-                        if (!parentVal) return;
+                        const negate = f.enabledBy.startsWith('!');
+                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
+                        const parentVal = w.config[key] !== undefined ? w.config[key] : false;
+                        if (negate ? parentVal : !parentVal) return;
                     }
                     /* Inline toggle group: render all fields sharing the same inline key as one compact row */
                     if (f.inline) {
@@ -4931,8 +5317,10 @@
                 html += `</div></details>`;
             }
 
-            /* ── Rules Accordion (conditional overrides — full appearance clone) ── */
+            /* ── Rules Accordion (conditional overrides — only for types that support apply_overrides) ── */
+            const NO_RULES_TYPES = new Set(['meter', 'image', 'indicator']);
             const rules = w.config.rules || [];
+            if (!NO_RULES_TYPES.has(w.type)) {
             html += `<details class="inspector-accordion"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
             html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
             rules.forEach((rule, ri) => {
@@ -4968,8 +5356,10 @@
                 html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin:8px 0 4px;">THEN change:</div>`;
                 appearFields.forEach(f => {
                     if (f.enabledBy) {
-                        const parentVal = (overrides[f.enabledBy] !== undefined) ? overrides[f.enabledBy] : (w.config[f.enabledBy] !== undefined ? w.config[f.enabledBy] : false);
-                        if (!parentVal) return;
+                        const negate = f.enabledBy.startsWith('!');
+                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
+                        const parentVal = (overrides[key] !== undefined) ? overrides[key] : (w.config[key] !== undefined ? w.config[key] : false);
+                        if (negate ? parentVal : !parentVal) return;
                     }
                     const isOverridden = overrides.hasOwnProperty(f.name);
                     const val = isOverridden ? overrides[f.name] : (w.config[f.name] !== undefined ? w.config[f.name] : f.def);
@@ -4988,13 +5378,19 @@
                     } else if (f.type === 'checkbox') {
                         html += `<label class="toggle-switch"><input type="checkbox" ${val ? 'checked' : ''} onchange="updateRuleField(${ri}, '${f.name}', this.checked)" ${disabledAttr}><span class="toggle-track"></span></label>`;
                     } else if (f.type === 'color') {
-                        const cHex = Number(val != null ? val : 0).toString(16).toUpperCase().padStart(6, '0');
+                        const rSnapped = snapToRgb565(Number(val != null ? val : 0));
+                        const cHex = rSnapped.toString(16).toUpperCase().padStart(6, '0');
                         html += `<div class="color-field-wrap">
                             <input type="color" value="#${cHex}"
-                                oninput="document.getElementById('rclr_${ri}_${f.name}').value='0x'+this.value.substring(1).toUpperCase(); updateRuleField(${ri},'${f.name}',parseInt('0x'+this.value.substring(1).toUpperCase()))"
+                                oninput="
+                                    let s=snapToRgb565(parseInt('0x'+this.value.substring(1)));
+                                    let h=s.toString(16).toUpperCase().padStart(6,'0');
+                                    this.value='#'+h;
+                                    document.getElementById('rclr_${ri}_${f.name}').value='0x'+h;
+                                    updateRuleField(${ri},'${f.name}',s)"
                                 ${disabledAttr}>
                             <input type="text" id="rclr_${ri}_${f.name}" value="0x${cHex}"
-                                oninput="let v=parseInt(this.value); if(!isNaN(v)){let h=v.toString(16).padStart(6,'0'); this.previousElementSibling.value='#'+h; updateRuleField(${ri},'${f.name}',v);}"
+                                oninput="let v=parseInt(this.value); if(!isNaN(v)){let s=snapToRgb565(v); let h=s.toString(16).toUpperCase().padStart(6,'0'); this.value='0x'+h; this.previousElementSibling.value='#'+h; updateRuleField(${ri},'${f.name}',s);}"
                                 ${disabledAttr}>
                         </div>`;
                     } else if (f.type === 'image_picker') {
@@ -5046,6 +5442,7 @@
             });
             html += `<button class="btn btn-secondary" style="font-size:11px; width:100%;" onclick="addRule()" ${disabledAttr}>+ Add Rule</button>`;
             html += `</div></details>`;
+            } /* end NO_RULES_TYPES gate */
 
             inspectorContent.innerHTML = html;
             _restoreInspectorState();
@@ -5111,6 +5508,55 @@
                     _updateSimButton();
                 }
             } catch (e) { /* device offline */ }
+        }
+
+        /* ── Per-widget test value injection ── */
+        const _testValues = {};  /* signalName → value (tracks active test controls) */
+        const _testLastSend = {}; /* signalName → timestamp (throttle) */
+        const TOGGLE_TEST_TYPES = new Set(['warning', 'toggle', 'button', 'indicator']);
+
+        function _getWidgetSignalName(w) {
+            if (w.signal) return w.signal;
+            if (w.config && w.config.signal_name) return w.config.signal_name;
+            return null;
+        }
+        function _getTestBounds(w) {
+            const c = w.config || {};
+            const decimals = c.decimals ?? 0;
+            const step = decimals > 0 ? Math.pow(10, -decimals) : 1;
+            switch (w.type) {
+                case 'bar': return { min: c.bar_min ?? 0, max: c.bar_max ?? 100, step };
+                case 'meter': return { min: c.min ?? 0, max: c.max ?? 100, step };
+                case 'rpm_bar': return { min: 0, max: c.rpm_max ?? 7000, step: 10 };
+                case 'arc': return { min: c.signal_min ?? 0, max: c.signal_max ?? 100, step };
+                case 'shift_light': return { min: c.range_min ?? 0, max: c.range_max ?? 7000, step: 10 };
+                case 'panel': return { min: -10, max: 100, step };
+                case 'text': return { min: -10, max: 100, step };
+                default: return { min: 0, max: 100, step: 1 };
+            }
+        }
+        function setTestValue(signalName, value) {
+            _testValues[signalName] = value;
+            const now = Date.now();
+            if (!_testLastSend[signalName] || now - _testLastSend[signalName] >= 80) {
+                _doInject(signalName, value);
+                _testLastSend[signalName] = now;
+            }
+        }
+        function clearTestValue(signalName) {
+            delete _testValues[signalName];
+            delete _testLastSend[signalName];
+        }
+        function clearAllTestValues() {
+            for (const k of Object.keys(_testValues)) delete _testValues[k];
+            for (const k of Object.keys(_testLastSend)) delete _testLastSend[k];
+        }
+        function _doInject(signalName, value) {
+            fetch('/api/signal/inject', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ signal: signalName, value: parseFloat(value) })
+            }).catch(() => {});
         }
 
         /* ── Rule manipulation functions ── */
@@ -5406,7 +5852,8 @@
                 scale: preset.scale || 1.0,
                 offset: preset.offset || 0.0,
                 is_signed: preset.is_signed || false,
-                is_little_endian: _presetIsLittleEndian(preset)
+                is_little_endian: _presetIsLittleEndian(preset),
+                unit: preset.unit || ''
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -5451,10 +5898,11 @@
                 can_id: isNaN(canId) ? 0 : canId,
                 bit_start: parseInt(document.getElementById('customSigBitStart').value) || 0,
                 bit_length: parseInt(document.getElementById('customSigBitLen').value) || 16,
-                scale: parseFloat(document.getElementById('customSigScale').value) || 1,
+                scale: (v => isNaN(v) ? 1 : v)(parseFloat(document.getElementById('customSigScale').value)),
                 offset: parseFloat(document.getElementById('customSigOffset').value) || 0,
                 is_signed: document.getElementById('customSigSigned').checked,
-                is_little_endian: document.getElementById('customSigEndian').value === 'le'
+                is_little_endian: document.getElementById('customSigEndian').value === 'le',
+                unit: ''
             };
             if (existingIdx >= 0) {
                 currentLayout.signals[existingIdx] = sigObj;
@@ -5555,8 +6003,8 @@
             w.config[field] = finalVal;
 
             /* If this field is a toggle that controls sub-fields, re-render inspector */
-            if (fieldDef && fieldDef.type === 'checkbox' && !fieldDef.enabledBy) {
-                const hasChildren = def.fields.some(f => f.enabledBy === field);
+            if (fieldDef && fieldDef.type === 'checkbox') {
+                const hasChildren = def.fields.some(f => f.enabledBy === field || f.enabledBy === '!' + field);
                 if (hasChildren) updateInspector();
             }
 
@@ -6003,7 +6451,7 @@
             pushHistory();
             currentLayout.signals.push({
                 name: name, can_id: 0, bit_start: 0, bit_length: 16,
-                scale: 1, offset: 0, is_signed: false, is_little_endian: true
+                scale: 1, offset: 0, is_signed: false, is_little_endian: true, unit: ''
             });
             renderSignalTable();
             renderSignals();
@@ -6229,6 +6677,7 @@
                     `<td class="col-scale"${dimStyle}><input type="number" value="${s.offset}" step="0.1" onchange="updateSignalField(${i},'offset',+this.value)"${isInternal ? ' tabindex="-1"' : ''}></td>` +
                     `<td class="col-toggle"${dimStyle}><span class="sig-toggle ${s.is_signed ? 'on' : 'off'}" onclick="${isInternal ? '' : `toggleSignalBool(${i},'is_signed')`}" title="${s.is_signed ? 'Signed' : 'Unsigned'}">${s.is_signed ? 'S' : 'U'}</span></td>` +
                     `<td class="col-toggle"${dimStyle}><span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="${isInternal ? '' : `toggleSignalBool(${i},'is_little_endian')`}" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span></td>` +
+                    `<td class="col-unit"><input type="text" value="${s.unit || ''}" onchange="updateSignalField(${i},'unit',this.value)" spellcheck="false" maxlength="7" placeholder="" title="Display unit (e.g. PSI, C, km/h)"></td>` +
                     `<td class="col-actions"><button class="sig-del-btn" onclick="deleteSignal(${i})" title="Delete signal">&times;</button></td>` +
                     pickBtn +
                     `</tr>`;
@@ -6397,6 +6846,94 @@
             } catch (e) { updateStatus('Delete failed', true); }
         }
 
+        /* ── Layout Rename ──────────────────────────────────────────── */
+
+        function _showRenameOverlay(currentName, onConfirm) {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:320px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+                    <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:14px;letter-spacing:0.03em;">Rename</div>
+                    <input id="_renameInput" type="text" value="${currentName}" maxlength="27"
+                        style="width:100%;box-sizing:border-box;background:#111214;border:1px solid #3a3b40;border-radius:6px;padding:9px 12px;color:#fff;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;"
+                        onfocus="this.select()">
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+                        <button id="_renameCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                        <button id="_renameOk" style="padding:7px 16px;cursor:pointer;background:#3b82f6;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">Rename</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const inp = document.getElementById('_renameInput');
+            const cancel = () => overlay.remove();
+            document.getElementById('_renameCancel').onclick = cancel;
+            overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
+            document.getElementById('_renameOk').onclick = () => {
+                const raw = inp.value.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+                if (!raw) { inp.style.borderColor = '#f44'; return; }
+                overlay.remove();
+                onConfirm(raw);
+            };
+            inp.addEventListener('keydown', e => {
+                if (e.key === 'Enter') document.getElementById('_renameOk').click();
+                if (e.key === 'Escape') cancel();
+            });
+            setTimeout(() => inp.focus(), 50);
+        }
+
+        async function renameCurrentLayout() {
+            const oldName = currentLayout.name || '';
+            if (oldName === 'default') { showToast('Cannot rename default layout', 'error'); return; }
+            _showRenameOverlay(oldName, async (newName) => {
+                if (newName === oldName) return;
+                try {
+                    const resp = await fetch('/api/layout/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ old_name: oldName, new_name: newName })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.text();
+                        showToast(err || 'Rename failed', 'error');
+                        return;
+                    }
+                    currentLayout.name = newName;
+                    await fetchLayoutsKeepCurrent();
+                    renderEditor();
+                    showToast(`Renamed to "${newName}"`, 'success');
+                } catch (e) { showToast('Rename failed', 'error'); }
+            });
+        }
+
+        async function renameSplash() {
+            const sel = document.getElementById('splashSelect');
+            const oldName = sel ? sel.value : '';
+            if (!oldName) return;
+            _showRenameOverlay(oldName, async (newName) => {
+                if (newName === oldName) return;
+                try {
+                    const resp = await fetch('/api/layout/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ old_name: '_splash_' + oldName, new_name: '_splash_' + newName })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.text();
+                        showToast(err || 'Rename failed', 'error');
+                        return;
+                    }
+                    /* Update active splash in NVS */
+                    await fetch('/api/splash/set', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: newName })
+                    });
+                    await fetchSplashes();
+                    showToast(`Renamed to "${newName}"`, 'success');
+                } catch (e) { showToast('Rename failed', 'error'); }
+            });
+        }
+
         /* Backend Sync */
         async function fetchLayouts() {
             try {
@@ -6433,7 +6970,10 @@
         async function loadLayout(name) {
             try {
                 /* Fetch live in-memory state first; fall back to raw file */
-                const fetchName = currentScreenMode === 'splash' ? '_splash' : name;
+                const splashSel = document.getElementById('splashSelect');
+                const fetchName = currentScreenMode === 'splash'
+                    ? '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default')
+                    : name;
                 let response = await fetch('/api/layout/current');
                 if (!response.ok) {
                     response = await fetch(`/api/layout/raw?name=${encodeURIComponent(fetchName)}`);
@@ -6441,7 +6981,7 @@
                 if (!response.ok) {
                     if (currentScreenMode === 'splash') {
                         /* No splash layout yet — start with empty canvas */
-                        currentLayout = { name: '_splash', widgets: [], signals: [] };
+                        currentLayout = { name: fetchName, widgets: [], signals: [] };
                     } else {
                         throw new Error();
                     }
@@ -6462,14 +7002,6 @@
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
-                    }
-                    /* Convert TX data byte arrays to comma-separated strings for editor */
-                    if (w.config) {
-                        ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
-                            if (Array.isArray(w.config[key])) {
-                                w.config[key] = w.config[key].join(',');
-                            }
-                        });
                     }
                     /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                     if (w.config && w.config.rules) {
@@ -6513,9 +7045,10 @@
             const layoutName = currentLayout.name || 'default';
             const isDefault = !isSplash && layoutName === 'default';
 
-            /* Splash layouts always save as _splash */
+            /* Splash layouts save as _splash_<name> */
             if (isSplash) {
-                payload.name = '_splash';
+                const splashSel = document.getElementById('splashSelect');
+                payload.name = '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default');
             }
 
             /* Confirm which layout will be overwritten */
@@ -6606,9 +7139,17 @@
                     if (type === 'image') {
                         html += `<button onclick="_smEditImage('${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Resize / Crop">Edit</button>`;
                     }
-                    html += `<button onclick="_smCopyToSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px;" title="Copy to SD">→ SD</button>`;
+                    if (type === 'layout' && name !== 'default') {
+                        html += `<button onclick="_smRenameLayout('${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Rename">Ren</button>`;
+                    }
+                    html += `<button onclick="_smCopyToSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Copy to SD">\u2192 SD</button>`;
+                    /* Delete from internal (protect default layout) */
+                    const canDelete = !(type === 'layout' && name === 'default');
+                    if (canDelete) {
+                        html += `<button onclick="_smDeleteInternal('${type}','${name}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete">&times;</button>`;
+                    }
                 } else {
-                    html += `<button onclick="_smCopyFromSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">← Int</button>`;
+                    html += `<button onclick="_smCopyFromSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">\u2190 Int</button>`;
                     html += `<button onclick="_smDeleteFromSD('${type}','${name}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete from SD">&times;</button>`;
                 }
                 html += `</div>`;
@@ -6740,6 +7281,57 @@
                 await _smRefresh();
                 refreshStorageInfo();
             } catch(e) { showToast('Delete failed: ' + e.message, 'error'); }
+        }
+
+        async function _smDeleteInternal(type, name) {
+            const typeLabel = type === 'layout' ? 'layout' : type === 'image' ? 'image' : 'font';
+            if (!confirm(`Delete ${typeLabel} "${name}" from internal storage?`)) return;
+            try {
+                let url;
+                if (type === 'layout') {
+                    url = '/api/layout/delete';
+                } else if (type === 'image') {
+                    url = `/api/image/delete?name=${encodeURIComponent(name)}`;
+                } else {
+                    url = `/api/font/delete?name=${encodeURIComponent(name)}`;
+                }
+                const opts = { method: 'POST' };
+                if (type === 'layout') {
+                    opts.headers = { 'Content-Type': 'application/json' };
+                    opts.body = JSON.stringify({ name });
+                }
+                const resp = await fetch(url, opts);
+                if (!resp.ok) { showToast('Delete failed', 'error'); return; }
+                showToast(`Deleted ${name}`);
+                await _smRefresh();
+                refreshStorageInfo();
+                /* Refresh relevant caches */
+                if (type === 'layout') await fetchLayoutsKeepCurrent();
+                if (type === 'font') await _refreshFontList();
+            } catch(e) { showToast('Delete failed: ' + e.message, 'error'); }
+        }
+
+        function _smRenameLayout(oldName) {
+            _showRenameOverlay(oldName, async (newName) => {
+                if (newName === oldName) return;
+                try {
+                    const resp = await fetch('/api/layout/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ old_name: oldName, new_name: newName })
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.text();
+                        showToast(err || 'Rename failed', 'error');
+                        return;
+                    }
+                    /* Update editor if we renamed the currently-loaded layout */
+                    if (currentLayout.name === oldName) currentLayout.name = newName;
+                    await fetchLayoutsKeepCurrent();
+                    await _smRefresh();
+                    showToast(`Renamed to "${newName}"`, 'success');
+                } catch (e) { showToast('Rename failed', 'error'); }
+            });
         }
 
         function _rdmimgToCanvas(buf) {
@@ -7038,11 +7630,13 @@
         }
 
         function downloadJson() {
-            const blob = new Blob([JSON.stringify(currentLayout, null, 2)], { type: 'application/json' });
+            const payload = buildFirmwarePayload();
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = `${currentLayout.name}.json`;
+            a.href = url; a.download = `${currentLayout.name || 'layout'}.json`;
             a.click();
+            URL.revokeObjectURL(url);
         }
 
         /* ── .rdm Bundle Export/Import ────────────────────────────── */
@@ -7055,7 +7649,7 @@
          *     [8-15]  Reserved (zeros)
          *
          *   Per entry:
-         *     [0]       Type: uint8 (0 = layout JSON, 1 = image)
+         *     [0]       Type: uint8 (0 = layout JSON, 1 = image, 2 = font TTF)
          *     [1]       Name length: uint8
          *     [2..N]    Name: UTF-8 (name_length bytes)
          *     [N..N+4]  Data length: uint32 LE
@@ -7066,22 +7660,30 @@
             const name = currentLayout.name || 'layout';
             updateStatus('Building .rdm bundle...');
 
-            /* Collect image names referenced by image and meter widgets */
+            /* Collect image names by scanning WIDGET_DEFS for image_picker fields */
             const imageNames = new Set();
+            const fontFamilies = new Set();
             (currentLayout.widgets || []).forEach(w => {
-                if (!w.config) return;
-                if (w.type === 'image' && w.config.image_name)
-                    imageNames.add(w.config.image_name);
-                if (w.type === 'meter') {
-                    if (w.config.bg_image_name) imageNames.add(w.config.bg_image_name);
-                    if (w.config.needle_image_name) imageNames.add(w.config.needle_image_name);
-                }
+                if (!w.config || !w.type) return;
+                const def = WIDGET_DEFS[w.type];
+                if (!def || !def.fields) return;
+                def.fields.forEach(f => {
+                    if (f.type === 'image_picker') {
+                        const val = w.config[f.name];
+                        if (val) imageNames.add(val);
+                    }
+                    if (f.type === 'font') {
+                        const parsed = parseFontValue(w.config[f.name]);
+                        if (parsed && parsed.custom) fontFamilies.add(parsed.family);
+                    }
+                });
             });
 
             /* Fetch image binaries from device */
             const images = [];
             for (const imgName of imageNames) {
                 try {
+                    updateStatus(`Fetching image "${imgName}"...`);
                     const resp = await fetch(`/api/image/data?name=${encodeURIComponent(imgName)}`);
                     if (!resp.ok) {
                         updateStatus(`Warning: could not fetch image "${imgName}"`, true);
@@ -7093,15 +7695,30 @@
                 }
             }
 
+            /* Fetch font TTF binaries from device (skip built-in fonts) */
+            const fonts = [];
+            for (const family of fontFamilies) {
+                try {
+                    updateStatus(`Fetching font "${family}"...`);
+                    const resp = await fetch(`/api/font/data?name=${encodeURIComponent(family)}`);
+                    if (!resp.ok) {
+                        updateStatus(`Warning: could not fetch font "${family}"`, true);
+                        continue;
+                    }
+                    fonts.push({ name: family, data: new Uint8Array(await resp.arrayBuffer()) });
+                } catch (e) {
+                    updateStatus(`Warning: failed to fetch font "${family}"`, true);
+                }
+            }
+
             /* Serialize layout as firmware-ready JSON (RGB565, signal_name mapped) */
             const payload = buildFirmwarePayload();
             const layoutJson = JSON.stringify(payload, null, 2);
             const layoutBytes = new TextEncoder().encode(layoutJson);
 
             /* Calculate total size */
-            const entryCount = 1 + images.length;
+            const entryCount = 1 + images.length + fonts.length;
             let totalSize = 16; /* header */
-            /* Layout entry: 1 (type) + 1 (name len) + name.length + 4 (data len) + data.length */
             const nameBytes = new TextEncoder().encode(name);
             totalSize += 1 + 1 + nameBytes.length + 4 + layoutBytes.length;
             const imageEntries = images.map(img => {
@@ -7109,6 +7726,13 @@
                 return { nameBytes: nb, data: img.data };
             });
             for (const entry of imageEntries) {
+                totalSize += 1 + 1 + entry.nameBytes.length + 4 + entry.data.length;
+            }
+            const fontEntries = fonts.map(fnt => {
+                const nb = new TextEncoder().encode(fnt.name);
+                return { nameBytes: nb, data: fnt.data };
+            });
+            for (const entry of fontEntries) {
                 totalSize += 1 + 1 + entry.nameBytes.length + 4 + entry.data.length;
             }
 
@@ -7140,6 +7764,15 @@
                 u8.set(entry.data, off); off += entry.data.length;
             }
 
+            /* Font entries */
+            for (const entry of fontEntries) {
+                u8[off++] = 2; /* type = font */
+                u8[off++] = entry.nameBytes.length;
+                u8.set(entry.nameBytes, off); off += entry.nameBytes.length;
+                view.setUint32(off, entry.data.length, true); off += 4;
+                u8.set(entry.data, off); off += entry.data.length;
+            }
+
             /* Download */
             const blob = new Blob([buf], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
@@ -7148,9 +7781,12 @@
             a.click();
             URL.revokeObjectURL(url);
 
-            const imgMsg = images.length > 0 ? ` with ${images.length} image${images.length > 1 ? 's' : ''}` : '';
-            updateStatus(`Exported ${name}.rdm${imgMsg}`);
-            showToast(`Exported ${name}.rdm${imgMsg}`, 'success');
+            const parts = [];
+            if (images.length > 0) parts.push(`${images.length} image${images.length > 1 ? 's' : ''}`);
+            if (fonts.length > 0) parts.push(`${fonts.length} font${fonts.length > 1 ? 's' : ''}`);
+            const assetMsg = parts.length > 0 ? ` with ${parts.join(', ')}` : '';
+            updateStatus(`Exported ${name}.rdm${assetMsg}`);
+            showToast(`Exported ${name}.rdm${assetMsg}`, 'success');
         }
 
         function importRdm() {
@@ -7180,6 +7816,7 @@
                     let layoutData = null;
                     let layoutName = '';
                     const images = [];
+                    const fonts = [];
 
                     /* Parse entries */
                     for (let i = 0; i < entryCount; i++) {
@@ -7201,6 +7838,8 @@
                             layoutName = entryName;
                         } else if (entryType === 1) {
                             images.push({ name: entryName, data: data });
+                        } else if (entryType === 2) {
+                            fonts.push({ name: entryName, data: data });
                         }
                     }
 
@@ -7208,8 +7847,27 @@
                     if (!layoutData.widgets || !Array.isArray(layoutData.widgets))
                         throw new Error('Invalid layout: missing widgets array');
 
+                    /* Check storage space before uploading assets */
+                    const totalAssetBytes = images.reduce((s, i) => s + i.data.length, 0)
+                                          + fonts.reduce((s, f) => s + f.data.length, 0);
+                    if (totalAssetBytes > 0) {
+                        try {
+                            const storageResp = await fetch('/api/storage/info');
+                            if (storageResp.ok) {
+                                const info = await storageResp.json();
+                                if (totalAssetBytes > info.free) {
+                                    const needKB = (totalAssetBytes / 1024).toFixed(0);
+                                    const freeKB = (info.free / 1024).toFixed(0);
+                                    throw new Error(`Not enough storage: need ${needKB} KB, only ${freeKB} KB free`);
+                                }
+                            }
+                        } catch (e) {
+                            if (e.message.includes('Not enough storage')) throw e;
+                        }
+                    }
+
                     /* Upload images to device */
-                    let uploadedCount = 0;
+                    let uploadedImages = 0;
                     for (const img of images) {
                         try {
                             updateStatus(`Uploading image "${img.name}"...`);
@@ -7218,11 +7876,46 @@
                                 headers: { 'Content-Type': 'application/octet-stream' },
                                 body: img.data
                             });
-                            if (resp.ok) uploadedCount++;
+                            if (resp.ok) uploadedImages++;
                             else updateStatus(`Warning: failed to upload image "${img.name}"`, true);
                         } catch (e) {
                             updateStatus(`Warning: failed to upload image "${img.name}"`, true);
                         }
+                    }
+
+                    /* Upload fonts — check for duplicates, ask user */
+                    let uploadedFonts = 0;
+                    if (fonts.length > 0) {
+                        /* Get existing font list to detect duplicates */
+                        let existingFonts = [];
+                        try {
+                            const flResp = await fetch('/api/font/list');
+                            if (flResp.ok) existingFonts = await flResp.json();
+                        } catch (e) { /* ignore */ }
+
+                        for (const fnt of fonts) {
+                            const exists = existingFonts.includes(fnt.name);
+                            if (exists) {
+                                const overwrite = confirm(`Font "${fnt.name}" already exists on device. Overwrite it?`);
+                                if (!overwrite) {
+                                    uploadedFonts++;
+                                    continue;
+                                }
+                            }
+                            try {
+                                updateStatus(`Uploading font "${fnt.name}"...`);
+                                const resp = await fetch(`/api/font/upload?name=${encodeURIComponent(fnt.name)}`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/octet-stream' },
+                                    body: fnt.data
+                                });
+                                if (resp.ok) uploadedFonts++;
+                                else updateStatus(`Warning: failed to upload font "${fnt.name}"`, true);
+                            } catch (e) {
+                                updateStatus(`Warning: failed to upload font "${fnt.name}"`, true);
+                            }
+                        }
+                        await _refreshFontList();
                     }
 
                     /* layoutData is in firmware format (RGB565, signal_name in config).
@@ -7247,18 +7940,7 @@
 
                     /* Now convert to web-editor format */
                     pushHistory();
-                    (layoutData.widgets || []).forEach(w => {
-                        if (w.config && w.config.signal_name && !w.signal)
-                            w.signal = w.config.signal_name;
-                        if (w.type === 'bar' && w.config) {
-                            const lo = w.config.bar_low !== undefined ? w.config.bar_low : 0;
-                            const hi = w.config.bar_high !== undefined ? w.config.bar_high : 100;
-                            const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
-                            const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
-                            w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
-                        }
-                    });
-                    convertWidgetColors(layoutData.widgets, rgb565to888);
+                    firmwareToWebFormat(layoutData);
                     currentLayout = layoutData;
                     selectedIndex = -1; selectedIndices = new Set();
                     history = [JSON.stringify(currentLayout)];
@@ -7269,11 +7951,15 @@
                     renderEditor();
                     renderSignals();
                     updateInspector();
+                    refreshStorageInfo();
                     await fetchLayoutsKeepCurrent();
 
-                    const imgMsg = images.length > 0 ? ` + ${uploadedCount}/${images.length} images` : '';
-                    updateStatus(`Imported ${file.name}${imgMsg}`);
-                    showToast(`Imported ${file.name}${imgMsg}`, 'success');
+                    const parts = [];
+                    if (images.length > 0) parts.push(`${uploadedImages}/${images.length} images`);
+                    if (fonts.length > 0) parts.push(`${uploadedFonts}/${fonts.length} fonts`);
+                    const assetMsg = parts.length > 0 ? ` + ${parts.join(', ')}` : '';
+                    updateStatus(`Imported ${file.name}${assetMsg}`);
+                    showToast(`Imported ${file.name}${assetMsg}`, 'success');
                 } catch (err) {
                     updateStatus('Failed to import .rdm: ' + err.message, true);
                     showToast('Import failed: ' + err.message, 'error');
@@ -7311,14 +7997,6 @@
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
                     }
-                    /* Convert TX data byte arrays to comma-separated strings for editor */
-                    if (w.config) {
-                        ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
-                            if (Array.isArray(w.config[key])) {
-                                w.config[key] = w.config[key].join(',');
-                            }
-                        });
-                    }
                     /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                     if (w.config && w.config.rules) {
                         w.config.rules.forEach(rule => {
@@ -7339,7 +8017,7 @@
                     }
                 });
                 convertWidgetColors(currentLayout.widgets, rgb565to888);
-                _editingActive = true;
+                _editingActive = false;
                 selectedIndex = -1; selectedIndices = new Set();
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
@@ -7357,6 +8035,7 @@
         let _lastDeviceSnapshot = '';
         let _syncTimer = null;
         let _editingActive = false;
+        let _lastKnownVersion = -1;
 
         function hasUnsavedEdits() {
             if (!history.length) return false;
@@ -7366,13 +8045,22 @@
         async function syncFromDevice() {
             if (_editingActive || selectedIndex >= 0) return;
             try {
+                /* Check lightweight version endpoint first to avoid
+                   fetching the full layout JSON on every poll cycle */
+                const vResp = await fetch('/api/layout/version');
+                if (vResp.ok) {
+                    const vData = await vResp.json();
+                    if (vData.v === _lastKnownVersion) return;
+                    _lastKnownVersion = vData.v;
+                }
+
                 const resp = await fetch('/api/layout/current');
                 if (!resp.ok) return;
                 const deviceLayout = await resp.json();
                 const deviceSnap = JSON.stringify(deviceLayout);
 
                 /* Detect device-side mode change (e.g. splash exited by boot timer) */
-                const deviceIsSplash = (deviceLayout.name || '') === '_splash';
+                const deviceIsSplash = (deviceLayout.name || '').startsWith('_splash_');
                 const webIsSplash = currentScreenMode === 'splash';
                 if (deviceIsSplash !== webIsSplash) {
                     currentScreenMode = deviceIsSplash ? 'splash' : 'dashboard';
@@ -7411,14 +8099,6 @@
                     (currentLayout.widgets || []).forEach(w => {
                         if (w.config && w.config.signal_name && !w.signal) {
                             w.signal = w.config.signal_name;
-                        }
-                        /* Convert TX data byte arrays to comma-separated strings for editor */
-                        if (w.config) {
-                            ['tx_on_data', 'tx_off_data', 'tx_press_data', 'tx_release_data'].forEach(key => {
-                                if (Array.isArray(w.config[key])) {
-                                    w.config[key] = w.config[key].join(',');
-                                }
-                            });
                         }
                         /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                         if (w.config && w.config.rules) {
@@ -7530,12 +8210,13 @@
             }
         }
 
-        /* Override layoutEditorNew to show ECU modal */
+        /* Override layoutEditorNew to show ECU modal and save immediately */
         const _origLayoutEditorNew = layoutEditorNew;
         layoutEditorNew = async function() {
             const name = prompt('New layout name:', '');
             if (!name || !name.trim()) return;
             const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+            if (safeName === 'default') { showToast('Cannot use name "default"', 'error'); return; }
             const ecuChoice = await showEcuModal();
             pushHistory();
             currentLayout = { name: safeName, widgets: [], signals: [] };
@@ -7548,8 +8229,22 @@
             renderEditor();
             renderSignals();
             updateInspector();
+            /* Save empty layout to device immediately */
+            try {
+                const payload = buildFirmwarePayload();
+                await fetch('/api/layout/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                _editingActive = false;
+                _lastDeviceSnapshot = JSON.stringify(payload);
+                history = [JSON.stringify(currentLayout)];
+                historyIndex = 0;
+                await fetchLayoutsKeepCurrent();
+            } catch (e) { /* save failed, layout exists in editor only */ }
             updateStatus('Created new layout: ' + safeName + (ecuChoice.ecu ? ` (${ecuChoice.ecu})` : ''));
-            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            showToast('Created ' + safeName, 'success');
         };
 
         /* ── Signal sidebar: sort ECU-matching signals to top ──────── */
@@ -7824,6 +8519,7 @@
                 updateStatus('Failed to save dimmer settings', true);
             }
         }
+
     </script>
 </body>
 

@@ -12,6 +12,11 @@ extern void indicator_apply_analog_state(bool left_on, bool right_on);
 
 void wire_inputs_init(void)
 {
+    /* Guard: skip GPIO init when pins are disabled (-1) */
+    if (WIRE_INPUT_LEFT_GPIO < 0 || WIRE_INPUT_RIGHT_GPIO < 0) {
+        return;
+    }
+
     gpio_config_t io_conf = {
         .pin_bit_mask  = (1ULL << WIRE_INPUT_LEFT_GPIO) | (1ULL << WIRE_INPUT_RIGHT_GPIO),
         .mode          = GPIO_MODE_INPUT,
@@ -29,6 +34,12 @@ void wire_inputs_task(void *pvParam)
     (void)pvParam;
     /* Allow GPIO to stabilise and the UI to initialise before first sample */
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Guard: skip polling when pins are disabled (-1) */
+    if (WIRE_INPUT_LEFT_GPIO < 0 || WIRE_INPUT_RIGHT_GPIO < 0) {
+        vTaskDelete(NULL);
+        return;
+    }
 
     for (;;) {
         bool left_on  = (gpio_get_level(WIRE_INPUT_LEFT_GPIO)  == 1);

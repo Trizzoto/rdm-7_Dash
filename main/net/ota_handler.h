@@ -27,9 +27,13 @@ ota_status_t get_ota_status(void);
 const char* get_latest_version(void);
 int get_ota_progress(void);
 float get_update_file_size_mb(void);
-const char* get_update_type_str(void);
 const char* get_release_notes(void);
 void initialize_sntp(void);
 void debug_ota_connectivity(void);
 
-#endif 
+/* Set a custom firmware download URL (plain HTTP recommended).
+ * If not set, defaults to OTA_DEFAULT_BASE_URL/<version>/esp32-firmware.bin */
+void ota_set_firmware_url(const char *url);
+const char *ota_get_firmware_url(void);
+
+#endif

@@ -5,10 +5,9 @@
 #include "../theme.h"
 #include "../ui.h"
 #include "config_modal.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "lvgl.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Externs not already covered by the headers above */
@@ -53,6 +52,30 @@ static void do_screen_transition(lv_obj_t *old, lv_obj_t *btn) {
 	clear_menu_refs();
 }
 
+/* ── deferred transition context ─────────────────────────────── */
+
+typedef struct {
+	lv_obj_t *old_screen;
+	lv_obj_t *btn;
+	lv_obj_t *indicator;
+} deferred_transition_t;
+
+static void _deferred_save_transition_cb(lv_timer_t *t) {
+	deferred_transition_t *ctx = (deferred_transition_t *)t->user_data;
+	if (ctx->indicator && lv_obj_is_valid(ctx->indicator))
+		lv_obj_del(ctx->indicator);
+	do_screen_transition(ctx->old_screen, ctx->btn);
+	free(ctx);
+}
+
+static void _deferred_cancel_transition_cb(lv_timer_t *t) {
+	deferred_transition_t *ctx = (deferred_transition_t *)t->user_data;
+	if (ctx->indicator && lv_obj_is_valid(ctx->indicator))
+		lv_obj_del(ctx->indicator);
+	do_screen_transition(ctx->old_screen, ctx->btn);
+	free(ctx);
+}
+
 /* ── public API ───────────────────────────────────────────────── */
 
 void close_menu_event_cb(lv_event_t *e) {
@@ -68,15 +91,26 @@ void close_menu_event_cb(lv_event_t *e) {
 	lv_label_set_text(ind, "Saving...");
 	lv_obj_align(ind, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(ind, THEME_FONT_MEDIUM, 0);
 	lv_refr_now(NULL);
 
 	/* Persist widget config into JSON layout on LittleFS */
 	dashboard_persist_layout();
-
 	reconfigure_can_filter();
-	vTaskDelay(pdMS_TO_TICKS(50));
-	lv_obj_del(ind);
-	do_screen_transition(old, btn);
+
+	/* Defer the screen transition so the LVGL task is not blocked */
+	deferred_transition_t *ctx = malloc(sizeof(deferred_transition_t));
+	if (ctx) {
+		ctx->old_screen = old;
+		ctx->btn = btn;
+		ctx->indicator = ind;
+		lv_timer_t *tm = lv_timer_create(_deferred_save_transition_cb, 50, ctx);
+		lv_timer_set_repeat_count(tm, 1);
+	} else {
+		/* Fallback: transition immediately if malloc fails */
+		lv_obj_del(ind);
+		do_screen_transition(old, btn);
+	}
 }
 
 void cancel_menu_event_cb(lv_event_t *e) {
@@ -92,11 +126,21 @@ void cancel_menu_event_cb(lv_event_t *e) {
 	lv_label_set_text(ind, "Canceling...");
 	lv_obj_align(ind, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_text_color(ind, THEME_COLOR_TEXT_PRIMARY, 0);
+	lv_obj_set_style_text_font(ind, THEME_FONT_MEDIUM, 0);
 	lv_refr_now(NULL);
 
-	vTaskDelay(pdMS_TO_TICKS(200));
-	lv_obj_del(ind);
-	do_screen_transition(old, btn);
+	/* Defer the screen transition so the LVGL task is not blocked */
+	deferred_transition_t *ctx = malloc(sizeof(deferred_transition_t));
+	if (ctx) {
+		ctx->old_screen = old;
+		ctx->btn = btn;
+		ctx->indicator = ind;
+		lv_timer_t *tm = lv_timer_create(_deferred_cancel_transition_cb, 200, ctx);
+		lv_timer_set_repeat_count(tm, 1);
+	} else {
+		lv_obj_del(ind);
+		do_screen_transition(old, btn);
+	}
 }
 
 void load_menu_screen_for_widget(widget_t *w) {
@@ -104,7 +148,7 @@ void load_menu_screen_for_widget(widget_t *w) {
 	destroy_preconfig_menu();
 
 	ui_MenuScreen = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(ui_MenuScreen, lv_color_black(), 0);
+	lv_obj_set_style_bg_color(ui_MenuScreen, THEME_COLOR_BG, 0);
 	lv_obj_set_style_bg_opa(ui_MenuScreen, LV_OPA_COVER, 0);
 	lv_obj_clear_flag(ui_MenuScreen, LV_OBJ_FLAG_SCROLLABLE);
 

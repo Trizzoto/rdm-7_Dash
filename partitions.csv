@@ -3,13 +3,10 @@
 nvs,        data,  nvs,      0x9000,   0x24000,
 otadata,    data,  ota,      0x2d000,  0x2000,
 phy_init,   data,  phy,      0x2f000,  0x1000,
-# OTA dual-bank app partitions (each 0x290000 = 2.5625 MB)
-# ota_0 start    : 0x030000
-# ota_0 end      : 0x2C0000
-# ota_1 end      : 0x550000
-ota_0,      app,   ota_0,    0x30000,  0x290000,
-ota_1,      app,   ota_1,    ,         0x290000,
-# LittleFS data partition (layouts + web assets)
-# start          : 0x550000
-# end            : 0x800000  (fills 8 MB flash exactly)
-littlefs,   data,  spiffs,   ,         0x2B0000,
+# OTA dual-bank app partitions (each 0x380000 = 3.5 MB)
+ota_0,      app,   ota_0,    0x30000,  0x380000,
+ota_1,      app,   ota_1,    ,         0x380000,
+# LittleFS data partition (layouts, images, fonts)
+# start          : 0x730000
+# end            : 0x1000000 (fills 16 MB flash)
+littlefs,   data,  spiffs,   ,         0x8D0000,

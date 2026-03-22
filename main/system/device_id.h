@@ -5,7 +5,8 @@
 #include <stdbool.h>
 
 // Maximum length for serial number string (RDM-XXXX-XXXX format)
-#define MAX_SERIAL_LENGTH 13
+// "RDM-XXXX-XXXX" = 13 chars + null terminator = 14 bytes minimum; 16 for alignment
+#define MAX_SERIAL_LENGTH 16
 
 /**
  * @brief Initialize the device ID system

@@ -63,6 +63,17 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 		lv_label_set_text(label, td->static_text);
 	else
 		lv_label_set_text(label, "---");
+
+	/* Apply rotation if set */
+	if (td && td->rotation != 0) {
+		lv_obj_set_style_transform_angle(label, td->rotation * 10,
+		                                 LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_transform_pivot_x(label, (lv_coord_t)(w->w / 2),
+		                                   LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_transform_pivot_y(label, (lv_coord_t)(w->h / 2),
+		                                   LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
 	w->root = label;
 
 	/* Subscribe to signal if bound */
@@ -97,6 +108,8 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "font", td->font);
 		if (td->text_color.full != TEXT_DEFAULT_COLOR.full)
 			cJSON_AddNumberToObject(cfg, "text_color", td->text_color.full);
+		if (td->rotation != 0)
+			cJSON_AddNumberToObject(cfg, "rotation", td->rotation);
 	}
 }
 
@@ -130,6 +143,9 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "text_color");
 	if (cJSON_IsNumber(item)) td->text_color.full = (uint16_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rotation");
+	if (cJSON_IsNumber(item)) td->rotation = (int16_t)item->valueint;
 
 	/* Resolve signal name → index */
 	if (td->signal_name[0] != '\0')

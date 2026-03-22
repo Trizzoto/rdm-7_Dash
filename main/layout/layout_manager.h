@@ -33,7 +33,7 @@ extern "C" {
 #define LAYOUT_MAX_FILE_BYTES 32768
 
 /* Current layout JSON schema version (single source of truth). */
-#define LAYOUT_SCHEMA_VERSION 9
+#define LAYOUT_SCHEMA_VERSION 10
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
@@ -159,6 +159,15 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
 								  size_t buf_size, size_t *out_len);
 
 /**
+ * @brief Return a monotonically increasing version counter.
+ *
+ * Incremented on every layout save (save_raw) and load.  The web editor
+ * can poll this cheaply to decide whether the full layout JSON needs to
+ * be re-fetched.
+ */
+uint32_t layout_manager_get_version(void);
+
+/**
  * @brief Apply an already-parsed cJSON layout tree, creating widgets on
  *        @p parent without reading from disk.
  *
@@ -169,6 +178,38 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
  * @return ESP_OK on success.
  */
 esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent);
+
+/**
+ * @brief Enumerate available splash layouts.
+ *
+ * Scans /lfs/layouts/ for files matching `_splash_*.json`, strips the
+ * prefix and suffix, and writes bare names into @p names.
+ *
+ * @param names     Array of LAYOUT_MAX_NAME-byte buffers.
+ * @param max_count Maximum entries to write.
+ * @return Number of splash layouts found (≤ max_count), or -1 on error.
+ */
+int layout_manager_list_splash(char names[][LAYOUT_MAX_NAME], int max_count);
+
+/**
+ * @brief Persist the active splash layout name to NVS.
+ *
+ * @param name Bare splash name (e.g. "Default", "Racing").
+ * @return ESP_OK on success.
+ */
+esp_err_t layout_manager_set_active_splash(const char *name);
+
+/**
+ * @brief Read the active splash layout name from NVS.
+ *
+ * Copies the bare name into @p name_out.  Defaults to "Default" if
+ * no splash has been explicitly set.
+ *
+ * @param name_out Buffer to receive the name.
+ * @param len      Size of @p name_out in bytes.
+ * @return ESP_OK on success.
+ */
+esp_err_t layout_manager_get_active_splash(char *name_out, size_t len);
 
 #ifdef __cplusplus
 }

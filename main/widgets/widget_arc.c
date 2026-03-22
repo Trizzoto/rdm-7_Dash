@@ -1,12 +1,20 @@
 /*
- * widget_arc.c -- Decorative arc/ring shape widget (no data binding).
+ * widget_arc.c -- Arc widget with optional signal binding and image mode.
  *
- * Purely visual decoration: renders a foreground and background arc
- * with configurable angles, widths, colors, and rounded ends.
- * No signal subscription or CAN integration.
+ * Supports three modes:
+ *   1. Static arc (no signal) -- decorative foreground + background arc
+ *   2. Signal-bound arc -- indicator value driven by signal percentage
+ *   3. Image mode -- track + fill images with clip-based reveal
+ *
+ * When both arc_image and arc_image_full are set, the LVGL arc is replaced
+ * with two images: the track image as background and the fill image
+ * progressively revealed left-to-right via a clipping container whose
+ * width is set proportional to the signal value.
  */
 #include "widget_arc.h"
+#include "widget_image.h"
 #include "widget_rules.h"
+#include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -27,10 +35,160 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_BG_COLOR   0x333333
 #define ARC_DEFAULT_BG_WIDTH    10
 #define ARC_DEFAULT_ROUNDED     false
+#define ARC_DEFAULT_SIG_MIN     0.0f
+#define ARC_DEFAULT_SIG_MAX     100.0f
 
-static void _arc_create(widget_t *w, lv_obj_t *parent) {
+/* Forward declarations */
+static void _arc_on_signal(float value, bool is_stale, void *user_data);
+
+/* ── Helper: check if arc is in image mode ─────────────────────────────── */
+
+static bool _is_image_mode(const arc_data_t *d) {
+    return d->arc_image[0] != '\0' && d->arc_image_full[0] != '\0';
+}
+
+static bool _is_static_image_mode(const arc_data_t *d) {
+    return d->arc_image[0] != '\0' && d->arc_image_full[0] == '\0';
+}
+
+/* ── Helper: update clip width from signal value ───────────────────────── */
+
+static void _update_image_clip(widget_t *w, float value) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d || !d->img_clip_obj) return;
+
+    float range = d->signal_max - d->signal_min;
+    if (range <= 0.0f) range = 100.0f;
+    float pct = (value - d->signal_min) / range;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+
+    lv_coord_t clip_w = (lv_coord_t)(pct * (float)w->w);
+    lv_obj_set_width(d->img_clip_obj, clip_w);
+}
+
+/* ── Helper: update standard arc value from signal ─────────────────────── */
+
+static void _update_arc_value(widget_t *w, float value) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d || !d->arc_obj) return;
+
+    float range = d->signal_max - d->signal_min;
+    if (range <= 0.0f) range = 100.0f;
+    float pct = (value - d->signal_min) / range;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+
+    lv_arc_set_value(d->arc_obj, (int16_t)(pct * 100.0f));
+}
+
+/* ── Signal callback ───────────────────────────────────────────────────── */
+
+static void _arc_on_signal(float value, bool is_stale, void *user_data) {
+    widget_t *w = (widget_t *)user_data;
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (!d) return;
+
+    if (is_stale) {
+        if (_is_image_mode(d) && d->img_clip_obj) {
+            lv_obj_set_width(d->img_clip_obj, 0);
+        } else if (d->arc_obj) {
+            lv_arc_set_value(d->arc_obj, 0);
+        }
+        return;
+    }
+
+    if (_is_image_mode(d)) {
+        _update_image_clip(w, value);
+    } else if (d->arc_obj) {
+        _update_arc_value(w, value);
+    }
+}
+
+/* ── Create: image mode ────────────────────────────────────────────────── */
+
+static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+
+    /* Create a transparent container as root */
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_set_size(cont, w->w, w->h);
+    lv_obj_set_align(cont, LV_ALIGN_CENTER);
+    lv_obj_set_pos(cont, w->x, w->y);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN);
+
+    /* Load track (background) image */
+    d->arc_img_dsc = rdm_image_load(d->arc_image);
+    if (d->arc_img_dsc) {
+        d->img_bg_obj = lv_img_create(cont);
+        lv_img_set_src(d->img_bg_obj, d->arc_img_dsc);
+        lv_obj_set_align(d->img_bg_obj, LV_ALIGN_CENTER);
+    } else {
+        ESP_LOGW(TAG, "Failed to load track image '%s'", d->arc_image);
+    }
+
+    /* Load fill image */
+    d->arc_img_full_dsc = rdm_image_load(d->arc_image_full);
+    if (d->arc_img_full_dsc) {
+        /* Create clip container -- starts at width 0 (empty) */
+        d->img_clip_obj = lv_obj_create(cont);
+        lv_obj_set_size(d->img_clip_obj, 0, w->h);
+        lv_obj_set_align(d->img_clip_obj, LV_ALIGN_LEFT_MID);
+        lv_obj_clear_flag(d->img_clip_obj, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_opa(d->img_clip_obj, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(d->img_clip_obj, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(d->img_clip_obj, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(d->img_clip_obj, 0, LV_PART_MAIN);
+
+        /* Full image inside the clip container, aligned to left so it
+         * gets progressively revealed as clip container width grows */
+        d->img_full_obj = lv_img_create(d->img_clip_obj);
+        lv_img_set_src(d->img_full_obj, d->arc_img_full_dsc);
+        lv_obj_set_align(d->img_full_obj, LV_ALIGN_LEFT_MID);
+    } else {
+        ESP_LOGW(TAG, "Failed to load fill image '%s'", d->arc_image_full);
+    }
+
+    w->root = cont;
+}
+
+/* ── Create: static image mode (track only, no fill) ───────────────────── */
+
+static void _arc_create_static_image(widget_t *w, lv_obj_t *parent) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_set_size(cont, w->w, w->h);
+    lv_obj_set_align(cont, LV_ALIGN_CENTER);
+    lv_obj_set_pos(cont, w->x, w->y);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN);
+
+    d->arc_img_dsc = rdm_image_load(d->arc_image);
+    if (d->arc_img_dsc) {
+        d->img_bg_obj = lv_img_create(cont);
+        lv_img_set_src(d->img_bg_obj, d->arc_img_dsc);
+        lv_obj_set_align(d->img_bg_obj, LV_ALIGN_CENTER);
+    } else {
+        lv_obj_t *lbl = lv_label_create(cont);
+        lv_label_set_text(lbl, d->arc_image);
+        lv_obj_set_align(lbl, LV_ALIGN_CENTER);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), LV_PART_MAIN);
+    }
+
+    w->root = cont;
+}
+
+/* ── Create: standard arc mode ─────────────────────────────────────────── */
+
+static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
 
     lv_obj_t *obj = lv_arc_create(parent);
     lv_obj_set_size(obj, w->w, w->h);
@@ -47,9 +205,15 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     lv_obj_set_style_arc_width(obj, d->bg_arc_width, LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(obj, d->rounded_ends, LV_PART_MAIN);
 
-    /* Foreground/indicator arc (LV_PART_INDICATOR) -- fill completely */
+    /* Foreground/indicator arc (LV_PART_INDICATOR) */
     lv_arc_set_range(obj, 0, 100);
-    lv_arc_set_value(obj, 100);
+    if (d->signal_index >= 0) {
+        /* Signal-bound: start at 0, signal callback will update */
+        lv_arc_set_value(obj, 0);
+    } else {
+        /* Static: fill completely */
+        lv_arc_set_value(obj, 100);
+    }
     lv_arc_set_angles(obj, d->start_angle, d->end_angle);
     lv_obj_set_style_arc_color(obj, d->arc_color, LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(obj, d->arc_width, LV_PART_INDICATOR);
@@ -64,6 +228,28 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
 
     d->arc_obj = obj;
     w->root = obj;
+}
+
+/* ── Vtable: create ────────────────────────────────────────────────────── */
+
+static void _arc_create(widget_t *w, lv_obj_t *parent) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d) return;
+
+    if (_is_image_mode(d)) {
+        _arc_create_image_mode(w, parent);
+    } else if (_is_static_image_mode(d)) {
+        _arc_create_static_image(w, parent);
+    } else {
+        _arc_create_standard(w, parent);
+    }
+
+    /* Subscribe to signal after w->root is set */
+    if (d->signal_index >= 0)
+        signal_subscribe(d->signal_index, _arc_on_signal, w);
+
+    /* Subscribe rules (safe no-op if no rules defined) */
+    widget_rules_subscribe(w);
 }
 
 static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -83,20 +269,38 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     cJSON *cfg = cJSON_AddObjectToObject(out, "config");
     if (!cfg) return;
 
+    /* Standard arc fields -- defaults-only */
     if (d->start_angle != ARC_DEFAULT_START)
         cJSON_AddNumberToObject(cfg, "start_angle", d->start_angle);
     if (d->end_angle != ARC_DEFAULT_END)
         cJSON_AddNumberToObject(cfg, "end_angle", d->end_angle);
     if (d->arc_width != ARC_DEFAULT_WIDTH)
         cJSON_AddNumberToObject(cfg, "arc_width", d->arc_width);
-    if (lv_color_to16(d->arc_color) != lv_color_to16(lv_color_hex(ARC_DEFAULT_COLOR)))
-        cJSON_AddNumberToObject(cfg, "arc_color", lv_color_to16(d->arc_color));
-    if (lv_color_to16(d->bg_arc_color) != lv_color_to16(lv_color_hex(ARC_DEFAULT_BG_COLOR)))
-        cJSON_AddNumberToObject(cfg, "bg_arc_color", lv_color_to16(d->bg_arc_color));
+    if (d->arc_color.full != lv_color_hex(ARC_DEFAULT_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "arc_color", (int)d->arc_color.full);
+    if (d->bg_arc_color.full != lv_color_hex(ARC_DEFAULT_BG_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "bg_arc_color", (int)d->bg_arc_color.full);
     if (d->bg_arc_width != ARC_DEFAULT_BG_WIDTH)
         cJSON_AddNumberToObject(cfg, "bg_arc_width", d->bg_arc_width);
     if (d->rounded_ends != ARC_DEFAULT_ROUNDED)
         cJSON_AddBoolToObject(cfg, "rounded_ends", d->rounded_ends);
+
+    /* Signal binding */
+    if (d->signal_name[0] != '\0')
+        cJSON_AddStringToObject(cfg, "signal_name", d->signal_name);
+    if (d->signal_min != ARC_DEFAULT_SIG_MIN)
+        cJSON_AddNumberToObject(cfg, "signal_min", (double)d->signal_min);
+    if (d->signal_max != ARC_DEFAULT_SIG_MAX)
+        cJSON_AddNumberToObject(cfg, "signal_max", (double)d->signal_max);
+
+    /* Image mode */
+    if (d->arc_image[0] != '\0')
+        cJSON_AddStringToObject(cfg, "arc_image", d->arc_image);
+    if (d->arc_image_full[0] != '\0')
+        cJSON_AddStringToObject(cfg, "arc_image_full", d->arc_image_full);
+
+    /* Rules */
+    widget_rules_to_json(w, cfg);
 }
 
 static void _arc_from_json(widget_t *w, cJSON *in) {
@@ -108,6 +312,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (!cfg) return;
 
     cJSON *item;
+
+    /* Standard arc fields */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "start_angle");
     if (cJSON_IsNumber(item)) d->start_angle = (int16_t)item->valueint;
 
@@ -118,26 +324,64 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->arc_width = (uint8_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_color");
-    if (cJSON_IsNumber(item)) d->arc_color = lv_color_hex(item->valueint);
+    if (cJSON_IsNumber(item)) d->arc_color.full = (uint16_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_arc_color");
-    if (cJSON_IsNumber(item)) d->bg_arc_color = lv_color_hex(item->valueint);
+    if (cJSON_IsNumber(item)) d->bg_arc_color.full = (uint16_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_arc_width");
     if (cJSON_IsNumber(item)) d->bg_arc_width = (uint8_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "rounded_ends");
     if (cJSON_IsBool(item)) d->rounded_ends = cJSON_IsTrue(item);
+
+    /* Signal binding */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name));
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_min");
+    if (cJSON_IsNumber(item)) d->signal_min = (float)item->valuedouble;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_max");
+    if (cJSON_IsNumber(item)) d->signal_max = (float)item->valuedouble;
+
+    /* Image mode */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->arc_image, item->valuestring, sizeof(d->arc_image));
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->arc_image_full, item->valuestring, sizeof(d->arc_image_full));
+
+    /* Resolve signal name to index */
+    if (d->signal_name[0] != '\0')
+        d->signal_index = signal_find_by_name(d->signal_name);
+
+    /* Rules */
+    widget_rules_from_json(w, cfg);
 }
 
 static void _arc_destroy(widget_t *w) {
     if (!w) return;
+    arc_data_t *d = (arc_data_t *)w->type_data;
+
+    /* Unsubscribe signal before deleting LVGL objects */
+    if (d && d->signal_index >= 0)
+        signal_unsubscribe(d->signal_index, _arc_on_signal, w);
+
     widget_rules_free(w);
+
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
     w->root = NULL;
-    arc_data_t *d = (arc_data_t *)w->type_data;
-    if (d) free(d);
+
+    if (d) {
+        rdm_image_free(d->arc_img_dsc);
+        rdm_image_free(d->arc_img_full_dsc);
+        free(d);
+    }
     free(w);
 }
 
@@ -146,7 +390,10 @@ static void _arc_destroy(widget_t *w) {
 static void _arc_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
     if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
     arc_data_t *d = (arc_data_t *)w->type_data;
-    if (!d || !d->arc_obj) return;
+    if (!d) return;
+
+    /* Overrides only apply to standard arc mode */
+    if (!d->arc_obj) return;
 
     lv_color_t fg = d->arc_color;
     lv_color_t bg = d->bg_arc_color;
@@ -181,14 +428,18 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     if (!d) { free(w); return NULL; }
 
     /* Set defaults */
-    d->start_angle  = ARC_DEFAULT_START;
-    d->end_angle    = ARC_DEFAULT_END;
-    d->arc_width    = ARC_DEFAULT_WIDTH;
-    d->arc_color    = lv_color_hex(ARC_DEFAULT_COLOR);
-    d->bg_arc_color = lv_color_hex(ARC_DEFAULT_BG_COLOR);
-    d->bg_arc_width = ARC_DEFAULT_BG_WIDTH;
-    d->rounded_ends = ARC_DEFAULT_ROUNDED;
-    d->arc_obj      = NULL;
+    d->start_angle   = ARC_DEFAULT_START;
+    d->end_angle     = ARC_DEFAULT_END;
+    d->arc_width     = ARC_DEFAULT_WIDTH;
+    d->arc_color     = lv_color_hex(ARC_DEFAULT_COLOR);
+    d->bg_arc_color  = lv_color_hex(ARC_DEFAULT_BG_COLOR);
+    d->bg_arc_width  = ARC_DEFAULT_BG_WIDTH;
+    d->rounded_ends  = ARC_DEFAULT_ROUNDED;
+    d->arc_obj       = NULL;
+    d->signal_index  = -1;
+    d->signal_min    = ARC_DEFAULT_SIG_MIN;
+    d->signal_max    = ARC_DEFAULT_SIG_MAX;
+    /* arc_image, arc_image_full, signal_name: zeroed by calloc */
 
     w->type      = WIDGET_ARC;
     w->slot      = slot;

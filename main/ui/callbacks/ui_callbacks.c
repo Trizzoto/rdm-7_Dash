@@ -126,7 +126,7 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
                               void (*on_cancel)(void *user_data), void *user_data) {
     
     // Check if we're on the WiFi screen - don't create dialog
-    if (is_wifi_screen_active()) {
+    if (wifi_ui_is_active()) {
         return;
     }
     
@@ -168,109 +168,139 @@ void show_text_input_dialog_ex(lv_obj_t *target_textarea, const char *title, con
     lv_obj_set_style_bg_opa(current_text_dialog->modal, LV_OPA_70, 0);
     lv_obj_clear_flag(current_text_dialog->modal, LV_OBJ_FLAG_SCROLLABLE);
     
-    // Create dialog container - taller to fully contain buttons
+    // Create dialog container — flex column for clean vertical stacking
     lv_obj_t *dialog_container = lv_obj_create(current_text_dialog->modal);
-    lv_obj_set_size(dialog_container, 400, 160);
-    lv_obj_set_style_bg_color(dialog_container, THEME_COLOR_PANEL, 0);
+    lv_obj_set_size(dialog_container, 420, 170);
+    lv_obj_set_style_bg_color(dialog_container, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(dialog_container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(dialog_container, THEME_COLOR_SCROLLBAR, 0);
-    lv_obj_set_style_border_width(dialog_container, 2, 0);
-    lv_obj_set_style_radius(dialog_container, 8, 0);
-    lv_obj_align(dialog_container, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_set_style_border_color(dialog_container, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(dialog_container, 1, 0);
+    lv_obj_set_style_radius(dialog_container, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_shadow_width(dialog_container, 12, 0);
+    lv_obj_set_style_shadow_ofs_y(dialog_container, 4, 0);
+    lv_obj_set_style_shadow_color(dialog_container, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(dialog_container, 100, 0);
+    lv_obj_align(dialog_container, LV_ALIGN_TOP_MID, 0, 16);
     lv_obj_clear_flag(dialog_container, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Title label - smaller font
+
+    // Title label
     if (title) {
         lv_obj_t *title_label = lv_label_create(dialog_container);
         lv_label_set_text(title_label, title);
-        lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-        lv_obj_set_style_text_font(title_label, THEME_FONT_BODY, 0);
-        lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 8);
+        lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM, 0);
+        lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
     }
-    
+
     // Create prefix label if needed (for CAN ID: 0x)
     if (show_prefix) {
         current_text_dialog->prefix_label = lv_label_create(dialog_container);
         lv_label_set_text(current_text_dialog->prefix_label, "0x");
-        lv_obj_set_style_text_color(current_text_dialog->prefix_label, lv_color_white(), 0);
+        lv_obj_set_style_text_color(current_text_dialog->prefix_label, THEME_COLOR_TEXT_MUTED, 0);
         lv_obj_set_style_text_font(current_text_dialog->prefix_label, THEME_FONT_BODY, 0);
-        lv_obj_align(current_text_dialog->prefix_label, LV_ALIGN_TOP_MID, -130, 47);
+        lv_obj_align(current_text_dialog->prefix_label, LV_ALIGN_TOP_LEFT, 42, 48);
     } else {
         current_text_dialog->prefix_label = NULL;
     }
-    
-    // Text display area (shows what user is typing) - white background like config menu
+
+    // Text display area — dark input matching settings panel inputs
     current_text_dialog->text_display = lv_label_create(dialog_container);
-    int display_width = show_prefix ? 260 : 300;  // Narrower if prefix is shown
-    int display_x = show_prefix ? 20 : 0;          // Offset to right if prefix is shown
-    lv_obj_set_size(current_text_dialog->text_display, display_width, 30);
-    lv_obj_set_style_bg_color(current_text_dialog->text_display, lv_color_white(), 0);
+    int display_width = show_prefix ? 280 : 340;
+    int display_x = show_prefix ? 18 : 0;
+    lv_obj_set_size(current_text_dialog->text_display, display_width, 34);
+    lv_obj_set_style_bg_color(current_text_dialog->text_display, THEME_COLOR_INPUT_BG, 0);
     lv_obj_set_style_bg_opa(current_text_dialog->text_display, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(current_text_dialog->text_display, THEME_COLOR_SCROLLBAR, 0);
-    lv_obj_set_style_border_width(current_text_dialog->text_display, 1, 0);
-    lv_obj_set_style_radius(current_text_dialog->text_display, 4, 0);
-    lv_obj_set_style_text_color(current_text_dialog->text_display, lv_color_black(), 0);
+    lv_obj_set_style_border_color(current_text_dialog->text_display, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_border_width(current_text_dialog->text_display, 2, 0);
+    lv_obj_set_style_radius(current_text_dialog->text_display, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_text_color(current_text_dialog->text_display, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_set_style_text_font(current_text_dialog->text_display, THEME_FONT_BODY, 0);
-    lv_obj_set_style_pad_all(current_text_dialog->text_display, 6, 0);
+    lv_obj_set_style_pad_left(current_text_dialog->text_display, 8, 0);
+    lv_obj_set_style_pad_right(current_text_dialog->text_display, 8, 0);
+    lv_obj_set_style_pad_top(current_text_dialog->text_display, 7, 0);
+    lv_obj_set_style_pad_bottom(current_text_dialog->text_display, 7, 0);
     lv_obj_align(current_text_dialog->text_display, LV_ALIGN_TOP_MID, display_x, 40);
     lv_label_set_long_mode(current_text_dialog->text_display, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    
+
     // Set initial text or placeholder
     if (target_textarea) {
         const char *current_text = lv_textarea_get_text(target_textarea);
         if (current_text && strlen(current_text) > 0) {
             lv_label_set_text(current_text_dialog->text_display, current_text);
-            // Keep black text for existing content
-            lv_obj_set_style_text_color(current_text_dialog->text_display, lv_color_black(), 0);
         } else if (placeholder) {
             lv_label_set_text(current_text_dialog->text_display, placeholder);
-            // Grey color for placeholder text
             lv_obj_set_style_text_color(current_text_dialog->text_display, THEME_COLOR_TEXT_GHOST, 0);
         }
     }
-    
-    // Button container - positioned with more space in taller dialog
+
+    // Button container
     lv_obj_t *btn_container = lv_obj_create(dialog_container);
-    lv_obj_set_size(btn_container, 300, 35);
+    lv_obj_set_size(btn_container, 340, 40);
     lv_obj_set_style_bg_opa(btn_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn_container, 0, 0);
     lv_obj_set_style_pad_all(btn_container, 0, 0);
-    lv_obj_align(btn_container, LV_ALIGN_TOP_MID, 0, 105);
+    lv_obj_set_style_pad_column(btn_container, 12, 0);
+    lv_obj_align(btn_container, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_flex_flow(btn_container, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_flex_main_place(btn_container, LV_FLEX_ALIGN_SPACE_EVENLY, 0);
+    lv_obj_set_style_flex_main_place(btn_container, LV_FLEX_ALIGN_CENTER, 0);
+    lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Cancel button - smaller
+
+    // Cancel button — secondary style
     lv_obj_t *cancel_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(cancel_btn, 120, 30);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL, 0);
-    lv_obj_set_style_radius(cancel_btn, 6, 0);
+    lv_obj_set_size(cancel_btn, 140, 34);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(cancel_btn, 1, 0);
+    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
     lv_obj_add_event_cb(cancel_btn, text_input_cancel_event_cb, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *cancel_label = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_set_style_text_color(cancel_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, 0);
     lv_obj_center(cancel_label);
-    
-    // OK button - smaller
+
+    // OK button — primary accent style
     lv_obj_t *ok_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(ok_btn, 120, 30);
+    lv_obj_set_size(ok_btn, 140, 34);
     lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE, 0);
-    lv_obj_set_style_radius(ok_btn, 6, 0);
+    lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(ok_btn, 0, 0);
+    lv_obj_set_style_radius(ok_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(ok_btn, 0, 0);
     lv_obj_add_event_cb(ok_btn, text_input_ok_event_cb, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *ok_label = lv_label_create(ok_btn);
-    lv_label_set_text(ok_label, "OK");
-    lv_obj_set_style_text_color(ok_label, lv_color_white(), 0);
+    lv_label_set_text(ok_label, LV_SYMBOL_OK "  OK");
+    lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
     lv_obj_set_style_text_font(ok_label, THEME_FONT_SMALL, 0);
     lv_obj_center(ok_label);
     
-    // Create keyboard
+    // Create keyboard — styled to match dark theme
     current_text_dialog->keyboard = lv_keyboard_create(current_text_dialog->modal);
-    lv_obj_set_style_bg_color(current_text_dialog->keyboard, THEME_COLOR_KEYBOARD_BG, 0);
+    lv_obj_set_style_bg_color(current_text_dialog->keyboard, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(current_text_dialog->keyboard, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(current_text_dialog->keyboard, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(current_text_dialog->keyboard, 1, 0);
+    lv_obj_set_style_border_side(current_text_dialog->keyboard, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_pad_all(current_text_dialog->keyboard, 4, 0);
+    lv_obj_set_style_pad_gap(current_text_dialog->keyboard, 4, 0);
     lv_obj_align(current_text_dialog->keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    /* Key items — dark bg, light text, rounded */
+    lv_obj_set_style_bg_color(current_text_dialog->keyboard, THEME_COLOR_SECTION_BG, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(current_text_dialog->keyboard, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(current_text_dialog->keyboard, THEME_COLOR_TEXT_PRIMARY, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(current_text_dialog->keyboard, THEME_FONT_BODY, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(current_text_dialog->keyboard, THEME_COLOR_BORDER, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(current_text_dialog->keyboard, 1, LV_PART_ITEMS);
+    lv_obj_set_style_radius(current_text_dialog->keyboard, THEME_RADIUS_NORMAL, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(current_text_dialog->keyboard, 0, LV_PART_ITEMS);
+    /* Key pressed state */
+    lv_obj_set_style_bg_color(current_text_dialog->keyboard, THEME_COLOR_ACCENT_BLUE, LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(current_text_dialog->keyboard, THEME_COLOR_TEXT_ON_ACCENT, LV_PART_ITEMS | LV_STATE_PRESSED);
     
     // Connect keyboard to target textarea
     if (target_textarea) {
@@ -359,7 +389,7 @@ void keyboard_event_cb(lv_event_t * e) {
         
         // Check if we're on the WiFi screen - if so, skip our custom dialog
         // The WiFi screen handles its own keyboard with password_input_event_cb
-        if (is_wifi_screen_active()) {
+        if (wifi_ui_is_active()) {
             return;
         }
         
@@ -425,12 +455,12 @@ void keyboard_event_cb(lv_event_t * e) {
         show_text_input_dialog_ex(obj, title, placeholder, show_prefix, NULL, NULL, NULL);
         
         // If we opened a dialog and know this is a numeric field, switch keyboard to number mode
-        if (!is_wifi_screen_active() && numeric_only && current_text_dialog && current_text_dialog->keyboard) {
+        if (!wifi_ui_is_active() && numeric_only && current_text_dialog && current_text_dialog->keyboard) {
             lv_keyboard_set_mode(current_text_dialog->keyboard, LV_KEYBOARD_MODE_NUMBER);
         }
         
     } else if(code == LV_EVENT_DEFOCUSED) {
-        if (is_wifi_screen_active()) {
+        if (wifi_ui_is_active()) {
             return;
         }
 

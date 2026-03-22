@@ -31,6 +31,9 @@ static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 static TaskHandle_t canTaskHandle = NULL;
 static volatile bool can_task_should_stop = false;
 static volatile bool s_can_task_running = false;
+static volatile uint32_t s_last_rx_can_id = 0;
+static volatile uint32_t s_rx_frame_count = 0;
+static volatile bool     s_suspended = false;
 
 #define CAN_TASK_PRIORITY 7
 
@@ -49,9 +52,16 @@ extern void example_lvgl_unlock(void);
  * Simplified: receive one frame and enqueue it for the LVGL task to process.
  * The task never touches LVGL directly — it only writes to s_can_queue.
  */
+/* CAN bus-off recovery limits */
+#define CAN_RECOVERY_MAX_RETRIES    10
+#define CAN_RECOVERY_INITIAL_MS     100
+#define CAN_RECOVERY_MAX_MS         5000
+
 static void can_receive_task(void *pvParameter) {
 	(void)pvParameter;
 	static uint32_t s_queue_drop_count = 0;
+	int recovery_retries = 0;
+	uint32_t recovery_delay_ms = CAN_RECOVERY_INITIAL_MS;
 
 	s_can_task_running = true;
 
@@ -60,6 +70,12 @@ static void can_receive_task(void *pvParameter) {
 		esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5));
 
 		if (ret == ESP_OK) {
+			/* Successful receive resets recovery state */
+			recovery_retries = 0;
+			recovery_delay_ms = CAN_RECOVERY_INITIAL_MS;
+
+			s_last_rx_can_id = message.identifier;
+			s_rx_frame_count++;
 			if (s_can_queue != NULL) {
 				/* Non-blocking enqueue; drop oldest frames if the queue is
 				 * momentarily full rather than stalling the RX loop. */
@@ -73,12 +89,29 @@ static void can_receive_task(void *pvParameter) {
 		} else if (ret == ESP_ERR_TIMEOUT) {
 			vTaskDelay(pdMS_TO_TICKS(1));
 		} else if (ret == ESP_ERR_INVALID_STATE) {
-			ESP_LOGW(TAG, "CAN bus error, attempting recovery");
+			if (recovery_retries >= CAN_RECOVERY_MAX_RETRIES) {
+				ESP_LOGE(TAG, "CAN recovery failed after %d retries, giving up",
+						 CAN_RECOVERY_MAX_RETRIES);
+				/* Sleep for 5 seconds before allowing retries again */
+				vTaskDelay(pdMS_TO_TICKS(CAN_RECOVERY_MAX_MS));
+				recovery_retries = 0;
+				recovery_delay_ms = CAN_RECOVERY_INITIAL_MS;
+				continue;
+			}
+			ESP_LOGW(TAG, "CAN bus error, recovery attempt %d/%d (delay %lu ms)",
+					 recovery_retries + 1, CAN_RECOVERY_MAX_RETRIES,
+					 (unsigned long)recovery_delay_ms);
 			twai_stop();
-			vTaskDelay(pdMS_TO_TICKS(100));
+			vTaskDelay(pdMS_TO_TICKS(recovery_delay_ms));
 			esp_err_t start_err = twai_start();
 			if (start_err != ESP_OK) {
 				ESP_LOGE(TAG, "CAN recovery failed: %s", esp_err_to_name(start_err));
+			}
+			recovery_retries++;
+			/* Exponential backoff: double delay, cap at max */
+			recovery_delay_ms *= 2;
+			if (recovery_delay_ms > CAN_RECOVERY_MAX_MS) {
+				recovery_delay_ms = CAN_RECOVERY_MAX_MS;
 			}
 		} else {
 			ESP_LOGW(TAG, "CAN receive error: %s", esp_err_to_name(ret));
@@ -326,4 +359,77 @@ void can_process_queued_frames(void) {
 		}
 		processed++;
 	}
+}
+
+esp_err_t can_get_diagnostics(uint32_t *state, uint32_t *msgs_to_tx,
+                              uint32_t *msgs_to_rx, uint32_t *tx_error_counter,
+                              uint32_t *rx_error_counter, uint32_t *bus_error_count,
+                              uint32_t *rx_missed) {
+	twai_status_info_t info;
+	esp_err_t err = twai_get_status_info(&info);
+	if (err != ESP_OK) return err;
+	if (state)            *state            = info.state;
+	if (msgs_to_tx)       *msgs_to_tx       = info.msgs_to_tx;
+	if (msgs_to_rx)       *msgs_to_rx       = info.msgs_to_rx;
+	if (tx_error_counter) *tx_error_counter  = info.tx_error_counter;
+	if (rx_error_counter) *rx_error_counter  = info.rx_error_counter;
+	if (bus_error_count)  *bus_error_count   = info.bus_error_count;
+	if (rx_missed)        *rx_missed         = info.arb_lost_count + info.rx_missed_count;
+	return ESP_OK;
+}
+
+uint32_t can_get_last_rx_id(void) {
+	return s_last_rx_can_id;
+}
+
+uint32_t can_get_rx_frame_count(void) {
+	return s_rx_frame_count;
+}
+
+twai_timing_config_t can_get_timing_for_bitrate(uint8_t index) {
+	return _bitrate_to_timing(index);
+}
+
+void can_suspend(void) {
+	if (s_suspended) return;
+	ESP_LOGI(TAG, "Suspending CAN for bus test");
+	_stop_can_task();
+	vTaskDelay(pdMS_TO_TICKS(50));
+	twai_driver_uninstall();
+	vTaskDelay(pdMS_TO_TICKS(50));
+	s_suspended = true;
+}
+
+void can_resume(void) {
+	if (!s_suspended) return;
+	ESP_LOGI(TAG, "Resuming normal CAN operation");
+
+	/* Rebuild acceptance filter from current signal registry */
+	build_twai_filter_from_signals(&f_config);
+
+	/* Load saved bitrate */
+	uint8_t saved_bitrate = 2;
+	config_store_load_bitrate(&saved_bitrate);
+	g_t_config = _bitrate_to_timing(saved_bitrate);
+
+	esp_err_t err = twai_driver_install(&g_config, &g_t_config, &f_config);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Resume: twai_driver_install failed: %s",
+				 esp_err_to_name(err));
+		s_suspended = false;
+		return;
+	}
+
+	if (twai_start() != ESP_OK) {
+		ESP_LOGE(TAG, "Resume: twai_start failed");
+		s_suspended = false;
+		return;
+	}
+	vTaskDelay(pdMS_TO_TICKS(50));
+
+	can_task_should_stop = false;
+	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
+							NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0);
+	s_suspended = false;
+	ESP_LOGI(TAG, "CAN resumed");
 }

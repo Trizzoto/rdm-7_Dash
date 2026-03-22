@@ -31,6 +31,9 @@ typedef struct {
 	uint8_t    needle_width;         /* default: 4 */
 	lv_color_t needle_color;         /* default: white (0xFFFFFF) */
 	int16_t    needle_r_mod;         /* default: -10 */
+	/* Needle center ball (LV_PART_INDICATOR) */
+	uint8_t    needle_ball_size;     /* default: 10 (diameter in px, 0 = hidden) */
+	lv_color_t needle_ball_color;    /* default: white (0xFFFFFF) */
 	/* Needle image (overrides line needle when set) */
 	char           needle_image_name[32]; /* RDMIMG name, empty = use line needle */
 	int16_t        needle_pivot_x;       /* pivot X in image pixels, default: 0 */

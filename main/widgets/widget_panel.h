@@ -76,9 +76,6 @@ lv_obj_t *create_panel(lv_obj_t *parent, int width, int height, int x, int y,
 void update_panel_ui_immediate(uint8_t i, const char *value_str,
 							   double final_value);
 
-/** Async panel UI update (lv_async_call compatible). */
-void update_panel_ui(void *param);
-
 /** Returns pointer to last_panel_can_received[idx] for timeout tracking. */
 uint64_t *widget_panel_get_last_can_time(uint8_t idx);
 

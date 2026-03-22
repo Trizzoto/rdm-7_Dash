@@ -19,16 +19,20 @@
 #include "freertos/task.h"
 #include "esp_err.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "ota_update_dialog.h"
 #include "lwip/ip4_addr.h"
 #include "callbacks/ui_callbacks.h"
 #include "can/can_manager.h"
+#include "can/can_bus_test.h"
 #include "storage/config_store.h"
+#include "storage/data_logger.h"
+#include "storage/sd_manager.h"
 #include "widgets/signal.h"
 #include <stdlib.h>
 #include <string.h>
 
-extern char* connected_ssid;
+#include "net/wifi_manager.h"
 
 // Global WiFi status labels for updating
 static lv_obj_t* wifi_status_label = NULL;
@@ -36,24 +40,59 @@ static lv_obj_t* web_status_label = NULL;
 static lv_timer_t *s_wifi_status_timer = NULL;
 static lv_obj_t* wifi_loading_dialog = NULL;
 
+// Data logging UI state
+static lv_obj_t *s_log_btn = NULL;
+static lv_obj_t *s_log_btn_label = NULL;
+static lv_obj_t *s_log_status_label = NULL;
+static lv_timer_t *s_log_status_timer = NULL;
+
+/* CAN diagnostics — redesigned with health indicator + collapsible details */
+static lv_obj_t  *s_can_health_dot     = NULL;
+static lv_obj_t  *s_can_health_label   = NULL;
+static lv_obj_t  *s_can_summary_label  = NULL;
+static lv_obj_t  *s_can_details_grid   = NULL;
+static lv_obj_t  *s_can_details_toggle = NULL;
+static lv_obj_t  *s_can_detail_labels[6];  /* RX Count, TX Count, RX Err, TX Err, Bus Err, RX Missed */
+static lv_timer_t *s_can_diag_timer    = NULL;
+static uint32_t   s_prev_rx_count      = 0;
+static uint32_t   s_rx_rate            = 0;
+
+/* CAN bus scan overlay */
+static lv_obj_t  *s_scan_overlay       = NULL;
+static lv_obj_t  *s_scan_title_label   = NULL;
+static lv_obj_t  *s_scan_status_label  = NULL;
+static lv_obj_t  *s_scan_bar           = NULL;
+static lv_obj_t  *s_scan_progress_label = NULL;
+static lv_obj_t  *s_scan_result_labels[4];
+static lv_obj_t  *s_scan_detail_label  = NULL;
+static lv_obj_t  *s_scan_apply_btn     = NULL;
+static lv_obj_t  *s_scan_close_btn     = NULL;
+static lv_obj_t  *s_scan_cancel_btn    = NULL;
+
+/* Bitrate dropdown pointer for scan apply */
+static lv_obj_t  *s_bitrate_dropdown   = NULL;
+
+// AP hotspot status label
+static lv_obj_t* ap_status_label = NULL;
+
 // Function to refresh WiFi status displays
 static void refresh_wifi_status(void) {
     if (!wifi_status_label || !web_status_label) return;
-    
-    // Update WiFi status
-    if (connected_ssid) {
-        char status_text[32];
-        snprintf(status_text, sizeof(status_text), "WiFi: %s", connected_ssid);
+
+    // Update WiFi STA status
+    const char *sta_ssid = wifi_manager_get_connected_ssid();
+    if (sta_ssid && sta_ssid[0] != '\0') {
+        char status_text[48];
+        snprintf(status_text, sizeof(status_text), "WiFi: %s", sta_ssid);
         lv_label_set_text(wifi_status_label, status_text);
         lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
     } else {
         lv_label_set_text(wifi_status_label, "WiFi: Not Connected");
         lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
-    
-    // Update web server status
-    if (connected_ssid) {
-        // Get IP address
+
+    // Update web server status — show STA IP if connected, else AP IP if AP active
+    if (sta_ssid && sta_ssid[0] != '\0') {
         esp_netif_ip_info_t ip_info;
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
@@ -66,8 +105,31 @@ static void refresh_wifi_status(void) {
             lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
         }
     } else {
-        lv_label_set_text(web_status_label, "Web: Connect WiFi first");
-        lv_obj_set_style_text_color(web_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
+        /* Check if AP mode provides an alternative */
+        if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
+            lv_label_set_text(web_status_label, "Web: http://192.168.4.1");
+            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_label_set_text(web_status_label, "Web: Connect WiFi first");
+            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+    }
+
+    // Update AP hotspot status
+    if (ap_status_label && lv_obj_is_valid(ap_status_label)) {
+        if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
+            wifi_sta_list_t sta_list;
+            esp_wifi_ap_get_sta_list(&sta_list);
+            char ap_text[64];
+            snprintf(ap_text, sizeof(ap_text), "Hotspot: %s (%d client%s)",
+                     wifi_manager_get_ap_ssid(), sta_list.num,
+                     sta_list.num == 1 ? "" : "s");
+            lv_label_set_text(ap_status_label, ap_text);
+            lv_obj_set_style_text_color(ap_status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_label_set_text(ap_status_label, "Hotspot: Disabled");
+            lv_obj_set_style_text_color(ap_status_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
     }
 }
 
@@ -151,7 +213,7 @@ static void brightness_bar_event_cb(lv_event_t * e) {
     
     // Update label only - don't save to NVS
     if (brightness_label) {
-        lv_label_set_text_fmt(brightness_label, "Brightness: %d%%", val);
+        lv_label_set_text_fmt(brightness_label, "%d%%", val);
     }
 }
 
@@ -206,7 +268,7 @@ void dimmer_subscribe(void) {
            signal injection (GPIO indicators, etc.) can still feed it.
            CAN ID 0 ensures the filter builder ignores this entry. */
         idx = signal_register(dimmer_config.signal_name, 0,
-                              0, 1, 1.0f, 0.0f, false, 1);
+                              0, 1, 1.0f, 0.0f, false, 1, "");
     }
     if (idx >= 0) {
         signal_subscribe(idx, _dimmer_signal_cb, NULL);
@@ -277,46 +339,94 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
     lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(overlay, close_dimmer_popup_cb, LV_EVENT_CLICKED, overlay);
 
-    // Create popup container
+    // Create popup container — uses settings_panel for consistent look
     lv_obj_t* popup = lv_obj_create(overlay);
-    lv_obj_set_size(popup, 500, 380);
+    lv_obj_set_size(popup, 480, 360);
     lv_obj_align(popup, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(popup, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(popup, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(popup, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(popup, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(popup, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(popup, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(popup, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(popup, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(popup, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(popup, 1, 0);
+    lv_obj_set_style_radius(popup, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_shadow_width(popup, 20, 0);
+    lv_obj_set_style_shadow_ofs_y(popup, 4, 0);
+    lv_obj_set_style_shadow_color(popup, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(popup, 140, 0);
+    lv_obj_set_style_pad_all(popup, 0, 0);
     lv_obj_clear_flag(popup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(popup, LV_OBJ_FLAG_CLICKABLE);
 
-    // Title
-    lv_obj_t* title = lv_label_create(popup);
-    lv_label_set_text(title, "Brightness Dimmer Switch");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* ── Header bar ─────────────────────────────────────────────────── */
+    lv_obj_t* hdr = lv_obj_create(popup);
+    lv_obj_set_size(hdr, lv_pct(100), 44);
+    lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(hdr, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(hdr, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(hdr, 1, 0);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Close button
-    lv_obj_t* close_btn = lv_btn_create(popup);
-    lv_obj_set_size(close_btn, 40, 35);
-    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -10, 5);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* title = lv_label_create(hdr);
+    lv_label_set_text(title, "Brightness Dimmer Switch");
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    lv_obj_t* close_btn = lv_btn_create(hdr);
+    lv_obj_set_size(close_btn, 32, 28);
+    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_border_width(close_btn, 1, 0);
+    lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(close_btn, 0, 0);
     lv_obj_t* close_label = lv_label_create(close_btn);
-    lv_label_set_text(close_label, "X");
+    lv_label_set_text(close_label, LV_SYMBOL_CLOSE);
     lv_obj_center(close_label);
+    lv_obj_set_style_text_font(close_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(close_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(close_btn, close_dimmer_popup_cb, LV_EVENT_CLICKED, overlay);
 
-    // Signal Source dropdown
-    lv_obj_t* signal_label = lv_label_create(popup);
-    lv_label_set_text(signal_label, "Signal Source:");
-    lv_obj_align(signal_label, LV_ALIGN_TOP_LEFT, 10, 50);
-    lv_obj_set_style_text_color(signal_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* ── Content area — flex column for clean layout ────────────────── */
+    lv_obj_t* body = lv_obj_create(popup);
+    lv_obj_set_size(body, lv_pct(100), 260);
+    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 44);
+    lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(body, 0, 0);
+    lv_obj_set_style_pad_all(body, 14, 0);
+    lv_obj_set_style_pad_row(body, 6, 0);
+    lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* signal_dd = lv_dropdown_create(popup);
-    lv_obj_set_size(signal_dd, 250, 40);
-    lv_obj_align(signal_dd, LV_ALIGN_TOP_LEFT, 10, 70);
+    /* Row 1: Signal Source + Threshold side by side */
+    lv_obj_t* row1 = lv_obj_create(body);
+    lv_obj_set_size(row1, lv_pct(100), 52);
+    lv_obj_set_style_bg_opa(row1, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row1, 0, 0);
+    lv_obj_set_style_pad_all(row1, 0, 0);
+    lv_obj_clear_flag(row1, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* signal_label = lv_label_create(row1);
+    lv_label_set_text(signal_label, "Signal Source");
+    lv_obj_align(signal_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(signal_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(signal_label, THEME_FONT_TINY, 0);
+
+    lv_obj_t* signal_dd = lv_dropdown_create(row1);
+    lv_obj_set_size(signal_dd, 260, 30);
+    lv_obj_align(signal_dd, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(signal_dd, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(signal_dd, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(signal_dd, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(signal_dd, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_border_color(signal_dd, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(signal_dd, 1, 0);
+    lv_obj_set_style_radius(signal_dd, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(signal_dd, 4, 0);
+    lv_obj_set_style_text_color(signal_dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
     {
         static char sig_options[1024];
         uint16_t sel = _build_signal_options(sig_options, sizeof(sig_options));
@@ -324,87 +434,146 @@ static void brightness_dimmer_config_cb(lv_event_t * e) {
         lv_dropdown_set_selected(signal_dd, sel);
     }
 
-    // Threshold input
-    lv_obj_t* thresh_label = lv_label_create(popup);
-    lv_label_set_text(thresh_label, "Threshold:");
-    lv_obj_align(thresh_label, LV_ALIGN_TOP_LEFT, 280, 50);
-    lv_obj_set_style_text_color(thresh_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* thresh_label = lv_label_create(row1);
+    lv_label_set_text(thresh_label, "Threshold");
+    lv_obj_align(thresh_label, LV_ALIGN_TOP_LEFT, 275, 0);
+    lv_obj_set_style_text_color(thresh_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(thresh_label, THEME_FONT_TINY, 0);
 
-    lv_obj_t* thresh_input = lv_textarea_create(popup);
-    lv_obj_set_size(thresh_input, 100, 40);
-    lv_obj_align(thresh_input, LV_ALIGN_TOP_LEFT, 280, 70);
+    lv_obj_t* thresh_input = lv_textarea_create(row1);
+    lv_obj_set_size(thresh_input, 100, 30);
+    lv_obj_align(thresh_input, LV_ALIGN_BOTTOM_LEFT, 275, 0);
+    lv_textarea_set_one_line(thresh_input, true);
     lv_textarea_set_max_length(thresh_input, 8);
-    lv_obj_clear_flag(thresh_input, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(thresh_input, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(thresh_input, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(thresh_input, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(thresh_input, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_border_color(thresh_input, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(thresh_input, 1, 0);
+    lv_obj_set_style_radius(thresh_input, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(thresh_input, 4, 0);
+    lv_obj_set_style_border_color(thresh_input, THEME_COLOR_ACCENT_BLUE, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(thresh_input, 2, LV_STATE_FOCUSED);
     char thresh_str[16];
     snprintf(thresh_str, sizeof(thresh_str), "%.2f", dimmer_config.threshold);
     lv_textarea_set_text(thresh_input, thresh_str);
     lv_obj_add_event_cb(thresh_input, keyboard_event_cb, LV_EVENT_ALL, NULL);
 
-    // Toggle Mode dropdown
-    lv_obj_t* toggle_mode_label = lv_label_create(popup);
-    lv_label_set_text(toggle_mode_label, "Toggle Mode:");
-    lv_obj_align(toggle_mode_label, LV_ALIGN_TOP_LEFT, 10, 120);
-    lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* Row 2: Toggle Mode + Invert side by side */
+    lv_obj_t* row2 = lv_obj_create(body);
+    lv_obj_set_size(row2, lv_pct(100), 52);
+    lv_obj_set_style_bg_opa(row2, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row2, 0, 0);
+    lv_obj_set_style_pad_all(row2, 0, 0);
+    lv_obj_clear_flag(row2, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* toggle_mode_dd = lv_dropdown_create(popup);
-    lv_obj_set_size(toggle_mode_dd, 120, 40);
-    lv_obj_align(toggle_mode_dd, LV_ALIGN_TOP_LEFT, 10, 140);
+    lv_obj_t* toggle_mode_label = lv_label_create(row2);
+    lv_label_set_text(toggle_mode_label, "Toggle Mode");
+    lv_obj_align(toggle_mode_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(toggle_mode_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(toggle_mode_label, THEME_FONT_TINY, 0);
+
+    lv_obj_t* toggle_mode_dd = lv_dropdown_create(row2);
+    lv_obj_set_size(toggle_mode_dd, 130, 30);
+    lv_obj_align(toggle_mode_dd, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(toggle_mode_dd, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(toggle_mode_dd, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(toggle_mode_dd, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(toggle_mode_dd, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_border_color(toggle_mode_dd, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(toggle_mode_dd, 1, 0);
+    lv_obj_set_style_radius(toggle_mode_dd, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(toggle_mode_dd, 4, 0);
+    lv_obj_set_style_text_color(toggle_mode_dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
     lv_dropdown_set_options(toggle_mode_dd, "On/Off\nMomentary");
     lv_dropdown_set_selected(toggle_mode_dd, dimmer_config.is_momentary ? 1 : 0);
 
-    // Invert switch
-    lv_obj_t* invert_label = lv_label_create(popup);
-    lv_label_set_text(invert_label, "Invert:");
-    lv_obj_align(invert_label, LV_ALIGN_TOP_LEFT, 180, 120);
-    lv_obj_set_style_text_color(invert_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* invert_label = lv_label_create(row2);
+    lv_label_set_text(invert_label, "Invert");
+    lv_obj_align(invert_label, LV_ALIGN_TOP_LEFT, 180, 0);
+    lv_obj_set_style_text_color(invert_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(invert_label, THEME_FONT_TINY, 0);
 
-    lv_obj_t* invert_switch = lv_switch_create(popup);
+    lv_obj_t* invert_switch = lv_switch_create(row2);
     lv_obj_set_size(invert_switch, 50, 25);
-    lv_obj_align(invert_switch, LV_ALIGN_TOP_LEFT, 180, 140);
+    lv_obj_align(invert_switch, LV_ALIGN_BOTTOM_LEFT, 180, 0);
     if (dimmer_config.invert) {
         lv_obj_add_state(invert_switch, LV_STATE_CHECKED);
     }
 
-    // Brightness Set slider
-    lv_obj_t* brightness_set_label = lv_label_create(popup);
-    lv_label_set_text(brightness_set_label, "Dim Brightness:");
-    lv_obj_align(brightness_set_label, LV_ALIGN_TOP_LEFT, 10, 190);
-    lv_obj_set_style_text_color(brightness_set_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t* enable_label = lv_label_create(row2);
+    lv_label_set_text(enable_label, "Enabled");
+    lv_obj_align(enable_label, LV_ALIGN_TOP_LEFT, 275, 0);
+    lv_obj_set_style_text_color(enable_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(enable_label, THEME_FONT_TINY, 0);
 
-    lv_obj_t* brightness_set_slider = lv_slider_create(popup);
-    lv_obj_set_size(brightness_set_slider, 280, 20);
-    lv_obj_align(brightness_set_slider, LV_ALIGN_TOP_LEFT, 10, 210);
-    lv_slider_set_range(brightness_set_slider, 5, 100);
-    lv_slider_set_value(brightness_set_slider, dimmer_config.dim_brightness, LV_ANIM_OFF);
-
-    lv_obj_t* brightness_value_label = lv_label_create(popup);
-    lv_label_set_text_fmt(brightness_value_label, "%d%%", dimmer_config.dim_brightness);
-    lv_obj_align(brightness_value_label, LV_ALIGN_TOP_LEFT, 300, 210);
-    lv_obj_set_style_text_color(brightness_value_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    lv_obj_add_event_cb(brightness_set_slider, brightness_set_slider_cb, LV_EVENT_VALUE_CHANGED, brightness_value_label);
-
-    // Enable/Disable switch
-    lv_obj_t* enable_label = lv_label_create(popup);
-    lv_label_set_text(enable_label, "Enabled:");
-    lv_obj_align(enable_label, LV_ALIGN_TOP_LEFT, 10, 250);
-    lv_obj_set_style_text_color(enable_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    lv_obj_t* enable_switch = lv_switch_create(popup);
+    lv_obj_t* enable_switch = lv_switch_create(row2);
     lv_obj_set_size(enable_switch, 50, 25);
-    lv_obj_align(enable_switch, LV_ALIGN_TOP_LEFT, 10, 270);
+    lv_obj_align(enable_switch, LV_ALIGN_BOTTOM_LEFT, 275, 0);
     if (dimmer_config.enabled) {
         lv_obj_add_state(enable_switch, LV_STATE_CHECKED);
     }
 
-    // Save button
-    lv_obj_t* save_btn = lv_btn_create(popup);
-    lv_obj_set_size(save_btn, 120, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE_ALT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(save_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* Row 3: Dim Brightness slider */
+    lv_obj_t* row3 = lv_obj_create(body);
+    lv_obj_set_size(row3, lv_pct(100), 48);
+    lv_obj_set_style_bg_opa(row3, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row3, 0, 0);
+    lv_obj_set_style_pad_all(row3, 0, 0);
+    lv_obj_clear_flag(row3, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* brightness_set_label = lv_label_create(row3);
+    lv_label_set_text(brightness_set_label, "Dim Brightness");
+    lv_obj_align(brightness_set_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(brightness_set_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(brightness_set_label, THEME_FONT_TINY, 0);
+
+    lv_obj_t* brightness_set_slider = lv_slider_create(row3);
+    lv_obj_set_size(brightness_set_slider, 340, 18);
+    lv_obj_align(brightness_set_slider, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_slider_set_range(brightness_set_slider, 5, 100);
+    lv_slider_set_value(brightness_set_slider, dimmer_config.dim_brightness, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(brightness_set_slider, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_radius(brightness_set_slider, THEME_RADIUS_PILL, 0);
+    lv_obj_set_style_bg_color(brightness_set_slider, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(brightness_set_slider, THEME_RADIUS_PILL, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(brightness_set_slider, THEME_COLOR_TEXT_PRIMARY, LV_PART_KNOB);
+    lv_obj_set_style_radius(brightness_set_slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(brightness_set_slider, 2, LV_PART_KNOB);
+
+    lv_obj_t* brightness_value_label = lv_label_create(row3);
+    lv_label_set_text_fmt(brightness_value_label, "%d%%", dimmer_config.dim_brightness);
+    lv_obj_align(brightness_value_label, LV_ALIGN_BOTTOM_LEFT, 355, 0);
+    lv_obj_set_style_text_color(brightness_value_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(brightness_value_label, THEME_FONT_SMALL, 0);
+
+    lv_obj_add_event_cb(brightness_set_slider, brightness_set_slider_cb, LV_EVENT_VALUE_CHANGED, brightness_value_label);
+
+    /* ── Footer with Save button ────────────────────────────────────── */
+    lv_obj_t* footer = lv_obj_create(popup);
+    lv_obj_set_size(footer, lv_pct(100), 52);
+    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(footer, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(footer, 0, 0);
+    lv_obj_set_style_border_side(footer, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(footer, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(footer, 1, 0);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* save_btn = lv_btn_create(footer);
+    lv_obj_set_size(save_btn, 160, 34);
+    lv_obj_align(save_btn, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE, 0);
+    lv_obj_set_style_bg_color(save_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(save_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(save_btn, 0, 0);
+    lv_obj_set_style_shadow_width(save_btn, 0, 0);
     lv_obj_t* save_label = lv_label_create(save_btn);
-    lv_label_set_text(save_label, "Save");
+    lv_label_set_text(save_label, LV_SYMBOL_SAVE "  Save");
+    lv_obj_set_style_text_color(save_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_font(save_label, THEME_FONT_SMALL, 0);
     lv_obj_center(save_label);
 
     // Store all inputs in user data for save callback
@@ -528,6 +697,429 @@ static void save_dimmer_config_cb(lv_event_t * e) {
         dimmer_config.invert, dimmer_config.dim_brightness, dimmer_config.enabled);
 }
 
+static void refresh_can_diagnostics(void) {
+    if (!s_can_health_dot) return;
+
+    /* If scan is running, show "Scanning..." state */
+    if (can_bus_test_is_running()) {
+        lv_obj_set_style_bg_color(s_can_health_dot, THEME_COLOR_ACCENT_YELLOW, 0);
+        lv_label_set_text(s_can_health_label, "Bus scan in progress...");
+        lv_obj_set_style_text_color(s_can_health_label,
+                                     THEME_COLOR_ACCENT_YELLOW, 0);
+        lv_label_set_text(s_can_summary_label, "");
+        return;
+    }
+
+    uint32_t state = 0, msgs_to_tx = 0, msgs_to_rx = 0;
+    uint32_t tx_err = 0, rx_err = 0, bus_err = 0, rx_missed = 0;
+
+    esp_err_t err = can_get_diagnostics(&state, &msgs_to_tx, &msgs_to_rx,
+                                        &tx_err, &rx_err, &bus_err, &rx_missed);
+    if (err != ESP_OK) {
+        lv_obj_set_style_bg_color(s_can_health_dot, THEME_COLOR_TEXT_HINT, 0);
+        lv_label_set_text(s_can_health_label, "CAN status unavailable");
+        lv_obj_set_style_text_color(s_can_health_label,
+                                     THEME_COLOR_TEXT_HINT, 0);
+        lv_label_set_text(s_can_summary_label, "");
+        return;
+    }
+
+    /* Compute RX rate (frames/sec) */
+    uint32_t current_count = can_get_rx_frame_count();
+    s_rx_rate = current_count - s_prev_rx_count;
+    s_prev_rx_count = current_count;
+
+    /* Determine health status */
+    const char *health_msg;
+    lv_color_t dot_color;
+
+    if (state == TWAI_STATE_STOPPED) {
+        health_msg = "CAN bus stopped";
+        dot_color = THEME_COLOR_TEXT_HINT;
+    } else if (state == TWAI_STATE_BUS_OFF) {
+        health_msg = "No CAN traffic detected";
+        dot_color = THEME_COLOR_STATUS_ERROR;
+    } else if (s_rx_rate == 0 && current_count == 0) {
+        health_msg = "No CAN traffic detected";
+        dot_color = THEME_COLOR_STATUS_ERROR;
+    } else if (state == TWAI_STATE_RECOVERING ||
+               (bus_err > 10 && s_rx_rate > 0)) {
+        health_msg = "CAN bus has errors";
+        dot_color = THEME_COLOR_ACCENT_YELLOW;
+    } else if (s_rx_rate > 0) {
+        health_msg = "Receiving CAN data normally";
+        dot_color = THEME_COLOR_STATUS_CONNECTED;
+    } else {
+        health_msg = "No CAN traffic detected";
+        dot_color = THEME_COLOR_STATUS_ERROR;
+    }
+
+    lv_obj_set_style_bg_color(s_can_health_dot, dot_color, 0);
+    lv_label_set_text(s_can_health_label, health_msg);
+    lv_obj_set_style_text_color(s_can_health_label, dot_color, 0);
+
+    /* Summary line: bitrate | last ID | rate */
+    static const char *br_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
+    uint8_t saved_br = 2;
+    config_store_load_bitrate(&saved_br);
+    if (saved_br > 3) saved_br = 2;
+
+    uint32_t last_id = can_get_last_rx_id();
+    if (last_id > 0) {
+        lv_label_set_text_fmt(s_can_summary_label,
+            "%s  |  Last ID: 0x%03lX  |  ~%lu frames/sec",
+            br_labels[saved_br], (unsigned long)last_id,
+            (unsigned long)s_rx_rate);
+    } else {
+        lv_label_set_text_fmt(s_can_summary_label,
+            "%s  |  No frames received",
+            br_labels[saved_br]);
+    }
+
+    /* Update detail labels */
+    lv_label_set_text_fmt(s_can_detail_labels[0], "RX Count: %lu",
+                          (unsigned long)msgs_to_rx);
+    lv_label_set_text_fmt(s_can_detail_labels[1], "RX Errors: %lu",
+                          (unsigned long)rx_err);
+    lv_label_set_text_fmt(s_can_detail_labels[2], "RX Missed: %lu",
+                          (unsigned long)rx_missed);
+    lv_label_set_text_fmt(s_can_detail_labels[3], "TX Count: %lu",
+                          (unsigned long)msgs_to_tx);
+    lv_label_set_text_fmt(s_can_detail_labels[4], "TX Errors: %lu",
+                          (unsigned long)tx_err);
+    lv_label_set_text_fmt(s_can_detail_labels[5], "Bus Errors: %lu",
+                          (unsigned long)bus_err);
+}
+
+static void refresh_can_diag_timer_cb(lv_timer_t* timer) {
+    refresh_can_diagnostics();
+}
+
+/* ── Details toggle callback ───────────────────────────────────────────── */
+
+static void _details_toggle_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_can_details_grid || !s_can_details_toggle) return;
+    bool hidden = lv_obj_has_flag(s_can_details_grid, LV_OBJ_FLAG_HIDDEN);
+    if (hidden) {
+        lv_obj_clear_flag(s_can_details_grid, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_can_details_toggle, LV_SYMBOL_DOWN " Hide Details");
+    } else {
+        lv_obj_add_flag(s_can_details_grid, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_can_details_toggle, LV_SYMBOL_RIGHT " Show Details");
+    }
+}
+
+/* ── Scan overlay ──────────────────────────────────────────────────────── */
+
+static void _close_scan_overlay(void) {
+    if (s_scan_overlay && lv_obj_is_valid(s_scan_overlay)) {
+        lv_obj_del(s_scan_overlay);
+    }
+    s_scan_overlay = NULL;
+    can_bus_test_set_ui_callback(NULL);
+}
+
+static void _scan_close_cb(lv_event_t *e) {
+    (void)e;
+    _close_scan_overlay();
+}
+
+static void _scan_cancel_cb(lv_event_t *e) {
+    (void)e;
+    can_bus_test_cancel();
+}
+
+static void _scan_apply_cb(lv_event_t *e) {
+    (void)e;
+    const can_scan_report_t *r = can_bus_test_get_report();
+    if (r->recommended_bitrate < 0) return;
+
+    uint8_t idx = (uint8_t)r->recommended_bitrate;
+
+    /* Apply bitrate */
+    config_store_save_bitrate(idx);
+    can_change_bitrate(idx);
+
+    /* Update dropdown if still valid */
+    if (s_bitrate_dropdown && lv_obj_is_valid(s_bitrate_dropdown)) {
+        lv_dropdown_set_selected(s_bitrate_dropdown, idx);
+    }
+
+    _close_scan_overlay();
+    refresh_can_diagnostics();
+}
+
+/** Called via lv_async_call from can_bus_test task on state changes. */
+static void _scan_ui_update(void) {
+    if (!s_scan_overlay || !lv_obj_is_valid(s_scan_overlay)) return;
+
+    const can_scan_report_t *r = can_bus_test_get_report();
+    static const char *br_names[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
+
+    switch (r->state) {
+    case CAN_SCAN_STOPPING:
+        lv_label_set_text(s_scan_status_label, "Stopping CAN for scan...");
+        break;
+
+    case CAN_SCAN_TESTING_BITRATE: {
+        lv_label_set_text(s_scan_status_label, "Scanning for CAN traffic...");
+        uint8_t idx = r->current_bitrate_idx;
+        lv_label_set_text_fmt(s_scan_progress_label,
+            "Testing %s  (%d of 4)", br_names[idx], idx + 1);
+        /* Update progress bar (0-100) */
+        lv_bar_set_value(s_scan_bar, (idx * 25), LV_ANIM_ON);
+
+        /* Update per-bitrate result labels */
+        for (uint8_t i = 0; i < 4; i++) {
+            if (i < idx) {
+                if (r->results[i].traffic_detected) {
+                    lv_label_set_text_fmt(s_scan_result_labels[i],
+                        "%s --- %lu frames", br_names[i],
+                        (unsigned long)r->results[i].frames_received);
+                    lv_obj_set_style_text_color(s_scan_result_labels[i],
+                        THEME_COLOR_STATUS_CONNECTED, 0);
+                } else {
+                    lv_label_set_text_fmt(s_scan_result_labels[i],
+                        "%s --- No traffic", br_names[i]);
+                    lv_obj_set_style_text_color(s_scan_result_labels[i],
+                        THEME_COLOR_TEXT_MUTED, 0);
+                }
+            } else if (i == idx) {
+                lv_label_set_text_fmt(s_scan_result_labels[i],
+                    "%s --- Testing...", br_names[i]);
+                lv_obj_set_style_text_color(s_scan_result_labels[i],
+                    THEME_COLOR_ACCENT_YELLOW, 0);
+            }
+            /* i > idx: leave as "..." */
+        }
+        break;
+    }
+
+    case CAN_SCAN_RESTORING:
+        lv_bar_set_value(s_scan_bar, 95, LV_ANIM_ON);
+        lv_label_set_text(s_scan_status_label, "Restoring CAN...");
+        break;
+
+    case CAN_SCAN_COMPLETE:
+    case CAN_SCAN_CANCELLED: {
+        lv_bar_set_value(s_scan_bar, 100, LV_ANIM_ON);
+
+        /* Update all result labels */
+        for (uint8_t i = 0; i < 4; i++) {
+            if (r->results[i].traffic_detected) {
+                /* Build ID list string */
+                char id_buf[128] = "";
+                int pos = 0;
+                uint8_t show = r->results[i].unique_id_count > 6 ?
+                               6 : r->results[i].unique_id_count;
+                for (uint8_t j = 0; j < show; j++) {
+                    pos += snprintf(id_buf + pos, sizeof(id_buf) - pos,
+                        "%s0x%03lX", j > 0 ? ", " : "",
+                        (unsigned long)r->results[i].unique_ids[j]);
+                }
+                if (r->results[i].unique_id_count > 6) {
+                    snprintf(id_buf + pos, sizeof(id_buf) - pos, ", ...");
+                }
+                lv_label_set_text_fmt(s_scan_result_labels[i],
+                    "%s --- %lu frames (%s)",
+                    br_names[i],
+                    (unsigned long)r->results[i].frames_received,
+                    id_buf);
+                lv_obj_set_style_text_color(s_scan_result_labels[i],
+                    THEME_COLOR_STATUS_CONNECTED, 0);
+            } else {
+                lv_label_set_text_fmt(s_scan_result_labels[i],
+                    "%s --- No traffic", br_names[i]);
+                lv_obj_set_style_text_color(s_scan_result_labels[i],
+                    THEME_COLOR_TEXT_MUTED, 0);
+            }
+        }
+
+        /* Title and summary */
+        if (r->state == CAN_SCAN_CANCELLED) {
+            lv_label_set_text(s_scan_title_label, "Scan Cancelled");
+            lv_label_set_text(s_scan_status_label, "Scan was cancelled");
+        } else {
+            lv_label_set_text(s_scan_title_label, "Scan Complete");
+        }
+
+        if (r->recommended_bitrate >= 0) {
+            uint8_t bi = (uint8_t)r->recommended_bitrate;
+            lv_label_set_text_fmt(s_scan_status_label,
+                "Found CAN traffic at %s", br_names[bi]);
+            lv_label_set_text_fmt(s_scan_detail_label,
+                "%lu frames received, %u unique IDs",
+                (unsigned long)r->results[bi].frames_received,
+                r->results[bi].unique_id_count);
+            lv_obj_set_style_text_color(s_scan_status_label,
+                THEME_COLOR_STATUS_CONNECTED, 0);
+        } else {
+            lv_label_set_text(s_scan_status_label,
+                "No CAN traffic detected at any speed");
+            lv_obj_set_style_text_color(s_scan_status_label,
+                THEME_COLOR_STATUS_ERROR, 0);
+            lv_label_set_text(s_scan_detail_label,
+                "Check: CAN-H/CAN-L polarity, transceiver,\n"
+                "bus termination, and that the vehicle is powered.");
+        }
+
+        /* Show/hide buttons */
+        lv_obj_add_flag(s_scan_cancel_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_scan_close_btn, LV_OBJ_FLAG_HIDDEN);
+        if (r->recommended_bitrate >= 0) {
+            /* Only show Apply if different from current bitrate */
+            uint8_t saved = 2;
+            config_store_load_bitrate(&saved);
+            if (saved != (uint8_t)r->recommended_bitrate) {
+                lv_obj_t *apply_lbl = lv_obj_get_child(s_scan_apply_btn, 0);
+                lv_label_set_text_fmt(apply_lbl, "Apply %s",
+                    br_names[(uint8_t)r->recommended_bitrate]);
+                lv_obj_clear_flag(s_scan_apply_btn, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+
+        lv_label_set_text(s_scan_progress_label, "");
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+static void _open_scan_overlay(void) {
+    /* Create modal overlay on lv_layer_top */
+    s_scan_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_scan_overlay, 420, 320);
+    lv_obj_center(s_scan_overlay);
+    lv_obj_set_style_bg_color(s_scan_overlay, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(s_scan_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_scan_overlay, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_color(s_scan_overlay, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_border_width(s_scan_overlay, 1, 0);
+    lv_obj_set_style_shadow_width(s_scan_overlay, THEME_SHADOW_W_POPUP, 0);
+    lv_obj_set_style_shadow_color(s_scan_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(s_scan_overlay, LV_OPA_50, 0);
+    lv_obj_set_style_pad_all(s_scan_overlay, 16, 0);
+    lv_obj_set_style_pad_row(s_scan_overlay, 6, 0);
+    lv_obj_set_flex_flow(s_scan_overlay, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(s_scan_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Title */
+    s_scan_title_label = lv_label_create(s_scan_overlay);
+    lv_label_set_text(s_scan_title_label, "CAN Bus Scan");
+    lv_obj_set_style_text_font(s_scan_title_label, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(s_scan_title_label, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    /* Status message */
+    s_scan_status_label = lv_label_create(s_scan_overlay);
+    lv_label_set_text(s_scan_status_label, "Starting scan...");
+    lv_obj_set_style_text_font(s_scan_status_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_scan_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Progress bar */
+    s_scan_bar = lv_bar_create(s_scan_overlay);
+    lv_obj_set_size(s_scan_bar, lv_pct(100), 12);
+    lv_bar_set_range(s_scan_bar, 0, 100);
+    lv_bar_set_value(s_scan_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_scan_bar, THEME_COLOR_INPUT_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_scan_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(s_scan_bar, THEME_RADIUS_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_scan_bar, THEME_RADIUS_SMALL, LV_PART_INDICATOR);
+
+    /* Progress text (e.g. "Testing 250 kbps (2 of 4)") */
+    s_scan_progress_label = lv_label_create(s_scan_overlay);
+    lv_label_set_text(s_scan_progress_label, "");
+    lv_obj_set_style_text_font(s_scan_progress_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_scan_progress_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Per-bitrate result lines */
+    for (int i = 0; i < 4; i++) {
+        static const char *br_init[] = {
+            "125 kbps --- ...", "250 kbps --- ...",
+            "500 kbps --- ...", "1 Mbps   --- ..."
+        };
+        s_scan_result_labels[i] = lv_label_create(s_scan_overlay);
+        lv_label_set_text(s_scan_result_labels[i], br_init[i]);
+        lv_obj_set_style_text_font(s_scan_result_labels[i], THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_scan_result_labels[i], THEME_COLOR_TEXT_HINT, 0);
+    }
+
+    /* Detail label (frame count + unique IDs after completion) */
+    s_scan_detail_label = lv_label_create(s_scan_overlay);
+    lv_label_set_text(s_scan_detail_label, "");
+    lv_obj_set_style_text_font(s_scan_detail_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_scan_detail_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Button row */
+    lv_obj_t *btn_row = lv_obj_create(s_scan_overlay);
+    lv_obj_set_size(btn_row, lv_pct(100), 34);
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_style_pad_all(btn_row, 0, 0);
+    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Cancel button (visible during scan) */
+    s_scan_cancel_btn = lv_btn_create(btn_row);
+    lv_obj_set_size(s_scan_cancel_btn, 90, 30);
+    lv_obj_align(s_scan_cancel_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(s_scan_cancel_btn, THEME_COLOR_BTN_GRAY, 0);
+    lv_obj_set_style_bg_color(s_scan_cancel_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_scan_cancel_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(s_scan_cancel_btn, 0, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(s_scan_cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(s_scan_cancel_btn, _scan_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Close button (hidden during scan) */
+    s_scan_close_btn = lv_btn_create(btn_row);
+    lv_obj_set_size(s_scan_close_btn, 90, 30);
+    lv_obj_align(s_scan_close_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(s_scan_close_btn, THEME_COLOR_BTN_GRAY, 0);
+    lv_obj_set_style_bg_color(s_scan_close_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_scan_close_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(s_scan_close_btn, 0, 0);
+    lv_obj_t *close_lbl = lv_label_create(s_scan_close_btn);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_center(close_lbl);
+    lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(s_scan_close_btn, _scan_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_scan_close_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* Apply button (hidden until results) */
+    s_scan_apply_btn = lv_btn_create(btn_row);
+    lv_obj_set_size(s_scan_apply_btn, 120, 30);
+    lv_obj_align(s_scan_apply_btn, LV_ALIGN_RIGHT_MID, -100, 0);
+    lv_obj_set_style_bg_color(s_scan_apply_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_color(s_scan_apply_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_scan_apply_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(s_scan_apply_btn, 0, 0);
+    lv_obj_t *apply_lbl = lv_label_create(s_scan_apply_btn);
+    lv_label_set_text(apply_lbl, "Apply");
+    lv_obj_center(apply_lbl);
+    lv_obj_set_style_text_font(apply_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(apply_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(s_scan_apply_btn, _scan_apply_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_scan_apply_btn, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void _scan_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (can_bus_test_is_running()) return;
+
+    can_bus_test_set_ui_callback(_scan_ui_update);
+    _open_scan_overlay();
+
+    if (!can_bus_test_start()) {
+        lv_label_set_text(s_scan_status_label, "Failed to start scan");
+    }
+}
+
 // Close menu callback
 static void close_menu_event_cb(lv_event_t * e) {
     // Delete WiFi status timer to prevent leak
@@ -536,11 +1128,46 @@ static void close_menu_event_cb(lv_event_t * e) {
         s_wifi_status_timer = NULL;
     }
 
+    // Delete CAN diagnostics timer
+    if (s_can_diag_timer) {
+        lv_timer_del(s_can_diag_timer);
+        s_can_diag_timer = NULL;
+    }
+
+    /* Close scan overlay (lives on lv_layer_top, not auto-deleted) */
+    if (s_scan_overlay && lv_obj_is_valid(s_scan_overlay)) {
+        lv_obj_del(s_scan_overlay);
+    }
+
+    /* Cancel any running bus scan and detach UI callback */
+    can_bus_test_set_ui_callback(NULL);
+    if (can_bus_test_is_running()) {
+        can_bus_test_cancel();
+    }
+
     // NULL out all static LVGL pointers (screen is about to be deleted)
     wifi_status_label = NULL;
     web_status_label = NULL;
+    ap_status_label = NULL;
     brightness_label = NULL;
     wifi_loading_dialog = NULL;
+    s_can_health_dot = NULL;
+    s_can_health_label = NULL;
+    s_can_summary_label = NULL;
+    s_can_details_grid = NULL;
+    s_can_details_toggle = NULL;
+    memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
+    s_scan_overlay = NULL;
+    s_scan_title_label = NULL;
+    s_scan_status_label = NULL;
+    s_scan_bar = NULL;
+    s_scan_progress_label = NULL;
+    memset(s_scan_result_labels, 0, sizeof(s_scan_result_labels));
+    s_scan_detail_label = NULL;
+    s_scan_apply_btn = NULL;
+    s_scan_close_btn = NULL;
+    s_scan_cancel_btn = NULL;
+    s_bitrate_dropdown = NULL;
 
     lv_obj_t * old_screen = (lv_obj_t *)lv_event_get_user_data(e);
     if (old_screen) {
@@ -568,7 +1195,7 @@ static void show_wifi_screen_delayed(lv_timer_t* timer) {
     }
     
     // Show WiFi screen
-    show_wifi_screen();
+    wifi_ui_show();
     
     // Delete the timer
     lv_timer_del(timer);
@@ -579,45 +1206,77 @@ static void wifi_btn_event_cb(lv_event_t *e) {
     // Guard against double-tap while loading dialog is already showing
     if (wifi_loading_dialog && lv_obj_is_valid(wifi_loading_dialog)) return;
 
-    // Create loading dialog immediately
+    /* Loading dialog — centered with shadow */
     wifi_loading_dialog = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(wifi_loading_dialog, 300, 150);
+    lv_obj_set_size(wifi_loading_dialog, 280, 140);
     lv_obj_align(wifi_loading_dialog, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(wifi_loading_dialog, lv_color_hex(0x2E2E2E), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(wifi_loading_dialog, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(wifi_loading_dialog, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(wifi_loading_dialog, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(wifi_loading_dialog, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(wifi_loading_dialog, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(wifi_loading_dialog, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(wifi_loading_dialog, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(wifi_loading_dialog, 1, 0);
+    lv_obj_set_style_radius(wifi_loading_dialog, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_shadow_width(wifi_loading_dialog, 20, 0);
+    lv_obj_set_style_shadow_ofs_y(wifi_loading_dialog, 4, 0);
+    lv_obj_set_style_shadow_color(wifi_loading_dialog, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(wifi_loading_dialog, 140, 0);
+    lv_obj_set_style_pad_all(wifi_loading_dialog, 16, 0);
     lv_obj_clear_flag(wifi_loading_dialog, LV_OBJ_FLAG_SCROLLABLE);
-    
-    // Loading title
+
     lv_obj_t* title = lv_label_create(wifi_loading_dialog);
-    lv_label_set_text(title, "Wi-Fi Settings");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    // Loading spinner
+    lv_label_set_text(title, LV_SYMBOL_WIFI "  Wi-Fi Settings");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+
     lv_obj_t* spinner = lv_spinner_create(wifi_loading_dialog, 1000, 60);
-    lv_obj_set_size(spinner, 40, 40);
-    lv_obj_align(spinner, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-    
-    // Loading text
+    lv_obj_set_size(spinner, 36, 36);
+    lv_obj_align(spinner, LV_ALIGN_CENTER, 0, 2);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinner, 4, LV_PART_INDICATOR);
+
     lv_obj_t* loading_text = lv_label_create(wifi_loading_dialog);
     lv_label_set_text(loading_text, "Searching for networks...");
-    lv_obj_align(loading_text, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_text_color(loading_text, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(loading_text, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(loading_text, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_text_color(loading_text, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(loading_text, THEME_FONT_SMALL, 0);
     
     // Create timer to show WiFi screen after a brief delay (allows dialog to render)
     lv_timer_create(show_wifi_screen_delayed, 100, NULL);
 }
 
+// Async callbacks — dispatched to LVGL thread after OTA check completes
+static void _ota_show_update_available(void *param) {
+    (void)param;
+    show_ota_update_dialog(FIRMWARE_VERSION, get_latest_version(),
+                           get_update_file_size_mb(),
+                           get_release_notes());
+}
+
+static void _ota_show_up_to_date(void *param) {
+    (void)param;
+    show_ota_up_to_date_dialog(FIRMWARE_VERSION);
+}
+
+static void _ota_show_check_failed(void *param) {
+    (void)param;
+    show_ota_check_failed_dialog();
+}
+
 // OTA check task — runs off the LVGL thread so the UI stays responsive
 static void _ota_check_task(void *param) {
     check_for_update();
+
+    ota_status_t status = get_ota_status();
+    if (status == OTA_UPDATE_AVAILABLE) {
+        lv_async_call(_ota_show_update_available, NULL);
+    } else if (status == OTA_NO_UPDATE_AVAILABLE) {
+        lv_async_call(_ota_show_up_to_date, NULL);
+    } else {
+        lv_async_call(_ota_show_check_failed, NULL);
+    }
+
     vTaskDelete(NULL);
 }
 
@@ -627,7 +1286,84 @@ static void update_btn_event_cb(lv_event_t *e) {
 
     ESP_LOGI("OTA", "Check for updates button clicked");
 
-    xTaskCreate(_ota_check_task, "ota_chk", 8192, NULL, 3, NULL);
+    show_ota_checking_dialog();
+
+    /* Allocate task memory: TCB in internal RAM (required), stack in PSRAM */
+    static StaticTask_t s_ota_chk_tcb;
+    static StackType_t *s_ota_chk_stack;
+    const uint32_t OTA_CHK_STACK = 8192;
+
+    if (!s_ota_chk_stack) {
+        s_ota_chk_stack = heap_caps_calloc(OTA_CHK_STACK, sizeof(StackType_t),
+                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!s_ota_chk_stack) {
+        ESP_LOGE("OTA", "Failed to allocate OTA check stack");
+        show_ota_check_failed_dialog();
+        return;
+    }
+
+    xTaskCreateStaticPinnedToCore(_ota_check_task, "ota_chk", OTA_CHK_STACK,
+                                  NULL, 3, s_ota_chk_stack, &s_ota_chk_tcb, 0);
+}
+
+/* ── Data Logging ─────────────────────────────────────────────────────── */
+
+static void _update_log_ui(void) {
+    if (!s_log_btn_label || !s_log_status_label) return;
+
+    if (data_logger_is_active()) {
+        lv_label_set_text(s_log_btn_label, "Stop Logging");
+        lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_BTN_DANGER,
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+
+        uint32_t samples = data_logger_get_sample_count();
+        uint32_t elapsed = data_logger_get_elapsed_ms();
+        uint32_t secs = elapsed / 1000;
+        uint32_t mins = secs / 60;
+        secs %= 60;
+        lv_label_set_text_fmt(s_log_status_label,
+                              "Recording: %lu samples (%lum %lus)",
+                              (unsigned long)samples,
+                              (unsigned long)mins, (unsigned long)secs);
+        lv_obj_set_style_text_color(s_log_status_label,
+                                    THEME_COLOR_STATUS_CONNECTED,
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+        lv_label_set_text(s_log_btn_label, "Start Logging");
+        lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_BORDER,
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+
+        const char *file = data_logger_current_file();
+        if (file[0] != '\0') {
+            const char *basename = strrchr(file, '/');
+            basename = basename ? basename + 1 : file;
+            lv_label_set_text_fmt(s_log_status_label, "Stopped: %s", basename);
+        } else {
+            if (!sd_manager_is_mounted())
+                lv_label_set_text(s_log_status_label, "No SD card");
+            else
+                lv_label_set_text(s_log_status_label, "Stopped");
+        }
+        lv_obj_set_style_text_color(s_log_status_label,
+                                    THEME_COLOR_TEXT_MUTED,
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+static void _log_status_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    _update_log_ui();
+}
+
+static void _log_toggle_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (data_logger_is_active()) {
+        data_logger_stop();
+    } else {
+        data_logger_start();
+    }
+    _update_log_ui();
 }
 
 /* ── Factory Reset ────────────────────────────────────────────────────── */
@@ -657,20 +1393,31 @@ static void _factory_reset_btn_cb(lv_event_t *e) {
         "The device will reboot with defaults.",
         btns, true);
 
-    lv_obj_set_style_bg_color(mbox, lv_color_hex(0x1A1A2E), LV_PART_MAIN);
-    lv_obj_set_style_border_color(mbox, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN);
-    lv_obj_set_style_border_width(mbox, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(mbox, THEME_COLOR_SURFACE, LV_PART_MAIN);
+    lv_obj_set_style_border_color(mbox, THEME_COLOR_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(mbox, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(mbox, THEME_RADIUS_NORMAL, LV_PART_MAIN);
     lv_obj_set_style_text_color(mbox, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN);
     lv_obj_set_style_text_font(mbox, THEME_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(mbox, 8, LV_PART_MAIN);
+    lv_obj_set_style_shadow_ofs_y(mbox, 2, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(mbox, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(mbox, 80, LV_PART_MAIN);
     lv_obj_set_width(mbox, 380);
     lv_obj_center(mbox);
 
-    /* Style the RESET button red */
+    /* Style the RESET button — red text on neutral bg */
     lv_obj_t *btn_area = lv_msgbox_get_btns(mbox);
-    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_BTN_CANCEL,
+    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_SECTION_BG,
                               LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(btn_area, THEME_COLOR_TEXT_PRIMARY,
+    lv_obj_set_style_text_color(btn_area, THEME_COLOR_STATUS_ERROR,
                                 LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn_area, 1,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn_area, THEME_COLOR_BORDER,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(btn_area, THEME_RADIUS_NORMAL,
+                            LV_PART_ITEMS | LV_STATE_DEFAULT);
 
     lv_obj_add_event_cb(mbox, _factory_reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
@@ -703,139 +1450,151 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_bg_opa(settings_screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(settings_screen, LV_OBJ_FLAG_SCROLLABLE);
     
-    // Main container with border - sized properly for 480px screen height
+    // Main container
     lv_obj_t* main_container = lv_obj_create(settings_screen);
-    lv_obj_set_size(main_container, 760, 440);  // Fit within 480px screen with margins
+    lv_obj_set_size(main_container, 760, 440);
     lv_obj_align(main_container, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(main_container, THEME_COLOR_SURFACE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(main_container, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(main_container, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(main_container, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(main_container, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(main_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);  // Reduced padding for more space
+    lv_obj_set_style_bg_color(main_container, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(main_container, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(main_container, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(main_container, 1, 0);
+    lv_obj_set_style_radius(main_container, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(main_container, 0, 0);
     lv_obj_clear_flag(main_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Header section
+    // Header — flat bar, bottom border only
     lv_obj_t* header = lv_obj_create(main_container);
-    lv_obj_set_size(header, lv_pct(100), 50);  // Reduced height for more content space
+    lv_obj_set_size(header, lv_pct(100), 44);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(header, THEME_COLOR_PANEL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(header, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(header, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(header, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(header, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_set_style_border_width(header, 1, 0);
+    lv_obj_set_style_border_color(header, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
     // Title
     lv_obj_t* title = lv_label_create(header);
-    lv_label_set_text(title, "DEVICE SETTINGS");
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 20, 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_XLARGE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(title, "Device Settings");
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 15, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    // Close button
+    // Close button — secondary neutral
     lv_obj_t* close_btn = lv_btn_create(header);
-    lv_obj_set_size(close_btn, 50, 35);  // Smaller button for smaller header
-    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -15, 0);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_BTN_CLOSE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(close_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(close_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(close_btn, 60, 28);
+    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(close_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_border_width(close_btn, 1, 0);
+    lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(close_btn, 0, 0);
     lv_obj_t* close_label = lv_label_create(close_btn);
-    lv_label_set_text(close_label, "X");
+    lv_label_set_text(close_label, "Close");
     lv_obj_center(close_label);
-    lv_obj_set_style_text_font(close_label, THEME_FONT_MEDIUM, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(close_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(close_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(close_btn, close_menu_event_cb, LV_EVENT_CLICKED, device_settings_return_screen);
     
-    // Content area - properly sized for 440px container
+    // Content area — below header
     lv_obj_t* content = lv_obj_create(main_container);
-    lv_obj_set_size(content, lv_pct(100), 350);  // Proper size to fit in 440px container
-    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 60);  // Position below 50px header with 10px gap
-    lv_obj_set_style_bg_opa(content, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(content, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(content, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_right(content, 25, LV_PART_MAIN | LV_STATE_DEFAULT);  // Extra right padding for scrollbar space
-    lv_obj_set_scroll_dir(content, LV_DIR_VER);  // Enable vertical scrolling
+    lv_obj_set_size(content, lv_pct(100), 388);
+    lv_obj_align(content, LV_ALIGN_TOP_MID, 0, 48);
+    lv_obj_set_style_bg_opa(content, 0, 0);
+    lv_obj_set_style_border_width(content, 0, 0);
+    lv_obj_set_style_pad_all(content, THEME_PAD_NORMAL, 0);
+    lv_obj_set_style_pad_right(content, 20, 0);
+    lv_obj_set_style_pad_row(content, THEME_PAD_SMALL, 0);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    
-    // Scrollbar styling - move it away from content
+
+    // Scrollbar
     lv_obj_set_style_bg_color(content, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(content, 200, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_width(content, 8, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_right(content, 5, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);  // Move scrollbar away from edge
+    lv_obj_set_style_bg_opa(content, 150, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
+    lv_obj_set_style_width(content, 4, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(content, THEME_RADIUS_SMALL, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
 
     // First row container
     lv_obj_t* first_row = lv_obj_create(content);
-    lv_obj_set_size(first_row, lv_pct(100), 120);  // Reduced height for better fit
-    lv_obj_set_style_bg_opa(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(first_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_bottom(first_row, 15, LV_PART_MAIN | LV_STATE_DEFAULT);  // Manual spacing
+    lv_obj_set_size(first_row, lv_pct(100), 120);
+    lv_obj_set_style_bg_opa(first_row, 0, 0);
+    lv_obj_set_style_border_width(first_row, 0, 0);
+    lv_obj_set_style_pad_all(first_row, 0, 0);
     lv_obj_clear_flag(first_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(first_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(first_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     // CAN Bus Configuration Section
     lv_obj_t* can_section = lv_obj_create(first_row);
-    lv_obj_set_size(can_section, lv_pct(48), 120);  // Match first_row height
-    lv_obj_set_style_bg_color(can_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(can_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(can_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(can_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(can_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(can_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(can_section, lv_pct(48), 120);
+    lv_obj_set_style_bg_color(can_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(can_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(can_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(can_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(can_section, 1, 0);
+    lv_obj_set_style_pad_all(can_section, 12, 0);
     lv_obj_clear_flag(can_section, LV_OBJ_FLAG_SCROLLABLE);
 
-    // CAN section title
+    // CAN section title — muted uppercase
     lv_obj_t* can_title = lv_label_create(can_section);
     lv_label_set_text(can_title, "CAN BUS");
     lv_obj_align(can_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(can_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(can_title, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(can_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(can_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(can_title, 1, 0);
 
     // Bitrate label
     lv_obj_t* bitrate_label = lv_label_create(can_section);
     lv_label_set_text(bitrate_label, "Bitrate");
-    lv_obj_align(bitrate_label, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_text_font(bitrate_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(bitrate_label, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(bitrate_label, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_text_font(bitrate_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(bitrate_label, THEME_COLOR_TEXT_MUTED, 0);
 
-    // Bitrate dropdown
+    // Bitrate dropdown — dark input style
     lv_obj_t* bitrate_dd = lv_dropdown_create(can_section);
     lv_dropdown_set_options(bitrate_dd, "125 kbps\n250 kbps\n500 kbps\n1 Mbps");
-    lv_obj_set_size(bitrate_dd, 140, 35);
-    lv_obj_align(bitrate_dd, LV_ALIGN_TOP_LEFT, 0, 50);
-    lv_obj_set_style_bg_color(bitrate_dd, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(bitrate_dd, THEME_COLOR_SCROLLBAR, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(bitrate_dd, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(bitrate_dd, 4, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(bitrate_dd, 140, 32);
+    lv_obj_align(bitrate_dd, LV_ALIGN_TOP_LEFT, 0, 42);
+    lv_obj_set_style_bg_color(bitrate_dd, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(bitrate_dd, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(bitrate_dd, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_border_color(bitrate_dd, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(bitrate_dd, 1, 0);
+    lv_obj_set_style_radius(bitrate_dd, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(bitrate_dd, 4, 0);
+    lv_obj_set_style_text_color(bitrate_dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
     lv_obj_add_event_cb(bitrate_dd, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_bitrate_dropdown = bitrate_dd;
 
     // Device Information Section
     lv_obj_t* info_section = lv_obj_create(first_row);
-    lv_obj_set_size(info_section, lv_pct(48), 120);  // Match first_row height
-    lv_obj_set_style_bg_color(info_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(info_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(info_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(info_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(info_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(info_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(info_section, lv_pct(48), 120);
+    lv_obj_set_style_bg_color(info_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(info_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(info_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(info_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(info_section, 1, 0);
+    lv_obj_set_style_pad_all(info_section, 12, 0);
     lv_obj_clear_flag(info_section, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Info section title
+    // Info section title — muted uppercase
     lv_obj_t* info_title = lv_label_create(info_section);
     lv_label_set_text(info_title, "DEVICE INFO");
     lv_obj_align(info_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(info_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(info_title, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(info_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(info_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(info_title, 1, 0);
 
-    // Serial number - adjusted positions
+    // Serial number
     lv_obj_t* serial_label = lv_label_create(info_section);
     lv_label_set_text(serial_label, "Serial Number");
-    lv_obj_align(serial_label, LV_ALIGN_TOP_LEFT, 0, 25);
-    lv_obj_set_style_text_font(serial_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(serial_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(serial_label, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_text_font(serial_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(serial_label, THEME_COLOR_TEXT_HINT, 0);
 
     lv_obj_t* serial_value = lv_label_create(info_section);
     char serial[MAX_SERIAL_LENGTH];
@@ -844,175 +1603,353 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     } else {
         lv_label_set_text(serial_value, "Unknown");
     }
-    lv_obj_align(serial_value, LV_ALIGN_TOP_LEFT, 0, 42);
-    lv_obj_set_style_text_font(serial_value, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(serial_value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(serial_value, LV_ALIGN_TOP_LEFT, 0, 36);
+    lv_obj_set_style_text_font(serial_value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(serial_value, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    // Firmware version - adjusted positions
+    // Firmware version
     lv_obj_t* fw_label = lv_label_create(info_section);
     lv_label_set_text(fw_label, "Firmware");
-    lv_obj_align(fw_label, LV_ALIGN_TOP_LEFT, 0, 70);
-    lv_obj_set_style_text_font(fw_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(fw_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(fw_label, LV_ALIGN_TOP_LEFT, 0, 62);
+    lv_obj_set_style_text_font(fw_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(fw_label, THEME_COLOR_TEXT_HINT, 0);
 
     lv_obj_t* fw_value = lv_label_create(info_section);
     lv_label_set_text(fw_value, FIRMWARE_VERSION);
-    lv_obj_align(fw_value, LV_ALIGN_TOP_LEFT, 0, 87);
-    lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(fw_value, LV_ALIGN_TOP_LEFT, 0, 76);
+    lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, 0);
 
     // Second row container
     lv_obj_t* second_row = lv_obj_create(content);
-    lv_obj_set_size(second_row, lv_pct(100), 185);  // Increased height to give Check Updates button more room
-    lv_obj_set_style_bg_opa(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(second_row, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(second_row, lv_pct(100), 200);
+    lv_obj_set_style_bg_opa(second_row, 0, 0);
+    lv_obj_set_style_border_width(second_row, 0, 0);
+    lv_obj_set_style_pad_all(second_row, 0, 0);
     lv_obj_clear_flag(second_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(second_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(second_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     // Network & Updates Section
     lv_obj_t* network_section = lv_obj_create(second_row);
-    lv_obj_set_size(network_section, lv_pct(48), 185);  // Increased height to give Check Updates button more room
-    lv_obj_set_style_bg_color(network_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(network_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(network_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(network_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(network_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(network_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(network_section, lv_pct(48), 200);
+    lv_obj_set_style_bg_color(network_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(network_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(network_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(network_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(network_section, 1, 0);
+    lv_obj_set_style_pad_all(network_section, 12, 0);
     lv_obj_clear_flag(network_section, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Network section title
+    // Network section title — muted uppercase
     lv_obj_t* network_title = lv_label_create(network_section);
     lv_label_set_text(network_title, "NETWORK & UPDATES");
     lv_obj_align(network_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(network_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(network_title, THEME_COLOR_ACCENT_ORANGE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(network_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(network_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(network_title, 1, 0);
 
-    // WiFi button - adjusted position
+    // WiFi button — primary accent
     lv_obj_t* wifi_btn = lv_btn_create(network_section);
-    lv_obj_set_size(wifi_btn, 180, 35);
-    lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(wifi_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(wifi_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(wifi_btn, 180, 30);
+    lv_obj_align(wifi_btn, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_bg_color(wifi_btn, THEME_COLOR_BTN_SAVE, 0);
+    lv_obj_set_style_bg_opa(wifi_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(wifi_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(wifi_btn, 0, 0);
+    lv_obj_set_style_shadow_width(wifi_btn, 0, 0);
     lv_obj_t* wifi_label = lv_label_create(wifi_btn);
     lv_label_set_text(wifi_label, "Wi-Fi Settings");
     lv_obj_center(wifi_label);
-    lv_obj_set_style_text_font(wifi_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(wifi_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(wifi_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(wifi_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
     lv_obj_add_event_cb(wifi_btn, wifi_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // WiFi status - adjusted position
+    // WiFi status
     wifi_status_label = lv_label_create(network_section);
-    lv_obj_align(wifi_status_label, LV_ALIGN_TOP_LEFT, 0, 75);
-    lv_obj_set_style_text_font(wifi_status_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(wifi_status_label, LV_ALIGN_TOP_LEFT, 0, 60);
+    lv_obj_set_style_text_font(wifi_status_label, THEME_FONT_TINY, 0);
 
     // Web server status
     web_status_label = lv_label_create(network_section);
-    lv_obj_align(web_status_label, LV_ALIGN_TOP_LEFT, 0, 90);
-    lv_obj_set_style_text_font(web_status_label, THEME_FONT_TINY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
+    lv_obj_align(web_status_label, LV_ALIGN_TOP_LEFT, 0, 75);
+    lv_obj_set_style_text_font(web_status_label, THEME_FONT_TINY, 0);
+
+    // AP hotspot status
+    ap_status_label = lv_label_create(network_section);
+    lv_obj_align(ap_status_label, LV_ALIGN_TOP_LEFT, 0, 90);
+    lv_obj_set_style_text_font(ap_status_label, THEME_FONT_TINY, 0);
+
     // Initial refresh of WiFi status
     refresh_wifi_status();
 
-    // Update button - adjusted position
+    // Update button — secondary style
     lv_obj_t* update_btn = lv_btn_create(network_section);
-    lv_obj_set_size(update_btn, 180, 35);
+    lv_obj_set_size(update_btn, 180, 30);
     lv_obj_align(update_btn, LV_ALIGN_TOP_LEFT, 0, 115);
-    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_BTN_SAVE_ALT, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_BTN_SAVE_ALT_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(update_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(update_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(update_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(update_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(update_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(update_btn, 1, 0);
+    lv_obj_set_style_border_color(update_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(update_btn, 0, 0);
     lv_obj_t* update_label = lv_label_create(update_btn);
     lv_label_set_text(update_label, "Check Updates");
     lv_obj_center(update_label);
-    lv_obj_set_style_text_font(update_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(update_label, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(update_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(update_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(update_btn, update_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     // Display Settings Section
     lv_obj_t* display_section = lv_obj_create(second_row);
-    lv_obj_set_size(display_section, lv_pct(48), 185);  // Increased height to match network section
-    lv_obj_set_style_bg_color(display_section, THEME_COLOR_SECTION_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(display_section, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(display_section, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(display_section, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(display_section, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(display_section, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(display_section, lv_pct(48), 200);
+    lv_obj_set_style_bg_color(display_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(display_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(display_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(display_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(display_section, 1, 0);
+    lv_obj_set_style_pad_all(display_section, 12, 0);
     lv_obj_clear_flag(display_section, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Display section title
+    // Display section title — muted uppercase
     lv_obj_t* display_title = lv_label_create(display_section);
     lv_label_set_text(display_title, "DISPLAY");
     lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_text_font(display_title, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(display_title, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(display_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(display_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(display_title, 1, 0);
 
-    // Brightness label - adjusted position
+    // Brightness label
     lv_obj_t* brightness_text = lv_label_create(display_section);
     lv_label_set_text(brightness_text, "Brightness");
-    lv_obj_align(brightness_text, LV_ALIGN_TOP_LEFT, 0, 30);
-    lv_obj_set_style_text_font(brightness_text, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(brightness_text, THEME_COLOR_TEXT_MUTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(brightness_text, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_text_font(brightness_text, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(brightness_text, THEME_COLOR_TEXT_MUTED, 0);
 
-    // Use current brightness value (don't load from NVS)
     uint8_t saved_brightness = current_brightness;
 
-    // Brightness slider - adjusted position and size
+    // Brightness slider — dark track, accent indicator, light knob
     lv_obj_t* brightness_bar = lv_slider_create(display_section);
-    lv_obj_set_size(brightness_bar, 220, 25);
-    lv_obj_align(brightness_bar, LV_ALIGN_TOP_LEFT, 0, 60);
+    lv_obj_set_size(brightness_bar, 220, 20);
+    lv_obj_align(brightness_bar, LV_ALIGN_TOP_LEFT, 0, 45);
     lv_slider_set_range(brightness_bar, 5, 100);
     lv_slider_set_value(brightness_bar, saved_brightness, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_CONTROL_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(brightness_bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(brightness_bar, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
-    
-    // Brightness knob
-    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_TEXT_PRIMARY, LV_PART_KNOB | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(brightness_bar, 255, LV_PART_KNOB | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(brightness_bar, LV_RADIUS_CIRCLE, LV_PART_KNOB | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(brightness_bar, 3, LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(brightness_bar, THEME_RADIUS_PILL, 0);
+    /* Filled indicator */
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(brightness_bar, THEME_RADIUS_PILL, LV_PART_INDICATOR);
+    /* Knob */
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_TEXT_PRIMARY, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_radius(brightness_bar, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(brightness_bar, 2, LV_PART_KNOB);
 
-    // Brightness percentage label - adjusted position
+    // Brightness percentage label
     brightness_label = lv_label_create(display_section);
-    lv_label_set_text_fmt(brightness_label, "Brightness: %d%%", saved_brightness);
-    lv_obj_align(brightness_label, LV_ALIGN_TOP_LEFT, 0, 95);
-    lv_obj_set_style_text_font(brightness_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(brightness_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text_fmt(brightness_label, "%d%%", saved_brightness);
+    lv_obj_align(brightness_label, LV_ALIGN_TOP_LEFT, 230, 48);
+    lv_obj_set_style_text_font(brightness_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(brightness_label, THEME_COLOR_TEXT_PRIMARY, 0);
 
     lv_obj_add_event_cb(brightness_bar, brightness_bar_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Brightness Dimmer Switch button
+    // Brightness Dimmer Switch button — secondary style
     lv_obj_t* dimmer_btn = lv_btn_create(display_section);
-    lv_obj_set_size(dimmer_btn, 220, 35);
-    lv_obj_align(dimmer_btn, LV_ALIGN_TOP_LEFT, 0, 130);
-    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_BORDER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_BTN_DIM_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(dimmer_btn, 6, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(dimmer_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(dimmer_btn, 250, 30);
+    lv_obj_align(dimmer_btn, LV_ALIGN_TOP_LEFT, 0, 80);
+    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(dimmer_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(dimmer_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(dimmer_btn, 1, 0);
+    lv_obj_set_style_border_color(dimmer_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(dimmer_btn, 0, 0);
     lv_obj_t* dimmer_label = lv_label_create(dimmer_btn);
-    lv_label_set_text(dimmer_label, "Brightness Dimmer Switch");
+    lv_label_set_text(dimmer_label, "Dimmer Switch Config");
     lv_obj_center(dimmer_label);
-    lv_obj_set_style_text_font(dimmer_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(dimmer_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(dimmer_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(dimmer_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
 
-    // Factory Reset button — full width at bottom
+    // Data Logging section — full width
+    lv_obj_t *log_section = lv_obj_create(content);
+    lv_obj_set_size(log_section, lv_pct(100), 70);
+    lv_obj_set_style_bg_color(log_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(log_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(log_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(log_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(log_section, 1, 0);
+    lv_obj_set_style_pad_all(log_section, 12, 0);
+    lv_obj_clear_flag(log_section, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *log_title = lv_label_create(log_section);
+    lv_label_set_text(log_title, "DATA LOGGING");
+    lv_obj_align(log_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(log_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(log_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(log_title, 1, 0);
+
+    s_log_btn = lv_btn_create(log_section);
+    lv_obj_set_size(s_log_btn, 140, 30);
+    lv_obj_align(s_log_btn, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(s_log_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_log_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_log_btn, 1, 0);
+    lv_obj_set_style_border_color(s_log_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(s_log_btn, 0, 0);
+    s_log_btn_label = lv_label_create(s_log_btn);
+    lv_label_set_text(s_log_btn_label, "Start Logging");
+    lv_obj_center(s_log_btn_label);
+    lv_obj_set_style_text_font(s_log_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_log_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(s_log_btn, _log_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_log_status_label = lv_label_create(log_section);
+    lv_label_set_text(s_log_status_label, "Stopped");
+    lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 155, 30);
+    lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    _update_log_ui();
+
+    if (s_log_status_timer) {
+        lv_timer_del(s_log_status_timer);
+    }
+    s_log_status_timer = lv_timer_create(_log_status_timer_cb, 1000, NULL);
+
+    /* ── CAN Bus Diagnostics — redesigned with health indicator ────────── */
+    lv_obj_t *can_diag_section = lv_obj_create(content);
+    lv_obj_set_size(can_diag_section, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(can_diag_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(can_diag_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(can_diag_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_side(can_diag_section, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_color(can_diag_section, THEME_COLOR_SECTION_CAN_TITLE, 0);
+    lv_obj_set_style_border_width(can_diag_section, 3, 0);
+    lv_obj_set_style_pad_all(can_diag_section, 10, 0);
+    lv_obj_set_style_pad_left(can_diag_section, 12, 0);
+    lv_obj_set_style_pad_row(can_diag_section, 5, 0);
+    lv_obj_clear_flag(can_diag_section, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(can_diag_section, LV_FLEX_FLOW_COLUMN);
+
+    /* Title row: "CAN BUS" + [Run Bus Scan] button */
+    lv_obj_t *title_row = lv_obj_create(can_diag_section);
+    lv_obj_set_size(title_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(title_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(title_row, 0, 0);
+    lv_obj_set_style_pad_all(title_row, 0, 0);
+    lv_obj_clear_flag(title_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *can_diag_title = lv_label_create(title_row);
+    lv_label_set_text(can_diag_title, "CAN BUS");
+    lv_obj_align(can_diag_title, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(can_diag_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(can_diag_title, THEME_COLOR_SECTION_CAN_TITLE, 0);
+    lv_obj_set_style_text_letter_space(can_diag_title, 1, 0);
+
+    lv_obj_t *scan_btn = lv_btn_create(title_row);
+    lv_obj_set_size(scan_btn, 110, 24);
+    lv_obj_align(scan_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(scan_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(scan_btn, 0, 0);
+    lv_obj_t *scan_btn_lbl = lv_label_create(scan_btn);
+    lv_label_set_text(scan_btn_lbl, "Run Bus Scan");
+    lv_obj_center(scan_btn_lbl);
+    lv_obj_set_style_text_font(scan_btn_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(scan_btn_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(scan_btn, _scan_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Health indicator row: colored dot + message */
+    lv_obj_t *health_row = lv_obj_create(can_diag_section);
+    lv_obj_set_size(health_row, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(health_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(health_row, 0, 0);
+    lv_obj_set_style_pad_all(health_row, 0, 0);
+    lv_obj_set_style_pad_column(health_row, 6, 0);
+    lv_obj_clear_flag(health_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(health_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(health_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    s_can_health_dot = lv_obj_create(health_row);
+    lv_obj_set_size(s_can_health_dot, 8, 8);
+    lv_obj_set_style_radius(s_can_health_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_can_health_dot, THEME_COLOR_TEXT_HINT, 0);
+    lv_obj_set_style_bg_opa(s_can_health_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_can_health_dot, 0, 0);
+    lv_obj_clear_flag(s_can_health_dot, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_can_health_label = lv_label_create(health_row);
+    lv_label_set_text(s_can_health_label, "Checking...");
+    lv_obj_set_style_text_font(s_can_health_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_can_health_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Summary line: bitrate | last ID | rate */
+    s_can_summary_label = lv_label_create(can_diag_section);
+    lv_label_set_text(s_can_summary_label, "");
+    lv_obj_set_style_text_font(s_can_summary_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_can_summary_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* "Show Details" / "Hide Details" toggle */
+    s_can_details_toggle = lv_label_create(can_diag_section);
+    lv_label_set_text(s_can_details_toggle, LV_SYMBOL_RIGHT " Show Details");
+    lv_obj_set_style_text_font(s_can_details_toggle, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_can_details_toggle, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_add_flag(s_can_details_toggle, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_can_details_toggle, _details_toggle_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Details grid — hidden by default */
+    s_can_details_grid = lv_obj_create(can_diag_section);
+    lv_obj_set_size(s_can_details_grid, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_can_details_grid, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(s_can_details_grid, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_can_details_grid, 0, 0);
+    lv_obj_set_style_radius(s_can_details_grid, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_pad_all(s_can_details_grid, 6, 0);
+    lv_obj_set_style_pad_column(s_can_details_grid, 8, 0);
+    lv_obj_set_style_pad_row(s_can_details_grid, 2, 0);
+    lv_obj_clear_flag(s_can_details_grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(s_can_details_grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_add_flag(s_can_details_grid, LV_OBJ_FLAG_HIDDEN);
+
+    #define DIAG_COL_W 200
+    static const char *detail_defaults[] = {
+        "RX Count: ---", "RX Errors: ---", "RX Missed: ---",
+        "TX Count: ---", "TX Errors: ---", "Bus Errors: ---"
+    };
+    for (int i = 0; i < 6; i++) {
+        s_can_detail_labels[i] = lv_label_create(s_can_details_grid);
+        lv_label_set_text(s_can_detail_labels[i], detail_defaults[i]);
+        lv_obj_set_width(s_can_detail_labels[i], DIAG_COL_W);
+        lv_obj_set_style_text_font(s_can_detail_labels[i], THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_can_detail_labels[i], THEME_COLOR_TEXT_MUTED, 0);
+    }
+    #undef DIAG_COL_W
+
+    /* Initialize RX rate tracking */
+    s_prev_rx_count = can_get_rx_frame_count();
+    s_rx_rate = 0;
+
+    refresh_can_diagnostics();
+
+    // Factory Reset button — subtle danger, not loud
     lv_obj_t* reset_btn = lv_btn_create(content);
-    lv_obj_set_size(reset_btn, lv_pct(100), 40);
-    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0x331111), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(reset_btn, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(reset_btn, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(reset_btn, lv_pct(100), 34);
+    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(reset_btn, 1, 0);
+    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
     lv_obj_t* reset_label = lv_label_create(reset_btn);
     lv_label_set_text(reset_label, "Reset to Default");
     lv_obj_center(reset_label);
-    lv_obj_set_style_text_font(reset_label, THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(reset_label, THEME_COLOR_BTN_CANCEL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(reset_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(reset_label, THEME_COLOR_STATUS_ERROR, 0);
     lv_obj_add_event_cb(reset_btn, _factory_reset_btn_cb, LV_EVENT_CLICKED, NULL);
 
     uint8_t saved_bitrate = 2; /* default 500 kbps */
@@ -1024,6 +1961,11 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
         lv_timer_del(s_wifi_status_timer);
     }
     s_wifi_status_timer = lv_timer_create(refresh_wifi_status_timer_cb, 2000, NULL);
+
+    if (s_can_diag_timer) {
+        lv_timer_del(s_can_diag_timer);
+    }
+    s_can_diag_timer = lv_timer_create(refresh_can_diag_timer_cb, 1000, NULL);
 
     lv_scr_load(settings_screen);
 }

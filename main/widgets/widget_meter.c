@@ -6,7 +6,6 @@
  * No double-precision math; only int32_t and clamping.
  */
 #include "widget_meter.h"
-#include "widget_rules.h"
 #include "widget_image.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -148,6 +147,16 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		needle = lv_meter_add_needle_line(m, scale, md->needle_width, md->needle_color, md->needle_r_mod);
 	}
 
+	/* Needle center ball styling */
+	if (md->needle_ball_size == 0) {
+		lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
+	} else {
+		lv_obj_set_style_size(m, md->needle_ball_size, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_color(m, md->needle_ball_color, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_opa(m, LV_OPA_COVER, LV_PART_INDICATOR);
+	}
+
 	ESP_LOGD(TAG, "_meter_create: calling lv_meter_set_indicator_value");
 	md->meter = m;
 	md->scale = scale;
@@ -212,6 +221,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_color", (int)md->needle_color.full);
 	if (md->needle_r_mod != -10)
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
+	if (md->needle_ball_size != 10)
+		cJSON_AddNumberToObject(cfg, "needle_ball_size", md->needle_ball_size);
+	if (md->needle_ball_color.full != lv_color_white().full)
+		cJSON_AddNumberToObject(cfg, "needle_ball_color", (int)md->needle_ball_color.full);
 	if (md->needle_image_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "needle_image_name", md->needle_image_name);
 	if (md->needle_pivot_x != 0)
@@ -301,6 +314,10 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_r_mod");
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_ball_size");
+	if (cJSON_IsNumber(ap)) md->needle_ball_size = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_ball_color");
+	if (cJSON_IsNumber(ap)) md->needle_ball_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_image_name");
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->needle_image_name, ap->valuestring, sizeof(md->needle_image_name));
@@ -341,7 +358,6 @@ static void _meter_destroy(widget_t *w) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (md && md->signal_index >= 0)
 		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
-	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -358,71 +374,6 @@ uint8_t widget_meter_get_value_idx(const widget_t *w) {
 		return 0;
 	const meter_data_t *md = (const meter_data_t *)w->type_data;
 	return md->value_idx < 13 ? md->value_idx : 0;
-}
-
-/* ── apply_overrides: live style changes driven by conditional rules ───── */
-
-static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
-	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
-	meter_data_t *md = (meter_data_t *)w->type_data;
-	if (!md) return;
-	lv_obj_t *m = md->meter;
-	if (!m) return;
-
-	/* Start from base meter_data_t values (restore defaults) */
-	lv_color_t bg_color = md->meter_bg_color;
-	uint8_t bg_opa = md->meter_bg_opa;
-	lv_color_t bdr_color = md->border_color;
-	lv_coord_t bdr_width = (lv_coord_t)md->border_width;
-	uint8_t bdr_opa = md->border_opa;
-	lv_color_t ndl_color = md->needle_color;
-	lv_color_t minor_tick_c = md->minor_tick_color;
-	lv_color_t major_tick_c = md->major_tick_color;
-	bool ticks_changed = false;
-
-	/* Apply active overrides on top */
-	for (uint8_t i = 0; i < count; i++) {
-		const rule_override_t *o = &ov[i];
-		if (strcmp(o->field_name, "meter_bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			bg_color.full = (uint16_t)o->value.color;
-		} else if (strcmp(o->field_name, "meter_bg_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
-			bg_opa = (uint8_t)o->value.num;
-		} else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			bdr_color.full = (uint16_t)o->value.color;
-		} else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
-			bdr_width = (lv_coord_t)o->value.num;
-		} else if (strcmp(o->field_name, "border_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
-			bdr_opa = (uint8_t)o->value.num;
-		} else if (strcmp(o->field_name, "needle_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			ndl_color.full = (uint16_t)o->value.color;
-		} else if (strcmp(o->field_name, "minor_tick_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			minor_tick_c.full = (uint16_t)o->value.color;
-			ticks_changed = true;
-		} else if (strcmp(o->field_name, "major_tick_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			major_tick_c.full = (uint16_t)o->value.color;
-			ticks_changed = true;
-		}
-	}
-
-	/* Apply all styles (either overridden or restored to base) */
-	lv_obj_set_style_bg_color(m, bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(m, bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(m, bdr_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(m, bdr_width, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_opa(m, bdr_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_line_color(m, ndl_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	/* Re-apply tick colors via scale API (not style-based in LVGL v8) */
-	if (ticks_changed || count == 0) {
-		if (md->scale) {
-			uint8_t safe_tick_count = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
-			uint8_t safe_major_every = md->major_tick_every < 1 ? 1 : md->major_tick_every;
-			lv_meter_set_scale_ticks(m, md->scale, safe_tick_count,
-				md->minor_tick_width, md->minor_tick_length, minor_tick_c);
-			lv_meter_set_scale_major_ticks(m, md->scale, safe_major_every,
-				md->major_tick_width, md->major_tick_length, major_tick_c, md->label_gap);
-			lv_obj_invalidate(m);
-		}
-	}
 }
 
 widget_t *widget_meter_create_instance(uint8_t value_idx) {
@@ -461,6 +412,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_width = 4;
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
+	md->needle_ball_size = 10;
+	md->needle_ball_color = lv_color_white();
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;
@@ -487,7 +440,6 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	w->to_json = _meter_to_json;
 	w->from_json = _meter_from_json;
 	w->destroy = _meter_destroy;
-	w->apply_overrides = _meter_apply_overrides;
 
 	return w;
 }

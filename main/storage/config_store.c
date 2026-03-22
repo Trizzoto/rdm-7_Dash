@@ -146,6 +146,85 @@ esp_err_t config_store_clear_wifi(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  WIFI AP (HOTSPOT) SETTINGS
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_WIFI_AP "wifi_ap_cfg"
+
+esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI_AP, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    nvs_set_u8(handle, "enabled", cfg->enabled ? 1 : 0);
+    nvs_set_str(handle, "password", cfg->password);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "AP config saved (enabled=%d)", cfg->enabled);
+    return err;
+}
+
+esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+
+    /* Defaults — AP disabled until user explicitly enables it */
+    cfg->enabled = false;
+    strncpy(cfg->password, "rdm7dash", sizeof(cfg->password) - 1);
+    cfg->password[sizeof(cfg->password) - 1] = '\0';
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI_AP, NVS_READONLY, &handle);
+    if (err != ESP_OK) return ESP_OK; /* use defaults if namespace missing */
+
+    uint8_t u8;
+    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) cfg->enabled = (u8 != 0);
+
+    size_t len = sizeof(cfg->password);
+    nvs_get_str(handle, "password", cfg->password, &len);
+
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  WIFI BOOT SETTINGS
+ * ═══════════════════════════════════════════════════════════════════════ */
+esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    nvs_set_u8(handle, "on_boot", cfg->wifi_on_boot ? 1 : 0);
+    nvs_set_u8(handle, "ap_en", cfg->ap_enabled ? 1 : 0);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    /* Defaults */
+    cfg->wifi_on_boot = false;
+    cfg->ap_enabled = false;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READONLY, &handle);
+    if (err != ESP_OK) return ESP_OK; /* use defaults if namespace missing */
+
+    uint8_t u8;
+    if (nvs_get_u8(handle, "on_boot", &u8) == ESP_OK) cfg->wifi_on_boot = (u8 != 0);
+    if (nvs_get_u8(handle, "ap_en", &u8) == ESP_OK) cfg->ap_enabled = (u8 != 0);
+
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FACTORY RESET
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -189,6 +268,7 @@ void config_store_factory_reset(void)
     _erase_nvs_namespace(NS_CAN);
     _erase_nvs_namespace(NS_DIMMER);
     _erase_nvs_namespace(NS_WIFI);
+    _erase_nvs_namespace(NS_WIFI_AP);
     _erase_nvs_namespace("layout_mgr");
 
     /* Clear user content from LittleFS */

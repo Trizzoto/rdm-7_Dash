@@ -31,6 +31,14 @@ typedef struct {
 	uint8_t    indicator_radius;     /* default: 5 */
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	/* ── Image-based bar (optional) ── */
+	char     bar_image[64];          /* track/background image name (default: "") */
+	char     bar_image_full[64];     /* fill image name (default: "") */
+	lv_img_dsc_t *bar_img_dsc;      /* runtime: loaded track image descriptor */
+	lv_img_dsc_t *bar_img_full_dsc;  /* runtime: loaded fill image descriptor */
+	lv_obj_t *img_bg_obj;            /* runtime: background image LVGL object */
+	lv_obj_t *img_full_obj;          /* runtime: full image LVGL object */
+	lv_obj_t *img_clip_obj;          /* runtime: clipping container for fill */
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* LVGL object pointers (runtime only, per-instance) */
@@ -38,9 +46,6 @@ typedef struct {
 	lv_obj_t *label_obj;
 	lv_obj_t *value_obj;
 } bar_data_t;
-
-/* previous_bar_values is also used by widget_dispatcher; expose it */
-extern float previous_bar_values[2];
 
 /** Create BAR1 and BAR2 horizontal bar widgets and their labels on parent. */
 void widget_bar_create(lv_obj_t *parent);

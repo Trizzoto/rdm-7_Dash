@@ -19,6 +19,7 @@
 #include "widgets/signal_sim.h"
 #include "ui/settings/device_settings.h"
 #include "storage/config_store.h"
+#include "storage/data_logger.h"
 #include "esp_littlefs.h"
 #include <dirent.h>
 #include <stdbool.h>
@@ -46,23 +47,52 @@ extern void example_lvgl_unlock(void);
 /* ── Path-safety check for user-supplied names (no traversal) ──────────── */
 
 static bool _name_is_safe(const char *name) {
+	if (!name || !name[0]) return false;
 	for (const char *p = name; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p == '.') return false;
+		if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
 	}
 	return true;
 }
 
-/* ── Deferred screen reload (runs on LVGL task via lv_async_call) ────────── */
+/* Like _name_is_safe but allows a single dot for file extension (e.g. ".csv") */
+static bool _filename_is_safe(const char *name) {
+	if (!name || !name[0]) return false;
+	for (const char *p = name; *p; p++) {
+		if (*p == '/' || *p == '\\' || *p < 0x20) return false;
+	}
+	/* Reject ".." sequences */
+	if (strstr(name, "..")) return false;
+	return true;
+}
+
+/* ── Debounced screen reload (runs on LVGL task via lv_async_call) ───────── */
 
 static char *s_pending_preview_json = NULL;
+static lv_timer_t *s_reload_debounce_timer  = NULL;
+static lv_timer_t *s_splash_debounce_timer  = NULL;
 
-static void _deferred_screen_reload(void *arg) {
-	(void)arg;
+#define RELOAD_DEBOUNCE_MS 600
+
+static void _do_screen_reload(lv_timer_t *t) {
+	(void)t;
+	s_reload_debounce_timer = NULL;
 	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
 	ui_Screen3_screen_init();
 	lv_scr_load(ui_Screen3);
 	if (old && old != ui_Screen3 && lv_obj_is_valid(old))
 		lv_obj_del(old);
+}
+
+/* Schedule or reset the debounce timer (must run on LVGL task) */
+static void _deferred_screen_reload(void *arg) {
+	(void)arg;
+	if (s_reload_debounce_timer) {
+		lv_timer_reset(s_reload_debounce_timer);
+	} else {
+		s_reload_debounce_timer = lv_timer_create(_do_screen_reload,
+												   RELOAD_DEBOUNCE_MS, NULL);
+		lv_timer_set_repeat_count(s_reload_debounce_timer, 1);
+	}
 }
 
 static void _deferred_preview_apply(void *arg) {
@@ -91,11 +121,23 @@ static void _deferred_preview_apply(void *arg) {
 	cJSON_Delete(root);
 }
 
-/* ── Splash screen reload (runs on LVGL task) ────────────────────────── */
+/* ── Splash screen reload (debounced, runs on LVGL task) ─────────────── */
+
+static void _do_splash_reload(lv_timer_t *t) {
+	(void)t;
+	s_splash_debounce_timer = NULL;
+	splash_screen_enter_edit_mode();
+}
 
 static void _deferred_splash_reload(void *arg) {
 	(void)arg;
-	splash_screen_enter_edit_mode();
+	if (s_splash_debounce_timer) {
+		lv_timer_reset(s_splash_debounce_timer);
+	} else {
+		s_splash_debounce_timer = lv_timer_create(_do_splash_reload,
+												   RELOAD_DEBOUNCE_MS, NULL);
+		lv_timer_set_repeat_count(s_splash_debounce_timer, 1);
+	}
 }
 
 /* ── Screen switch (runs on LVGL task) ───────────────────────────────── */
@@ -111,8 +153,13 @@ static void _deferred_screen_switch_dashboard(void *arg) {
 }
 
 // HTTP handler for the main page (serves embedded web/index.html)
+// TODO: Serve gzip-compressed HTML for ~4x size reduction (~433KB -> ~60KB).
+// Implementation: change CMakeLists.txt EMBED_TXTFILES to EMBED_FILES with a
+// pre-compressed .gz file, then set Content-Encoding: gzip here when the
+// client's Accept-Encoding includes "gzip". This requires a build-time gzip
+// step (e.g. a custom CMake command or pre-committed .gz file).
 static esp_err_t index_handler(httpd_req_t *req) {
-	httpd_resp_set_type(req, "text/html");
+	httpd_resp_set_type(req, "text/html; charset=UTF-8");
 	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
 	size_t len = index_html_end - index_html_start;
 	return httpd_resp_send(req, (const char *)index_html_start, len);
@@ -165,6 +212,23 @@ static const httpd_uri_t screenshot_uri = {.uri = "/screenshot",
 										   .handler = screenshot_handler,
 										   .user_ctx = NULL};
 
+// Lightweight version check — web editor polls this to avoid fetching the
+// full layout JSON on every sync cycle.
+static esp_err_t layout_version_handler(httpd_req_t *req) {
+	char buf[32];
+	snprintf(buf, sizeof(buf), "{\"v\":%lu}",
+			 (unsigned long)layout_manager_get_version());
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static const httpd_uri_t layout_version_uri = {
+	.uri = "/api/layout/version",
+	.method = HTTP_GET,
+	.handler = layout_version_handler,
+	.user_ctx = NULL};
+
 // HTTP handler for exporting current layout JSON
 static esp_err_t layout_current_handler(httpd_req_t *req) {
 	/* Check if we're in splash edit mode */
@@ -172,7 +236,8 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 
 	char layout_name[LAYOUT_MAX_NAME];
 	if (is_splash) {
-		strcpy(layout_name, "_splash");
+		snprintf(layout_name, sizeof(layout_name), "_splash_%s",
+		         splash_screen_get_active_name());
 	} else if (rdm_settings_get_active_layout(layout_name,
 	                                          sizeof(layout_name)) != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
@@ -369,7 +434,24 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	strncpy(layout_name, name_item->valuestring, sizeof(layout_name) - 1);
 	layout_name[sizeof(layout_name) - 1] = '\0';
 
-	bool is_splash = (strcmp(layout_name, "_splash") == 0);
+	/* Reject path traversal in layout names */
+	if (!_name_is_safe(layout_name)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Invalid layout name");
+		return ESP_FAIL;
+	}
+
+	/* Ensure schema_version is always set so layout_load won't reject it */
+	cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	if (!cJSON_IsNumber(sv) || sv->valueint < 1) {
+		if (sv) cJSON_ReplaceItemInObjectCaseSensitive(root, "schema_version",
+					cJSON_CreateNumber(LAYOUT_SCHEMA_VERSION));
+		else cJSON_AddNumberToObject(root, "schema_version",
+					LAYOUT_SCHEMA_VERSION);
+	}
+
+	bool is_splash = (strncmp(layout_name, "_splash_", 8) == 0);
 
 	/* Protect the default layout from being overwritten via web editor */
 	if (!is_splash && strcmp(layout_name, "default") == 0) {
@@ -390,7 +472,10 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 
 	if (apply_after_save) {
 		if (is_splash) {
-			/* Reload splash screen (don't change active dashboard layout) */
+			/* Update active splash NVS + reload splash screen */
+			const char *bare = layout_name + 8; /* skip "_splash_" */
+			layout_manager_set_active_splash(bare);
+			splash_screen_set_active_name(bare);
 			lv_async_call(_deferred_splash_reload, NULL);
 		} else {
 			// Update active layout name in NVS
@@ -461,12 +546,11 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 							"Failed to serialize preview JSON");
 		return ESP_FAIL;
 	}
-	/* If a previous preview is still pending, free it to avoid leak */
-	char *old_preview = s_pending_preview_json;
+	/* Atomically swap the pending pointer.  The old pointer (if any) is NOT
+	 * freed here because a previous lv_async_call may still reference it.
+	 * Instead, the async callback (_deferred_preview_apply) frees its own
+	 * argument after use, so each buffer is freed exactly once. */
 	s_pending_preview_json = json_copy;
-	if (old_preview) {
-		free(old_preview);
-	}
 	lv_async_call(_deferred_preview_apply, json_copy);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
@@ -905,6 +989,13 @@ static esp_err_t layout_set_handler(httpd_req_t *req) {
 	layout_name[sizeof(layout_name) - 1] = '\0';
 	cJSON_Delete(root);
 
+	/* Reject path traversal in layout names */
+	if (!_name_is_safe(layout_name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Invalid layout name");
+		return ESP_FAIL;
+	}
+
 	if (layout_manager_set_active(layout_name) != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to set active layout");
@@ -957,6 +1048,13 @@ static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	layout_name[sizeof(layout_name) - 1] = '\0';
 	cJSON_Delete(root);
 
+	/* Reject path traversal in layout names */
+	if (!_name_is_safe(layout_name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Invalid layout name");
+		return ESP_FAIL;
+	}
+
 	/* Protect the default layout from deletion */
 	if (strcmp(layout_name, "default") == 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
@@ -988,6 +1086,304 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
 											  .method = HTTP_POST,
 											  .handler = layout_delete_handler,
 											  .user_ctx = NULL};
+
+/* POST /api/layout/rename — rename a layout file and update NVS if active
+ * Body: { "old_name": "Foo", "new_name": "Bar" } */
+static esp_err_t layout_rename_handler(httpd_req_t *req) {
+	char buf[192];
+	if (req->content_len >= sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *old_item = cJSON_GetObjectItemCaseSensitive(root, "old_name");
+	cJSON *new_item = cJSON_GetObjectItemCaseSensitive(root, "new_name");
+	if (!cJSON_IsString(old_item) || !cJSON_IsString(new_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Missing old_name/new_name");
+		return ESP_FAIL;
+	}
+
+	char old_name[LAYOUT_MAX_NAME], new_name[LAYOUT_MAX_NAME];
+	strncpy(old_name, old_item->valuestring, sizeof(old_name) - 1);
+	old_name[sizeof(old_name) - 1] = '\0';
+	strncpy(new_name, new_item->valuestring, sizeof(new_name) - 1);
+	new_name[sizeof(new_name) - 1] = '\0';
+	cJSON_Delete(root);
+
+	if (!_name_is_safe(old_name) || !_name_is_safe(new_name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+	if (strcmp(old_name, "default") == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"Cannot rename default layout");
+		return ESP_FAIL;
+	}
+	if (strcmp(old_name, new_name) == 0) {
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+	}
+
+	/* Build paths */
+	char old_path[80], new_path[80];
+	snprintf(old_path, sizeof(old_path), "/lfs/layouts/%s.json", old_name);
+	snprintf(new_path, sizeof(new_path), "/lfs/layouts/%s.json", new_name);
+
+	/* Check destination doesn't already exist */
+	struct stat st;
+	if (stat(new_path, &st) == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+							"A layout with that name already exists");
+		return ESP_FAIL;
+	}
+
+	/* Read existing file, update internal "name" field, write to new path */
+	FILE *f = fopen(old_path, "r");
+	if (!f) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Layout not found");
+		return ESP_FAIL;
+	}
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (fsize <= 0 || fsize > LAYOUT_MAX_FILE_BYTES) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Bad file");
+		return ESP_FAIL;
+	}
+	char *json_buf = malloc(fsize + 1);
+	if (!json_buf) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	fread(json_buf, 1, fsize, f);
+	fclose(f);
+	json_buf[fsize] = '\0';
+
+	/* Update the "name" field inside the JSON */
+	cJSON *layout = cJSON_Parse(json_buf);
+	free(json_buf);
+	if (layout) {
+		cJSON *n = cJSON_GetObjectItemCaseSensitive(layout, "name");
+		if (n) cJSON_SetValuestring(n, new_name);
+		else cJSON_AddStringToObject(layout, "name", new_name);
+
+		char *out = cJSON_PrintUnformatted(layout);
+		cJSON_Delete(layout);
+		if (out) {
+			FILE *fw = fopen(new_path, "w");
+			if (fw) {
+				fwrite(out, 1, strlen(out), fw);
+				fflush(fw);
+				fclose(fw);
+				remove(old_path);
+			}
+			free(out);
+		}
+	} else {
+		/* Can't parse JSON — just rename the file */
+		rename(old_path, new_path);
+	}
+
+	/* Update NVS if this was the active layout */
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active(active, sizeof(active));
+	if (strcmp(active, old_name) == 0) {
+		layout_manager_set_active(new_name);
+	}
+
+	/* Also remove backup file if it exists */
+	char bak_path[96];
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", old_path);
+	remove(bak_path);
+
+	ESP_LOGI(TAG, "Renamed layout '%s' -> '%s'", old_name, new_name);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t layout_rename_uri = {.uri = "/api/layout/rename",
+											  .method = HTTP_POST,
+											  .handler = layout_rename_handler,
+											  .user_ctx = NULL};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Splash API endpoints
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* GET /api/splash/list — list splash layouts + active splash name */
+static esp_err_t splash_list_handler(httpd_req_t *req) {
+	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	int count = layout_manager_list_splash(names, LAYOUT_MAX_COUNT);
+	if (count < 0) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Failed to list splashes");
+		return ESP_FAIL;
+	}
+
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active_splash(active, sizeof(active));
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "active", active);
+	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
+	for (int i = 0; i < count; i++)
+		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json_str) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Failed to serialize JSON");
+		return ESP_FAIL;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static const httpd_uri_t splash_list_uri = {
+	.uri = "/api/splash/list", .method = HTTP_GET,
+	.handler = splash_list_handler, .user_ctx = NULL
+};
+
+/* POST /api/splash/set — set active splash by name */
+static esp_err_t splash_set_handler(httpd_req_t *req) {
+	char buf[128];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+	if (!cJSON_IsString(name_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name'");
+		return ESP_FAIL;
+	}
+
+	char name[LAYOUT_MAX_NAME];
+	strncpy(name, name_item->valuestring, sizeof(name) - 1);
+	name[sizeof(name) - 1] = '\0';
+	cJSON_Delete(root);
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	layout_manager_set_active_splash(name);
+	splash_screen_set_active_name(name);
+
+	/* If in splash edit mode, reload to the newly selected splash */
+	if (splash_screen_is_edit_mode())
+		lv_async_call(_deferred_splash_reload, NULL);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_set_uri = {
+	.uri = "/api/splash/set", .method = HTTP_POST,
+	.handler = splash_set_handler, .user_ctx = NULL
+};
+
+/* POST /api/splash/delete — delete a splash layout file */
+static esp_err_t splash_delete_handler(httpd_req_t *req) {
+	char buf[128];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+	if (!cJSON_IsString(name_item)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name'");
+		return ESP_FAIL;
+	}
+
+	char name[LAYOUT_MAX_NAME];
+	strncpy(name, name_item->valuestring, sizeof(name) - 1);
+	name[sizeof(name) - 1] = '\0';
+	cJSON_Delete(root);
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	/* Build full layout name e.g. "_splash_Racing" */
+	char full_name[LAYOUT_MAX_NAME];
+	snprintf(full_name, sizeof(full_name), "_splash_%s", name);
+	esp_err_t err = layout_manager_delete(full_name);
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Splash not found");
+		return ESP_FAIL;
+	}
+
+	/* If deleted splash was active, reset to Default */
+	char active[LAYOUT_MAX_NAME];
+	layout_manager_get_active_splash(active, sizeof(active));
+	if (strcmp(active, name) == 0) {
+		layout_manager_set_active_splash("Default");
+		splash_screen_set_active_name("Default");
+		if (splash_screen_is_edit_mode())
+			lv_async_call(_deferred_splash_reload, NULL);
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_delete_uri = {
+	.uri = "/api/splash/delete", .method = HTTP_POST,
+	.handler = splash_delete_handler, .user_ctx = NULL
+};
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Image API endpoints
@@ -1432,6 +1828,65 @@ static const httpd_uri_t font_delete_uri = {.uri = "/api/font/delete",
 											.handler = font_delete_handler,
 											.user_ctx = NULL};
 
+/* GET /api/font/data?name=<family_name> — return raw TTF binary */
+static esp_err_t font_data_handler(httpd_req_t *req) {
+	char query[64] = {0};
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+		return ESP_FAIL;
+	}
+	char name[32] = {0};
+	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
+		return ESP_FAIL;
+	}
+
+	if (!_name_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	char path[80];
+	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
+		return ESP_FAIL;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long file_size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	if (file_size <= 0 || file_size > FONT_MAX_FILE_SIZE) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
+		return ESP_FAIL;
+	}
+
+	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
+	if (!buf) buf = malloc(file_size);
+	if (!buf) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+
+	size_t nread = fread(buf, 1, file_size, f);
+	fclose(f);
+
+	httpd_resp_set_type(req, "application/octet-stream");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
+	free(buf);
+	return res;
+}
+
+static const httpd_uri_t font_data_uri = {.uri = "/api/font/data",
+										  .method = HTTP_GET,
+										  .handler = font_data_handler,
+										  .user_ctx = NULL};
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Fuel sender calibration endpoints
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1575,6 +2030,81 @@ static esp_err_t _signal_simulate_get_handler(httpd_req_t *req) {
 		: "{\"enabled\":false}";
 	httpd_resp_sendstr(req, resp);
 	return ESP_OK;
+}
+
+/* POST /api/signal/inject — inject test value into one or more signals
+ * Body: { "signal": "RPM", "value": 3500 }
+ * Or batch: { "values": [{ "signal": "RPM", "value": 3500 }, ...] } */
+
+typedef struct {
+	uint8_t count;
+	struct { char name[32]; float value; } entries[16];
+} signal_inject_batch_t;
+
+static void _deferred_inject(void *arg) {
+	signal_inject_batch_t *batch = (signal_inject_batch_t *)arg;
+	for (uint8_t i = 0; i < batch->count; i++)
+		signal_inject_test_value(batch->entries[i].name, batch->entries[i].value);
+	free(batch);
+}
+
+static esp_err_t _signal_inject_handler(httpd_req_t *req) {
+	char buf[512];
+	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (ret <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[ret] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	signal_inject_batch_t *batch = calloc(1, sizeof(signal_inject_batch_t));
+	if (!batch) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+
+	/* Single: { signal, value } */
+	cJSON *sig = cJSON_GetObjectItemCaseSensitive(root, "signal");
+	cJSON *val = cJSON_GetObjectItemCaseSensitive(root, "value");
+	if (cJSON_IsString(sig) && cJSON_IsNumber(val)) {
+		strncpy(batch->entries[0].name, sig->valuestring, 31);
+		batch->entries[0].value = (float)val->valuedouble;
+		batch->count = 1;
+	}
+
+	/* Batch: { values: [...] } */
+	cJSON *values = cJSON_GetObjectItemCaseSensitive(root, "values");
+	if (cJSON_IsArray(values)) {
+		cJSON *item;
+		cJSON_ArrayForEach(item, values) {
+			if (batch->count >= 16) break;
+			cJSON *s = cJSON_GetObjectItemCaseSensitive(item, "signal");
+			cJSON *v = cJSON_GetObjectItemCaseSensitive(item, "value");
+			if (cJSON_IsString(s) && cJSON_IsNumber(v)) {
+				strncpy(batch->entries[batch->count].name, s->valuestring, 31);
+				batch->entries[batch->count].value = (float)v->valuedouble;
+				batch->count++;
+			}
+		}
+	}
+
+	cJSON_Delete(root);
+
+	if (batch->count > 0)
+		lv_async_call(_deferred_inject, batch);
+	else
+		free(batch);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
 }
 
 /* GET /api/storage/info — returns total/used/free bytes for LittleFS + SD */
@@ -2145,6 +2675,208 @@ static const httpd_uri_t dimmer_config_post_uri = {
 	.handler = _dimmer_config_post_handler, .user_ctx = NULL
 };
 
+/* ── Data Logger API ──────────────────────────────────────────────────── */
+
+static void _deferred_log_start(void *arg) {
+	(void)arg;
+	data_logger_start();
+}
+
+static void _deferred_log_stop(void *arg) {
+	(void)arg;
+	data_logger_stop();
+}
+
+static esp_err_t _log_start_handler(httpd_req_t *req) {
+	/* data_logger uses an LVGL timer, so start from LVGL task */
+	if (data_logger_is_active()) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Already logging");
+		return ESP_OK;
+	}
+	if (!sd_manager_is_mounted()) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"SD card not mounted");
+		return ESP_OK;
+	}
+	lv_async_call(_deferred_log_start, NULL);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _log_stop_handler(httpd_req_t *req) {
+	if (!data_logger_is_active()) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not logging");
+		return ESP_OK;
+	}
+	lv_async_call(_deferred_log_stop, NULL);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _log_status_handler(httpd_req_t *req) {
+	bool active = data_logger_is_active();
+	const char *file = data_logger_current_file();
+	uint32_t samples = data_logger_get_sample_count();
+	uint32_t elapsed = data_logger_get_elapsed_ms();
+
+	/* Extract just the filename from the full path */
+	const char *basename = file;
+	const char *p = strrchr(file, '/');
+	if (p) basename = p + 1;
+
+	char buf[192];
+	snprintf(buf, sizeof(buf),
+			 "{\"active\":%s,\"file\":\"%s\",\"samples\":%lu,\"elapsed_ms\":%lu}",
+			 active ? "true" : "false",
+			 basename,
+			 (unsigned long)samples, (unsigned long)elapsed);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static esp_err_t _log_list_handler(httpd_req_t *req) {
+	if (!sd_manager_is_mounted()) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
+		return ESP_FAIL;
+	}
+
+	cJSON *arr = cJSON_CreateArray();
+	DIR *d = opendir("/sdcard/logs");
+	if (d) {
+		struct dirent *de;
+		while ((de = readdir(d)) != NULL) {
+			size_t flen = strlen(de->d_name);
+			if (flen <= 4 || strcmp(de->d_name + flen - 4, ".csv") != 0)
+				continue;
+			char path[96];
+			snprintf(path, sizeof(path), "/sdcard/logs/%s", de->d_name);
+			struct stat st;
+			if (stat(path, &st) != 0) continue;
+
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", de->d_name);
+			cJSON_AddNumberToObject(obj, "size", st.st_size);
+			cJSON_AddItemToArray(arr, obj);
+		}
+		closedir(d);
+	}
+
+	char *json_str = cJSON_PrintUnformatted(arr);
+	cJSON_Delete(arr);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]",
+									HTTPD_RESP_USE_STRLEN);
+	free(json_str);
+	return res;
+}
+
+static esp_err_t _log_download_handler(httpd_req_t *req) {
+	char query[128] = "";
+	char name[64] = "";
+
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+		httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK ||
+		name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name param");
+		return ESP_OK;
+	}
+
+	/* Prevent path traversal */
+	if (!_filename_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_OK;
+	}
+
+	char path[96];
+	snprintf(path, sizeof(path), "/sdcard/logs/%s", name);
+	FILE *f = fopen(path, "r");
+	if (!f) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Log not found");
+		return ESP_OK;
+	}
+
+	httpd_resp_set_type(req, "text/csv");
+
+	/* Set Content-Disposition for browser download */
+	char disposition[128];
+	snprintf(disposition, sizeof(disposition),
+			 "attachment; filename=\"%s\"", name);
+	httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+
+	char *buf = malloc(4096);
+	if (!buf) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_OK;
+	}
+	size_t n;
+	while ((n = fread(buf, 1, 4096, f)) > 0)
+		httpd_resp_send_chunk(req, buf, n);
+	httpd_resp_send_chunk(req, NULL, 0);
+	free(buf);
+	fclose(f);
+	return ESP_OK;
+}
+
+static esp_err_t _log_delete_handler(httpd_req_t *req) {
+	char query[128] = "";
+	char name[64] = "";
+
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+		httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK ||
+		name[0] == '\0') {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name param");
+		return ESP_OK;
+	}
+
+	if (!_filename_is_safe(name)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_OK;
+	}
+
+	char path[96];
+	snprintf(path, sizeof(path), "/sdcard/logs/%s", name);
+
+	if (remove(path) != 0) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Log not found");
+		return ESP_OK;
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"deleted\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t log_start_uri = {
+	.uri = "/api/log/start", .method = HTTP_POST,
+	.handler = _log_start_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_stop_uri = {
+	.uri = "/api/log/stop", .method = HTTP_POST,
+	.handler = _log_stop_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_status_uri = {
+	.uri = "/api/log/status", .method = HTTP_GET,
+	.handler = _log_status_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_list_uri = {
+	.uri = "/api/log/list", .method = HTTP_GET,
+	.handler = _log_list_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_download_uri = {
+	.uri = "/api/log/download", .method = HTTP_GET,
+	.handler = _log_download_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_delete_uri = {
+	.uri = "/api/log/delete", .method = HTTP_POST,
+	.handler = _log_delete_handler, .user_ctx = NULL
+};
+
 /* Helper macro to log on URI registration failure */
 #define REGISTER_URI(svr, uri_ptr) do { \
 	if (httpd_register_uri_handler(svr, uri_ptr) != ESP_OK) \
@@ -2159,9 +2891,8 @@ esp_err_t web_server_start(void) {
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
-	/* Increase stack size to handle LVGL snapshot + capture logic safely. */
-	config.stack_size = 8192;
-	config.max_uri_handlers = 30;
+	config.stack_size = 5120;
+	config.max_uri_handlers = 51;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -2178,6 +2909,7 @@ esp_err_t web_server_start(void) {
 	// Register URI handlers
 	REGISTER_URI(server, &index_uri);
 	REGISTER_URI(server, &screenshot_uri);
+	REGISTER_URI(server, &layout_version_uri);
 	REGISTER_URI(server, &layout_current_uri);
 	REGISTER_URI(server, &layout_raw_uri);
 	REGISTER_URI(server, &layout_save_uri);
@@ -2189,6 +2921,10 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &custom_preset_delete_uri);
 	REGISTER_URI(server, &layout_set_uri);
 	REGISTER_URI(server, &layout_delete_uri);
+	REGISTER_URI(server, &layout_rename_uri);
+	REGISTER_URI(server, &splash_list_uri);
+	REGISTER_URI(server, &splash_set_uri);
+	REGISTER_URI(server, &splash_delete_uri);
 	REGISTER_URI(server, &image_upload_uri);
 	REGISTER_URI(server, &image_list_uri);
 	REGISTER_URI(server, &image_delete_uri);
@@ -2196,6 +2932,7 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &font_upload_uri);
 	REGISTER_URI(server, &font_list_uri);
 	REGISTER_URI(server, &font_delete_uri);
+	REGISTER_URI(server, &font_data_uri);
 	REGISTER_URI(server, &storage_info_uri);
 	REGISTER_URI(server, &sd_status_uri);
 	REGISTER_URI(server, &sd_files_uri);
@@ -2204,6 +2941,12 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &screen_switch_uri);
 	REGISTER_URI(server, &dimmer_config_get_uri);
 	REGISTER_URI(server, &dimmer_config_post_uri);
+	REGISTER_URI(server, &log_start_uri);
+	REGISTER_URI(server, &log_stop_uri);
+	REGISTER_URI(server, &log_status_uri);
+	REGISTER_URI(server, &log_list_uri);
+	REGISTER_URI(server, &log_download_uri);
+	REGISTER_URI(server, &log_delete_uri);
 	static const httpd_uri_t signal_values_uri = {
 		.uri = "/api/signals/values",
 		.method = HTTP_GET,
@@ -2224,6 +2967,13 @@ esp_err_t web_server_start(void) {
 		.handler = _signal_simulate_get_handler
 	};
 	REGISTER_URI(server, &signal_simulate_get_uri);
+
+	static const httpd_uri_t signal_inject_uri = {
+		.uri = "/api/signal/inject",
+		.method = HTTP_POST,
+		.handler = _signal_inject_handler
+	};
+	REGISTER_URI(server, &signal_inject_uri);
 
 	static const httpd_uri_t fuel_status_uri = {
 		.uri = "/api/fuel/status",

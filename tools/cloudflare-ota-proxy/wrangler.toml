@@ -1,0 +1,8 @@
+name = "rdm7-ota-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Custom domain - configure in Cloudflare dashboard after deploying
+# routes = [
+#   { pattern = "ota.rdm7.net/*", zone_name = "rdm7.net" }
+# ]
