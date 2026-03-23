@@ -842,27 +842,6 @@ static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
     lv_dropdown_set_selected(lcol_dd, _theme_color_idx(rd->limiter_color));
     lv_obj_add_event_cb(lcol_dd, rpm_limiter_color_dropdown_event_cb,
                          LV_EVENT_VALUE_CHANGED, NULL);
-
-    /* ── Background section ────────────────────────────────────────── */
-    settings_section_t *bg_sec =
-        settings_add_section(tab, "BACKGROUND", THEME_COLOR_ACCENT_TEAL);
-
-    lv_obj_t *bg_sw = settings_add_switch(bg_sec, "Enable:",
-                                           rd->background_enabled);
-    lv_obj_add_event_cb(bg_sw, rpm_background_switch_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *bg_val_dd = settings_add_dropdown(bg_sec, "Threshold RPM:",
-                                                 RPM_STEP_OPTS, 0);
-    lv_dropdown_set_selected(bg_val_dd, _rpm_to_idx(rd->background_value));
-    lv_obj_add_event_cb(bg_val_dd, rpm_background_threshold_roller_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *bg_col_dd = settings_add_dropdown(bg_sec, "Background Colour:",
-                                                 COLOR_OPTS, 0);
-    lv_dropdown_set_selected(bg_col_dd, _theme_color_idx(rd->background_color));
-    lv_obj_add_event_cb(bg_col_dd, rpm_background_color_dropdown_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* =========================================================================

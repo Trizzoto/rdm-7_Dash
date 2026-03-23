@@ -2135,6 +2135,9 @@
             </div>
             <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
             <button id="splashDeleteBtn" class="btn btn-secondary btn-icon" onclick="splashDelete()" title="Delete current splash" style="display:none; color:hsl(0,70%,60%); font-size:13px; padding:2px 5px;">&#215;</button>
+            <label id="splashFadeLabel" style="display:none; align-items:center; gap:4px; font-size:11px; color:var(--text-muted); margin-left:8px; cursor:pointer;" title="Fade transition between splash and dashboard">
+                <input type="checkbox" id="splashFadeToggle" onchange="toggleSplashFade(this.checked)" style="cursor:pointer;"> Fade
+            </label>
             <div class="layout-menu-wrap" id="splashMenuWrap" style="display:none;">
                 <button class="btn btn-secondary btn-icon" onclick="toggleSplashMenu()" title="Splash actions">&#9776;</button>
                 <div class="layout-menu" id="splashMenu">
@@ -3313,11 +3316,7 @@
                         { v: 6, l: "Circles Solid" }
                     ], def: 0, cat: "appearance" },
                     { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
-                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" },
-                    { name: "lights_enabled", label: "RPM Lights", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "background_enabled", label: "Background Enabled", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "background_value", label: "Background RPM", type: "stepper", min: 0, max: 20000, def: 0, cat: "appearance" },
-                    { name: "background_color", label: "Background Color", type: "color", def: 0x333333, cat: "appearance" }
+                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" }
                 ]
             },
             "panel": {
@@ -3742,12 +3741,14 @@
             const simBtn = document.getElementById('pillSimulate');
 
             const splashDeleteBtn = document.getElementById('splashDeleteBtn');
+            const splashFadeLabel = document.getElementById('splashFadeLabel');
             if (isSplash) {
                 hide(layoutSelect);
                 hide(layoutMenuWrap);
                 show(splashSelect, '');
                 show(splashDeleteBtn, '');
                 show(splashMenuWrap, '');
+                show(splashFadeLabel, 'flex');
                 if (signalsTab) hide(signalsTab);
                 if (signalsTabBtn) hide(signalsTabBtn);
                 hide(ecuCtx);
@@ -3758,6 +3759,7 @@
                 hide(splashSelect);
                 hide(splashDeleteBtn);
                 hide(splashMenuWrap);
+                hide(splashFadeLabel);
                 if (signalsTab) show(signalsTab, '');
                 if (signalsTabBtn) show(signalsTabBtn, '');
                 show(ecuCtx, 'none'); /* ecuCtx is always hidden via inline style */
@@ -3848,6 +3850,8 @@
                     if (s === data.active) opt.selected = true;
                     sel.appendChild(opt);
                 });
+                const fadeToggle = document.getElementById('splashFadeToggle');
+                if (fadeToggle) fadeToggle.checked = data.fade_enabled !== false;
                 const active = sel.value || data.active || 'Default';
                 await loadLayout('_splash_' + active);
             } catch (e) {
@@ -3874,6 +3878,19 @@
             } catch (e) {
                 updateStatus('Splash switch failed', true);
                 showToast('Splash switch failed', 'error');
+            }
+        }
+
+        async function toggleSplashFade(enabled) {
+            try {
+                await fetch('/api/splash/fade', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                showToast('Splash fade ' + (enabled ? 'enabled' : 'disabled'));
+            } catch (e) {
+                showToast('Failed to update fade setting', 'error');
             }
         }
 

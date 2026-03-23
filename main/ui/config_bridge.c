@@ -422,18 +422,3 @@ lv_color_t config_bridge_get_rpm_limiter_color(void) {
 	return rd ? rd->limiter_color : lv_color_hex(0xFF0000);
 }
 
-bool config_bridge_get_rpm_background_enabled(void) {
-	rpm_bar_data_t *rd = _get_rpm_data();
-	return rd ? rd->background_enabled : false;
-}
-
-int32_t config_bridge_get_rpm_background_value(void) {
-	rpm_bar_data_t *rd = _get_rpm_data();
-	return rd ? rd->background_value : 0;
-}
-
-lv_color_t config_bridge_get_rpm_background_color(void) {
-	rpm_bar_data_t *rd = _get_rpm_data();
-	return rd ? rd->background_color : lv_color_hex(0x000000);
-}
-

@@ -44,6 +44,10 @@ typedef struct {
 esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg);
 esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg);
 
+/* ── Splash fade setting ──────────────────────────────────────────────── */
+esp_err_t config_store_save_splash_fade(bool enabled);
+esp_err_t config_store_load_splash_fade(bool *enabled);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

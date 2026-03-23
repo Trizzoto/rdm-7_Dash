@@ -1250,8 +1250,12 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 	char active[LAYOUT_MAX_NAME];
 	layout_manager_get_active_splash(active, sizeof(active));
 
+	bool fade_enabled = true;
+	config_store_load_splash_fade(&fade_enabled);
+
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "active", active);
+	cJSON_AddBoolToObject(root, "fade_enabled", fade_enabled);
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
@@ -1392,6 +1396,49 @@ static esp_err_t splash_delete_handler(httpd_req_t *req) {
 static const httpd_uri_t splash_delete_uri = {
 	.uri = "/api/splash/delete", .method = HTTP_POST,
 	.handler = splash_delete_handler, .user_ctx = NULL
+};
+
+/* POST /api/splash/fade — set splash fade enabled/disabled */
+static esp_err_t splash_fade_handler(httpd_req_t *req) {
+	char buf[64];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (!cJSON_IsBool(enabled)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' bool");
+		return ESP_FAIL;
+	}
+
+	bool val = cJSON_IsTrue(enabled);
+	cJSON_Delete(root);
+
+	config_store_save_splash_fade(val);
+	ESP_LOGI(TAG, "Splash fade set to %s", val ? "enabled" : "disabled");
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_fade_uri = {
+	.uri = "/api/splash/fade", .method = HTTP_POST,
+	.handler = splash_fade_handler, .user_ctx = NULL
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2934,6 +2981,7 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &splash_list_uri);
 	REGISTER_URI(server, &splash_set_uri);
 	REGISTER_URI(server, &splash_delete_uri);
+	REGISTER_URI(server, &splash_fade_uri);
 	REGISTER_URI(server, &image_upload_uri);
 	REGISTER_URI(server, &image_list_uri);
 	REGISTER_URI(server, &image_delete_uri);

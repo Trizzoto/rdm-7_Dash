@@ -14,10 +14,6 @@ typedef struct {
 	uint8_t  limiter_effect;   /* 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined */
 	int32_t  limiter_value;
 	lv_color_t limiter_color;
-	bool     lights_enabled;
-	bool     background_enabled;
-	int32_t  background_value;
-	lv_color_t background_color;
 	char     signal_name[32];
 	int16_t  signal_index;
 } rpm_bar_data_t;
@@ -59,13 +55,8 @@ void rpm_color_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e);
-void rpm_background_switch_event_cb(lv_event_t *e);
-void rpm_background_color_dropdown_event_cb(lv_event_t *e);
-void rpm_background_threshold_roller_event_cb(lv_event_t *e);
-
 /** Color-wheel popup creators. */
 void create_rpm_color_wheel_popup(void);
-void create_rpm_background_color_wheel_popup(void);
 void create_limiter_color_wheel_popup(void);
 
 /** Returns pointer to last_rpm_can_received for dispatcher timeout tracking. */

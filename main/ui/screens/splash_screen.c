@@ -9,6 +9,7 @@
 #include "widgets/font_manager.h"
 #include "widgets/signal.h"
 #include "widgets/widget_registry.h"
+#include "storage/config_store.h"
 #include <string.h>
 #include <sys/stat.h>
 
@@ -24,6 +25,7 @@ void ui_Screen3_screen_init(void);
 static lv_obj_t *splash_screen = NULL;
 static esp_timer_handle_t splash_timer = NULL;
 static bool s_edit_mode = false;
+static bool s_fade_enabled = true;
 static char s_active_splash_name[LAYOUT_MAX_NAME] = "Default";
 
 /* Widget tracking for splash edit mode (parallels dashboard.c) */
@@ -107,9 +109,9 @@ static void _splash_build_dashboard(lv_timer_t *t)
 
 	ui_Screen3_screen_init();
 
-	/* Fade in from black — LVGL renders the dashboard off-screen first,
-	 * then cross-fades over 300ms. auto_del=true cleans up the black screen. */
-	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, true);
+	/* Instant swap — dashboard is already built off-screen.
+	 * auto_del=true cleans up the black screen. */
+	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 /** Phase 1: show a clean black screen while dashboard builds (LVGL task). */
@@ -117,22 +119,28 @@ static void _splash_transition_cb(void *arg)
 {
 	(void)arg;
 
-	/* Create a solid black screen */
-	lv_obj_t *black = lv_obj_create(NULL);
-	lv_obj_set_style_bg_color(black, lv_color_black(), 0);
-	lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
-	lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
-
-	/* Fade splash to black over 200ms, auto-delete splash screen */
-	splash_screen = NULL;  /* lv_scr_load_anim will delete it */
+	splash_screen = NULL;
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
-	lv_scr_load_anim(black, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
 
-	/* Build dashboard after fade-to-black completes + one extra frame
-	 * for the black screen to fully render. */
-	lv_timer_t *t = lv_timer_create(_splash_build_dashboard, 250, NULL);
-	lv_timer_set_repeat_count(t, 1);
+	if (s_fade_enabled) {
+		/* Create a solid black screen */
+		lv_obj_t *black = lv_obj_create(NULL);
+		lv_obj_set_style_bg_color(black, lv_color_black(), 0);
+		lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
+		lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
+
+		/* Fade splash to black over 200ms, auto-delete splash screen */
+		lv_scr_load_anim(black, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
+
+		/* Build dashboard after fade completes */
+		lv_timer_t *t = lv_timer_create(_splash_build_dashboard, 250, NULL);
+		lv_timer_set_repeat_count(t, 1);
+	} else {
+		/* No fade — build and show dashboard immediately */
+		ui_Screen3_screen_init();
+		lv_scr_load(ui_Screen3);
+	}
 }
 
 /** esp_timer callback — runs on the esp_timer task, NOT safe for LVGL calls. */
@@ -153,11 +161,13 @@ void show_splash_screen(void)
 {
 	splash_screen = _create_screen();
 
-	/* Read active splash name from NVS */
+	/* Read settings from NVS */
 	layout_manager_init(); /* idempotent — ensures LittleFS mounted */
 	layout_manager_get_active_splash(s_active_splash_name,
 	                                 sizeof(s_active_splash_name));
-	ESP_LOGI(TAG, "Active splash: '%s'", s_active_splash_name);
+	config_store_load_splash_fade(&s_fade_enabled);
+	ESP_LOGI(TAG, "Active splash: '%s', fade: %s", s_active_splash_name,
+	         s_fade_enabled ? "on" : "off");
 
 	/* Try to load custom splash layout */
 	if (!_load_splash_layout(splash_screen)) {

@@ -259,74 +259,6 @@ void rpm_limiter_color_dropdown_event_cb(lv_event_t *e) {
 	}
 }
 
-void rpm_background_switch_event_cb(lv_event_t *e) {
-	lv_obj_t *switch_obj = lv_event_get_target(e);
-	bool is_checked = lv_obj_has_state(switch_obj, LV_STATE_CHECKED);
-
-	// Update configuration
-	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
-	if (rd) rd->background_enabled = is_checked;
-}
-
-void rpm_background_color_dropdown_event_cb(lv_event_t *e) {
-	lv_obj_t *dropdown = lv_event_get_target(e);
-	uint16_t selected = lv_dropdown_get_selected(dropdown);
-
-	// Determine new color based on selection - same colors as limiter
-	lv_color_t new_background_color;
-	switch (selected) {
-	case 0:
-		new_background_color = THEME_COLOR_GREEN;
-		break; // Green
-	case 1:
-		new_background_color = THEME_COLOR_CYAN;
-		break; // Light Blue
-	case 2:
-		new_background_color = THEME_COLOR_YELLOW;
-		break; // Yellow
-	case 3:
-		new_background_color = THEME_COLOR_ORANGE;
-		break; // Orange
-	case 4:
-		new_background_color = THEME_COLOR_RED;
-		break; // Red
-	case 5:
-		new_background_color = THEME_COLOR_BLUE;
-		break; // Blue
-	case 6:
-		new_background_color = THEME_COLOR_PURPLE;
-		break; // Purple
-	case 7:
-		new_background_color = THEME_COLOR_MAGENTA;
-		break; // Magenta
-	case 8:
-		new_background_color = THEME_COLOR_PINK;
-		break; // Pink
-	case 9:	   // Custom color - open color wheel popup
-		create_rpm_background_color_wheel_popup();
-		return; // Don't update color yet, wait for color wheel selection
-	default:
-		new_background_color = THEME_COLOR_GREEN;
-		break;
-	}
-
-	// Update configuration
-	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
-	if (rd) rd->background_color = new_background_color;
-}
-
-void rpm_background_threshold_roller_event_cb(lv_event_t *e) {
-	lv_obj_t *roller = lv_event_get_target(e);
-	uint16_t selected = lv_dropdown_get_selected(roller);
-
-	int32_t threshold_value =
-		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
-
-	// Update configuration
-	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
-	if (rd) rd->background_value = threshold_value;
-}
-
 static void update_menu_rpm_value_text(int rpm_value) {
 	// Update the RPM value text in menu screen during demos
 	// Guard: menu must be the active screen and label must be valid
@@ -347,16 +279,6 @@ static void update_menu_rpm_value_text(int rpm_value) {
 static lv_obj_t *color_wheel_popup = NULL;
 static lv_obj_t *color_wheel = NULL;
 static lv_color_t selected_custom_color;
-
-// Global variables for RPM background color wheel popup
-static lv_obj_t *rpm_background_color_wheel_popup = NULL;
-static lv_obj_t *rpm_background_color_wheel = NULL;
-static lv_color_t selected_rpm_background_custom_color;
-
-// Global variables for RPM background functionality
-static bool rpm_background_active = false;
-static lv_color_t original_screen_bg_color;
-static bool original_screen_bg_color_saved = false;
 
 static void color_wheel_value_changed_cb(lv_event_t *e) {
 	// Update the selected color as user moves the color wheel
@@ -393,123 +315,6 @@ static void color_wheel_cancel_event_cb(lv_event_t *e) {
 		color_wheel_popup = NULL;
 		color_wheel = NULL;
 	}
-}
-
-// RPM Background color wheel popup event callbacks
-static void rpm_background_color_wheel_ok_event_cb(lv_event_t *e) {
-	// Apply the selected color from the color wheel
-	{
-		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
-		if (rd) rd->background_color = selected_rpm_background_custom_color;
-	}
-
-	// Close the popup
-	if (rpm_background_color_wheel_popup) {
-		lv_obj_del(rpm_background_color_wheel_popup);
-		rpm_background_color_wheel_popup = NULL;
-		rpm_background_color_wheel = NULL;
-	}
-}
-
-static void rpm_background_color_wheel_cancel_event_cb(lv_event_t *e) {
-	// Just close the popup without applying changes
-	if (rpm_background_color_wheel_popup) {
-		lv_obj_del(rpm_background_color_wheel_popup);
-		rpm_background_color_wheel_popup = NULL;
-		rpm_background_color_wheel = NULL;
-	}
-}
-
-static void rpm_background_color_wheel_value_changed_cb(lv_event_t *e) {
-	// Update the selected color as user moves the color wheel
-	lv_obj_t *colorwheel = lv_event_get_target(e);
-	selected_rpm_background_custom_color = lv_colorwheel_get_rgb(colorwheel);
-}
-
-void create_rpm_background_color_wheel_popup(void) {
-	// Don't create multiple popups
-	if (rpm_background_color_wheel_popup)
-		return;
-
-	// Create popup background
-	rpm_background_color_wheel_popup = lv_obj_create(lv_scr_act());
-	lv_obj_set_size(rpm_background_color_wheel_popup, 400, 350);
-	lv_obj_center(rpm_background_color_wheel_popup);
-	lv_obj_set_style_bg_color(rpm_background_color_wheel_popup,
-							  THEME_COLOR_PANEL,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(rpm_background_color_wheel_popup,
-								  THEME_COLOR_BORDER_MED,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(rpm_background_color_wheel_popup, 2,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(rpm_background_color_wheel_popup, 10,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_width(rpm_background_color_wheel_popup, 15,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_color(rpm_background_color_wheel_popup,
-								  THEME_COLOR_BG,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_shadow_opa(rpm_background_color_wheel_popup, 150,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	// Title label
-	lv_obj_t *title_label = lv_label_create(rpm_background_color_wheel_popup);
-	lv_label_set_text(title_label, "Select Custom Background Colour");
-	lv_obj_set_style_text_color(title_label, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(title_label, THEME_FONT_MEDIUM,
-							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 15);
-
-	// Create color wheel
-	rpm_background_color_wheel =
-		lv_colorwheel_create(rpm_background_color_wheel_popup, true);
-	lv_obj_set_size(rpm_background_color_wheel, 200, 200);
-	lv_obj_align(rpm_background_color_wheel, LV_ALIGN_CENTER, 0, -10);
-
-	// Set initial color to current background color
-	rpm_bar_data_t *rd_bg = _lookup_rpm_bar_data();
-	lv_color_t current_color = rd_bg ? rd_bg->background_color : THEME_COLOR_GREEN;
-	lv_colorwheel_set_rgb(rpm_background_color_wheel, current_color);
-	selected_rpm_background_custom_color = current_color;
-
-	// Add color wheel change event
-	lv_obj_add_event_cb(rpm_background_color_wheel,
-						rpm_background_color_wheel_value_changed_cb,
-						LV_EVENT_VALUE_CHANGED, NULL);
-
-	// OK button
-	lv_obj_t *ok_btn = lv_btn_create(rpm_background_color_wheel_popup);
-	lv_obj_set_size(ok_btn, 80, 35);
-	lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -20);
-	lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(ok_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	lv_obj_t *ok_label = lv_label_create(ok_btn);
-	lv_label_set_text(ok_label, "OK");
-	lv_obj_set_style_text_color(ok_label, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_center(ok_label);
-	lv_obj_add_event_cb(ok_btn, rpm_background_color_wheel_ok_event_cb,
-						LV_EVENT_CLICKED, NULL);
-
-	// Cancel button
-	lv_obj_t *cancel_btn = lv_btn_create(rpm_background_color_wheel_popup);
-	lv_obj_set_size(cancel_btn, 80, 35);
-	lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -20);
-	lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(cancel_btn, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-	lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-	lv_label_set_text(cancel_label, "Cancel");
-	lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_center(cancel_label);
-	lv_obj_add_event_cb(cancel_btn, rpm_background_color_wheel_cancel_event_cb,
-						LV_EVENT_CLICKED, NULL);
 }
 
 void create_rpm_color_wheel_popup(void) {
@@ -739,166 +544,6 @@ void set_rpm_value(int rpm) {
 		lv_bar_set_value(rpm_bar_gauge, scaled_rpm, LV_ANIM_OFF);
 	}
 
-	// Check if we should activate RPM background effect based on
-	// real RPM
-	rpm_bar_data_t *rd_bg = _lookup_rpm_bar_data();
-	if (rd_bg && rd_bg->background_enabled) {
-		int32_t background_threshold = rd_bg->background_value;
-
-		// Add hysteresis for background effect too: activate at
-		// threshold, deactivate at threshold - 200 RPM
-		const int32_t BACKGROUND_HYSTERESIS = 200;
-
-		if (!rpm_background_active && rpm >= background_threshold) {
-			// RPM exceeded background threshold, change background
-			// color
-			rpm_background_active = true;
-
-			// Save original background color if not already saved
-			if (!original_screen_bg_color_saved && ui_Screen3 &&
-				lv_obj_is_valid(ui_Screen3)) {
-				// Get current background color (assuming it's the
-				// default)
-				original_screen_bg_color =
-					THEME_COLOR_BG; // Default black background
-				original_screen_bg_color_saved = true;
-			}
-
-			// Set background to the configured RPM background color
-			if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
-				lv_obj_set_style_bg_color(
-					ui_Screen3,
-					rd_bg->background_color,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-
-			// Change panel backgrounds to grey when RPM background
-			// is active
-			for (int i = 0; i < 8; i++) {
-				if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-					lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_PANEL,
-											  LV_PART_MAIN | LV_STATE_DEFAULT);
-				}
-			}
-
-			// Change text elements to grey when RPM background is
-			// active
-			if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
-				lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
-				lv_obj_set_style_text_color(ui_Bar_1_Label, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
-				lv_obj_set_style_text_color(ui_Bar_1_Value, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
-				lv_obj_set_style_text_color(ui_Bar_2_Label, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
-				lv_obj_set_style_text_color(ui_Bar_2_Value, THEME_COLOR_PANEL,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-		} else if (rpm_background_active &&
-				   rpm < (background_threshold - BACKGROUND_HYSTERESIS)) {
-			// RPM dropped below threshold minus hysteresis, restore
-			// original background
-			rpm_background_active = false;
-
-			// Restore original background color
-			if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
-				lv_obj_set_style_bg_color(ui_Screen3, original_screen_bg_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-
-			// Restore panel backgrounds to black when RPM
-			// background is inactive
-			for (int i = 0; i < 8; i++) {
-				if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-					lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_BG,
-											  LV_PART_MAIN | LV_STATE_DEFAULT);
-				}
-			}
-
-			// Restore text elements to white when RPM background is
-			// inactive
-			if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
-				lv_obj_set_style_text_color(ui_RPM_Value,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
-				lv_obj_set_style_text_color(ui_Bar_1_Label,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
-				lv_obj_set_style_text_color(ui_Bar_1_Value,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
-				lv_obj_set_style_text_color(ui_Bar_2_Label,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-			if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
-				lv_obj_set_style_text_color(ui_Bar_2_Value,
-											THEME_COLOR_TEXT_PRIMARY,
-											LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-		}
-		// If RPM is between (threshold - HYSTERESIS) and threshold,
-		// maintain current state
-	} else if (rpm_background_active) {
-		// Background feature is disabled but background is still
-		// active - restore it
-		rpm_background_active = false;
-		if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
-			lv_obj_set_style_bg_color(ui_Screen3, original_screen_bg_color,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-
-		// Restore panel backgrounds to black when RPM background is
-		// disabled
-		for (int i = 0; i < 8; i++) {
-			if (ui_Box[i] && lv_obj_is_valid(ui_Box[i])) {
-				lv_obj_set_style_bg_color(ui_Box[i], THEME_COLOR_BG,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
-		}
-
-		// Restore text elements to white when RPM background is
-		// disabled
-		if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
-			lv_obj_set_style_text_color(ui_RPM_Value, THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Bar_1_Label && lv_obj_is_valid(ui_Bar_1_Label)) {
-			lv_obj_set_style_text_color(ui_Bar_1_Label,
-										THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Bar_1_Value && lv_obj_is_valid(ui_Bar_1_Value)) {
-			lv_obj_set_style_text_color(ui_Bar_1_Value,
-										THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Bar_2_Label && lv_obj_is_valid(ui_Bar_2_Label)) {
-			lv_obj_set_style_text_color(ui_Bar_2_Label,
-										THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-		if (ui_Bar_2_Value && lv_obj_is_valid(ui_Bar_2_Value)) {
-			lv_obj_set_style_text_color(ui_Bar_2_Value,
-										THEME_COLOR_TEXT_PRIMARY,
-										LV_PART_MAIN | LV_STATE_DEFAULT);
-		}
-	}
 }
 void update_redline_position(void) {
 	if (!rpm_redline_zone)
@@ -1252,10 +897,6 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_effect", rd->limiter_effect);
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
-	cJSON_AddBoolToObject(cfg, "lights_enabled", rd->lights_enabled);
-	cJSON_AddBoolToObject(cfg, "background_enabled", rd->background_enabled);
-	cJSON_AddNumberToObject(cfg, "background_value", rd->background_value);
-	cJSON_AddNumberToObject(cfg, "background_color", (int)rd->background_color.full);
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
 }
@@ -1284,14 +925,6 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) rd->limiter_value = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_color");
 	if (cJSON_IsNumber(item)) rd->limiter_color.full = (uint32_t)item->valueint;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "lights_enabled");
-	if (cJSON_IsBool(item)) rd->lights_enabled = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_enabled");
-	if (cJSON_IsBool(item)) rd->background_enabled = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_value");
-	if (cJSON_IsNumber(item)) rd->background_value = (int32_t)item->valueint;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "background_color");
-	if (cJSON_IsNumber(item)) rd->background_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name));
@@ -1308,7 +941,6 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 	/* Restore defaults from type_data */
 	lv_color_t bar_col = rd->bar_color;
 	lv_color_t lim_col = rd->limiter_color;
-	lv_color_t bg_col  = rd->background_color;
 
 	/* Overlay active overrides */
 	for (uint8_t i = 0; i < count; i++) {
@@ -1319,9 +951,6 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 		} else if (strcmp(o->field_name, "limiter_color") == 0 && o->value_type == RULE_VAL_COLOR) {
 			lv_color_t c; c.full = (uint16_t)o->value.color;
 			lim_col = c;
-		} else if (strcmp(o->field_name, "background_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			lv_color_t c; c.full = (uint16_t)o->value.color;
-			bg_col = c;
 		}
 	}
 
@@ -1338,12 +967,6 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 	/* Apply redline/limiter zone color */
 	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
 		lv_obj_set_style_bg_color(rpm_redline_zone, lim_col,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
-
-	/* Apply background bar color */
-	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
-		lv_obj_set_style_bg_color(rpm_bar_gauge, bg_col,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 }
@@ -1384,10 +1007,6 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->limiter_effect = 0;
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */
-	rd->lights_enabled = false;
-	rd->background_enabled = false;
-	rd->background_value = 0;
-	rd->background_color = lv_color_hex(0x000000);
 
 	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;

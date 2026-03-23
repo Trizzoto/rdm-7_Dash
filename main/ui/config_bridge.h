@@ -104,9 +104,6 @@ lv_color_t config_bridge_get_rpm_bar_color(void);
 uint8_t    config_bridge_get_rpm_limiter_effect(void);
 int32_t    config_bridge_get_rpm_limiter_value(void);
 lv_color_t config_bridge_get_rpm_limiter_color(void);
-bool       config_bridge_get_rpm_background_enabled(void);
-int32_t    config_bridge_get_rpm_background_value(void);
-lv_color_t config_bridge_get_rpm_background_color(void);
 
 /* ── Signal auto-create ───────────────────────────────────────────────── */
 
