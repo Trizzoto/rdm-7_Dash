@@ -928,7 +928,7 @@
             position: absolute;
             pointer-events: none;
             z-index: 0;
-            opacity: 0.1;
+            opacity: 0.15;
         }
 
         #interactionLayer::before {
@@ -936,7 +936,7 @@
             left: 0;
             width: 100%;
             height: 1px;
-            background: hsla(0, 0%, 60%, 0.6);
+            background: #ffffff;
         }
 
         #interactionLayer::after {
@@ -944,7 +944,12 @@
             top: 0;
             width: 1px;
             height: 100%;
-            background: hsla(0, 0%, 60%, 0.6);
+            background: #ffffff;
+        }
+
+        #interactionLayer.hide-crosshair::before,
+        #interactionLayer.hide-crosshair::after {
+            display: none;
         }
 
         /* Inspector Empty State */
@@ -2101,6 +2106,7 @@
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
                 <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
+                <button class="header-pill active" id="pillCrosshair" onclick="toggleHeaderPill(this, 'crosshair')">Crosshair</button>
             </div>
             <!-- Hidden checkboxes for JS compatibility -->
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
@@ -2114,19 +2120,14 @@
             <div class="header-divider"></div>
             <select id="layoutSelect"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;"></select>
-            <button class="btn btn-secondary btn-icon" onclick="deleteCurrentLayout()" title="Delete current layout" style="color:hsl(0,70%,60%); font-size:13px; padding:2px 5px;">&#215;</button>
             <div class="layout-menu-wrap" id="layoutMenuWrap">
                 <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions">&#9776;</button>
                 <div class="layout-menu" id="layoutMenu">
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()">New Layout...</div>
-                    <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()">Save As New...</div>
                     <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()">Rename...</div>
                     <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()">Export .rdm Bundle</div>
-                    <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()">Import .rdm Bundle</div>
-                    <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="downloadJson(); closeLayoutMenu()">Export JSON</div>
-                    <div class="layout-menu-item" onclick="importJson(); closeLayoutMenu()">Import JSON</div>
+                    <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()">Import .rdm</div>
+                    <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()">Export .rdm</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()">Dimmer Settings...</div>
                     <div class="layout-menu-sep"></div>
@@ -2134,7 +2135,6 @@
                 </div>
             </div>
             <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
-            <button id="splashDeleteBtn" class="btn btn-secondary btn-icon" onclick="splashDelete()" title="Delete current splash" style="display:none; color:hsl(0,70%,60%); font-size:13px; padding:2px 5px;">&#215;</button>
             <label id="splashFadeLabel" style="display:none; align-items:center; gap:4px; font-size:11px; color:var(--text-muted); margin-left:8px; cursor:pointer;" title="Fade transition between splash and dashboard">
                 <input type="checkbox" id="splashFadeToggle" onchange="toggleSplashFade(this.checked)" style="cursor:pointer;"> Fade
             </label>
@@ -2142,13 +2142,11 @@
                 <button class="btn btn-secondary btn-icon" onclick="toggleSplashMenu()" title="Splash actions">&#9776;</button>
                 <div class="layout-menu" id="splashMenu">
                     <div class="layout-menu-item" onclick="splashNew(); closeSplashMenu()">New Splash...</div>
-                    <div class="layout-menu-item" onclick="splashSaveAs(); closeSplashMenu()">Save As New...</div>
                     <div class="layout-menu-item" onclick="renameSplash(); closeSplashMenu()">Rename...</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="splashDelete(); closeSplashMenu()" style="color:hsl(0,70%,60%)">Delete Splash</div>
                 </div>
             </div>
-            <input type="file" id="importJsonInput" accept=".json" style="display:none">
             <input type="file" id="importRdmInput" accept=".rdm" style="display:none">
             <div class="header-divider"></div>
             <button class="btn btn-secondary" onclick="resetView()">Reset</button>
@@ -2157,7 +2155,7 @@
             <div class="header-divider"></div>
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min→max for visual testing">Simulate</button>
             <div class="header-divider"></div>
-            <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Apply</button>
+            <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
         </div>
         <!-- Hidden elements for JS compatibility -->
         <select id="ecuContextSelect" style="display:none;" onchange="onEcuContextChange(this.value)"><option value="">Custom</option></select>
@@ -3067,18 +3065,80 @@
             }
         }
 
+        /* ── Styled Prompt Overlay (replaces browser prompt()) ── */
+        function _showPromptOverlay(title, defaultValue, onConfirm, opts) {
+            const _opts = typeof opts === 'string' ? { subtitle: opts } : (opts || {});
+            const subtitle = _opts.subtitle ? `<div style="font-size:11px;color:#888;margin-bottom:10px;white-space:pre-wrap;">${_opts.subtitle}</div>` : '';
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:320px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+                    <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:14px;letter-spacing:0.03em;">${title}</div>
+                    ${subtitle}
+                    <input id="_promptInput" type="text" value="${defaultValue || ''}" maxlength="64"
+                        style="width:100%;box-sizing:border-box;background:#111214;border:1px solid #3a3b40;border-radius:6px;padding:9px 12px;color:#fff;font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;"
+                        onfocus="this.select()">
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+                        <button id="_promptCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                        <button id="_promptOk" style="padding:7px 16px;cursor:pointer;background:#3b82f6;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">OK</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const inp = document.getElementById('_promptInput');
+            const cancel = () => { overlay.remove(); };
+            document.getElementById('_promptCancel').onclick = cancel;
+            overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
+            document.getElementById('_promptOk').onclick = () => {
+                let val = inp.value.trim();
+                if (!_opts.raw) val = val.replace(/[^a-zA-Z0-9_-]/g, '_');
+                if (!val) { inp.style.borderColor = '#f44'; return; }
+                overlay.remove();
+                onConfirm(val);
+            };
+            inp.addEventListener('keydown', e => {
+                if (e.key === 'Enter') document.getElementById('_promptOk').click();
+                if (e.key === 'Escape') cancel();
+            });
+            setTimeout(() => inp.focus(), 50);
+        }
+
+        /* ── Styled Confirm Overlay (replaces browser confirm()) ── */
+        function _showConfirmOverlay(title, message, confirmLabel, onConfirm) {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(6,6,8,0.82);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:#1a1b1e;border:1px solid #2e2f34;border-radius:10px;padding:24px;min-width:320px;max-width:400px;box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+                    <div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:8px;letter-spacing:0.03em;">${title}</div>
+                    <div style="font-size:12px;color:#999;margin-bottom:18px;line-height:1.5;">${message}</div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button id="_confirmCancel" style="padding:7px 16px;cursor:pointer;background:transparent;border:1px solid #2e2f34;border-radius:6px;color:#999;font-size:12px;">Cancel</button>
+                        <button id="_confirmOk" style="padding:7px 16px;cursor:pointer;background:#ef4444;border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:500;">${confirmLabel}</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const cancel = () => overlay.remove();
+            document.getElementById('_confirmCancel').onclick = cancel;
+            overlay.addEventListener('click', e => { if (e.target === overlay) cancel(); });
+            document.getElementById('_confirmOk').onclick = () => {
+                overlay.remove();
+                onConfirm();
+            };
+            document.addEventListener('keydown', function handler(e) {
+                if (e.key === 'Escape') { cancel(); document.removeEventListener('keydown', handler); }
+            });
+        }
+
         function layoutEditorNew() {
-            const name = prompt('New layout name:', '');
-            if (!name || !name.trim()) return;
-            const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-            pushHistory();
-            currentLayout = { name: safeName, widgets: [], signals: [] };
-            selectedIndex = -1; selectedIndices = new Set();
-            renderEditor();
-            renderSignals();
-            updateInspector();
-            updateStatus('Created new layout: ' + safeName);
-            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            _showPromptOverlay('New Layout', '', (safeName) => {
+                pushHistory();
+                currentLayout = { name: safeName, widgets: [], signals: [] };
+                selectedIndex = -1; selectedIndices = new Set();
+                renderEditor();
+                renderSignals();
+                updateInspector();
+                updateStatus('Created new layout: ' + safeName);
+                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            });
         }
 
         async function layoutEditorSaveAs() {
@@ -3434,7 +3494,7 @@
                     { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 2, max: 100, def: 21, cat: "appearance" },
                     { name: "minor_tick_width", label: "Tick Width", type: "stepper", min: 1, max: 20, def: 2, cat: "appearance" },
                     { name: "minor_tick_length", label: "Tick Length", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
-                    { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x888888, cat: "appearance" },
+                    { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance" },
                     { name: "major_tick_every", label: "Major Tick Every", type: "stepper", min: 1, max: 50, def: 5, cat: "appearance" },
                     { name: "major_tick_width", label: "Major Tick Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "major_tick_length", label: "Major Tick Length", type: "stepper", min: 1, max: 50, def: 15, cat: "appearance" },
@@ -3549,8 +3609,8 @@
                     { name: "color_mid", label: "Mid Color", type: "color", def: 0xFFFF00, cat: "appearance" },
                     { name: "color_high", label: "High Color", type: "color", def: 0xFF0000, cat: "appearance" },
                     { name: "color_off", label: "Off Color", type: "color", def: 0x212121, cat: "appearance" },
-                    { name: "led_spacing", label: "LED Spacing", type: "stepper", def: 2, cat: "appearance", min: 0, max: 20, step: 1 },
-                    { name: "border_radius", label: "Corner Radius", type: "stepper", def: 2, cat: "appearance", min: 0, max: 50, step: 1 },
+                    { name: "led_spacing", label: "LED Spacing", type: "stepper", def: 2, cat: "appearance", min: 0, max: 200, step: 1 },
+                    { name: "border_radius", label: "Corner Radius", type: "stepper", def: 2, cat: "appearance", min: 0, max: 255, step: 1 },
                     { name: "led_width", label: "LED Width (0=auto)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100, step: 1 },
                     { name: "led_height", label: "LED Height (0=auto)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100, step: 1 },
                     { name: "fill_mode", label: "Fill Direction", type: "select", def: 0, cat: "data", options: [{v:0,l:"Left to Right"},{v:1,l:"Outside In"}] },
@@ -3740,13 +3800,11 @@
             const ecuCtx = document.getElementById('ecuContextSelect');
             const simBtn = document.getElementById('pillSimulate');
 
-            const splashDeleteBtn = document.getElementById('splashDeleteBtn');
             const splashFadeLabel = document.getElementById('splashFadeLabel');
             if (isSplash) {
                 hide(layoutSelect);
                 hide(layoutMenuWrap);
                 show(splashSelect, '');
-                show(splashDeleteBtn, '');
                 show(splashMenuWrap, '');
                 show(splashFadeLabel, 'flex');
                 if (signalsTab) hide(signalsTab);
@@ -3757,7 +3815,6 @@
                 show(layoutSelect, '');
                 show(layoutMenuWrap, '');
                 hide(splashSelect);
-                hide(splashDeleteBtn);
                 hide(splashMenuWrap);
                 hide(splashFadeLabel);
                 if (signalsTab) show(signalsTab, '');
@@ -3903,69 +3960,49 @@
         }
 
         async function splashNew() {
-            const name = prompt('New splash name:');
-            if (!name || !name.trim()) return;
-            const trimmed = name.trim();
-            /* Create an empty splash layout */
-            const payload = { name: '_splash_' + trimmed, schema_version: 10, widgets: [], signals: [] };
-            try {
-                const resp = await fetch('/api/layout/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (!resp.ok) throw new Error();
-                await fetchSplashes();
-                /* Select the new splash */
-                const sel = document.getElementById('splashSelect');
-                sel.value = trimmed;
-                await switchSplash(trimmed);
-                showToast('Created splash: ' + trimmed, 'success');
-            } catch (e) {
-                showToast('Failed to create splash', 'error');
-            }
-        }
-
-        async function splashSaveAs() {
-            const name = prompt('Save splash as:');
-            if (!name || !name.trim()) return;
-            const trimmed = name.trim();
-            const payload = buildFirmwarePayload();
-            payload.name = '_splash_' + trimmed;
-            try {
-                const resp = await fetch('/api/layout/save?apply=0', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (!resp.ok) throw new Error();
-                await fetchSplashes();
-                const sel = document.getElementById('splashSelect');
-                sel.value = trimmed;
-                await switchSplash(trimmed);
-                showToast('Saved splash as: ' + trimmed, 'success');
-            } catch (e) {
-                showToast('Failed to save splash', 'error');
-            }
+            _showPromptOverlay('New Splash', '', async (trimmed) => {
+                const payload = { name: '_splash_' + trimmed, schema_version: 10, widgets: [], signals: [] };
+                try {
+                    const resp = await fetch('/api/layout/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!resp.ok) throw new Error();
+                    await fetchSplashes();
+                    const sel = document.getElementById('splashSelect');
+                    sel.value = trimmed;
+                    await switchSplash(trimmed);
+                    showToast('Created splash: ' + trimmed, 'success');
+                } catch (e) {
+                    showToast('Failed to create splash', 'error');
+                }
+            });
         }
 
         async function splashDelete() {
             const sel = document.getElementById('splashSelect');
             const name = sel.value;
             if (!name) return;
-            if (!confirm('Delete splash "' + name + '"?')) return;
-            try {
-                const resp = await fetch('/api/splash/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name })
-                });
-                if (!resp.ok) throw new Error();
-                await fetchSplashes();
-                showToast('Deleted splash: ' + name, 'success');
-            } catch (e) {
-                showToast('Failed to delete splash', 'error');
-            }
+            _showConfirmOverlay(
+                'Delete Splash',
+                'Are you sure you want to delete <strong style="color:#e0e0e0;">"' + name + '"</strong>? This action cannot be undone.',
+                'Delete',
+                async () => {
+                    try {
+                        const resp = await fetch('/api/splash/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name })
+                        });
+                        if (!resp.ok) throw new Error();
+                        await fetchSplashes();
+                        showToast('Deleted splash: ' + name, 'success');
+                    } catch (e) {
+                        showToast('Failed to delete splash', 'error');
+                    }
+                }
+            );
         }
 
         function initPalette() {
@@ -5087,13 +5124,13 @@
                 const sMax = f.max != null ? f.max : 9999;
                 html += `<div style="display:flex; gap:4px; align-items:center;">
                     <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
-                        onclick="(function(btn){var sl=btn.nextElementSibling; var ni=sl.nextElementSibling; var v=Math.max(${sMin}, parseInt(sl.value)-1); sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&lt;</button>
-                    <input type="range" min="${sMin}" max="${sMax}" value="${val}" style="flex:1"
+                        onclick="(function(btn){var sl=btn.nextElementSibling; var ni=sl.nextElementSibling; var v=parseInt(sl.value)-${f.step||1}; if(v<${sMin})v=${sMin}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&lt;</button>
+                    <input type="range" min="${sMin}" max="${sMax}" value="${Math.min(val, sMax)}" style="flex:1"
                         oninput="this.nextElementSibling.value=this.value; updateWidgetConfigField('${f.name}', parseInt(this.value), true)" ${disabledAttr}>
-                    <input type="number" value="${val}" min="${sMin}" max="${sMax}" style="width:48px; text-align:center; font-size:11px; font-family:'JetBrains Mono',monospace; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:2px 4px;"
-                        oninput="(function(ni){var v=parseInt(ni.value); if(!isNaN(v)){v=Math.max(${sMin},Math.min(${sMax},v)); ni.previousElementSibling.value=v; updateWidgetConfigField('${f.name}',v,true);}})(this)" ${disabledAttr}>
+                    <input type="number" value="${val}" style="width:56px; text-align:center; font-size:11px; font-family:'JetBrains Mono',monospace; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:2px 4px;"
+                        oninput="(function(ni){var v=parseInt(ni.value); if(isNaN(v))return; var sl=ni.previousElementSibling; if(v>parseInt(sl.max))sl.max=v; if(v<parseInt(sl.min))sl.min=v; sl.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)" ${disabledAttr}>
                     <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
-                        onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=Math.min(${sMax}, parseInt(sl.value)+1); sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
+                        onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=parseInt(sl.value)+${f.step||1}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
                 </div>`;
             } else if (f.type === 'textarea') {
                 const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -6846,21 +6883,27 @@
         async function deleteCurrentLayout() {
             const name = currentLayout.name || '';
             if (name === 'default') {
-                updateStatus('Cannot delete default layout', true);
+                showToast('Cannot delete default layout', 'error');
                 return;
             }
-            if (!confirm('Delete layout "' + name + '"?')) return;
-            try {
-                const response = await fetch('/api/layout/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name })
-                });
-                if (response.ok) {
-                    updateStatus('Deleted ' + name);
-                    fetchLayouts();
-                } else throw new Error();
-            } catch (e) { updateStatus('Delete failed', true); }
+            _showConfirmOverlay(
+                'Delete Layout',
+                'Are you sure you want to delete <strong style="color:#e0e0e0;">"' + name + '"</strong>? This action cannot be undone.',
+                'Delete',
+                async () => {
+                    try {
+                        const response = await fetch('/api/layout/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: name })
+                        });
+                        if (response.ok) {
+                            showToast('Deleted "' + name + '"', 'success');
+                            fetchLayouts();
+                        } else throw new Error();
+                    } catch (e) { showToast('Delete failed', 'error'); }
+                }
+            );
         }
 
         /* ── Layout Rename ──────────────────────────────────────────── */
@@ -7636,6 +7679,8 @@
             } else if (id === 'widgets') {
                 document.getElementById('showWidgetsToggle').checked = isActive;
                 document.getElementById('interactionLayer').classList.toggle('hide-widgets', !isActive);
+            } else if (id === 'crosshair') {
+                document.getElementById('interactionLayer').classList.toggle('hide-crosshair', !isActive);
             }
         }
 

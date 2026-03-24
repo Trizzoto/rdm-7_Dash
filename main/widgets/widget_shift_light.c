@@ -103,16 +103,18 @@ static lv_color_t _led_color_for_pos(shift_light_data_t *d, int index, int fill_
 /**
  * Map a fill order index (0 = first to light) to physical LED position.
  * left-to-right: 0,1,2,...,N-1
- * outside-in:    0, N-1, 1, N-2, 2, N-3, ...  (alternating from edges)
+ * outside-in:    0, N-1, 1, N-2, 2, N-3, ...  (pairs light simultaneously)
  */
 static int _fill_order(shift_light_data_t *d, int fill_idx) {
     if (d->fill_mode == 0 || d->led_count <= 1) return fill_idx;
-    /* Outside-in: even indices from left, odd from right */
-    int half = fill_idx / 2;
+    /* Outside-in symmetric: pairs light at the same time.
+     * fill_idx 0 → pos 0 (left outer), fill_idx 1 → pos N-1 (right outer),
+     * fill_idx 2 → pos 1 (left inner), fill_idx 3 → pos N-2 (right inner), etc. */
+    int pair = fill_idx / 2;
     if (fill_idx % 2 == 0)
-        return half;                        /* left side */
+        return pair;                        /* left side */
     else
-        return d->led_count - 1 - half;     /* right side */
+        return d->led_count - 1 - pair;     /* right side */
 }
 
 static void _shift_light_on_signal(float value, bool is_stale, void *user_data) {
@@ -134,6 +136,12 @@ static void _shift_light_on_signal(float value, bool is_stale, void *user_data) 
     if (normalized < 0) normalized = 0;
     if (normalized > 1) normalized = 1;
     d->active_count = (uint8_t)(normalized * d->led_count + 0.5f);
+
+    /* Outside-in mode: LEDs light in pairs (both outermost, then both next-inner).
+     * Round active_count up to the nearest even number so both members of a
+     * pair always activate together. */
+    if (d->fill_mode == 1 && d->active_count % 2 != 0 && d->active_count < d->led_count)
+        d->active_count++;
 
     bool flashing = (value >= d->flash_threshold);
 

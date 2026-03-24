@@ -2933,6 +2933,21 @@ static const httpd_uri_t log_delete_uri = {
 	.handler = _log_delete_handler, .user_ctx = NULL
 };
 
+/* ═════════════════════════════════════════════════════════════════════════════
+ *  CORS Preflight Handler — responds to OPTIONS requests from cross-origin
+ *  desktop apps (Tauri) so that POST requests with Content-Type: application/json
+ *  pass the browser's preflight check.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+static esp_err_t cors_preflight_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+	httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
+	httpd_resp_set_status(req, "204 No Content");
+	httpd_resp_send(req, NULL, 0);
+	return ESP_OK;
+}
+
 /* Helper macro to log on URI registration failure */
 #define REGISTER_URI(svr, uri_ptr) do { \
 	if (httpd_register_uri_handler(svr, uri_ptr) != ESP_OK) \
@@ -2948,11 +2963,12 @@ esp_err_t web_server_start(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
 	config.stack_size = 5120;
-	config.max_uri_handlers = 51;
+	config.max_uri_handlers = 52;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
 	config.send_wait_timeout = 30;
+	config.uri_match_fn = httpd_uri_match_wildcard;
 
 	ESP_LOGI(TAG, "Starting web server on port %d", config.server_port);
 
@@ -2961,6 +2977,15 @@ esp_err_t web_server_start(void) {
 		ESP_LOGE(TAG, "Failed to start web server: %s", esp_err_to_name(ret));
 		return ret;
 	}
+
+	/* Register CORS preflight handler for all API OPTIONS requests */
+	static const httpd_uri_t cors_options_uri = {
+		.uri = "/api/*",
+		.method = HTTP_OPTIONS,
+		.handler = cors_preflight_handler,
+		.user_ctx = NULL,
+	};
+	REGISTER_URI(server, &cors_options_uri);
 
 	// Register URI handlers
 	REGISTER_URI(server, &index_uri);

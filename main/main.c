@@ -35,6 +35,7 @@
 #include "sdkconfig.h"
 #include "ui/screens/ui_wifi.h"
 #include "net/wifi_manager.h"
+#include "net/uart_protocol.h"
 #include "storage/config_store.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
@@ -737,6 +738,11 @@ void app_main(void) {
 	// Initialize remaining components while splash is showing
 	sd_manager_init();
 	data_logger_init();
+	/* Initialize UART serial protocol (core 0, priority 5) */
+	if (uart_protocol_init() != ESP_OK) {
+		ESP_LOGE(TAG, "UART protocol init failed!");
+	}
+
 	/* Initialize WiFi manager (creates netif, no radio start yet) */
 	wifi_manager_init();
 	wifi_ui_init();

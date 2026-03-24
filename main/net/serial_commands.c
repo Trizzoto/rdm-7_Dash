@@ -1,0 +1,1017 @@
+/**
+ * serial_commands.c — JSON-RPC command dispatcher for UART serial protocol.
+ *
+ * Each method handler calls the same core logic as the HTTP web server
+ * handlers, then sends a JSON response frame over UART.
+ */
+#include "serial_commands.h"
+#include "uart_protocol.h"
+
+#include "cJSON.h"
+#include "display_capture.h"
+#include "esp_heap_caps.h"
+#include "esp_littlefs.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
+#include "layout/layout_manager.h"
+#include "storage/config_store.h"
+#include "storage/data_logger.h"
+#include "storage/sd_manager.h"
+#include "system/device_id.h"
+#include "system/rdm_settings.h"
+#include "ui/dashboard.h"
+#include "ui/screens/splash_screen.h"
+#include "ui/screens/ui_Screen3.h"
+#include "ui/ui.h"
+#include "ui/settings/device_settings.h"
+#include "widgets/font_manager.h"
+#include "widgets/signal.h"
+#include "widgets/signal_sim.h"
+#include "lvgl.h"
+
+#include <dirent.h>
+#include <string.h>
+#include <sys/stat.h>
+
+static const char *TAG = "serial_cmd";
+
+/* LVGL mutex (defined in main.c) */
+extern bool example_lvgl_lock(int timeout_ms);
+extern void example_lvgl_unlock(void);
+
+/* Deferred screen reload — must run on LVGL task */
+static void _deferred_screen_reload(void *arg)
+{
+    (void)arg;
+    lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+    ui_Screen3_screen_init();
+    lv_scr_load(ui_Screen3);
+    if (old && old != ui_Screen3 && lv_obj_is_valid(old))
+        lv_obj_del(old);
+}
+
+/* Image/font directory paths (same as web_server.c) */
+#define LFS_IMAGE_DIR "/lfs/images"
+#define LFS_FONT_DIR  "/lfs/fonts"
+#define IMAGE_MAX_SIZE (1200 * 1024)
+
+/* ── Upload session state ───────────────────────────────────────────────── */
+
+static serial_upload_session_t s_upload = {0};
+
+/* ── Helper: path-safety check (replicates web_server.c _name_is_safe) ── */
+
+static bool _name_is_safe(const char *name)
+{
+    if (!name || !name[0]) return false;
+    for (const char *p = name; *p; p++) {
+        if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
+    }
+    return true;
+}
+
+/* ── Helper: ensure directories exist ───────────────────────────────────── */
+
+static void _ensure_dir(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        mkdir(path, 0775);
+    }
+}
+
+/* ── Helper: send JSON-RPC response ─────────────────────────────────────── */
+
+static void _send_response(int id, cJSON *result, const char *error)
+{
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddNumberToObject(resp, "id", id);
+    if (error) {
+        cJSON_AddNullToObject(resp, "result");
+        cJSON_AddStringToObject(resp, "error", error);
+    } else {
+        if (result)
+            cJSON_AddItemToObject(resp, "result", result);
+        else
+            cJSON_AddNullToObject(resp, "result");
+        cJSON_AddNullToObject(resp, "error");
+    }
+    char *json = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    if (json) {
+        uart_protocol_send_json(json);
+        free(json);
+    }
+}
+
+static void _send_ok(int id)
+{
+    cJSON *r = cJSON_CreateString("ok");
+    _send_response(id, r, NULL);
+}
+
+static void _send_error(int id, const char *msg)
+{
+    _send_response(id, NULL, msg);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Method Handlers
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── device.info ─────────────────────────────────────────────────────────── */
+
+static void _handle_device_info(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    char serial[MAX_SERIAL_LENGTH];
+    get_device_serial(serial);
+    cJSON_AddStringToObject(r, "serial", serial);
+
+    const esp_app_desc_t *desc = esp_app_get_description();
+    cJSON_AddStringToObject(r, "version", desc->version);
+    cJSON_AddNumberToObject(r, "schema", LAYOUT_SCHEMA_VERSION);
+    cJSON_AddStringToObject(r, "project", desc->project_name);
+    _send_response(id, r, NULL);
+}
+
+/* ── storage.info ────────────────────────────────────────────────────────── */
+
+static void _handle_storage_info(int id, cJSON *params)
+{
+    (void)params;
+    size_t total = 0, used = 0;
+    if (esp_littlefs_info("littlefs", &total, &used) != ESP_OK) {
+        _send_error(id, "Cannot read storage info");
+        return;
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "total", total);
+    cJSON_AddNumberToObject(r, "used", used);
+    cJSON_AddNumberToObject(r, "free", (total > used) ? total - used : 0);
+
+    cJSON *sd = cJSON_AddObjectToObject(r, "sd");
+    if (sd_manager_is_mounted()) {
+        size_t sd_total = 0, sd_used = 0, sd_free = 0;
+        cJSON_AddBoolToObject(sd, "mounted", true);
+        if (sd_manager_get_info(&sd_total, &sd_used, &sd_free) == ESP_OK) {
+            cJSON_AddNumberToObject(sd, "total", sd_total);
+            cJSON_AddNumberToObject(sd, "used", sd_used);
+            cJSON_AddNumberToObject(sd, "free", sd_free);
+        }
+    } else {
+        cJSON_AddBoolToObject(sd, "mounted", false);
+    }
+    _send_response(id, r, NULL);
+}
+
+/* ── layout.list ─────────────────────────────────────────────────────────── */
+
+static void _handle_layout_list(int id, cJSON *params)
+{
+    (void)params;
+    char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+    int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
+    if (count < 0) {
+        _send_error(id, "Failed to list layouts");
+        return;
+    }
+
+    char active[LAYOUT_MAX_NAME];
+    if (layout_manager_get_active(active, sizeof(active)) != ESP_OK)
+        strcpy(active, "default");
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "active", active);
+    cJSON *arr = cJSON_AddArrayToObject(r, "layouts");
+    for (int i = 0; i < count; i++) {
+        if (names[i][0] == '_') continue; /* skip system layouts */
+        cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+    }
+    _send_response(id, r, NULL);
+}
+
+/* ── layout.current ──────────────────────────────────────────────────────── */
+
+static void _handle_layout_current(int id, cJSON *params)
+{
+    (void)params;
+    bool is_splash = splash_screen_is_edit_mode();
+    char name[LAYOUT_MAX_NAME];
+    if (is_splash) {
+        snprintf(name, sizeof(name), "_splash_%s",
+                 splash_screen_get_active_name());
+    } else if (rdm_settings_get_active_layout(name, sizeof(name)) != ESP_OK) {
+        _send_error(id, "Failed to read active layout");
+        return;
+    }
+
+    if (!example_lvgl_lock(1000)) {
+        _send_error(id, "LVGL busy");
+        return;
+    }
+
+    widget_t **widgets;
+    uint8_t count;
+    if (is_splash) {
+        widgets = splash_screen_get_widgets();
+        count = splash_screen_get_widget_count();
+    } else {
+        widgets = dashboard_get_widgets();
+        count = dashboard_get_widget_count();
+    }
+    cJSON *root = layout_manager_build_json(name, widgets, count);
+    example_lvgl_unlock();
+
+    if (!root) {
+        _send_error(id, "Failed to build layout JSON");
+        return;
+    }
+    _send_response(id, root, NULL);
+}
+
+/* ── layout.raw ──────────────────────────────────────────────────────────── */
+
+static void _handle_layout_raw(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item)) {
+        _send_error(id, "Missing 'name' parameter");
+        return;
+    }
+    const char *name = name_item->valuestring;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) { _send_error(id, "OOM"); return; }
+
+    size_t out_len = 0;
+    esp_err_t err = layout_manager_read_raw(name, buf, LAYOUT_MAX_FILE_BYTES,
+                                            &out_len);
+    if (err != ESP_OK) {
+        free(buf);
+        _send_error(id, "Layout not found");
+        return;
+    }
+
+    /* Parse raw JSON and send as result */
+    cJSON *layout = cJSON_ParseWithLength(buf, out_len);
+    free(buf);
+    if (!layout) {
+        _send_error(id, "Invalid layout JSON");
+        return;
+    }
+    _send_response(id, layout, NULL);
+}
+
+/* ── layout.save ─────────────────────────────────────────────────────────── */
+
+static void _handle_layout_save(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    cJSON *data_item = cJSON_GetObjectItem(params, "data");
+    if (!cJSON_IsString(name_item) || !cJSON_IsObject(data_item)) {
+        _send_error(id, "Missing 'name' or 'data'");
+        return;
+    }
+    const char *name = name_item->valuestring;
+    if (!_name_is_safe(name)) {
+        _send_error(id, "Invalid layout name");
+        return;
+    }
+
+    esp_err_t err = layout_manager_save_raw(name, data_item);
+    if (err != ESP_OK) {
+        _send_error(id, "Save failed");
+        return;
+    }
+    layout_manager_set_active(name);
+
+    /* Trigger hot-reload via LVGL async */
+    lv_async_call(_deferred_screen_reload, NULL);
+    _send_ok(id);
+}
+
+/* ── layout.set ──────────────────────────────────────────────────────────── */
+
+static void _handle_layout_set(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item)) {
+        _send_error(id, "Missing 'name'");
+        return;
+    }
+    const char *name = name_item->valuestring;
+    if (!_name_is_safe(name)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+
+    layout_manager_set_active(name);
+    lv_async_call(_deferred_screen_reload, NULL);
+    _send_ok(id);
+}
+
+/* ── layout.delete ───────────────────────────────────────────────────────── */
+
+static void _handle_layout_delete(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item)) {
+        _send_error(id, "Missing 'name'");
+        return;
+    }
+    const char *name = name_item->valuestring;
+    if (!_name_is_safe(name)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+    if (strcmp(name, "default") == 0) {
+        _send_error(id, "Cannot delete default layout");
+        return;
+    }
+
+    esp_err_t err = layout_manager_delete(name);
+    if (err != ESP_OK) {
+        _send_error(id, "Delete failed");
+        return;
+    }
+    _send_ok(id);
+}
+
+/* ── layout.version ──────────────────────────────────────────────────────── */
+
+static void _handle_layout_version(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateNumber(layout_manager_get_version());
+    _send_response(id, r, NULL);
+}
+
+/* ── image.list ──────────────────────────────────────────────────────────── */
+
+static void _handle_image_list(int id, cJSON *params)
+{
+    (void)params;
+    _ensure_dir(LFS_IMAGE_DIR);
+
+    cJSON *arr = cJSON_CreateArray();
+    DIR *d = opendir(LFS_IMAGE_DIR);
+    if (d) {
+        struct dirent *de;
+        while ((de = readdir(d)) != NULL) {
+            size_t flen = strlen(de->d_name);
+            if (flen < 8 || strcmp(de->d_name + flen - 7, ".rdmimg") != 0)
+                continue;
+
+            char path[80];
+            snprintf(path, sizeof(path), "%s/%s", LFS_IMAGE_DIR, de->d_name);
+
+            /* Read RDMIMG header for dimensions */
+            FILE *f = fopen(path, "rb");
+            if (!f) continue;
+            uint8_t hdr[12];
+            if (fread(hdr, 1, 12, f) == 12 && memcmp(hdr, "RDMI", 4) == 0) {
+                uint16_t w = hdr[4] | (hdr[5] << 8);
+                uint16_t h = hdr[6] | (hdr[7] << 8);
+
+                struct stat st;
+                stat(path, &st);
+
+                char name_buf[32];
+                size_t name_len = flen - 7;
+                if (name_len >= sizeof(name_buf)) name_len = sizeof(name_buf) - 1;
+                memcpy(name_buf, de->d_name, name_len);
+                name_buf[name_len] = '\0';
+
+                cJSON *obj = cJSON_CreateObject();
+                cJSON_AddStringToObject(obj, "name", name_buf);
+                cJSON_AddNumberToObject(obj, "width", w);
+                cJSON_AddNumberToObject(obj, "height", h);
+                cJSON_AddNumberToObject(obj, "size", st.st_size);
+                cJSON_AddItemToArray(arr, obj);
+            }
+            fclose(f);
+        }
+        closedir(d);
+    }
+    _send_response(id, arr, NULL);
+}
+
+/* ── image.delete ────────────────────────────────────────────────────────── */
+
+static void _handle_image_delete(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+    char path[80];
+    snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR,
+             name_item->valuestring);
+    if (remove(path) != 0) {
+        _send_error(id, "Delete failed");
+        return;
+    }
+    _send_ok(id);
+}
+
+/* ── image.data ──────────────────────────────────────────────────────────── */
+
+static void _handle_image_data(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+
+    char path[80];
+    snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR,
+             name_item->valuestring);
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        _send_error(id, "Image not found");
+        return;
+    }
+
+    /* For binary data, report size so desktop can request via chunked transfer */
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "size", st.st_size);
+    cJSON_AddStringToObject(r, "name", name_item->valuestring);
+    _send_response(id, r, NULL);
+}
+
+/* ── font.list ───────────────────────────────────────────────────────────── */
+
+static void _handle_font_list(int id, cJSON *params)
+{
+    (void)params;
+    _ensure_dir(LFS_FONT_DIR);
+
+    cJSON *arr = cJSON_CreateArray();
+    DIR *d = opendir(LFS_FONT_DIR);
+    if (d) {
+        struct dirent *de;
+        while ((de = readdir(d)) != NULL) {
+            size_t flen = strlen(de->d_name);
+            if (flen < 5 || strcmp(de->d_name + flen - 4, ".ttf") != 0)
+                continue;
+
+            char name_buf[32];
+            size_t name_len = flen - 4;
+            if (name_len >= sizeof(name_buf)) name_len = sizeof(name_buf) - 1;
+            memcpy(name_buf, de->d_name, name_len);
+            name_buf[name_len] = '\0';
+
+            char path[80];
+            snprintf(path, sizeof(path), "%s/%s", LFS_FONT_DIR, de->d_name);
+            struct stat st;
+            stat(path, &st);
+
+            cJSON *obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(obj, "name", name_buf);
+            cJSON_AddNumberToObject(obj, "size", st.st_size);
+            cJSON_AddItemToArray(arr, obj);
+        }
+        closedir(d);
+    }
+    _send_response(id, arr, NULL);
+}
+
+/* ── font.delete ─────────────────────────────────────────────────────────── */
+
+static void _handle_font_delete(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+    if (!font_manager_remove_family(name_item->valuestring)) {
+        _send_error(id, "Font not found");
+        return;
+    }
+    _send_ok(id);
+}
+
+/* ── signal.values ───────────────────────────────────────────────────────── */
+
+static void _handle_signal_values(int id, cJSON *params)
+{
+    (void)params;
+    if (!example_lvgl_lock(500)) {
+        _send_error(id, "LVGL busy");
+        return;
+    }
+
+    uint16_t count = signal_get_count();
+    cJSON *r = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(r, "signals");
+    for (uint16_t i = 0; i < count; i++) {
+        signal_t *sig = signal_get_by_index(i);
+        if (!sig || sig->name[0] == '\0') continue;
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "name", sig->name);
+        cJSON_AddNumberToObject(obj, "value", sig->current_value);
+        cJSON_AddBoolToObject(obj, "stale", sig->is_stale);
+        cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
+        cJSON_AddItemToArray(arr, obj);
+    }
+    example_lvgl_unlock();
+    _send_response(id, r, NULL);
+}
+
+/* ── signal.inject ───────────────────────────────────────────────────────── */
+
+static void _handle_signal_inject(int id, cJSON *params)
+{
+    /* Supports single {"name":"RPM","value":3000} or batch {"signals":[...]} */
+    cJSON *batch = cJSON_GetObjectItem(params, "signals");
+    if (cJSON_IsArray(batch)) {
+        int n = cJSON_GetArraySize(batch);
+        for (int i = 0; i < n; i++) {
+            cJSON *item = cJSON_GetArrayItem(batch, i);
+            cJSON *n_item = cJSON_GetObjectItem(item, "name");
+            cJSON *v_item = cJSON_GetObjectItem(item, "value");
+            if (cJSON_IsString(n_item) && cJSON_IsNumber(v_item)) {
+                signal_inject_test_value(n_item->valuestring,
+                                         (float)v_item->valuedouble);
+            }
+        }
+    } else {
+        cJSON *n_item = cJSON_GetObjectItem(params, "name");
+        cJSON *v_item = cJSON_GetObjectItem(params, "value");
+        if (cJSON_IsString(n_item) && cJSON_IsNumber(v_item)) {
+            signal_inject_test_value(n_item->valuestring,
+                                     (float)v_item->valuedouble);
+        }
+    }
+    _send_ok(id);
+}
+
+/* ── signal.simulate ─────────────────────────────────────────────────────── */
+
+static void _handle_signal_simulate(int id, cJSON *params)
+{
+    cJSON *enable = cJSON_GetObjectItem(params, "enable");
+    if (cJSON_IsBool(enable)) {
+        if (cJSON_IsTrue(enable))
+            lv_async_call((lv_async_cb_t)signal_sim_start, NULL);
+        else
+            lv_async_call((lv_async_cb_t)signal_sim_stop, NULL);
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "active", signal_sim_is_active());
+    _send_response(id, r, NULL);
+}
+
+/* ── screenshot ──────────────────────────────────────────────────────────── */
+
+static void _handle_screenshot(int id, cJSON *params)
+{
+    (void)params;
+    uint8_t *buf = NULL;
+    size_t size = 0;
+
+    esp_err_t err = display_capture_screenshot(&buf, &size);
+    if (err != ESP_OK || !buf) {
+        _send_error(id, "Screenshot failed");
+        return;
+    }
+
+    /* Send size in JSON response — desktop will fetch binary via chunked read */
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "size", size);
+    cJSON_AddStringToObject(r, "format", "bmp");
+    _send_response(id, r, NULL);
+
+    /* Send the binary data as a binary frame */
+    /* Prefix: type tag (0x01) + "screenshot" session marker */
+    size_t frame_len = 1 + size;
+    uint8_t *frame = malloc(frame_len);
+    if (frame) {
+        frame[0] = UART_PAYLOAD_BINARY;
+        memcpy(frame + 1, buf, size);
+        /* Send directly as framed data — desktop knows to expect it */
+        uart_protocol_send_frame(frame, frame_len);
+        free(frame);
+    }
+    display_capture_free_buffer(buf);
+}
+
+/* ── splash.list ─────────────────────────────────────────────────────────── */
+
+static void _handle_splash_list(int id, cJSON *params)
+{
+    (void)params;
+    char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+    int count = layout_manager_list_splash(names, LAYOUT_MAX_COUNT);
+    if (count < 0) {
+        _send_error(id, "Failed to list splash layouts");
+        return;
+    }
+
+    char active[LAYOUT_MAX_NAME];
+    if (layout_manager_get_active_splash(active, sizeof(active)) != ESP_OK)
+        strcpy(active, "Default");
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "active", active);
+    cJSON *arr = cJSON_AddArrayToObject(r, "splashes");
+    for (int i = 0; i < count; i++)
+        cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+    _send_response(id, r, NULL);
+}
+
+/* ── upload.start (image/font/OTA chunked transfer) ──────────────────────── */
+
+static void _handle_upload_start(int id, cJSON *params)
+{
+    if (s_upload.active) {
+        _send_error(id, "Upload already in progress");
+        return;
+    }
+
+    cJSON *type_item = cJSON_GetObjectItem(params, "type");
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    cJSON *size_item = cJSON_GetObjectItem(params, "size");
+    if (!cJSON_IsString(type_item) || !cJSON_IsNumber(size_item)) {
+        _send_error(id, "Missing type/size");
+        return;
+    }
+
+    const char *type = type_item->valuestring;
+    uint32_t total_size = (uint32_t)size_item->valuedouble;
+    const char *name = cJSON_IsString(name_item) ? name_item->valuestring : "";
+
+    /* Validate type */
+    bool is_ota = (strcmp(type, "ota") == 0);
+    bool is_image = (strcmp(type, "image") == 0);
+    bool is_font = (strcmp(type, "font") == 0);
+    if (!is_ota && !is_image && !is_font) {
+        _send_error(id, "Invalid upload type (image/font/ota)");
+        return;
+    }
+
+    if ((is_image || is_font) && !_name_is_safe(name)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+
+    if (is_image && total_size > IMAGE_MAX_SIZE) {
+        _send_error(id, "Image too large");
+        return;
+    }
+
+    /* Initialise session */
+    memset(&s_upload, 0, sizeof(s_upload));
+    strncpy(s_upload.type, type, sizeof(s_upload.type) - 1);
+    strncpy(s_upload.name, name, sizeof(s_upload.name) - 1);
+    s_upload.total_size = total_size;
+    s_upload.total_chunks = (uint16_t)((total_size + UART_PROTO_CHUNK_SIZE - 1)
+                                       / UART_PROTO_CHUNK_SIZE);
+    s_upload.session_id = (uint64_t)esp_random() << 32 | esp_random();
+
+    if (is_ota) {
+        /* Begin OTA partition write */
+        const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+        if (!part) {
+            _send_error(id, "No OTA partition available");
+            return;
+        }
+        esp_ota_handle_t handle;
+        esp_err_t err = esp_ota_begin(part, total_size, &handle);
+        if (err != ESP_OK) {
+            _send_error(id, "OTA begin failed");
+            return;
+        }
+        s_upload.ota_handle = (void *)(uintptr_t)handle;
+        s_upload.ota_partition = (void *)part;
+    } else {
+        /* Allocate accumulation buffer in PSRAM */
+        s_upload.buffer = heap_caps_malloc(total_size, MALLOC_CAP_SPIRAM);
+        if (!s_upload.buffer) {
+            s_upload.buffer = malloc(total_size);
+            if (!s_upload.buffer) {
+                _send_error(id, "OOM for upload buffer");
+                return;
+            }
+        }
+    }
+
+    s_upload.active = true;
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "session", (double)s_upload.session_id);
+    cJSON_AddNumberToObject(r, "chunk_size", UART_PROTO_CHUNK_SIZE);
+    cJSON_AddNumberToObject(r, "total_chunks", s_upload.total_chunks);
+    _send_response(id, r, NULL);
+}
+
+/* ── upload.finish ───────────────────────────────────────────────────────── */
+
+static void _handle_upload_finish(int id, cJSON *params)
+{
+    (void)params;
+    if (!s_upload.active) {
+        _send_error(id, "No upload in progress");
+        return;
+    }
+
+    bool is_ota = (strcmp(s_upload.type, "ota") == 0);
+    bool is_image = (strcmp(s_upload.type, "image") == 0);
+    bool is_font = (strcmp(s_upload.type, "font") == 0);
+
+    if (is_ota) {
+        esp_ota_handle_t handle = (esp_ota_handle_t)(uintptr_t)s_upload.ota_handle;
+        const esp_partition_t *part = (const esp_partition_t *)s_upload.ota_partition;
+        esp_err_t err = esp_ota_end(handle);
+        if (err != ESP_OK) {
+            _send_error(id, "OTA end failed");
+            s_upload.active = false;
+            return;
+        }
+        err = esp_ota_set_boot_partition(part);
+        if (err != ESP_OK) {
+            _send_error(id, "Set boot partition failed");
+            s_upload.active = false;
+            return;
+        }
+        s_upload.active = false;
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddStringToObject(r, "status", "ok");
+        cJSON_AddBoolToObject(r, "reboot_required", true);
+        _send_response(id, r, NULL);
+        return;
+    }
+
+    /* Image or font — write accumulated buffer to LittleFS */
+    if (s_upload.received != s_upload.total_size) {
+        ESP_LOGW(TAG, "Upload incomplete: %u/%u bytes",
+                 (unsigned)s_upload.received, (unsigned)s_upload.total_size);
+    }
+
+    char path[80];
+    if (is_image) {
+        _ensure_dir(LFS_IMAGE_DIR);
+        /* Validate RDMIMG magic */
+        if (s_upload.received < 12 ||
+            memcmp(s_upload.buffer, "RDMI", 4) != 0) {
+            free(s_upload.buffer);
+            s_upload.buffer = NULL;
+            s_upload.active = false;
+            _send_error(id, "Invalid RDMIMG format");
+            return;
+        }
+        snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR,
+                 s_upload.name);
+    } else if (is_font) {
+        _ensure_dir(LFS_FONT_DIR);
+        snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR,
+                 s_upload.name);
+    } else {
+        free(s_upload.buffer);
+        s_upload.buffer = NULL;
+        s_upload.active = false;
+        _send_error(id, "Unknown upload type");
+        return;
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        free(s_upload.buffer);
+        s_upload.buffer = NULL;
+        s_upload.active = false;
+        _send_error(id, "Cannot write file");
+        return;
+    }
+    size_t nw = fwrite(s_upload.buffer, 1, s_upload.received, f);
+    fclose(f);
+    free(s_upload.buffer);
+    s_upload.buffer = NULL;
+    s_upload.active = false;
+
+    if (nw != s_upload.received) {
+        remove(path);
+        _send_error(id, "Write incomplete");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Upload complete: %s '%s' (%u bytes)",
+             is_image ? "image" : "font", s_upload.name,
+             (unsigned)s_upload.received);
+    _send_ok(id);
+}
+
+/* ── upload.abort ────────────────────────────────────────────────────────── */
+
+static void _handle_upload_abort(int id, cJSON *params)
+{
+    (void)params;
+    if (!s_upload.active) {
+        _send_ok(id);
+        return;
+    }
+
+    if (strcmp(s_upload.type, "ota") == 0) {
+        esp_ota_handle_t handle = (esp_ota_handle_t)(uintptr_t)s_upload.ota_handle;
+        esp_ota_abort(handle);
+    }
+    if (s_upload.buffer) {
+        free(s_upload.buffer);
+        s_upload.buffer = NULL;
+    }
+    s_upload.active = false;
+    _send_ok(id);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Dispatch Table
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+typedef void (*cmd_handler_fn)(int id, cJSON *params);
+
+typedef struct {
+    const char   *method;
+    cmd_handler_fn handler;
+} cmd_entry_t;
+
+static const cmd_entry_t s_dispatch_table[] = {
+    /* Device */
+    { "device.info",        _handle_device_info },
+    { "storage.info",       _handle_storage_info },
+    /* Layouts */
+    { "layout.list",        _handle_layout_list },
+    { "layout.current",     _handle_layout_current },
+    { "layout.raw",         _handle_layout_raw },
+    { "layout.save",        _handle_layout_save },
+    { "layout.set",         _handle_layout_set },
+    { "layout.delete",      _handle_layout_delete },
+    { "layout.version",     _handle_layout_version },
+    /* Splash */
+    { "splash.list",        _handle_splash_list },
+    /* Images */
+    { "image.list",         _handle_image_list },
+    { "image.delete",       _handle_image_delete },
+    { "image.data",         _handle_image_data },
+    /* Fonts */
+    { "font.list",          _handle_font_list },
+    { "font.delete",        _handle_font_delete },
+    /* Signals */
+    { "signal.values",      _handle_signal_values },
+    { "signal.inject",      _handle_signal_inject },
+    { "signal.simulate",    _handle_signal_simulate },
+    /* Screenshot */
+    { "screenshot",         _handle_screenshot },
+    /* Chunked uploads */
+    { "upload.start",       _handle_upload_start },
+    { "upload.finish",      _handle_upload_finish },
+    { "upload.abort",       _handle_upload_abort },
+};
+
+#define DISPATCH_TABLE_SIZE \
+    (sizeof(s_dispatch_table) / sizeof(s_dispatch_table[0]))
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Public API
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+esp_err_t serial_commands_dispatch(const char *json_str, size_t len)
+{
+    (void)len;
+    cJSON *req = cJSON_Parse(json_str);
+    if (!req) {
+        ESP_LOGW(TAG, "Invalid JSON request");
+        _send_error(0, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *id_item = cJSON_GetObjectItem(req, "id");
+    int id = cJSON_IsNumber(id_item) ? (int)id_item->valuedouble : 0;
+
+    cJSON *method_item = cJSON_GetObjectItem(req, "method");
+    if (!cJSON_IsString(method_item)) {
+        cJSON_Delete(req);
+        _send_error(id, "Missing 'method'");
+        return ESP_FAIL;
+    }
+    const char *method = method_item->valuestring;
+
+    cJSON *params = cJSON_GetObjectItem(req, "params");
+    if (!params) params = cJSON_CreateObject(); /* empty params */
+
+    /* Look up handler in dispatch table */
+    bool found = false;
+    for (size_t i = 0; i < DISPATCH_TABLE_SIZE; i++) {
+        if (strcmp(method, s_dispatch_table[i].method) == 0) {
+            s_dispatch_table[i].handler(id, params);
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        ESP_LOGW(TAG, "Unknown method: %s", method);
+        _send_error(id, "Unknown method");
+    }
+
+    cJSON_Delete(req);
+    return ESP_OK;
+}
+
+/* ── Binary chunk handler ───────────────────────────────────────────────── */
+
+esp_err_t serial_commands_handle_binary(const uint8_t *data, size_t len)
+{
+    if (!s_upload.active) {
+        ESP_LOGW(TAG, "Binary chunk received but no upload in progress");
+        return ESP_FAIL;
+    }
+
+    /* Binary chunk format:
+     * [session_id: 8B] [chunk_idx: 2B LE] [data: rest] */
+    if (len < 10) {
+        ESP_LOGW(TAG, "Binary chunk too short (%u bytes)", (unsigned)len);
+        return ESP_FAIL;
+    }
+
+    uint64_t session = 0;
+    memcpy(&session, data, 8);
+    if (session != s_upload.session_id) {
+        ESP_LOGW(TAG, "Session mismatch");
+        return ESP_FAIL;
+    }
+
+    uint16_t chunk_idx = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
+    const uint8_t *chunk_data = data + 10;
+    size_t chunk_len = len - 10;
+
+    if (chunk_idx != s_upload.next_chunk) {
+        ESP_LOGW(TAG, "Chunk index mismatch: expected %u, got %u",
+                 s_upload.next_chunk, chunk_idx);
+        /* Send NACK */
+        cJSON *resp = cJSON_CreateObject();
+        cJSON_AddNumberToObject(resp, "id", 0);
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddNumberToObject(r, "chunk", chunk_idx);
+        cJSON_AddBoolToObject(r, "ok", false);
+        cJSON_AddNumberToObject(r, "expected", s_upload.next_chunk);
+        cJSON_AddItemToObject(resp, "result", r);
+        cJSON_AddNullToObject(resp, "error");
+        char *json = cJSON_PrintUnformatted(resp);
+        cJSON_Delete(resp);
+        if (json) { uart_protocol_send_json(json); free(json); }
+        return ESP_FAIL;
+    }
+
+    bool is_ota = (strcmp(s_upload.type, "ota") == 0);
+
+    if (is_ota) {
+        /* Write directly to OTA partition */
+        esp_ota_handle_t handle = (esp_ota_handle_t)(uintptr_t)s_upload.ota_handle;
+        esp_err_t err = esp_ota_write(handle, chunk_data, chunk_len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA write failed: %s", esp_err_to_name(err));
+            /* Send NACK */
+            cJSON *resp = cJSON_CreateObject();
+            cJSON_AddNumberToObject(resp, "id", 0);
+            cJSON *r = cJSON_CreateObject();
+            cJSON_AddNumberToObject(r, "chunk", chunk_idx);
+            cJSON_AddBoolToObject(r, "ok", false);
+            cJSON_AddItemToObject(resp, "result", r);
+            cJSON_AddNullToObject(resp, "error");
+            char *json = cJSON_PrintUnformatted(resp);
+            cJSON_Delete(resp);
+            if (json) { uart_protocol_send_json(json); free(json); }
+            return ESP_FAIL;
+        }
+    } else {
+        /* Accumulate in buffer */
+        size_t copy_len = chunk_len;
+        if (s_upload.received + copy_len > s_upload.total_size)
+            copy_len = s_upload.total_size - s_upload.received;
+        memcpy(s_upload.buffer + s_upload.received, chunk_data, copy_len);
+    }
+
+    s_upload.received += chunk_len;
+    s_upload.next_chunk++;
+
+    /* Send ACK */
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddNumberToObject(resp, "id", 0);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "chunk", chunk_idx);
+    cJSON_AddBoolToObject(r, "ok", true);
+    cJSON_AddItemToObject(resp, "result", r);
+    cJSON_AddNullToObject(resp, "error");
+    char *json = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    if (json) { uart_protocol_send_json(json); free(json); }
+
+    return ESP_OK;
+}
