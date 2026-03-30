@@ -16,6 +16,11 @@ typedef struct {
 	bool     current_state;     /* runtime only -- NOT serialized */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* Color-based state rendering (replaces opacity-based) */
+	lv_color_t color_on;        /* default: amber 0xFFBF00 */
+	uint8_t    opa_on;          /* default: 255 (fully visible) */
+	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
+	uint8_t    opa_off;         /* default: 0 (invisible) */
 } indicator_data_t;
 
 /* --- API -----------------------------------------------------------------*/

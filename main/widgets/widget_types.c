@@ -71,25 +71,27 @@ const lv_font_t *widget_resolve_font(const char *name) {
 
 /* ─── Size constraints table ────────────────────────────────────────────── */
 /*
- * All values in pixels.  Designed for an 800×480 display.
- * Phase 3 drag-and-drop will enforce these limits when the user resizes.
+ * All values in pixels.  Max dimensions derived from SCREEN_W / SCREEN_H
+ * (see screen_config.h) so constraints adapt to different display sizes.
  *
  * Order must match widget_type_t enum exactly.
  */
+#include "screen_config.h"
+
 const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_PANEL     */ { .min_w =  80, .min_h =  40, .max_w = 250, .max_h = 130 },
-    /* WIDGET_RPM_BAR   */ { .min_w = 300, .min_h =  30, .max_w = 800, .max_h =  80 },
+    /* WIDGET_RPM_BAR   */ { .min_w = 300, .min_h =  30, .max_w = SCREEN_W, .max_h =  80 },
     /* WIDGET_BAR       */ { .min_w = 120, .min_h =  15, .max_w = 450, .max_h =  50 },
     /* WIDGET_INDICATOR */ { .min_w =  30, .min_h =  30, .max_w =  80, .max_h =  80 },
     /* WIDGET_WARNING   */ { .min_w =  18, .min_h =  18, .max_w =  60, .max_h =  60 },
-    /* WIDGET_TEXT      */ { .min_w =  40, .min_h =  20, .max_w = 400, .max_h = 100 },
-    /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = 800, .max_h = 800 },
-    /* WIDGET_IMAGE     */ { .min_w =  10, .min_h =  10, .max_w = 800, .max_h = 480 },
-    /* WIDGET_SHAPE_PANEL */ { .min_w = 10, .min_h = 10, .max_w = 800, .max_h = 480 },
-    /* WIDGET_ARC       */ { .min_w =  30, .min_h =  30, .max_w = 800, .max_h = 800 },
+    /* WIDGET_TEXT      */ { .min_w =  40, .min_h =  20, .max_w = SCREEN_ORIGIN_X, .max_h = 100 },
+    /* WIDGET_METER     */ { .min_w =  80, .min_h =  80, .max_w = SCREEN_W, .max_h = SCREEN_W },
+    /* WIDGET_IMAGE     */ { .min_w =  10, .min_h =  10, .max_w = SCREEN_W, .max_h = SCREEN_H },
+    /* WIDGET_SHAPE_PANEL */ { .min_w = 10, .min_h = 10, .max_w = SCREEN_W, .max_h = SCREEN_H },
+    /* WIDGET_ARC       */ { .min_w =  30, .min_h =  30, .max_w = SCREEN_W, .max_h = SCREEN_W },
     /* WIDGET_TOGGLE    */ { .min_w =  40, .min_h =  20, .max_w = 200, .max_h =  80 },
     /* WIDGET_BUTTON    */ { .min_w =  40, .min_h =  20, .max_w = 300, .max_h = 100 },
-    /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = 800, .max_h =  60 },
+    /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = SCREEN_W, .max_h =  60 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */

@@ -29,7 +29,7 @@ static const char *TAG = "dashboard";
 
 /* Maximum widgets the dashboard tracks (5 types × worst-case instances):
  *   panel×8, rpm_bar×1, bar×2, indicator×2, warning×8, text×N, meter×N */
-#define DASHBOARD_MAX_WIDGETS 24
+#define DASHBOARD_MAX_WIDGETS 32
 
 static widget_t *s_widgets[DASHBOARD_MAX_WIDGETS];
 static uint8_t s_widget_count = 0;

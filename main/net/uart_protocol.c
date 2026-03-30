@@ -7,6 +7,7 @@
  * Non-framed data (ESP_LOG output) is silently discarded by the frame parser.
  */
 #include "uart_protocol.h"
+#include "serial_protocol.h"
 #include "serial_commands.h"
 
 #include "driver/uart.h"
@@ -146,6 +147,9 @@ static void _process_complete_frame(void)
         _parser_reset();
         return;
     }
+
+    /* Set active transport to UART before dispatching */
+    serial_protocol_set_active(TRANSPORT_UART);
 
     uint8_t payload_type = s_parser.payload[0];
     uint8_t *payload_data = s_parser.payload + 1;
@@ -309,6 +313,11 @@ esp_err_t uart_protocol_init(void)
         ESP_LOGE(TAG, "Failed to create UART RX task");
         return ESP_FAIL;
     }
+
+    /* Register with transport abstraction */
+    serial_protocol_register(TRANSPORT_UART,
+                             uart_protocol_send_frame,
+                             uart_protocol_send_json);
 
     ESP_LOGI(TAG, "UART protocol initialised (port %d, %d baud)",
              UART_PROTO_PORT_NUM, UART_PROTO_BAUD_RATE);

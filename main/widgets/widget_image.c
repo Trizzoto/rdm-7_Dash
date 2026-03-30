@@ -9,6 +9,7 @@
  */
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "screen_config.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -53,7 +54,7 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 	}
 
 	/* Validate dimensions */
-	if (hdr.width == 0 || hdr.height == 0 || hdr.width > 800 || hdr.height > 480) {
+	if (hdr.width == 0 || hdr.height == 0 || hdr.width > SCREEN_W || hdr.height > SCREEN_H) {
 		ESP_LOGE(TAG, "Invalid dimensions %ux%u in %s", hdr.width, hdr.height, path);
 		fclose(f);
 		return NULL;
@@ -124,6 +125,8 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 			id->img_obj = lv_img_create(cont);
 			lv_img_set_src(id->img_obj, id->img_dsc);
 			lv_obj_set_align(id->img_obj, LV_ALIGN_CENTER);
+			if (id->image_scale != 256)
+				lv_img_set_zoom(id->img_obj, id->image_scale);
 			lv_obj_set_style_img_opa(id->img_obj, id->opacity,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 			if (id->recolor_opa > 0) {
@@ -164,6 +167,8 @@ static void _image_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "image_name", id->image_name);
 	if (id->opacity != 255)
 		cJSON_AddNumberToObject(cfg, "opacity", id->opacity);
+	if (id->image_scale != 256)
+		cJSON_AddNumberToObject(cfg, "image_scale", id->image_scale);
 	if (id->recolor_opa != 0)
 		cJSON_AddNumberToObject(cfg, "recolor_opa", id->recolor_opa);
 	if (id->recolor.full != lv_color_black().full)
@@ -184,6 +189,8 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opacity");
 	if (cJSON_IsNumber(item)) id->opacity = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_scale");
+	if (cJSON_IsNumber(item)) id->image_scale = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor_opa");
 	if (cJSON_IsNumber(item)) id->recolor_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor");
@@ -215,6 +222,7 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	if (!id) { free(w); return NULL; }
 
 	id->opacity = 255;
+	id->image_scale = 256;  /* 256 = 100% in LVGL zoom */
 	id->recolor = lv_color_black();
 	id->recolor_opa = 0;
 

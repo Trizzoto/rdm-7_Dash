@@ -1,5 +1,6 @@
 #include "widget_rpm_bar.h"
 #include "widget_rules.h"
+#include "screen_config.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
 #include "can/can_decode.h"
@@ -832,9 +833,9 @@ lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent) {
 	/* Create a transparent container that holds all RPM sub-components.
 	 * This allows the whole RPM widget to be moved as a single unit. */
 	lv_obj_t *container = lv_obj_create(parent);
-	lv_obj_set_size(container, 800, 55);
+	lv_obj_set_size(container, SCREEN_W, 55);
 	lv_obj_set_align(container, LV_ALIGN_CENTER);
-	lv_obj_set_pos(container, 0, -213);
+	lv_obj_set_pos(container, 0, -(int16_t)SCREEN_ORIGIN_Y + 55 / 2);
 	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_bg_opa(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1012,10 +1013,10 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	w->type = WIDGET_RPM_BAR;
 	w->slot = 0;
 	/* RPM bar occupies full screen width at top.
-	 * y = -240 + 55/2 = -213 in center-origin coords. */
+	 * y = -SCREEN_ORIGIN_Y + 55/2 = -213 in center-origin coords. */
 	w->x = 0;
-	w->y = -213;
-	w->w = 800;
+	w->y = -(int16_t)SCREEN_ORIGIN_Y + 55 / 2;
+	w->w = SCREEN_W;
 	w->h = 55;
 	snprintf(w->id, sizeof(w->id), "rpm_bar_0");
 

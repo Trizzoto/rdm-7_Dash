@@ -21,6 +21,7 @@
 
 #include "signal.h"
 #include "signal_internal.h"
+#include "screen_config.h"
 
 #include "cJSON.h"
 #include "esp_littlefs.h"
@@ -29,6 +30,7 @@
 #include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 
 #include <dirent.h>
@@ -514,9 +516,13 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 			widget_rules_from_json(w, cfg_obj);
 
 		/* Build LVGL objects on the parent screen */
-		ESP_LOGD(TAG, "%s: Calling create for %s", caller, w->id);
+		ESP_LOGI(TAG, "%s: Creating widget %s (type=%d, x=%d, y=%d, w=%d, h=%d)",
+				 caller, w->id, (int)wtype, (int)w->x, (int)w->y, (int)w->w, (int)w->h);
 		w->create(w, parent);
-		ESP_LOGD(TAG, "%s: Returned from create for %s", caller, w->id);
+		ESP_LOGI(TAG, "%s: Created %s OK", caller, w->id);
+
+		/* Yield briefly to feed the watchdog — important for layouts with many widgets */
+		vTaskDelay(pdMS_TO_TICKS(1));
 
 		/* Subscribe rule signals after create (needs w->root) */
 		widget_rules_subscribe(w);
@@ -660,6 +666,8 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 
 	cJSON_AddNumberToObject(root, "schema_version", LAYOUT_SCHEMA_VERSION);
 	cJSON_AddStringToObject(root, "name", name);
+	cJSON_AddNumberToObject(root, "screen_w", SCREEN_W);
+	cJSON_AddNumberToObject(root, "screen_h", SCREEN_H);
 
 	/* Conditionally add ECU context if set */
 	if (s_layout_ecu[0])

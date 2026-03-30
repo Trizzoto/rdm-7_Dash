@@ -5,16 +5,21 @@
  * handlers, then sends a JSON response frame over UART.
  */
 #include "serial_commands.h"
+#include "serial_protocol.h"
 #include "uart_protocol.h"
 
 #include "cJSON.h"
 #include "display_capture.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include "layout/layout_manager.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
@@ -28,9 +33,12 @@
 #include "ui/settings/device_settings.h"
 #include "widgets/font_manager.h"
 #include "widgets/signal.h"
+#include "widgets/signal_internal.h"
 #include "widgets/signal_sim.h"
 #include "lvgl.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <dirent.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -101,7 +109,7 @@ static void _send_response(int id, cJSON *result, const char *error)
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
     if (json) {
-        uart_protocol_send_json(json);
+        serial_protocol_send_json(json);
         free(json);
     }
 }
@@ -135,6 +143,19 @@ static void _handle_device_info(int id, cJSON *params)
     cJSON_AddStringToObject(r, "version", desc->version);
     cJSON_AddNumberToObject(r, "schema", LAYOUT_SCHEMA_VERSION);
     cJSON_AddStringToObject(r, "project", desc->project_name);
+
+    cJSON *hw = cJSON_AddObjectToObject(r, "hardware");
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    cJSON_AddStringToObject(hw, "chip", CONFIG_IDF_TARGET);
+    cJSON_AddNumberToObject(hw, "cores", chip_info.cores);
+    cJSON_AddNumberToObject(hw, "psram_mb",
+        (double)heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / (1024 * 1024));
+    uint32_t flash_size = 0;
+    esp_flash_get_size(NULL, &flash_size);
+    cJSON_AddNumberToObject(hw, "flash_mb",
+        (double)flash_size / (1024 * 1024));
+
     _send_response(id, r, NULL);
 }
 
@@ -309,8 +330,17 @@ static void _handle_layout_set(int id, cJSON *params)
         return;
     }
 
-    layout_manager_set_active(name);
-    lv_async_call(_deferred_screen_reload, NULL);
+    /* Handle splash screens (names prefixed with _splash_) */
+    if (strncmp(name, "_splash_", 8) == 0) {
+        const char *splash_name = name + 8;
+        layout_manager_set_active_splash(splash_name);
+        splash_screen_set_active_name(splash_name);
+        if (splash_screen_is_edit_mode())
+            lv_async_call(_deferred_screen_reload, NULL);
+    } else {
+        layout_manager_set_active(name);
+        lv_async_call(_deferred_screen_reload, NULL);
+    }
     _send_ok(id);
 }
 
@@ -419,31 +449,114 @@ static void _handle_image_delete(int id, cJSON *params)
     _send_ok(id);
 }
 
-/* ── image.data ──────────────────────────────────────────────────────────── */
+/* ── Download chunk size (raw binary frames, no base64 overhead) ─────────── */
+#define DOWNLOAD_CHUNK_SIZE (32 * 1024)
 
-static void _handle_image_data(int id, cJSON *params)
+/* ── download.start (returns metadata for chunked download) ─────────────── */
+
+static void _handle_download_start(int id, cJSON *params)
 {
+    cJSON *type_item = cJSON_GetObjectItem(params, "type");
     cJSON *name_item = cJSON_GetObjectItem(params, "name");
-    if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
-        _send_error(id, "Invalid name");
+    if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)
+        || !_name_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid type/name");
+        return;
+    }
+
+    const char *type = type_item->valuestring;
+    const char *name = name_item->valuestring;
+    bool is_image = (strcmp(type, "image") == 0);
+    bool is_font  = (strcmp(type, "font") == 0);
+    if (!is_image && !is_font) {
+        _send_error(id, "Invalid download type (image/font)");
         return;
     }
 
     char path[80];
-    snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR,
-             name_item->valuestring);
+    if (is_image)
+        snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+    else
+        snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
 
     struct stat st;
     if (stat(path, &st) != 0) {
-        _send_error(id, "Image not found");
+        _send_error(id, is_image ? "Image not found" : "Font not found");
         return;
     }
 
-    /* For binary data, report size so desktop can request via chunked transfer */
+    uint32_t file_size = (uint32_t)st.st_size;
+    uint16_t total_chunks = (uint16_t)((file_size + DOWNLOAD_CHUNK_SIZE - 1)
+                                       / DOWNLOAD_CHUNK_SIZE);
+
     cJSON *r = cJSON_CreateObject();
-    cJSON_AddNumberToObject(r, "size", st.st_size);
-    cJSON_AddStringToObject(r, "name", name_item->valuestring);
+    cJSON_AddStringToObject(r, "name", name);
+    cJSON_AddNumberToObject(r, "size", file_size);
+    cJSON_AddNumberToObject(r, "chunks", total_chunks);
+    cJSON_AddNumberToObject(r, "chunk_size", DOWNLOAD_CHUNK_SIZE);
     _send_response(id, r, NULL);
+}
+
+/* ── download.chunk (responds with raw binary frame — no base64/JSON) ───── */
+
+static void _handle_download_chunk(int id, cJSON *params)
+{
+    cJSON *type_item  = cJSON_GetObjectItem(params, "type");
+    cJSON *name_item  = cJSON_GetObjectItem(params, "name");
+    cJSON *index_item = cJSON_GetObjectItem(params, "index");
+    if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)
+        || !cJSON_IsNumber(index_item)
+        || !_name_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid params");
+        return;
+    }
+
+    const char *type = type_item->valuestring;
+    const char *name = name_item->valuestring;
+    uint16_t chunk_idx = (uint16_t)index_item->valueint;
+
+    bool is_image = (strcmp(type, "image") == 0);
+    bool is_font  = (strcmp(type, "font") == 0);
+    if (!is_image && !is_font) {
+        _send_error(id, "Invalid download type");
+        return;
+    }
+
+    char path[80];
+    if (is_image)
+        snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
+    else
+        snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        _send_error(id, "File not found");
+        return;
+    }
+
+    /* Allocate buffer: type tag (1B) + chunk data */
+    uint8_t *buf = malloc(1 + DOWNLOAD_CHUNK_SIZE);
+    if (!buf) {
+        fclose(f);
+        _send_error(id, "OOM for read buffer");
+        return;
+    }
+
+    uint32_t offset = (uint32_t)chunk_idx * DOWNLOAD_CHUNK_SIZE;
+    fseek(f, offset, SEEK_SET);
+    buf[0] = UART_PAYLOAD_BINARY;
+    size_t nr = fread(buf + 1, 1, DOWNLOAD_CHUNK_SIZE, f);
+    fclose(f);
+
+    if (nr == 0) {
+        free(buf);
+        _send_error(id, "Read past end of file");
+        return;
+    }
+
+    /* Send raw binary frame — desktop reads type tag to distinguish from JSON error */
+    serial_protocol_send_frame(buf, 1 + nr);
+    free(buf);
 }
 
 /* ── font.list ───────────────────────────────────────────────────────────── */
@@ -591,15 +704,16 @@ static void _handle_screenshot(int id, cJSON *params)
     _send_response(id, r, NULL);
 
     /* Send the binary data as a binary frame */
-    /* Prefix: type tag (0x01) + "screenshot" session marker */
+    /* Prefix: type tag (0x01) + screenshot data */
     size_t frame_len = 1 + size;
     uint8_t *frame = malloc(frame_len);
     if (frame) {
         frame[0] = UART_PAYLOAD_BINARY;
         memcpy(frame + 1, buf, size);
-        /* Send directly as framed data — desktop knows to expect it */
-        uart_protocol_send_frame(frame, frame_len);
+        serial_protocol_send_frame(frame, frame_len);
         free(frame);
+    } else {
+        ESP_LOGE(TAG, "OOM for screenshot frame (%u bytes)", (unsigned)frame_len);
     }
     display_capture_free_buffer(buf);
 }
@@ -675,7 +789,9 @@ static void _handle_upload_start(int id, cJSON *params)
     s_upload.total_size = total_size;
     s_upload.total_chunks = (uint16_t)((total_size + UART_PROTO_CHUNK_SIZE - 1)
                                        / UART_PROTO_CHUNK_SIZE);
-    s_upload.session_id = (uint64_t)esp_random() << 32 | esp_random();
+    /* Mask to 53 bits so the value survives JSON double round-trip */
+    s_upload.session_id = ((uint64_t)esp_random() << 32 | esp_random())
+                          & 0x1FFFFFFFFFFFFFull;
 
     if (is_ota) {
         /* Begin OTA partition write */
@@ -830,6 +946,313 @@ static void _handle_upload_abort(int id, cJSON *params)
     _send_ok(id);
 }
 
+/* ── brightness.get / brightness.set ─────────────────────────────────────── */
+
+static void _handle_brightness_get(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "brightness", (int)current_brightness);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_brightness_set(int id, cJSON *params)
+{
+    cJSON *j = cJSON_GetObjectItem(params, "brightness");
+    if (!cJSON_IsNumber(j)) {
+        _send_error(id, "Missing brightness");
+        return;
+    }
+    int val = (int)j->valuedouble;
+    if (val < 1) val = 1;
+    if (val > 100) val = 100;
+    set_display_brightness(val);
+    _send_ok(id);
+}
+
+/* ── can.config.get / can.config.set ────────────────────────────────────── */
+
+static void _handle_can_config_get(int id, cJSON *params)
+{
+    (void)params;
+    uint8_t bitrate = 2;
+    config_store_load_bitrate(&bitrate);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "bitrate", (int)bitrate);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_can_config_set(int id, cJSON *params)
+{
+    cJSON *j = cJSON_GetObjectItem(params, "bitrate");
+    if (!cJSON_IsNumber(j)) {
+        _send_error(id, "Missing bitrate");
+        return;
+    }
+    uint8_t bitrate = (uint8_t)j->valuedouble;
+    if (bitrate > 3) {
+        _send_error(id, "Invalid bitrate index (0-3)");
+        return;
+    }
+    config_store_save_bitrate(bitrate);
+    _send_ok(id);
+}
+
+/* ── dimmer.get / dimmer.set ─────────────────────────────────────────────── */
+
+static void _handle_dimmer_get(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "signal_name", dimmer_config.signal_name);
+    cJSON_AddNumberToObject(r, "threshold", dimmer_config.threshold);
+    cJSON_AddBoolToObject(r, "is_momentary", dimmer_config.is_momentary);
+    cJSON_AddBoolToObject(r, "invert", dimmer_config.invert);
+    cJSON_AddNumberToObject(r, "dim_brightness", dimmer_config.dim_brightness);
+    cJSON_AddBoolToObject(r, "enabled", dimmer_config.enabled);
+    _send_response(id, r, NULL);
+}
+
+static void _deferred_serial_dimmer_subscribe(void *arg)
+{
+    (void)arg;
+    dimmer_subscribe();
+}
+
+static void _handle_dimmer_set(int id, cJSON *params)
+{
+    if (!example_lvgl_lock(1000)) {
+        _send_error(id, "LVGL busy");
+        return;
+    }
+
+    cJSON *j;
+    if ((j = cJSON_GetObjectItem(params, "signal_name")) && cJSON_IsString(j)) {
+        strncpy(dimmer_config.signal_name, j->valuestring,
+                sizeof(dimmer_config.signal_name) - 1);
+        dimmer_config.signal_name[sizeof(dimmer_config.signal_name) - 1] = '\0';
+    }
+    if ((j = cJSON_GetObjectItem(params, "threshold")) && cJSON_IsNumber(j))
+        dimmer_config.threshold = (float)j->valuedouble;
+    if ((j = cJSON_GetObjectItem(params, "is_momentary")))
+        dimmer_config.is_momentary = cJSON_IsTrue(j);
+    if ((j = cJSON_GetObjectItem(params, "invert")))
+        dimmer_config.invert = cJSON_IsTrue(j);
+    if ((j = cJSON_GetObjectItem(params, "dim_brightness")) && cJSON_IsNumber(j))
+        dimmer_config.dim_brightness = (uint8_t)j->valuedouble;
+    if ((j = cJSON_GetObjectItem(params, "enabled")))
+        dimmer_config.enabled = cJSON_IsTrue(j);
+
+    example_lvgl_unlock();
+
+    save_dimmer_config_to_nvs();
+    lv_async_call(_deferred_serial_dimmer_subscribe, NULL);
+
+    _send_ok(id);
+}
+
+/* ── system.health ──────────────────────────────────────────────────────── */
+
+static void _handle_system_health(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "uptime_s",
+        (double)(esp_timer_get_time() / 1000000ULL));
+    cJSON_AddNumberToObject(r, "heap_free",
+        (double)esp_get_free_heap_size());
+    cJSON_AddNumberToObject(r, "heap_min_free",
+        (double)esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(r, "psram_free",
+        (double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    int rssi = 0;
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        rssi = ap_info.rssi;
+    }
+    cJSON_AddNumberToObject(r, "wifi_rssi", rssi);
+    _send_response(id, r, NULL);
+}
+
+/* ── system.reboot ──────────────────────────────────────────────────────── */
+
+static void _handle_system_reboot(int id, cJSON *params)
+{
+    (void)params;
+    _send_ok(id);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+}
+
+/* ── Data Logger serial commands ────────────────────────────────────────── */
+
+static void _deferred_serial_log_start(void *arg)
+{
+    (void)arg;
+    data_logger_start();
+}
+
+static void _handle_log_start(int id, cJSON *params)
+{
+    (void)params;
+    lv_async_call(_deferred_serial_log_start, NULL);
+    _send_ok(id);
+}
+
+static void _deferred_serial_log_stop(void *arg)
+{
+    (void)arg;
+    data_logger_stop();
+}
+
+static void _handle_log_stop(int id, cJSON *params)
+{
+    (void)params;
+    lv_async_call(_deferred_serial_log_stop, NULL);
+    _send_ok(id);
+}
+
+static void _handle_log_status(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "active", data_logger_is_active());
+    cJSON_AddStringToObject(r, "file", data_logger_current_file());
+    cJSON_AddNumberToObject(r, "samples", data_logger_get_sample_count());
+    cJSON_AddNumberToObject(r, "elapsed_ms", data_logger_get_elapsed_ms());
+    _send_response(id, r, NULL);
+}
+
+static void _handle_log_list(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateArray();
+    DIR *d = opendir("/sdcard/logs");
+    if (d) {
+        struct dirent *ent;
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_type == DT_REG) {
+                cJSON *item = cJSON_CreateObject();
+                cJSON_AddStringToObject(item, "name", ent->d_name);
+                char path[128];
+                snprintf(path, sizeof(path), "/sdcard/logs/%s", ent->d_name);
+                struct stat st;
+                if (stat(path, &st) == 0)
+                    cJSON_AddNumberToObject(item, "size", st.st_size);
+                cJSON_AddItemToArray(r, item);
+            }
+        }
+        closedir(d);
+    }
+    _send_response(id, r, NULL);
+}
+
+static void _handle_log_delete(int id, cJSON *params)
+{
+    cJSON *j = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(j) || !_name_is_safe(j->valuestring)) {
+        _send_error(id, "Invalid name");
+        return;
+    }
+    char path[128];
+    snprintf(path, sizeof(path), "/sdcard/logs/%s", j->valuestring);
+    if (remove(path) != 0) {
+        _send_error(id, "Delete failed");
+        return;
+    }
+    _send_ok(id);
+}
+
+/* ── Fuel calibration serial commands ───────────────────────────────────── */
+
+static void _handle_fuel_status(int id, cJSON *params)
+{
+    (void)params;
+    fuel_cal_config_t fc;
+    signal_internal_get_fuel_cal(&fc);
+    float voltage = signal_internal_get_fuel_voltage();
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "voltage", voltage);
+    cJSON_AddNumberToObject(r, "empty_v", fc.empty_v);
+    cJSON_AddNumberToObject(r, "full_v", fc.full_v);
+    cJSON_AddNumberToObject(r, "full_value", fc.full_value);
+    cJSON_AddBoolToObject(r, "enabled", fc.enabled);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_fuel_set_empty(int id, cJSON *params)
+{
+    (void)params;
+    float v = signal_internal_get_fuel_voltage();
+    fuel_cal_config_t fc;
+    signal_internal_get_fuel_cal(&fc);
+    signal_internal_set_fuel_cal(v, fc.full_v, fc.full_value, fc.enabled);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "empty_v", v);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_fuel_set_full(int id, cJSON *params)
+{
+    (void)params;
+    float v = signal_internal_get_fuel_voltage();
+    fuel_cal_config_t fc;
+    signal_internal_get_fuel_cal(&fc);
+    signal_internal_set_fuel_cal(fc.empty_v, v, fc.full_value, true);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "full_v", v);
+    _send_response(id, r, NULL);
+}
+
+/* ── WiFi config serial commands ────────────────────────────────────────── */
+
+static void _handle_wifi_config_get(int id, cJSON *params)
+{
+    (void)params;
+    wifi_credentials_t creds = {0};
+    config_store_load_wifi(&creds);
+
+    wifi_boot_config_t boot = {0};
+    config_store_load_wifi_boot(&boot);
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "ssid", creds.ssid);
+    cJSON_AddStringToObject(r, "password", creds.password);
+    cJSON_AddBoolToObject(r, "auto_connect", creds.auto_connect);
+    cJSON_AddBoolToObject(r, "wifi_on_boot", boot.wifi_on_boot);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_wifi_config_set(int id, cJSON *params)
+{
+    wifi_credentials_t creds = {0};
+    config_store_load_wifi(&creds);
+
+    cJSON *j;
+    if ((j = cJSON_GetObjectItem(params, "ssid")) && cJSON_IsString(j)) {
+        strncpy(creds.ssid, j->valuestring, sizeof(creds.ssid) - 1);
+        creds.ssid[sizeof(creds.ssid) - 1] = '\0';
+    }
+    if ((j = cJSON_GetObjectItem(params, "password")) && cJSON_IsString(j)) {
+        strncpy(creds.password, j->valuestring, sizeof(creds.password) - 1);
+        creds.password[sizeof(creds.password) - 1] = '\0';
+    }
+    if ((j = cJSON_GetObjectItem(params, "auto_connect")))
+        creds.auto_connect = cJSON_IsTrue(j);
+    config_store_save_wifi(&creds);
+
+    if ((j = cJSON_GetObjectItem(params, "wifi_on_boot"))) {
+        wifi_boot_config_t boot = {0};
+        config_store_load_wifi_boot(&boot);
+        boot.wifi_on_boot = cJSON_IsTrue(j);
+        config_store_save_wifi_boot(&boot);
+    }
+
+    _send_ok(id);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  Dispatch Table
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -858,14 +1281,41 @@ static const cmd_entry_t s_dispatch_table[] = {
     /* Images */
     { "image.list",         _handle_image_list },
     { "image.delete",       _handle_image_delete },
-    { "image.data",         _handle_image_data },
+    /* Chunked downloads (images + fonts) */
+    { "download.start",     _handle_download_start },
+    { "download.chunk",     _handle_download_chunk },
     /* Fonts */
     { "font.list",          _handle_font_list },
     { "font.delete",        _handle_font_delete },
+    /* Brightness */
+    { "brightness.get",     _handle_brightness_get },
+    { "brightness.set",     _handle_brightness_set },
+    /* CAN config */
+    { "can.config.get",     _handle_can_config_get },
+    { "can.config.set",     _handle_can_config_set },
+    /* Dimmer */
+    { "dimmer.get",         _handle_dimmer_get },
+    { "dimmer.set",         _handle_dimmer_set },
+    /* System */
+    { "system.health",      _handle_system_health },
+    { "system.reboot",      _handle_system_reboot },
     /* Signals */
     { "signal.values",      _handle_signal_values },
     { "signal.inject",      _handle_signal_inject },
     { "signal.simulate",    _handle_signal_simulate },
+    /* Data Logger */
+    { "log.start",          _handle_log_start },
+    { "log.stop",           _handle_log_stop },
+    { "log.status",         _handle_log_status },
+    { "log.list",           _handle_log_list },
+    { "log.delete",         _handle_log_delete },
+    /* Fuel Calibration */
+    { "fuel.status",        _handle_fuel_status },
+    { "fuel.set-empty",     _handle_fuel_set_empty },
+    { "fuel.set-full",      _handle_fuel_set_full },
+    /* WiFi Config */
+    { "wifi.config.get",    _handle_wifi_config_get },
+    { "wifi.config.set",    _handle_wifi_config_set },
     /* Screenshot */
     { "screenshot",         _handle_screenshot },
     /* Chunked uploads */
@@ -903,7 +1353,11 @@ esp_err_t serial_commands_dispatch(const char *json_str, size_t len)
     const char *method = method_item->valuestring;
 
     cJSON *params = cJSON_GetObjectItem(req, "params");
-    if (!params) params = cJSON_CreateObject(); /* empty params */
+    bool params_owned = false;
+    if (!params) {
+        params = cJSON_CreateObject(); /* empty params — owned separately */
+        params_owned = true;
+    }
 
     /* Look up handler in dispatch table */
     bool found = false;
@@ -920,6 +1374,7 @@ esp_err_t serial_commands_dispatch(const char *json_str, size_t len)
         _send_error(id, "Unknown method");
     }
 
+    if (params_owned) cJSON_Delete(params);
     cJSON_Delete(req);
     return ESP_OK;
 }
@@ -965,11 +1420,12 @@ esp_err_t serial_commands_handle_binary(const uint8_t *data, size_t len)
         cJSON_AddNullToObject(resp, "error");
         char *json = cJSON_PrintUnformatted(resp);
         cJSON_Delete(resp);
-        if (json) { uart_protocol_send_json(json); free(json); }
+        if (json) { serial_protocol_send_json(json); free(json); }
         return ESP_FAIL;
     }
 
     bool is_ota = (strcmp(s_upload.type, "ota") == 0);
+    size_t accepted = chunk_len;     /* bytes actually consumed */
 
     if (is_ota) {
         /* Write directly to OTA partition */
@@ -987,18 +1443,18 @@ esp_err_t serial_commands_handle_binary(const uint8_t *data, size_t len)
             cJSON_AddNullToObject(resp, "error");
             char *json = cJSON_PrintUnformatted(resp);
             cJSON_Delete(resp);
-            if (json) { uart_protocol_send_json(json); free(json); }
+            if (json) { serial_protocol_send_json(json); free(json); }
             return ESP_FAIL;
         }
     } else {
-        /* Accumulate in buffer */
-        size_t copy_len = chunk_len;
-        if (s_upload.received + copy_len > s_upload.total_size)
-            copy_len = s_upload.total_size - s_upload.received;
-        memcpy(s_upload.buffer + s_upload.received, chunk_data, copy_len);
+        /* Accumulate in buffer — clamp to remaining space */
+        accepted = chunk_len;
+        if (s_upload.received + accepted > s_upload.total_size)
+            accepted = s_upload.total_size - s_upload.received;
+        memcpy(s_upload.buffer + s_upload.received, chunk_data, accepted);
     }
 
-    s_upload.received += chunk_len;
+    s_upload.received += accepted;
     s_upload.next_chunk++;
 
     /* Send ACK */
@@ -1011,7 +1467,7 @@ esp_err_t serial_commands_handle_binary(const uint8_t *data, size_t len)
     cJSON_AddNullToObject(resp, "error");
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
-    if (json) { uart_protocol_send_json(json); free(json); }
+    if (json) { serial_protocol_send_json(json); free(json); }
 
     return ESP_OK;
 }

@@ -36,6 +36,7 @@
 #include "ui/screens/ui_wifi.h"
 #include "net/wifi_manager.h"
 #include "net/uart_protocol.h"
+// #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
 #include "storage/config_store.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
@@ -103,8 +104,9 @@ static const char *TAG = "main";
 #define LCD_RGB_PANEL_WRITE_BYTES NULL // Use default write bytes function
 
 // The pixel number in horizontal and vertical
-#define EXAMPLE_LCD_H_RES 800
-#define EXAMPLE_LCD_V_RES 480
+#include "screen_config.h"
+#define EXAMPLE_LCD_H_RES SCREEN_W
+#define EXAMPLE_LCD_V_RES SCREEN_H
 
 #if CONFIG_EXAMPLE_DOUBLE_FB
 #define EXAMPLE_LCD_NUM_FB 2
@@ -524,7 +526,9 @@ void app_main(void) {
 	ESP_ERROR_CHECK(i2c_master_init());
 	ESP_LOGI(TAG, "I2C initialized successfully");
 	// gpio_init();
-	// Set initial configuration for I2C device at 0x24
+	// Set initial configuration for I2C device at 0x24 (CH422G mode register)
+	// 0x24 = mode config, 0x38 = output register (pins 0-7)
+	// USB_SEL (EXIO5) is set via 0x38 writes below (bit 5 in 0x2C = HIGH)
 	uint8_t write_buf = 0x01;
 	i2c_master_write_to_device(I2C_MASTER_NUM, 0x24, &write_buf, 1,
 							   I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
@@ -742,6 +746,16 @@ void app_main(void) {
 	if (uart_protocol_init() != ESP_OK) {
 		ESP_LOGE(TAG, "UART protocol init failed!");
 	}
+
+	/* USB CDC disabled — ESP32-S3 USB Serial/JTAG and USB OTG share the
+	 * same PHY and can't coexist. To enable USB CDC in the future:
+	 * 1. Disable CONFIG_USJ_ENABLE_USB_SERIAL_JTAG in sdkconfig
+	 * 2. Disable CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
+	 * 3. Uncomment usb_cdc_protocol_init() below
+	 */
+	// if (usb_cdc_protocol_init() != ESP_OK) {
+	// 	ESP_LOGW(TAG, "USB CDC protocol init failed");
+	// }
 
 	/* Initialize WiFi manager (creates netif, no radio start yet) */
 	wifi_manager_init();

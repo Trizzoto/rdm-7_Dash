@@ -1,5 +1,6 @@
 #include "widget_indicator.h"
 #include "widget_rules.h"
+#include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
@@ -394,7 +395,7 @@ void create_indicator_config_menu(uint8_t indicator_idx) {
 
 	// Create a container for inputs
 	lv_obj_t *inputs_container = lv_obj_create(config_screen);
-	lv_obj_set_size(inputs_container, 800, 480);
+	lv_obj_set_size(inputs_container, SCREEN_W, SCREEN_H);
 	lv_obj_align(inputs_container, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_bg_opa(inputs_container, 0, 0);
 	lv_obj_set_style_border_opa(inputs_container, 0, 0);
@@ -640,21 +641,16 @@ void update_indicator_ui_immediate(uint8_t indicator_idx) {
 	lv_obj_t *indicator_obj =
 		(indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
-		if (current_state) {
-			if (id && id->animation_enabled) {
-				lv_obj_set_style_opa(indicator_obj, 255,
-									 LV_PART_MAIN | LV_STATE_DEFAULT);
-				indicator_animation_state = false;
-				if (indicator_animation_timer) {
-					lv_timer_resume(indicator_animation_timer);
-				}
-			} else {
-				lv_obj_set_style_opa(indicator_obj, 255,
-									 LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_color_t color = (id && current_state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
+		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 0);
+		lv_obj_set_style_img_recolor(indicator_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(indicator_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_opa(indicator_obj, opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (current_state && id && id->animation_enabled) {
+			indicator_animation_state = false;
+			if (indicator_animation_timer) {
+				lv_timer_resume(indicator_animation_timer);
 			}
-		} else {
-			lv_obj_set_style_opa(indicator_obj, 50,
-								 LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 	}
 	update_config_preview(indicator_idx);
@@ -673,16 +669,12 @@ void update_config_preview(uint8_t indicator_idx) {
 		ESP_LOGD(TAG, "Updating config preview for indicator %d: %s", indicator_idx,
 			   state ? "ACTIVE" : "INACTIVE");
 
-		// Update preview indicator opacity
-		if (state) {
-			lv_obj_set_style_opa(preview_indicator_config, 255,
-								 LV_PART_MAIN |
-									 LV_STATE_DEFAULT); // 100% opacity
-		} else {
-			lv_obj_set_style_opa(preview_indicator_config, 50,
-								 LV_PART_MAIN |
-									 LV_STATE_DEFAULT); // 50% opacity
-		}
+		// Update preview indicator color
+		lv_color_t color = (id && state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
+		uint8_t opa = (id && state) ? id->opa_on : (id ? id->opa_off : 0);
+		lv_obj_set_style_img_recolor(preview_indicator_config, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(preview_indicator_config, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_opa(preview_indicator_config, opa > 0 ? opa : 50, LV_PART_MAIN | LV_STATE_DEFAULT);
 
 		// Update preview status text
 		lv_label_set_text_fmt(preview_status_text_config, "%s INDICATOR\n%s",
@@ -736,34 +728,21 @@ void update_indicator_ui(void *param) {
 	// Update the previous state
 	previous_indicator_states[indicator_idx] = current_state;
 
-	// Update main indicator opacity based on state
+	// Update main indicator color based on state
 	lv_obj_t *indicator_obj =
 		(indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
-		if (current_state) {
-			ESP_LOGD(TAG, "Indicator %d: Setting to ACTIVE", indicator_idx);
-			if (id && id->animation_enabled) {
-				ESP_LOGD(TAG, "Indicator %d: Animation enabled - starting timer",
-					   indicator_idx);
-				lv_obj_set_style_opa(indicator_obj, 255,
-									 LV_PART_MAIN | LV_STATE_DEFAULT);
-				indicator_animation_state = false;
-				if (indicator_animation_timer) {
-					lv_timer_resume(indicator_animation_timer);
-				}
-			} else {
-				ESP_LOGD(TAG, "Indicator %d: Solid mode - 100%% opacity",
-					   indicator_idx);
-				lv_obj_set_style_opa(indicator_obj, 255,
-									 LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_color_t color = (id && current_state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
+		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 0);
+		lv_obj_set_style_img_recolor(indicator_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(indicator_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_opa(indicator_obj, opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (current_state && id && id->animation_enabled) {
+			indicator_animation_state = false;
+			if (indicator_animation_timer) {
+				lv_timer_resume(indicator_animation_timer);
 			}
-		} else {
-			ESP_LOGD(TAG, "Indicator %d: Setting to INACTIVE (50%% opacity)",
-				   indicator_idx);
-			lv_obj_set_style_opa(indicator_obj, 50,
-								 LV_PART_MAIN |
-									 LV_STATE_DEFAULT); // 50% opacity (default)
 		}
 	} else {
 		ESP_LOGW(TAG, "Indicator %d: Object is null or invalid", indicator_idx);
@@ -786,18 +765,17 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 				(i == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 			if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
 				if (id->animation_enabled) {
-					// Flash between 100% and 50% opacity like a real indicator
-					uint8_t opacity =
-						indicator_animation_state
-							? 255
-							: 128; // 100% or 50% (128 = 50% of 255)
-					lv_obj_set_style_opa(indicator_obj, opacity,
-										 LV_PART_MAIN | LV_STATE_DEFAULT);
+					// Flash between full and half opacity using color-based rendering
+					uint8_t flash_opa = indicator_animation_state
+						? id->opa_on
+						: (id->opa_on / 2);
+					lv_obj_set_style_img_recolor(indicator_obj, id->color_on, LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_set_style_img_opa(indicator_obj, flash_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 					any_indicator_animating = true;
 				} else {
-					// Solid mode - always 100% opacity when active
-					lv_obj_set_style_opa(indicator_obj, 255,
-										 LV_PART_MAIN | LV_STATE_DEFAULT);
+					// Solid mode - full color when active
+					lv_obj_set_style_img_recolor(indicator_obj, id->color_on, LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_set_style_img_opa(indicator_obj, id->opa_on, LV_PART_MAIN | LV_STATE_DEFAULT);
 				}
 			}
 		}
@@ -814,67 +792,57 @@ void widget_indicator_reset(void) {
 	ui_Indicator_Right = NULL;
 }
 
+/* Helper: compute LVGL zoom (256 = 1x) to scale src image to target size */
+static uint16_t _calc_zoom(uint16_t src_w, uint16_t src_h, uint16_t tgt_w, uint16_t tgt_h) {
+	if (src_w == 0 || src_h == 0) return 256;
+	uint16_t zx = (uint16_t)((uint32_t)tgt_w * 256 / src_w);
+	uint16_t zy = (uint16_t)((uint32_t)tgt_h * 256 / src_h);
+	return (zx < zy) ? zx : zy; /* fit inside, maintain aspect ratio */
+}
+
 void widget_indicator_create_one(lv_obj_t *parent, uint8_t i) {
-	if (i == 0) {
-		ui_Indicator_Left = lv_img_create(parent);
-		lv_img_set_src(ui_Indicator_Left, &ui_img_indicator_left_png);
-		lv_obj_set_width(ui_Indicator_Left, LV_SIZE_CONTENT);
-		lv_obj_set_height(ui_Indicator_Left, LV_SIZE_CONTENT);
-		lv_obj_set_x(ui_Indicator_Left, -95);
-		lv_obj_set_y(ui_Indicator_Left, -133);
-		lv_obj_set_align(ui_Indicator_Left, LV_ALIGN_CENTER);
-		lv_obj_add_flag(ui_Indicator_Left, LV_OBJ_FLAG_ADV_HITTEST);
-		lv_obj_clear_flag(ui_Indicator_Left, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_opa(ui_Indicator_Left, 50,
-							 LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_outline_width(ui_Indicator_Left, 0,
-									   LV_PART_MAIN | LV_STATE_DEFAULT);
+	const lv_img_dsc_t *src = (i == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
+	int16_t def_x = (i == 0) ? -95 : 95;
+	lv_obj_t **obj_ptr = (i == 0) ? &ui_Indicator_Left : &ui_Indicator_Right;
 
-		lv_obj_t *left_ta = lv_obj_create(parent);
-		lv_obj_set_size(left_ta, 50, 50);
-		lv_obj_set_x(left_ta, -95);
-		lv_obj_set_y(left_ta, -133);
-		lv_obj_set_align(left_ta, LV_ALIGN_CENTER);
-		lv_obj_clear_flag(left_ta, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_bg_opa(left_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(left_ta, 0,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		uint8_t *left_id = lv_mem_alloc(sizeof(uint8_t));
-		if (left_id) {
-			*left_id = 0;
-			lv_obj_add_event_cb(left_ta, indicator_longpress_cb,
-								LV_EVENT_LONG_PRESSED, left_id);
-		}
-	} else if (i == 1) {
-		ui_Indicator_Right = lv_img_create(parent);
-		lv_img_set_src(ui_Indicator_Right, &ui_img_indicator_right_png);
-		lv_obj_set_width(ui_Indicator_Right, LV_SIZE_CONTENT);
-		lv_obj_set_height(ui_Indicator_Right, LV_SIZE_CONTENT);
-		lv_obj_set_x(ui_Indicator_Right, 95);
-		lv_obj_set_y(ui_Indicator_Right, -133);
-		lv_obj_set_align(ui_Indicator_Right, LV_ALIGN_CENTER);
-		lv_obj_add_flag(ui_Indicator_Right, LV_OBJ_FLAG_ADV_HITTEST);
-		lv_obj_clear_flag(ui_Indicator_Right, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_opa(ui_Indicator_Right, 50,
-							 LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_outline_width(ui_Indicator_Right, 0,
-									   LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Look up widget for sizing and color data */
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_INDICATOR, i);
+	indicator_data_t *id = w ? (indicator_data_t *)w->type_data : NULL;
+	uint16_t tgt_w = w ? w->w : 50;
+	uint16_t tgt_h = w ? w->h : 50;
 
-		lv_obj_t *right_ta = lv_obj_create(parent);
-		lv_obj_set_size(right_ta, 50, 50);
-		lv_obj_set_x(right_ta, 95);
-		lv_obj_set_y(right_ta, -133);
-		lv_obj_set_align(right_ta, LV_ALIGN_CENTER);
-		lv_obj_clear_flag(right_ta, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_set_style_bg_opa(right_ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(right_ta, 0,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		uint8_t *right_id = lv_mem_alloc(sizeof(uint8_t));
-		if (right_id) {
-			*right_id = 1;
-			lv_obj_add_event_cb(right_ta, indicator_longpress_cb,
-								LV_EVENT_LONG_PRESSED, right_id);
-		}
+	*obj_ptr = lv_img_create(parent);
+	lv_img_set_src(*obj_ptr, src);
+	lv_obj_set_width(*obj_ptr, LV_SIZE_CONTENT);
+	lv_obj_set_height(*obj_ptr, LV_SIZE_CONTENT);
+	lv_img_set_zoom(*obj_ptr, _calc_zoom(src->header.w, src->header.h, tgt_w, tgt_h));
+	lv_obj_set_x(*obj_ptr, w ? w->x : def_x);
+	lv_obj_set_y(*obj_ptr, w ? w->y : -133);
+	lv_obj_set_align(*obj_ptr, LV_ALIGN_CENTER);
+	lv_obj_add_flag(*obj_ptr, LV_OBJ_FLAG_ADV_HITTEST);
+	lv_obj_clear_flag(*obj_ptr, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_outline_width(*obj_ptr, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Apply initial color-based state (off by default) */
+	lv_color_t init_color = id ? id->color_off : lv_color_hex(0x333333);
+	uint8_t init_opa = id ? id->opa_off : 0;
+	lv_obj_set_style_img_recolor(*obj_ptr, init_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_img_recolor_opa(*obj_ptr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_img_opa(*obj_ptr, init_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Transparent touch area for long-press config */
+	lv_obj_t *ta = lv_obj_create(parent);
+	lv_obj_set_size(ta, tgt_w, tgt_h);
+	lv_obj_set_x(ta, w ? w->x : def_x);
+	lv_obj_set_y(ta, w ? w->y : -133);
+	lv_obj_set_align(ta, LV_ALIGN_CENTER);
+	lv_obj_clear_flag(ta, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_style_bg_opa(ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	uint8_t *slot_id = lv_mem_alloc(sizeof(uint8_t));
+	if (slot_id) {
+		*slot_id = i;
+		lv_obj_add_event_cb(ta, indicator_longpress_cb, LV_EVENT_LONG_PRESSED, slot_id);
 	}
 }
 
@@ -912,6 +880,12 @@ static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
 	w->h = nh;
+	if (w->root && lv_obj_is_valid(w->root)) {
+		indicator_data_t *id = (indicator_data_t *)w->type_data;
+		uint8_t slot = id ? id->slot : 0;
+		const lv_img_dsc_t *src = (slot == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
+		lv_img_set_zoom(w->root, _calc_zoom(src->header.w, src->header.h, nw, nh));
+	}
 }
 static void _indicator_open_settings(widget_t *w) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
@@ -930,6 +904,10 @@ static void _indicator_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "is_momentary", id->is_momentary);
 		if (id->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", id->signal_name);
+		cJSON_AddNumberToObject(cfg, "color_on", (int)id->color_on.full);
+		cJSON_AddNumberToObject(cfg, "opa_on", id->opa_on);
+		cJSON_AddNumberToObject(cfg, "color_off", (int)id->color_off.full);
+		cJSON_AddNumberToObject(cfg, "opa_off", id->opa_off);
 	}
 }
 static void _indicator_from_json(widget_t *w, cJSON *in) {
@@ -954,6 +932,15 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(item) && item->valuestring) {
 		safe_strncpy(id->signal_name, item->valuestring, sizeof(id->signal_name));
 	}
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "color_on");
+	if (cJSON_IsNumber(item)) id->color_on.full = (uint16_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "opa_on");
+	if (cJSON_IsNumber(item)) id->opa_on = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "color_off");
+	if (cJSON_IsNumber(item)) id->color_off.full = (uint16_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "opa_off");
+	if (cJSON_IsNumber(item)) id->opa_off = (uint8_t)item->valueint;
 
 	/* Resolve signal name → index */
 	if (id->signal_name[0] != '\0')
@@ -991,6 +978,10 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	id->is_momentary = true;
 	id->current_state = false;
 	id->signal_index = -1;
+	id->color_on = lv_color_hex(0xFFBF00);   /* amber */
+	id->opa_on = 255;                         /* fully visible */
+	id->color_off = lv_color_hex(0x333333);   /* dark grey */
+	id->opa_off = 70;                         /* dimmed when off (visible) */
 
 	w->type = WIDGET_INDICATOR;
 	w->slot = s;
