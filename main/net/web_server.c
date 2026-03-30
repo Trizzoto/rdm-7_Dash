@@ -5,10 +5,17 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_ota_ops.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include "layout/layout_manager.h"
 #include "lvgl.h"
 #include "storage/sd_manager.h"
+#include "system/device_id.h"
 #include "system/rdm_settings.h"
+#include "system/screen_config.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -21,6 +28,8 @@
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
 #include "esp_littlefs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <dirent.h>
 #include <stdbool.h>
 #include <string.h>
@@ -1447,7 +1456,8 @@ static const httpd_uri_t splash_fade_uri = {
  */
 
 #define LFS_IMAGE_DIR "/lfs/images"
-#define IMAGE_MAX_SIZE (1200 * 1024) /* 1200KB max — full 800x480 RDMIMG is ~1125KB */
+/* Max RDMIMG size: SCREEN_W * SCREEN_H * 3 bytes/pixel + 12-byte header, rounded up */
+#define IMAGE_MAX_SIZE (1200 * 1024)
 
 static void _ensure_image_dir(void) {
 	struct stat st;
@@ -2933,6 +2943,313 @@ static const httpd_uri_t log_delete_uri = {
 	.handler = _log_delete_handler, .user_ctx = NULL
 };
 
+/* ── Device Info API ───────────────────────────────────────────────────── */
+
+static esp_err_t _device_info_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	cJSON *root = cJSON_CreateObject();
+
+	char serial[MAX_SERIAL_LENGTH];
+	get_device_serial(serial);
+	cJSON_AddStringToObject(root, "serial", serial);
+
+	const esp_app_desc_t *desc = esp_app_get_description();
+	cJSON_AddStringToObject(root, "version", desc->version);
+	cJSON_AddNumberToObject(root, "schema", LAYOUT_SCHEMA_VERSION);
+	cJSON_AddStringToObject(root, "project", desc->project_name);
+
+	const screen_profile_t *scr = screen_get_profile();
+	cJSON *display = cJSON_AddObjectToObject(root, "display");
+	cJSON_AddNumberToObject(display, "width", scr->width);
+	cJSON_AddNumberToObject(display, "height", scr->height);
+	cJSON_AddStringToObject(display, "shape",
+		scr->shape == SCREEN_SHAPE_ROUND ? "round" : "rect");
+
+	cJSON *hw = cJSON_AddObjectToObject(root, "hardware");
+	esp_chip_info_t chip_info;
+	esp_chip_info(&chip_info);
+	cJSON_AddStringToObject(hw, "chip", CONFIG_IDF_TARGET);
+	cJSON_AddNumberToObject(hw, "cores", chip_info.cores);
+	cJSON_AddNumberToObject(hw, "psram_mb",
+		(double)heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / (1024 * 1024));
+	uint32_t flash_size = 0;
+	esp_flash_get_size(NULL, &flash_size);
+	cJSON_AddNumberToObject(hw, "flash_mb",
+		(double)flash_size / (1024 * 1024));
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+static const httpd_uri_t device_info_uri = {
+	.uri = "/api/device/info", .method = HTTP_GET,
+	.handler = _device_info_handler, .user_ctx = NULL
+};
+
+/* ── Brightness API ───────────────────────────────────────────────────── */
+
+static esp_err_t _brightness_get_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	char buf[48];
+	snprintf(buf, sizeof(buf), "{\"brightness\":%d}", (int)current_brightness);
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static esp_err_t _brightness_post_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	char buf[64];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *j = cJSON_GetObjectItem(root, "brightness");
+	if (!cJSON_IsNumber(j)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing brightness");
+		return ESP_FAIL;
+	}
+
+	int val = (int)j->valuedouble;
+	cJSON_Delete(root);
+
+	if (val < 1) val = 1;
+	if (val > 100) val = 100;
+	set_display_brightness(val);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t brightness_get_uri = {
+	.uri = "/api/brightness", .method = HTTP_GET,
+	.handler = _brightness_get_handler, .user_ctx = NULL
+};
+static const httpd_uri_t brightness_post_uri = {
+	.uri = "/api/brightness", .method = HTTP_POST,
+	.handler = _brightness_post_handler, .user_ctx = NULL
+};
+
+/* ── CAN Config API ───────────────────────────────────────────────────── */
+
+static esp_err_t _can_config_get_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	uint8_t bitrate = 2; /* default 500 kbps */
+	config_store_load_bitrate(&bitrate);
+
+	char buf[32];
+	snprintf(buf, sizeof(buf), "{\"bitrate\":%d}", (int)bitrate);
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static esp_err_t _can_config_post_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	char buf[64];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *j = cJSON_GetObjectItem(root, "bitrate");
+	if (!cJSON_IsNumber(j)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing bitrate");
+		return ESP_FAIL;
+	}
+
+	uint8_t bitrate = (uint8_t)j->valuedouble;
+	cJSON_Delete(root);
+
+	if (bitrate > 3) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid bitrate index (0-3)");
+		return ESP_FAIL;
+	}
+
+	config_store_save_bitrate(bitrate);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t can_config_get_uri = {
+	.uri = "/api/can/config", .method = HTTP_GET,
+	.handler = _can_config_get_handler, .user_ctx = NULL
+};
+static const httpd_uri_t can_config_post_uri = {
+	.uri = "/api/can/config", .method = HTTP_POST,
+	.handler = _can_config_post_handler, .user_ctx = NULL
+};
+
+/* ── System Health API ────────────────────────────────────────────────── */
+
+static esp_err_t _system_health_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddNumberToObject(root, "uptime_s",
+		(double)(esp_timer_get_time() / 1000000ULL));
+	cJSON_AddNumberToObject(root, "heap_free",
+		(double)esp_get_free_heap_size());
+	cJSON_AddNumberToObject(root, "heap_min_free",
+		(double)esp_get_minimum_free_heap_size());
+	cJSON_AddNumberToObject(root, "psram_free",
+		(double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+	/* WiFi RSSI (0 if not connected) */
+	int rssi = 0;
+	wifi_ap_record_t ap_info;
+	if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+		rssi = ap_info.rssi;
+	}
+	cJSON_AddNumberToObject(root, "wifi_rssi", rssi);
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+static const httpd_uri_t system_health_uri = {
+	.uri = "/api/system/health", .method = HTTP_GET,
+	.handler = _system_health_handler, .user_ctx = NULL
+};
+
+/* ── System Reboot API ────────────────────────────────────────────────── */
+
+static void _deferred_reboot(void *arg) {
+	(void)arg;
+	vTaskDelay(pdMS_TO_TICKS(500));
+	esp_restart();
+}
+
+static esp_err_t _system_reboot_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}");
+
+	/* Schedule reboot after response is sent */
+	xTaskCreate((TaskFunction_t)_deferred_reboot, "reboot", 2048, NULL, 1, NULL);
+	return ESP_OK;
+}
+
+static const httpd_uri_t system_reboot_uri = {
+	.uri = "/api/system/reboot", .method = HTTP_POST,
+	.handler = _system_reboot_handler, .user_ctx = NULL
+};
+
+/* ── WiFi Config API ──────────────────────────────────────────────────── */
+
+static esp_err_t _wifi_config_get_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	wifi_credentials_t creds = {0};
+	config_store_load_wifi(&creds);
+
+	wifi_boot_config_t boot = {0};
+	config_store_load_wifi_boot(&boot);
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "ssid", creds.ssid);
+	cJSON_AddStringToObject(root, "password", creds.password);
+	cJSON_AddBoolToObject(root, "auto_connect", creds.auto_connect);
+	cJSON_AddBoolToObject(root, "wifi_on_boot", boot.wifi_on_boot);
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+static esp_err_t _wifi_config_post_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	char buf[256];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	wifi_credentials_t creds = {0};
+	config_store_load_wifi(&creds);
+
+	cJSON *j;
+	if ((j = cJSON_GetObjectItem(root, "ssid")) && cJSON_IsString(j)) {
+		strncpy(creds.ssid, j->valuestring, sizeof(creds.ssid) - 1);
+		creds.ssid[sizeof(creds.ssid) - 1] = '\0';
+	}
+	if ((j = cJSON_GetObjectItem(root, "password")) && cJSON_IsString(j)) {
+		strncpy(creds.password, j->valuestring, sizeof(creds.password) - 1);
+		creds.password[sizeof(creds.password) - 1] = '\0';
+	}
+	if ((j = cJSON_GetObjectItem(root, "auto_connect")))
+		creds.auto_connect = cJSON_IsTrue(j);
+	config_store_save_wifi(&creds);
+
+	if ((j = cJSON_GetObjectItem(root, "wifi_on_boot"))) {
+		wifi_boot_config_t boot = {0};
+		config_store_load_wifi_boot(&boot);
+		boot.wifi_on_boot = cJSON_IsTrue(j);
+		config_store_save_wifi_boot(&boot);
+	}
+
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t wifi_config_get_uri = {
+	.uri = "/api/wifi/config", .method = HTTP_GET,
+	.handler = _wifi_config_get_handler, .user_ctx = NULL
+};
+static const httpd_uri_t wifi_config_post_uri = {
+	.uri = "/api/wifi/config", .method = HTTP_POST,
+	.handler = _wifi_config_post_handler, .user_ctx = NULL
+};
+
 /* ═════════════════════════════════════════════════════════════════════════════
  *  CORS Preflight Handler — responds to OPTIONS requests from cross-origin
  *  desktop apps (Tauri) so that POST requests with Content-Type: application/json
@@ -2963,7 +3280,7 @@ esp_err_t web_server_start(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
 	config.stack_size = 5120;
-	config.max_uri_handlers = 52;
+	config.max_uri_handlers = 64;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -3021,6 +3338,15 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &sd_copy_uri);
 	REGISTER_URI(server, &sd_delete_uri);
 	REGISTER_URI(server, &screen_switch_uri);
+	REGISTER_URI(server, &device_info_uri);
+	REGISTER_URI(server, &brightness_get_uri);
+	REGISTER_URI(server, &brightness_post_uri);
+	REGISTER_URI(server, &can_config_get_uri);
+	REGISTER_URI(server, &can_config_post_uri);
+	REGISTER_URI(server, &system_health_uri);
+	REGISTER_URI(server, &system_reboot_uri);
+	REGISTER_URI(server, &wifi_config_get_uri);
+	REGISTER_URI(server, &wifi_config_post_uri);
 	REGISTER_URI(server, &dimmer_config_get_uri);
 	REGISTER_URI(server, &dimmer_config_post_uri);
 	REGISTER_URI(server, &log_start_uri);

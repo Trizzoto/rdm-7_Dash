@@ -1,6 +1,7 @@
 #include "widget_warning.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "screen_config.h"
 #include "widget_panel.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -556,8 +557,8 @@ void create_warning_config_menu(uint8_t warning_idx) {
 
 	// Create a container for inputs
 	lv_obj_t *inputs_container = lv_obj_create(config_screen);
-	lv_obj_set_size(inputs_container, 800,
-					480); // Adjusted size to fit within the border
+	lv_obj_set_size(inputs_container, SCREEN_W,
+					SCREEN_H); /* Full-screen overlay */
 	lv_obj_align(inputs_container, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_bg_opa(inputs_container, 0, 0);
 	lv_obj_set_style_border_opa(inputs_container, 0, 0);

@@ -232,10 +232,19 @@
             transform-origin: center;
             border-radius: 2px;
             box-shadow: 0 0 40px hsla(0, 0%, 0%, 0.5);
+            overflow: hidden;
+        }
+
+        .canvas-container.screen-round {
+            border-radius: 50%;
         }
 
         .display-bezel.bezel-on .canvas-container {
             border-radius: 0;
+        }
+
+        .display-bezel.bezel-on .canvas-container.screen-round {
+            border-radius: 50%;
         }
 
         #screenshotCanvas {
@@ -2112,6 +2121,11 @@
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
             <input type="checkbox" id="showWidgetsToggle" checked style="display:none;">
             <div class="header-divider"></div>
+            <select id="screenSizeSelect" onchange="switchScreenSize(this.value)"
+                style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;"
+                title="Target display size">
+            </select>
+            <div class="header-divider"></div>
             <select id="screenModeSelect" onchange="switchScreenMode(this.value)"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;">
                 <option value="dashboard">Dashboard</option>
@@ -2260,7 +2274,7 @@
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
         <div id="widgetCount">0 widgets, 0 signals</div>
         <div id="storageInfo" style="font-size:10px; color:var(--text-muted); cursor:pointer;" onclick="openStorageManager()" title="Click to manage storage"></div>
-        <div>800x480 &middot; <span id="widgetCoords">(0, 0)</span></div>
+        <div><span id="screenResLabel">800x480</span> &middot; <span id="widgetCoords">(0, 0)</span></div>
         <div style="margin-left:auto; display:flex; align-items:center; gap:6px;">
             <button class="zoom-btn" onclick="zoomBy(-0.1)" title="Zoom Out">&minus;</button>
             <input id="zoomDisplay" type="text" value="100%" style="width:42px; text-align:center; background:transparent; border:1px solid transparent; color:inherit; font:inherit; padding:1px 2px; border-radius:3px; cursor:text;" onfocus="this.select(); this.style.borderColor='var(--border)'" onblur="applyZoomInput(this); this.style.borderColor='transparent'" onkeydown="if(event.key==='Enter'){this.blur()}">
@@ -2270,10 +2284,23 @@
 
     <script>
         /* Configuration & State */
-        const CANVAS_W = 800;
-        const CANVAS_H = 480;
-        const ORIGIN_X = 400; // Center X
-        const ORIGIN_Y = 240; // Center Y
+
+        /* ── Screen presets ─────────────────────────────────────────── */
+        const SCREEN_PRESETS = [
+            { id: '800x480_rect',  w: 800, h: 480, shape: 'rect',  label: '800×480 Rectangle' },
+            { id: '480x480_rect',  w: 480, h: 480, shape: 'rect',  label: '480×480 Square' },
+            { id: '480x480_round', w: 480, h: 480, shape: 'round', label: '480×480 Round' },
+            { id: '720x720_rect',  w: 720, h: 720, shape: 'rect',  label: '720×720 Square' },
+            { id: '720x720_round', w: 720, h: 720, shape: 'round', label: '720×720 Round' },
+        ];
+        let _screenShape = 'rect';
+        let _deviceScreenId = null;  /* set when connected — null = offline */
+
+        /* Screen dimensions — updated from /api/device/info or selector */
+        let CANVAS_W = 800;
+        let CANVAS_H = 480;
+        let ORIGIN_X = 400; // Center X = CANVAS_W / 2
+        let ORIGIN_Y = 240; // Center Y = CANVAS_H / 2
 
         let currentLayout = { name: "default", widgets: [], signals: [] };
         let selectedIndex = -1;
@@ -3501,6 +3528,7 @@
                     { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "label_gap", label: "Label Gap", type: "stepper", min: -20, max: 50, def: 10, cat: "appearance" },
                     { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance" },
+                    { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
                     { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
                     { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
@@ -4242,12 +4270,12 @@
                 const w = currentLayout.widgets[i];
                 if (!w) return;
                 switch (dir) {
-                    case 'left':   w.x = -400 + Math.round(w.w / 2); break;
+                    case 'left':   w.x = -ORIGIN_X + Math.round(w.w / 2); break;
                     case 'center': w.x = anchor.x; break;
-                    case 'right':  w.x = 400 - Math.round(w.w / 2); break;
-                    case 'top':    w.y = -240 + Math.round(w.h / 2); break;
+                    case 'right':  w.x = ORIGIN_X - Math.round(w.w / 2); break;
+                    case 'top':    w.y = -ORIGIN_Y + Math.round(w.h / 2); break;
                     case 'middle': w.y = anchor.y; break;
-                    case 'bottom': w.y = 240 - Math.round(w.h / 2); break;
+                    case 'bottom': w.y = ORIGIN_Y - Math.round(w.h / 2); break;
                 }
             });
             renderEditor();
@@ -4934,6 +4962,9 @@
         let previewTimer = null;
         function buildFirmwarePayload() {
             const payload = JSON.parse(JSON.stringify(currentLayout));
+            /* Tag layout with target screen dimensions */
+            payload.screen_w = CANVAS_W;
+            payload.screen_h = CANVAS_H;
             /* Convert RGB888 → RGB565 BEFORE rules are converted to array format
              * (convertWidgetColors handles object-format rule overrides) */
             convertWidgetColors(payload.widgets, rgb888to565);
@@ -6994,6 +7025,111 @@
             });
         }
 
+        /* ── Screen size selector & device info ────────────────────── */
+
+        function initScreenSizeSelector() {
+            const sel = document.getElementById('screenSizeSelect');
+            if (!sel) return;
+            sel.innerHTML = '';
+            SCREEN_PRESETS.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.label;
+                sel.appendChild(opt);
+            });
+            /* Restore from localStorage or default */
+            const saved = localStorage.getItem('rdm7_screen_preset');
+            if (saved && SCREEN_PRESETS.find(p => p.id === saved)) {
+                sel.value = saved;
+                const preset = SCREEN_PRESETS.find(p => p.id === saved);
+                applyScreenPreset(preset, false);
+            }
+        }
+
+        function switchScreenSize(presetId) {
+            const preset = SCREEN_PRESETS.find(p => p.id === presetId);
+            if (!preset) return;
+            try { localStorage.setItem('rdm7_screen_preset', presetId); } catch (e) { }
+            applyScreenPreset(preset, true);
+        }
+
+        function applyScreenPreset(preset, doZoom) {
+            _screenShape = preset.shape;
+            applyScreenDimensions(preset.w, preset.h, preset.shape, doZoom);
+        }
+
+        async function fetchDeviceInfo() {
+            try {
+                const resp = await fetch('/api/device/info');
+                if (!resp.ok) return;
+                const info = await resp.json();
+                if (info.display) {
+                    const dw = info.display.width;
+                    const dh = info.display.height;
+                    const ds = info.display.shape || 'rect';
+                    /* Find matching preset */
+                    const match = SCREEN_PRESETS.find(p =>
+                        p.w === dw && p.h === dh && p.shape === ds);
+                    if (match) {
+                        _deviceScreenId = match.id;
+                        const sel = document.getElementById('screenSizeSelect');
+                        if (sel) sel.value = match.id;
+                        try { localStorage.setItem('rdm7_screen_preset', match.id); } catch (e) { }
+                        applyScreenPreset(match, false);
+                    } else {
+                        /* Device reports unknown size — apply raw values */
+                        _deviceScreenId = null;
+                        applyScreenDimensions(dw, dh, ds, false);
+                    }
+                    updateStatus('Connected — ' + dw + '×' + dh + ' ' + ds);
+                }
+            } catch (e) {
+                updateStatus('Offline — using local screen preset', true);
+            }
+        }
+
+        function applyScreenDimensions(w, h, shape, doZoom) {
+            if (!w || !h) return;
+            shape = shape || 'rect';
+            _screenShape = shape;
+            CANVAS_W = w;
+            CANVAS_H = h;
+            ORIGIN_X = Math.round(w / 2);
+            ORIGIN_Y = Math.round(h / 2);
+
+            /* Update CSS-sized elements */
+            document.querySelectorAll('.canvas-container').forEach(el => {
+                el.style.width = w + 'px';
+                el.style.height = h + 'px';
+                el.classList.toggle('screen-round', shape === 'round');
+            });
+            const ssCanvas = document.getElementById('screenshotCanvas');
+            if (ssCanvas) { ssCanvas.width = w; ssCanvas.height = h;
+                ssCanvas.style.width = w + 'px'; ssCanvas.style.height = h + 'px'; }
+            const iLayer = document.getElementById('interactionLayer');
+            if (iLayer) { iLayer.style.width = w + 'px'; iLayer.style.height = h + 'px'; }
+
+            /* Update status bar label */
+            const lbl = document.getElementById('screenResLabel');
+            if (lbl) lbl.textContent = w + 'x' + h + (shape === 'round' ? ' ●' : '');
+
+            /* Update selector to match */
+            const sel = document.getElementById('screenSizeSelect');
+            const match = SCREEN_PRESETS.find(p => p.w === w && p.h === h && p.shape === shape);
+            if (sel && match) sel.value = match.id;
+
+            /* Patch screen-dependent WIDGET_DEFS defaults */
+            if (WIDGET_DEFS.rpm_bar) {
+                WIDGET_DEFS.rpm_bar.defW = w;
+                WIDGET_DEFS.rpm_bar.defY = -ORIGIN_Y + Math.round(55 / 2);
+            }
+            if (WIDGET_DEFS.shift_light) {
+                WIDGET_DEFS.shift_light.defW = ORIGIN_X;
+            }
+
+            if (doZoom) zoomToFit();
+        }
+
         /* Backend Sync */
         async function fetchLayouts() {
             try {
@@ -8496,9 +8632,12 @@
         }
 
         /* Start */
+        initScreenSizeSelector();
         initPalette();
-        fetchPresets().then(() => populateEcuContextSelect());
-        fetchLayouts();
+        fetchDeviceInfo().then(() => {
+            fetchPresets().then(() => populateEcuContextSelect());
+            fetchLayouts();
+        });
         _refreshImageList();
         _refreshFontList();
         refreshStorageInfo();

@@ -1,5 +1,6 @@
 #include "ui_wifi.h"
 #include "../theme.h"
+#include "screen_config.h"
 #include "net/wifi_manager.h"
 #include "storage/config_store.h"
 #include "web_server.h"
@@ -832,7 +833,7 @@ static void _show_password_modal(const char *ssid)
 
     /* Overlay */
     password_modal = lv_obj_create(wifi_screen);
-    lv_obj_set_size(password_modal, 800, 480);
+    lv_obj_set_size(password_modal, SCREEN_W, SCREEN_H);
     lv_obj_align(password_modal, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(password_modal, THEME_COLOR_BG, 0);
     lv_obj_set_style_bg_opa(password_modal, LV_OPA_50, 0);
@@ -931,7 +932,7 @@ static void _show_password_modal(const char *ssid)
 
     /* Keyboard */
     wifi_keyboard = lv_keyboard_create(password_modal);
-    lv_obj_set_size(wifi_keyboard, 800, 200);
+    lv_obj_set_size(wifi_keyboard, SCREEN_W, 200);
     lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(wifi_keyboard, password_input);
 

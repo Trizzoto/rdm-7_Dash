@@ -5,9 +5,10 @@
 #include <stddef.h>
 #include "esp_err.h"
 
-// Display capture configuration
-#define CAPTURE_WIDTH  800
-#define CAPTURE_HEIGHT 480
+// Display capture configuration — derived from screen_config.h
+#include "screen_config.h"
+#define CAPTURE_WIDTH  SCREEN_W
+#define CAPTURE_HEIGHT SCREEN_H
 #define CAPTURE_BYTES_PER_PIXEL 2  // RGB565
 
 // Function declarations

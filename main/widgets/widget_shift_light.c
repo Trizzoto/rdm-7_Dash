@@ -14,7 +14,7 @@
 
 static const char __attribute__((unused)) *TAG = "widget_shl";
 
-#define SHL_DEFAULT_W              400
+/* SHL_DEFAULT_W defined in widget_shift_light.h via screen_config.h */
 #define SHL_DEFAULT_H               30
 #define SHL_DEFAULT_LED_COUNT        8
 #define SHL_DEFAULT_RANGE_MIN     4000.0f

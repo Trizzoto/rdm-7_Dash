@@ -11,6 +11,9 @@ extern "C" {
 #endif
 
 #include "widget_types.h"
+#include "screen_config.h"
+
+#define SHL_DEFAULT_W (SCREEN_ORIGIN_X)   /* half screen width */
 
 typedef struct {
     char     signal_name[32];

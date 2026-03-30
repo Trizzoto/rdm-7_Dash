@@ -1,6 +1,7 @@
 #include "widget_bar.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
@@ -28,6 +29,12 @@
 #include <string.h>
 
 static const char *TAG = "widget_bar";
+
+/* Default x offsets from screen centre for BAR1 and BAR2 (60% of half-width) */
+static const int16_t s_bar_default_x[2] = {
+	-(int16_t)(SCREEN_ORIGIN_X * 3 / 5),
+	 (int16_t)(SCREEN_ORIGIN_X * 3 / 5)
+};
 
 /* Helper: returns true when both image names are set (image-based bar mode) */
 static inline bool _bar_is_image_mode(const bar_data_t *bd) {
@@ -678,7 +685,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_bar_set_value(ui_Bar_1, b1_min, LV_ANIM_OFF);
 	lv_obj_set_width(ui_Bar_1, 300);
 	lv_obj_set_height(ui_Bar_1, 30);
-	lv_obj_set_x(ui_Bar_1, -240);
+	lv_obj_set_x(ui_Bar_1, s_bar_default_x[0]);
 	lv_obj_set_y(ui_Bar_1, 209);
 	lv_obj_set_align(ui_Bar_1, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_1, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -696,7 +703,7 @@ void widget_bar_create(lv_obj_t *parent) {
 							LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
 	ui_Bar_1_Label = lv_label_create(parent);
-	lv_obj_set_x(ui_Bar_1_Label, -240);
+	lv_obj_set_x(ui_Bar_1_Label, s_bar_default_x[0]);
 	lv_obj_set_y(ui_Bar_1_Label, 181);
 	lv_obj_set_align(ui_Bar_1_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_1_Label, (bd1 && bd1->label[0]) ? bd1->label : "BAR1");
@@ -730,7 +737,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_bar_set_value(ui_Bar_2, b2_min, LV_ANIM_OFF);
 	lv_obj_set_width(ui_Bar_2, 300);
 	lv_obj_set_height(ui_Bar_2, 30);
-	lv_obj_set_x(ui_Bar_2, 240);
+	lv_obj_set_x(ui_Bar_2, s_bar_default_x[1]);
 	lv_obj_set_y(ui_Bar_2, 209);
 	lv_obj_set_align(ui_Bar_2, LV_ALIGN_CENTER);
 	lv_obj_set_style_radius(ui_Bar_2, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -748,7 +755,7 @@ void widget_bar_create(lv_obj_t *parent) {
 							LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
 	ui_Bar_2_Label = lv_label_create(parent);
-	lv_obj_set_x(ui_Bar_2_Label, 240);
+	lv_obj_set_x(ui_Bar_2_Label, s_bar_default_x[1]);
 	lv_obj_set_y(ui_Bar_2_Label, 181);
 	lv_obj_set_align(ui_Bar_2_Label, LV_ALIGN_CENTER);
 	lv_label_set_text(ui_Bar_2_Label, (bd2 && bd2->label[0]) ? bd2->label : "BAR2");
@@ -888,8 +895,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 			/* Use LEFT alignment so width grows rightward from left edge */
 			lv_obj_set_align(clip, LV_ALIGN_TOP_LEFT);
 			/* Convert center-based coords to top-left coords */
-			lv_coord_t abs_left = 400 + w->x - (w->w / 2);
-			lv_coord_t abs_top = 240 + w->y - (w->h / 2);
+			lv_coord_t abs_left = SCREEN_ORIGIN_X + w->x - (w->w / 2);
+			lv_coord_t abs_top = SCREEN_ORIGIN_Y + w->y - (w->h / 2);
 			lv_obj_set_pos(clip, abs_left, abs_top);
 			bd->img_clip_obj = clip;
 
@@ -1154,9 +1161,6 @@ static void _bar_destroy(widget_t *w) {
 	free(w->type_data);
 	free(w);
 }
-
-/* Default x offsets from screen centre for BAR1 and BAR2 */
-static const int16_t s_bar_default_x[2] = {-240, 240};
 
 /* ── apply_overrides: live style changes driven by conditional rules ───── */
 

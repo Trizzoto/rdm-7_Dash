@@ -55,6 +55,7 @@ typedef struct {
 	uint8_t    scale_padding;        /* default: 0 — pushes tick ring inward from border */
 	int8_t     label_gap;            /* default: 10 — distance from major tick to label */
 	char       tick_label_font[32];  /* default: "" — font for tick value labels */
+	lv_color_t tick_label_color;    /* default: white (0xFFFFFF) */
 	char     signal_name[32];
 	int16_t  signal_index;
 } meter_data_t;

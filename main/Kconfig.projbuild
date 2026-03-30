@@ -19,3 +19,38 @@ menu "Example Configuration"
             Enable this option, the example will use a pair of semaphores to avoid the tearing effect.
             Note, if the Double Frame Buffer is used, then we can also avoid the tearing effect without the lock.
 endmenu
+
+menu "RDM-7 Display Configuration"
+
+    choice RDM_SCREEN_SIZE
+        prompt "Screen resolution"
+        default RDM_SCREEN_800X480
+        help
+            Select the target display resolution. Each option sets SCREEN_W and SCREEN_H
+            used throughout the firmware for widget constraints, coordinate system, and
+            default layouts.
+
+        config RDM_SCREEN_800X480
+            bool "800x480 (7\" rectangle)"
+        config RDM_SCREEN_480X480
+            bool "480x480 (4\" square/round)"
+        config RDM_SCREEN_720X720
+            bool "720x720 (round)"
+    endchoice
+
+    choice RDM_SCREEN_SHAPE
+        prompt "Screen shape"
+        default RDM_SHAPE_RECT if RDM_SCREEN_800X480
+        default RDM_SHAPE_ROUND if RDM_SCREEN_720X720
+        default RDM_SHAPE_RECT if RDM_SCREEN_480X480
+        help
+            Select the physical display shape. Round screens apply a circular
+            mask so content outside the visible circle is clipped.
+
+        config RDM_SHAPE_RECT
+            bool "Rectangle / Square"
+        config RDM_SHAPE_ROUND
+            bool "Round (circular mask)"
+    endchoice
+
+endmenu
