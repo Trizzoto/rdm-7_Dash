@@ -3233,6 +3233,10 @@
                     const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                     w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
                 }
+                /* Image: convert LVGL zoom (256 = 100%) to web percentage */
+                if (w.type === 'image' && w.config && w.config.image_scale !== undefined) {
+                    w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
+                }
             });
             /* Convert firmware RGB565 colors → RGB888 for editor (after rule overrides are in object format) */
             convertWidgetColors(data.widgets, rgb565to888);
@@ -3473,7 +3477,11 @@
                     { name: "slot", label: "Side", type: "select", options: [{ v: 0, l: "Left" }, { v: 1, l: "Right" }], def: 0, cat: "data" },
                     { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0, cat: "data" },
                     { name: "animation", label: "Anim Enabled", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: false, cat: "appearance" }
+                    { name: "is_momentary", label: "Momentary", type: "checkbox", def: false, cat: "appearance" },
+                    { name: "color_on", label: "Active Color", type: "color", def: 0xFFBF00, cat: "appearance" },
+                    { name: "opa_on", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
+                    { name: "color_off", label: "Inactive Color", type: "color", def: 0x333333, cat: "appearance" },
+                    { name: "opa_off", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 70, cat: "appearance" }
                 ]
             },
             "warning": {
@@ -3526,9 +3534,10 @@
                     { name: "major_tick_width", label: "Major Tick Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "major_tick_length", label: "Major Tick Length", type: "stepper", min: 1, max: 50, def: 15, cat: "appearance" },
                     { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "label_gap", label: "Label Gap", type: "stepper", min: -20, max: 50, def: 10, cat: "appearance" },
-                    { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance" },
-                    { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
+                    { name: "label_gap", label: "Label Gap", type: "stepper", min: -20, max: 50, def: 10, cat: "appearance", enabledBy: "show_tick_labels" },
+                    { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
+                    { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels" },
                     { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
                     { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
@@ -3544,6 +3553,7 @@
                 displayName: "Image", defW: 100, defH: 100,
                 fields: [
                     { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data" },
+                    { name: "image_scale", label: "Scale %", type: "stepper", min: 10, max: 200, def: 100, cat: "appearance" },
                     { name: "opacity", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "recolor", label: "Color Overlay", type: "color", def: 0x000000, cat: "appearance" },
                     { name: "recolor_opa", label: "Overlay Strength (0-255)", type: "stepper", min: 0, max: 255, def: 0, cat: "appearance" }
@@ -4988,6 +4998,10 @@
                     w.config.bar_high = mx;
                     w.config.bar_low_color = rgb888to565(0x0000FF);
                     w.config.bar_high_color = rgb888to565(0xFF0000);
+                }
+                /* Image: convert scale percentage (10-200) to LVGL zoom (256 = 100%) */
+                if (w.type === 'image' && w.config.image_scale !== undefined) {
+                    w.config.image_scale = Math.round(w.config.image_scale * 256 / 100);
                 }
                 /* Clean up web-editor-only fields */
                 delete w.config.bar_alerts_enabled;
@@ -7218,6 +7232,10 @@
                         const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                         w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
                     }
+                    /* Image: convert LVGL zoom (256 = 100%) to web percentage */
+                    if (w.type === 'image' && w.config && w.config.image_scale !== undefined) {
+                        w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
+                    }
                 });
                 /* Convert firmware RGB565 colors → RGB888 for editor */
                 convertWidgetColors(currentLayout.widgets, rgb565to888);
@@ -8213,6 +8231,10 @@
                         const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                         w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
                     }
+                    /* Image: convert LVGL zoom (256 = 100%) to web percentage */
+                    if (w.type === 'image' && w.config && w.config.image_scale !== undefined) {
+                        w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
+                    }
                 });
                 convertWidgetColors(currentLayout.widgets, rgb565to888);
                 _editingActive = false;
@@ -8315,6 +8337,10 @@
                             const mn = w.config.bar_min !== undefined ? w.config.bar_min : 0;
                             const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                             w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
+                        }
+                        /* Image: convert LVGL zoom (256 = 100%) to web percentage */
+                        if (w.type === 'image' && w.config && w.config.image_scale !== undefined) {
+                            w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
                         }
                     });
                     /* Convert firmware RGB565 colors → RGB888 for editor */

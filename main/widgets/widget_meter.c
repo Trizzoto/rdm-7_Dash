@@ -116,6 +116,10 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 			lv_obj_set_style_text_font(m, tfont, LV_PART_TICKS);
 		}
 	}
+	/* Hide tick labels if disabled */
+	if (!md->show_tick_labels) {
+		lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+	}
 
 	/* Needle: use image if configured, otherwise line.
 	 * When needle_angle_offset != 0 AND using an image needle, create a
@@ -259,6 +263,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
 	if (md->tick_label_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "tick_label_color", (int)md->tick_label_color.full);
+	if (!md->show_tick_labels)
+		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
 
 	/* Rules */
 	widget_rules_to_json(w, cfg);
@@ -363,6 +369,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_color");
 	if (cJSON_IsNumber(ap)) md->tick_label_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
+	if (cJSON_IsBool(ap)) md->show_tick_labels = cJSON_IsTrue(ap);
 
 	/* Rules */
 	widget_rules_from_json(w, cfg);
@@ -465,8 +473,9 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_r_mod = -10;
 	md->needle_ball_size = 10;
 	md->needle_ball_color = lv_color_white();
-	/* Tick label color */
+	/* Tick label defaults */
 	md->tick_label_color = lv_color_white();
+	md->show_tick_labels = true;
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;
