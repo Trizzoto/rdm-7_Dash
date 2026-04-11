@@ -46,6 +46,11 @@ typedef struct {
 	lv_obj_t  *header_label;
 	lv_obj_t  *value_label;
 	lv_obj_t  *custom_text_label;
+	/* Display-state cache: used by _panel_on_signal to early-out when
+	 * a new signal update would render the same thing as last time.
+	 * Collapses a 60 Hz restyle storm to just the visible transitions. */
+	char       last_display[32];
+	uint8_t    last_warn_state;  /* bit0=label bit1=value bit2=panel bit7=stale */
 } panel_data_t;
 
 /** Initialise shared LVGL styles (box_style, common_style). Call once at boot.

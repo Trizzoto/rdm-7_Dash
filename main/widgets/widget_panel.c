@@ -355,6 +355,30 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 		apply_panel = pd->warning_low_apply_panel;
 	}
 
+	/* Early-out: if the rendered string AND the warning-state bitmap
+	 * are both unchanged since the last call, there is nothing to
+	 * update. Signals can fire at hundreds of Hz while the displayed
+	 * integer only changes a few times per second — this gate collapses
+	 * a storm of redundant lv_label_set_text / set_style calls into the
+	 * handful of actual transitions. Also stops clobbering the style
+	 * overrides applied by widget_rules so the rules system no longer
+	 * needs to re-assert on every single signal update. */
+	uint8_t warn_state = ((uint8_t)apply_label      ) |
+	                     ((uint8_t)apply_value << 1 ) |
+	                     ((uint8_t)apply_panel << 2 ) |
+	                     ((uint8_t)(is_stale ? 1 : 0) << 7);
+	if (strncmp(pd->last_display, display_str, sizeof(pd->last_display)) == 0 &&
+	    pd->last_warn_state == warn_state) {
+		return;
+	}
+	/* Cache the display string. Use memcpy(size-1) + manual null terminator
+	 * — GCC's -Wstringop-truncation false-flags safe_strncpy here because
+	 * it cannot prove display_str's length at compile time. */
+	size_t copy_len = strnlen(display_str, sizeof(pd->last_display) - 1);
+	memcpy(pd->last_display, display_str, copy_len);
+	pd->last_display[copy_len] = '\0';
+	pd->last_warn_state = warn_state;
+
 	/* Update this widget's own LVGL objects directly (per-instance pointers).
 	 * This is the authoritative path — avoids cross-talk via global arrays
 	 * if two panels share a slot due to misconfiguration. */

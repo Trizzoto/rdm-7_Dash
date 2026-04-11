@@ -79,7 +79,9 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
     if (!w || !w->rules || w->rule_count == 0) return;
     if (!w->root) return;
 
-    for (uint8_t i = 0; i < w->rule_count; i++) {
+    /* Evaluate each rule and build a new activation bitmask. */
+    uint32_t new_mask = 0;
+    for (uint8_t i = 0; i < w->rule_count && i < 32; i++) {
         widget_rule_t *r = &w->rules[i];
         bool match = false;
 
@@ -105,13 +107,18 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
         }
 
         r->is_active = match;
+        if (match) new_mask |= (1u << i);
     }
 
-    /* Always re-apply overrides on every signal update — the widget's own
-     * signal callback may reset styles to defaults on each value change,
-     * so we must re-assert active overrides every time, not just on
-     * state transitions. Pass count=0 when no rules are active to let
-     * the widget revert to its base appearance. */
+    /* Early-out: if no rule has changed activation state since the last
+     * signal update, the visible result of apply_overrides would be
+     * identical and calling it just wastes CPU invalidating a widget
+     * that doesn't need to change. This collapses the rules evaluation
+     * cost on steady-state signals (e.g. RPM hovering below threshold)
+     * from ~60 Hz of redundant restyling to 0 Hz. */
+    if (new_mask == w->last_rule_mask) return;
+    w->last_rule_mask = new_mask;
+
     if (!w->apply_overrides) return;
 
     /* Cap merged overrides to a sane stack-safe limit — in practice no
@@ -207,6 +214,9 @@ void widget_rules_from_json(widget_t *w, const cJSON *config)
         return;
     }
     w->rule_count = count;
+    /* UINT32_MAX sentinel forces the first evaluation to apply overrides,
+     * since any real bitmask (at most 32 bits, 16 rules cap) will differ. */
+    w->last_rule_mask = 0xFFFFFFFFu;
 
     for (uint8_t i = 0; i < count; i++) {
         const cJSON *rule_obj = cJSON_GetArrayItem(rules_arr, (int)i);

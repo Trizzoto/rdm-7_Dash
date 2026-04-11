@@ -151,6 +151,14 @@ struct widget_t {
     /* Conditional rules (heap-allocated, NULL if no rules) */
     widget_rule_t *rules;
     uint8_t        rule_count;
+
+    /* Bitmask of currently-active rules (bit i = rules[i].is_active).
+     * widget_rules evaluation uses this to early-out when no rule has
+     * changed state since the last signal update, avoiding a storm of
+     * redundant apply_overrides calls at signal frequency. A value of
+     * UINT32_MAX is the "uninitialised" sentinel so the first eval
+     * always applies overrides. */
+    uint32_t       last_rule_mask;
 };
 
 /* ─── Size constraints ───────────────────────────────────────────────────── */
