@@ -692,16 +692,28 @@ void app_main(void) {
 	lv_disp_set_bg_color(disp, THEME_COLOR_BG);
 	ESP_LOGI(TAG, "Display background set to black to prevent white flicker");
 
-	/* Apply saved display rotation (#23). 0/90/180/270 map directly to
-	 * LV_DISP_ROT_NONE..LV_DISP_ROT_270. Note: touch coords are auto-swapped
-	 * by LVGL when rotation is enabled; for physical 90/270 the panel is
-	 * still driven in landscape and LVGL rotates the framebuffer in software. */
+	/* NOTE: Display rotation at boot is intentionally disabled for now.
+	 *
+	 * Calling lv_disp_set_rotation() on the RGB panel configuration used here
+	 * causes esp_cache_msync / rgb_panel_draw_bitmap failures ("wrong size,
+	 * total size overflow") because LVGL's software rotation path requires
+	 * disp_drv.sw_rotate = 1 AND a full-frame buffer pair in PSRAM — our
+	 * current buffers are sized smaller to fit memory.
+	 *
+	 * Re-enabling rotation requires:
+	 *   1. disp_drv.sw_rotate = 1 on the disp_drv before lv_disp_drv_register
+	 *   2. Both framebuffers sized (H_RES * V_RES * sizeof(lv_color_t))
+	 *   3. Verification on-device that no cache alignment faults appear
+	 *
+	 * Until then the rotation persistence layer (config_store_save/load_rotation)
+	 * stays in place, but the UI button is hidden. See #23. */
 	{
 		uint8_t saved_rot = 0;
 		(void) config_store_load_rotation(&saved_rot);
 		if (saved_rot > 0 && saved_rot <= 3) {
-			lv_disp_set_rotation(disp, (lv_disp_rot_t)saved_rot);
-			ESP_LOGI(TAG, "Applied saved display rotation: %u (90deg steps)", (unsigned)saved_rot);
+			ESP_LOGW(TAG, "Display rotation %u deg saved but NOT applied — "
+				"rotation temporarily disabled, see comment at %s:%d",
+				(unsigned)(saved_rot * 90), __FILE__, __LINE__);
 		}
 	}
 
@@ -819,21 +831,20 @@ void app_main(void) {
 	wifi_boot_config_t boot_cfg;
 	config_store_load_wifi_boot(&boot_cfg);
 
-	/* First-run wizard (#17): on a fresh device (no first_run_done flag in NVS),
+	/* First-run setup (#17): on a fresh device (no first_run_done flag in NVS),
 	   auto-enable WiFi + AP so the user can reach the web UI immediately from
-	   their phone — no manual menu steps required. We mark the flag after this
-	   boot so subsequent boots respect the user's actual preference. */
+	   their phone. The on-screen wizard (shown from splash_screen.c after the
+	   dashboard loads) presents CAN-scan + Wi-Fi-setup buttons; dismissing the
+	   wizard is what sets first_run_done = true. We only touch the wifi_boot
+	   config here, not the first_run flag. */
 	bool first_run_done = false;
 	config_store_load_first_run_done(&first_run_done);
 	if (!first_run_done) {
-		ESP_LOGW(TAG, "First run detected — auto-enabling WiFi + AP for onboarding");
+		ESP_LOGW(TAG, "First run detected — enabling Wi-Fi + AP for onboarding");
 		boot_cfg.wifi_on_boot = true;
 		boot_cfg.ap_enabled = true;
 		(void) config_store_save_wifi_boot(&boot_cfg);
-		(void) config_store_save_first_run_done(true);
-		/* An on-screen banner with the AP SSID / password / IP is surfaced from
-		   the splash-screen flow once the dashboard is visible; for now the
-		   wifi info is already available under Settings > Wi-Fi. */
+		/* Do NOT mark first_run_done here — the wizard does that on dismissal */
 	}
 
 	if (boot_cfg.wifi_on_boot) {

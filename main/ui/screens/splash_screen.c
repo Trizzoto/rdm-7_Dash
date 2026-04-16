@@ -3,11 +3,13 @@
 #include "../theme.h"
 #include "ui_helpers.h"
 #include "ui_Screen3.h"
+#include "first_run_wizard.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "layout/layout_manager.h"
 #include "widgets/font_manager.h"
 #include "widgets/signal.h"
+#include "storage/config_store.h"
 #include "widgets/widget_registry.h"
 #include "storage/config_store.h"
 #include <string.h>
@@ -103,6 +105,15 @@ static bool _load_splash_layout(lv_obj_t *parent)
 /* ── Boot splash ─────────────────────────────────────────────────────── */
 
 /** Phase 2: build and show the dashboard (runs after black frame rendered). */
+static void _first_run_check_cb(lv_timer_t *t)
+{
+	(void)t;
+	bool done = false;
+	if (config_store_load_first_run_done(&done) == ESP_OK && !done) {
+		show_first_run_wizard();
+	}
+}
+
 static void _splash_build_dashboard(lv_timer_t *t)
 {
 	(void)t;
@@ -112,6 +123,12 @@ static void _splash_build_dashboard(lv_timer_t *t)
 	/* Instant swap — dashboard is already built off-screen.
 	 * auto_del=true cleans up the black screen. */
 	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+
+	/* First-run wizard: show 800ms after dashboard appears so the user sees
+	   the dashboard first, then the welcome overlay. Check NVS before showing
+	   so returning users are not disturbed. */
+	lv_timer_t *wiz = lv_timer_create(_first_run_check_cb, 800, NULL);
+	lv_timer_set_repeat_count(wiz, 1);
 }
 
 /** Phase 1: show a clean black screen while dashboard builds (LVGL task). */

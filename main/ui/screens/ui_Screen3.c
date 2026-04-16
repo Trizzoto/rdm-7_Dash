@@ -7,6 +7,7 @@
  */
 
 #include "ui/screens/ui_Screen3.h"
+#include "can/can_manager.h"
 #include "device_id.h"
 #include "device_settings.h"
 #include "esp_log.h"
@@ -399,6 +400,73 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  BUS SILENT Overlay
+ *  ─────────────────
+ *  Small top-right badge that appears when no CAN frames have arrived for
+ *  more than CAN_SILENT_MS. Hidden when traffic is flowing. Polled once per
+ *  second by an LVGL timer — tiny overhead, and we compare against the
+ *  cumulative frame counter exposed by can_manager.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define CAN_SILENT_MS 5000
+
+static lv_obj_t *s_bus_silent_badge = NULL;
+static lv_timer_t *s_bus_silent_timer = NULL;
+static uint32_t s_last_rx_count = 0;
+static uint32_t s_last_rx_change_ms = 0;
+
+static void _bus_silent_tick_cb(lv_timer_t *t) {
+    (void)t;
+    if (!s_bus_silent_badge || !lv_obj_is_valid(s_bus_silent_badge)) return;
+
+    uint32_t now_ms = lv_tick_get();
+    uint32_t cnt = can_get_rx_frame_count();
+    if (cnt != s_last_rx_count) {
+        s_last_rx_count = cnt;
+        s_last_rx_change_ms = now_ms;
+    }
+    /* On first tick, seed timestamp so we don't immediately show silence */
+    if (s_last_rx_change_ms == 0) s_last_rx_change_ms = now_ms;
+
+    uint32_t silent_for = now_ms - s_last_rx_change_ms;
+    bool should_show = (silent_for > CAN_SILENT_MS);
+
+    bool currently_visible = !lv_obj_has_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+    if (should_show && !currently_visible) {
+        lv_obj_clear_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+    } else if (!should_show && currently_visible) {
+        lv_obj_add_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void _ui_screen3_init_bus_silent_overlay(void) {
+    /* Top-right badge — positioned over the dashboard but non-interactive */
+    s_bus_silent_badge = lv_obj_create(ui_Screen3);
+    lv_obj_remove_style_all(s_bus_silent_badge);
+    lv_obj_set_size(s_bus_silent_badge, 160, 32);
+    lv_obj_align(s_bus_silent_badge, LV_ALIGN_TOP_RIGHT, -12, 12);
+    lv_obj_set_style_bg_color(s_bus_silent_badge, lv_color_hex(0x7F1D1D), 0);
+    lv_obj_set_style_bg_opa(s_bus_silent_badge, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(s_bus_silent_badge, lv_color_hex(0xF87171), 0);
+    lv_obj_set_style_border_width(s_bus_silent_badge, 1, 0);
+    lv_obj_set_style_radius(s_bus_silent_badge, 6, 0);
+    lv_obj_add_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_bus_silent_badge, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_bus_silent_badge, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl = lv_label_create(s_bus_silent_badge);
+    lv_label_set_text(lbl, LV_SYMBOL_WARNING "  NO CAN BUS");
+    lv_obj_center(lbl);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFECACA), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    /* Poll once per second — seeded so initial "no data yet" doesn't trigger */
+    s_last_rx_count = can_get_rx_frame_count();
+    s_last_rx_change_ms = lv_tick_get();
+    if (s_bus_silent_timer) { lv_timer_del(s_bus_silent_timer); s_bus_silent_timer = NULL; }
+    s_bus_silent_timer = lv_timer_create(_bus_silent_tick_cb, 1000, NULL);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  Screen initialisation
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -469,6 +537,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
 
+	/* BUS SILENT overlay — shows when no CAN frames have been received for
+	   >CAN_SILENT_MS milliseconds. Small top-right badge (doesn't block widgets),
+	   tinted red for visibility. Invisible when CAN traffic is flowing. */
+	_ui_screen3_init_bus_silent_overlay();
 }
 
 void ui_Screen3_preview_layout(cJSON *root) {

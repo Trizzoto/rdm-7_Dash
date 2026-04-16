@@ -1857,32 +1857,17 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(dimmer_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
 
-    /* ── Rotation button (#23) — cycles 0/90/180/270 per press ── */
-    lv_obj_t *rot_btn = lv_btn_create(display_section);
-    lv_obj_set_size(rot_btn, 250, 30);
-    lv_obj_align(rot_btn, LV_ALIGN_TOP_LEFT, 0, 120);
-    lv_obj_set_style_bg_color(rot_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(rot_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(rot_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(rot_btn, 1, 0);
-    lv_obj_set_style_border_color(rot_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(rot_btn, 0, 0);
-    s_rotation_btn_label = lv_label_create(rot_btn);
-    {
-        uint8_t saved_rot = 0;
-        config_store_load_rotation(&saved_rot);
-        static const char *names[] = { "Rotation: 0\xC2\xB0", "Rotation: 90\xC2\xB0", "Rotation: 180\xC2\xB0", "Rotation: 270\xC2\xB0" };
-        lv_label_set_text(s_rotation_btn_label, names[saved_rot <= 3 ? saved_rot : 0]);
-    }
-    lv_obj_center(s_rotation_btn_label);
-    lv_obj_set_style_text_font(s_rotation_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_rotation_btn_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(rot_btn, _rotation_btn_cb, LV_EVENT_CLICKED, NULL);
+    /* ── Rotation button (#23) — HIDDEN until RGB-panel driver gets sw_rotate support.
+       The persistence code stays so a future firmware that configures the driver
+       correctly can pick up the saved value. For now, showing this button would
+       only allow users to trigger the esp_cache_msync crash. */
+    (void) _rotation_btn_cb; /* silence unused warning */
+    (void) s_rotation_btn_label;
 
     /* ── Night mode toggle (#23) — manual override ── */
     lv_obj_t *night_btn = lv_btn_create(display_section);
     lv_obj_set_size(night_btn, 250, 30);
-    lv_obj_align(night_btn, LV_ALIGN_TOP_LEFT, 0, 160);
+    lv_obj_align(night_btn, LV_ALIGN_TOP_LEFT, 0, 120);
     lv_obj_set_style_bg_color(night_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(night_btn, LV_OPA_80, LV_STATE_PRESSED);
     lv_obj_set_style_radius(night_btn, THEME_RADIUS_NORMAL, 0);
