@@ -35,6 +35,7 @@
 #include "sdkconfig.h"
 #include "ui/screens/ui_wifi.h"
 #include "net/wifi_manager.h"
+#include "net/mdns_service.h"
 #include "net/uart_protocol.h"
 // #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
 #include "storage/config_store.h"
@@ -119,7 +120,7 @@ static const char *TAG = "main";
 	10 // Reduced from 30ms for 70fps responsiveness
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS                                         \
 	5 // Reduced from 20ms for better performance
-#define EXAMPLE_LVGL_TASK_STACK_SIZE (8 * 1024)
+#define EXAMPLE_LVGL_TASK_STACK_SIZE (16 * 1024)
 #define EXAMPLE_LVGL_TASK_PRIORITY 8
 
 // we use two semaphores to sync the VSYNC event and the LVGL task, to avoid
@@ -415,6 +416,10 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 }
 
 void app_main(void) {
+	ESP_LOGW(TAG, "[mem] app_main enter  free_int=%u  free_psram=%u",
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
 	// Initialize PWM for GPIO16
 	init_pwm();
 
@@ -598,12 +603,22 @@ void app_main(void) {
 
 	/* Try internal SRAM first — much faster writes than PSRAM since
 	 * the LCD DMA is constantly reading the PSRAM framebuffer.
-	 * Internal SRAM avoids the SPI bus contention bottleneck. */
+	 * Internal SRAM avoids the SPI bus contention bottleneck.
+	 *
+	 * Cap the internal allocation aggressively so that:
+	 *   (a) total free internal DRAM stays high enough for WiFi's
+	 *       esf_buf_setup_static pool (~50 KB contiguous required),
+	 *   (b) largest_free_block doesn't drop below ~32 KB — two big
+	 *       48 KB chunks fragment the heap so badly that no single
+	 *       contiguous WiFi allocation can succeed later.
+	 * 10–20 lines is standard for an 800×480 panel on ESP32-S3. */
 	void *buf1 = NULL, *buf2 = NULL;
 	size_t buf_size = 0;
 
-	/* Internal SRAM: try 40 lines, then 30 lines */
-	for (int lines = 40; lines >= 30; lines -= 10) {
+	/* Internal SRAM: try 20, then 16, then 10 lines */
+	static const int try_lines[] = {20, 16, 10};
+	for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
+		int lines = try_lines[i];
 		buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
 		buf_size = (buf_size + 31) & ~31;
 		buf1 = heap_caps_aligned_alloc(32, buf_size,
@@ -666,6 +681,19 @@ void app_main(void) {
 	// Set display background to black immediately to prevent white flicker
 	lv_disp_set_bg_color(disp, THEME_COLOR_BG);
 	ESP_LOGI(TAG, "Display background set to black to prevent white flicker");
+
+	/* Apply saved display rotation (#23). 0/90/180/270 map directly to
+	 * LV_DISP_ROT_NONE..LV_DISP_ROT_270. Note: touch coords are auto-swapped
+	 * by LVGL when rotation is enabled; for physical 90/270 the panel is
+	 * still driven in landscape and LVGL rotates the framebuffer in software. */
+	{
+		uint8_t saved_rot = 0;
+		(void) config_store_load_rotation(&saved_rot);
+		if (saved_rot > 0 && saved_rot <= 3) {
+			lv_disp_set_rotation(disp, (lv_disp_rot_t)saved_rot);
+			ESP_LOGI(TAG, "Applied saved display rotation: %u (90deg steps)", (unsigned)saved_rot);
+		}
+	}
 
 	// Don't turn on backlight yet - wait until splash screen is ready
 	ESP_LOGI(TAG, "Backlight will be turned on after splash screen loads");
@@ -742,7 +770,9 @@ void app_main(void) {
 	// Initialize remaining components while splash is showing
 	sd_manager_init();
 	data_logger_init();
-	/* Initialize UART serial protocol (core 0, priority 5) */
+	/* Initialize UART serial protocol (core 0, priority 5).
+	 * Shares GPIO 43/44 with the ESP-IDF console (UART0) — the board's
+	 * CH422G I/O expander selects which UART drives the USB bridge. */
 	if (uart_protocol_init() != ESP_OK) {
 		ESP_LOGE(TAG, "UART protocol init failed!");
 	}
@@ -757,13 +787,44 @@ void app_main(void) {
 	// 	ESP_LOGW(TAG, "USB CDC protocol init failed");
 	// }
 
+	ESP_LOGW(TAG, "[mem] before wifi_manager_init  free_int=%u  largest_int=%u",
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
 	/* Initialize WiFi manager (creates netif, no radio start yet) */
 	wifi_manager_init();
 	wifi_ui_init();
 
+	/* Initialise mDNS after the netif stack is up — the daemon attaches to
+	   any netif that comes online, so hostname "rdm7" resolves on both STA
+	   and SoftAP once those interfaces start. Refresh is called by
+	   wifi_manager.c event handlers when IP or AP state changes. */
+	rdm7_mdns_init();
+
+	ESP_LOGW(TAG, "[mem] after wifi_ui_init  free_int=%u  largest_int=%u",
+	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
 	/* Check if WiFi should start on boot */
 	wifi_boot_config_t boot_cfg;
 	config_store_load_wifi_boot(&boot_cfg);
+
+	/* First-run wizard (#17): on a fresh device (no first_run_done flag in NVS),
+	   auto-enable WiFi + AP so the user can reach the web UI immediately from
+	   their phone — no manual menu steps required. We mark the flag after this
+	   boot so subsequent boots respect the user's actual preference. */
+	bool first_run_done = false;
+	config_store_load_first_run_done(&first_run_done);
+	if (!first_run_done) {
+		ESP_LOGW(TAG, "First run detected — auto-enabling WiFi + AP for onboarding");
+		boot_cfg.wifi_on_boot = true;
+		boot_cfg.ap_enabled = true;
+		(void) config_store_save_wifi_boot(&boot_cfg);
+		(void) config_store_save_first_run_done(true);
+		/* An on-screen banner with the AP SSID / password / IP is surfaced from
+		   the splash-screen flow once the dashboard is visible; for now the
+		   wifi info is already available under Settings > Wi-Fi. */
+	}
 
 	if (boot_cfg.wifi_on_boot) {
 		ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");

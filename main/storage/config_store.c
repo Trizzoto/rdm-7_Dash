@@ -2,13 +2,11 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
+#include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdbool.h>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 static const char *TAG = "config_store";
 
@@ -149,6 +147,150 @@ esp_err_t config_store_clear_wifi(void)
     return err;
 }
 
+/* ── Multi-SSID list (#19) ─────────────────────────────────────────────
+   Layout in NVS namespace NS_WIFI:
+     key                      value
+     ssid / password / auto_con   legacy slot (kept for back-compat — mirrors slot 0)
+     list_count                u8 number of entries in the list (0..CONFIG_STORE_WIFI_SLOT_COUNT)
+     ssid_0 ... ssid_4         str SSID for each slot
+     pw_0   ... pw_4           str password for each slot
+
+   On first boot after an upgrade, the legacy single creds are migrated to
+   slot 0 transparently on first call to _load_list. */
+
+static void _wifi_slot_keys(uint8_t i, char ssid_key[16], char pw_key[16]) {
+    snprintf(ssid_key, 16, "ssid_%u", (unsigned)i);
+    snprintf(pw_key,   16, "pw_%u",   (unsigned)i);
+}
+
+esp_err_t config_store_load_wifi_list(wifi_credentials_t out[CONFIG_STORE_WIFI_SLOT_COUNT], uint8_t *count)
+{
+    if (!out || !count) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(wifi_credentials_t) * CONFIG_STORE_WIFI_SLOT_COUNT);
+    *count = 0;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+
+    uint8_t n = 0;
+    if (nvs_get_u8(handle, "list_count", &n) != ESP_OK) {
+        /* Legacy / no list yet — attempt to migrate the single-SSID store to slot 0 */
+        size_t len = sizeof(out[0].ssid);
+        if (nvs_get_str(handle, "ssid", out[0].ssid, &len) == ESP_OK && out[0].ssid[0] != '\0') {
+            len = sizeof(out[0].password);
+            if (nvs_get_str(handle, "password", out[0].password, &len) != ESP_OK) out[0].password[0] = '\0';
+            uint8_t ac = 0;
+            (void) nvs_get_u8(handle, "auto_con", &ac);
+            out[0].auto_connect = (ac != 0);
+            *count = 1;
+        }
+        nvs_close(handle);
+        return ESP_OK;
+    }
+
+    if (n > CONFIG_STORE_WIFI_SLOT_COUNT) n = CONFIG_STORE_WIFI_SLOT_COUNT;
+    for (uint8_t i = 0; i < n; i++) {
+        char ssid_key[16], pw_key[16];
+        _wifi_slot_keys(i, ssid_key, pw_key);
+        size_t len = sizeof(out[i].ssid);
+        if (nvs_get_str(handle, ssid_key, out[i].ssid, &len) != ESP_OK) out[i].ssid[0] = '\0';
+        len = sizeof(out[i].password);
+        if (nvs_get_str(handle, pw_key,   out[i].password, &len) != ESP_OK) out[i].password[0] = '\0';
+        out[i].auto_connect = true;
+    }
+    *count = n;
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_save_wifi_list(const wifi_credentials_t *entries, uint8_t count)
+{
+    if (count > CONFIG_STORE_WIFI_SLOT_COUNT) count = CONFIG_STORE_WIFI_SLOT_COUNT;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    /* Write new entries */
+    for (uint8_t i = 0; i < count; i++) {
+        char ssid_key[16], pw_key[16];
+        _wifi_slot_keys(i, ssid_key, pw_key);
+        if ((err = nvs_set_str(handle, ssid_key, entries[i].ssid)) != ESP_OK) { nvs_close(handle); return err; }
+        if ((err = nvs_set_str(handle, pw_key,   entries[i].password)) != ESP_OK) { nvs_close(handle); return err; }
+    }
+    /* Clear unused slots so stale entries don't reappear */
+    for (uint8_t i = count; i < CONFIG_STORE_WIFI_SLOT_COUNT; i++) {
+        char ssid_key[16], pw_key[16];
+        _wifi_slot_keys(i, ssid_key, pw_key);
+        nvs_erase_key(handle, ssid_key);
+        nvs_erase_key(handle, pw_key);
+    }
+
+    if ((err = nvs_set_u8(handle, "list_count", count)) != ESP_OK) { nvs_close(handle); return err; }
+
+    /* Keep the legacy single-cred keys mirroring slot 0 for backwards compat */
+    if (count > 0) {
+        nvs_set_str(handle, "ssid",     entries[0].ssid);
+        nvs_set_str(handle, "password", entries[0].password);
+        nvs_set_u8(handle,  "auto_con", entries[0].auto_connect ? 1 : 0);
+    } else {
+        nvs_erase_key(handle, "ssid");
+        nvs_erase_key(handle, "password");
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "WiFi list saved (%u entries)", (unsigned)count);
+    return err;
+}
+
+esp_err_t config_store_add_wifi(const wifi_credentials_t *entry)
+{
+    if (!entry || entry->ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
+    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    uint8_t count = 0;
+    config_store_load_wifi_list(list, &count);
+
+    /* Overwrite if SSID already present */
+    for (uint8_t i = 0; i < count; i++) {
+        if (strncmp(list[i].ssid, entry->ssid, sizeof(list[i].ssid)) == 0) {
+            list[i] = *entry;
+            return config_store_save_wifi_list(list, count);
+        }
+    }
+
+    /* Append, or evict oldest (shift left, append at end) if full */
+    if (count < CONFIG_STORE_WIFI_SLOT_COUNT) {
+        list[count] = *entry;
+        count++;
+    } else {
+        for (uint8_t i = 0; i < CONFIG_STORE_WIFI_SLOT_COUNT - 1; i++) list[i] = list[i + 1];
+        list[CONFIG_STORE_WIFI_SLOT_COUNT - 1] = *entry;
+        count = CONFIG_STORE_WIFI_SLOT_COUNT;
+    }
+    return config_store_save_wifi_list(list, count);
+}
+
+esp_err_t config_store_remove_wifi(const char *ssid)
+{
+    if (!ssid) return ESP_ERR_INVALID_ARG;
+    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    uint8_t count = 0;
+    config_store_load_wifi_list(list, &count);
+
+    uint8_t found = CONFIG_STORE_WIFI_SLOT_COUNT;
+    for (uint8_t i = 0; i < count; i++) {
+        if (strncmp(list[i].ssid, ssid, sizeof(list[i].ssid)) == 0) { found = i; break; }
+    }
+    if (found >= count) return ESP_ERR_NOT_FOUND;
+
+    for (uint8_t i = found; i < count - 1; i++) list[i] = list[i + 1];
+    memset(&list[count - 1], 0, sizeof(list[0]));
+    count--;
+    return config_store_save_wifi_list(list, count);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  WIFI AP (HOTSPOT) SETTINGS
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -258,58 +400,141 @@ esp_err_t config_store_load_splash_fade(bool *enabled)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  FIRST-RUN FLAG (#17)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_FIRST_RUN "first_run"
+
+esp_err_t config_store_save_first_run_done(bool done)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_FIRST_RUN, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "done", done ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) ESP_LOGI(TAG, "first_run_done = %d", done);
+    return err;
+}
+
+esp_err_t config_store_load_first_run_done(bool *done)
+{
+    if (!done) return ESP_ERR_INVALID_ARG;
+    *done = false;
+    nvs_handle_t handle;
+    if (nvs_open(NS_FIRST_RUN, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8 = 0;
+    if (nvs_get_u8(handle, "done", &u8) == ESP_OK) *done = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  DISPLAY ROTATION + NIGHT MODE (#23)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_DISPLAY "display_cfg"
+
+esp_err_t config_store_save_rotation(uint8_t rot)
+{
+    if (rot > 3) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_DISPLAY, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "rot", rot);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Display rotation saved: %u", (unsigned)rot);
+    return err;
+}
+
+esp_err_t config_store_load_rotation(uint8_t *rot)
+{
+    if (!rot) return ESP_ERR_INVALID_ARG;
+    *rot = 0;
+    nvs_handle_t handle;
+    if (nvs_open(NS_DISPLAY, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8 = 0;
+    if (nvs_get_u8(handle, "rot", &u8) == ESP_OK && u8 <= 3) *rot = u8;
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_save_night_mode(const night_mode_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_DISPLAY, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    nvs_set_u8(handle, "nm_en",       cfg->enabled ? 1 : 0);
+    nvs_set_u8(handle, "nm_manual",   cfg->manual_active ? 1 : 0);
+    uint8_t br = cfg->night_brightness;
+    if (br < 5) br = 5;
+    if (br > 100) br = 100;
+    nvs_set_u8(handle, "nm_bright",   br);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Night mode saved (enabled=%d manual=%d bright=%u)",
+                                cfg->enabled, cfg->manual_active, (unsigned)br);
+    return err;
+}
+
+esp_err_t config_store_load_night_mode(night_mode_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->night_brightness = 25; /* sane default */
+    nvs_handle_t handle;
+    if (nvs_open(NS_DISPLAY, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8 = 0;
+    if (nvs_get_u8(handle, "nm_en",     &u8) == ESP_OK) cfg->enabled = (u8 != 0);
+    if (nvs_get_u8(handle, "nm_manual", &u8) == ESP_OK) cfg->manual_active = (u8 != 0);
+    if (nvs_get_u8(handle, "nm_bright", &u8) == ESP_OK && u8 >= 5 && u8 <= 100)
+        cfg->night_brightness = u8;
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FACTORY RESET
  * ═══════════════════════════════════════════════════════════════════════ */
-
-static void _erase_nvs_namespace(const char *ns)
-{
-    nvs_handle_t h;
-    if (nvs_open(ns, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_erase_all(h);
-        nvs_commit(h);
-        nvs_close(h);
-        ESP_LOGI(TAG, "Erased NVS namespace '%s'", ns);
-    }
-}
-
-static void _clear_directory(const char *path)
-{
-    DIR *d = opendir(path);
-    if (!d) return;
-
-    struct dirent *ent;
-    char filepath[128];
-    int count = 0;
-
-    while ((ent = readdir(d)) != NULL) {
-        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
-            continue;
-        snprintf(filepath, sizeof(filepath), "%s/%s", path, ent->d_name);
-        if (unlink(filepath) == 0)
-            count++;
-        else
-            ESP_LOGW(TAG, "Failed to delete %s", filepath);
-    }
-    closedir(d);
-    ESP_LOGI(TAG, "Cleared %d files from %s", count, path);
-}
 
 void config_store_factory_reset(void)
 {
     ESP_LOGW(TAG, "=== FACTORY RESET ===");
 
-    /* Erase all NVS namespaces used by the application */
-    _erase_nvs_namespace(NS_CAN);
-    _erase_nvs_namespace(NS_DIMMER);
-    _erase_nvs_namespace(NS_WIFI);
-    _erase_nvs_namespace(NS_WIFI_AP);
-    _erase_nvs_namespace("layout_mgr");
+    /* ── Wipe NVS completely ─────────────────────────────────────────────
+     * Erase the entire "nvs" partition in one shot. This catches every
+     * namespace used anywhere in the firmware (current and future) without
+     * having to maintain a hand-curated list, and is what factory-state
+     * devices start with. The next call to nvs_flash_init() on boot will
+     * recreate an empty NVS. */
+    esp_err_t err = nvs_flash_deinit();
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_INITIALIZED) {
+        ESP_LOGW(TAG, "nvs_flash_deinit: %s", esp_err_to_name(err));
+    }
+    err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_erase FAILED: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "NVS partition erased");
+    }
 
-    /* Clear user content from LittleFS */
-    _clear_directory("/lfs/layouts");
-    _clear_directory("/lfs/images");
-    _clear_directory("/lfs/fonts");
-    _clear_directory("/lfs/presets");
+    /* ── Wipe LittleFS completely ────────────────────────────────────────
+     * Unmount (if currently mounted) and format the partition. Formatting
+     * is a single-shot wipe — far more reliable than iterating directories
+     * and unlink-ing each entry. The next mount (via layout_manager_init)
+     * will find an empty filesystem and regenerate /lfs/layouts/default.json
+     * from compiled-in data plus reseed the embedded RDM logo via
+     * boot_assets_seed_defaults(). */
+    esp_err_t u = esp_vfs_littlefs_unregister("littlefs");
+    if (u != ESP_OK && u != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "esp_vfs_littlefs_unregister: %s", esp_err_to_name(u));
+    }
+    esp_err_t f = esp_littlefs_format("littlefs");
+    if (f != ESP_OK) {
+        ESP_LOGE(TAG, "esp_littlefs_format FAILED: %s", esp_err_to_name(f));
+    } else {
+        ESP_LOGW(TAG, "LittleFS partition formatted");
+    }
 
-    ESP_LOGW(TAG, "Factory reset complete — reboot to apply");
+    ESP_LOGW(TAG, "Factory reset complete — rebooting to apply");
 }

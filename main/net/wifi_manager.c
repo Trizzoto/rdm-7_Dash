@@ -4,9 +4,11 @@
 #include "esp_netif.h"
 #include "esp_mac.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "storage/config_store.h"
+#include "mdns_service.h"
 #include "lvgl.h"
 #include <stdatomic.h>
 #include <string.h>
@@ -90,6 +92,11 @@ static void _set_state(wifi_mgr_state_t new_state)
 
 /* Deferred to LVGL task — timer service task stack is too small for
  * esp_wifi_connect() + _set_state() (malloc + lv_async_call). */
+/* Multi-SSID rotation (#19): after each failed attempt on the current slot,
+   advance to the next known network before the exponential backoff runs again.
+   On an empty list, falls back to the legacy single-cred path. */
+static uint8_t s_current_wifi_slot = 0;
+
 static void _deferred_reconnect(void *arg)
 {
     (void)arg;
@@ -99,14 +106,29 @@ static void _deferred_reconnect(void *arg)
     ESP_LOGI(TAG, "Reconnect attempt %d/%d (scan first)",
              s_reconnect_attempts, WIFI_RECONNECT_MAX_ATTEMPTS);
 
-    /* Load saved creds and scan first — avoids "Haven't to connect" error
-     * when the AP isn't visible yet. */
-    wifi_credentials_t creds = {0};
-    if (config_store_load_wifi(&creds) == ESP_OK && creds.ssid[0] != '\0') {
+    /* Load the known-networks list and rotate through it. */
+    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    uint8_t list_count = 0;
+    (void) config_store_load_wifi_list(list, &list_count);
+
+    wifi_credentials_t chosen = {0};
+    if (list_count > 0) {
+        if (s_current_wifi_slot >= list_count) s_current_wifi_slot = 0;
+        chosen = list[s_current_wifi_slot];
+        ESP_LOGI(TAG, "Trying known network %u/%u: '%s'",
+                 (unsigned)(s_current_wifi_slot + 1), (unsigned)list_count, chosen.ssid);
+        /* Advance for next attempt — wrap around */
+        s_current_wifi_slot = (uint8_t)((s_current_wifi_slot + 1) % list_count);
+    } else {
+        /* Legacy single-cred fallback (empty list or pre-migration NVS) */
+        (void) config_store_load_wifi(&chosen);
+    }
+
+    if (chosen.ssid[0] != '\0') {
         s_auto_connect_pending = true;
-        strncpy(s_auto_ssid, creds.ssid, sizeof(s_auto_ssid) - 1);
+        strncpy(s_auto_ssid, chosen.ssid, sizeof(s_auto_ssid) - 1);
         s_auto_ssid[sizeof(s_auto_ssid) - 1] = '\0';
-        strncpy(s_auto_pass, creds.password, sizeof(s_auto_pass) - 1);
+        strncpy(s_auto_pass, chosen.password, sizeof(s_auto_pass) - 1);
         s_auto_pass[sizeof(s_auto_pass) - 1] = '\0';
         wifi_manager_scan();
     } else {
@@ -303,7 +325,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             /* L2 association succeeded — reset reconnect state */
             _stop_reconnect();
 
-            /* Save credentials to NVS */
+            /* Save credentials to NVS — legacy single-cred AND to the
+               multi-SSID list (#19) so future reconnect rotations see it. */
             wifi_credentials_t creds = {0};
             strncpy(creds.ssid, s_connected_ssid, sizeof(creds.ssid) - 1);
             strncpy(creds.password, s_pending_pass, sizeof(creds.password) - 1);
@@ -311,6 +334,10 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             esp_err_t save_err = config_store_save_wifi(&creds);
             if (save_err != ESP_OK) {
                 ESP_LOGW(TAG, "Failed to save WiFi creds: %s", esp_err_to_name(save_err));
+            }
+            esp_err_t add_err = config_store_add_wifi(&creds);
+            if (add_err != ESP_OK && add_err != ESP_ERR_INVALID_ARG) {
+                ESP_LOGW(TAG, "Failed to add WiFi to known list: %s", esp_err_to_name(add_err));
             }
 
             /* Don't set CONNECTED yet — wait for IP_EVENT_STA_GOT_IP.
@@ -360,6 +387,12 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             _process_scan_results();
             break;
 
+        case WIFI_EVENT_AP_START:
+            /* SoftAP is up — advertise rdm7.local on it too so clients on the hotspot
+               can reach us by name at 192.168.4.1 / rdm7.local. */
+            rdm7_mdns_refresh();
+            break;
+
         case WIFI_EVENT_AP_STACONNECTED: {
             wifi_event_ap_staconnected_t *ev = (wifi_event_ap_staconnected_t *)event_data;
             ESP_LOGI(TAG, "AP: station " MACSTR " joined (aid=%d)",
@@ -383,6 +416,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             snprintf(s_sta_ip, sizeof(s_sta_ip), IPSTR, IP2STR(&ev->ip_info.ip));
             ESP_LOGI(TAG, "Got IP: %s", s_sta_ip);
             _set_state(WIFI_MGR_STATE_CONNECTED);
+            /* Advertise rdm7.local on the newly-joined network. */
+            rdm7_mdns_refresh();
         } else if (event_id == IP_EVENT_STA_LOST_IP) {
             ESP_LOGW(TAG, "Lost IP address");
             memset(s_sta_ip, 0, sizeof(s_sta_ip));
@@ -442,6 +477,11 @@ void wifi_manager_start(void)
         ESP_LOGW(TAG, "Already started");
         return;
     }
+
+    ESP_LOGW(TAG, "[mem] wifi_manager_start  free_int=%u  largest_int=%u  free_psram=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     ESP_LOGI(TAG, "Starting WiFi radio");
 
@@ -664,12 +704,14 @@ void wifi_manager_auto_connect(void)
 {
     wifi_credentials_t creds = {0};
     if (config_store_load_wifi(&creds) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved WiFi credentials");
+        ESP_LOGI(TAG, "No saved WiFi credentials — scanning only");
+        wifi_manager_scan();
         return;
     }
 
     if (!creds.auto_connect || creds.ssid[0] == '\0') {
-        ESP_LOGI(TAG, "Auto-connect disabled or SSID empty");
+        ESP_LOGI(TAG, "Auto-connect disabled or SSID empty — scanning only");
+        wifi_manager_scan();
         return;
     }
 

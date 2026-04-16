@@ -4,6 +4,7 @@ idf_component_register(
         "can/can_decode.c"
         "can/can_manager.c"
         "can/can_bus_test.c"
+        "storage/boot_assets.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
         "storage/data_logger.c"
@@ -15,6 +16,7 @@ idf_component_register(
         "net/uart_protocol.c"
         "net/serial_protocol.c"
         "net/serial_commands.c"
+        "net/mdns_service.c"
         "system/device_id.c"
         "system/rdm_settings.c"
         "system/screen_config.c"
@@ -122,7 +124,9 @@ idf_component_register(
         "esp-tls"
         "esp_http_server"
         "joltwallet__littlefs"
+        "espressif__mdns"
     EMBED_TXTFILES "web/index.html"
+    EMBED_FILES "embed/RDM.rdmimg"
 )
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")

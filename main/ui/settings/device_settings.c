@@ -955,13 +955,44 @@ static void _scan_ui_update(void) {
             lv_obj_set_style_text_color(s_scan_status_label,
                 THEME_COLOR_STATUS_CONNECTED, 0);
         } else {
+            /* #13 Improved "no bus detected" UX — clear troubleshooting checklist.
+               Count total bus errors vs frames across all bitrates to distinguish
+               "bus silent" (likely wiring / not powered) from "bus noisy but
+               unreadable" (wrong termination, crossed wires, or a baud outside
+               our supported range). */
+            uint32_t total_errors = 0;
+            uint32_t total_frames = 0;
+            for (uint8_t i = 0; i < 4; i++) {
+                total_errors += r->results[i].bus_errors;
+                total_frames += r->results[i].frames_received;
+            }
+
             lv_label_set_text(s_scan_status_label,
-                "No CAN traffic detected at any speed");
+                "No CAN traffic detected");
             lv_obj_set_style_text_color(s_scan_status_label,
                 THEME_COLOR_STATUS_ERROR, 0);
-            lv_label_set_text(s_scan_detail_label,
-                "Check: CAN-H/CAN-L polarity, transceiver,\n"
-                "bus termination, and that the vehicle is powered.");
+
+            if (total_errors > 0 && total_frames == 0) {
+                /* Bus is noisy — likely wrong baud outside our range, or a
+                   wiring fault that induces errors without decodable frames. */
+                lv_label_set_text(s_scan_detail_label,
+                    "Bus activity detected but no valid frames.\n"
+                    "Likely causes:\n"
+                    "  - Unsupported baud (we try 125, 250, 500, 1000)\n"
+                    "  - CAN-H / CAN-L swapped\n"
+                    "  - Incorrect termination (need 120 ohm x 2 across the bus)\n"
+                    "  - Electrical noise on the pair");
+            } else {
+                /* Bus is silent — ECU not talking, dash not on the bus, or
+                   the vehicle is off. */
+                lv_label_set_text(s_scan_detail_label,
+                    "Bus appears silent. Check:\n"
+                    "  - Ignition ON (ECU powered and transmitting)\n"
+                    "  - CAN-H and CAN-L connected to the right pins\n"
+                    "  - Bus termination (120 ohm at each end)\n"
+                    "  - Yellow connector on the rear sets dash-end termination\n"
+                    "  - Vehicle CAN is available at your tap-in point");
+            }
         }
 
         /* Show/hide buttons */
@@ -1188,21 +1219,24 @@ static void bitrate_dropdown_event_cb(lv_event_t * e) {
 
 // Timer callback to show WiFi screen after loading dialog
 static void show_wifi_screen_delayed(lv_timer_t* timer) {
+    ESP_LOGI("dev_set", "[trace] show_wifi_screen_delayed ENTER");
     // Close loading dialog
     if (wifi_loading_dialog && lv_obj_is_valid(wifi_loading_dialog)) {
         lv_obj_del(wifi_loading_dialog);
         wifi_loading_dialog = NULL;
     }
-    
+    ESP_LOGI("dev_set", "[trace] about to call wifi_ui_show()");
     // Show WiFi screen
     wifi_ui_show();
-    
+    ESP_LOGI("dev_set", "[trace] wifi_ui_show returned");
+
     // Delete the timer
     lv_timer_del(timer);
 }
 
 // WiFi button callback
 static void wifi_btn_event_cb(lv_event_t *e) {
+    ESP_LOGI("dev_set", "[trace] wifi_btn_event_cb ENTER");
     // Guard against double-tap while loading dialog is already showing
     if (wifi_loading_dialog && lv_obj_is_valid(wifi_loading_dialog)) return;
 
