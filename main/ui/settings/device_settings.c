@@ -44,6 +44,43 @@ static lv_obj_t* wifi_loading_dialog = NULL;
 static lv_obj_t *s_log_btn = NULL;
 static lv_obj_t *s_log_btn_label = NULL;
 static lv_obj_t *s_log_status_label = NULL;
+
+/* Display rotation + night-mode (#23) */
+static lv_obj_t *s_rotation_btn_label = NULL;
+static lv_obj_t *s_night_btn_label = NULL;
+
+static void _rotation_btn_cb(lv_event_t *e) {
+    (void)e;
+    uint8_t rot = 0;
+    config_store_load_rotation(&rot);
+    rot = (uint8_t)((rot + 1) % 4); /* 0 → 1 → 2 → 3 → 0 */
+    config_store_save_rotation(rot);
+    lv_disp_t *disp = lv_disp_get_default();
+    if (disp) lv_disp_set_rotation(disp, (lv_disp_rot_t)rot);
+    if (s_rotation_btn_label) {
+        static const char *names[] = { "Rotation: 0\xC2\xB0", "Rotation: 90\xC2\xB0", "Rotation: 180\xC2\xB0", "Rotation: 270\xC2\xB0" };
+        lv_label_set_text(s_rotation_btn_label, names[rot]);
+    }
+}
+
+static void _night_btn_cb(lv_event_t *e) {
+    (void)e;
+    night_mode_config_t cfg;
+    config_store_load_night_mode(&cfg);
+    cfg.manual_active = !cfg.manual_active;
+    cfg.enabled = true; /* turning it on via the button implies the feature is on */
+    config_store_save_night_mode(&cfg);
+    /* Apply immediately: clamp current brightness to night_brightness when active */
+    if (cfg.manual_active && current_brightness > cfg.night_brightness) {
+        /* Use the existing PWM update path through LEDC */
+        uint32_t duty = (uint32_t)cfg.night_brightness * ((1u << 13) - 1u) / 100u;
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    }
+    if (s_night_btn_label) {
+        lv_label_set_text(s_night_btn_label, cfg.manual_active ? "Night Mode: ON" : "Night Mode: OFF");
+    }
+}
 static lv_timer_t *s_log_status_timer = NULL;
 
 /* CAN diagnostics — redesigned with health indicator + collapsible details */
@@ -967,31 +1004,44 @@ static void _scan_ui_update(void) {
                 total_frames += r->results[i].frames_received;
             }
 
+            /* Override the title so users don't mistake "Scan Complete" for success */
+            lv_label_set_text(s_scan_title_label, "No CAN Bus Detected");
+            lv_obj_set_style_text_color(s_scan_title_label,
+                THEME_COLOR_STATUS_ERROR, 0);
+
             lv_label_set_text(s_scan_status_label,
-                "No CAN traffic detected");
+                "Scan finished — no valid CAN frames on any supported bitrate.");
             lv_obj_set_style_text_color(s_scan_status_label,
                 THEME_COLOR_STATUS_ERROR, 0);
+
+            /* Ensure detail text wraps and can hold multiple lines visibly */
+            lv_label_set_long_mode(s_scan_detail_label, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(s_scan_detail_label, lv_pct(95));
+            /* Keep the muted colour — lets status label's red stand out */
+            lv_obj_set_style_text_color(s_scan_detail_label,
+                THEME_COLOR_TEXT_MUTED, 0);
 
             if (total_errors > 0 && total_frames == 0) {
                 /* Bus is noisy — likely wrong baud outside our range, or a
                    wiring fault that induces errors without decodable frames. */
-                lv_label_set_text(s_scan_detail_label,
-                    "Bus activity detected but no valid frames.\n"
-                    "Likely causes:\n"
-                    "  - Unsupported baud (we try 125, 250, 500, 1000)\n"
-                    "  - CAN-H / CAN-L swapped\n"
-                    "  - Incorrect termination (need 120 ohm x 2 across the bus)\n"
-                    "  - Electrical noise on the pair");
+                lv_label_set_text_fmt(s_scan_detail_label,
+                    "Bus activity seen (%lu errors) but no valid frames.\n"
+                    "Troubleshoot:\n"
+                    "  - CAN-H / CAN-L may be swapped\n"
+                    "  - Check termination (120 Ohm at each end of the bus)\n"
+                    "  - ECU baud may be outside 125/250/500/1000 kbps\n"
+                    "  - Look for electrical noise on the twisted pair",
+                    (unsigned long)total_errors);
             } else {
                 /* Bus is silent — ECU not talking, dash not on the bus, or
                    the vehicle is off. */
                 lv_label_set_text(s_scan_detail_label,
                     "Bus appears silent. Check:\n"
-                    "  - Ignition ON (ECU powered and transmitting)\n"
-                    "  - CAN-H and CAN-L connected to the right pins\n"
-                    "  - Bus termination (120 ohm at each end)\n"
-                    "  - Yellow connector on the rear sets dash-end termination\n"
-                    "  - Vehicle CAN is available at your tap-in point");
+                    "  - Ignition ON so the ECU is powered + transmitting\n"
+                    "  - CAN-H / CAN-L wired to the correct pins\n"
+                    "  - Bus termination (120 Ohm at each end)\n"
+                    "  - Yellow connector on the rear (dash-end terminator)\n"
+                    "  - Vehicle CAN exposed at your tap-in point");
             }
         }
 
@@ -1734,9 +1784,9 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(update_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(update_btn, update_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Display Settings Section
+    // Display Settings Section — expanded to fit rotation + night-mode buttons
     lv_obj_t* display_section = lv_obj_create(second_row);
-    lv_obj_set_size(display_section, lv_pct(48), 200);
+    lv_obj_set_size(display_section, lv_pct(48), 260);
     lv_obj_set_style_bg_color(display_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(display_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(display_section, THEME_RADIUS_NORMAL, 0);
@@ -1806,6 +1856,49 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(dimmer_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(dimmer_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ── Rotation button (#23) — cycles 0/90/180/270 per press ── */
+    lv_obj_t *rot_btn = lv_btn_create(display_section);
+    lv_obj_set_size(rot_btn, 250, 30);
+    lv_obj_align(rot_btn, LV_ALIGN_TOP_LEFT, 0, 120);
+    lv_obj_set_style_bg_color(rot_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(rot_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(rot_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(rot_btn, 1, 0);
+    lv_obj_set_style_border_color(rot_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(rot_btn, 0, 0);
+    s_rotation_btn_label = lv_label_create(rot_btn);
+    {
+        uint8_t saved_rot = 0;
+        config_store_load_rotation(&saved_rot);
+        static const char *names[] = { "Rotation: 0\xC2\xB0", "Rotation: 90\xC2\xB0", "Rotation: 180\xC2\xB0", "Rotation: 270\xC2\xB0" };
+        lv_label_set_text(s_rotation_btn_label, names[saved_rot <= 3 ? saved_rot : 0]);
+    }
+    lv_obj_center(s_rotation_btn_label);
+    lv_obj_set_style_text_font(s_rotation_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_rotation_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(rot_btn, _rotation_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ── Night mode toggle (#23) — manual override ── */
+    lv_obj_t *night_btn = lv_btn_create(display_section);
+    lv_obj_set_size(night_btn, 250, 30);
+    lv_obj_align(night_btn, LV_ALIGN_TOP_LEFT, 0, 160);
+    lv_obj_set_style_bg_color(night_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(night_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(night_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(night_btn, 1, 0);
+    lv_obj_set_style_border_color(night_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(night_btn, 0, 0);
+    s_night_btn_label = lv_label_create(night_btn);
+    {
+        night_mode_config_t nm_cfg;
+        config_store_load_night_mode(&nm_cfg);
+        lv_label_set_text(s_night_btn_label, nm_cfg.manual_active ? "Night Mode: ON" : "Night Mode: OFF");
+    }
+    lv_obj_center(s_night_btn_label);
+    lv_obj_set_style_text_font(s_night_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_night_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(night_btn, _night_btn_cb, LV_EVENT_CLICKED, NULL);
 
     // Data Logging section — full width
     lv_obj_t *log_section = lv_obj_create(content);

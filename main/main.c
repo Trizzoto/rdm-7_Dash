@@ -401,6 +401,16 @@ float fuel_sender_read_voltage(void) {
 static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 	(void)timer;
 	wifi_manager_start();
+
+	/* Honour boot config for AP mode — on first-run we explicitly set ap_enabled=true
+	   in app_main so the hotspot is discoverable immediately. On subsequent boots,
+	   this reflects the user's saved preference. */
+	wifi_boot_config_t cfg;
+	if (config_store_load_wifi_boot(&cfg) == ESP_OK && cfg.ap_enabled) {
+		wifi_manager_enable_ap(true);
+		ESP_LOGI(TAG, "AP mode enabled by boot config");
+	}
+
 	wifi_manager_auto_connect();
 
 	ESP_LOGI(TAG, "Starting web server...");

@@ -56,6 +56,7 @@ static const struct {
 };
 
 static lv_obj_t *warning_circles[8] = {NULL};
+static lv_obj_t *warning_touch_areas[8] = {NULL};
 static lv_obj_t *warning_labels[8] = {NULL};
 uint64_t last_signal_times[8] = {0};
 bool toggle_debounce[8] = {false};
@@ -108,7 +109,9 @@ void warning_low_color_event_cb(lv_event_t *e) {
 	}
 }
 
-static void warning_longpress_cb(lv_event_t *e) {
+__attribute__((unused)) static void warning_longpress_cb(lv_event_t *e) {
+	/* Retained for future use — the long-press config menu wiring was moved
+	   to the centralised dashboard long-press dispatcher. */
 	uint8_t warning_idx = *(uint8_t *)lv_event_get_user_data(e);
 	create_warning_config_menu(warning_idx);
 }
@@ -860,6 +863,7 @@ void widget_warning_reset(void) {
 	for (int i = 0; i < 8; i++) {
 		warning_circles[i] = NULL;
 		warning_labels[i] = NULL;
+		warning_touch_areas[i] = NULL;
 	}
 }
 
@@ -971,13 +975,9 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_style_border_width(touch_area, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	uint8_t *warning_id = lv_mem_alloc(sizeof(uint8_t));
-	if (!warning_id) return;
-	*warning_id = i;
-	lv_obj_add_event_cb(touch_area, warning_longpress_cb, LV_EVENT_LONG_PRESSED,
-						warning_id);
-	lv_obj_add_event_cb(touch_area, free_warning_idx_event_cb, LV_EVENT_DELETE,
-						warning_id);
+	/* Store touch area so _warning_create can use it as w->root.
+	 * Long-press is handled by dashboard.c's _register_widget_long_press(). */
+	warning_touch_areas[i] = touch_area;
 
 	update_warning_ui_immediate(i);
 
@@ -1017,7 +1017,9 @@ static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
 	widget_warning_create_one(parent, slot);
-	w->root = (slot < 8) ? warning_circles[slot] : NULL;
+	/* Use the touch area as w->root so long-press always works
+	 * (the circle may have ADV_HITTEST or be tiny/invisible). */
+	w->root = (slot < 8) ? warning_touch_areas[slot] : NULL;
 
 	/* Subscribe to signal if bound */
 	if (wd && wd->signal_index >= 0)
@@ -1036,9 +1038,7 @@ static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	}
 }
 static void _warning_open_settings(widget_t *w) {
-	warning_data_t *wd = (warning_data_t *)w->type_data;
-	uint8_t slot = wd ? wd->slot : 0;
-	create_warning_config_menu(slot);
+	load_menu_screen_for_widget(w);
 }
 static void _warning_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);
