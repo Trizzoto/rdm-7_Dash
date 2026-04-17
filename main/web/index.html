@@ -220,6 +220,67 @@
                 inset 0 1px 0 rgba(255,255,255,0.08);
         }
 
+        /* Night-mode editor preview: subtle dim tint on the display area */
+        .display-bezel.editor-night .canvas-container {
+            box-shadow: 0 0 40px hsla(240, 40%, 8%, 0.85);
+        }
+        .display-bezel.editor-night .canvas-container::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(hsla(220, 40%, 4%, 0.28), hsla(220, 40%, 4%, 0.28));
+            z-index: 1;
+        }
+        .header-pill.night-active {
+            background: hsl(220, 50%, 20%);
+            color: hsl(210, 80%, 85%);
+            border-color: hsl(220, 60%, 40%);
+        }
+        .header-pill.night-active:hover {
+            background: hsl(220, 55%, 24%);
+        }
+        /* Night-override indicator + reset button shown next to fields in night mode */
+        .night-override-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            color: hsl(210, 80%, 80%);
+            margin-left: 6px;
+            user-select: none;
+        }
+        .night-override-chip.has-override {
+            color: hsl(210, 95%, 75%);
+        }
+        .night-reset-btn {
+            background: transparent;
+            border: 1px solid hsl(220, 30%, 45%);
+            color: hsl(210, 70%, 80%);
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: 4px;
+            font-family: inherit;
+        }
+        .night-reset-btn:hover {
+            background: hsl(220, 40%, 22%);
+        }
+        .night-mode-banner {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+            background: hsl(220, 45%, 16%);
+            border: 1px solid hsl(220, 55%, 35%);
+            color: hsl(210, 80%, 85%);
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
         .display-bezel:not(.bezel-on) {
             padding: 0;
         }
@@ -2126,6 +2187,7 @@
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
                 <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
                 <button class="header-pill active" id="pillCrosshair" onclick="toggleHeaderPill(this, 'crosshair')">Crosshair</button>
+                <button class="header-pill" id="pillDayNight" onclick="toggleEditorMode()" title="Preview day or night mode">Day</button>
             </div>
             <!-- Hidden checkboxes for JS compatibility -->
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
@@ -2239,6 +2301,7 @@
             </div>
             </div>
             <div class="right-tab-content" id="rightTabLayers" style="overflow:hidden;">
+                <div id="layoutSettingsBox" style="flex:0 0 auto; padding:8px 10px; border-bottom:1px solid var(--border); font-size:12px;"></div>
                 <div id="layerTree" style="flex:1; overflow-y:auto; min-height:0;"></div>
             </div>
         </aside>
@@ -2322,6 +2385,9 @@
         let _cachedImageList = [];
         let _cachedFontList = [];
         let currentScreenMode = 'dashboard';
+        /* Day / Night editor mode — 'day' or 'night'. Drives canvas appearance + inspector UI
+         * for night-mode override fields. Persisted per-session, not saved to layout. */
+        let currentEditorMode = 'day';
         const SPLASH_WIDGET_TYPES = ['image', 'text', 'shape_panel'];
 
         function switchSidebarTab(tabName) {
@@ -3336,6 +3402,23 @@
                         });
                     }
                 });
+                /* Convert colors in the night overrides block. Night keys may differ
+                 * from web field names (e.g. warning's border_color_style → border_color);
+                 * build a set of night color keys from nightOverridable color fields. */
+                if (w.config.night && typeof w.config.night === 'object') {
+                    const nightColorKeys = new Set();
+                    def.fields.forEach(f => {
+                        if (f.nightOverridable && f.type === 'color') {
+                            const nk = (f.nightKey) ? f.nightKey : f.name;
+                            nightColorKeys.add(nk);
+                        }
+                    });
+                    Object.keys(w.config.night).forEach(k => {
+                        if (nightColorKeys.has(k) && w.config.night[k] !== undefined && typeof w.config.night[k] === 'number') {
+                            w.config.night[k] = convertFn(w.config.night[k]);
+                        }
+                    });
+                }
             });
         }
 
@@ -3409,14 +3492,14 @@
                 fields: [
                     { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
                     { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
-                    { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                     { name: "limiter_effect", label: "Limiter Effect", type: "select", options: [
                         { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar+Circles" },
                         { v: 3, l: "Circles" }, { v: 4, l: "Bar Solid" }, { v: 5, l: "Bar+Circles Solid" },
                         { v: 6, l: "Circles Solid" }
                     ], def: 0, cat: "appearance" },
                     { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
-                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance" }
+                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true }
                 ]
             },
             "panel": {
@@ -3441,11 +3524,11 @@
                     { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                     { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 7, cat: "appearance" },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 3, cat: "appearance" },
-                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
-                    { name: "bg_color", label: "Background", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
+                    { name: "bg_color", label: "Background", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                     { name: "bg_opa", label: "BG Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "label_y_offset", label: "Label Y Offset", type: "stepper", min: -100, max: 100, def: -28, cat: "appearance" },
                     { name: "value_y_offset", label: "Value Y Offset", type: "stepper", min: -100, max: 100, def: 9, cat: "appearance" },
                     { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", min: -100, max: 100, def: 41, cat: "appearance" },
@@ -3461,23 +3544,23 @@
                     { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance" },
+                    { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                     { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                     { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
-                    { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
                     { name: "bar_radius", label: "Bar Radius", type: "stepper", min: 0, max: 50, def: 5, cat: "appearance" },
                     { name: "bar_border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 2, cat: "appearance" },
-                    { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
                     { name: "indicator_radius", label: "Fill Radius", type: "stepper", min: 0, max: 50, def: 5, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "bar_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                    { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                    { name: "bar_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                     { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
                     { name: "bar_low", label: "Low Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
-                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
+                    { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true },
                     { name: "bar_high", label: "High Threshold", type: "stepper", min: -99999, max: 99999, def: 100, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" },
-                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled" }
+                    { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true }
                 ]
             },
             "indicator": {
@@ -3487,9 +3570,9 @@
                     { name: "input_source", label: "Input Source", type: "select", options: [{ v: 0, l: "Wire" }, { v: 1, l: "CAN" }], def: 0, cat: "data" },
                     { name: "animation", label: "Anim Enabled", type: "checkbox", def: true, cat: "appearance" },
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "color_on", label: "Active Color", type: "color", def: 0xFFBF00, cat: "appearance" },
+                    { name: "color_on", label: "Active Color", type: "color", def: 0xFFBF00, cat: "appearance", nightOverridable: true },
                     { name: "opa_on", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
-                    { name: "color_off", label: "Inactive Color", type: "color", def: 0x333333, cat: "appearance" },
+                    { name: "color_off", label: "Inactive Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                     { name: "opa_off", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 70, cat: "appearance" }
                 ]
             },
@@ -3497,18 +3580,18 @@
                 displayName: "Alert Light", defW: 25, defH: 25,
                 fields: [
                     { name: "label", label: "Label", type: "text", def: "", cat: "data" },
-                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
                     { name: "active_opa", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                     { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance" },
+                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance", nightOverridable: true },
                     { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 80, cat: "appearance" },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
-                    { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true, nightKey: "border_color" },
                     { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
                     { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                 ]
             },
             "text": {
@@ -3518,7 +3601,7 @@
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                     { name: "rotation", label: "Rotation (°)", type: "stepper", min: 0, max: 359, def: 0, cat: "appearance" },
                     { name: "font", label: "Font", type: "font", def: "", cat: "appearance" },
-                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
+                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                 ]
             },
             "meter": {
@@ -3528,56 +3611,56 @@
                     { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
                     { name: "start_angle", label: "Start angle", type: "number", def: 135, cat: "data" },
                     { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" },
-                    { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance" },
+                    { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", nightOverridable: true },
                     { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
-                    { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "border_color", label: "Border Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_opa", label: "Border Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "scale_padding", label: "Scale Padding", type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
                     { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 2, max: 100, def: 21, cat: "appearance" },
                     { name: "minor_tick_width", label: "Tick Width", type: "stepper", min: 1, max: 20, def: 2, cat: "appearance" },
                     { name: "minor_tick_length", label: "Tick Length", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
-                    { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance" },
+                    { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", nightOverridable: true },
                     { name: "major_tick_every", label: "Major Tick Every", type: "stepper", min: 1, max: 50, def: 5, cat: "appearance" },
                     { name: "major_tick_width", label: "Major Tick Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "major_tick_length", label: "Major Tick Length", type: "stepper", min: 1, max: 50, def: 15, cat: "appearance" },
-                    { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
                     { name: "label_gap", label: "Label Gap", type: "stepper", min: -20, max: 50, def: 10, cat: "appearance", enabledBy: "show_tick_labels" },
                     { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
-                    { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels" },
-                    { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance" },
+                    { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
+                    { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                     { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
                     { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
                     { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance" },
                     { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
-                    { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
+                    { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" },
                     { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", min: 0, max: 40, def: 10, cat: "appearance" },
-                    { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance" }
+                    { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                 ]
             },
             "image": {
                 displayName: "Image", defW: 100, defH: 100,
                 fields: [
-                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", nightOverridable: true },
                     { name: "image_scale", label: "Scale %", type: "stepper", min: 10, max: 200, def: 100, cat: "appearance" },
                     { name: "opacity", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
-                    { name: "recolor", label: "Color Overlay", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "recolor", label: "Color Overlay", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                     { name: "recolor_opa", label: "Overlay Strength (0-255)", type: "stepper", min: 0, max: 255, def: 0, cat: "appearance" }
                 ]
             },
             "shape_panel": {
                 displayName: "Shape Panel", defW: 200, defH: 100,
                 fields: [
-                    { name: "bg_color", label: "Background", type: "color", def: 0x1A1A1A, cat: "appearance" },
+                    { name: "bg_color", label: "Background", type: "color", def: 0x1A1A1A, cat: "appearance", nightOverridable: true },
                     { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
-                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance" },
+                    { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 200, def: 10, cat: "appearance" },
                     { name: "shadow_width", label: "Shadow Width", type: "stepper", min: 0, max: 50, def: 0, cat: "appearance" },
-                    { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance" },
+                    { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                     { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", min: 0, max: 255, def: 128, cat: "appearance" },
                     { name: "shadow_ofs_x", label: "Shadow X", type: "stepper", min: -100, max: 100, def: 0, cat: "appearance" },
                     { name: "shadow_ofs_y", label: "Shadow Y", type: "stepper", min: -100, max: 100, def: 0, cat: "appearance" }
@@ -3591,12 +3674,12 @@
                     { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data" },
                     { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                     { name: "arc_width", label: "Arc Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
-                    { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance" },
-                    { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance" },
+                    { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                    { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                     { name: "bg_arc_width", label: "Track Width", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance" },
                     { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
-                    { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance" }
+                    { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true }
                 ]
             },
             "toggle": {
@@ -3610,12 +3693,12 @@
                     { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
                     { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
                     { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", min: 0, max: 50, def: 0, cat: "data" },
-                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance" },
-                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                    { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance", nightOverridable: true },
                     { name: "active_opa", label: "Active Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 100, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_label", nightOverridable: true },
                     { name: "font", label: "Font", type: "font", def: "", cat: "appearance", enabledBy: "show_label" },
                     { name: "label_align", label: "Text Align", type: "select", def: 1, cat: "appearance", options: [{v:0,l:"Left"},{v:1,l:"Center"},{v:2,l:"Right"}], enabledBy: "show_label" },
                     { name: "label_x", label: "Label X Offset", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "show_label" },
@@ -3634,10 +3717,10 @@
                     { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
                     { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", min: 0, max: 50, def: 0, cat: "data" },
                     { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: false, cat: "data", enabledBy: "!latch" },
-                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
-                    { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance" },
-                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance" },
-                    { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance" },
+                    { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                    { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
+                    { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                    { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance", nightOverridable: true },
                     { name: "border_radius", label: "Border Radius", type: "stepper", min: 0, max: 100, def: 5, cat: "appearance" },
                     { name: "font", label: "Font", type: "font", def: "", cat: "appearance", enabledBy: "show_label" },
                     { name: "label_align", label: "Text Align", type: "select", def: 1, cat: "appearance", options: [{v:0,l:"Left"},{v:1,l:"Center"},{v:2,l:"Right"}], enabledBy: "show_label" },
@@ -3654,10 +3737,10 @@
                     { name: "range_max", label: "Range Max", type: "number", def: 7000, cat: "data" },
                     { name: "flash_threshold", label: "Flash RPM", type: "number", def: 7200, cat: "data" },
                     { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "data", min: 50, max: 1000, step: 10 },
-                    { name: "color_low", label: "Low Color", type: "color", def: 0x00FF00, cat: "appearance" },
-                    { name: "color_mid", label: "Mid Color", type: "color", def: 0xFFFF00, cat: "appearance" },
-                    { name: "color_high", label: "High Color", type: "color", def: 0xFF0000, cat: "appearance" },
-                    { name: "color_off", label: "Off Color", type: "color", def: 0x212121, cat: "appearance" },
+                    { name: "color_low", label: "Low Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                    { name: "color_mid", label: "Mid Color", type: "color", def: 0xFFFF00, cat: "appearance", nightOverridable: true },
+                    { name: "color_high", label: "High Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
+                    { name: "color_off", label: "Off Color", type: "color", def: 0x212121, cat: "appearance", nightOverridable: true },
                     { name: "led_spacing", label: "LED Spacing", type: "stepper", def: 2, cat: "appearance", min: 0, max: 200, step: 1 },
                     { name: "border_radius", label: "Corner Radius", type: "stepper", def: 2, cat: "appearance", min: 0, max: 255, step: 1 },
                     { name: "led_width", label: "LED Width (0=auto)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100, step: 1 },
@@ -4104,7 +4187,12 @@
                     const colorField = w.type === 'rpm_bar' ? 'bar_color'
                                      : w.type === 'warning' ? 'active_color' : null;
                     if (colorField && w.config[colorField] != null) {
-                        const hex = Number(w.config[colorField]).toString(16).padStart(6, '0');
+                        /* In night mode, prefer night override for the swatch. */
+                        let swVal = w.config[colorField];
+                        if (currentEditorMode === 'night' && w.config.night && w.config.night[colorField] != null) {
+                            swVal = w.config.night[colorField];
+                        }
+                        const hex = Number(swVal).toString(16).padStart(6, '0');
                         customHtml += `<div class="widget-detail" style="position:absolute;bottom:2px;right:2px;width:10px;height:10px;background:#${hex};border:1px solid hsla(0, 0%, 100%, 0.3);border-radius:2px;"></div>`;
                     }
                 }
@@ -4153,8 +4241,67 @@
             renderLayerTree();
         }
 
+        /* Render the Layout Settings box shown above the layers list.
+         * Currently exposes the Night-Mode trigger: a signal dropdown + threshold
+         * stored in currentLayout.night_mode = { signal_name, active_when }. */
+        function renderLayoutSettings() {
+            const box = document.getElementById('layoutSettingsBox');
+            if (!box) return;
+            const nm = currentLayout.night_mode || {};
+            const sigNames = (currentLayout.signals || []).map(s => s.name);
+            const active = !!nm.signal_name;
+            let html = `<div style="font-weight:600; font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">\uD83C\uDF19 Night-Mode Trigger</div>`;
+            html += `<div style="display:grid; grid-template-columns:1fr; gap:6px;">`;
+            html += `<label style="font-size:10px; color:var(--text-muted); display:block;">Signal
+                <select id="nmSignalSel" style="width:100%; margin-top:2px; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:11px;" onchange="setNightModeSignal(this.value)">
+                    <option value="">(disabled)</option>`;
+            sigNames.forEach(sn => {
+                html += `<option value="${sn}" ${nm.signal_name === sn ? 'selected' : ''}>${sn}</option>`;
+            });
+            html += `</select></label>`;
+            html += `<label style="font-size:10px; color:var(--text-muted); display:block;">Active when &ge;
+                <input id="nmActiveWhen" type="number" step="0.1" value="${nm.active_when != null ? nm.active_when : 1}"
+                    style="width:100%; margin-top:2px; padding:4px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:11px;"
+                    ${active ? '' : 'disabled'}
+                    onchange="setNightModeThreshold(parseFloat(this.value))"></label>`;
+            if (active) {
+                html += `<button class="btn btn-secondary" style="font-size:10px; padding:4px 8px; margin-top:2px;" onclick="clearNightModeTrigger()">Clear / Disable</button>`;
+            }
+            html += `</div>`;
+            box.innerHTML = html;
+        }
+
+        function setNightModeSignal(sigName) {
+            pushHistory();
+            if (!sigName) {
+                delete currentLayout.night_mode;
+            } else {
+                if (!currentLayout.night_mode) currentLayout.night_mode = { active_when: 1 };
+                currentLayout.night_mode.signal_name = sigName;
+                if (currentLayout.night_mode.active_when == null) currentLayout.night_mode.active_when = 1;
+            }
+            renderLayoutSettings();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function setNightModeThreshold(val) {
+            if (!currentLayout.night_mode) return;
+            if (isNaN(val)) val = 1;
+            pushHistory();
+            currentLayout.night_mode.active_when = val;
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        function clearNightModeTrigger() {
+            pushHistory();
+            delete currentLayout.night_mode;
+            renderLayoutSettings();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
         function renderLayerTree() {
             layerTree.innerHTML = '';
+            renderLayoutSettings();
             const defs = typeof WIDGET_DEFS !== 'undefined' ? WIDGET_DEFS : {};
             // Render in reverse order so topmost (highest index) are at the top of the list
             for (let i = currentLayout.widgets.length - 1; i >= 0; i--) {
@@ -5024,6 +5171,10 @@
                 }
                 /* Clean up web-editor-only fields */
                 delete w.config.bar_alerts_enabled;
+                /* Strip empty night override object so we don't ship "night":{} to firmware */
+                if (w.config.night && typeof w.config.night === 'object' && Object.keys(w.config.night).length === 0) {
+                    delete w.config.night;
+                }
                 /* Convert rule overrides from object {field: value} to firmware array [{field, type, value}] */
                 if (w.config.rules) {
                     const def = WIDGET_DEFS[w.type];
@@ -5071,6 +5222,59 @@
                     });
                 } catch (e) { }
             }, 250); // 250ms debounce
+        }
+
+        /* Render a night-mode override control for a field (color or image_picker only).
+         * Input mutates w.config.night[key] via updateWidgetNightField; a Reset button
+         * clears the override. Pre-fills with day value when no override exists yet. */
+        function renderFieldHTMLNight(f, w, disabledAttr) {
+            const isOverridden = hasNightOverride(w, f);
+            const val = getEffectiveFieldValue(w, f);
+            const moon = isOverridden ? '\uD83C\uDF19' : '\u25CB';
+            const badgeClass = isOverridden ? 'night-override-chip has-override' : 'night-override-chip';
+            const resetBtn = isOverridden ? `<button class="night-reset-btn" onclick="clearWidgetNightField('${f.name}')" ${disabledAttr}>Reset</button>` : '';
+            let html = `<div class="field"><label>${f.label} <span class="${badgeClass}" title="${isOverridden ? 'Night override set' : 'No night override'}">${moon}</span></label>`;
+            if (f.type === 'color') {
+                const snapped = snapToRgb565(Number(val != null ? val : 0));
+                const colorHex = snapped.toString(16).toUpperCase().padStart(6, '0');
+                html += `<div class="color-field-wrap">
+                    <input type="color" value="#${colorHex}"
+                           oninput="
+                              let s = snapToRgb565(parseInt('0x' + this.value.substring(1)));
+                              let h = s.toString(16).toUpperCase().padStart(6,'0');
+                              this.value = '#' + h;
+                              document.getElementById('nclr_${f.name}').value = '0x' + h;
+                              updateWidgetNightField('${f.name}', s, false);
+                           "
+                           ${disabledAttr}>
+                    <input type="text" id="nclr_${f.name}" value="0x${colorHex}"
+                           oninput="
+                              let v = parseInt(this.value);
+                              if(!isNaN(v)){
+                                  let s = snapToRgb565(v);
+                                  let h = s.toString(16).toUpperCase().padStart(6,'0');
+                                  this.value = '0x' + h;
+                                  this.previousElementSibling.value='#'+h;
+                                  updateWidgetNightField('${f.name}', s, false);
+                              }
+                           "
+                           ${disabledAttr}>
+                    ${resetBtn}
+                </div>`;
+            } else if (f.type === 'image_picker') {
+                html += `<div class="image-picker-wrap">
+                    <select id="nimgsel_${f.name}" onchange="updateWidgetNightField('${f.name}', this.value, false)" ${disabledAttr}>
+                        <option value="">(none)</option>
+                    </select>
+                    ${resetBtn}
+                </div>`;
+                setTimeout(() => _populateImageSelect('nimgsel_' + f.name, val), 0);
+            } else {
+                /* Fallback: defer to day renderer (shouldn't happen — only color/image are nightOverridable). */
+                return renderFieldHTML(f, val, disabledAttr);
+            }
+            html += `</div>`;
+            return html;
         }
 
         function renderFieldHTML(f, val, disabledAttr) {
@@ -5260,6 +5464,9 @@
             const lockMsg = w.locked ? '<div style="background:hsla(0, 100%, 63%, 0.1); border:1px solid hsl(0, 100%, 63%); color:hsl(0, 100%, 63%); padding:4px; font-size:11px; margin-bottom:12px; text-align:center; border-radius:4px;">Widget is Locked</div>' : '';
 
             let html = lockMsg;
+            if (currentEditorMode === 'night') {
+                html += `<div class="night-mode-banner">\uD83C\uDF19 Night Mode — edits to color/image fields below create per-widget night overrides.</div>`;
+            }
 
             /* ── Layout Accordion (open by default) ── */
             html += `<details class="inspector-accordion" open><summary>Layout</summary><div class="accordion-body">`;
@@ -5342,7 +5549,11 @@
                         const parentVal = w.config[key] !== undefined ? w.config[key] : false;
                         if (negate ? parentVal : !parentVal) return;
                     }
-                    html += renderFieldHTML(f, val, disabledAttr);
+                    if (currentEditorMode === 'night' && f.nightOverridable) {
+                        html += renderFieldHTMLNight(f, w, disabledAttr);
+                    } else {
+                        html += renderFieldHTML(f, val, disabledAttr);
+                    }
                 });
 
                 /* ── Fuel Sender Calibration (inline in Data tab) ── */
@@ -5385,7 +5596,11 @@
                         const parentVal = w.config[key] !== undefined ? w.config[key] : false;
                         if (negate ? parentVal : !parentVal) return;
                     }
-                    html += renderFieldHTML(f, val, disabledAttr);
+                    if (currentEditorMode === 'night' && f.nightOverridable) {
+                        html += renderFieldHTMLNight(f, w, disabledAttr);
+                    } else {
+                        html += renderFieldHTML(f, val, disabledAttr);
+                    }
                 });
                 html += `</div></details>`;
             }
@@ -5430,7 +5645,11 @@
                         html += `</div>`;
                         return;
                     }
-                    html += renderFieldHTML(f, val, disabledAttr);
+                    if (currentEditorMode === 'night' && f.nightOverridable) {
+                        html += renderFieldHTMLNight(f, w, disabledAttr);
+                    } else {
+                        html += renderFieldHTML(f, val, disabledAttr);
+                    }
                 });
                 html += `</div></details>`;
             }
@@ -6130,6 +6349,45 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
+        /* Write a night-mode override for the selected widget. Creates w.config.night
+         * lazily and stores under the field's night key (usually same as field name,
+         * but e.g. warning's border_color_style maps to "border_color"). */
+        function updateWidgetNightField(field, val, isNumeric) {
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+            const def = WIDGET_DEFS[w.type];
+            const fieldDef = def.fields.find(f => f.name === field);
+            if (!fieldDef || !fieldDef.nightOverridable) return;
+            let finalVal = val;
+            if (isNumeric) {
+                finalVal = parseFloat(val);
+                if (isNaN(finalVal)) finalVal = 0;
+            }
+            if (!w.config) w.config = {};
+            if (!w.config.night) w.config.night = {};
+            w.config.night[_nightKey(fieldDef)] = finalVal;
+            pushHistory();
+            renderEditor();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* Remove a night override for the currently-selected widget + field. */
+        function clearWidgetNightField(field) {
+            if (selectedIndex === -1) return;
+            const w = currentLayout.widgets[selectedIndex];
+            const def = WIDGET_DEFS[w.type];
+            const fieldDef = def.fields.find(f => f.name === field);
+            if (!fieldDef) return;
+            if (w.config && w.config.night) {
+                delete w.config.night[_nightKey(fieldDef)];
+                if (Object.keys(w.config.night).length === 0) delete w.config.night;
+            }
+            pushHistory();
+            renderEditor();
+            updateInspector();
+            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
         /* ─── Image picker helpers ─────────────────────────────────────── */
 
         async function _populateImageSelect(selectId, currentVal) {
@@ -6577,6 +6835,8 @@
         }
 
         function renderSignals() {
+            /* Keep the night-mode trigger signal dropdown in sync with signal changes */
+            if (typeof renderLayoutSettings === 'function') renderLayoutSettings();
             const sigs = currentLayout.signals || [];
             const c = document.getElementById('sigList');
             if (!c) return;
@@ -7862,6 +8122,49 @@
             } else if (id === 'crosshair') {
                 document.getElementById('interactionLayer').classList.toggle('hide-crosshair', !isActive);
             }
+        }
+
+        /* ── Day/Night editor mode toggle ──────────────────────────────────
+         * Flips the `currentEditorMode` flag and updates the canvas + inspector
+         * so the user can preview widgets' night overrides. Does not mutate
+         * any layout data — purely a view-mode switch.
+         */
+        function toggleEditorMode() {
+            currentEditorMode = (currentEditorMode === 'day') ? 'night' : 'day';
+            const btn = document.getElementById('pillDayNight');
+            const bezel = document.getElementById('canvasContainer');
+            if (currentEditorMode === 'night') {
+                btn.textContent = '\uD83C\uDF19 Night';
+                btn.classList.add('night-active');
+                bezel.classList.add('editor-night');
+            } else {
+                btn.textContent = 'Day';
+                btn.classList.remove('night-active');
+                bezel.classList.remove('editor-night');
+            }
+            renderEditor();
+            updateInspector();
+        }
+
+        /* Resolve a widget field's effective value for rendering in the current
+         * editor mode. In day mode returns the config value (or default). In night
+         * mode returns the night override if set, else falls through to day value.
+         * Respects per-field nightKey (e.g. warning's border_color_style → border_color). */
+        function _nightKey(fieldDef) {
+            return (fieldDef && fieldDef.nightKey) ? fieldDef.nightKey : (fieldDef ? fieldDef.name : null);
+        }
+        function getEffectiveFieldValue(w, fieldDef) {
+            const dayVal = (w.config && w.config[fieldDef.name] !== undefined) ? w.config[fieldDef.name] : fieldDef.def;
+            if (currentEditorMode !== 'night' || !fieldDef.nightOverridable) return dayVal;
+            const nk = _nightKey(fieldDef);
+            if (w.config && w.config.night && w.config.night[nk] !== undefined) {
+                return w.config.night[nk];
+            }
+            return dayVal;
+        }
+        function hasNightOverride(w, fieldDef) {
+            if (!w.config || !w.config.night || !fieldDef.nightOverridable) return false;
+            return Object.prototype.hasOwnProperty.call(w.config.night, _nightKey(fieldDef));
         }
 
         function updateFooterCounts() {
