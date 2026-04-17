@@ -11,9 +11,18 @@ extern "C" {
 #endif
 
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include "screen_config.h"
 
 #define SHL_DEFAULT_W (SCREEN_ORIGIN_X)   /* half screen width */
+
+/* ── Night-mode overrides for shift_light ───────────────────────────────── */
+typedef struct {
+    NIGHT_FIELD_COLOR(color_low)
+    NIGHT_FIELD_COLOR(color_mid)
+    NIGHT_FIELD_COLOR(color_high)
+    NIGHT_FIELD_COLOR(color_off)
+} shift_light_night_overrides_t;
 
 typedef struct {
     char     signal_name[32];
@@ -38,6 +47,8 @@ typedef struct {
     uint8_t  active_count;     /* Runtime: how many LEDs are active */
     lv_obj_t *leds[16];        /* Runtime: LVGL rectangle objects */
     lv_timer_t *flash_timer;   /* Runtime: flash animation timer */
+    /* Night-mode appearance overrides (only applied when night_mode active) */
+    shift_light_night_overrides_t night;
 } shift_light_data_t;
 
 widget_t *widget_shift_light_create_instance(uint8_t slot);

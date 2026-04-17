@@ -10,6 +10,7 @@
 #include "widget_image.h"
 #include "widget_rules.h"
 #include "screen_config.h"
+#include "system/night_mode.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -104,6 +105,10 @@ void rdm_image_free(lv_img_dsc_t *dsc) {
 	free(dsc);
 }
 
+/* Forward declarations — used by _image_create / _image_destroy below. */
+static void _image_apply_night_mode(widget_t *w, bool active);
+static void _image_night_cb(bool active, void *user_data);
+
 static void _image_create(widget_t *w, lv_obj_t *parent) {
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (!id) return;
@@ -146,6 +151,12 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	}
 
 	w->root = cont;
+
+	/* Subscribe to night-mode changes if any night override is set. */
+	if (id->night.has_recolor || id->night.has_image_name) {
+		night_mode_subscribe(_image_night_cb, w);
+		_image_apply_night_mode(w, night_mode_is_active());
+	}
 }
 
 static void _image_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -173,6 +184,14 @@ static void _image_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "recolor_opa", id->recolor_opa);
 	if (id->recolor.full != lv_color_black().full)
 		cJSON_AddNumberToObject(cfg, "recolor", (int)id->recolor.full);
+	/* Night-mode overrides — emit only fields that have an override set */
+	{
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, id->night, recolor);
+		NIGHT_SERIALIZE_IMAGE(n, id->night, image_name);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
+	}
 }
 
 static void _image_from_json(widget_t *w, cJSON *in) {
@@ -195,10 +214,18 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) id->recolor_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor");
 	if (cJSON_IsNumber(item)) id->recolor.full = (uint32_t)item->valueint;
+
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, id->night, recolor);
+		NIGHT_PARSE_IMAGE(night, id->night, image_name);
+	}
 }
 
 static void _image_destroy(widget_t *w) {
 	if (!w) return;
+	night_mode_unsubscribe(_image_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
@@ -209,6 +236,32 @@ static void _image_destroy(widget_t *w) {
 		free(id);
 	}
 	free(w);
+}
+
+/* Re-apply recolor based on current night-mode state. Image swap is not
+ * performed at runtime — swapping requires re-loading the LVGL image.
+ * TODO: image swap via re-create if needed. */
+static void _image_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	image_data_t *id = (image_data_t *)w->type_data;
+	if (!id || !id->img_obj || !lv_obj_is_valid(id->img_obj)) return;
+
+	lv_color_t rc = NIGHT_PICK_COLOR(active, id->night, recolor, id->recolor);
+
+	/* If no recolor opa is set on day side and we're in night mode, force a
+	 * subtle recolor. Otherwise respect the widget's configured recolor_opa. */
+	if (id->recolor_opa > 0 || (active && id->night.has_recolor)) {
+		lv_obj_set_style_img_recolor(id->img_obj, rc,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(id->img_obj,
+			(active && id->night.has_recolor) ? LV_OPA_COVER : id->recolor_opa,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _image_night_cb(bool active, void *user_data) {
+	_image_apply_night_mode((widget_t *)user_data, active);
 }
 
 widget_t *widget_image_create_instance(uint8_t slot) {
@@ -241,6 +294,7 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	w->to_json = _image_to_json;
 	w->from_json = _image_from_json;
 	w->destroy = _image_destroy;
+	w->apply_night_mode = _image_apply_night_mode;
 
 	return w;
 }

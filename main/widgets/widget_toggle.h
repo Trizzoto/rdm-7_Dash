@@ -1,11 +1,20 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for toggle ────────────────────────────────────── */
+typedef struct {
+    NIGHT_FIELD_COLOR(active_color)
+    NIGHT_FIELD_COLOR(inactive_color)
+    NIGHT_FIELD_COLOR(label_color)
+    NIGHT_FIELD_IMAGE(image_name, 64)
+} toggle_night_overrides_t;
 
 typedef struct {
     char       label[32];
@@ -39,6 +48,8 @@ typedef struct {
     lv_obj_t  *img_obj;             /* runtime: LVGL image object (image mode) */
     void      *img_dsc;             /* runtime: lv_img_dsc_t* from rdm_image_load() */
     lv_timer_t *tx_timer;           /* runtime: periodic TX timer (NULL when inactive) */
+    /* Night-mode appearance overrides (only applied when night_mode active) */
+    toggle_night_overrides_t night;
 } toggle_data_t;
 
 widget_t *widget_toggle_create_instance(uint8_t slot);

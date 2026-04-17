@@ -3,6 +3,7 @@
 #include "screen_config.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
+#include "system/night_mode.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -870,6 +871,10 @@ static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
 	update_rpm_ui_immediate(buf, rpm);
 }
 
+/* Forward declarations — used by _rpm_bar_create / _rpm_bar_destroy. */
+static void _rpm_bar_apply_night_mode(widget_t *w, bool active);
+static void _rpm_bar_night_cb(bool active, void *user_data);
+
 static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_t *container = widget_rpm_bar_create(parent);
 	w->root = container;
@@ -882,6 +887,14 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
 	if (rbd && rbd->signal_index >= 0)
 		signal_subscribe(rbd->signal_index, _rpm_bar_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set, and apply
+	 * current state immediately so the widget renders correctly even if it
+	 * was created while night-mode is already active. */
+	if (rbd && (rbd->night.has_bar_color || rbd->night.has_limiter_color)) {
+		night_mode_subscribe(_rpm_bar_night_cb, w);
+		_rpm_bar_apply_night_mode(w, night_mode_is_active());
+	}
 }
 static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
@@ -902,6 +915,14 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
+	/* Night-mode overrides — emit only fields that have an override set */
+	{
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, rd->night, bar_color);
+		NIGHT_SERIALIZE_COLOR(n, rd->night, limiter_color);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
+	}
 }
 static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
@@ -931,6 +952,13 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name));
+
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, rd->night, bar_color);
+		NIGHT_PARSE_COLOR(night, rd->night, limiter_color);
+	}
 
 	/* Resolve signal name → index */
 	if (rd->signal_name[0] != '\0')
@@ -979,6 +1007,7 @@ static void _rpm_bar_destroy(widget_t *w) {
 		rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
 		if (rbd && rbd->signal_index >= 0)
 			signal_unsubscribe(rbd->signal_index, _rpm_bar_on_signal, w);
+		night_mode_unsubscribe(_rpm_bar_night_cb, w);
 		widget_rules_free(w);
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
@@ -986,6 +1015,36 @@ static void _rpm_bar_destroy(widget_t *w) {
 		free(w->type_data);
 		free(w);
 	}
+}
+
+/* Re-apply colors based on current night-mode state. Uses the same global
+ * LVGL objects (rpm_bar_gauge / rpm_redline_zone) that _rpm_bar_apply_overrides
+ * writes to. */
+static void _rpm_bar_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
+	if (!rd) return;
+
+	lv_color_t bar_col = NIGHT_PICK_COLOR(active, rd->night, bar_color,     rd->bar_color);
+	lv_color_t lim_col = NIGHT_PICK_COLOR(active, rd->night, limiter_color, rd->limiter_color);
+
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+		lv_obj_set_style_bg_color(rpm_bar_gauge, bar_col,
+								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, bar_col,
+									   LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
+									 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
+	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
+		lv_obj_set_style_bg_color(rpm_redline_zone, lim_col,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _rpm_bar_night_cb(bool active, void *user_data) {
+	_rpm_bar_apply_night_mode((widget_t *)user_data, active);
 }
 
 widget_t *widget_rpm_bar_create_instance(void) {
@@ -1029,6 +1088,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	w->from_json = _rpm_bar_from_json;
 	w->destroy = _rpm_bar_destroy;
 	w->apply_overrides = _rpm_bar_apply_overrides;
+	w->apply_night_mode = _rpm_bar_apply_night_mode;
 
 	return w;
 }

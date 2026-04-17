@@ -8,6 +8,7 @@
 #include "widget_meter.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -41,6 +42,10 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	if (v > md->max) v = md->max;
 	lv_meter_set_indicator_value(md->meter, md->needle, v);
 }
+
+/* Forward declarations — used by _meter_create / _meter_destroy below. */
+static void _meter_apply_night_mode(widget_t *w, bool active);
+static void _meter_night_cb(bool active, void *user_data);
 
 static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
@@ -180,6 +185,16 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe rules (safe no-op if no rules defined) */
 	widget_rules_subscribe(w);
 
+	/* Subscribe to night-mode changes if any night override is set. */
+	if (md->night.has_minor_tick_color  || md->night.has_major_tick_color ||
+	    md->night.has_needle_color      || md->night.has_needle_ball_color ||
+	    md->night.has_border_color      || md->night.has_meter_bg_color ||
+	    md->night.has_tick_label_color  || md->night.has_needle_image_name ||
+	    md->night.has_bg_image_name) {
+		night_mode_subscribe(_meter_night_cb, w);
+		_meter_apply_night_mode(w, night_mode_is_active());
+	}
+
 	ESP_LOGD(TAG, "_meter_create: DONE");
 }
 
@@ -268,6 +283,22 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 
 	/* Rules */
 	widget_rules_to_json(w, cfg);
+
+	/* Night-mode overrides — emit only fields that have an override set */
+	{
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, md->night, minor_tick_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, major_tick_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, needle_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, needle_ball_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, border_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, meter_bg_color);
+		NIGHT_SERIALIZE_COLOR(n, md->night, tick_label_color);
+		NIGHT_SERIALIZE_IMAGE(n, md->night, needle_image_name);
+		NIGHT_SERIALIZE_IMAGE(n, md->night, bg_image_name);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
+	}
 }
 
 static void _meter_from_json(widget_t *w, cJSON *in) {
@@ -374,6 +405,20 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 
 	/* Rules */
 	widget_rules_from_json(w, cfg);
+
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, md->night, minor_tick_color);
+		NIGHT_PARSE_COLOR(night, md->night, major_tick_color);
+		NIGHT_PARSE_COLOR(night, md->night, needle_color);
+		NIGHT_PARSE_COLOR(night, md->night, needle_ball_color);
+		NIGHT_PARSE_COLOR(night, md->night, border_color);
+		NIGHT_PARSE_COLOR(night, md->night, meter_bg_color);
+		NIGHT_PARSE_COLOR(night, md->night, tick_label_color);
+		NIGHT_PARSE_IMAGE(night, md->night, needle_image_name);
+		NIGHT_PARSE_IMAGE(night, md->night, bg_image_name);
+	}
 }
 
 static void _meter_destroy(widget_t *w) {
@@ -382,6 +427,7 @@ static void _meter_destroy(widget_t *w) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (md && md->signal_index >= 0)
 		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
+	night_mode_unsubscribe(_meter_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
@@ -433,6 +479,37 @@ static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	 * LVGL v8 doesn't expose a direct API for line needle color after creation,
 	 * so we store it for potential future use. */
 	(void)nc;
+}
+
+/* Re-apply colors based on current night-mode state. Only runtime-mutable
+ * style properties are updated here — tick colors and line needle color are
+ * baked in at lv_meter_set_scale_ticks() / lv_meter_add_needle_line() in
+ * LVGL v8 and cannot be changed without re-creating the scale. Likewise for
+ * image swaps. TODO: full re-create path for tick + needle + image swap. */
+static void _meter_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !md->meter) return;
+
+	lv_color_t bg   = NIGHT_PICK_COLOR(active, md->night, meter_bg_color,   md->meter_bg_color);
+	lv_color_t bdr  = NIGHT_PICK_COLOR(active, md->night, border_color,     md->border_color);
+	lv_color_t nbc  = NIGHT_PICK_COLOR(active, md->night, needle_ball_color, md->needle_ball_color);
+	lv_color_t tlc  = NIGHT_PICK_COLOR(active, md->night, tick_label_color, md->tick_label_color);
+
+	lv_obj_set_style_bg_color(md->meter, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (md->border_width > 0) {
+		lv_obj_set_style_border_color(md->meter, bdr,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (md->needle_ball_size > 0) {
+		lv_obj_set_style_bg_color(md->meter, nbc, LV_PART_INDICATOR);
+	}
+	lv_obj_set_style_text_color(md->meter, tlc, LV_PART_TICKS);
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _meter_night_cb(bool active, void *user_data) {
+	_meter_apply_night_mode((widget_t *)user_data, active);
 }
 
 widget_t *widget_meter_create_instance(uint8_t value_idx) {
@@ -503,6 +580,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	w->from_json = _meter_from_json;
 	w->destroy = _meter_destroy;
 	w->apply_overrides = _meter_apply_overrides;
+	w->apply_night_mode = _meter_apply_night_mode;
 
 	return w;
 }

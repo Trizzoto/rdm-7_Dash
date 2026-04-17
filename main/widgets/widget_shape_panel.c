@@ -6,6 +6,7 @@
  */
 #include "widget_shape_panel.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -46,6 +47,10 @@ static inline lv_color_t _u32_to_color(uint32_t v) {
     return c;
 }
 
+/* Forward declarations — used by _shape_panel_create / _shape_panel_destroy. */
+static void _shape_panel_apply_night_mode(widget_t *w, bool active);
+static void _shape_panel_night_cb(bool active, void *user_data);
+
 /* ── vtable: create ─────────────────────────────────────────────────────── */
 
 static void _shape_panel_create(widget_t *w, lv_obj_t *parent) {
@@ -76,6 +81,13 @@ static void _shape_panel_create(widget_t *w, lv_obj_t *parent) {
     lv_obj_set_style_shadow_ofs_y(obj, sd->shadow_ofs_y, LV_PART_MAIN);
 
     w->root = obj;
+
+    /* Subscribe to night-mode changes if any night override is set. */
+    if (sd->night.has_bg_color || sd->night.has_border_color ||
+        sd->night.has_shadow_color) {
+        night_mode_subscribe(_shape_panel_night_cb, w);
+        _shape_panel_apply_night_mode(w, night_mode_is_active());
+    }
 }
 
 /* ── vtable: resize ─────────────────────────────────────────────────────── */
@@ -128,6 +140,16 @@ static void _shape_panel_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "shadow_ofs_x", sd->shadow_ofs_x);
     if (sd->shadow_ofs_y != DEF_SHADOW_OFS_Y)
         cJSON_AddNumberToObject(cfg, "shadow_ofs_y", sd->shadow_ofs_y);
+
+    /* Night-mode overrides — emit only fields that have an override set */
+    {
+        cJSON *n = cJSON_CreateObject();
+        NIGHT_SERIALIZE_COLOR(n, sd->night, bg_color);
+        NIGHT_SERIALIZE_COLOR(n, sd->night, border_color);
+        NIGHT_SERIALIZE_COLOR(n, sd->night, shadow_color);
+        if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+        else cJSON_Delete(n);
+    }
 }
 
 /* ── vtable: from_json ──────────────────────────────────────────────────── */
@@ -171,12 +193,21 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_ofs_y");
     if (cJSON_IsNumber(item)) sd->shadow_ofs_y = (int8_t)item->valueint;
+
+    /* Night-mode overrides */
+    cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+    if (cJSON_IsObject(night)) {
+        NIGHT_PARSE_COLOR(night, sd->night, bg_color);
+        NIGHT_PARSE_COLOR(night, sd->night, border_color);
+        NIGHT_PARSE_COLOR(night, sd->night, shadow_color);
+    }
 }
 
 /* ── vtable: destroy ────────────────────────────────────────────────────── */
 
 static void _shape_panel_destroy(widget_t *w) {
     if (!w) return;
+    night_mode_unsubscribe(_shape_panel_night_cb, w);
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
@@ -232,6 +263,26 @@ static void _shape_panel_apply_overrides(widget_t *w, const rule_override_t *ov,
     lv_obj_set_style_shadow_opa(w->root, shd_opa, LV_PART_MAIN);
 }
 
+/* Re-apply colors based on current night-mode state. */
+static void _shape_panel_apply_night_mode(widget_t *w, bool active) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
+    if (!sd) return;
+
+    lv_color_t bg  = NIGHT_PICK_COLOR(active, sd->night, bg_color,     sd->bg_color);
+    lv_color_t bdr = NIGHT_PICK_COLOR(active, sd->night, border_color, sd->border_color);
+    lv_color_t shd = NIGHT_PICK_COLOR(active, sd->night, shadow_color, sd->shadow_color);
+
+    lv_obj_set_style_bg_color(w->root, bg, LV_PART_MAIN);
+    lv_obj_set_style_border_color(w->root, bdr, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(w->root, shd, LV_PART_MAIN);
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _shape_panel_night_cb(bool active, void *user_data) {
+    _shape_panel_apply_night_mode((widget_t *)user_data, active);
+}
+
 /* ── Factory ────────────────────────────────────────────────────────────── */
 
 widget_t *widget_shape_panel_create_instance(uint8_t slot) {
@@ -273,6 +324,7 @@ widget_t *widget_shape_panel_create_instance(uint8_t slot) {
     w->from_json     = _shape_panel_from_json;
     w->destroy       = _shape_panel_destroy;
     w->apply_overrides = _shape_panel_apply_overrides;
+    w->apply_night_mode = _shape_panel_apply_night_mode;
 
     ESP_LOGI(TAG, "Created shape_panel instance slot=%u", slot);
     return w;

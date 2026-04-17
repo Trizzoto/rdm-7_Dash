@@ -62,6 +62,13 @@ static uint32_t s_layout_version = 0;
 static char s_layout_ecu[32] = "";
 static char s_layout_ecu_version[32] = "";
 
+/* Layout-level night-mode CAN trigger (optional).
+ * If a layout binds night mode to a CAN signal, these hold the binding
+ * until the dashboard reads them and subscribes to the signal. Empty
+ * signal name means "no CAN trigger — manual toggle only". */
+static char  s_night_trigger_signal[32]   = "";
+static float s_night_trigger_active_when  = 1.0f;
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Internal helpers
  * ═══════════════════════════════════════════════════════════════════════════
@@ -614,6 +621,23 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		s_layout_ecu_version[0] = '\0';
 	}
 
+	/* ── Optional night-mode CAN trigger ── */
+	s_night_trigger_signal[0]  = '\0';
+	s_night_trigger_active_when = 1.0f;
+	const cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "night_mode");
+	if (cJSON_IsObject(nm)) {
+		const cJSON *sig = cJSON_GetObjectItemCaseSensitive(nm, "signal_name");
+		if (cJSON_IsString(sig) && sig->valuestring[0]) {
+			strncpy(s_night_trigger_signal, sig->valuestring,
+			        sizeof(s_night_trigger_signal) - 1);
+			s_night_trigger_signal[sizeof(s_night_trigger_signal) - 1] = '\0';
+		}
+		const cJSON *aw = cJSON_GetObjectItemCaseSensitive(nm, "active_when");
+		if (cJSON_IsNumber(aw)) {
+			s_night_trigger_active_when = (float)aw->valuedouble;
+		}
+	}
+
 	/* ── Instantiate signals + widgets ── */
 	esp_err_t ret = _instantiate_widgets(root, parent, "layout_load");
 	cJSON_Delete(root);
@@ -627,6 +651,25 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 			 (unsigned long)s_layout_version);
 	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  layout_manager_get_night_trigger
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+bool layout_manager_get_night_trigger(char *out_signal, size_t signal_buf_size,
+                                      float *out_active_when) {
+	if (s_night_trigger_signal[0] == '\0') {
+		if (out_signal && signal_buf_size > 0) out_signal[0] = '\0';
+		if (out_active_when) *out_active_when = 1.0f;
+		return false;
+	}
+	if (out_signal && signal_buf_size > 0) {
+		strncpy(out_signal, s_night_trigger_signal, signal_buf_size - 1);
+		out_signal[signal_buf_size - 1] = '\0';
+	}
+	if (out_active_when) *out_active_when = s_night_trigger_active_when;
+	return true;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -669,6 +712,15 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 		cJSON_AddStringToObject(root, "ecu", s_layout_ecu);
 	if (s_layout_ecu_version[0])
 		cJSON_AddStringToObject(root, "ecu_version", s_layout_ecu_version);
+
+	/* Conditionally add night-mode CAN trigger if set */
+	if (s_night_trigger_signal[0]) {
+		cJSON *nm = cJSON_AddObjectToObject(root, "night_mode");
+		if (nm) {
+			cJSON_AddStringToObject(nm, "signal_name", s_night_trigger_signal);
+			cJSON_AddNumberToObject(nm, "active_when", s_night_trigger_active_when);
+		}
+	}
 
 	/* Serialise registered signals */
 	_save_signals(root);

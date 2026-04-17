@@ -56,7 +56,7 @@ esp_err_t rdm7_mdns_refresh(void) {
     const mdns_txt_item_t rdm7_txt[] = {
         { .key = "serial",  .value = serial },
         { .key = "version", .value = FIRMWARE_VERSION },
-        { .key = "schema",  .value = "12" },
+        { .key = "schema",  .value = "13" },
     };
 
     /* Remove any previous instance (harmless if absent) so we always advertise the latest metadata */

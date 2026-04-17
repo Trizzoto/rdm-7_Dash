@@ -1,11 +1,25 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for meter ────────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(minor_tick_color)
+	NIGHT_FIELD_COLOR(major_tick_color)
+	NIGHT_FIELD_COLOR(needle_color)
+	NIGHT_FIELD_COLOR(needle_ball_color)
+	NIGHT_FIELD_COLOR(border_color)
+	NIGHT_FIELD_COLOR(meter_bg_color)
+	NIGHT_FIELD_COLOR(tick_label_color)
+	NIGHT_FIELD_IMAGE(needle_image_name, 32)
+	NIGHT_FIELD_IMAGE(bg_image_name, 32)
+} meter_night_overrides_t;
 
 /* ── Per-instance state for meter widget ───────────────────────────────── */
 typedef struct {
@@ -59,6 +73,8 @@ typedef struct {
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* Night-mode appearance overrides */
+	meter_night_overrides_t night;
 } meter_data_t;
 
 /**

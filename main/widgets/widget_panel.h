@@ -2,10 +2,19 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for panel ─────────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(border_color)
+	NIGHT_FIELD_COLOR(bg_color)
+	NIGHT_FIELD_COLOR(label_color)
+	NIGHT_FIELD_COLOR(value_color)
+} panel_night_overrides_t;
 
 /* ── Per-instance state for panel widgets ──────────────────────────────── */
 typedef struct {
@@ -51,6 +60,8 @@ typedef struct {
 	 * Collapses a 60 Hz restyle storm to just the visible transitions. */
 	char       last_display[32];
 	uint8_t    last_warn_state;  /* bit0=label bit1=value bit2=panel bit7=stale */
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	panel_night_overrides_t night;
 } panel_data_t;
 
 /** Initialise shared LVGL styles (box_style, common_style). Call once at boot.

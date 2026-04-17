@@ -7,6 +7,7 @@
 #include "widget_button.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
 #include "cJSON.h"
@@ -49,6 +50,8 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
 /* ── Forward declarations ─────────────────────────────────────────────────── */
 static void _btn_start_tx_timer(widget_t *w);
 static void _btn_stop_tx_timer(button_data_t *d);
+static void _button_apply_night_mode(widget_t *w, bool active);
+static void _button_night_cb(bool active, void *user_data);
 
 /* ── LVGL callbacks ───────────────────────────────────────────────────────── */
 
@@ -190,6 +193,13 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
 
         d->btn_obj = NULL;
         w->root = cont;
+
+        /* Subscribe to night-mode changes if any night override is set */
+        if (d->night.has_bg_color || d->night.has_text_color ||
+            d->night.has_pressed_color || d->night.has_image_name) {
+            night_mode_subscribe(_button_night_cb, w);
+            _button_apply_night_mode(w, night_mode_is_active());
+        }
         return;
     }
 
@@ -234,6 +244,13 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
     d->img_obj   = NULL;
     d->img_dsc   = NULL;
     w->root      = btn;
+
+    /* Subscribe to night-mode changes if any night override is set */
+    if (d->night.has_bg_color || d->night.has_text_color ||
+        d->night.has_pressed_color || d->night.has_image_name) {
+        night_mode_subscribe(_button_night_cb, w);
+        _button_apply_night_mode(w, night_mode_is_active());
+    }
 }
 
 /* ── vtable: resize ───────────────────────────────────────────────────────── */
@@ -308,6 +325,17 @@ static void _button_to_json(widget_t *w, cJSON *out) {
         cJSON_AddBoolToObject(cfg, "show_label", d->show_label);
     if (d->image_name[0] != '\0')
         cJSON_AddStringToObject(cfg, "image_name", d->image_name);
+
+    /* Night-mode overrides — emit only fields that have an override set */
+    {
+        cJSON *n = cJSON_CreateObject();
+        NIGHT_SERIALIZE_COLOR(n, d->night, bg_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, text_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, pressed_color);
+        NIGHT_SERIALIZE_IMAGE(n, d->night, image_name);
+        if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+        else cJSON_Delete(n);
+    }
 }
 
 /* ── vtable: from_json ────────────────────────────────────────────────────── */
@@ -386,6 +414,15 @@ static void _button_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsString(item) && item->valuestring) {
         safe_strncpy(d->image_name, item->valuestring, sizeof(d->image_name));
     }
+
+    /* Night-mode overrides */
+    cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+    if (cJSON_IsObject(night)) {
+        NIGHT_PARSE_COLOR(night, d->night, bg_color);
+        NIGHT_PARSE_COLOR(night, d->night, text_color);
+        NIGHT_PARSE_COLOR(night, d->night, pressed_color);
+        NIGHT_PARSE_IMAGE(night, d->night, image_name);
+    }
 }
 
 /* ── vtable: destroy ──────────────────────────────────────────────────────── */
@@ -397,6 +434,7 @@ static void _button_destroy(widget_t *w) {
         _btn_stop_tx_timer(d);
         rdm_image_free((lv_img_dsc_t *)d->img_dsc);
     }
+    night_mode_unsubscribe(_button_night_cb, w);
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
@@ -437,6 +475,51 @@ static void _button_apply_overrides(widget_t *w, const rule_override_t *ov, uint
     if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
         lv_obj_set_style_text_color(d->label_obj, txt, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
+}
+
+/* ── Night-mode apply ─────────────────────────────────────────────────────── */
+/* Re-apply colors (and image, where feasible) based on current night-mode
+ * state. bg_color goes on LV_STATE_DEFAULT and pressed_color on LV_STATE_PRESSED
+ * so that LVGL's native state handling continues to work under night mode. */
+static void _button_apply_night_mode(widget_t *w, bool active) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    button_data_t *d = (button_data_t *)w->type_data;
+    if (!d) return;
+
+    lv_color_t bg      = NIGHT_PICK_COLOR(active, d->night, bg_color,      d->bg_color);
+    lv_color_t txt     = NIGHT_PICK_COLOR(active, d->night, text_color,    d->text_color);
+    lv_color_t pressed = NIGHT_PICK_COLOR(active, d->night, pressed_color, d->pressed_color);
+
+    if (d->btn_obj && lv_obj_is_valid(d->btn_obj)) {
+        lv_obj_set_style_bg_color(d->btn_obj, bg,      LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_color(d->btn_obj, pressed, LV_PART_MAIN | LV_STATE_PRESSED);
+    }
+    if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
+        /* Swap image source if a night override image is set */
+        const char *img_name = NIGHT_PICK_IMAGE(active, d->night, image_name, d->image_name);
+        if (img_name && img_name[0] != '\0') {
+            lv_img_dsc_t *new_dsc = rdm_image_load(img_name);
+            if (new_dsc) {
+                lv_img_set_src(d->img_obj, new_dsc);
+                rdm_image_free((lv_img_dsc_t *)d->img_dsc);
+                d->img_dsc = new_dsc;
+            }
+        }
+        /* Recolor tint follows latch state like _btn_update_visual does */
+        lv_obj_set_style_img_recolor(d->img_obj,
+            d->latch_state ? pressed : bg,
+            LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_recolor_opa(d->img_obj, LV_OPA_COVER,
+            LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+        lv_obj_set_style_text_color(d->label_obj, txt, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _button_night_cb(bool active, void *user_data) {
+    _button_apply_night_mode((widget_t *)user_data, active);
 }
 
 /* ── Factory ──────────────────────────────────────────────────────────────── */
@@ -483,6 +566,7 @@ widget_t *widget_button_create_instance(uint8_t slot) {
     w->from_json        = _button_from_json;
     w->destroy          = _button_destroy;
     w->apply_overrides  = _button_apply_overrides;
+    w->apply_night_mode = _button_apply_night_mode;
 
     ESP_LOGI(TAG, "Created button instance slot=%u", slot);
     return w;

@@ -3,6 +3,7 @@
  */
 #include "widget_shift_light.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -188,6 +189,10 @@ static void _flash_timer_cb(lv_timer_t *timer) {
     }
 }
 
+/* Forward declarations — night mode hooks used in _shl_create / _shl_destroy */
+static void _shl_apply_night_mode(widget_t *w, bool active);
+static void _shl_night_cb(bool active, void *user_data);
+
 static void _shl_create(widget_t *w, lv_obj_t *parent) {
     shift_light_data_t *d = (shift_light_data_t *)w->type_data;
     if (!d) return;
@@ -222,6 +227,15 @@ static void _shl_create(widget_t *w, lv_obj_t *parent) {
     d->flash_timer = lv_timer_create(_flash_timer_cb, d->flash_speed, w);
     if (d->flash_timer)
         lv_timer_set_repeat_count(d->flash_timer, -1);
+
+    /* Subscribe to night-mode changes if any night override is set, and apply
+     * current state immediately so the widget renders correctly even if it
+     * was created while night-mode is already active. */
+    if (d->night.has_color_low  || d->night.has_color_mid ||
+        d->night.has_color_high || d->night.has_color_off) {
+        night_mode_subscribe(_shl_night_cb, w);
+        _shl_apply_night_mode(w, night_mode_is_active());
+    }
 }
 
 static void _shl_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -277,6 +291,17 @@ static void _shl_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "threshold_mid", (double)d->threshold_mid);
     if (d->threshold_high != SHL_DEFAULT_THRESH_HIGH)
         cJSON_AddNumberToObject(cfg, "threshold_high", (double)d->threshold_high);
+
+    /* Night-mode overrides — emit only fields that have an override set */
+    {
+        cJSON *n = cJSON_CreateObject();
+        NIGHT_SERIALIZE_COLOR(n, d->night, color_low);
+        NIGHT_SERIALIZE_COLOR(n, d->night, color_mid);
+        NIGHT_SERIALIZE_COLOR(n, d->night, color_high);
+        NIGHT_SERIALIZE_COLOR(n, d->night, color_off);
+        if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+        else cJSON_Delete(n);
+    }
 }
 
 static void _shl_from_json(widget_t *w, cJSON *in) {
@@ -347,6 +372,15 @@ static void _shl_from_json(widget_t *w, cJSON *in) {
 
     if (d->signal_name[0])
         d->signal_index = signal_find_by_name(d->signal_name);
+
+    /* Night-mode overrides */
+    cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+    if (cJSON_IsObject(night)) {
+        NIGHT_PARSE_COLOR(night, d->night, color_low);
+        NIGHT_PARSE_COLOR(night, d->night, color_mid);
+        NIGHT_PARSE_COLOR(night, d->night, color_high);
+        NIGHT_PARSE_COLOR(night, d->night, color_off);
+    }
 }
 
 static void _shl_destroy(widget_t *w) {
@@ -363,6 +397,7 @@ static void _shl_destroy(widget_t *w) {
         }
     }
 
+    night_mode_unsubscribe(_shl_night_cb, w);
     widget_rules_free(w);
 
     if (w->root && lv_obj_is_valid(w->root))
@@ -419,6 +454,51 @@ static void _shl_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
     }
 }
 
+/* ── Night-mode apply ───────────────────────────────────────────────────── */
+/* Re-apply LED colors based on current night-mode state. Picks day-or-night
+ * value for each overridable color and re-renders the LED strip respecting
+ * the current active_count and fill_mode. */
+static void _shl_apply_night_mode(widget_t *w, bool active_state) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    shift_light_data_t *d = (shift_light_data_t *)w->type_data;
+    if (!d) return;
+
+    lv_color_t c_low  = NIGHT_PICK_COLOR(active_state, d->night, color_low,  d->color_low);
+    lv_color_t c_mid  = NIGHT_PICK_COLOR(active_state, d->night, color_mid,  d->color_mid);
+    lv_color_t c_high = NIGHT_PICK_COLOR(active_state, d->night, color_high, d->color_high);
+    lv_color_t c_off  = NIGHT_PICK_COLOR(active_state, d->night, color_off,  d->color_off);
+
+    /* Build fill step map matching _shl_apply_overrides / _shift_light_on_signal */
+    bool led_active[16] = {false};
+    int  step_of[16]    = {0};
+    for (int f = 0; f < d->led_count; f++) {
+        int phys = _fill_order(d, f);
+        step_of[phys] = f;
+        if (f < d->active_count)
+            led_active[phys] = true;
+    }
+
+    for (int i = 0; i < d->led_count; i++) {
+        if (!d->leds[i]) continue;
+        if (led_active[i]) {
+            int basis = (d->fill_mode == 1) ? step_of[i] : i;
+            float pos = (d->led_count > 1) ? (float)basis / (float)(d->led_count - 1) : 0;
+            lv_color_t color;
+            if (pos < d->threshold_mid) color = c_low;
+            else if (pos < d->threshold_high) color = c_mid;
+            else color = c_high;
+            lv_obj_set_style_bg_color(d->leds[i], color, LV_PART_MAIN);
+        } else {
+            lv_obj_set_style_bg_color(d->leds[i], c_off, LV_PART_MAIN);
+        }
+    }
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _shl_night_cb(bool active, void *user_data) {
+    _shl_apply_night_mode((widget_t *)user_data, active);
+}
+
 widget_t *widget_shift_light_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
     if (!w) return NULL;
@@ -466,6 +546,7 @@ widget_t *widget_shift_light_create_instance(uint8_t slot) {
     w->from_json       = _shl_from_json;
     w->destroy         = _shl_destroy;
     w->apply_overrides = _shl_apply_overrides;
+    w->apply_night_mode = _shl_apply_night_mode;
 
     return w;
 }

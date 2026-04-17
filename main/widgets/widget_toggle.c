@@ -6,6 +6,7 @@
 #include "widget_toggle.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
 #include "signal.h"
@@ -52,6 +53,8 @@ static void _toggle_open_settings(widget_t *w);
 static void _toggle_to_json(widget_t *w, cJSON *out);
 static void _toggle_from_json(widget_t *w, cJSON *in);
 static void _toggle_destroy(widget_t *w);
+static void _toggle_apply_night_mode(widget_t *w, bool active);
+static void _toggle_night_cb(bool active, void *user_data);
 
 /* ── Helper: apply image styling based on current state ─────────────────── */
 static void _toggle_apply_image_state(toggle_data_t *d) {
@@ -280,6 +283,15 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
     if (d->signal_index >= 0) {
         signal_subscribe(d->signal_index, _toggle_on_signal, w);
     }
+
+    /* Subscribe to night-mode changes if any night override is set, and apply
+     * current state immediately so the widget renders correctly even if it
+     * was created while night-mode is already active. */
+    if (d->night.has_active_color || d->night.has_inactive_color ||
+        d->night.has_label_color  || d->night.has_image_name) {
+        night_mode_subscribe(_toggle_night_cb, w);
+        _toggle_apply_night_mode(w, night_mode_is_active());
+    }
 }
 
 /* ── Resize ─────────────────────────────────────────────────────────────── */
@@ -359,6 +371,17 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
 
     if (d->inactive_opa != DEF_INACTIVE_OPA)
         cJSON_AddNumberToObject(cfg, "inactive_opa", d->inactive_opa);
+
+    /* Night-mode overrides — emit only fields that have an override set */
+    {
+        cJSON *n = cJSON_CreateObject();
+        NIGHT_SERIALIZE_COLOR(n, d->night, active_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, inactive_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, label_color);
+        NIGHT_SERIALIZE_IMAGE(n, d->night, image_name);
+        if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+        else cJSON_Delete(n);
+    }
 }
 
 /* ── from_json ──────────────────────────────────────────────────────────── */
@@ -443,6 +466,15 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
     if (cJSON_IsNumber(item)) d->inactive_opa = (uint8_t)item->valueint;
+
+    /* Night-mode overrides */
+    cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+    if (cJSON_IsObject(night)) {
+        NIGHT_PARSE_COLOR(night, d->night, active_color);
+        NIGHT_PARSE_COLOR(night, d->night, inactive_color);
+        NIGHT_PARSE_COLOR(night, d->night, label_color);
+        NIGHT_PARSE_IMAGE(night, d->night, image_name);
+    }
 }
 
 /* ── Destroy ────────────────────────────────────────────────────────────── */
@@ -454,6 +486,7 @@ static void _toggle_destroy(widget_t *w) {
         if (d->signal_index >= 0)
             signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
     }
+    night_mode_unsubscribe(_toggle_night_cb, w);
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
@@ -506,6 +539,51 @@ static void _toggle_apply_overrides(widget_t *w, const rule_override_t *ov, uint
     }
 }
 
+/* ── Night-mode apply ───────────────────────────────────────────────────── */
+/* Re-apply colors and (where feasible) the image source based on current
+ * night-mode state. Picks day-or-night for each overridable field and writes
+ * to the LVGL objects. */
+static void _toggle_apply_night_mode(widget_t *w, bool active) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d) return;
+
+    lv_color_t active_c   = NIGHT_PICK_COLOR(active, d->night, active_color,   d->active_color);
+    lv_color_t inactive_c = NIGHT_PICK_COLOR(active, d->night, inactive_color, d->inactive_color);
+    lv_color_t lbl_c      = NIGHT_PICK_COLOR(active, d->night, label_color,    d->label_color);
+
+    if (d->sw_obj && lv_obj_is_valid(d->sw_obj)) {
+        lv_obj_set_style_bg_color(d->sw_obj, inactive_c, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_color(d->sw_obj, active_c, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    }
+    if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
+        /* Swap image source if a night override image is set */
+        const char *img_name = NIGHT_PICK_IMAGE(active, d->night, image_name, d->image_name);
+        if (img_name && img_name[0] != '\0') {
+            lv_img_dsc_t *new_dsc = rdm_image_load(img_name);
+            if (new_dsc) {
+                lv_img_set_src(d->img_obj, new_dsc);
+                rdm_image_free((lv_img_dsc_t *)d->img_dsc);
+                d->img_dsc = new_dsc;
+            }
+        }
+        /* Re-apply tint with night-picked colors */
+        lv_color_t tint = d->current_state ? active_c : inactive_c;
+        lv_obj_set_style_img_recolor(d->img_obj, tint,
+                                     LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_img_recolor_opa(d->img_obj, LV_OPA_COVER,
+                                         LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+        lv_obj_set_style_text_color(d->label_obj, lbl_c, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _toggle_night_cb(bool active, void *user_data) {
+    _toggle_apply_night_mode((widget_t *)user_data, active);
+}
+
 /* ── Factory ────────────────────────────────────────────────────────────── */
 widget_t *widget_toggle_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
@@ -548,6 +626,7 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     w->from_json        = _toggle_from_json;
     w->destroy          = _toggle_destroy;
     w->apply_overrides  = _toggle_apply_overrides;
+    w->apply_night_mode = _toggle_apply_night_mode;
 
     return w;
 }

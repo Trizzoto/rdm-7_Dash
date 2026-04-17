@@ -2,10 +2,20 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for warning ──────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(active_color)
+	NIGHT_FIELD_COLOR(inactive_color)
+	NIGHT_FIELD_COLOR(border_color)
+	NIGHT_FIELD_COLOR(label_color)
+	NIGHT_FIELD_IMAGE(image_name, 64)
+} warning_night_overrides_t;
 
 /* ── Per-instance state for warning widgets ────────────────────────────── */
 typedef struct {
@@ -30,6 +40,8 @@ typedef struct {
 	/* Runtime LVGL pointers (not serialized) */
 	lv_img_dsc_t *img_dsc;          /* loaded RDMIMG descriptor, or NULL */
 	lv_obj_t     *img_obj;          /* LVGL image object, or NULL */
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	warning_night_overrides_t night;
 } warning_data_t;
 
 /* --- Objects exposed externally ------------------------------------------*/

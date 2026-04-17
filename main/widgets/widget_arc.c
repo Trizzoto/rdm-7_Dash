@@ -14,6 +14,7 @@
 #include "widget_arc.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -232,6 +233,10 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
 
 /* ── Vtable: create ────────────────────────────────────────────────────── */
 
+/* Forward declarations — night mode hooks used in _arc_create / _arc_destroy */
+static void _arc_apply_night_mode(widget_t *w, bool active);
+static void _arc_night_cb(bool active, void *user_data);
+
 static void _arc_create(widget_t *w, lv_obj_t *parent) {
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (!d) return;
@@ -250,6 +255,15 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
 
     /* Subscribe rules (safe no-op if no rules defined) */
     widget_rules_subscribe(w);
+
+    /* Subscribe to night-mode changes if any night override is set, and apply
+     * current state immediately so the widget renders correctly even if it
+     * was created while night-mode is already active. */
+    if (d->night.has_arc_color || d->night.has_bg_arc_color ||
+        d->night.has_arc_image || d->night.has_arc_image_full) {
+        night_mode_subscribe(_arc_night_cb, w);
+        _arc_apply_night_mode(w, night_mode_is_active());
+    }
 }
 
 static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -301,6 +315,17 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
 
     /* Rules */
     widget_rules_to_json(w, cfg);
+
+    /* Night-mode overrides — emit only fields that have an override set */
+    {
+        cJSON *n = cJSON_CreateObject();
+        NIGHT_SERIALIZE_COLOR(n, d->night, arc_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, bg_arc_color);
+        NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image);
+        NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image_full);
+        if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+        else cJSON_Delete(n);
+    }
 }
 
 static void _arc_from_json(widget_t *w, cJSON *in) {
@@ -361,6 +386,15 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 
     /* Rules */
     widget_rules_from_json(w, cfg);
+
+    /* Night-mode overrides */
+    cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+    if (cJSON_IsObject(night)) {
+        NIGHT_PARSE_COLOR(night, d->night, arc_color);
+        NIGHT_PARSE_COLOR(night, d->night, bg_arc_color);
+        NIGHT_PARSE_IMAGE(night, d->night, arc_image);
+        NIGHT_PARSE_IMAGE(night, d->night, arc_image_full);
+    }
 }
 
 static void _arc_destroy(widget_t *w) {
@@ -370,6 +404,8 @@ static void _arc_destroy(widget_t *w) {
     /* Unsubscribe signal before deleting LVGL objects */
     if (d && d->signal_index >= 0)
         signal_unsubscribe(d->signal_index, _arc_on_signal, w);
+
+    night_mode_unsubscribe(_arc_night_cb, w);
 
     widget_rules_free(w);
 
@@ -419,6 +455,57 @@ static void _arc_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
     lv_obj_set_style_arc_width(d->arc_obj, bg_w, LV_PART_MAIN);
 }
 
+/* ── Night-mode apply ───────────────────────────────────────────────────── */
+/* Re-apply arc colors (and image swaps, where feasible) based on current
+ * night-mode state. Image swap behaviour:
+ *   - In standard arc mode (no images): only arc_color and bg_arc_color apply.
+ *   - In image mode: we attempt to reload the track/fill image descriptors
+ *     from the night override names; LVGL source pointers are updated. Colors
+ *     are not meaningful in image mode (the arc LVGL object is not used). */
+static void _arc_apply_night_mode(widget_t *w, bool active) {
+    if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d) return;
+
+    /* Colors — apply to standard arc mode */
+    if (d->arc_obj && lv_obj_is_valid(d->arc_obj)) {
+        lv_color_t fg = NIGHT_PICK_COLOR(active, d->night, arc_color,    d->arc_color);
+        lv_color_t bg = NIGHT_PICK_COLOR(active, d->night, bg_arc_color, d->bg_arc_color);
+        lv_obj_set_style_arc_color(d->arc_obj, fg, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(d->arc_obj, bg, LV_PART_MAIN);
+    }
+
+    /* Image swap — only meaningful in image mode. Reload the descriptor
+     * using the night-picked image name and swap the LVGL source. */
+    if (d->img_bg_obj && lv_obj_is_valid(d->img_bg_obj)) {
+        const char *bg_name = NIGHT_PICK_IMAGE(active, d->night, arc_image, d->arc_image);
+        if (bg_name && bg_name[0] != '\0') {
+            lv_img_dsc_t *new_dsc = rdm_image_load(bg_name);
+            if (new_dsc) {
+                lv_img_set_src(d->img_bg_obj, new_dsc);
+                rdm_image_free(d->arc_img_dsc);
+                d->arc_img_dsc = new_dsc;
+            }
+        }
+    }
+    if (d->img_full_obj && lv_obj_is_valid(d->img_full_obj)) {
+        const char *full_name = NIGHT_PICK_IMAGE(active, d->night, arc_image_full, d->arc_image_full);
+        if (full_name && full_name[0] != '\0') {
+            lv_img_dsc_t *new_dsc = rdm_image_load(full_name);
+            if (new_dsc) {
+                lv_img_set_src(d->img_full_obj, new_dsc);
+                rdm_image_free(d->arc_img_full_dsc);
+                d->arc_img_full_dsc = new_dsc;
+            }
+        }
+    }
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _arc_night_cb(bool active, void *user_data) {
+    _arc_apply_night_mode((widget_t *)user_data, active);
+}
+
 widget_t *widget_arc_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
     if (!w) return NULL;
@@ -457,6 +544,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     w->from_json     = _arc_from_json;
     w->destroy       = _arc_destroy;
     w->apply_overrides = _arc_apply_overrides;
+    w->apply_night_mode = _arc_apply_night_mode;
 
     ESP_LOGI(TAG, "Created arc widget instance (slot %u)", slot);
     return w;

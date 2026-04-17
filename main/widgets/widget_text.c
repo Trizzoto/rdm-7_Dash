@@ -8,6 +8,7 @@
 #include "widget_text.h"
 #include "widget_rules.h"
 #include "widget_types.h"
+#include "system/night_mode.h"
 #include "ui/theme.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -19,6 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 static const char *TAG = "widget_text";
+
+/* Forward declarations — used by _text_create / _text_destroy. */
+static void _text_apply_night_mode(widget_t *w, bool active);
+static void _text_night_cb(bool active, void *user_data);
 
 #define TEXT_DEFAULT_W 100
 #define TEXT_DEFAULT_H 24
@@ -79,6 +84,14 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (td && td->signal_index >= 0)
 		signal_subscribe(td->signal_index, _text_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set, and apply
+	 * current state immediately so the widget renders correctly even if it
+	 * was created while night-mode is already active. */
+	if (td && td->night.has_text_color) {
+		night_mode_subscribe(_text_night_cb, w);
+		_text_apply_night_mode(w, night_mode_is_active());
+	}
 }
 
 static void _text_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -110,6 +123,11 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "text_color", td->text_color.full);
 		if (td->rotation != 0)
 			cJSON_AddNumberToObject(cfg, "rotation", td->rotation);
+		/* Night-mode overrides — emit only fields that have an override set */
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, td->night, text_color);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
 	}
 }
 
@@ -147,6 +165,12 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "rotation");
 	if (cJSON_IsNumber(item)) td->rotation = (int16_t)item->valueint;
 
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, td->night, text_color);
+	}
+
 	/* Resolve signal name → index */
 	if (td->signal_name[0] != '\0')
 		td->signal_index = signal_find_by_name(td->signal_name);
@@ -157,6 +181,7 @@ static void _text_destroy(widget_t *w) {
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (td && td->signal_index >= 0)
 		signal_unsubscribe(td->signal_index, _text_on_signal, w);
+	night_mode_unsubscribe(_text_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
@@ -192,6 +217,21 @@ static void _text_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_
 	lv_obj_set_style_text_font(w->root, f ? f : THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
+/* Re-apply colors based on current night-mode state. */
+static void _text_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (!td) return;
+
+	lv_color_t c = NIGHT_PICK_COLOR(active, td->night, text_color, td->text_color);
+	lv_obj_set_style_text_color(w->root, c, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _text_night_cb(bool active, void *user_data) {
+	_text_apply_night_mode((widget_t *)user_data, active);
+}
+
 /* ── Factory ─────────────────────────────────────────────────────────────── */
 
 widget_t *widget_text_create_instance(uint8_t value_idx) {
@@ -223,6 +263,7 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	w->from_json = _text_from_json;
 	w->destroy = _text_destroy;
 	w->apply_overrides = _text_apply_overrides;
+	w->apply_night_mode = _text_apply_night_mode;
 
 	return w;
 }

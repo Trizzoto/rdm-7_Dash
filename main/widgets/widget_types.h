@@ -128,6 +128,13 @@ typedef void (*widget_destroy_fn)      (widget_t *w);
 /** Apply rule overrides to the widget's live LVGL objects. */
 typedef void (*widget_apply_overrides_fn)(widget_t *w, const rule_override_t *overrides, uint8_t count);
 
+/** Apply (or revert) night-mode overrides to the widget's live LVGL objects.
+ *  Called when night mode toggles. When `active` is true, fields with night
+ *  overrides set are switched to their night values; when false, the
+ *  widget's day values are re-applied. NULL if widget has no appearance
+ *  worth night-overriding (or simply doesn't support it). */
+typedef void (*widget_apply_night_mode_fn)(widget_t *w, bool active);
+
 /* ─── Core widget struct ─────────────────────────────────────────────────── */
 
 struct widget_t {
@@ -147,6 +154,7 @@ struct widget_t {
     widget_from_json_fn        from_json;
     widget_destroy_fn          destroy;
     widget_apply_overrides_fn  apply_overrides;  /**< NULL if widget ignores rules. */
+    widget_apply_night_mode_fn apply_night_mode; /**< NULL if widget has no night-mode overrides. */
 
     /* Conditional rules (heap-allocated, NULL if no rules) */
     widget_rule_t *rules;

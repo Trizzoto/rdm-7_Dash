@@ -5,6 +5,7 @@
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
+#include "system/night_mode.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -643,7 +644,10 @@ void update_indicator_ui_immediate(uint8_t indicator_idx) {
 	lv_obj_t *indicator_obj =
 		(indicator_idx == 0) ? ui_Indicator_Left : ui_Indicator_Right;
 	if (indicator_obj && lv_obj_is_valid(indicator_obj)) {
-		lv_color_t color = (id && current_state) ? id->color_on : (id ? id->color_off : lv_color_hex(0x333333));
+		bool night_active = night_mode_is_active();
+		lv_color_t color = (id && current_state)
+			? (id ? NIGHT_PICK_COLOR(night_active, id->night, color_on,  id->color_on)  : lv_color_hex(0xFFBF00))
+			: (id ? NIGHT_PICK_COLOR(night_active, id->night, color_off, id->color_off) : lv_color_hex(0x333333));
 		uint8_t opa = (id && current_state) ? id->opa_on : (id ? id->opa_off : 0);
 		lv_obj_set_style_img_recolor(indicator_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_img_recolor_opa(indicator_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -860,6 +864,10 @@ void widget_indicator_create(lv_obj_t *parent) {
 /* ── Phase 2: widget_t factory
  * ───────────────────────────────────────────── */
 
+/* Forward declarations — used by _indicator_create / _indicator_destroy. */
+static void _indicator_apply_night_mode(widget_t *w, bool active);
+static void _indicator_night_cb(bool active, void *user_data);
+
 static void _indicator_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
@@ -882,6 +890,14 @@ static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (id && id->signal_index >= 0)
 		signal_subscribe(id->signal_index, _indicator_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set, and apply
+	 * current state immediately so the widget renders correctly even if it
+	 * was created while night-mode is already active. */
+	if (id && (id->night.has_color_on || id->night.has_color_off)) {
+		night_mode_subscribe(_indicator_night_cb, w);
+		_indicator_apply_night_mode(w, night_mode_is_active());
+	}
 }
 static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
@@ -913,6 +929,12 @@ static void _indicator_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "opa_on", id->opa_on);
 		cJSON_AddNumberToObject(cfg, "color_off", (int)id->color_off.full);
 		cJSON_AddNumberToObject(cfg, "opa_off", id->opa_off);
+		/* Night-mode overrides — emit only fields that have an override set */
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, id->night, color_on);
+		NIGHT_SERIALIZE_COLOR(n, id->night, color_off);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
 	}
 }
 static void _indicator_from_json(widget_t *w, cJSON *in) {
@@ -947,6 +969,13 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opa_off");
 	if (cJSON_IsNumber(item)) id->opa_off = (uint8_t)item->valueint;
 
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, id->night, color_on);
+		NIGHT_PARSE_COLOR(night, id->night, color_off);
+	}
+
 	/* Resolve signal name → index */
 	if (id->signal_name[0] != '\0')
 		id->signal_index = signal_find_by_name(id->signal_name);
@@ -955,12 +984,40 @@ static void _indicator_destroy(widget_t *w) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	if (id && id->signal_index >= 0)
 		signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+	night_mode_unsubscribe(_indicator_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
 	free(w->type_data);
 	free(w);
+}
+
+/* Re-apply colors based on current night-mode state. The indicator image is
+ * a separate global LVGL object (ui_Indicator_Left / ui_Indicator_Right) and
+ * uses img_recolor rather than text/bg color. We only swap the recolor — opa
+ * and current on/off state come from the runtime current_state flag and are
+ * re-applied via update_indicator_ui_immediate(). */
+static void _indicator_apply_night_mode(widget_t *w, bool active) {
+	if (!w) return;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (!id) return;
+	uint8_t slot = id->slot;
+	if (slot >= 2) return;
+
+	lv_obj_t *img_obj = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+	if (!img_obj || !lv_obj_is_valid(img_obj)) return;
+
+	lv_color_t color = id->current_state
+		? NIGHT_PICK_COLOR(active, id->night, color_on,  id->color_on)
+		: NIGHT_PICK_COLOR(active, id->night, color_off, id->color_off);
+	lv_obj_set_style_img_recolor(img_obj, color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_img_recolor_opa(img_obj, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _indicator_night_cb(bool active, void *user_data) {
+	_indicator_apply_night_mode((widget_t *)user_data, active);
 }
 
 /* Default positions (relative to LV_ALIGN_CENTER): left x=-95, right x=+95,
@@ -1003,6 +1060,7 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	w->to_json = _indicator_to_json;
 	w->from_json = _indicator_from_json;
 	w->destroy = _indicator_destroy;
+	w->apply_night_mode = _indicator_apply_night_mode;
 
 	return w;
 }

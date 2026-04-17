@@ -2,10 +2,24 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for bar ──────────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(bar_low_color)
+	NIGHT_FIELD_COLOR(bar_high_color)
+	NIGHT_FIELD_COLOR(bar_in_range_color)
+	NIGHT_FIELD_COLOR(bar_bg_color)
+	NIGHT_FIELD_COLOR(bar_border_color)
+	NIGHT_FIELD_COLOR(label_color)
+	NIGHT_FIELD_COLOR(value_color)
+	NIGHT_FIELD_IMAGE(bar_image, 64)
+	NIGHT_FIELD_IMAGE(bar_image_full, 64)
+} bar_night_overrides_t;
 
 /* ── Per-instance state for bar widgets ────────────────────────────────── */
 typedef struct {
@@ -45,6 +59,12 @@ typedef struct {
 	lv_obj_t *bar_obj;
 	lv_obj_t *label_obj;
 	lv_obj_t *value_obj;
+	/* Runtime tracking for night-mode image swap — name currently loaded
+	 * into bar_img_dsc / bar_img_full_dsc, so we only reload on a change. */
+	char     current_bar_image[64];
+	char     current_bar_image_full[64];
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	bar_night_overrides_t night;
 } bar_data_t;
 
 /** Create BAR1 and BAR2 horizontal bar widgets and their labels on parent. */

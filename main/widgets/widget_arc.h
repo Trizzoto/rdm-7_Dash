@@ -1,11 +1,20 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for arc ───────────────────────────────────────── */
+typedef struct {
+    NIGHT_FIELD_COLOR(arc_color)
+    NIGHT_FIELD_COLOR(bg_arc_color)
+    NIGHT_FIELD_IMAGE(arc_image, 64)
+    NIGHT_FIELD_IMAGE(arc_image_full, 64)
+} arc_night_overrides_t;
 
 typedef struct {
     int16_t    start_angle;     /* default: 135 */
@@ -31,6 +40,9 @@ typedef struct {
     lv_obj_t     *img_bg_obj;         /* runtime: background image object */
     lv_obj_t     *img_full_obj;       /* runtime: full image object */
     lv_obj_t     *img_clip_obj;       /* runtime: clipping container */
+
+    /* Night-mode appearance overrides (only applied when night_mode active) */
+    arc_night_overrides_t night;
 } arc_data_t;
 
 widget_t *widget_arc_create_instance(uint8_t slot);

@@ -4,6 +4,7 @@
 #include "widgets/signal.h"
 #include "widgets/signal_internal.h"
 #include "widgets/widget_registry.h"
+#include "system/night_mode.h"
 
 /* Existing widget create functions — used as fallback */
 #include "widgets/widget_bar.h"
@@ -97,6 +98,44 @@ static void _register_widget_long_press(void) {
 	}
 }
 
+/* ── Layout-level night-mode CAN trigger ────────────────────────────────────
+ * If the loaded layout has a `night_mode.signal_name` binding, we subscribe
+ * to that signal here. The callback compares live value vs `active_when`
+ * threshold and forwards to night_mode_set_active(). Subscription survives
+ * for the life of the layout — torn down by signal_registry_reset on next
+ * layout load, plus the night_mode subscriber list is cleared by dashboard_init. */
+
+static char    s_night_trig_name[33] = "";
+static int16_t s_night_trig_idx      = -1;
+static float   s_night_trig_threshold = 1.0f;
+
+static void _night_trigger_signal_cb(float value, bool is_stale, void *user_data) {
+	(void)user_data;
+	if (is_stale) return;
+	night_mode_set_active(value >= s_night_trig_threshold);
+}
+
+static void _setup_night_trigger(void) {
+	s_night_trig_name[0] = '\0';
+	s_night_trig_idx     = -1;
+	s_night_trig_threshold = 1.0f;
+
+	if (!layout_manager_get_night_trigger(s_night_trig_name,
+	                                      sizeof(s_night_trig_name),
+	                                      &s_night_trig_threshold)) {
+		return;
+	}
+	s_night_trig_idx = signal_find_by_name(s_night_trig_name);
+	if (s_night_trig_idx < 0) {
+		ESP_LOGW("dashboard", "night-mode trigger signal '%s' not found in registry — skipped",
+		         s_night_trig_name);
+		return;
+	}
+	signal_subscribe((uint16_t)s_night_trig_idx, _night_trigger_signal_cb, NULL);
+	ESP_LOGI("dashboard", "Night-mode trigger subscribed to '%s' (active_when >= %.3f)",
+	         s_night_trig_name, (double)s_night_trig_threshold);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  *  dashboard_init
  * ════════════════════════════════════════════════════════════════════════════
@@ -111,6 +150,9 @@ void dashboard_init(lv_obj_t *parent) {
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
+	/* Drop any night-mode subscribers from the previous layout — the widgets
+	 * they pointed at have been destroyed; new layout will subscribe fresh. */
+	night_mode_clear_subscribers();
 
 	/* Create (or keep) signal timeout timer — checks every 500 ms */
 	if (!s_signal_timeout_timer) {
@@ -162,6 +204,12 @@ loaded:
 
 	/* Subscribe brightness dimmer to its configured signal */
 	dimmer_subscribe();
+
+	/* Set up the layout-level night-mode CAN trigger (if any). Must run
+	 * AFTER signals are loaded and widget night_mode subscriptions are in
+	 * place — that way the first trigger callback flips the state and
+	 * re-renders all widgets correctly. */
+	_setup_night_trigger();
 }
 
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
@@ -174,6 +222,7 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
+	night_mode_clear_subscribers();
 
 	/* Ensure layout manager is init (FS mounted etc) before applying */
 	layout_manager_init();
@@ -187,6 +236,8 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
 								 &s_widget_count);
 		_register_widget_long_press();
+		/* Re-bind layout-level night-mode CAN trigger for the new layout. */
+		_setup_night_trigger();
 	}
 }
 

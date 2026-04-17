@@ -15,6 +15,7 @@
 #include "ui_helpers.h"
 #include "screens/ui_Screen3.h"
 #include "screens/first_run_wizard.h"
+#include "system/night_mode.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -78,6 +79,9 @@ static void _night_btn_cb(lv_event_t *e) {
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     }
+    /* Notify the night-mode subsystem so all subscribed widgets apply
+     * their per-layout color/image overrides. */
+    night_mode_set_active(cfg.manual_active);
     if (s_night_btn_label) {
         lv_label_set_text(s_night_btn_label, cfg.manual_active ? "Night Mode: ON" : "Night Mode: OFF");
     }

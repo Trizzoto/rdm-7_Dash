@@ -36,6 +36,7 @@
 #include "sdkconfig.h"
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
+#include "system/night_mode.h"
 #include "ui/screens/ui_wifi.h"
 
 // #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
@@ -442,6 +443,10 @@ void app_main(void) {
 				 "dashboard may use fallback",
 				 esp_err_to_name(layout_err));
 	}
+
+	/* Night-mode subsystem: must init before any code can subscribe (i.e.
+	 * before dashboard_init). Idempotent — safe to call again. */
+	night_mode_init();
 
 	// EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
 	// comes later

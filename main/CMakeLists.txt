@@ -21,6 +21,7 @@ idf_component_register(
         "system/rdm_settings.c"
         "system/screen_config.c"
         "system/display_capture.c"
+        "system/night_mode.c"
         "ui/ui.c"
         "ui/dashboard.c"
         "ui/ui_styles.c"

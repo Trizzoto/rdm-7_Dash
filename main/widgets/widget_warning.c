@@ -3,6 +3,7 @@
 #include "widget_rules.h"
 #include "screen_config.h"
 #include "widget_panel.h"
+#include "system/night_mode.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
@@ -1013,6 +1014,10 @@ static void _warning_on_signal(float value, bool is_stale, void *user_data) {
 	update_warning_ui_immediate(slot);
 }
 
+/* Forward declarations — used by _warning_create / _warning_destroy below. */
+static void _warning_apply_night_mode(widget_t *w, bool active);
+static void _warning_night_cb(bool active, void *user_data);
+
 static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
@@ -1024,6 +1029,14 @@ static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (wd && wd->signal_index >= 0)
 		signal_subscribe(wd->signal_index, _warning_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set. */
+	if (wd && (wd->night.has_active_color || wd->night.has_inactive_color ||
+	           wd->night.has_border_color || wd->night.has_label_color ||
+	           wd->night.has_image_name)) {
+		night_mode_subscribe(_warning_night_cb, w);
+		_warning_apply_night_mode(w, night_mode_is_active());
+	}
 }
 static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (w->root && lv_obj_is_valid(w->root))
@@ -1072,6 +1085,17 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
 		if (wd->inactive_opa != 80)
 			cJSON_AddNumberToObject(cfg, "inactive_opa", wd->inactive_opa);
+		/* Night-mode overrides — emit only fields that have an override set */
+		{
+			cJSON *n = cJSON_CreateObject();
+			NIGHT_SERIALIZE_COLOR(n, wd->night, active_color);
+			NIGHT_SERIALIZE_COLOR(n, wd->night, inactive_color);
+			NIGHT_SERIALIZE_COLOR(n, wd->night, border_color);
+			NIGHT_SERIALIZE_COLOR(n, wd->night, label_color);
+			NIGHT_SERIALIZE_IMAGE(n, wd->night, image_name);
+			if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+			else cJSON_Delete(n);
+		}
 	}
 }
 static void _warning_from_json(widget_t *w, cJSON *in) {
@@ -1122,6 +1146,16 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
 	if (cJSON_IsNumber(item)) wd->inactive_opa = (uint8_t)item->valueint;
 
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, wd->night, active_color);
+		NIGHT_PARSE_COLOR(night, wd->night, inactive_color);
+		NIGHT_PARSE_COLOR(night, wd->night, border_color);
+		NIGHT_PARSE_COLOR(night, wd->night, label_color);
+		NIGHT_PARSE_IMAGE(night, wd->night, image_name);
+	}
+
 	/* Resolve signal name → index */
 	if (wd->signal_name[0] != '\0')
 		wd->signal_index = signal_find_by_name(wd->signal_name);
@@ -1131,6 +1165,7 @@ static void _warning_destroy(widget_t *w) {
 	uint8_t slot = wd ? wd->slot : 0;
 	if (wd && wd->signal_index >= 0)
 		signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
+	night_mode_unsubscribe(_warning_night_cb, w);
 	widget_rules_free(w);
 	/* Label is a sibling of root (child of parent), delete explicitly */
 	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot]))
@@ -1216,6 +1251,58 @@ static void _warning_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 	}
 }
 
+/* Re-apply colors/image based on current night-mode state. Called by
+ * night_mode subscribers. Image swap is not supported at runtime — swapping
+ * the image requires re-creating the LVGL image object, so we only apply
+ * colors here. TODO: image swap via re-create if needed. */
+static void _warning_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	uint8_t slot = wd->slot;
+
+	lv_color_t active_c   = NIGHT_PICK_COLOR(active, wd->night, active_color,   wd->active_color);
+	lv_color_t inactive_c = NIGHT_PICK_COLOR(active, wd->night, inactive_color, wd->inactive_color);
+	lv_color_t bdr_c      = NIGHT_PICK_COLOR(active, wd->night, border_color,  wd->border_color);
+	lv_color_t lbl_c      = NIGHT_PICK_COLOR(active, wd->night, label_color,   wd->label_color);
+
+	/* Which color is currently shown depends on state */
+	lv_color_t cur = wd->current_state ? active_c : inactive_c;
+	uint8_t cur_opa = wd->current_state ? wd->active_opa : wd->inactive_opa;
+
+	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot])) {
+		if (wd->img_obj != NULL) {
+			/* Image mode */
+			lv_obj_set_style_img_recolor(warning_circles[slot], cur,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(warning_circles[slot], LV_OPA_COVER,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_opa(warning_circles[slot], cur_opa,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		} else {
+			/* Circle mode */
+			lv_obj_set_style_bg_color(warning_circles[slot], cur,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_opa(warning_circles[slot], cur_opa,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			if (wd->border_width > 0) {
+				lv_obj_set_style_border_color(warning_circles[slot], bdr_c,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
+		}
+	}
+
+	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot])) {
+		lv_obj_set_style_text_color(warning_labels[slot], lbl_c,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _warning_night_cb(bool active, void *user_data) {
+	_warning_apply_night_mode((widget_t *)user_data, active);
+}
+
 widget_t *widget_warning_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1261,6 +1348,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	w->from_json = _warning_from_json;
 	w->destroy = _warning_destroy;
 	w->apply_overrides = _warning_apply_overrides;
+	w->apply_night_mode = _warning_apply_night_mode;
 
 	return w;
 }

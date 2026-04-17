@@ -1,12 +1,18 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for text ─────────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(text_color)
+} text_night_overrides_t;
 
 /* ── Per-instance state for text widget ────────────────────────────────── */
 typedef struct {
@@ -18,6 +24,8 @@ typedef struct {
 	int16_t    signal_index;
 	lv_color_t text_color;
 	int16_t    rotation;       /* Rotation in degrees (0-359, default 0) */
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	text_night_overrides_t night;
 } text_data_t;
 
 /**

@@ -1,6 +1,7 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -16,6 +17,12 @@ typedef struct __attribute__((packed)) {
 	uint8_t  reserved[3];
 } rdm_image_header_t;
 
+/* ── Night-mode overrides for image ────────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(recolor)
+	NIGHT_FIELD_IMAGE(image_name, 32)
+} image_night_overrides_t;
+
 /* ── Per-instance state for image widget ──────────────────────────────── */
 typedef struct {
 	char          image_name[32];
@@ -25,6 +32,8 @@ typedef struct {
 	uint16_t      image_scale;    /* LVGL zoom: 256 = 100%, 128 = 50%, 512 = 200% */
 	lv_img_dsc_t *img_dsc;        /* runtime: PSRAM-loaded image descriptor */
 	lv_obj_t     *img_obj;        /* runtime: LVGL image object */
+	/* Night-mode appearance overrides */
+	image_night_overrides_t night;
 } image_data_t;
 
 /**

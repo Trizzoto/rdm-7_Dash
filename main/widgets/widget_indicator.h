@@ -2,10 +2,17 @@
 #include "lvgl.h"
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for indicator ────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(color_on)
+	NIGHT_FIELD_COLOR(color_off)
+} indicator_night_overrides_t;
 
 /* ── Per-instance state for indicator widgets ──────────────────────────── */
 typedef struct {
@@ -21,6 +28,8 @@ typedef struct {
 	uint8_t    opa_on;          /* default: 255 (fully visible) */
 	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
 	uint8_t    opa_off;         /* default: 0 (invisible) */
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	indicator_night_overrides_t night;
 } indicator_data_t;
 
 /* --- API -----------------------------------------------------------------*/

@@ -1,10 +1,17 @@
 #pragma once
 #include "lvgl.h"
 #include "widget_types.h"
+#include "widget_night_helpers.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Night-mode overrides for rpm_bar ──────────────────────────────────── */
+typedef struct {
+	NIGHT_FIELD_COLOR(bar_color)
+	NIGHT_FIELD_COLOR(limiter_color)
+} rpm_bar_night_overrides_t;
 
 /* ── Per-instance state for RPM bar widget ─────────────────────────────── */
 typedef struct {
@@ -16,6 +23,8 @@ typedef struct {
 	lv_color_t limiter_color;
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* Night-mode appearance overrides (only applied when night_mode active) */
+	rpm_bar_night_overrides_t night;
 } rpm_bar_data_t;
 
 /** Create the RPM widget container with bar gauge, redline, tick marks, Panel9.

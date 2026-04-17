@@ -6,6 +6,7 @@
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
+#include "system/night_mode.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -813,13 +814,17 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
 		lv_bar_set_value(bd->bar_obj, bar_value, LV_ANIM_OFF);
+		bool night_active = night_mode_is_active();
+		lv_color_t low_col  = NIGHT_PICK_COLOR(night_active, bd->night, bar_low_color,      bd->bar_low_color);
+		lv_color_t high_col = NIGHT_PICK_COLOR(night_active, bd->night, bar_high_color,     bd->bar_high_color);
+		lv_color_t in_col   = NIGHT_PICK_COLOR(night_active, bd->night, bar_in_range_color, bd->bar_in_range_color);
 		lv_color_t new_color;
 		if (final_value < bd->bar_low)
-			new_color = bd->bar_low_color;
+			new_color = low_col;
 		else if (final_value > bd->bar_high)
-			new_color = bd->bar_high_color;
+			new_color = high_col;
 		else
-			new_color = bd->bar_in_range_color;
+			new_color = in_col;
 		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
@@ -854,6 +859,10 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	}
 }
 
+/* Forward declarations — used by _bar_create / _bar_destroy. */
+static void _bar_apply_night_mode(widget_t *w, bool active);
+static void _bar_night_cb(bool active, void *user_data);
+
 /* ── _bar_create: create a single bar per slot, positioned by layout ──────── */
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
@@ -869,6 +878,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		/* ── Image-based bar mode ──────────────────────────────────── */
 		bd->bar_img_dsc = rdm_image_load(bd->bar_image);
 		bd->bar_img_full_dsc = rdm_image_load(bd->bar_image_full);
+		safe_strncpy(bd->current_bar_image, bd->bar_image, sizeof(bd->current_bar_image));
+		safe_strncpy(bd->current_bar_image_full, bd->bar_image_full, sizeof(bd->current_bar_image_full));
 
 		if (bd->bar_img_dsc && bd->bar_img_full_dsc) {
 			/* Background (track) image */
@@ -991,6 +1002,18 @@ standard_bar:
 	/* Subscribe to signal if bound */
 	if (bd && bd->signal_index >= 0)
 		signal_subscribe(bd->signal_index, _bar_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set, and apply
+	 * current state immediately so the widget renders correctly even if it
+	 * was created while night-mode is already active. */
+	if (bd && (bd->night.has_bar_low_color      || bd->night.has_bar_high_color    ||
+	           bd->night.has_bar_in_range_color || bd->night.has_bar_bg_color      ||
+	           bd->night.has_bar_border_color   || bd->night.has_label_color       ||
+	           bd->night.has_value_color        || bd->night.has_bar_image         ||
+	           bd->night.has_bar_image_full)) {
+		night_mode_subscribe(_bar_night_cb, w);
+		_bar_apply_night_mode(w, night_mode_is_active());
+	}
 }
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	if (w->root && lv_obj_is_valid(w->root))
@@ -1044,6 +1067,19 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "bar_image", bd->bar_image);
 		if (bd->bar_image_full[0] != '\0')
 			cJSON_AddStringToObject(cfg, "bar_image_full", bd->bar_image_full);
+		/* Night-mode overrides — emit only fields that have an override set */
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_low_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_high_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_in_range_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_bg_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_border_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, label_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, value_color);
+		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image);
+		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image_full);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
 	} else {
 		cJSON_AddNumberToObject(cfg, "slot", 0);
 	}
@@ -1120,6 +1156,20 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(bd->bar_image_full, item->valuestring, sizeof(bd->bar_image_full));
 
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, bd->night, bar_low_color);
+		NIGHT_PARSE_COLOR(night, bd->night, bar_high_color);
+		NIGHT_PARSE_COLOR(night, bd->night, bar_in_range_color);
+		NIGHT_PARSE_COLOR(night, bd->night, bar_bg_color);
+		NIGHT_PARSE_COLOR(night, bd->night, bar_border_color);
+		NIGHT_PARSE_COLOR(night, bd->night, label_color);
+		NIGHT_PARSE_COLOR(night, bd->night, value_color);
+		NIGHT_PARSE_IMAGE(night, bd->night, bar_image);
+		NIGHT_PARSE_IMAGE(night, bd->night, bar_image_full);
+	}
+
 	/* Resolve signal name → index */
 	if (bd->signal_name[0] != '\0')
 		bd->signal_index = signal_find_by_name(bd->signal_name);
@@ -1129,6 +1179,7 @@ static void _bar_destroy(widget_t *w) {
 	uint8_t slot = bd ? bd->slot : 0;
 	if (bd && bd->signal_index >= 0)
 		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+	night_mode_unsubscribe(_bar_night_cb, w);
 	widget_rules_free(w);
 	/* Label and value are siblings of root (children of parent), delete explicitly */
 	if (bd && bd->label_obj && lv_obj_is_valid(bd->label_obj))
@@ -1216,6 +1267,68 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 	}
 }
 
+/* Re-apply colors (and, if needed, swap bar images) based on current
+ * night-mode state. Dynamic bar indicator color (low/high/in_range) is
+ * selected per-value inside _bar_on_signal, which already calls
+ * night_mode_is_active() — we don't need to recompute it here. */
+static void _bar_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	lv_color_t bar_bg  = NIGHT_PICK_COLOR(active, bd->night, bar_bg_color,     bd->bar_bg_color);
+	lv_color_t bar_bdr = NIGHT_PICK_COLOR(active, bd->night, bar_border_color, bd->bar_border_color);
+	lv_color_t lbl_col = NIGHT_PICK_COLOR(active, bd->night, label_color,      bd->label_color);
+	lv_color_t val_col = NIGHT_PICK_COLOR(active, bd->night, value_color,      bd->value_color);
+
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
+		lv_obj_set_style_text_color(bd->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
+		lv_obj_set_style_text_color(bd->value_obj, val_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Image swap — only if in image mode and the desired name differs from
+	 * what's currently loaded. Reloading is relatively expensive so we avoid
+	 * it when the override isn't set or resolves to the same name. */
+	const char *want_bg   = (active && bd->night.has_bar_image)      ? bd->night.bar_image      : bd->bar_image;
+	const char *want_full = (active && bd->night.has_bar_image_full) ? bd->night.bar_image_full : bd->bar_image_full;
+
+	if (bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj) && want_bg && want_bg[0] != '\0' &&
+	    strncmp(bd->current_bar_image, want_bg, sizeof(bd->current_bar_image)) != 0) {
+		lv_img_dsc_t *new_dsc = rdm_image_load(want_bg);
+		if (new_dsc) {
+			lv_img_set_src(bd->img_bg_obj, new_dsc);
+			if (new_dsc->header.w > 0)
+				lv_img_set_zoom(bd->img_bg_obj, (uint16_t)(256 * w->w / new_dsc->header.w));
+			rdm_image_free(bd->bar_img_dsc);
+			bd->bar_img_dsc = new_dsc;
+			safe_strncpy(bd->current_bar_image, want_bg, sizeof(bd->current_bar_image));
+		}
+	}
+	if (bd->img_full_obj && lv_obj_is_valid(bd->img_full_obj) && want_full && want_full[0] != '\0' &&
+	    strncmp(bd->current_bar_image_full, want_full, sizeof(bd->current_bar_image_full)) != 0) {
+		lv_img_dsc_t *new_dsc = rdm_image_load(want_full);
+		if (new_dsc) {
+			lv_img_set_src(bd->img_full_obj, new_dsc);
+			if (new_dsc->header.w > 0)
+				lv_img_set_zoom(bd->img_full_obj, (uint16_t)(256 * w->w / new_dsc->header.w));
+			rdm_image_free(bd->bar_img_full_dsc);
+			bd->bar_img_full_dsc = new_dsc;
+			safe_strncpy(bd->current_bar_image_full, want_full, sizeof(bd->current_bar_image_full));
+		}
+	}
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _bar_night_cb(bool active, void *user_data) {
+	_bar_apply_night_mode((widget_t *)user_data, active);
+}
+
 widget_t *widget_bar_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1257,6 +1370,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	w->from_json = _bar_from_json;
 	w->destroy = _bar_destroy;
 	w->apply_overrides = _bar_apply_overrides;
+	w->apply_night_mode = _bar_apply_night_mode;
 
 	return w;
 }

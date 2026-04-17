@@ -1,5 +1,6 @@
 #include "widget_panel.h"
 #include "widget_rules.h"
+#include "system/night_mode.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -421,6 +422,11 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	}
 }
 
+/* Forward declarations — used by _panel_create / _panel_destroy below but
+ * defined further down (after _panel_apply_overrides). */
+static void _panel_apply_night_mode(widget_t *w, bool active);
+static void _panel_night_cb(bool active, void *user_data);
+
 static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
 	if (!pd) return;
@@ -521,6 +527,15 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (pd->signal_index >= 0)
 		signal_subscribe(pd->signal_index, _panel_on_signal, w);
+
+	/* Subscribe to night-mode changes if any night override is set, and apply
+	 * current state immediately so the widget renders correctly even if it
+	 * was created while night-mode is already active. */
+	if (pd->night.has_border_color || pd->night.has_bg_color ||
+	    pd->night.has_label_color  || pd->night.has_value_color) {
+		night_mode_subscribe(_panel_night_cb, w);
+		_panel_apply_night_mode(w, night_mode_is_active());
+	}
 }
 
 static void _panel_resize(widget_t *w, uint16_t nw, uint16_t nh) {
@@ -588,6 +603,16 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "custom_text_x_offset", pd->custom_text_x_offset);
 	if (pd->custom_text_y_offset != 32)
 		cJSON_AddNumberToObject(cfg, "custom_text_y_offset", pd->custom_text_y_offset);
+	/* Night-mode overrides — emit only fields that have an override set */
+	{
+		cJSON *n = cJSON_CreateObject();
+		NIGHT_SERIALIZE_COLOR(n, pd->night, border_color);
+		NIGHT_SERIALIZE_COLOR(n, pd->night, bg_color);
+		NIGHT_SERIALIZE_COLOR(n, pd->night, label_color);
+		NIGHT_SERIALIZE_COLOR(n, pd->night, value_color);
+		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
+		else cJSON_Delete(n);
+	}
 }
 static void _panel_from_json(widget_t *w, cJSON *in) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
@@ -687,6 +712,15 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
 	if (cJSON_IsNumber(item)) pd->custom_text_y_offset = (int8_t)item->valueint;
 
+	/* Night-mode overrides */
+	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
+	if (cJSON_IsObject(night)) {
+		NIGHT_PARSE_COLOR(night, pd->night, border_color);
+		NIGHT_PARSE_COLOR(night, pd->night, bg_color);
+		NIGHT_PARSE_COLOR(night, pd->night, label_color);
+		NIGHT_PARSE_COLOR(night, pd->night, value_color);
+	}
+
 	/* Resolve signal name → index */
 	if (pd->signal_name[0] != '\0')
 		pd->signal_index = signal_find_by_name(pd->signal_name);
@@ -696,6 +730,7 @@ static void _panel_destroy(widget_t *w) {
 		panel_data_t *pd = (panel_data_t *)w->type_data;
 		if (pd && pd->signal_index >= 0)
 			signal_unsubscribe(pd->signal_index, _panel_on_signal, w);
+		night_mode_unsubscribe(_panel_night_cb, w);
 		widget_rules_free(w);
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
@@ -767,6 +802,36 @@ static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	}
 }
 
+/* Re-apply colors based on current night-mode state. Called by night_mode
+ * subscribers — this is just a thin wrapper that picks day-or-night value
+ * for each overridable field and writes to the LVGL objects. */
+static void _panel_apply_night_mode(widget_t *w, bool active) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (!pd) return;
+
+	lv_color_t bg     = NIGHT_PICK_COLOR(active, pd->night, bg_color,     pd->bg_color);
+	lv_color_t bdr    = NIGHT_PICK_COLOR(active, pd->night, border_color, pd->border_color);
+	lv_color_t lblc   = NIGHT_PICK_COLOR(active, pd->night, label_color,  pd->label_color);
+	lv_color_t valc   = NIGHT_PICK_COLOR(active, pd->night, value_color,  pd->value_color);
+
+	if (pd->box && lv_obj_is_valid(pd->box)) {
+		lv_obj_set_style_bg_color(pd->box, bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(pd->box, bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
+		lv_obj_set_style_text_color(pd->header_label, lblc, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
+		lv_obj_set_style_text_color(pd->value_label, valc, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
+static void _panel_night_cb(bool active, void *user_data) {
+	_panel_apply_night_mode((widget_t *)user_data, active);
+}
+
 widget_t *widget_panel_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -820,6 +885,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	w->from_json = _panel_from_json;
 	w->destroy = _panel_destroy;
 	w->apply_overrides = _panel_apply_overrides;
+	w->apply_night_mode = _panel_apply_night_mode;
 
 	return w;
 }

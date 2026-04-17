@@ -35,8 +35,14 @@ extern "C" {
 /* Current layout JSON schema version (single source of truth).
  * Written into every saved layout. No longer drives default.json regeneration
  * on boot — user edits to "default" are preserved across reboots. Factory
- * reset is the way to revert to the compiled-in default layout. */
-#define LAYOUT_SCHEMA_VERSION 12
+ * reset is the way to revert to the compiled-in default layout.
+ *
+ * v13: night-mode appearance overrides. Each widget's `config` may contain
+ *      a `night` sub-object with delta values for color and image fields.
+ *      Layout root may also contain a `night_mode` block with `signal_name`
+ *      + `active_when` for CAN-signal-driven night mode triggering.
+ *      Older schemas load fine — missing night blocks just mean no overrides. */
+#define LAYOUT_SCHEMA_VERSION 13
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
@@ -181,6 +187,22 @@ uint32_t layout_manager_get_version(void);
  * @return ESP_OK on success.
  */
 esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent);
+
+/**
+ * @brief Read the current layout's night-mode CAN trigger config (if any).
+ *
+ * Populated whenever a layout is loaded that contains a `night_mode` block at
+ * the root. Returns true if the layout has a trigger; false if night mode is
+ * controlled solely by manual toggle / settings.
+ *
+ * @param out_signal       Buffer that receives the signal name (caller-owned).
+ * @param signal_buf_size  Size of @p out_signal in bytes (33 is plenty).
+ * @param out_active_when  Receives the value at-or-above which night mode is
+ *                         considered active (e.g. 1.0 for boolean signals).
+ * @return true if a trigger is configured, false otherwise.
+ */
+bool layout_manager_get_night_trigger(char *out_signal, size_t signal_buf_size,
+                                      float *out_active_when);
 
 /**
  * @brief Enumerate available splash layouts.
