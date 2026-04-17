@@ -111,35 +111,28 @@ esp_err_t generate_default_layout(void) {
 		_add_widget(arr, "shape_panel", "shape_panel_1", 0, -182, 800, 9, cfg);
 	}
 
-	/* ── RPM Bar ────────────────────────────────────────────────────────── */
+	/* ── RPM Bar (bound to RPM signal — Haltech Nexus standard) ─────────── */
 	{
 		cJSON *cfg = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg, "rpm_max", 7000);
-		cJSON_AddStringToObject(cfg, "signal_name", "RPM");
 		cJSON_AddNumberToObject(cfg, "redline", 6500);
+		cJSON_AddStringToObject(cfg, "signal_name", "RPM");
 		_add_widget(arr, "rpm_bar", "rpm_bar_0", 0, -215, 800, 55, cfg);
 	}
 
 	/* ── Panels (8 slots) ───────────────────────────────────────────────── */
 	{
 		static const char * const labels[8] = {
-			"COOLANT PRESSURE", "FUEL PRESSURE", "COOLANT TEMP", "INTAKE AIR TEMP",
-			"OIL TEMP", "MAP", "LAMBDA TARGET", "LAMBDA"
+			"VALUE 1", "VALUE 2", "VALUE 3", "VALUE 4",
+			"VALUE 5", "VALUE 6", "VALUE 7", "VALUE 8"
 		};
-		static const char * const signals[8] = {
-			"COOLANT_PRESSURE", "FUEL_PRESSURE", "COOLANT_TEMP", "INTAKE_AIR_TEMP",
-			"OIL_TEMP", "MAP", "LAMBDA_TARGET", "LAMBDA"
-		};
-		static const int decimals[8] = { 0, 0, 0, 0, 0, 0, 0, 2 };
 
 		for (int i = 0; i < 8; i++) {
 			char id[16];
 			snprintf(id, sizeof(id), "panel_%d", i);
 			cJSON *cfg = cJSON_CreateObject();
 			cJSON_AddNumberToObject(cfg, "slot", i);
-			cJSON_AddNumberToObject(cfg, "decimals", decimals[i]);
 			cJSON_AddStringToObject(cfg, "label", labels[i]);
-			cJSON_AddStringToObject(cfg, "signal_name", signals[i]);
 			_add_widget(arr, "panel", id, s_panel_pos[i].x, s_panel_pos[i].y,
 						155, 92, cfg);
 		}
@@ -149,8 +142,7 @@ esp_err_t generate_default_layout(void) {
 	{
 		cJSON *cfg0 = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg0, "slot", 0);
-		cJSON_AddStringToObject(cfg0, "label", "COOLANT TEMP");
-		cJSON_AddStringToObject(cfg0, "signal_name", "COOLANT_TEMP");
+		cJSON_AddStringToObject(cfg0, "label", "BAR 1");
 		cJSON_AddNumberToObject(cfg0, "bar_low", 0);
 		cJSON_AddNumberToObject(cfg0, "bar_high", 100);
 		cJSON_AddNumberToObject(cfg0, "bar_low_color", 31);
@@ -159,13 +151,24 @@ esp_err_t generate_default_layout(void) {
 
 		cJSON *cfg1 = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg1, "slot", 1);
-		cJSON_AddStringToObject(cfg1, "label", "THROTTLE  ");
-		cJSON_AddStringToObject(cfg1, "signal_name", "THROTTLE__");
+		cJSON_AddStringToObject(cfg1, "label", "BAR 2");
 		cJSON_AddNumberToObject(cfg1, "bar_low", 0);
 		cJSON_AddNumberToObject(cfg1, "bar_high", 100);
 		cJSON_AddNumberToObject(cfg1, "bar_low_color", 31);
 		cJSON_AddNumberToObject(cfg1, "bar_high_color", 63488);
 		_add_widget(arr, "bar", "bar_1", 240, 209, 300, 30, cfg1);
+	}
+
+	/* ── Gear panel (Haltech Nexus standard) ───────────────────────────── */
+	{
+		cJSON *cfg = cJSON_CreateObject();
+		cJSON_AddNumberToObject(cfg, "slot", 8);  /* unused panel slot */
+		cJSON_AddStringToObject(cfg, "label", "GEAR");
+		cJSON_AddStringToObject(cfg, "signal_name", "GEAR");
+		cJSON_AddNumberToObject(cfg, "bg_color", 14823);   /* THEME_COLOR_PANEL 0x393C39 as RGB565 */
+		cJSON_AddNumberToObject(cfg, "border_color", 14823);
+		cJSON_AddNumberToObject(cfg, "decimals", 0);
+		_add_widget(arr, "panel", "panel_gear", 0, 178, 92, 92, cfg);
 	}
 
 	/* ── Indicators (2 slots) ───────────────────────────────────────────── */
@@ -188,10 +191,6 @@ esp_err_t generate_default_layout(void) {
 		cJSON *cfg = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg, "slot", i);
 		cJSON_AddNumberToObject(cfg, "inactive_opa", 180);
-		if (i == 7) {
-			cJSON_AddStringToObject(cfg, "label", "INTAKE AIR TEMP");
-			cJSON_AddNumberToObject(cfg, "radius", 200);
-		}
 		_add_widget(arr, "warning", id, s_warn_pos[i].x, s_warn_pos[i].y,
 					20, 20, cfg);
 	}
@@ -199,13 +198,12 @@ esp_err_t generate_default_layout(void) {
 	/* ── Vehicle speed (large center text) ──────────────────────────────── */
 	{
 		cJSON *cfg = cJSON_CreateObject();
-		cJSON_AddStringToObject(cfg, "static_text", "");
+		cJSON_AddStringToObject(cfg, "static_text", "---");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);
 		cJSON_AddStringToObject(cfg, "font", "fugaz_56");
 		cJSON_AddNumberToObject(cfg, "text_color", 65535);
-		cJSON_AddStringToObject(cfg, "signal_name", "VEHICLE_SPEED");
-		_add_widget(arr, "text", "text_1", 0, 70, 180, 80, cfg);
+		_add_widget(arr, "text", "text_1", 0, 80, 120, 60, cfg);
 	}
 
 	/* ── RDM logo image ─────────────────────────────────────────────────── */
@@ -220,44 +218,32 @@ esp_err_t generate_default_layout(void) {
 	/* ── RPM text ───────────────────────────────────────────────────────── */
 	{
 		cJSON *cfg = cJSON_CreateObject();
-		cJSON_AddStringToObject(cfg, "static_text", "");
+		cJSON_AddStringToObject(cfg, "static_text", "---");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);
 		cJSON_AddStringToObject(cfg, "font", "fugaz_28");
 		cJSON_AddNumberToObject(cfg, "text_color", 65535);
-		cJSON_AddStringToObject(cfg, "signal_name", "RPM");
-		_add_widget(arr, "text", "text_2", 0, -111, 180, 80, cfg);
+		_add_widget(arr, "text", "text_2", 0, -133, 120, 30, cfg);
 	}
 
-	/* ── FPS counter (debug) ────────────────────────────────────────────── */
-	{
-		cJSON *cfg = cJSON_CreateObject();
-		cJSON_AddStringToObject(cfg, "static_text", "");
-		cJSON_AddNumberToObject(cfg, "decimals", 0);
-		cJSON_AddNumberToObject(cfg, "rotation", 0);
-		cJSON_AddStringToObject(cfg, "font", "");
-		cJSON_AddNumberToObject(cfg, "text_color", 65535);
-		cJSON_AddStringToObject(cfg, "signal_name", "FPS");
-		_add_widget(arr, "text", "text_3", -380, -160, 100, 30, cfg);
-	}
-
-	/* ── Signals ────────────────────────────────────────────────────────── */
+	/* ── Signals (unbound — all CAN IDs = 0, user assigns via editor) ──── */
 	cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
 	static const struct { const char *name; int can_id; int bit_start; int bit_length;
 		     double scale; double offset; int is_signed; int endian; } sig_defs[] = {
-		{ "VEHICLE_SPEED", 1314, 48, 16, 0.1,   0, 0, 1 },
-		{ "RPM",           1312,  0, 16, 1.0,   0, 1, 1 },
-		{ "COOLANT_TEMP",  1328, 48, 16, 0.1,   0, 0, 1 },
-		{ "FPS",              0,  0, 16, 1.0,   0, 0, 1 },
-		{ "THROTTLE__",    1312, 16, 16, 0.1,   0, 0, 1 },
-		{ "COOLANT_PRESSURE",1335,32, 16, 0.1,  0, 0, 1 },
-		{ "FUEL_PRESSURE", 1335,  0, 16, 0.1,   0, 0, 1 },
-		{ "INTAKE_AIR_TEMP",1328,32, 16, 0.1,   0, 0, 1 },
-		{ "LAMBDA_TARGET", 1319, 48, 16, 0.001, 0, 0, 1 },
-		{ "LAMBDA_A",      1313,  0, 16, 0.001, 0, 0, 1 },
-		{ "LAMBDA",        1312, 48, 16, 0.001, 0, 0, 1 },
-		{ "MAP",           1312, 32, 16, 0.1,   0, 0, 1 },
-		{ "OIL_TEMP",      1334, 48, 16, 0.1,   0, 0, 1 },
+		{ "RPM",           864,  0, 16, 1.0,   0, 0, 0 },  /* Haltech Nexus: 0x360, big-endian */
+		{ "GEAR",          864, 48, 16, 1.0,   0, 0, 0 },  /* Haltech Nexus: 0x360 bit 48, big-endian */
+		{ "VEHICLE_SPEED",   0,  0, 16, 0.1,   0, 0, 1 },
+		{ "COOLANT_TEMP",    0,  0, 16, 0.1,   0, 0, 1 },
+		{ "THROTTLE",        0,  0, 16, 0.1,   0, 0, 1 },
+		{ "MAP",             0,  0, 16, 0.1,   0, 0, 1 },
+		{ "LAMBDA",          0,  0, 16, 0.001, 0, 0, 1 },
+		{ "OIL_TEMP",        0,  0, 16, 0.1,   0, 0, 1 },
+		{ "FUEL_PRESSURE",   0,  0, 16, 0.1,   0, 0, 1 },
+		{ "INTAKE_AIR_TEMP", 0,  0, 16, 0.1,   0, 0, 1 },
+		{ "OIL_PRESSURE",    0,  0, 16, 0.1,   0, 0, 1 },
+		{ "BATTERY_VOLTAGE", 0,  0, 16, 0.01,  0, 0, 1 },
+		{ "BOOST",           0,  0, 16, 0.1,   0, 1, 1 },
+		{ "EGT",             0,  0, 16, 0.1,   0, 0, 1 },
 	};
 	for (int i = 0; i < (int)(sizeof(sig_defs)/sizeof(sig_defs[0])); i++) {
 		cJSON *s = cJSON_CreateObject();
@@ -384,6 +370,61 @@ esp_err_t generate_rpm_meter_test_layout(void) {
 		return ESP_FAIL;
 
 	ESP_LOGI(TAG, "RPM Meter Test layout v%d written to %s (%u bytes)",
+			 LAYOUT_SCHEMA_VERSION, path, (unsigned)len);
+	return ESP_OK;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  generate_default_splash — centred RDM logo
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+esp_err_t generate_default_splash(void) {
+	cJSON *root = cJSON_CreateObject();
+	if (!root)
+		return ESP_ERR_NO_MEM;
+
+	cJSON_AddNumberToObject(root, "schema_version", LAYOUT_SCHEMA_VERSION);
+	cJSON_AddStringToObject(root, "name", "_splash_Default");
+	cJSON_AddNumberToObject(root, "screen_w", SCREEN_W);
+	cJSON_AddNumberToObject(root, "screen_h", SCREEN_H);
+
+	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
+
+	/* Centred RDM logo image — same asset as the dashboard default layout */
+	{
+		cJSON *cfg = cJSON_CreateObject();
+		cJSON_AddStringToObject(cfg, "image_name", "RDM");
+		cJSON_AddNumberToObject(cfg, "image_scale", 256); /* 100% in LVGL zoom */
+		cJSON_AddNumberToObject(cfg, "opacity", 255);
+		_add_widget(arr, "image", "image_splash_0", 0, 0, 120, 62, cfg);
+	}
+
+	/* Empty signals array */
+	cJSON_AddArrayToObject(root, "signals");
+
+	/* ── Serialise & write ──────────────────────────────────────────────── */
+	char *json_str = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+
+	if (!json_str)
+		return ESP_ERR_NO_MEM;
+
+	const char *path = LFS_LAYOUT_DIR "/_splash_Default.json";
+	FILE *f = fopen(path, "w");
+	if (!f) {
+		free(json_str);
+		return ESP_FAIL;
+	}
+
+	size_t len = strlen(json_str);
+	size_t nw = fwrite(json_str, 1, len, f);
+	fclose(f);
+	free(json_str);
+
+	if (nw != len)
+		return ESP_FAIL;
+
+	ESP_LOGI(TAG, "Default splash v%d written to %s (%u bytes)",
 			 LAYOUT_SCHEMA_VERSION, path, (unsigned)len);
 	return ESP_OK;
 }

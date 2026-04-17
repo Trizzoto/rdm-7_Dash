@@ -247,6 +247,16 @@
             border-radius: 50%;
         }
 
+        .display-bezel.bezel-on.bezel-round {
+            border-radius: 50%;
+            padding: 50px;
+        }
+
+        .display-bezel.bezel-on.bezel-round-slim {
+            border-radius: 50%;
+            padding: 20px;
+        }
+
         #screenshotCanvas {
             width: 800px;
             height: 480px;
@@ -2287,11 +2297,10 @@
 
         /* ── Screen presets ─────────────────────────────────────────── */
         const SCREEN_PRESETS = [
-            { id: '800x480_rect',  w: 800, h: 480, shape: 'rect',  label: '800×480 Rectangle' },
-            { id: '480x480_rect',  w: 480, h: 480, shape: 'rect',  label: '480×480 Square' },
-            { id: '480x480_round', w: 480, h: 480, shape: 'round', label: '480×480 Round' },
-            { id: '720x720_rect',  w: 720, h: 720, shape: 'rect',  label: '720×720 Square' },
-            { id: '720x720_round', w: 720, h: 720, shape: 'round', label: '720×720 Round' },
+            { id: '800x480_rect',  w: 800, h: 480, shape: 'rect',  label: 'RDM-7 inch' },
+            { id: '720x720_round', w: 720, h: 720, shape: 'round', label: '4 inch Round' },
+            { id: '800x800_round', w: 800, h: 800, shape: 'round', label: '3.4 inch Round' },
+            { id: '480x480_round', w: 480, h: 480, shape: 'round', label: '2.8 inch Round' },
         ];
         let _screenShape = 'rect';
         let _deviceScreenId = null;  /* set when connected — null = offline */
@@ -3600,6 +3609,7 @@
                     { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
                     { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
                     { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
+                    { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", min: 0, max: 50, def: 0, cat: "data" },
                     { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance" },
@@ -3622,6 +3632,7 @@
                     { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
                     { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
                     { name: "tx_endian", label: "Endian", type: "select", def: 1, cat: "data", options: [{v:0,l:"Big Endian"},{v:1,l:"Little Endian"}] },
+                    { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", min: 0, max: 50, def: 0, cat: "data" },
                     { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: false, cat: "data", enabledBy: "!latch" },
                     { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance" },
                     { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance" },
@@ -4317,7 +4328,7 @@
         }
 
         /** Max slot count per widget type that uses slots. */
-        const SLOT_LIMITS = { panel: 8, bar: 2, indicator: 2, warning: 8 };
+        const SLOT_LIMITS = { panel: 16, bar: 2, indicator: 2, warning: 8 };
 
         /** Find next available slot for a widget type, or -1 if all taken. */
         function nextAvailableSlot(type) {
@@ -4573,10 +4584,18 @@
             const vp = document.getElementById('workspaceViewport');
             if (!vp) return;
             const rect = vp.getBoundingClientRect();
-            /* bezel padding: 50px top/bottom, 80px left/right */
+            /* bezel padding: rect=80+80 x 50+50; round=50+50; round-slim=20+20 */
             const bezelOn = canvasContainer.classList.contains('bezel-on');
-            const contentW = 800 + (bezelOn ? 160 : 0);
-            const contentH = 480 + (bezelOn ? 100 : 0);
+            let bezelPad = 0;
+            if (bezelOn) {
+                if (canvasContainer.classList.contains('bezel-round-slim')) bezelPad = 40;
+                else if (canvasContainer.classList.contains('bezel-round')) bezelPad = 100;
+            }
+            const isRoundBezel = bezelPad > 0;
+            const bezelPadX = bezelOn ? (isRoundBezel ? bezelPad : 160) : 0;
+            const bezelPadY = bezelOn ? (isRoundBezel ? bezelPad : 100) : 0;
+            const contentW = CANVAS_W + bezelPadX;
+            const contentH = CANVAS_H + bezelPadY;
             const padW = 40, padH = 40; /* breathing room */
             const scaleX = (rect.width - padW) / contentW;
             const scaleY = (rect.height - padH) / contentH;
@@ -7116,6 +7135,13 @@
                 el.style.width = w + 'px';
                 el.style.height = h + 'px';
                 el.classList.toggle('screen-round', shape === 'round');
+            });
+            /* Round bezel when screen is round; slim for large round (720+) */
+            const isRound = shape === 'round';
+            const isLargeRound = isRound && w >= 720;
+            document.querySelectorAll('.display-bezel').forEach(el => {
+                el.classList.toggle('bezel-round', isRound && !isLargeRound);
+                el.classList.toggle('bezel-round-slim', isLargeRound);
             });
             const ssCanvas = document.getElementById('screenshotCanvas');
             if (ssCanvas) { ssCanvas.width = w; ssCanvas.height = h;

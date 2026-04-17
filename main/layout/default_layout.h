@@ -26,6 +26,16 @@ esp_err_t generate_default_layout(void);
  */
 esp_err_t generate_rpm_meter_test_layout(void);
 
+/**
+ * @brief Write /lfs/layouts/_splash_Default.json with a centred RDM logo.
+ *
+ * Called on first boot when no splash layouts exist, giving the desktop
+ * editor something to load and the device a proper splash to display.
+ *
+ * @return ESP_OK on success, or an ESP error code.
+ */
+esp_err_t generate_default_splash(void);
+
 #ifdef __cplusplus
 }
 #endif

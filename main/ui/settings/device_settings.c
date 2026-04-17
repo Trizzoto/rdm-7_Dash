@@ -14,6 +14,7 @@
 #include "ui.h"
 #include "ui_helpers.h"
 #include "screens/ui_Screen3.h"
+#include "screens/first_run_wizard.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1450,6 +1451,24 @@ static void _log_toggle_btn_cb(lv_event_t *e) {
     _update_log_ui();
 }
 
+/* ── Re-run First-Run Wizard ──────────────────────────────────────────── */
+
+static void _show_wizard_async(void *arg) {
+    (void)arg;
+    show_first_run_wizard();
+}
+
+static void _run_wizard_btn_cb(lv_event_t *e) {
+    (void)e;
+    /* Return to the dashboard so the wizard overlay has a clean backdrop */
+    lv_obj_t *ret = device_settings_return_screen;
+    if (ret && lv_obj_is_valid(ret)) {
+        lv_scr_load(ret);
+    }
+    /* Defer to next LVGL tick so the screen load fully commits first */
+    lv_async_call(_show_wizard_async, NULL);
+}
+
 /* ── Factory Reset ────────────────────────────────────────────────────── */
 
 static void _factory_reset_confirm_cb(lv_event_t *e) {
@@ -2047,6 +2066,22 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     s_rx_rate = 0;
 
     refresh_can_diagnostics();
+
+    // Run Setup Wizard button — opens the first-run overlay again
+    lv_obj_t* wizard_btn = lv_btn_create(content);
+    lv_obj_set_size(wizard_btn, lv_pct(100), 34);
+    lv_obj_set_style_bg_color(wizard_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(wizard_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(wizard_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(wizard_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(wizard_btn, 1, 0);
+    lv_obj_set_style_shadow_width(wizard_btn, 0, 0);
+    lv_obj_t* wizard_label = lv_label_create(wizard_btn);
+    lv_label_set_text(wizard_label, "Run Setup Wizard");
+    lv_obj_center(wizard_label);
+    lv_obj_set_style_text_font(wizard_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(wizard_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(wizard_btn, _run_wizard_btn_cb, LV_EVENT_CLICKED, NULL);
 
     // Factory Reset button — subtle danger, not loud
     lv_obj_t* reset_btn = lv_btn_create(content);

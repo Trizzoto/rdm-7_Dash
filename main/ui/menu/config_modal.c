@@ -22,11 +22,15 @@
 #include "widgets/widget_panel.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_rpm_bar.h"
+#include "widgets/widget_indicator.h"
+#include "widgets/widget_warning.h"
 #include "../settings/preset_picker.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define THEME_COLOR_GREY lv_color_hex(0x292C29)
 
 /* ── Derive signal name from preset label ─────────────────────────────── */
 
@@ -273,6 +277,26 @@ static void label_changed_cb(lv_event_t *e)
 }
 
 /* =========================================================================
+ * Decimals dropdown callback
+ * ========================================================================= */
+
+static void decimals_changed_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || !ctx->widget || !ctx->widget->type_data) return;
+
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint8_t val = (uint8_t)lv_dropdown_get_selected(dd);
+
+    switch (ctx->widget->type) {
+    case WIDGET_PANEL: ((panel_data_t *)ctx->widget->type_data)->decimals = val; break;
+    case WIDGET_BAR:   ((bar_data_t *)ctx->widget->type_data)->decimals   = val; break;
+    default: break;
+    }
+}
+
+/* =========================================================================
  * CAN settings toggle (click to expand/collapse)
  * ========================================================================= */
 
@@ -390,6 +414,22 @@ static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
         lv_obj_add_event_cb(ctx->label_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
         lv_obj_add_event_cb(ctx->label_ta, label_changed_cb,
                             LV_EVENT_VALUE_CHANGED, ctx);
+
+        /* Decimals dropdown (panel + bar only) */
+        if (w->type == WIDGET_PANEL || w->type == WIDGET_BAR) {
+            uint8_t cur_dec = 0;
+            if (w->type == WIDGET_PANEL && w->type_data)
+                cur_dec = ((panel_data_t *)w->type_data)->decimals;
+            else if (w->type == WIDGET_BAR && w->type_data)
+                cur_dec = ((bar_data_t *)w->type_data)->decimals;
+
+            lv_obj_t *dec_dd = settings_add_dropdown(
+                sec_disp, "Decimals:", "0\n1\n2\n3\n4", 0);
+            if (cur_dec > 4) cur_dec = 4;
+            lv_dropdown_set_selected(dec_dd, cur_dec);
+            lv_obj_add_event_cb(dec_dd, decimals_changed_cb,
+                                LV_EVENT_VALUE_CHANGED, ctx);
+        }
     }
 
     /* ── Data Source section (only for widgets that receive CAN data) ── */
@@ -551,6 +591,30 @@ static void panel_warn_low_enable_cb(lv_event_t *e)
  * Alerts tab callbacks -- Bar
  * ========================================================================= */
 
+static void bar_min_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_BAR) return;
+    bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    bd->bar_min = (txt && txt[0]) ? (int32_t)atoi(txt) : 0;
+    if (bd->bar_obj)
+        lv_bar_set_range(bd->bar_obj, bd->bar_min, bd->bar_max);
+}
+
+static void bar_max_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_BAR) return;
+    bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    bd->bar_max = (txt && txt[0]) ? (int32_t)atoi(txt) : 100;
+    if (bd->bar_obj)
+        lv_bar_set_range(bd->bar_obj, bd->bar_min, bd->bar_max);
+}
+
 static void bar_low_thresh_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -694,7 +758,23 @@ static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
 static void build_alerts_tab_bar(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+    char buf[16];
 
+    /* ── Bar Range ─────────────────────────────────────────────────── */
+    settings_section_t *sec_range =
+        settings_add_section(tab, "BAR RANGE", THEME_COLOR_ACCENT_BLUE);
+
+    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_min);
+    lv_obj_t *bmin = settings_add_text_input(sec_range, "Min Value:", "0", buf);
+    lv_obj_add_event_cb(bmin, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(bmin, bar_min_cb, LV_EVENT_VALUE_CHANGED, ctx);
+
+    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_max);
+    lv_obj_t *bmax = settings_add_text_input(sec_range, "Max Value:", "100", buf);
+    lv_obj_add_event_cb(bmax, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(bmax, bar_max_cb, LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── Alert Thresholds ──────────────────────────────────────────── */
     bool has_warnings = (bd->bar_low != 0 || bd->bar_high != 0);
 
     settings_section_t *sec =
@@ -717,8 +797,6 @@ static void build_alerts_tab_bar(lv_obj_t *tab, modal_ctx_t *ctx)
         lv_obj_add_flag(warn_box, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_add_event_cb(en_sw, warnings_toggle_cb, LV_EVENT_VALUE_CHANGED, warn_box);
-
-    char buf[16];
 
     snprintf(buf, sizeof(buf), "%d", (int)bd->bar_low);
     lv_obj_t *blow = settings_add_text_input(warn_box, "Low Threshold:", "value", buf);
@@ -766,7 +844,7 @@ static uint16_t _rpm_to_idx(int32_t rpm) {
     return (uint16_t)idx;
 }
 
-/** Map a theme colour to the 10-entry colour dropdown index (9 = Custom). */
+/** Map a theme colour to colour dropdown index (10 = Custom...). */
 static uint16_t _theme_color_idx(lv_color_t c) {
     if (c.full == THEME_COLOR_GREEN.full)   return 0;
     if (c.full == THEME_COLOR_CYAN.full)    return 1;
@@ -777,7 +855,8 @@ static uint16_t _theme_color_idx(lv_color_t c) {
     if (c.full == THEME_COLOR_PURPLE.full)  return 6;
     if (c.full == THEME_COLOR_MAGENTA.full) return 7;
     if (c.full == THEME_COLOR_PINK.full)    return 8;
-    return 9; /* Custom */
+    if (c.full == THEME_COLOR_GREY.full)    return 9;
+    return 10; /* Custom */
 }
 
 /** Map limiter_effect enum to dropdown index. */
@@ -1010,6 +1089,491 @@ static void build_fuel_setup_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 }
 
 /* =========================================================================
+ * Indicator settings tab
+ * ========================================================================= */
+
+/* CAN fields container — show/hide based on source selection */
+static lv_obj_t *s_ind_can_section = NULL;
+
+static void indicator_input_src_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    id->input_source = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+    /* Show/hide CAN fields */
+    if (s_ind_can_section) {
+        if (id->input_source == 1)
+            lv_obj_clear_flag(s_ind_can_section, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(s_ind_can_section, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void indicator_toggle_mode_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    id->is_momentary = (lv_dropdown_get_selected(lv_event_get_target(e)) == 0);
+}
+
+static void indicator_animation_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    id->animation_enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
+static void indicator_can_id_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    if (!txt) return;
+    /* Signal's CAN ID — update the signal registry directly */
+    uint32_t can_id = (uint32_t)strtoul(txt, NULL, 16);
+    if (id->signal_index >= 0) {
+        signal_t *sig = signal_get_by_index(id->signal_index);
+        if (sig) sig->can_id = can_id;
+    }
+}
+
+static void indicator_bit_pos_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    if (id->signal_index >= 0) {
+        signal_t *sig = signal_get_by_index(id->signal_index);
+        if (sig) sig->bit_start = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+    }
+}
+
+/* (THEME_COLOR_GREY defined near top of file for use in _theme_color_idx) */
+
+static lv_color_t _idx_to_theme_color(uint16_t idx) {
+    switch (idx) {
+    case 0: return THEME_COLOR_GREEN;
+    case 1: return THEME_COLOR_CYAN;
+    case 2: return THEME_COLOR_YELLOW;
+    case 3: return THEME_COLOR_ORANGE;
+    case 4: return THEME_COLOR_RED;
+    case 5: return THEME_COLOR_BLUE;
+    case 6: return THEME_COLOR_PURPLE;
+    case 7: return THEME_COLOR_MAGENTA;
+    case 8: return THEME_COLOR_PINK;
+    case 9: return THEME_COLOR_GREY;
+    default: return THEME_COLOR_GREEN;
+    }
+}
+
+/* ── Reusable color wheel popup ──────────────────────────────────────── */
+
+static lv_obj_t   *s_cw_popup = NULL;
+static lv_obj_t   *s_cw_wheel = NULL;
+static lv_color_t *s_cw_target = NULL;  /* pointer to the lv_color_t to write */
+static lv_color_t  s_cw_selected;
+
+static void _cw_value_changed(lv_event_t *e) {
+    (void)e;
+    s_cw_selected = lv_colorwheel_get_rgb(s_cw_wheel);
+}
+
+static void _cw_ok(lv_event_t *e) {
+    (void)e;
+    if (s_cw_target) *s_cw_target = s_cw_selected;
+    if (s_cw_popup) { lv_obj_del(s_cw_popup); s_cw_popup = NULL; s_cw_wheel = NULL; }
+}
+
+static void _cw_cancel(lv_event_t *e) {
+    (void)e;
+    if (s_cw_popup) { lv_obj_del(s_cw_popup); s_cw_popup = NULL; s_cw_wheel = NULL; }
+}
+
+static void _open_color_wheel(lv_color_t *target, lv_color_t initial, const char *title) {
+    if (s_cw_popup) return;
+    s_cw_target = target;
+    s_cw_selected = initial;
+
+    s_cw_popup = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(s_cw_popup, 400, 350);
+    lv_obj_center(s_cw_popup);
+    lv_obj_set_style_bg_color(s_cw_popup, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_border_color(s_cw_popup, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(s_cw_popup, 1, 0);
+    lv_obj_set_style_radius(s_cw_popup, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_shadow_width(s_cw_popup, 20, 0);
+    lv_obj_set_style_shadow_ofs_y(s_cw_popup, 4, 0);
+    lv_obj_set_style_shadow_color(s_cw_popup, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(s_cw_popup, 140, 0);
+
+    lv_obj_t *lbl = lv_label_create(s_cw_popup);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_MEDIUM, 0);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 12);
+
+    s_cw_wheel = lv_colorwheel_create(s_cw_popup, true);
+    lv_obj_set_size(s_cw_wheel, 200, 200);
+    lv_obj_align(s_cw_wheel, LV_ALIGN_CENTER, 0, -10);
+    lv_colorwheel_set_rgb(s_cw_wheel, initial);
+    lv_obj_add_event_cb(s_cw_wheel, _cw_value_changed, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *ok_btn = lv_btn_create(s_cw_popup);
+    lv_obj_set_size(ok_btn, 80, 35);
+    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_LEFT, 50, -15);
+    lv_obj_set_style_bg_color(ok_btn, THEME_COLOR_BTN_SAVE, 0);
+    lv_obj_set_style_radius(ok_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_t *ok_lbl = lv_label_create(ok_btn);
+    lv_label_set_text(ok_lbl, "OK");
+    lv_obj_set_style_text_color(ok_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_center(ok_lbl);
+    lv_obj_add_event_cb(ok_btn, _cw_ok, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cancel_btn = lv_btn_create(s_cw_popup);
+    lv_obj_set_size(cancel_btn, 80, 35);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -50, -15);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_CANCEL, 0);
+    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_center(cancel_lbl);
+    lv_obj_add_event_cb(cancel_btn, _cw_cancel, LV_EVENT_CLICKED, NULL);
+}
+
+/* ── Indicator / Warning color callbacks (with Custom... option) ────── */
+
+static void indicator_color_on_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        id->color_on = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&id->color_on, id->color_on, "Active Colour");
+    }
+}
+
+static void indicator_color_off_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        id->color_off = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&id->color_off, id->color_off, "Inactive Colour");
+    }
+}
+
+static void indicator_opa_on_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    /* Dropdown: 0=255, 1=200, 2=150, 3=100, 4=70, 5=50, 6=25, 7=0 */
+    static const uint8_t opa_vals[] = {255, 200, 150, 100, 70, 50, 25, 0};
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    id->opa_on = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 255;
+}
+
+static void indicator_opa_off_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_INDICATOR) return;
+    indicator_data_t *id = (indicator_data_t *)ctx->widget->type_data;
+    static const uint8_t opa_vals[] = {255, 200, 150, 100, 70, 50, 25, 0};
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    id->opa_off = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 0;
+}
+
+static uint16_t _opa_to_idx(uint8_t opa) {
+    if (opa >= 228) return 0;  /* 255 */
+    if (opa >= 175) return 1;  /* 200 */
+    if (opa >= 125) return 2;  /* 150 */
+    if (opa >= 85)  return 3;  /* 100 */
+    if (opa >= 60)  return 4;  /* 70 */
+    if (opa >= 38)  return 5;  /* 50 */
+    if (opa >= 12)  return 6;  /* 25 */
+    return 7;                   /* 0 */
+}
+
+#define OPA_OPTS "100%\n78%\n59%\n39%\n27%\n20%\n10%\n0%"
+#define IND_COLOR_OPTS "Green\nCyan\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nGrey\nCustom..."
+
+static void build_indicator_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+{
+    widget_t *w = ctx->widget;
+    indicator_data_t *id = (indicator_data_t *)w->type_data;
+    if (!id) return;
+
+    signal_t *sig = (id->signal_index >= 0) ? signal_get_by_index(id->signal_index) : NULL;
+
+    /* ── INPUT section ─────────────────────────────────────────────── */
+    settings_section_t *sec_input =
+        settings_add_section(tab, "INPUT", THEME_COLOR_ACCENT_TEAL);
+
+    lv_obj_t *src_dd = settings_add_dropdown(sec_input, "Source:",
+                                              "Wire\nCAN BUS", 0);
+    lv_dropdown_set_selected(src_dd, id->input_source);
+    lv_obj_add_event_cb(src_dd, indicator_input_src_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── CAN section (hidden when source=Wire) ─────────────────────── */
+    settings_section_t *sec_can =
+        settings_add_section(tab, "CAN BUS", THEME_COLOR_ACCENT_BLUE);
+    s_ind_can_section = (lv_obj_t *)sec_can;
+
+    char can_id_str[16] = "0";
+    if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
+    lv_obj_t *can_id_ta = settings_add_text_input(sec_can, "CAN ID (0x):",
+                                                    "hex", can_id_str);
+    lv_obj_add_event_cb(can_id_ta, indicator_can_id_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *bit_dd = settings_add_dropdown(sec_can, "Bit Position:",
+                                              BIT_START_OPTS, 0);
+    lv_dropdown_set_selected(bit_dd, sig ? sig->bit_start : 0);
+    lv_obj_add_event_cb(bit_dd, indicator_bit_pos_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* Initial visibility */
+    if (id->input_source != 1)
+        lv_obj_add_flag(s_ind_can_section, LV_OBJ_FLAG_HIDDEN);
+
+    /* ── MODE section ──────────────────────────────────────────────── */
+    settings_section_t *sec_mode =
+        settings_add_section(tab, "BEHAVIOUR", THEME_COLOR_ACCENT_ORANGE);
+
+    lv_obj_t *mode_dd = settings_add_dropdown(sec_mode, "Mode:",
+                                               "Momentary\nToggle", 0);
+    lv_dropdown_set_selected(mode_dd, id->is_momentary ? 0 : 1);
+    lv_obj_add_event_cb(mode_dd, indicator_toggle_mode_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *anim_sw = settings_add_switch(sec_mode, "Animation:",
+                                             id->animation_enabled);
+    lv_obj_add_event_cb(anim_sw, indicator_animation_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── APPEARANCE section ────────────────────────────────────────── */
+    settings_section_t *sec_appear =
+        settings_add_section(tab, "APPEARANCE", THEME_COLOR_ACCENT_AMBER);
+
+    lv_obj_t *col_on_dd = settings_add_dropdown(sec_appear, "Active Colour:",
+                                                 IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(col_on_dd, _theme_color_idx(id->color_on));
+    lv_obj_add_event_cb(col_on_dd, indicator_color_on_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *opa_on_dd = settings_add_dropdown(sec_appear, "Active Opacity:",
+                                                 OPA_OPTS, 0);
+    lv_dropdown_set_selected(opa_on_dd, _opa_to_idx(id->opa_on));
+    lv_obj_add_event_cb(opa_on_dd, indicator_opa_on_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *col_off_dd = settings_add_dropdown(sec_appear, "Inactive Colour:",
+                                                  IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(col_off_dd, _theme_color_idx(id->color_off));
+    lv_obj_add_event_cb(col_off_dd, indicator_color_off_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *opa_off_dd = settings_add_dropdown(sec_appear, "Inactive Opacity:",
+                                                  OPA_OPTS, 0);
+    lv_dropdown_set_selected(opa_off_dd, _opa_to_idx(id->opa_off));
+    lv_obj_add_event_cb(opa_off_dd, indicator_opa_off_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+}
+
+/* =========================================================================
+ * Warning / Alert settings tab
+ * ========================================================================= */
+
+static lv_obj_t *s_warn_can_section = NULL;
+
+static void warning_label_changed_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    if (txt) { strncpy(wd->label, txt, sizeof(wd->label) - 1); wd->label[sizeof(wd->label) - 1] = '\0'; }
+}
+
+static void warning_can_id_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    const char *txt = lv_textarea_get_text(lv_event_get_target(e));
+    if (!txt) return;
+    uint32_t can_id = (uint32_t)strtoul(txt, NULL, 16);
+    if (wd->signal_index >= 0) {
+        signal_t *sig = signal_get_by_index(wd->signal_index);
+        if (sig) sig->can_id = can_id;
+    }
+}
+
+static void warning_bit_pos_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    if (wd->signal_index >= 0) {
+        signal_t *sig = signal_get_by_index(wd->signal_index);
+        if (sig) sig->bit_start = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+    }
+}
+
+static void warning_toggle_mode_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    wd->is_momentary = (lv_dropdown_get_selected(lv_event_get_target(e)) == 0);
+}
+
+static void warning_invert_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    wd->invert_toggle = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
+static void warning_color_on_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        wd->active_color = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&wd->active_color, wd->active_color, "Active Colour");
+    }
+}
+
+static void warning_color_off_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        wd->inactive_color = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&wd->inactive_color, wd->inactive_color, "Inactive Colour");
+    }
+}
+
+static void warning_opa_on_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    static const uint8_t opa_vals[] = {255, 200, 150, 100, 70, 50, 25, 0};
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    wd->active_opa = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 255;
+}
+
+static void warning_opa_off_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || ctx->widget->type != WIDGET_WARNING) return;
+    warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
+    static const uint8_t opa_vals[] = {255, 200, 150, 100, 70, 50, 25, 0};
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    wd->inactive_opa = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 80;
+}
+
+static void build_warning_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
+{
+    widget_t *w = ctx->widget;
+    warning_data_t *wd = (warning_data_t *)w->type_data;
+    if (!wd) return;
+
+    signal_t *sig = (wd->signal_index >= 0) ? signal_get_by_index(wd->signal_index) : NULL;
+
+    /* ── DISPLAY section ──────────────────────────────────────────── */
+    settings_section_t *sec_disp =
+        settings_add_section(tab, "DISPLAY", THEME_COLOR_ACCENT_TEAL);
+
+    lv_obj_t *lbl_ta = settings_add_text_input(sec_disp, "Label:",
+                                                "alert label", wd->label);
+    lv_obj_add_event_cb(lbl_ta, warning_label_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── CAN BUS section ──────────────────────────────────────────── */
+    settings_section_t *sec_can =
+        settings_add_section(tab, "CAN BUS", THEME_COLOR_ACCENT_BLUE);
+    s_warn_can_section = (lv_obj_t *)sec_can;
+
+    char can_id_str[16] = "0";
+    if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
+    lv_obj_t *can_ta = settings_add_text_input(sec_can, "CAN ID (0x):",
+                                                "hex", can_id_str);
+    lv_obj_add_event_cb(can_ta, warning_can_id_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *bit_dd = settings_add_dropdown(sec_can, "Bit Position:",
+                                              BIT_START_OPTS, 0);
+    lv_dropdown_set_selected(bit_dd, sig ? sig->bit_start : 0);
+    lv_obj_add_event_cb(bit_dd, warning_bit_pos_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── BEHAVIOUR section ────────────────────────────────────────── */
+    settings_section_t *sec_mode =
+        settings_add_section(tab, "BEHAVIOUR", THEME_COLOR_ACCENT_ORANGE);
+
+    lv_obj_t *mode_dd = settings_add_dropdown(sec_mode, "Mode:",
+                                               "Momentary\nToggle", 0);
+    lv_dropdown_set_selected(mode_dd, wd->is_momentary ? 0 : 1);
+    lv_obj_add_event_cb(mode_dd, warning_toggle_mode_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *inv_sw = settings_add_switch(sec_mode, "Invert Logic:",
+                                            wd->invert_toggle);
+    lv_obj_add_event_cb(inv_sw, warning_invert_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* ── APPEARANCE section ───────────────────────────────────────── */
+    settings_section_t *sec_appear =
+        settings_add_section(tab, "APPEARANCE", THEME_COLOR_ACCENT_AMBER);
+
+    lv_obj_t *col_on_dd = settings_add_dropdown(sec_appear, "Active Colour:",
+                                                 IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(col_on_dd, _theme_color_idx(wd->active_color));
+    lv_obj_add_event_cb(col_on_dd, warning_color_on_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *opa_on_dd = settings_add_dropdown(sec_appear, "Active Opacity:",
+                                                 OPA_OPTS, 0);
+    lv_dropdown_set_selected(opa_on_dd, _opa_to_idx(wd->active_opa));
+    lv_obj_add_event_cb(opa_on_dd, warning_opa_on_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *col_off_dd = settings_add_dropdown(sec_appear, "Inactive Colour:",
+                                                  IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(col_off_dd, _theme_color_idx(wd->inactive_color));
+    lv_obj_add_event_cb(col_off_dd, warning_color_off_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *opa_off_dd = settings_add_dropdown(sec_appear, "Inactive Opacity:",
+                                                  OPA_OPTS, 0);
+    lv_dropdown_set_selected(opa_off_dd, _opa_to_idx(wd->inactive_opa));
+    lv_obj_add_event_cb(opa_off_dd, warning_opa_off_cb,
+                        LV_EVENT_VALUE_CHANGED, ctx);
+}
+
+/* =========================================================================
  * Public: config_modal_open_for_widget
  * ========================================================================= */
 
@@ -1130,13 +1694,18 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_set_style_border_width(tab_btns, 2,
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
 
-    /* Create tabs */
-    lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  DATA  ");
-    style_tab(tab_data);
-    build_data_tab(tab_data, ctx);
+    /* Create tabs — indicators and warnings get simplified single-tab layouts,
+     * other widgets get the full DATA + PRESETS tabs. */
+    if (w->type != WIDGET_INDICATOR && w->type != WIDGET_WARNING) {
+        lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  DATA  ");
+        style_tab(tab_data);
+        build_data_tab(tab_data, ctx);
+    }
 
-    /* Presets tab (only for widgets that receive CAN data) */
-    if (widget_needs_data_source(w) && widget_get_signal_name_buf(w)) {
+    /* Presets tab (only for widgets that receive CAN data, skip indicators) */
+    if (widget_needs_data_source(w) && widget_get_signal_name_buf(w)
+        && w->type != WIDGET_INDICATOR
+        && w->type != WIDGET_WARNING) {
         lv_obj_t *tab_presets = lv_tabview_add_tab(tv, "  PRESETS  ");
         lv_obj_set_style_bg_color(tab_presets, THEME_COLOR_SURFACE, 0);
         lv_obj_set_style_bg_opa(tab_presets, LV_OPA_COVER, 0);
@@ -1159,6 +1728,18 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
         lv_obj_t *tab_rpm = lv_tabview_add_tab(tv, "  RPM SETTINGS  ");
         style_tab(tab_rpm);
         build_rpm_settings_tab(tab_rpm, ctx);
+    }
+
+    if (w->type == WIDGET_INDICATOR) {
+        lv_obj_t *tab_ind = lv_tabview_add_tab(tv, "  INDICATOR  ");
+        style_tab(tab_ind);
+        build_indicator_settings_tab(tab_ind, ctx);
+    }
+
+    if (w->type == WIDGET_WARNING) {
+        lv_obj_t *tab_warn = lv_tabview_add_tab(tv, "  ALERT  ");
+        style_tab(tab_warn);
+        build_warning_settings_tab(tab_warn, ctx);
     }
 
     /* Fuel setup tab — only when widget's signal is FUEL_SENDER_V */

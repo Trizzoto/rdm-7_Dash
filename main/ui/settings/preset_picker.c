@@ -81,6 +81,7 @@ const preconfig_item_t preconfig_items[] = {
 { "Haltech", "Nexus", "FUEL TRIM LT B2",    "3E3", 0, 48, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "FUEL TRIM ST B1",    "3E3", 0, 0, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "FUEL TRIM ST B2",    "3E3", 0, 16, 16, 0.1, 0, 1, true },
+{ "Haltech", "Nexus", "GEAR",               "360", 0, 48, 16, 1.0, 0, 0, false },
 { "Haltech", "Nexus", "GEARBOX OIL TEMP",   "3E1", 0, 0, 16, 0.1, -273.15, 1, false },
 { "Haltech", "Nexus", "IGN ANGLE LEAD",     "362", 0, 32, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "INJ STG1 TIME",      "364", 0, 0, 16, 0.001, 0, 3, false },
@@ -268,6 +269,49 @@ const preconfig_item_t preconfig_items[] = {
     { "MaxxECU", "1.3", "VVT INTAKE CAM 2 POS", "541", 1, 32, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "WASTEGATE PRESSURE", "537", 1, 16, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "WHEEL SLIP", "523", 1, 32, 16, 0.1, 0, 0, false },
+
+/* ── Link ECU — Generic Dash (Base CAN ID = 0x3E8 / 1000) ───────────── */
+{ "Link ECU", "Generic Dash", "ENGINE SPEED",          "3E8", 1, 16, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "MAP",                   "3E8", 1, 32, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "MGP",                   "3E8", 1, 48, 16, 1.0,    -100, 0, false },
+{ "Link ECU", "Generic Dash", "BARO PRESSURE",         "3E9", 1, 16, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "TPS",                   "3E9", 1, 32, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "INJECTOR DC",           "3E9", 1, 48, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "INJECTOR DC (SEC)",     "3EA", 1, 16, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "INJ PULSE WIDTH",       "3EA", 1, 32, 16, 0.001,  0,    3, false },
+{ "Link ECU", "Generic Dash", "COOLANT TEMP",           "3EA", 1, 48, 16, 1.0,    -50,  0, false },
+{ "Link ECU", "Generic Dash", "IAT",                   "3EB", 1, 16, 16, 1.0,    -50,  0, false },
+{ "Link ECU", "Generic Dash", "ECU VOLTS",             "3EB", 1, 32, 16, 0.01,   0,    2, false },
+{ "Link ECU", "Generic Dash", "MAF",                   "3EB", 1, 48, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "GEAR POSITION",         "3EC", 1, 16, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "INJECTOR TIMING",       "3EC", 1, 32, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "IGNITION TIMING",       "3EC", 1, 48, 16, 0.1,    -100, 1, false },
+{ "Link ECU", "Generic Dash", "CAM INLET BANK 1",      "3ED", 1, 16, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "CAM INLET BANK 2",      "3ED", 1, 32, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 1",    "3ED", 1, 48, 16, -0.1,   0,    1, false },
+{ "Link ECU", "Generic Dash", "CAM EXHAUST BANK 2",    "3EE", 1, 16, 16, -0.1,   0,    1, false },
+{ "Link ECU", "Generic Dash", "LAMBDA 1",              "3EE", 1, 32, 16, 0.001,  0,    3, false },
+{ "Link ECU", "Generic Dash", "LAMBDA 2",              "3EE", 1, 48, 16, 0.001,  0,    3, false },
+{ "Link ECU", "Generic Dash", "TRIG 1 ERROR COUNT",    "3EF", 1, 16, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "FAULT CODES",           "3EF", 1, 32, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "FUEL PRESSURE",         "3EF", 1, 48, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "OIL TEMP",              "3F0", 1, 16, 16, 1.0,    -50,  0, false },
+{ "Link ECU", "Generic Dash", "OIL PRESSURE",          "3F0", 1, 32, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "LF WHEEL SPEED",        "3F0", 1, 48, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "LR WHEEL SPEED",        "3F1", 1, 16, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "RF WHEEL SPEED",        "3F1", 1, 32, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "RR WHEEL SPEED",        "3F1", 1, 48, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 1",         "3F2", 1, 16, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 2",         "3F2", 1, 32, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 3",         "3F2", 1, 48, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 4",         "3F3", 1, 16, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 5",         "3F3", 1, 32, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 6",         "3F3", 1, 48, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 7",         "3F4", 1, 16, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "KNOCK LEVEL 8",         "3F4", 1, 32, 16, 5.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "LIMITS FLAGS",          "3F4", 1, 48, 16, 1.0,    0,    0, false },
+{ "Link ECU", "Generic Dash", "APS (MAIN)",            "3F5", 1, 16, 16, 0.1,    0,    1, false },
+{ "Link ECU", "Generic Dash", "ETHANOL %",             "3F5", 1, 32, 16, 1.0,    0,    0, false },
 
 /* ── RDM-7 GPIO ──────────────────────────────────────────────────────── */
 { "RDM-7", "GPIO",     "FUEL SENDER V",   "0", 1, 0, 16, 1.0,  0, 2, false },
@@ -556,7 +600,7 @@ void show_preconfig_menu(lv_obj_t * parent)
 
     // 5) ECU dropdown
     ui_ECU_Input = lv_dropdown_create(parent);
-    lv_dropdown_set_options(ui_ECU_Input, "MaxxECU\nHaltech\nFord");
+    lv_dropdown_set_options(ui_ECU_Input, "MaxxECU\nHaltech\nFord\nLink ECU");
     lv_obj_add_event_cb(ui_ECU_Input, ecu_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_set_width(ui_ECU_Input, 109);
     lv_obj_set_height(ui_ECU_Input, LV_SIZE_CONTENT);

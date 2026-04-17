@@ -35,6 +35,7 @@ static const char *TAG = "widget_toggle";
 #define DEF_TX_BIT_START    0
 #define DEF_TX_BIT_LENGTH   1
 #define DEF_TX_ENDIAN       1
+#define DEF_TX_RATE_HZ      0
 #define DEF_LABEL_ALIGN     1   /* center */
 #define DEF_SHOW_LABEL      true
 
@@ -92,6 +93,33 @@ static void _toggle_on_signal(float value, bool is_stale, void *user_data) {
     _toggle_apply_image_state(d);
 }
 
+/* ── Periodic TX timer ─────────────────────────────────────────────────── */
+
+static void _toggle_tx_timer_cb(lv_timer_t *t) {
+    widget_t *w = (widget_t *)t->user_data;
+    if (!w || !w->type_data) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d->current_state || d->tx_can_id == 0) return;
+    uint8_t frame[8] = {0};
+    uint32_t val = (d->tx_bit_length >= 32) ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u);
+    can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
+    can_transmit_frame(d->tx_can_id, frame, 8);
+}
+
+static void _toggle_start_tx_timer(widget_t *w) {
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d || d->tx_timer || d->tx_can_id == 0 || d->tx_rate_hz == 0) return;
+    uint32_t period = 1000 / d->tx_rate_hz;
+    d->tx_timer = lv_timer_create(_toggle_tx_timer_cb, period, w);
+}
+
+static void _toggle_stop_tx_timer(toggle_data_t *d) {
+    if (d->tx_timer) {
+        lv_timer_del(d->tx_timer);
+        d->tx_timer = NULL;
+    }
+}
+
 /* ── Toggle clicked event callback ──────────────────────────────────────── */
 static void _toggle_clicked_cb(lv_event_t *e) {
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
@@ -118,6 +146,12 @@ static void _toggle_clicked_cb(lv_event_t *e) {
         can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
         can_transmit_frame(d->tx_can_id, frame, 8);
     }
+
+    /* Start/stop periodic TX timer based on toggle state */
+    if (checked)
+        _toggle_start_tx_timer(w);
+    else
+        _toggle_stop_tx_timer(d);
 
     /* Update image styling if in image mode */
     _toggle_apply_image_state(d);
@@ -292,6 +326,9 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
     if (d->tx_endian != DEF_TX_ENDIAN)
         cJSON_AddNumberToObject(cfg, "tx_endian", d->tx_endian);
 
+    if (d->tx_rate_hz != DEF_TX_RATE_HZ)
+        cJSON_AddNumberToObject(cfg, "tx_rate_hz", d->tx_rate_hz);
+
     /* Appearance: only write if different from defaults */
     if (d->active_color.full != lv_color_hex(DEF_ACTIVE_COLOR).full)
         cJSON_AddNumberToObject(cfg, "active_color", (int)d->active_color.full);
@@ -365,6 +402,9 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_endian");
     if (cJSON_IsNumber(item)) d->tx_endian = (uint8_t)item->valueint;
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_rate_hz");
+    if (cJSON_IsNumber(item)) { d->tx_rate_hz = (uint8_t)item->valueint; if (d->tx_rate_hz > 50) d->tx_rate_hz = 50; }
+
     /* Appearance */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "active_color");
     if (cJSON_IsNumber(item)) d->active_color.full = (uint16_t)item->valueint;
@@ -409,8 +449,11 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 static void _toggle_destroy(widget_t *w) {
     if (!w) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
-    if (d && d->signal_index >= 0)
-        signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
+    if (d) {
+        _toggle_stop_tx_timer(d);
+        if (d->signal_index >= 0)
+            signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
+    }
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
@@ -479,6 +522,7 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     d->tx_bit_start        = DEF_TX_BIT_START;
     d->tx_bit_length       = DEF_TX_BIT_LENGTH;
     d->tx_endian           = DEF_TX_ENDIAN;
+    d->tx_rate_hz          = DEF_TX_RATE_HZ;
     d->active_color        = lv_color_hex(DEF_ACTIVE_COLOR);
     d->inactive_color      = lv_color_hex(DEF_INACTIVE_COLOR);
     d->label_color         = lv_color_hex(DEF_LABEL_COLOR);

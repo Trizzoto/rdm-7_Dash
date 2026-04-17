@@ -25,6 +25,7 @@
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
 #include "ui/settings/device_settings.h"
+#include "storage/boot_assets.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
 #include "esp_littlefs.h"
@@ -1645,6 +1646,12 @@ static esp_err_t image_delete_handler(httpd_req_t *req) {
 
 	if (!_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	if (boot_assets_is_protected_image(name)) {
+		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+		                    "Built-in image cannot be deleted");
 		return ESP_FAIL;
 	}
 

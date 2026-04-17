@@ -19,6 +19,7 @@ typedef struct {
     uint8_t    tx_bit_start;        /* bit position (0-63, default: 0) */
     uint8_t    tx_bit_length;       /* bit width (1-32, default: 1) */
     uint8_t    tx_endian;           /* 0 = big, 1 = little (default: 1) */
+    uint8_t    tx_rate_hz;          /* periodic TX rate (0 = on-change only, 1-50 Hz) */
     /* Appearance */
     lv_color_t active_color;        /* default: 0x00FF00 */
     lv_color_t inactive_color;      /* default: 0x555555 */
@@ -37,6 +38,7 @@ typedef struct {
     lv_obj_t  *label_obj;
     lv_obj_t  *img_obj;             /* runtime: LVGL image object (image mode) */
     void      *img_dsc;             /* runtime: lv_img_dsc_t* from rdm_image_load() */
+    lv_timer_t *tx_timer;           /* runtime: periodic TX timer (NULL when inactive) */
 } toggle_data_t;
 
 widget_t *widget_toggle_create_instance(uint8_t slot);

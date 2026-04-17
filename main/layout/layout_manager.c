@@ -1,5 +1,6 @@
 #include "layout_manager.h"
 #include "default_layout.h"
+#include "boot_assets.h"
 
 /* Widget factory headers */
 #include "widget_bar.h"
@@ -242,6 +243,10 @@ esp_err_t layout_manager_init(void) {
 	s_lfs_mounted = true;
 	ESP_LOGI(TAG, "LittleFS mounted at %s", LFS_BASE_PATH);
 
+	/* Seed firmware-embedded default assets (RDM logo, etc.) if missing.
+	 * This runs after every boot so factory reset is self-healing. */
+	boot_assets_seed_defaults();
+
 	/* Create /lfs/layouts directory if it does not exist */
 	struct stat st;
 	if (stat(LFS_LAYOUT_DIR, &st) != 0) {
@@ -253,55 +258,26 @@ esp_err_t layout_manager_init(void) {
 		}
 	}
 
-	/* ── Ensure default layout exists and is up-to-date ─────────────────
-	 * Read default.json's schema_version.  Regenerate if missing OR if
-	 * the version is older than LAYOUT_SCHEMA_VERSION so that a
-	 * firmware update automatically refreshes stale position data.      */
-	bool need_regen = false;
+	/* ── Seed default layout if missing ────────────────────────────────
+	 * Only generate default.json when it does not exist (first boot or
+	 * after factory reset).  User edits to "default" are preserved
+	 * across reboots — factory reset is the way to revert. */
 	char default_path[80];
 	snprintf(default_path, sizeof(default_path), "%s/default.json",
 			 LFS_LAYOUT_DIR);
 
-	FILE *df = fopen(default_path, "r");
-	if (!df) {
-		need_regen = true;
-		ESP_LOGI(TAG, "default.json not found — will generate");
-	} else {
-		char hdr[512];
-		size_t nr = fread(hdr, 1, sizeof(hdr) - 1, df);
-		fclose(df);
-		hdr[nr] = '\0';
-		cJSON *tmp = cJSON_Parse(hdr);
-		int ver = 0;
-		if (tmp) {
-			cJSON *sv = cJSON_GetObjectItemCaseSensitive(tmp, "schema_version");
-			if (cJSON_IsNumber(sv))
-				ver = sv->valueint;
-			cJSON_Delete(tmp);
-		}
-		if (ver < LAYOUT_SCHEMA_VERSION) {
-			need_regen = true;
-			ESP_LOGI(TAG, "default.json schema v%d < v%d — regenerating", ver,
-					 LAYOUT_SCHEMA_VERSION);
-		}
-	}
-
-	if (need_regen) {
+	struct stat st_def;
+	if (stat(default_path, &st_def) != 0) {
+		ESP_LOGI(TAG, "default.json not found — generating");
 		esp_err_t err2 = generate_default_layout();
 		if (err2 != ESP_OK) {
 			ESP_LOGW(TAG, "generate_default_layout failed: %s",
 					 esp_err_to_name(err2));
 		}
-		/* Also regenerate the RPM meter test layout to ensure it's up to date
-		 */
-		generate_rpm_meter_test_layout();
-
-		/* Only set active to "default" if no layout has been chosen yet.
-		 * Otherwise the user's last-used layout would be overwritten on
-		 * every boot whenever the schema version bumps. */
+		/* Set active to "default" only when no layout has been chosen */
 		char cur[LAYOUT_MAX_NAME] = {0};
 		if (layout_manager_get_active(cur, sizeof(cur)) != ESP_OK
-		    || strcmp(cur, "default") == 0) {
+		    || cur[0] == '\0') {
 			layout_manager_set_active("default");
 		}
 	}
@@ -318,6 +294,21 @@ esp_err_t layout_manager_init(void) {
 				ESP_LOGI(TAG, "Migrated _splash.json → _splash_Default.json");
 			} else {
 				ESP_LOGW(TAG, "Failed to migrate _splash.json");
+			}
+		}
+	}
+
+	/* ── Seed default splash if none exists ─────────────────────────── */
+	{
+		char splash_path[80];
+		snprintf(splash_path, sizeof(splash_path),
+				 "%s/_splash_Default.json", LFS_LAYOUT_DIR);
+		struct stat st_spl;
+		if (stat(splash_path, &st_spl) != 0) {
+			esp_err_t serr = generate_default_splash();
+			if (serr != ESP_OK) {
+				ESP_LOGW(TAG, "generate_default_splash failed: %s",
+						 esp_err_to_name(serr));
 			}
 		}
 	}
@@ -593,12 +584,16 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	/* ── Validate schema version ── */
 	cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
 	int schema_ver = cJSON_IsNumber(sv) ? sv->valueint : 0;
-	if (schema_ver < 1 || schema_ver > LAYOUT_SCHEMA_VERSION) {
-		ESP_LOGE(TAG, "layout_load: schema v%d invalid (expected 1..%d) in %s",
-				 schema_ver, LAYOUT_SCHEMA_VERSION, path);
+	if (schema_ver < 1) {
+		ESP_LOGE(TAG, "layout_load: schema v%d invalid (expected >= 1) in %s",
+				 schema_ver, path);
 		cJSON_Delete(root);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
+	}
+	if (schema_ver > LAYOUT_SCHEMA_VERSION) {
+		ESP_LOGW(TAG, "layout_load: schema v%d newer than firmware v%d — loading anyway",
+				 schema_ver, LAYOUT_SCHEMA_VERSION);
 	}
 
 	/* ── Extract optional ECU context fields ── */

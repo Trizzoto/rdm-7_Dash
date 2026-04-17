@@ -30,6 +30,7 @@ static const char *TAG = "widget_button";
 #define DEF_TX_BIT_START   0
 #define DEF_TX_BIT_LENGTH  1
 #define DEF_TX_ENDIAN      1
+#define DEF_TX_RATE_HZ     0
 #define DEF_TX_SEND_REL    false
 #define DEF_LATCH          false
 #define DEF_BG_COLOR       0x333333
@@ -44,6 +45,10 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
     if (a == 2) return LV_TEXT_ALIGN_RIGHT;
     return LV_TEXT_ALIGN_CENTER;
 }
+
+/* ── Forward declarations ─────────────────────────────────────────────────── */
+static void _btn_start_tx_timer(widget_t *w);
+static void _btn_stop_tx_timer(button_data_t *d);
 
 /* ── LVGL callbacks ───────────────────────────────────────────────────────── */
 
@@ -81,8 +86,14 @@ static void _btn_pressed_cb(lv_event_t *e) {
         d->latch_state = !d->latch_state;
         _btn_send(d, d->latch_state);
         _btn_update_visual(d);
+        /* Start/stop periodic TX based on latch state */
+        if (d->latch_state)
+            _btn_start_tx_timer(w);
+        else
+            _btn_stop_tx_timer(d);
     } else {
         _btn_send(d, true);
+        _btn_start_tx_timer(w);
     }
 }
 
@@ -91,8 +102,33 @@ static void _btn_released_cb(lv_event_t *e) {
     if (!w || !w->type_data) return;
     button_data_t *d = (button_data_t *)w->type_data;
 
-    if (!d->latch && d->tx_send_release) {
-        _btn_send(d, false);
+    if (!d->latch) {
+        _btn_stop_tx_timer(d);
+        if (d->tx_send_release)
+            _btn_send(d, false);
+    }
+}
+
+/* ── Periodic TX timer ────────────────────────────────────────────────────── */
+
+static void _btn_tx_timer_cb(lv_timer_t *t) {
+    widget_t *w = (widget_t *)t->user_data;
+    if (!w || !w->type_data) return;
+    button_data_t *d = (button_data_t *)w->type_data;
+    _btn_send(d, true);
+}
+
+static void _btn_start_tx_timer(widget_t *w) {
+    button_data_t *d = (button_data_t *)w->type_data;
+    if (!d || d->tx_timer || d->tx_can_id == 0 || d->tx_rate_hz == 0) return;
+    uint32_t period = 1000 / d->tx_rate_hz;
+    d->tx_timer = lv_timer_create(_btn_tx_timer_cb, period, w);
+}
+
+static void _btn_stop_tx_timer(button_data_t *d) {
+    if (d->tx_timer) {
+        lv_timer_del(d->tx_timer);
+        d->tx_timer = NULL;
     }
 }
 
@@ -242,6 +278,9 @@ static void _button_to_json(widget_t *w, cJSON *out) {
     if (d->tx_endian != DEF_TX_ENDIAN)
         cJSON_AddNumberToObject(cfg, "tx_endian", d->tx_endian);
 
+    if (d->tx_rate_hz != DEF_TX_RATE_HZ)
+        cJSON_AddNumberToObject(cfg, "tx_rate_hz", d->tx_rate_hz);
+
     if (d->tx_send_release != DEF_TX_SEND_REL)
         cJSON_AddBoolToObject(cfg, "tx_send_release", d->tx_send_release);
 
@@ -304,6 +343,9 @@ static void _button_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_endian");
     if (cJSON_IsNumber(item)) d->tx_endian = (uint8_t)item->valueint;
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_rate_hz");
+    if (cJSON_IsNumber(item)) { d->tx_rate_hz = (uint8_t)item->valueint; if (d->tx_rate_hz > 50) d->tx_rate_hz = 50; }
+
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_send_release");
     if (cJSON_IsBool(item)) d->tx_send_release = cJSON_IsTrue(item);
 
@@ -350,15 +392,16 @@ static void _button_from_json(widget_t *w, cJSON *in) {
 
 static void _button_destroy(widget_t *w) {
     if (!w) return;
+    if (w->type_data) {
+        button_data_t *d = (button_data_t *)w->type_data;
+        _btn_stop_tx_timer(d);
+        rdm_image_free((lv_img_dsc_t *)d->img_dsc);
+    }
     widget_rules_free(w);
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
     w->root = NULL;
-    if (w->type_data) {
-        button_data_t *d = (button_data_t *)w->type_data;
-        rdm_image_free((lv_img_dsc_t *)d->img_dsc);
-        free(d);
-    }
+    if (w->type_data) free(w->type_data);
     free(w);
 }
 
@@ -412,6 +455,7 @@ widget_t *widget_button_create_instance(uint8_t slot) {
     d->tx_bit_start     = DEF_TX_BIT_START;
     d->tx_bit_length    = DEF_TX_BIT_LENGTH;
     d->tx_endian        = DEF_TX_ENDIAN;
+    d->tx_rate_hz       = DEF_TX_RATE_HZ;
     d->tx_send_release  = DEF_TX_SEND_REL;
     d->latch            = DEF_LATCH;
     d->latch_state      = false;

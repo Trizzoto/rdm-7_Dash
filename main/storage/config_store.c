@@ -248,15 +248,22 @@ esp_err_t config_store_save_wifi_list(const wifi_credentials_t *entries, uint8_t
 esp_err_t config_store_add_wifi(const wifi_credentials_t *entry)
 {
     if (!entry || entry->ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
-    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    /* Heap-allocate the list. sys_evt task calls this path on STA connect and
+     * only has ~2.5 KB of stack — a 5-entry list on-stack (~500 B) plus NVS
+     * operations reliably blew that stack. */
+    wifi_credentials_t *list = calloc(CONFIG_STORE_WIFI_SLOT_COUNT, sizeof(*list));
+    if (!list) return ESP_ERR_NO_MEM;
     uint8_t count = 0;
     config_store_load_wifi_list(list, &count);
 
+    esp_err_t ret;
     /* Overwrite if SSID already present */
     for (uint8_t i = 0; i < count; i++) {
         if (strncmp(list[i].ssid, entry->ssid, sizeof(list[i].ssid)) == 0) {
             list[i] = *entry;
-            return config_store_save_wifi_list(list, count);
+            ret = config_store_save_wifi_list(list, count);
+            free(list);
+            return ret;
         }
     }
 
@@ -269,13 +276,17 @@ esp_err_t config_store_add_wifi(const wifi_credentials_t *entry)
         list[CONFIG_STORE_WIFI_SLOT_COUNT - 1] = *entry;
         count = CONFIG_STORE_WIFI_SLOT_COUNT;
     }
-    return config_store_save_wifi_list(list, count);
+    ret = config_store_save_wifi_list(list, count);
+    free(list);
+    return ret;
 }
 
 esp_err_t config_store_remove_wifi(const char *ssid)
 {
     if (!ssid) return ESP_ERR_INVALID_ARG;
-    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    /* Heap-allocate for the same reason as config_store_add_wifi. */
+    wifi_credentials_t *list = calloc(CONFIG_STORE_WIFI_SLOT_COUNT, sizeof(*list));
+    if (!list) return ESP_ERR_NO_MEM;
     uint8_t count = 0;
     config_store_load_wifi_list(list, &count);
 
@@ -283,12 +294,14 @@ esp_err_t config_store_remove_wifi(const char *ssid)
     for (uint8_t i = 0; i < count; i++) {
         if (strncmp(list[i].ssid, ssid, sizeof(list[i].ssid)) == 0) { found = i; break; }
     }
-    if (found >= count) return ESP_ERR_NOT_FOUND;
+    if (found >= count) { free(list); return ESP_ERR_NOT_FOUND; }
 
     for (uint8_t i = found; i < count - 1; i++) list[i] = list[i + 1];
     memset(&list[count - 1], 0, sizeof(list[0]));
     count--;
-    return config_store_save_wifi_list(list, count);
+    esp_err_t ret = config_store_save_wifi_list(list, count);
+    free(list);
+    return ret;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

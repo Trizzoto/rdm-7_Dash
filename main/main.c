@@ -19,8 +19,6 @@
 #include "esp_pm.h"
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "storage/sd_manager.h"
-#include "storage/data_logger.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,14 +27,17 @@
 #include "layout/layout_manager.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
+#include "net/mdns_service.h"
+#include "net/uart_protocol.h"
+#include "net/wifi_manager.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "ota_handler.h"
 #include "sdkconfig.h"
+#include "storage/data_logger.h"
+#include "storage/sd_manager.h"
 #include "ui/screens/ui_wifi.h"
-#include "net/wifi_manager.h"
-#include "net/mdns_service.h"
-#include "net/uart_protocol.h"
+
 // #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
 #include "storage/config_store.h"
 #include "ui/theme.h"
@@ -134,7 +135,6 @@ SemaphoreHandle_t sem_gui_ready;
 void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 				 lv_color_t *color_map);
 
-
 /* CAN subsystem — TWAI hardware, receive task */
 #include "can/can_manager.h"
 
@@ -144,7 +144,7 @@ void my_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 #define LEDC_OUTPUT_IO 16 // Define the output GPIO
 #define LEDC_CHANNEL LEDC_CHANNEL_0
 #define LEDC_DUTY_RES LEDC_TIMER_13_BIT // Set duty resolution to 13 bits
-#define LEDC_FREQUENCY 5000				// Frequency in Hz (matches device_settings.c)
+#define LEDC_FREQUENCY 5000 // Frequency in Hz (matches device_settings.c)
 #define LEDC_DUTY (8191)
 
 static esp_err_t i2c_master_init(void) {
@@ -178,7 +178,6 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
 #endif
 	return high_task_awoken == pdTRUE;
 }
-
 
 static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 								  lv_color_t *color_map) {
@@ -312,7 +311,6 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 	}
 }
 
-
 void init_nvs(void) {
 	esp_err_t err = nvs_flash_init();
 	if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
@@ -381,7 +379,7 @@ void fuel_sender_adc_init(void) {
 		.bitwidth = FUEL_SENDER_ADC_BITS,
 	};
 	err = adc_oneshot_config_channel(s_fuel_sender_adc, FUEL_SENDER_ADC_CH,
-							   &chan_cfg);
+									 &chan_cfg);
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "ADC channel config failed: %s", esp_err_to_name(err));
 	}
@@ -397,14 +395,13 @@ float fuel_sender_read_voltage(void) {
 	return (raw / 4095.0f) * 3.3f;
 }
 
-
 static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 	(void)timer;
 	wifi_manager_start();
 
-	/* Honour boot config for AP mode — on first-run we explicitly set ap_enabled=true
-	   in app_main so the hotspot is discoverable immediately. On subsequent boots,
-	   this reflects the user's saved preference. */
+	/* Honour boot config for AP mode — on first-run we explicitly set
+	   ap_enabled=true in app_main so the hotspot is discoverable immediately.
+	   On subsequent boots, this reflects the user's saved preference. */
 	wifi_boot_config_t cfg;
 	if (config_store_load_wifi_boot(&cfg) == ESP_OK && cfg.ap_enabled) {
 		wifi_manager_enable_ap(true);
@@ -427,8 +424,8 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 
 void app_main(void) {
 	ESP_LOGW(TAG, "[mem] app_main enter  free_int=%u  free_psram=%u",
-	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+			 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+			 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
 	// Initialize PWM for GPIO16
 	init_pwm();
@@ -634,10 +631,11 @@ void app_main(void) {
 		buf1 = heap_caps_aligned_alloc(32, buf_size,
 									   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 		if (buf1) {
-			buf2 = heap_caps_aligned_alloc(32, buf_size,
-										   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+			buf2 = heap_caps_aligned_alloc(
+				32, buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 			if (buf2) {
-				ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
+				ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)",
+						 lines);
 				break;
 			}
 			heap_caps_free(buf1);
@@ -647,16 +645,20 @@ void app_main(void) {
 
 	/* Fallback: PSRAM buffers (slower due to bus contention with LCD DMA) */
 	if (!buf1 || !buf2) {
-		ESP_LOGW(TAG, "Internal SRAM insufficient, falling back to PSRAM buffers");
-		buf_size = (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
+		ESP_LOGW(TAG,
+				 "Internal SRAM insufficient, falling back to PSRAM buffers");
+		buf_size =
+			(EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
 		buf_size = (buf_size + 31) & ~31;
-		const size_t min_buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
+		const size_t min_buf_size =
+			(EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
 
 		while (buf_size >= min_buf_size) {
 			buf1 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
 			if (buf1) {
 				buf2 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
-				if (buf2) break;
+				if (buf2)
+					break;
 				heap_caps_free(buf1);
 				buf1 = NULL;
 			}
@@ -705,15 +707,17 @@ void app_main(void) {
 	 *   2. Both framebuffers sized (H_RES * V_RES * sizeof(lv_color_t))
 	 *   3. Verification on-device that no cache alignment faults appear
 	 *
-	 * Until then the rotation persistence layer (config_store_save/load_rotation)
-	 * stays in place, but the UI button is hidden. See #23. */
+	 * Until then the rotation persistence layer
+	 * (config_store_save/load_rotation) stays in place, but the UI button is
+	 * hidden. See #23. */
 	{
 		uint8_t saved_rot = 0;
-		(void) config_store_load_rotation(&saved_rot);
+		(void)config_store_load_rotation(&saved_rot);
 		if (saved_rot > 0 && saved_rot <= 3) {
-			ESP_LOGW(TAG, "Display rotation %u deg saved but NOT applied — "
-				"rotation temporarily disabled, see comment at %s:%d",
-				(unsigned)(saved_rot * 90), __FILE__, __LINE__);
+			ESP_LOGW(TAG,
+					 "Display rotation %u deg saved but NOT applied — "
+					 "rotation temporarily disabled, see comment at %s:%d",
+					 (unsigned)(saved_rot * 90), __FILE__, __LINE__);
 		}
 	}
 
@@ -794,10 +798,22 @@ void app_main(void) {
 	data_logger_init();
 	/* Initialize UART serial protocol (core 0, priority 5).
 	 * Shares GPIO 43/44 with the ESP-IDF console (UART0) — the board's
-	 * CH422G I/O expander selects which UART drives the USB bridge. */
+	 * CH422G I/O expander selects which UART drives the USB bridge.
+	 *
+	 * DEBUG: set RDM7_DEBUG_KEEP_CONSOLE to 1 to skip UART1 takeover so boot
+	 * logs remain visible on the USB-UART bridge past this point. Desktop app
+	 * cannot connect while this is enabled. Flip back to 0 for production. */
+#ifndef RDM7_DEBUG_KEEP_CONSOLE
+#define RDM7_DEBUG_KEEP_CONSOLE 0
+#endif
+#if RDM7_DEBUG_KEEP_CONSOLE
+	ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "
+				  "so console logs stay on USB. Desktop app will not connect.");
+#else
 	if (uart_protocol_init() != ESP_OK) {
 		ESP_LOGE(TAG, "UART protocol init failed!");
 	}
+#endif
 
 	/* USB CDC disabled — ESP32-S3 USB Serial/JTAG and USB OTG share the
 	 * same PHY and can't coexist. To enable USB CDC in the future:
@@ -810,8 +826,8 @@ void app_main(void) {
 	// }
 
 	ESP_LOGW(TAG, "[mem] before wifi_manager_init  free_int=%u  largest_int=%u",
-	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+			 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+			 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
 	/* Initialize WiFi manager (creates netif, no radio start yet) */
 	wifi_manager_init();
@@ -824,8 +840,8 @@ void app_main(void) {
 	rdm7_mdns_init();
 
 	ESP_LOGW(TAG, "[mem] after wifi_ui_init  free_int=%u  largest_int=%u",
-	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+			 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+			 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
 	/* Check if WiFi should start on boot */
 	wifi_boot_config_t boot_cfg;
@@ -840,17 +856,20 @@ void app_main(void) {
 	bool first_run_done = false;
 	config_store_load_first_run_done(&first_run_done);
 	if (!first_run_done) {
-		ESP_LOGW(TAG, "First run detected — enabling Wi-Fi + AP for onboarding");
+		ESP_LOGW(TAG,
+				 "First run detected — enabling Wi-Fi + AP for onboarding");
 		boot_cfg.wifi_on_boot = true;
 		boot_cfg.ap_enabled = true;
-		(void) config_store_save_wifi_boot(&boot_cfg);
-		/* Do NOT mark first_run_done here — the wizard does that on dismissal */
+		(void)config_store_save_wifi_boot(&boot_cfg);
+		/* Do NOT mark first_run_done here — the wizard does that on dismissal
+		 */
 	}
 
 	if (boot_cfg.wifi_on_boot) {
 		ESP_LOGI(TAG, "WiFi-on-boot enabled, starting WiFi after 4s delay...");
 		/* Start WiFi with a 4-second delay to let dashboard load first */
-		lv_timer_t *wifi_boot_timer = lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
+		lv_timer_t *wifi_boot_timer =
+			lv_timer_create(_deferred_wifi_boot_cb, 4000, NULL);
 		lv_timer_set_repeat_count(wifi_boot_timer, 1);
 	} else {
 		ESP_LOGI(TAG, "WiFi disabled at boot — enable from Settings > Wi-Fi");

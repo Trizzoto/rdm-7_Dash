@@ -322,7 +322,6 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
 	if (!pd) return;
 	uint8_t slot = pd->slot;
-	if (slot >= 8) return;
 
 	const char *display_str;
 	char buf[32];
@@ -426,8 +425,6 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	panel_data_t *pd = (panel_data_t *)w->type_data;
 	if (!pd) return;
 	uint8_t slot = pd->slot;
-	if (slot >= 8)
-		return;
 
 	/* Create single box for this slot */
 	lv_obj_t *box = lv_obj_create(parent);
@@ -784,7 +781,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 		return NULL;
 	}
 
-	pd->slot = slot < 8 ? slot : 0;
+	pd->slot = slot;
 	pd->signal_index = -1;
 	/* Warning "apply to" defaults: label + value coloured, panel border not */
 	pd->warning_high_apply_label = true;
@@ -809,8 +806,8 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 
 	w->type = WIDGET_PANEL;
 	w->slot = pd->slot;
-	w->x = s_panel_default_x[pd->slot];
-	w->y = s_panel_default_y[pd->slot];
+	w->x = (pd->slot < 8) ? s_panel_default_x[pd->slot] : 0;
+	w->y = (pd->slot < 8) ? s_panel_default_y[pd->slot] : 0;
 	w->w = 155;
 	w->h = 92;
 	w->type_data = pd;

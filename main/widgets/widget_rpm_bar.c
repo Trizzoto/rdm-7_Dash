@@ -645,6 +645,7 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_bar_set_value(rpm_bar_gauge, 0, LV_ANIM_OFF);
 	lv_obj_set_size(rpm_bar_gauge, 783, 55);
 	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, 20, 0);
+	lv_obj_clear_flag(rpm_bar_gauge, LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
 
 	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
@@ -670,7 +671,7 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_set_height(rpm_redline_zone, 12);
 	lv_obj_set_y(rpm_redline_zone, 22);
 	lv_obj_set_align(rpm_redline_zone, LV_ALIGN_CENTER);
-	lv_obj_clear_flag(rpm_redline_zone, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_clear_flag(rpm_redline_zone, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
 	lv_obj_set_style_radius(rpm_redline_zone, 0,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(rpm_redline_zone, THEME_COLOR_RED,
@@ -767,7 +768,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 		lv_obj_set_style_border_width(line_top, 0,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_pad_all(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_clear_flag(line_top, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_clear_flag(line_top, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
 		// Position the line so it's centered horizontally on x_pos
 		lv_coord_t adjusted_x = x_pos - (line_width / 2);
@@ -811,7 +812,7 @@ void update_rpm_lines(lv_obj_t *parent) {
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_pad_all(line_bottom, 0,
 								 LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_clear_flag(line_bottom, LV_OBJ_FLAG_SCROLLABLE);
+		lv_obj_clear_flag(line_bottom, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
 		// Position the bottom line flat at the bottom with its height
 		// flipped
@@ -837,6 +838,7 @@ lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent) {
 	lv_obj_set_align(container, LV_ALIGN_CENTER);
 	lv_obj_set_pos(container, 0, -(int16_t)SCREEN_ORIGIN_Y + 55 / 2);
 	lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_add_flag(container, LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_set_style_bg_opa(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);

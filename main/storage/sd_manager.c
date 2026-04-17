@@ -35,9 +35,14 @@ esp_err_t sd_manager_init(void) {
 	host.max_freq_khz = 10000;
 
 	spi_bus_config_t bus_cfg = {
-		.mosi_io_num = SD_MOSI,
-		.miso_io_num = SD_MISO,
-		.sclk_io_num = SD_CLK,
+		.mosi_io_num   = SD_MOSI,
+		.miso_io_num   = SD_MISO,
+		.sclk_io_num   = SD_CLK,
+		/* Explicitly disable quad pins — zero-initialized defaults to
+		 * GPIO 0 which is the LCD G3 data line, and spi_bus_free() would
+		 * then reset GPIO 0 on the error path and glitch the LCD. */
+		.quadwp_io_num = -1,
+		.quadhd_io_num = -1,
 		.max_transfer_sz = 4000,
 	};
 	esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);

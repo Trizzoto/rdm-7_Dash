@@ -49,6 +49,26 @@ static const char *TAG = "serial_cmd";
 extern bool example_lvgl_lock(int timeout_ms);
 extern void example_lvgl_unlock(void);
 
+/* Deferred preview apply — runs on LVGL task. arg is a cJSON* root that
+ * this callback takes ownership of and frees. Mirrors the behavior of the
+ * HTTP /api/layout/preview endpoint. */
+static void _deferred_preview_apply(void *arg)
+{
+    cJSON *root = (cJSON *)arg;
+    if (!root) return;
+
+    if (splash_screen_is_edit_mode()) {
+        splash_screen_apply_preview(root);
+    } else {
+        lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+        ui_Screen3_preview_layout(root);
+        lv_scr_load(ui_Screen3);
+        if (old && old != ui_Screen3 && lv_obj_is_valid(old))
+            lv_obj_del(old);
+    }
+    cJSON_Delete(root);
+}
+
 /* Deferred screen reload — must run on LVGL task */
 static void _deferred_screen_reload(void *arg)
 {
@@ -76,6 +96,18 @@ static bool _name_is_safe(const char *name)
     if (!name || !name[0]) return false;
     for (const char *p = name; *p; p++) {
         if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
+    }
+    return true;
+}
+
+/* Like _name_is_safe but allows dots (for filenames with extensions like .csv) */
+static bool _filename_is_safe(const char *name)
+{
+    if (!name || !name[0]) return false;
+    /* Block path traversal (..) */
+    if (strstr(name, "..")) return false;
+    for (const char *p = name; *p; p++) {
+        if (*p == '/' || *p == '\\' || *p < 0x20) return false;
     }
     return true;
 }
@@ -312,6 +344,31 @@ static void _handle_layout_save(int id, cJSON *params)
 
     /* Trigger hot-reload via LVGL async */
     lv_async_call(_deferred_screen_reload, NULL);
+    _send_ok(id);
+}
+
+/* ── layout.preview ──────────────────────────────────────────────────────── *
+ *
+ * Applies the given layout JSON live on the display without saving to
+ * LittleFS. Used by the desktop editor's live-preview feature so edits
+ * (drag/resize/field changes) are reflected on the device in real time.
+ *
+ * The layout object is duplicated and ownership transferred to an
+ * lv_async_call that runs on the LVGL task. Returns immediately. */
+static void _handle_layout_preview(int id, cJSON *params)
+{
+    cJSON *data_item = cJSON_GetObjectItem(params, "data");
+    if (!cJSON_IsObject(data_item)) {
+        _send_error(id, "Missing 'data' object");
+        return;
+    }
+    /* Duplicate so the async callback owns its own copy. */
+    cJSON *copy = cJSON_Duplicate(data_item, 1);
+    if (!copy) {
+        _send_error(id, "Out of memory");
+        return;
+    }
+    lv_async_call(_deferred_preview_apply, copy);
     _send_ok(id);
 }
 
@@ -1151,7 +1208,7 @@ static void _handle_log_list(int id, cJSON *params)
 static void _handle_log_delete(int id, cJSON *params)
 {
     cJSON *j = cJSON_GetObjectItem(params, "name");
-    if (!cJSON_IsString(j) || !_name_is_safe(j->valuestring)) {
+    if (!cJSON_IsString(j) || !_filename_is_safe(j->valuestring)) {
         _send_error(id, "Invalid name");
         return;
     }
@@ -1253,6 +1310,220 @@ static void _handle_wifi_config_set(int id, cJSON *params)
     _send_ok(id);
 }
 
+/* ── SD Card ────────────────────────────────────────────────────────────── */
+
+static void _handle_sd_status(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "mounted", sd_manager_is_mounted());
+    if (sd_manager_is_mounted()) {
+        size_t total = 0, used = 0, avail = 0;
+        if (sd_manager_get_info(&total, &used, &avail) == ESP_OK) {
+            cJSON_AddNumberToObject(r, "total", total);
+            cJSON_AddNumberToObject(r, "used", used);
+            cJSON_AddNumberToObject(r, "free", avail);
+        }
+    }
+    _send_response(id, r, NULL);
+}
+
+/* Helper: walk a directory for files matching extension, add to JSON array */
+static void _sd_list_dir(cJSON *arr, const char *dir, const char *ext,
+                         size_t ext_len)
+{
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        size_t flen = strlen(de->d_name);
+        if (flen <= ext_len
+            || strcmp(de->d_name + flen - ext_len, ext) != 0)
+            continue;
+        char path[96];
+        snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+
+        char name[64];
+        size_t copy = flen - ext_len;
+        if (copy >= sizeof(name)) copy = sizeof(name) - 1;
+        memcpy(name, de->d_name, copy);
+        name[copy] = '\0';
+
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(obj, "name", name);
+        cJSON_AddNumberToObject(obj, "size", st.st_size);
+        cJSON_AddItemToArray(arr, obj);
+    }
+    closedir(d);
+}
+
+static void _handle_sd_files(int id, cJSON *params)
+{
+    (void)params;
+    if (!sd_manager_is_mounted()) {
+        _send_error(id, "SD card not mounted");
+        return;
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON *layouts = cJSON_AddArrayToObject(r, "layouts");
+    _sd_list_dir(layouts, SD_LAYOUT_DIR, ".json", 5);
+    cJSON *images = cJSON_AddArrayToObject(r, "images");
+    _sd_list_dir(images, SD_IMAGE_DIR, ".rdmimg", 7);
+    cJSON *fonts = cJSON_AddArrayToObject(r, "fonts");
+    _sd_list_dir(fonts, SD_FONT_DIR, ".ttf", 4);
+    _send_response(id, r, NULL);
+}
+
+/* Helper: copy file src → dst (4KB chunks) */
+static esp_err_t _serial_copy_file(const char *src, const char *dst)
+{
+    FILE *fin = fopen(src, "rb");
+    if (!fin) return ESP_ERR_NOT_FOUND;
+    FILE *fout = fopen(dst, "wb");
+    if (!fout) { fclose(fin); return ESP_FAIL; }
+    char *buf = malloc(4096);
+    if (!buf) { fclose(fin); fclose(fout); return ESP_FAIL; }
+    esp_err_t ret = ESP_OK;
+    size_t nr;
+    while ((nr = fread(buf, 1, 4096, fin)) > 0) {
+        if (fwrite(buf, 1, nr, fout) != nr) { ret = ESP_FAIL; break; }
+    }
+    free(buf);
+    fclose(fin);
+    fclose(fout);
+    if (ret != ESP_OK) remove(dst);
+    return ret;
+}
+
+static void _handle_sd_copy(int id, cJSON *params)
+{
+    cJSON *type_item = cJSON_GetObjectItem(params, "type");
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    cJSON *dir_item  = cJSON_GetObjectItem(params, "direction");
+    if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)
+        || !cJSON_IsString(dir_item)) {
+        _send_error(id, "Missing type/name/direction");
+        return;
+    }
+    const char *type = type_item->valuestring;
+    const char *name = name_item->valuestring;
+    const char *direction = dir_item->valuestring;
+    if (!_name_is_safe(name)) { _send_error(id, "Invalid name"); return; }
+    if (!sd_manager_is_mounted()) { _send_error(id, "SD card not mounted"); return; }
+
+    const char *lfs_dir = NULL, *sd_dir = NULL, *ext = NULL;
+    if (strcmp(type, "layout") == 0) {
+        lfs_dir = "/lfs/layouts"; sd_dir = SD_LAYOUT_DIR; ext = ".json";
+    } else if (strcmp(type, "image") == 0) {
+        lfs_dir = LFS_IMAGE_DIR; sd_dir = SD_IMAGE_DIR; ext = ".rdmimg";
+    } else if (strcmp(type, "font") == 0) {
+        lfs_dir = LFS_FONT_DIR; sd_dir = SD_FONT_DIR; ext = ".ttf";
+    } else {
+        _send_error(id, "Invalid type"); return;
+    }
+
+    char src[96], dst[96];
+    bool to_sd = (strcmp(direction, "to_sd") == 0);
+    if (to_sd) {
+        snprintf(src, sizeof(src), "%s/%s%s", lfs_dir, name, ext);
+        snprintf(dst, sizeof(dst), "%s/%s%s", sd_dir, name, ext);
+        /* Ensure SD subdirectory exists */
+        _ensure_dir(sd_dir);
+    } else if (strcmp(direction, "from_sd") == 0) {
+        snprintf(src, sizeof(src), "%s/%s%s", sd_dir, name, ext);
+        snprintf(dst, sizeof(dst), "%s/%s%s", lfs_dir, name, ext);
+    } else {
+        _send_error(id, "direction must be 'to_sd' or 'from_sd'"); return;
+    }
+
+    esp_err_t err = _serial_copy_file(src, dst);
+    if (err == ESP_ERR_NOT_FOUND) { _send_error(id, "Source file not found"); return; }
+    if (err != ESP_OK)            { _send_error(id, "Copy failed"); return; }
+    ESP_LOGI(TAG, "SD copy: %s '%s' %s", type, name, to_sd ? "to SD" : "from SD");
+    _send_ok(id);
+}
+
+static void _handle_sd_delete(int id, cJSON *params)
+{
+    cJSON *type_item = cJSON_GetObjectItem(params, "type");
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)) {
+        _send_error(id, "Missing type/name"); return;
+    }
+    const char *type = type_item->valuestring;
+    const char *name = name_item->valuestring;
+    if (!_name_is_safe(name)) { _send_error(id, "Invalid name"); return; }
+    if (!sd_manager_is_mounted()) { _send_error(id, "SD card not mounted"); return; }
+
+    char path[96];
+    if (strcmp(type, "layout") == 0)
+        snprintf(path, sizeof(path), "%s/%s.json", SD_LAYOUT_DIR, name);
+    else if (strcmp(type, "image") == 0)
+        snprintf(path, sizeof(path), "%s/%s.rdmimg", SD_IMAGE_DIR, name);
+    else if (strcmp(type, "font") == 0)
+        snprintf(path, sizeof(path), "%s/%s.ttf", SD_FONT_DIR, name);
+    else { _send_error(id, "Invalid type"); return; }
+
+    if (remove(path) != 0) { _send_error(id, "File not found on SD"); return; }
+    ESP_LOGI(TAG, "SD delete: %s '%s'", type, name);
+    _send_ok(id);
+}
+
+/* ── Log download (chunked binary) ─────────────────────────────────────── */
+
+static void _handle_log_download_start(int id, cJSON *params)
+{
+    cJSON *name_item = cJSON_GetObjectItem(params, "name");
+    if (!cJSON_IsString(name_item) || !_filename_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid name"); return;
+    }
+    char path[128];
+    snprintf(path, sizeof(path), "/sdcard/logs/%s", name_item->valuestring);
+    struct stat st;
+    if (stat(path, &st) != 0) { _send_error(id, "File not found"); return; }
+
+    uint32_t file_size = (uint32_t)st.st_size;
+    uint16_t total_chunks = (uint16_t)((file_size + DOWNLOAD_CHUNK_SIZE - 1)
+                                       / DOWNLOAD_CHUNK_SIZE);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "name", name_item->valuestring);
+    cJSON_AddNumberToObject(r, "size", file_size);
+    cJSON_AddNumberToObject(r, "chunks", total_chunks);
+    cJSON_AddNumberToObject(r, "chunk_size", DOWNLOAD_CHUNK_SIZE);
+    _send_response(id, r, NULL);
+}
+
+static void _handle_log_download_chunk(int id, cJSON *params)
+{
+    cJSON *name_item  = cJSON_GetObjectItem(params, "name");
+    cJSON *index_item = cJSON_GetObjectItem(params, "index");
+    if (!cJSON_IsString(name_item) || !cJSON_IsNumber(index_item)
+        || !_filename_is_safe(name_item->valuestring)) {
+        _send_error(id, "Invalid params"); return;
+    }
+
+    char path[128];
+    snprintf(path, sizeof(path), "/sdcard/logs/%s", name_item->valuestring);
+    FILE *f = fopen(path, "rb");
+    if (!f) { _send_error(id, "File not found"); return; }
+
+    uint8_t *buf = malloc(1 + DOWNLOAD_CHUNK_SIZE);
+    if (!buf) { fclose(f); _send_error(id, "OOM"); return; }
+
+    uint32_t offset = (uint32_t)index_item->valueint * DOWNLOAD_CHUNK_SIZE;
+    fseek(f, offset, SEEK_SET);
+    buf[0] = UART_PAYLOAD_BINARY;
+    size_t nr = fread(buf + 1, 1, DOWNLOAD_CHUNK_SIZE, f);
+    fclose(f);
+
+    if (nr == 0) { free(buf); _send_error(id, "Read past end"); return; }
+
+    serial_protocol_send_frame(buf, 1 + nr);
+    free(buf);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  Dispatch Table
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1273,6 +1544,7 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "layout.current",     _handle_layout_current },
     { "layout.raw",         _handle_layout_raw },
     { "layout.save",        _handle_layout_save },
+    { "layout.preview",     _handle_layout_preview },
     { "layout.set",         _handle_layout_set },
     { "layout.delete",      _handle_layout_delete },
     { "layout.version",     _handle_layout_version },
@@ -1309,6 +1581,13 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "log.status",         _handle_log_status },
     { "log.list",           _handle_log_list },
     { "log.delete",         _handle_log_delete },
+    { "log.download.start", _handle_log_download_start },
+    { "log.download.chunk", _handle_log_download_chunk },
+    /* SD Card */
+    { "sd.status",          _handle_sd_status },
+    { "sd.files",           _handle_sd_files },
+    { "sd.copy",            _handle_sd_copy },
+    { "sd.delete",          _handle_sd_delete },
     /* Fuel Calibration */
     { "fuel.status",        _handle_fuel_status },
     { "fuel.set-empty",     _handle_fuel_set_empty },

@@ -33,7 +33,7 @@ This repo is the firmware component of the **RDM project**, which spans four rep
 
 ## Widget System
 
-13 types in `widget_type_t` enum (`widget_types.h`). Slot-limited: panel(8), bar(2), indicator(2), warning(8).
+13 types in `widget_type_t` enum (`widget_types.h`). Slot-limited: panel(16), bar(2), indicator(2), warning(8).
 
 **Lifecycle:** factory → `from_json()` → `create()` → updates via signal callbacks → `to_json()` → `destroy()`
 

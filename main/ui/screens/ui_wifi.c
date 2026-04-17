@@ -985,8 +985,9 @@ static void _wifi_toggle_cb(lv_event_t *e)
         wifi_manager_start();
         web_server_start();
         ESP_LOGI(TAG, "WiFi started");
-        /* Auto-scan after enabling so the network list populates */
-        wifi_manager_scan();
+        /* Try to reconnect to saved network (scans first, connects if found).
+         * Falls back to a plain scan so the network list still populates. */
+        wifi_manager_auto_connect();
     } else {
         web_server_stop();
         wifi_manager_stop();

@@ -57,6 +57,8 @@ typedef struct {
 // Global variables for preview elements (to allow live updates)
 static lv_obj_t *preview_indicator_config = NULL;
 static lv_obj_t *preview_status_text_config = NULL;
+static lv_obj_t *s_ta_left = NULL;   /* touch area for left indicator */
+static lv_obj_t *s_ta_right = NULL;  /* touch area for right indicator */
 static uint8_t preview_indicator_idx = 0;
 
 /* Pointers for INPUT dropdown visibility: when Wire selected, hide CAN ID / bit
@@ -790,6 +792,8 @@ void indicator_animation_timer_cb(lv_timer_t *timer) {
 void widget_indicator_reset(void) {
 	ui_Indicator_Left = NULL;
 	ui_Indicator_Right = NULL;
+	s_ta_left = NULL;
+	s_ta_right = NULL;
 }
 
 /* Helper: compute LVGL zoom (256 = 1x) to scale src image to target size */
@@ -830,7 +834,9 @@ void widget_indicator_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_style_img_recolor_opa(*obj_ptr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_img_opa(*obj_ptr, init_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Transparent touch area for long-press config */
+	/* Transparent touch area — used as w->root for long-press detection.
+	 * The image itself has ADV_HITTEST and may be invisible (opa_off=0),
+	 * so we need a solid touch target on top. */
 	lv_obj_t *ta = lv_obj_create(parent);
 	lv_obj_set_size(ta, tgt_w, tgt_h);
 	lv_obj_set_x(ta, w ? w->x : def_x);
@@ -839,11 +845,10 @@ void widget_indicator_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_clear_flag(ta, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_bg_opa(ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(ta, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	uint8_t *slot_id = lv_mem_alloc(sizeof(uint8_t));
-	if (slot_id) {
-		*slot_id = i;
-		lv_obj_add_event_cb(ta, indicator_longpress_cb, LV_EVENT_LONG_PRESSED, slot_id);
-	}
+
+	/* Store the touch area so _indicator_create can use it as w->root */
+	if (i == 0) s_ta_left = ta;
+	else        s_ta_right = ta;
 }
 
 void widget_indicator_create(lv_obj_t *parent) {
@@ -870,8 +875,9 @@ static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	uint8_t slot = id ? id->slot : 0;
 	widget_indicator_create_one(parent, slot);
-	/* root points to the relevant image obj */
-	w->root = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+	/* root = the transparent touch area (always touchable, unlike the image
+	 * which has ADV_HITTEST and may be invisible at opa_off=0) */
+	w->root = (slot == 0) ? s_ta_left : s_ta_right;
 
 	/* Subscribe to signal if bound */
 	if (id && id->signal_index >= 0)
@@ -888,9 +894,8 @@ static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	}
 }
 static void _indicator_open_settings(widget_t *w) {
-	indicator_data_t *id = (indicator_data_t *)w->type_data;
-	uint8_t slot = id ? id->slot : 0;
-	create_indicator_config_menu(slot);
+	/* Use the standard tabbed config modal (DATA + PRESETS + INDICATOR tabs) */
+	load_menu_screen_for_widget(w);
 }
 static void _indicator_to_json(widget_t *w, cJSON *out) {
 	widget_base_to_json(w, out);

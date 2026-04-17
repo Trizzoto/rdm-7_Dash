@@ -439,11 +439,11 @@ static void _bus_silent_tick_cb(lv_timer_t *t) {
 }
 
 static void _ui_screen3_init_bus_silent_overlay(void) {
-    /* Top-right badge — positioned over the dashboard but non-interactive */
+    /* Centre badge — positioned over the dashboard but non-interactive */
     s_bus_silent_badge = lv_obj_create(ui_Screen3);
     lv_obj_remove_style_all(s_bus_silent_badge);
     lv_obj_set_size(s_bus_silent_badge, 160, 32);
-    lv_obj_align(s_bus_silent_badge, LV_ALIGN_TOP_RIGHT, -12, 12);
+    lv_obj_align(s_bus_silent_badge, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(s_bus_silent_badge, lv_color_hex(0x7F1D1D), 0);
     lv_obj_set_style_bg_opa(s_bus_silent_badge, LV_OPA_90, 0);
     lv_obj_set_style_border_color(s_bus_silent_badge, lv_color_hex(0xF87171), 0);

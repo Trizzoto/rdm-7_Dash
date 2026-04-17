@@ -33,8 +33,10 @@ extern "C" {
 #define LAYOUT_MAX_FILE_BYTES 32768
 
 /* Current layout JSON schema version (single source of truth).
- * v11: added screen_w / screen_h fields for multi-resolution support. */
-#define LAYOUT_SCHEMA_VERSION 11
+ * Written into every saved layout. No longer drives default.json regeneration
+ * on boot — user edits to "default" are preserved across reboots. Factory
+ * reset is the way to revert to the compiled-in default layout. */
+#define LAYOUT_SCHEMA_VERSION 12
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"
