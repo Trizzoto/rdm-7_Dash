@@ -44,6 +44,7 @@ Key patterns:
 - `destroy`: `widget_rules_free()`, free `type_data`
 - Per-instance styles via `lv_obj_set_style_*()` — not shared `lv_style_t`
 - Conditional rules: `widget_rules.c/h`, requires `apply_overrides` vtable + `widget_rules_subscribe()` after create
+- **Night mode**: per-widget `night_overrides_t` block in header; helpers in `widget_night_helpers.h` (`NIGHT_FIELD_COLOR`, `NIGHT_PARSE_*`, `NIGHT_PICK_*`). Add `apply_night_mode` vtable + `night_mode_subscribe()` after create. For widgets with hard-to-mutate LVGL v8 properties (image source, line needle color, tick colors), use **dual-object pattern**: build a hidden sibling at create with night values baked in, toggle visibility on `apply_night_mode`. See widget_image, widget_meter, widget_warning.
 
 ## Signal System
 
@@ -63,8 +64,18 @@ CAN RX (core 0) → s_can_queue → can_process_queued_frames() (LVGL task)
 | Fonts (TTF) | LittleFS `/lfs/fonts/` | `font_manager_get(family, size)` |
 | Settings | NVS | `rdm_settings_*()`, `config_store_*()` |
 | SD card | FAT `/sdcard/` | layouts/images/fonts subdirs |
+| Data logs | SD `/sdcard/logs/*.csv` | `data_logger_*()` (rate-selectable, NVS-persisted) |
 
 All CAN signal config is in layout JSON — not NVS.
+
+## Auxiliary Modules
+
+- **`storage/data_logger.c`** — CSV logger to SD, selectable rate (1..200 Hz, 0=Max). Rate persisted in NVS via `config_store_save_log_rate_hz`.
+- **`storage/signal_replay.c`** — Plays a logged CSV back through `signal_inject_test_value()`. Pairs with data_logger for offline layout testing.
+- **`system/night_mode.c`** — Singleton + subscriber list. Each widget that has night overrides subscribes via `night_mode_subscribe()`. Triggered by CAN signal (layout-level config) or manual toggle.
+- **`ui/screens/ui_diagnostics.c`** — System health (CAN/SD/WiFi/Signals/System cards), launched from Device Settings.
+- **`ui/screens/ui_peaks.c`** — Live signal peak/min table. Peak/min always tracked in `signal_t` (peak_value, min_value); this screen just exposes them.
+- **`ui/screens/ui_wifi.c`** — Multi-SSID management UI (connect/forget per saved network, out-of-range list).
 
 ## Config & Reload Flows
 
@@ -82,7 +93,11 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 
 - `WIDGET_DEFS` defines widget metadata + `fields[]` per type
 - `buildFirmwarePayload()`: maps `w.signal` → `config.signal_name`, converts colors, converts TX data
-- **`data/web/index.html` is a copy of `main/web/index.html`** — keep in sync
+- **THREE copies of `index.html` must stay in sync:**
+  1. `main/web/index.html` — embedded in firmware via `EMBED_TXTFILES`
+  2. `data/web/index.html` — copy
+  3. `../rdm7-desktop/src/index.html` — Tauri desktop app (separate repo)
+- Undo/redo with 100-snapshot history is built in (Ctrl+Z / Ctrl+Y + toolbar buttons)
 
 ## Fonts
 
@@ -97,8 +112,8 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 3. Add factory `widget_X_create_instance(uint8_t slot)`
 4. Register in: `widget_type_t` enum, `widget_constraints[]` + `widget_type_name()`, `_type_from_str()` + `_factory()` in `layout_manager.c`
 5. Add `.c` to `main/CMakeLists.txt` SRCS
-6. Add to `WIDGET_DEFS` in `main/web/index.html` + sync `data/web/index.html`
-7. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if schema changes
+6. Add to `WIDGET_DEFS` in `main/web/index.html` + sync `data/web/index.html` + sync `../rdm7-desktop/src/index.html`
+7. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if schema changes (currently v13)
 
 ## Coding Conventions
 
