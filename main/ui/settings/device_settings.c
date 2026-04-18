@@ -2095,21 +2095,21 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     /* Reset Peaks — wipes all signal peak/min so a new tuning session starts
      * fresh. Sits to the right of View. */
-    lv_obj_t *reset_btn = lv_btn_create(peak_section);
-    lv_obj_set_size(reset_btn, 110, 30);
-    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 118, 22);
-    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(reset_btn, 1, 0);
-    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
-    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
-    lv_label_set_text(reset_lbl, "Reset Peaks");
-    lv_obj_center(reset_lbl);
-    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *reset_peaks_btn = lv_btn_create(peak_section);
+    lv_obj_set_size(reset_peaks_btn, 110, 30);
+    lv_obj_align(reset_peaks_btn, LV_ALIGN_TOP_LEFT, 118, 22);
+    lv_obj_set_style_bg_color(reset_peaks_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(reset_peaks_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(reset_peaks_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(reset_peaks_btn, 1, 0);
+    lv_obj_set_style_border_color(reset_peaks_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(reset_peaks_btn, 0, 0);
+    lv_obj_t *reset_peaks_lbl = lv_label_create(reset_peaks_btn);
+    lv_label_set_text(reset_peaks_lbl, "Reset Peaks");
+    lv_obj_center(reset_peaks_lbl);
+    lv_obj_set_style_text_font(reset_peaks_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(reset_peaks_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(reset_peaks_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
 
     _update_log_ui();
 
