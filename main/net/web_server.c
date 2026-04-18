@@ -2750,14 +2750,36 @@ static const httpd_uri_t dimmer_config_post_uri = {
 
 /* ── Data Logger API ──────────────────────────────────────────────────── */
 
+/* Deferred-start carries the rate via a heap-allocated payload; the LVGL
+ * task picks it up, calls data_logger_start_with_rate, and frees the payload. */
+typedef struct {
+	uint16_t rate_hz;  /* 0 = Max, otherwise sample rate in Hz */
+	bool     persist;  /* true = save the rate to NVS after starting */
+} log_start_args_t;
+
 static void _deferred_log_start(void *arg) {
-	(void)arg;
-	data_logger_start();
+	log_start_args_t *args = (log_start_args_t *)arg;
+	if (args) {
+		data_logger_start_with_rate(args->rate_hz, args->persist);
+		free(args);
+	} else {
+		data_logger_start();
+	}
 }
 
 static void _deferred_log_stop(void *arg) {
 	(void)arg;
 	data_logger_stop();
+}
+
+/* lv_async_call shim for runtime rate changes from /api/log/config (POST).
+ * Takes ownership of the heap-allocated uint16_t in `arg`. */
+static void _deferred_log_set_rate(void *arg) {
+	uint16_t *p = (uint16_t *)arg;
+	if (p) {
+		data_logger_set_rate_hz(*p);
+		free(p);
+	}
 }
 
 static esp_err_t _log_start_handler(httpd_req_t *req) {
@@ -2771,9 +2793,92 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 							"SD card not mounted");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_log_start, NULL);
+
+	/* Optional JSON body: {"rate_hz": N, "persist": true|false}.
+	 * rate_hz: 0 = Max, otherwise sample rate in Hz (1..1000).
+	 * persist: default true; saves the rate to NVS so future sessions reuse it.
+	 * Body is optional — without it, we use the currently-configured rate. */
+	log_start_args_t *args = NULL;
+	if (req->content_len > 0 && req->content_len < 128) {
+		char buf[128];
+		int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+		if (received > 0) {
+			buf[received] = '\0';
+			cJSON *root = cJSON_Parse(buf);
+			if (root) {
+				cJSON *rate = cJSON_GetObjectItemCaseSensitive(root, "rate_hz");
+				cJSON *pers = cJSON_GetObjectItemCaseSensitive(root, "persist");
+				if (cJSON_IsNumber(rate)) {
+					args = (log_start_args_t *)calloc(1, sizeof(*args));
+					if (args) {
+						int v = rate->valueint;
+						if (v < 0)    v = 0;
+						if (v > 1000) v = 1000;
+						args->rate_hz = (uint16_t)v;
+						args->persist = cJSON_IsBool(pers) ? cJSON_IsTrue(pers) : true;
+					}
+				}
+				cJSON_Delete(root);
+			}
+		}
+	}
+
+	lv_async_call(_deferred_log_start, args);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
+	return ESP_OK;
+}
+
+/* GET /api/log/config — return current rate and metadata.
+ * POST /api/log/config with {"rate_hz": N} — update rate (works mid-log). */
+static esp_err_t _log_config_get_handler(httpd_req_t *req) {
+	uint16_t rate = data_logger_get_rate_hz();
+	char buf[96];
+	snprintf(buf, sizeof(buf), "{\"rate_hz\":%u,\"is_max\":%s}",
+	         (unsigned)rate, rate == 0 ? "true" : "false");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static esp_err_t _log_config_post_handler(httpd_req_t *req) {
+	if (req->content_len <= 0 || req->content_len >= 128) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body required");
+		return ESP_OK;
+	}
+	char buf[128];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
+		return ESP_OK;
+	}
+	buf[received] = '\0';
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_OK;
+	}
+	cJSON *rate = cJSON_GetObjectItemCaseSensitive(root, "rate_hz");
+	if (!cJSON_IsNumber(rate)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing rate_hz");
+		return ESP_OK;
+	}
+	int v = rate->valueint;
+	if (v < 0)    v = 0;
+	if (v > 1000) v = 1000;
+	cJSON_Delete(root);
+
+	/* data_logger_set_rate_hz touches the LVGL timer — defer to LVGL task. */
+	uint16_t *hz_arg = (uint16_t *)malloc(sizeof(uint16_t));
+	if (!hz_arg) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_OK;
+	}
+	*hz_arg = (uint16_t)v;
+	lv_async_call(_deferred_log_set_rate, hz_arg);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
 	return ESP_OK;
 }
 
@@ -2793,18 +2898,21 @@ static esp_err_t _log_status_handler(httpd_req_t *req) {
 	const char *file = data_logger_current_file();
 	uint32_t samples = data_logger_get_sample_count();
 	uint32_t elapsed = data_logger_get_elapsed_ms();
+	uint16_t rate = data_logger_get_rate_hz();
 
 	/* Extract just the filename from the full path */
 	const char *basename = file;
 	const char *p = strrchr(file, '/');
 	if (p) basename = p + 1;
 
-	char buf[192];
+	char buf[224];
 	snprintf(buf, sizeof(buf),
-			 "{\"active\":%s,\"file\":\"%s\",\"samples\":%lu,\"elapsed_ms\":%lu}",
+			 "{\"active\":%s,\"file\":\"%s\",\"samples\":%lu,\"elapsed_ms\":%lu,"
+			 "\"rate_hz\":%u}",
 			 active ? "true" : "false",
 			 basename,
-			 (unsigned long)samples, (unsigned long)elapsed);
+			 (unsigned long)samples, (unsigned long)elapsed,
+			 (unsigned)rate);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;
@@ -2948,6 +3056,14 @@ static const httpd_uri_t log_download_uri = {
 static const httpd_uri_t log_delete_uri = {
 	.uri = "/api/log/delete", .method = HTTP_POST,
 	.handler = _log_delete_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_config_get_uri = {
+	.uri = "/api/log/config", .method = HTTP_GET,
+	.handler = _log_config_get_handler, .user_ctx = NULL
+};
+static const httpd_uri_t log_config_post_uri = {
+	.uri = "/api/log/config", .method = HTTP_POST,
+	.handler = _log_config_post_handler, .user_ctx = NULL
 };
 
 /* ── Device Info API ───────────────────────────────────────────────────── */
@@ -3362,6 +3478,8 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &log_list_uri);
 	REGISTER_URI(server, &log_download_uri);
 	REGISTER_URI(server, &log_delete_uri);
+	REGISTER_URI(server, &log_config_get_uri);
+	REGISTER_URI(server, &log_config_post_uri);
 	static const httpd_uri_t signal_values_uri = {
 		.uri = "/api/signals/values",
 		.method = HTTP_GET,

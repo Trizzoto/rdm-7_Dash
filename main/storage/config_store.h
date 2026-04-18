@@ -100,6 +100,13 @@ typedef struct {
 esp_err_t config_store_save_night_mode(const night_mode_config_t *cfg);
 esp_err_t config_store_load_night_mode(night_mode_config_t *cfg);
 
+/* ── Data logger sample rate ──────────────────────────────────────────────
+ * Sample rate in Hz. Special value 0 = "Max" (sample on every LVGL tick;
+ * effectively bus-coalesced ~70-200 Hz depending on system load).
+ * Default: 10 Hz. */
+esp_err_t config_store_save_log_rate_hz(uint16_t hz);
+esp_err_t config_store_load_log_rate_hz(uint16_t *hz);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

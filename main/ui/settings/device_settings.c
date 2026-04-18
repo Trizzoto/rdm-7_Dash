@@ -46,6 +46,7 @@ static lv_obj_t* wifi_loading_dialog = NULL;
 static lv_obj_t *s_log_btn = NULL;
 static lv_obj_t *s_log_btn_label = NULL;
 static lv_obj_t *s_log_status_label = NULL;
+static lv_obj_t *s_log_rate_dd = NULL;
 
 /* Display rotation + night-mode (#23) */
 static lv_obj_t *s_rotation_btn_label = NULL;
@@ -1455,6 +1456,35 @@ static void _log_toggle_btn_cb(lv_event_t *e) {
     _update_log_ui();
 }
 
+/* Map dropdown index ↔ rate Hz. Order MUST match the static options string
+ * passed to lv_dropdown_set_options_static in the build code below:
+ *   0=1, 1=2, 2=5, 3=10, 4=20, 5=50, 6=100, 7=200, 8=Max(0). */
+static uint16_t _log_rate_idx_to_hz(uint16_t idx) {
+    static const uint16_t table[] = {1, 2, 5, 10, 20, 50, 100, 200, 0};
+    if (idx >= sizeof(table) / sizeof(table[0])) idx = 3; /* default 10Hz */
+    return table[idx];
+}
+static uint16_t _log_rate_hz_to_idx(uint16_t hz) {
+    switch (hz) {
+        case 1:   return 0;
+        case 2:   return 1;
+        case 5:   return 2;
+        case 10:  return 3;
+        case 20:  return 4;
+        case 50:  return 5;
+        case 100: return 6;
+        case 200: return 7;
+        case 0:   return 8;  /* Max */
+        default:  return 3;  /* unknown values fall back to 10Hz */
+    }
+}
+
+static void _log_rate_dd_cb(lv_event_t *e) {
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t idx = lv_dropdown_get_selected(dd);
+    data_logger_set_rate_hz(_log_rate_idx_to_hz(idx));
+}
+
 /* ── Re-run First-Run Wizard ──────────────────────────────────────────── */
 
 static void _show_wizard_async(void *arg) {
@@ -1908,9 +1938,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(s_night_btn_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(night_btn, _night_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    // Data Logging section — full width
+    // Data Logging section — full width. Slightly taller to fit the new
+    // "Rate" dropdown alongside the start/stop button.
     lv_obj_t *log_section = lv_obj_create(content);
-    lv_obj_set_size(log_section, lv_pct(100), 70);
+    lv_obj_set_size(log_section, lv_pct(100), 90);
     lv_obj_set_style_bg_color(log_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(log_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(log_section, THEME_RADIUS_NORMAL, 0);
@@ -1942,9 +1973,28 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(s_log_btn_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(s_log_btn, _log_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Rate dropdown — sits to the right of Start/Stop. Selectable mid-log;
+     * data_logger_set_rate_hz tears down + recreates the LVGL timer cleanly
+     * so the file keeps growing at the new rate. */
+    s_log_rate_dd = lv_dropdown_create(log_section);
+    lv_dropdown_set_options_static(s_log_rate_dd,
+        "1 Hz\n2 Hz\n5 Hz\n10 Hz\n20 Hz\n50 Hz\n100 Hz\n200 Hz\nMax");
+    lv_obj_set_size(s_log_rate_dd, 110, 30);
+    lv_obj_align(s_log_rate_dd, LV_ALIGN_TOP_LEFT, 150, 22);
+    lv_obj_set_style_bg_color(s_log_rate_dd, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_border_color(s_log_rate_dd, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(s_log_rate_dd, 1, 0);
+    lv_obj_set_style_radius(s_log_rate_dd, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_text_color(s_log_rate_dd, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s_log_rate_dd, THEME_FONT_SMALL, 0);
+    lv_dropdown_set_selected(s_log_rate_dd,
+                             _log_rate_hz_to_idx(data_logger_get_rate_hz()));
+    lv_obj_add_event_cb(s_log_rate_dd, _log_rate_dd_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+
     s_log_status_label = lv_label_create(log_section);
     lv_label_set_text(s_log_status_label, "Stopped");
-    lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 155, 30);
+    lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 0, 56);
     lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
 

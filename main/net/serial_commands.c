@@ -1144,16 +1144,42 @@ static void _handle_system_reboot(int id, cJSON *params)
 
 /* ── Data Logger serial commands ────────────────────────────────────────── */
 
+/* Optional rate carried via heap-allocated payload to the LVGL task. */
+typedef struct {
+    uint16_t rate_hz;
+    bool     persist;
+} serial_log_start_args_t;
+
 static void _deferred_serial_log_start(void *arg)
 {
-    (void)arg;
-    data_logger_start();
+    serial_log_start_args_t *a = (serial_log_start_args_t *)arg;
+    if (a) {
+        data_logger_start_with_rate(a->rate_hz, a->persist);
+        free(a);
+    } else {
+        data_logger_start();
+    }
 }
 
 static void _handle_log_start(int id, cJSON *params)
 {
-    (void)params;
-    lv_async_call(_deferred_serial_log_start, NULL);
+    /* Optional params: { "rate_hz": N, "persist": true|false } */
+    serial_log_start_args_t *a = NULL;
+    if (params) {
+        cJSON *rate = cJSON_GetObjectItemCaseSensitive(params, "rate_hz");
+        cJSON *pers = cJSON_GetObjectItemCaseSensitive(params, "persist");
+        if (cJSON_IsNumber(rate)) {
+            a = (serial_log_start_args_t *)calloc(1, sizeof(*a));
+            if (a) {
+                int v = rate->valueint;
+                if (v < 0)    v = 0;
+                if (v > 1000) v = 1000;
+                a->rate_hz = (uint16_t)v;
+                a->persist = cJSON_IsBool(pers) ? cJSON_IsTrue(pers) : true;
+            }
+        }
+    }
+    lv_async_call(_deferred_serial_log_start, a);
     _send_ok(id);
 }
 
@@ -1170,6 +1196,16 @@ static void _handle_log_stop(int id, cJSON *params)
     _send_ok(id);
 }
 
+/* lv_async_call shim for runtime rate changes via "log.config.set". */
+static void _deferred_serial_log_set_rate(void *arg)
+{
+    uint16_t *p = (uint16_t *)arg;
+    if (p) {
+        data_logger_set_rate_hz(*p);
+        free(p);
+    }
+}
+
 static void _handle_log_status(int id, cJSON *params)
 {
     (void)params;
@@ -1178,7 +1214,41 @@ static void _handle_log_status(int id, cJSON *params)
     cJSON_AddStringToObject(r, "file", data_logger_current_file());
     cJSON_AddNumberToObject(r, "samples", data_logger_get_sample_count());
     cJSON_AddNumberToObject(r, "elapsed_ms", data_logger_get_elapsed_ms());
+    cJSON_AddNumberToObject(r, "rate_hz", data_logger_get_rate_hz());
     _send_response(id, r, NULL);
+}
+
+/* GET current rate. */
+static void _handle_log_config_get(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    uint16_t hz = data_logger_get_rate_hz();
+    cJSON_AddNumberToObject(r, "rate_hz", hz);
+    cJSON_AddBoolToObject(r, "is_max", hz == 0);
+    _send_response(id, r, NULL);
+}
+
+/* SET rate via params: { "rate_hz": N }. 0 = Max. */
+static void _handle_log_config_set(int id, cJSON *params)
+{
+    if (!params) {
+        _send_error(id, "params required");
+        return;
+    }
+    cJSON *rate = cJSON_GetObjectItemCaseSensitive(params, "rate_hz");
+    if (!cJSON_IsNumber(rate)) {
+        _send_error(id, "rate_hz (number) required");
+        return;
+    }
+    int v = rate->valueint;
+    if (v < 0)    v = 0;
+    if (v > 1000) v = 1000;
+    uint16_t *arg = (uint16_t *)malloc(sizeof(uint16_t));
+    if (!arg) { _send_error(id, "OOM"); return; }
+    *arg = (uint16_t)v;
+    lv_async_call(_deferred_serial_log_set_rate, arg);
+    _send_ok(id);
 }
 
 static void _handle_log_list(int id, cJSON *params)
@@ -1583,6 +1653,8 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "log.delete",         _handle_log_delete },
     { "log.download.start", _handle_log_download_start },
     { "log.download.chunk", _handle_log_download_chunk },
+    { "log.config.get",     _handle_log_config_get },
+    { "log.config.set",     _handle_log_config_set },
     /* SD Card */
     { "sd.status",          _handle_sd_status },
     { "sd.files",           _handle_sd_files },

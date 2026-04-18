@@ -413,6 +413,39 @@ esp_err_t config_store_load_splash_fade(bool *enabled)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  DATA LOGGER RATE
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_DATALOG "dataloggr"
+
+esp_err_t config_store_save_log_rate_hz(uint16_t hz)
+{
+    if (hz > 1000) hz = 1000;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_DATALOG, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u16(handle, "rate_hz", hz);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_log_rate_hz(uint16_t *hz)
+{
+    if (!hz) return ESP_ERR_INVALID_ARG;
+    *hz = 10; /* default: 10 Hz */
+    nvs_handle_t handle;
+    if (nvs_open(NS_DATALOG, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint16_t v;
+    if (nvs_get_u16(handle, "rate_hz", &v) == ESP_OK) {
+        if (v > 1000) v = 1000;
+        *hz = v;
+    }
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FIRST-RUN FLAG (#17)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_FIRST_RUN "first_run"
