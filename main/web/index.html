@@ -5602,7 +5602,15 @@
         }
 
         function renderFieldHTML(f, val, disabledAttr) {
-            let html = `<div class="field"><label>${f.label}</label>`;
+            /* Hint chip on Day-mode fields that support night overrides, so
+             * users know they can switch to Night to customize colors/images
+             * per-widget for low-light use. Chip highlights if an override
+             * is already set. */
+            const hasOvr = f.nightOverridable && hasNightOverride(currentLayout.widgets[selectedIndex], f);
+            const nightHint = f.nightOverridable
+                ? ` <span class="night-override-chip${hasOvr ? ' has-override' : ''}" title="${hasOvr ? 'Night override set - switch to Night mode to edit' : 'Switch to Night mode to set a night override'}" style="cursor:help;">${hasOvr ? '\uD83C\uDF19' : '\u25CB'}</span>`
+                : '';
+            let html = `<div class="field"><label>${f.label}${nightHint}</label>`;
             if (f.type === 'select') {
                 const allNumeric = f.options.every(opt => { const v = typeof opt === 'object' ? opt.v : opt; return v === '' || typeof v === 'number' || !isNaN(Number(v)); });
                 html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, ${allNumeric})" ${disabledAttr}>`;
