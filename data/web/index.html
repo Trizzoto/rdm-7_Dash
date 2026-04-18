@@ -58,33 +58,57 @@
         header {
             background: #000;
             border-bottom: 1px solid var(--border);
-            padding: 6px 12px;
+            padding: 6px 10px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             z-index: 100;
             flex-shrink: 0;
-            /* Single row on desktop. Buttons/pills below are compact enough
-             * to fit 1280px+ viewports. If you're on something narrower the
-             * mobile @media rule below kicks in. */
             flex-wrap: nowrap;
             gap: 4px;
-            overflow-x: auto;
+            overflow: hidden;       /* no scrollbar in the header */
+            height: 48px;
+            box-sizing: border-box;
         }
-        /* Compact header controls so a laptop (1280px+) fits everything on
-         * one line. Dividers shrink too. */
+        /* All header controls share one height + padding so they line up
+         * cleanly in a single row. Text-only pills/btns size to their
+         * content; icon buttons are squared up with a min-width. */
         header .header-pill,
-        header .btn {
-            padding: 4px 7px;
+        header .btn,
+        header select {
+            height: 30px;
+            padding: 0 10px;
             font-size: 11px;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
         }
-        header .btn-icon { padding: 4px 6px; }
-        header .header-divider {
-            margin: 0 2px;
+        header .btn-icon {
+            min-width: 30px;
+            padding: 0 6px;
+            font-size: 13px;
         }
         header select {
-            padding: 4px 6px !important;
-            font-size: 11px !important;
+            padding: 0 22px 0 10px;  /* room for the native dropdown arrow */
+        }
+        header .header-divider {
+            margin: 0 2px;
+            flex-shrink: 0;
+        }
+        /* Hamburger menu trigger container shouldn't collapse awkwardly. */
+        header .layout-menu-wrap { flex-shrink: 0; }
+        /* Let the toolbar container own the full row width so nothing
+         * gets pushed out to a second line. */
+        header > .title { flex-shrink: 0; }
+        header > div:last-child {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 4px;
+            min-width: 0;
         }
 
         header .title {
@@ -121,12 +145,15 @@
             min-height: 0;
             overflow: hidden;
         }
-        /* When left sidebar is collapsed, squeeze it to a thin toggle strip. */
+        /* When left sidebar is collapsed, squeeze it to a thin toggle strip.
+         * NB: use visibility/width to hide leftResize, NOT display:none - that
+         * would remove it from grid flow and shift every other child one
+         * column to the left, collapsing the main canvas to 0 width. */
         .workspace.left-collapsed {
             grid-template-columns: 28px 0 1fr 4px var(--right-sidebar-w, 320px);
         }
         .workspace.left-collapsed .sidebar-left > *:not(.sidebar-collapse-toggle) { display: none; }
-        .workspace.left-collapsed #leftResize { display: none; }
+        .workspace.left-collapsed #leftResize { visibility: hidden; }
 
         /* Live signals panel */
         .sigcard {
@@ -241,12 +268,14 @@
                 grid-template-columns: 28px 0 1fr 4px var(--right-sidebar-w, 280px);
             }
             .workspace .sidebar-left > *:not(.sidebar-collapse-toggle) { display: none; }
-            .workspace #leftResize { display: none; }
+            /* visibility: hidden (not display:none) so the grid child count
+             * stays stable and the main canvas keeps its column. */
+            .workspace #leftResize { visibility: hidden; }
             .workspace:not(.left-collapsed) {
                 grid-template-columns: var(--left-sidebar-w, 240px) 4px 1fr 4px var(--right-sidebar-w, 280px);
             }
-            .workspace:not(.left-collapsed) .sidebar-left > * { display: ''; }
-            .workspace:not(.left-collapsed) #leftResize { display: block; }
+            .workspace:not(.left-collapsed) .sidebar-left > * { display: block; }
+            .workspace:not(.left-collapsed) #leftResize { visibility: visible; }
         }
 
         @media (max-width: 768px) {
