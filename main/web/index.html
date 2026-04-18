@@ -94,12 +94,84 @@
         /* Workspace Layout */
         .workspace {
             display: grid;
-            grid-template-columns: 1fr 4px var(--right-sidebar-w, 320px);
+            grid-template-columns: var(--left-sidebar-w, 240px) 4px 1fr 4px var(--right-sidebar-w, 320px);
             grid-template-rows: 1fr;
             flex: 1;
             min-height: 0;
             overflow: hidden;
         }
+        /* When left sidebar is collapsed, squeeze it to a thin toggle strip. */
+        .workspace.left-collapsed {
+            grid-template-columns: 28px 0 1fr 4px var(--right-sidebar-w, 320px);
+        }
+        .workspace.left-collapsed .sidebar-left > *:not(.sidebar-collapse-toggle) { display: none; }
+        .workspace.left-collapsed #leftResize { display: none; }
+
+        /* Live signals panel */
+        .sigcard {
+            border-bottom: 1px solid var(--border);
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.1s;
+        }
+        .sigcard:hover { background: var(--highlight); }
+        .sigcard-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .sigcard-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sigcard-name.bound { font-weight: 600; }
+        .sigcard-name.unbound { color: var(--text-muted); }
+        .sigcard-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text);
+        }
+        .sigcard-val.stale { color: hsl(0,60%,55%); }
+        .sigcard-val.fresh { color: hsl(140,60%,55%); }
+        .sigcard-details {
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px dashed var(--border);
+            font-size: 10px;
+            color: var(--text-muted);
+            display: none;
+        }
+        .sigcard.expanded .sigcard-details { display: block; }
+        .sigcard-kv {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 2px 10px;
+        }
+        .sigcard-kv span:nth-child(even) {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text);
+        }
+
+        .sidebar-collapse-toggle {
+            position: absolute;
+            top: 8px;
+            right: 4px;
+            width: 20px;
+            height: 20px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            line-height: 1;
+            z-index: 2;
+        }
+        .sidebar-collapse-toggle:hover { color: var(--text); border-color: var(--text-muted); }
 
         /* Sidebars */
         .sidebar {
@@ -2259,9 +2331,26 @@
         <input type="checkbox" id="livePreviewToggle" checked style="display:none;">
     </header>
 
-    <div class="workspace">
+    <div class="workspace" id="workspaceGrid">
         <!-- Hidden sigList kept for renderSignals() compatibility -->
         <div id="sigList" style="display:none;"></div>
+
+        <!-- Left Sidebar: live Signals panel -->
+        <aside class="sidebar sidebar-left" style="position:relative;">
+            <button class="sidebar-collapse-toggle" id="leftCollapseBtn" onclick="toggleLeftSidebar()" title="Collapse sidebar">&laquo;</button>
+            <div class="sidebar-header" style="padding-right:36px;">
+                Signals <span id="sigCardsCount" style="color:var(--text-muted); font-weight:400; margin-left:6px;"></span>
+            </div>
+            <div style="padding:6px 10px; border-bottom:1px solid var(--border);">
+                <input id="sigCardsFilter" placeholder="Filter..." style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px; font-size:11px;" oninput="renderLiveSignalCards()">
+            </div>
+            <div id="sigCardsList" style="flex:1; overflow:auto; min-height:0;">
+                <div style="padding:14px; color:var(--text-muted); font-size:11px;">Loading signals...</div>
+            </div>
+        </aside>
+
+        <!-- Left Resize Handle -->
+        <div class="sidebar-resize" id="leftResize" data-side="left"></div>
 
         <!-- Main Stage -->
         <main class="main-stage" style="flex-direction:column; padding:0;">
@@ -6935,6 +7024,8 @@
         function renderSignals() {
             /* Keep the night-mode trigger signal dropdown in sync with signal changes */
             if (typeof renderLayoutSettings === 'function') renderLayoutSettings();
+            /* Rebuild the live-value cards in the left sidebar */
+            if (typeof renderLiveSignalCards === 'function') renderLiveSignalCards();
             const sigs = currentLayout.signals || [];
             const c = document.getElementById('sigList');
             if (!c) return;
@@ -9494,6 +9585,106 @@
             document.getElementById('fuelCalibModal').style.display = 'none';
             if (_fuelTimer) { clearInterval(_fuelTimer); _fuelTimer = null; }
         }
+
+        /* ── Live Signals panel (left sidebar) ──────────────────────── */
+
+        let _sigCardsTimer = null;
+
+        function toggleLeftSidebar() {
+            const w = document.getElementById('workspaceGrid');
+            const btn = document.getElementById('leftCollapseBtn');
+            if (!w) return;
+            w.classList.toggle('left-collapsed');
+            if (btn) btn.innerHTML = w.classList.contains('left-collapsed') ? '&raquo;' : '&laquo;';
+        }
+
+        function _signalIsBoundByWidget(name) {
+            if (!name) return false;
+            return (currentLayout.widgets || []).some(w => w.signal === name);
+        }
+
+        function renderLiveSignalCards() {
+            const list = document.getElementById('sigCardsList');
+            const countEl = document.getElementById('sigCardsCount');
+            const filterEl = document.getElementById('sigCardsFilter');
+            if (!list) return;
+            const filter = filterEl && filterEl.value ? filterEl.value.toLowerCase() : '';
+            const all = currentLayout.signals || [];
+            const sigs = filter ? all.filter(s => (s.name || '').toLowerCase().includes(filter)) : all;
+            if (countEl) countEl.textContent = `(${sigs.length}${filter ? ' / ' + all.length : ''})`;
+            if (sigs.length === 0) {
+                list.innerHTML = '<div style="padding:14px; color:var(--text-muted); font-size:11px;">' +
+                    (filter ? 'No matching signals' : 'No signals defined') + '</div>';
+                return;
+            }
+            const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+            list.innerHTML = sigs.map(s => {
+                const bound  = _signalIsBoundByWidget(s.name);
+                const canHex = s.can_id != null ? ('0x' + Number(s.can_id).toString(16).toUpperCase()) : '-';
+                const endian = s.endian === 1 ? 'Intel LE' : 'Motorola BE';
+                return `<div class="sigcard" data-sig-name="${esc(s.name)}" onclick="this.classList.toggle('expanded')">
+                    <div class="sigcard-row">
+                        <span class="sigcard-name ${bound ? 'bound' : 'unbound'}" title="${bound ? 'Bound to widget' : 'Not bound'}">${esc(s.name) || '(unnamed)'}</span>
+                        <span class="sigcard-val" data-sig-val>-</span>
+                    </div>
+                    <div class="sigcard-details">
+                        <div class="sigcard-kv">
+                            <span>CAN ID</span><span>${canHex}</span>
+                            <span>Bit start</span><span>${esc(s.bit_start ?? '-')}</span>
+                            <span>Length</span><span>${esc(s.bit_length ?? '-')}</span>
+                            <span>Scale</span><span>${esc(s.scale ?? '-')}</span>
+                            <span>Offset</span><span>${esc(s.offset ?? '-')}</span>
+                            <span>Signed</span><span>${s.is_signed ? 'yes' : 'no'}</span>
+                            <span>Endian</span><span>${endian}</span>
+                            <span>Unit</span><span>${esc(s.unit) || '-'}</span>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function _pollLiveSignalValues() {
+            const list = document.getElementById('sigCardsList');
+            if (!list) return;
+            /* Skip polling if sidebar is collapsed - saves device CPU */
+            const ws = document.getElementById('workspaceGrid');
+            if (ws && ws.classList.contains('left-collapsed')) return;
+            try {
+                const r = await fetch('/api/signals/values');
+                if (!r.ok) return;
+                const data = await r.json();
+                const sigs = Array.isArray(data) ? data : (data.signals || []);
+                const map = {};
+                sigs.forEach(s => { if (s && s.name != null) map[s.name] = s; });
+                list.querySelectorAll('.sigcard').forEach(card => {
+                    const name = card.getAttribute('data-sig-name');
+                    const valEl = card.querySelector('[data-sig-val]');
+                    if (!valEl) return;
+                    const sig = map[name];
+                    if (!sig) {
+                        valEl.textContent = '-';
+                        valEl.className = 'sigcard-val stale';
+                        return;
+                    }
+                    const v = sig.value;
+                    let fmt;
+                    if (v == null) fmt = '-';
+                    else if (Number.isInteger(v)) fmt = v;
+                    else fmt = Number(v).toFixed(3);
+                    valEl.textContent = fmt;
+                    valEl.className = 'sigcard-val ' + (sig.stale ? 'stale' : 'fresh');
+                });
+            } catch (e) { /* silent */ }
+        }
+
+        /* Initial paint + polling - renderSignals() (called on every layout
+         * change) also calls renderLiveSignalCards to rebuild the list. */
+        document.addEventListener('DOMContentLoaded', () => {
+            renderLiveSignalCards();
+            if (_sigCardsTimer) clearInterval(_sigCardsTimer);
+            _pollLiveSignalValues();
+            _sigCardsTimer = setInterval(_pollLiveSignalValues, 500);
+        });
 
     </script>
 </body>
