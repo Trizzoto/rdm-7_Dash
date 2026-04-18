@@ -278,67 +278,171 @@
             .workspace:not(.left-collapsed) #leftResize { visibility: visible; }
         }
 
-        @media (max-width: 768px) {
-            /* Canvas gets full width; sidebars slide in as overlays. */
-            .workspace {
-                grid-template-columns: 1fr;
-                grid-template-rows: 1fr;
-            }
-            .workspace .sidebar-left,
-            .workspace .sidebar-right,
-            .workspace .sidebar-resize {
-                position: fixed;
-                top: 44px;
-                bottom: 34px;
-                width: 80vw;
-                max-width: 320px;
-                z-index: 150;
-                background: var(--bg-sidebar);
-                border: 1px solid var(--border);
-                box-shadow: var(--shadow-md);
-                transition: transform 0.25s ease-out;
-                overflow: hidden;
-                display: flex;
-                flex-direction: column;
-            }
-            .workspace .sidebar-left {
-                left: 0;
-                transform: translateX(-105%);
-            }
-            .workspace .sidebar-right {
-                right: 0;
-                transform: translateX(105%);
-            }
-            .workspace.mobile-left-open .sidebar-left  { transform: translateX(0); }
-            .workspace.mobile-right-open .sidebar-right { transform: translateX(0); }
+        /* ── Studio-style mobile pattern ────────────────────────────
+         * Phone (<=600px) or landscape-short (<=500px tall):
+         *   - single-column grid, canvas full-width
+         *   - .sidebar-right becomes a bottom-sheet with drag handle
+         *   - bottom #mobileActionBar + floating #mobileZoomBar
+         * Tablet (601-900px):
+         *   - .sidebar-right slides in from the right as a drawer
+         *   - same bottom action bar
+         * Desktop (>900px):
+         *   - mobile elements hidden, traditional side-by-side layout */
+
+        .mobile-burger {
+            display: none;
+            width: 34px; height: 34px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text);
+            font-size: 16px;
+            align-items: center; justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .mobile-burger:hover { background: var(--bg); }
+
+        #mobileActionBar {
+            display: none;
+            position: fixed;
+            left: 0; right: 0; bottom: 0;
+            height: calc(56px + env(safe-area-inset-bottom, 0px));
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            background: rgba(20,20,20,0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-top: 1px solid var(--border);
+            z-index: 9998;
+            justify-content: space-around;
+            align-items: stretch;
+        }
+        #mobileActionBar button {
+            flex: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 3px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 10px; font-weight: 500;
+            cursor: pointer;
+            padding: 4px 2px;
+            transition: color 0.15s;
+        }
+        #mobileActionBar button:hover,
+        #mobileActionBar button.active { color: var(--text); }
+        #mobileActionBar button svg { stroke: currentColor; }
+        #mobileActionBar button.sim-on { color: hsl(140,60%,70%); }
+
+        #mobileZoomBar {
+            display: none;
+            position: fixed;
+            bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+            left: 50%; transform: translateX(-50%);
+            z-index: 9995;
+            background: rgba(30,30,30,0.9);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 24px;
+            padding: 4px 8px;
+            gap: 4px;
+            opacity: 1;
+            transition: opacity 0.3s;
+        }
+        #mobileZoomBar.faded { opacity: 0.3; }
+        #mobileZoomBar button {
+            width: 36px; height: 36px;
+            background: transparent; border: none;
+            color: var(--text);
+            font-size: 16px; font-weight: 600;
+            cursor: pointer; border-radius: 18px;
+        }
+        #mobileZoomBar button:hover { background: rgba(255,255,255,0.08); }
+        #mobileZoomBar #mobileZoomLabel { font-size: 11px; width: auto; padding: 0 10px; }
+
+        #mobileSheetBackdrop {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9996;
+        }
+        #mobileSheetBackdrop.active { display: block; }
+
+        /* Tablet drawer: sidebar slides in from the right */
+        @media (max-width: 900px) {
+            .mobile-burger { display: inline-flex; }
+            #mobileActionBar { display: flex; }
+            #mobileZoomBar { display: flex; }
+
+            .workspace { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+            .workspace .sidebar-left { display: none; }          /* no signals sidebar on mobile */
             .workspace .sidebar-resize { display: none !important; }
 
-            /* Header: allow wrap + bigger tap targets */
-            header { flex-wrap: wrap; padding: 4px 8px; gap: 4px; min-height: 44px; }
-            header .header-pill, header .btn { min-height: 34px; min-width: 34px; }
-            .header-divider { display: none; }
-
-            /* Layout dropdown menu goes full-width */
-            .layout-menu { min-width: 72vw; right: 0; }
-            .layout-menu-item { padding: 12px 16px; font-size: 14px; }
-
-            /* Hide the alignment toolbar (advanced desktop feature) */
-            .align-bar { display: none; }
-
-            footer { font-size: 10px; padding: 6px 8px; }
-
-            /* Dim overlay when a sidebar is open on mobile */
-            .workspace.mobile-left-open::before,
-            .workspace.mobile-right-open::before {
-                content: '';
+            .sidebar-right {
                 position: fixed;
-                inset: 44px 0 34px 0;
-                background: rgba(0,0,0,0.4);
-                z-index: 140;
+                top: 0; right: 0; bottom: 0;
+                width: 320px; max-width: 85vw;
+                transform: translateX(100%);
+                transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+                box-shadow: -4px 0 24px rgba(0,0,0,0.45);
+                z-index: 9999;
             }
+            .sidebar-right.mobile-open { transform: translateX(0); }
 
-            /* Show the header mobile toggle buttons (hidden by inline style) */
-            .mobile-only-btn { display: inline-flex !important; }
+            main.main-stage { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+
+            /* Tighten header; drop desktop-only controls */
+            header { padding: 4px 8px; height: 44px; }
+            header > .title img { height: 22px; }
+            header .header-divider { display: none; }
+            header #screenModeSelect,
+            header #ecuSelect,
+            header #layoutSelect,
+            header #pillAutoSync,
+            header #pillSimulate,
+            header .layout-menu-wrap,
+            header #pillBezel, header #pillWidgets { display: none !important; }
+            /* Keep: burger, title, Day/Night pill, undo/redo, Save */
+
+            .align-bar { display: none !important; }
+            footer { display: none !important; }
+
+            /* Layout menu pops as a sheet-ish list on mobile */
+            .layout-menu {
+                position: fixed !important;
+                left: 12px; right: 12px; top: 56px;
+                width: auto !important; min-width: auto !important;
+                max-height: 60vh; overflow-y: auto;
+                z-index: 9999;
+            }
+            .layout-menu-item { padding: 14px 18px; font-size: 14px; }
+        }
+
+        /* Phone + landscape-short: bottom-sheet instead of side drawer */
+        @media (max-width: 600px), (max-height: 500px) {
+            .sidebar-right {
+                top: auto; right: 0; left: 0; bottom: 0;
+                width: 100%; max-width: 100%;
+                height: 60vh; max-height: 85vh;
+                transform: translateY(100%);
+                transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+                            height 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+                border-top: 1px solid var(--border);
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }
+            .sidebar-right.mobile-open { transform: translateY(0); }
+            .sidebar-right.sheet-full { height: 85vh; }
+            /* Drag handle pseudo-element */
+            .sidebar-right::before {
+                content: "";
+                display: block;
+                width: 44px; height: 4px;
+                background: var(--border-light);
+                border-radius: 2px;
+                margin: 8px auto 6px;
+                cursor: grab;
+            }
         }
 
         /* Touch canvas: prevent browser gestures from hijacking pan/zoom */
@@ -2483,9 +2587,8 @@
     <header>
         <div class="title"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAZAAAADPCAYAAADbEIdaAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAACxMAAAsTAQCanBgAAE60SURBVHhe7b15mFxHee//fev0MptmRiONNNp3y7Is7ysxxmZfjG3ANsGBBBISliSQEMCBwAWTS8Jmh+3e2EkglxgIi4235ELgx40Br9jY1mZb1mLt20gzGs3e3ed9f390naam1DPqma5zptuqz/PMI/Vbp7tPn1On3qp3K8Dj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDweTw1BtqAe2d7ZeZkC3sFKvSh+j8fj8bhAMe9f2t39WQLydpsLXhQD7o45cz5BwGdsucfj8ZzKiMhPCm1tbzpt27ZRu80Fda9ABKBdc+Z8D8ANdpvH4/GcyjDz55YdOfIJAkK7zQXKFtQbPwSUAOfZco/H4znFCQHsAMB2gyvqXoFcvHhxK4BFttzj8XhOZURkVIADBIjd5oq6VyA0NLSOgKwt93g8nlOcoQDYbwtdUvcKhIkusWUej8dzqkPAgBB5BTIRAlxmyzwej+dUR4j6lnZ3d9tyl9S1Atk3b14TAattucfj8XiwIa7oq4i6ViB55rlC1GLLPR6P51RHmJ+wZa6pawUC5vkENNtij8fjOdVR6fSDtsw1da1AhHmJAH4F4vF4PAYC9OdGR7fZctfUrQIRgKDUEgICu83j8XhOaUR2pmfMyNli19StAgFAROQd6B6Px2NBwOaju3bF6kBHnSsQBZFzbaHH4/Gc4ogA68+POQIL9axAdsyc2Swiy225x+PxnMqISAii3RRjDayIulUgqSBYCaW8A93j8XhMiIZBdMAWx0HdKhAhurTua9F7PB6PewZAdNAWxkHdjsE7Oju/q4jeZsurgZqakFm3DpRK2U01hxQKQC4HHh6GDAyABwYgg4OQfCwbj8VGes0aBB0dtrimkEIByOchIyPg6FoPDUFGR4vW5jpEtbcjs3atLY6F3KZN4L4+W1wXqJkzkTnjDFscC/mdOxHu22eLJ40AWwczmUvO3Lu3x25zTV0qEAHSu+bM2QDgdLutGjJnn425P/whKJOxm2oPEUAEIgIwA4UCeGQE4d69GH3qKeSeegqjGzaAe3qKg10uV3ODHaXT6PzWt9DwkpfYTbWFvm7CXPx/oQAZHUV4+DByGzZgdP165NavR7hvX1GhDw8X70kN0/zWt2LW5z9vi2Ph2Je+hONf/7otrnkok8Hs229H45VX2k2xcPQv/xKDd99tiycNAw8uO3z48jjLuEfUpQLZOnPmolQ6/SgB8+22ami66ip0/su/AFSXl+UEpFBAYedO5DZvRm7DBoz88pfIP/NMcUZdA6j2dsy9++7EZnixIoLw0CHkt2xBbvNmjD75JEYfeQThkSP2kTXBrC99CS3veIctjoXc00/j4FVX1dfqWCm0vP3t6Pi7vwOl03ZrLOy//HLkt2yxxZNGRL6yrLv7L2x5HNSlD6Qhk5lPQJMtr5bMGWe8aJQHAFAqhfTKlWi+5hrM/PjHMffuuzH3nnvQ+PKXQzU3T/tvVTNnQrW32+L6hAhBVxcaXvYytL7vfZj9v/4X5j3wADo+9zmkV60CZWtoy5ogQGbdOlsaG6klS5A+3amxIHZSCxei7f3vT0x5cH8/8jt22OIpQcBvbFlc1KUCyYfhUomhBlbmggts0YuHIIBqaUH2wgsx59vfRue3voXmN71pWge2YOZMqNZWW1z/EIGyWQSdnZjxrneh6yc/wayvfhWNL395TfjXgvZ2qLY2WxwbNGMGsuecY4trFspmMfOTn0Rq2TK7KTbyzz8POLAMCMAFkUdteVzUnQIRgBTREgBOn0TKZJCps1nSlAkCNLz0pZj15S+j81//FanFi6dlNRLMnVtcCb3IUS0taL72WnR+85uY/Y1vILV06bRc7wg1axaoJbkIeEqlkH3JS+rDt0iElhtvROPrXme3xMrob37jxkfJfHQgCGLdRMqk7hQIACXASnLsvwm6umo+Gsg1lM2i8RWvQOcdd6Dxla8EVLLdIf0iMxmeDGpsRNNrX4u53/8+Zrz97aCGBvuQRAjmzoWaMcMWx0rDJZeA6mCykFqyBK1/8ieJma6Aov9s9LHHbOlU2Zo6dCgxZ1OyI4YDNgOBAM4NuOk1axIfQGuFzOmnY/bXvoamN7wh0QE9c9ZZtuiUILV0KWZ+9rNo//jHQU3OXXknJZg/P3HTZTBvHrLnnWeLa4t0GjM/9alETVcAILkcCrt32+IpQUQb1yZQwiSi7kbMTEdHAwGn2fJqyaxbd8oqEGiHdsdnP4vGl73MbooHpZA9+2xbespA2Sxa3/MezLrlFgSdnXZzrKRXrEh0ogD81jSU+PdWilJoedvb0PTqVyd+jnzsmJM8GSmG7W4sRvImQ92NmBlgIYhm2vKqUKqYVJVwx6k1grlzMeuWW5BeHX+R42DOHARz5tjiU47ma6/FzE9/GtTYaDfFxnSt/LIXXIBg1ixbXBOkFi1C2/vfD0xDkEN45Ah4YMAWTx6RPDHvSSL/I6LuFIgEwUWu/R+qqSnxWWCtEixYgLYPfjB2E0fmjDNO6RVfCaXQfN11RXNWzNccAJBKIbNmjS1NBNXejuyFF9riaYeyWbR/7GOJm64i+MgRiAMFQkQDHASHbXmc1N8TzOw8bZlaW6FOMQf6uBCh6eqr0fDSl9otTsmef/4pv+IzmfH2t6PpNa+J/ZoEHR3TtvKjbLZ432tp4qBNa01XXWW3JEZh//5iWZxqERkgokO2OE5q6E6eHAECUupiW14tqr0dwezZtviUhdJptH/yk/HlaCiFzCns/ygHNTWh7aMfRTBvnt3klMzZZ0/fAE6E7O/8DlSC5rqTkV66FK3veU+yUVcWuWeesUVTQoDjWcCvQMZjx5w5s4XI+Uif6upKPKyx1kkvXYqGmBzq1NiIoKvLFp/ypFetwsyPfSzWAX66I6Eya9fGriQrJpVC+9/8TTEvZxrJb9xoi6YG0a55hw4N2uI4ia+nxkCKeSEA59OX9IoVsT609Qg1NKDh8stjmZkF7e3xrW7qnMZXvSq+rG0iZM4/35YmCmWzaHrTm2xx8kRRV69/fexmw4mQQgG5zZtt8dQQecoWxU1djZoFomUk4jxwPnOu3xm3HA2XXhpLdJDq6Ei0lEY9odrb0XT11UAQ2E1Vo5qbkVqwwBYnTvNVV8UyMZkMqcWL0fZnfxbLdZ4MhV27wP39tnhKMPOvbVnc1I0CkeI8YakQua2H4O3x45JasiSW6LRg9uxES2nUFURofstbYqmKoGbNqonSMcGCBUgntBdJOSiTQftHPjLtpisAyG3Y4KSEiQAFBIFXIBOgiGip8xDelhakFi2yxR79oMVh8kitWFETRQVrlWDOHDRde60trpqgs7MmFLdqakL2ootscTJEUVcxXN+pMPrww7ZoqhxY1tp6zBbGTd0okK0rV6ZIxPnGEek1a6Z9OV3LZM480xZVzYti/4+YaX7zm533y2D+/JpYgSAIirWxpqEWWGrpUrS+9701MYGRQsFZBBYBz9K2bYmVMImoGwUS9vZmmMh5BlTmzDOn1YlW66QWL7ZFVeN9TicntXixcxNLavHimgkWyV54YfLFFZUqJgw6vq5TRQYGwD3Odp19MskSJhG10ZsqIFBqDok4D+HNnH22VyAT4DpaipqakF650hZ7LFRLC9KnuS35Nl0Z6OUIOjvRkKQZSym0/O7vovmNb6yZ591VCRMBGCLPJFnCJKJuFEgKOI+InK47KZtFOoYZ9osJSqedPnCZVaucm2ZejFA2i2DRInfXnqi2gkUSLq6YWrwYbR/8YM2swBApkEEHaRsiowwcKuqSZEnm7jlgZ2fnLSD6kC2vhqCzE3PvvDP27TbzW7ZUPtMgAjU0IJg1q7jxzzTbakceeQSHHDocZ/zBH6DjC1+wxU6RXA75TZsgFUS3UBCAGhuhWluhZs4s1qNKaFA7GQP/9m/o+djHnOxhr1pasHDTpljCsqdKePQoDlx5JcJD8VbfoHQaHV/6Elp+93ftpmll8N57ceS97wW4SsuTyGEBXrOsu/tpuyluauNJqYAXZs9+jJRyuuZNr1qFuT/6Uby1gcIQB6+5BvktW+yW8UmloJqakFq8GDPe9z40vuIVoGmKVx/68Y/R/c532uIpM/u229AccyJZ7rnncOjqqysLj1QKlEqBMhlQSwsyZ52F5htuQMNLXjLtK6WRX/wCh3//9yEjI3bTpMmeey66fvITWzytSC6Ho3/+5xi85x67ySkz/uAPMPPv/m7aJ2M2fbfcgmMOJlMCbCPmy5ceOXLAboub2lnPTcCutraZUGqhLa+WYPZsqJluK8Pb8OAgCjt3go8fr/yvpweFvXsx8vDD6H7nO3Hk/e9HfscO+6MTITx40BZNGcpmY3HK2+Seegrc13fidS33d+wYwiNHUNi/H/nnn8fgnXfi8A034MCVV2LgjjsQHk60tNAYVGens0S3zDSXMCkHZTLF6ryOfmM5UsuWofX976855QHAXQY6cCzX3u7MGz8Z6kKBqGx2EUScx/ylFi+OfZYZHjwIyVexw2QYYuiee3Dkj/8Y4b59dmvs5LdutUVTRs2YEbvCRrS/dJXkt27F0Y9+FIdvvHFyq0eHqLY2kCObffaCC2xRTZC9+OL4QouJ0H7TTUgtWWK31AS59ett0ZQQkW2nbdvmoJzv5HHTO2MmDyyLpQZWDDkONuH+/ZBczhZPmtymTej92791Yg+vGBFnnRwA1OzZ8RetZEbuiSds6dRgRm7jRhy89lqMPPJIZSYxh1BDgxN/DGUyNZt7k169GqmFzo0LxYz+t74Vzddc4+Qauibs6UFh/35bPCWI6HFblhQ1r0AEIGJeQUTOd9tpSGBWVjhwAKhmBWIweN99GP6v/7LFsSGDgyjs3WuLp0zQ0RG7AuFjx5w9mBHc04Oev/orhI4/92S4Mruojg5QzNd9qlAmE4tPLLV0Kdo/9KGairoyyW/aVL3zXEMij9mypKjNqzsWhSBY7PpcqaEBqRUrbLFbRFDYu7c6E5ZJGGLge99z93knobB/P2RoyBZPmWD+/Nizjwu7d8dyffLbt6P385939tBXhKMVTzBnDlST8xqkzmh64xvd7saYTqPtgx+sWdMVAIy6WiWLjOTC0FE9+MnjdFCOg60rV6aIeZUtr5bUokWxz4YlDJ2HKOaffz4xx25+xw4n5reIOMqi2OS2bHG24rMZvPNOjD6W3GRPcjknSiSYN68mamCNR9DVhazD6gQtb3sbmq+/3hbXDiJFk6gbdq7q6Rm2hUlR8wpkZm9vRgDnpTsTyUDP5xE6NAEBAHd3uyx/MCGFnTudzuZjr8AqgsL27ZAwppJAYYiBH/4wsVWIDA87USCphQudmcPigLJZZC+5xMnzmFq+HG0f+EBN/14ZGnIW3ShEG6ejhElEzSuQ0Wy2nYicb2GWWbfOFjlHCgUU9uyxxVXBw8MIu7ttsXvCEIXduwFXg7FS8W2UpJFCoej/iHGAz23cCO7rs8WxwMePQ6r9LUTF0jEOBufYUArZiy6qPsmRCO0f/nA8TnmHhD09zvYAIZEnvAKZgHwudyYAt3uABAEya9fG/lC5dkIDxVk2Hz1qS50juVxRgTgiEZPhyAjCA/HmUoUHDoB7e21xLPDRo06UYSbulZ8DMmefXd0mY0RovuGGokM+5ue6WsLDhyFuSpgUAGyfjhpYETWvQEB0qS2qlqTyEcJDhyCjjsOzRZzNXiZCRkdR2LXLFk+ZzFlnxf5gy8iI8wgsG+7vr7wsTZUUDh6segVImQxSq5y7EJ0TzJqFhkun/qinli1D+0c+UrNRVybh4cNF82SVCNEwFWtgTRs1f7UFuMyWVYtqb4dqb7fFzsk995wTG/YJxPGZFjw46FSBNFx8sS1yjgwNxb4CkdFRp5FpE1HYtatqf04wdy6CBCZLVUOElre9bWqTjFQKbX/+53WzMVxh1y4nvkUC+kLmBOzZ41PTCmRTZ2cLEbmtaa1nO8GsWbbYObkNG2yREyiBkMzC9u3uVk9BkEjSZn7HDiczuwkRAR8/bkudI4VCMdquShNW9vzzpzYoTwOZc8+d0p7tLW97G5pvuMEW1yYiziobsMjxTDZ7xJYnSU0rkOYwXASRKj1rJ5JEPgJEislCrlEqkRnl6JNP2qIpo1paEMx2vpXLCeQcnvOEJLACRC7nJFInk0CyrCuosRENl19uiyckvXw52v/yL2s66srGVQ0sIjqyYP/+xLexNalpBRIqtRyA85E+vWpV7LMyyeWQdxyBBR3yGHR12WLnjDz4oC2aMkFHB1QCeQguamBVQhIrQBkerj6Igahma2CVg1IpZC++uPL6dERo+6u/QjB/vt1Ss8jwsLMVCJg3EFCdjbNKalqBBEqtApFzBRJ3OCkAhN3dbiItLILZs6E6OmyxU2RoCPlt22zxlFGdnbGX0pBcLjaT4RiCIJGtWHlgoOrSKWrmzERMtS7JnntuZX2FCM3XXYfmN7859smgS/Lbtzspz695yhYkTc0qEAECEllEjs+RgiCRHJBw3z4njjKb1LJlCObOtcVOKezdC3EYaRR0dsZeSiM8cACcgHObstn4zZ+6inO1u9UFnZ2JrJZcklq+HOkKSpCkly9H+1//dV1EXZm4NA2HQfBrW5Y0NXv1dy5ZkhbAebEqNWsWVJwbSGkK+/cDrivnEqHp6qvd1g0qQ+7ZZ52WMEmvWhX7g57fts399S6DmjEjdmUIAKNPP121ryU1f34i5+oSSqeLq4qJSKXQ+qd/WvMJg+VwWMLkWHDokDszwRSJ96mugpaBgTQROd9rNrN2bSK7+xX27HE6CANAes0atLzlLbbYLSLIb97s9NyTSGTLP/tsIqXu1cyZidSVGn2qeutEsHBh7JONOGh6wxsmXOW1vPWtaH7rW21xzSO5HAqu/B/A8zuB+Dv8SahZBTLc2NgqIs6nGBmHRdvGJQyLETRVziBNVEsLZt58c+wmCRkeLkaJuDp3IqTPOsuWuiUqu1JlyGslBHPnxp5RD2bkqlUgREgvXhz7yi8O1Jw5yF5Ufvfq1IoVaP/wh+sq6iqCjx1zVgaHiDZcMY0lTCJqtndRPn8aEbn1VhIhm0ARRcnn3Sa0EaHlne9EwyWX2C3O4ePHqx+8DNTMmUjHbGqQKOTVldKbgNS8eaCM28o6NmF3N/hIleH9REivWWNL6wJKpYrhvPZzSoS2v/gLBPOcl8ZLhPDgQSd+OgEkLNbAir/Dn4SaVSAFZuepy9TUlEjnk3zeWUkN1dKC1ve+FzM//vHYBy5oG23osNZWZvVqIObZogwPFzfuSoD06tUnDmyOyW/fXrU5joIgGQUSh9ImQvb888dudUuE5je9CS3XXef++ovE8zsswoMHnVQxIJE8ieyazhpYETWrQABMvTDOOATt7dUVbKsUF3WklEL23HMx+5//Ge0f/ziQgN8GhQL6/+VfbGlVjGeKcAkPD7td8U1AIv6cLVuqDghQ7e2xR+vJ6CjyO3bEMvhmzjgDyghBTq9cifZPfCIWk5zroJHxKBw44OR7BBhQItNawiTC/d1wwPNAFoBzZ4Xq6EikBlbY01MMg1Xq5H9BAMpmoVpbEXR1IX366Wi+9lrMueMOzL3vPjS+/OWJrDwAYHTTJuSeecYWTx0iZBOogcW9vU5XTeNChHTce4szI791a9U1sNJr11aekDdFZHAQg3fdVfVqqRyqra1UXJGiqKsplDk5Gdzfj8HvfS8WxTQGEeSff96Vsu3jIEigw5+cmK/a1KDOzkUA3Po/knKAorjDWue3voU53/72yf++8x3M+e53Med738PcO+9E1733YvZtt6Hxla9MTHEARUf00L33ukxyKm4bnECWcG7jxkQc6Kn582MvySL5fLEGVpUDTRIZ6Nzfj6H77oPEUR2aCC2/93uAUsUy7dddZx/hhKH77wf39YFcm8VsmIsKxAFCdKylUPAKZDwyRMtQXIU4JbVkSSKmINXaisZXvKKyvyuvRMNllyF7/vlIr1pVXCHF3ZnLEB45guGf/czpQBx0dIBaW22xc1w6/Scie955sd8bGR6uOgMdCSmQ8OhRFHbuxMhDD9lNTsicfTYar7wS7TfdFMtqqrBjB3pvvrlY7j7mcUHCEHlHq3sS2d959GgMWnvy1KQCEZHVcZQwycQdTlrHDPzgB07LlwCAmj17rCM0JkYS2qc8c+GFtsg5MjRU9SZk1NSE9PLlttg5hRdegOTzGLz//qpXTOWgTAazbrklFl+ODA+j93OfgwwMFDPfY54YhAcOODOzErDelk0XNadAfgAEDCwlwO2UgCiRGlj1SH7bNhz/+tedDwJBZ2fsdaO4t7fqAbcilCqWRo+ZsKen6j3vg7lzY88XQpQtH23zeyyGorBExajJGAb34V/+EsP/9V/FyMwEKlPkNm50+Xy5q4dSJTWnQC5csiRNRIttebVQU1PRhOUZg4yO4vjXvuYswckktWRJLKYHk8KuXVVHLFWCam1NZBfLwvbtVddQS82bV/3+4idDBKNPPAEA4CNHnNn3kyA8eBDHPvUpyMhIcauBBBTIqKMSJgIIMbv5MAfUnAKZ0d+fIcD5JlLp006bsDzCqcrIL36BwXvucTk7KpFJIA8h99xzySiQjo5EzHHRoFwNweLFUDErEBkZQWHHDkBXDs49+2wsfcg1ks/j2Oc/j/zOnQAAamuLXYFIGLrcauBg99GjNRHCi1pUIINELRBZasurJev9HyeQ27wZPTfd5DTyyiQdd86E3t2t2pDXSgjmzoVKICAgMgtNGSKkFyyI3Slc2Lnzt9sVMGPkl7+MJZzXNaOPP46h//zPkrJLLVoUu7lP+vsRVltZQEMiz+2ogRImETWnQAoiC4XI+ZOaOffcWGyp9Qr39KD35pudZczbUDqNTMw5E1IoFBMIE5j5pubOjX0FK8PDyD/3nC2eHEohtcJ5EesTyD37LMSI2Bt99NH4txOuEunvR++nPjXGXJtZuzb2cSE8fNhJBjoAENHj13sFMj5BEFxMgNM7SpkM0qc5t4rVLTI8jN5PfQojv/qV3eSM1IoViQy4LrZ9rYTUsmWxJ5vld+6s2v9BQRB/smO0LauhQMKeHow+/viYY2qKMETfV79adGYbZBOIrAv37wc7UK4CMBM9VQslTCLifSKmAAMvsWXVotrakilhUgfI0BB6b74ZA3fd5TTnwyabQNVjGRpCISEFkoQ/x0UJE2pqQmrRIlvsFCkUiiHf5spPBIN3353IanAq5J55BgPf+96Y86N0OpHQ/sKBA5DRUVs8eURGgzCMx2QwRWpKgQgQKCLnsZJq5sxE7Ne1jgwOovfTn8bAd74DxOw3aLjsMlvkHBkcLGZtJ0D6zDNtkXPyzz5btT8ntWRJ7M5+GRwsWy049/TT4Diy0qtERkfR+9nPntBXgq6u+McFZhR27nTyvBFwPBcE1cV4O6amFMjejo55EHG+iXMwd24iNbBqmfDAARz5wAfQf8cdTgq6TQSl04mYDPO7d8ey77wNNTcjtdR5XMcYpFAo5rNUuSrMJuDr4/5+hN0nBgKF3d3FVVQtwYz+b34TI7/4hd2C9OrV8W8up2ubOaI3FYZushEdUVMKJK/UChA5LwCVWrAg9nyEmiUMMfzTn+LwO99ZjD6pcoCqBNXWlojCzlUbsVQh2bPPjn2gkZGRE2bIUyGR6se9vWXPlfv7i0EANWTGyr/wQrHCdJl+nznrrNj9WsJcfWDEb+mV5uZeWzidxHv1Jkmg1Olx1MBKYg+HmkMEhb170fPJT6L7Pe8pDrYJPdhBZ2fsZhQAGH0ymYTcJBytMjiIsMqMekqlkrHp79tXPvQ7DDHy8MO1E84bhjj+5S+jsG+f3QIohfTKlfErkP7+6rd2iGDeuWzXrjIXfvqI9+pNAimey3IBnO8+lMg2tjWGjI6i52MfQ/83vuEshLBS1Jw5sZcwkXw+mSKKSZWk7+8vO6ufDGr27Pht+gDyE2x5PProo24cxg4Y/NGPMPCjH5U9V2psTGRzudxzzzlTqKxUMkvuSVAzCmTrypVpEVkURwhvZvVqW/yih7LZ4gxrGlZeQVcXKOt8ITmG8OBB8MCALXYONTbGHtUE7aPiKv05qfnzYw+dxkmy5QsHD54QKjsdFPbtQ99XvjJuVJuaMSP20vw4ybWaLEopdx/miJpRIB09PVkBnGdABfPmJWKPrzmI0PS614Fi3k62HJnTTotdceW3bh13cHBJ0NEBammxxc5xUWwvtXhx/DWw8vmJNx1jxtDdd9vSxOn/539Gfvt2W1xCzZiBoLPTFrtFBKMPP2xLp4ZInkZGElhyT46aUSBhEDQR4LwGdRKOMugBrefjH8fRj3xk3L/jt99uvy1WMuecg6CryxbHC1Eie3HnNm8ekwkdF8GcOVAJKJCqayURIVi4MPZgkcKhQ+CTlCUfmeas9JEHH0T/N75R1nEeEXR2xj6xlOFh5HfvtsVTQkR2L+7rO27Lp5v4R9YKyYvMEyLn5U6TSGiDjggauOMODPzbv4371/eVryCsslT3ZKBMJrad3MaFCJl162ypW5hR2L59wgHCFUFXV+y1kiCC3Poqt3hQCqnFi+Nf+T3zzEkVd3j4sMvIo0kRHjmC3s985qSh6uk1a2K/VuGRI852axSijZ+uoQz0iNpRIMC5zvcAUQqZhPYAye/ceVJnmRw/jtEHH7TFsdL4qlclujVu0NUVu21ZRkedbPtaCally2I3A4YHD1ZdbI+CoGg6jJncBA70CO7vL1ZJThoRDN55Z0U+mCTGhXGj1aYAAY95BTIRRJfYompJylFWKup3kpmZFAoYeeQRJ1mplZJatCiR4noRmXXrYjcZ8uAgwkOHbHEsJLE1bH7r1qr7BGWzSK1caYvdwlws236Sfo5CAaO//nXVdb0mS27jRvTdeuvJz08pNCQQmh3u3+9EgQgQMvPmWqqBFRHvk14hApDEUQOrowM0Y4Ytdk8uV1kIpghGn3wykeihiGDWrNir4pokEfIqCSkQSqfRcInzec0J5DZurLqEieroQDDLeRGHMfDQUMXXfeSRRxIN5+WBAfR88pMVbYymZs6M3zeo87BcKFEChtLpdDJF3yZJTSiQA11ds4lovi2vlmD27ESKKEouV1yBVEB+y5aKj3VCEKDhiiti3x8C0N+VwIyd+/rAvfEn5Da87GVQHR222ClSKBRn9VUqkMw558S+8pP+/pM60CMKu3ahsG2bLY6NofvvrzgvKL1yZexmXQnDCaPAJoOIHEMYxt/hp0C8Pa5CQuYVBDgPHwnmzYt9ZzagGG1R6b7cMjyMof/4D1scK41XXgkVtyMYgEpqf+nNm0/qb6qaIMCMP/ojW+ocGRxEwUGkThL7tXNfX2UrbRTNXYP33mtLY6Fw4AB6//ZvK17xZNati92BjjB0qUB7VTrtFch4FEROB+B8SpBOYA8HAAiPHp1UFdLBu+92srStlGD2bDRcfrktdo7q7Iw9Ax1A9RFLFZBetiz+aDIUN/YqOJipJmLTP3RoUv18+Be/qHhQnyoyPIzeT3yi4pURiIom3ZgViORyLveJP3Jw//6aC+FFLSgQAQgip0sMK5B0AgMAABReeGFSJojCnj3Ibdhgi+ODCM1veUvsD00qiZBXvS1p3DRecUXsPgUAyG3ZgrDSwW8cVHs7gvnOLcAnkNuy5eQOaoPwwAGXlWjLMvKLX2D45z+3xeNCmUyxskDMz0Jh1y5nvk4i2nIBkNyMcxJMuwLBGWekQbTAdQkTKJXIDBIAcps22aIJkXweIw88YItjJbNuXeyOw6CrK3aTIR8/jvwLL9hip6j2drT84R8msnoduu++k4bFnozUvHmxl47BFKofS38/8s8+a4udwUeP4tjf//2kkhbVjBlQSUwM1q+v+r5GMBD/knuKxP+EnIStBw82ENESW14tasYMpBYssMWxMNkHC8wYfeKJRIscBrNnI3P66bbYHURILVkSu7O+sGsXEKf5L53GzE9/GukEQp/52DEM/+xntnjSBEuWxF8Dixm5SVY/lnweo48/Hou/SgoF9P7P/znpfBPV2prIynLkkUds0ZQJlKqyTEF8TLsCSQdBk4g4f1oza9fGXtYB+iGZyow4t2kTwmPHbHFsUFNTsSx5XLNqomLZ/JjJVZAJPWV0/bDmq6+2W2Jh6D//E1ztJIII6cWLY1+B8LFjU9o+eOSxx4AY/CCjjz46pWAUNWtW7CsQyecrSmasBBEZTBFNUHxseolpNKkcCsMOApxn+yWRaQr9YPEUypOE3d3IOazUWQmNr3lNfEpVqfjzTUSQ37RpUv6milEK2fPOw6y///tEAgFkZATDP/1p9QUhlUKwYEF8EwNNfuvWk5YHKUdh+/aKIxQrRUZHcezznwcfn7xfObVsWXzPgIaPHXMWZk5E2+YfOFB9NmJMxNvrKoCVWhfHLoRJbAIEbVKZ0hJdBAPf/a4zO2klpFevRmrZMlvsBNXcHNtnR0ihgML+/e6vWRCg+c1vRucdd0AlULkAuszFaIV5CxNBQYDUcuc1SE8gt2nTlK675PMYuv9+Wzx1whDHv/pVjP7613ZLRUzrhltT4+lirFFtMu0KRMVQwoQaGmIfzCIKu3dPeUY88thjlcfVO4DSabRcf70tdkL6tNPiT84aHi67F/dUoXQaqRUr0HnbbZh1yy2J2MYjhv7jP9zc+3Q6kRpYo1U4hYd++lPI0BBkdLTqv9yGDej/P//H/oqKSWJiGe7Z40yBEPBoLZYwiXAb+TQFds6e/QiUcqpEgvnz0XXffYlsBNR366049sUvTiq8sYRSmPXFL6Ll7W+3W2Ijt3kzDr7xjZAqNy+yaX3vezHz5pttsVPC/ftx8M1vRmHnTrvp5BCBiECtrUgtXozM2rXIXnopml75ytizzW3CQ4dw4FWvqrgsyEQEXV1Y8NhjsTrRZWQEh2+8ESMPPWQ3VQRls2i49FLAQVHKwt69U670S83NWLhhQ7zl+UVw/Pbb0XvzzVMbEwxEJE9KvXbpoUP/z26rFaZVgTw7a9aMBqV2EpHTJzhz1lmY+8Mfxl7vH2GIox/5CAa+8x27pWKa3/IWzP7qV508XJXAvb04/La3OTGfmMy54w40vvrVttgpMjKC3IYNU0rCpEwGqr0dqq0NlM2Cmppit4WXhRnHvvCF4m55VQ4wANBw2WWYe9ddttgpYXc3Dl1/fawhuUmQWbMG837+83gjBcMQPZ/4BPq/+U27ZdKISA8TXbni8OEEk8Ymx7SasBqIVgJwHj4SdHUlsouc5HJVm1RyGzcmGo2lWludl3JIymRIDQ3IXnQRGn7ndyb9l73wQqRXrSpuENXWNj3KA0Bh//5i7ocD5YEES5hUnOldw6Qd9/tySKHgrAYWiHobgiC5wWEKTKsCQRCsJsD51Du1aFHsezhAR4NwlXbsws6dCB1HqUyILq7o8vqojg6oJKoe1zsiGPj3f0d+xw67ZcokokC6uxPdCC0usmefnYgCKTjKvhegZ3B01CuQcghAzLxWiJxPBZPIR4B26lYboii5HAZ/9CNbHCsNl14Kam21xVMmNX9+IiVM6p3RJ5/E8dtum7Iz2oayWaTjDp3Wm6VNNVCkVqBUCqmlS2NXIHz06JTyZcpBIgdX9fS4qYcSE9OmQACkFNEiiuEcksoBCXt7K9p/4GQM3nvvlGLsp4rq6EDjy19ui6dM0NUVqxP3xQD39+PY5z8PcVQfCVHpmARyVnIbNzpTetMFtbQg6Oy0xc7Jbd7szDypiJ4hwM2HxYTzwbtSjsya1QAR52FS1NCAdAJx8dARIVPKAbEIDx/G6KOP2uJYaX7LW9wknxEhtXDhtPkU6oXB738fow8/bIurIpVABjpEkPtNzVbSqBjV1pZItN2ow+TgWq6BFeFgBJkax4OgSQDnI31q8eJ4w/QM8hXsD10RzMWaSC4+q0Iyp5/uJsxZqeJWqjGbBuqZkUcfLRb9m0L02ESkli0DYlYgMjLizik8jaj29vjzfEQw4nCSEIjEX3a6SqZNgagwnKkA5+Vhs+edl9hg5nJfitGnn3ZW/rkSVEeHk2rFpBTSq1bZYo+msHs3ev/6r93fW6WKKz+HwRDlKOzcWX29rhogtXBh7H467u9H6Mj/ISI927u7p5DwlCzTpkAolVoJIueG88x559miWJAwRM7dhjHIP/98oqGSlM0Ws3KrjYkPgvhrYNUpMjKCnptumnTF2EqgVMrNCvIkTLWESa2RRB8NDx50VmGbgC1XADUfuTBtCkSYL7JlVRMEyCbkQJfjx6sO4TXhvj6MPPigLY6VxiuvrNqGnlq0yIfwloGPH0fPTTdh+L//O54BOJ1OpOR8NSVMaonMuefaIucUdu+GuKs8PLViXwkzbQqERC61ZdUS6EzjJCjs2ePEgV5CpJjRnuDDml65supBKJNAbH3dwYy+W2/F4J13xnY/VWNjMSw1TgqF4rasMf2GpKBUCtkkFMiePU6iKQUQVurhWq6BFTEtCoRXrsyCyHlZTDV7diKluKFtw65j43Pr1xeLMyZFEKDlxhtt6aRouMRpGbO6h/v70fOJT+D4bbe5nWBYBF1dUA5zecrB/f1T2qqg1lBdXaC4V8nMVRVWHYNIjkT22OJaZFoUyK7e3mUCOB/pg7lzY3+oIvIvvABx0VkMJAyntElONTRcccXUy76kUonl3NQDksuh56abMPCtb8U+a8+cc07sKz/u63O2r8V0kj3jDFC1vr6TIPl8cbdMBxDQhzCsiws/LQoEQbAmlhIm8+fHXlIccDzbsBh55BEny+BKCTo7kZ3iHglJbQ9aD+R37MDhG2/E4F13xbryiEiihEl49CjCBAM74iIJZSv5vLMSNQIcgVI1XcIkYloUiABnxVHCJLViRewdBdA1sI4cscVOyG/Zkmg0lmpunrIfIzVvHqix0RafWohg5IEHcPj665MLgiBKZF8LxxsjTQ9KIb1mzZT692SQ4WEUprC1dVmIjmZSqclvtzgNJK5ABEiBeUksJUzWrrVFsSCjo242AypDYd8+5Ldts8XxoRQaLr98Siu3YOHCU1qBhIcO4diXvoTD73pXsSZazGariGD27ERWfvnnnkvsN8WFampCqst5utkJFLZvd6dsRfYvOHBg2BbXIs4H8ZNxuLOzQSk135ZXCwVBcgpkeNhZwbQTCEMMxry/g032wgunFL2WmjdvSornxcDwz3+OQzfcgL5bb3UW+18pwaJFQAKlY14MJUyorQ00c6Ytdo7L/XWYaGNxrl37JK5ABoiaIeI8/lDNnp1IsTQACPv6wFXuAzIRQz/+MdjxjoEToWbMQNPrX2+LJyYIiqU0XNTTqhMkn8foY4+h+93vRvc73lGcoTsqnDcZ0itWVJ2/c1LyeeSeecaW1h1BezuCJBTII4/YoimjmJ+0ZbVK8k8/c5sQLbDF1ZJZt676rOoKCffti9VRyseOYeSBB2xxrDRfd92klAEphfTKlbb4xYkIRh58EIff+lYcfsc7MHT//c4j8CqGCKklS2IvXlk4dOhF4UBPIjJTRkaQ27LFFk8JASSbSrmryBgzlY8YjgiCYCFiCOFNwqkYkd+yJXbb8PDPfpbo7Da9fPnkFEIqhfRpp9nSFw0yNITcM8+g/1vfwoHXvhaHrr8eIw895KR8fzVQKoXU/PmxO4WdFQqdZtKnnTapidFUCI8ccdYvROTAvIMH60Zzx3tlyyDARRTDXuxJhDVGjDosojgeuQ0bwAludUutrZMq96BmzkRqgfOF5LQiuRxyTz2FY3//9zh4zTU4fN11xVpWTz+dqDKfkHQ6/gx0XdzzxaBAMlMMUZ8MhV273IXeE22ohwz0iMQVCJidpy6rlhakFi60xfHAjHwCtuHCrl0oHDhgi2OD0mk0XHxxxaaRzOmnJ2YyrAoRIAwho6OQgQGER4+isHcv8s89h5FHH8XQvfei7x/+AYff8Q7sO+ccHHjd69D35S8jt2FD0YRTY4NoIvvdiLwoNpGCUshecIEtdU5h1y7AkQJRwMP14kBHMekxOX4ABBd2du4ixz4QSqeRXr06fsciigokt2mT870dypFeuXJK0VFThY8fL+79UMFsO5g9G6klS2xx7SECEQEKBaBQgOTzRWUyPAweHCyGXtbRQEnpNNJr18aaWS3MKGzd6r4EfdIQIXP22bFeK+hw7sK+fVX3IwEYzG9cduTI/7XbapVEFcjOuXOXgXkjiJz7QDwej6eeEZFBAJct6+5+2m6rVRI1YUkYno4YSph4PB5P3UPUQ0q58cYnRKIKhIjWCZFXIB6Px2NBwJGhIKiLEiYRiSkQAQIAq6n4r8fj8XgMROQIt7f32/JaJjEFsn7u3AYmmmfLPR6PxwMA2HHmM8+4CedKiMQUSAvQTCIJxdp6PB5P3bHBFtQ6iSmQDHMrES2y5R6Px+MB2CuQ8ckDXQLEW5TG4/F46hARybcAdRO+G5GYAgmUOjeOPUA8Ho+n3iFg+5zu7uRKcDsisQFdmC+2ZR6Px+MBADxdTzWwIhJRIAIQiC6y5R6Px+MBADxkC+qBRBTIzs7OuRBxWv/K4/F4XgwIUGCRunOgIykFQsxn+ARCj8fjORESGSCRw7a8HkhEgXAQ+BImHo/HUwYhOhqI1FUGekTsCkQARSJnJvFdHo/HU2+QyOERoC4VSOzl3AVQL8yde6Ew+yx0j8fjsUgBhxZ3dz9MwMk34vF4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4pkD8iYQiBKAZ49TCEhEGkFNKjdptAMDMjUSUseXlEBEhogEiKiXkiEhQ3FG3PCIyYn+3iAQi0kxEpF8zEQ1an5sWkcbomMkSfa+INADIGvKcUmpY/59EZIb1HcNENO6+ycw8g4jMrP88EQ2h+HlKRFoqPWfzXMpRweeFAEaIqGA3mFRwj48TkYhIGkCT3TgJBomoMM51NSlds5MhIhkAjcbrE/qKiYikRKTJ6FtCREPlrpGIKABNItJUzDdDSEQj0e8od7zut+b9H9Nf7OdBf38/EQmK96KZjLJDUT+t4B6Ny3i/UV+7ZgBZ/VvzAIb0sSeUNp/o/ouIRNeHiMIy7WOujT6nwehYZs4SUYNxPOuxRPRr0vc5bRxzwtih5aSf6yYA0TUb1Z837rNbj4z3ADmDmTsBfI2Iuuw2FC92KCK9RPQIEX2TiHrNdmb+AlVYCl5EjhDRnxHRwUiWz+dfl0qlbhp75G8RkW8Q0bfNDisi5zDzrUqpqLPtJ6L3EVFfdAwzXw3gA+bDVilaad5ORD8UkQ8R0VVRWxiG96ZSqX9A8Tvmich3lVKl+yQiP1BK/e/otQkznwbg6+aDHobhPalU6su6fQ2ArxJR6SGYiDAMfxAEwW3jDYbMvBrAl4hoht2G4rmOAjjCzP+plLqr3MOG4ud8jYjW2XKD1xLRiIhcC+Av7MZKEZE/Vkpt1dfp9vEUCDP/IgiCT9nycjDz7xPRH0avReQogA8ppXaNPbKIiLxTRP7AUCB9RHQTET1nHsfMZ4vIu4joDABztCLJEdFRAM8CuF0p9ZT5HhFZLCJfJaJ2Q3aXUuprxuvzAdwSvWbmAaXUtVqxZkTkK0S0xjj+C0T0ExH5WyL6nUg+GURkAMBHlVLP6NcZEbleRK4iosUA2kUkTUQDAA4y86+UUrcrpXrMz2HmG4jo/aYsQiuQURHZQ0T/ppT6ldnOzEsAfJmIZurjewF8RCm1Tbe/j4jeanxeD4APKqX26NdNIvI/ieg8/Tokoq8R0T2//ZbSePduAJcCmCcirQCYiI6JyDYi+qZS6r/N93gmgJnXMPNxOQnMnGfm7zFzc/ReEUkz8w772PFg5o36BkbvD5j5fvs4E2b+hJ5dlNAPuXnM43r2E7UTM3+Jmdk8rlKYOcfMbxGRVBiG/221fTT6HmZ+vdkmIqKPL82UIkSkiZnvts+Jmd8XHcPMNzJz3mwfjzAMQ2b+0NhvGQszX8XMg/Z7bZh5NAzDf2Hm0kw9QkQWM/Oo/R6TqE+EYfiPdlulMPNxrZApDMN/sNtNwjD8oX2e48HM3zXfy8yjzPwa+zgUj13HzL3W8buYeVF0jIg0FAqFD+vzLdu/uMgRZn6t2XdF5Ar7WQvDcKee6Ufn8BdW+6+jz2DmOcy82WjL5/P5V4hICzP/ynzfZGDmA6xLGTHzEmb+CTPn7OMimLnAzD9m5g7jt1EYht+2j7VhZg7DcJiZf9+8Nsx8aRiGpX6mx5XFUXsYhj83P0d/xpuN759tXhtmHmLma4x2xcyvDsNwNzMXzM+K0Oc2UigU/lSvBOue2AschmG4SETGNSFF6Jn8dQBeaogXACg7ux2H/QCOG6+XADjbeF0RInKB9XorEeWN1xkRWTLeDLYCQgDrRSRLRGdabeuj/4jIZWObACJaKSIn1BULw/BaAK82z0mKs7Jf6f+TiKyr9J4T0SiAF2y5iR74TlBmNkSU0bP099htIvJu0yxQDuM3nXA9KkVE9hLRsIh06n7mBBE5x3ytV39Xl5mUtAP4IoA2S95DRN3R6zAM36+UupmIxjWxUZFZAD4pIqXnIwzD5aY5TR+7SERKKwcRudRsB/BEtPomog4RmWm09aVSqaMi0gZgtiGfFCLSTUSHRGSmiPyr7qfj3nMiCgC8GsC7DHEKwFrjdVmIiJRSDQA+JCLmOa9SSpUUqYj0iMghFPtxo70C1p9xhYhEFoYWAEuNQ0YB7IxeiMilIvJNpdQiff4noM8tq5S6qdwzXI9UNJhUQxAE55gmGAB9zPwcMz/PzGMqUOoLf270ulAoLDX9A3p2t1W//4Q/EfmNZe+9AMA84/UIM09ogyyaRukSS/Yb8zWADBGN2N/PzC8Ux+wieqa43T5ORJ4EsAdAl4iUZlnMHAJ4CsXvVERUuhYG88IwPMMUiMhSpdStRDTGPiwifQAiU0pARMtN+7iIHLTPLfoDsAnA1t9+2lhEJFBKjfk8Zu7R798qIsfM46noxLjKXD0xc6uIvM4w5zAzD4vIGBu2iGT1KiRvnyczH9CKMvrMUd237N/zoDapXaYH3+izcyJi+3nKDtw22v+zypYDeLP5O/Xs+ToReYWtFIhoh/ZrYHR09Fyl1Kej+6gnroeZ+VfM/IA2j5lcACAyySil1CI90JYgIiUi1+pVc5aIxgzCRPRI9H8RmUtEpf5IRMcA9ABoFJFe+5oy86HSB+nnS0TsY54D8EsABRF5LxFdYdzvgr5X/8XM65m55CPR5/1OQxHPMs9N95Ud+jt22X0GQIelrMdMJIlou2FSXQCg1WxH8Tuu0v4nAFhp+V+GiGi7Pq5NRG5XSpU2zROR48z8ODP/rMx1WhiG4WmmzDMOYRjeaS7jwjD8uja3zGDm99nmC2YuzToKhcK7zaUuMz8iIl3aHlnub4yTLwzDHxrvLTDzu5j5i6ZpgJlvtswALWEYHjPamZnHzNoiJ5n9/cx8JTOHxnuPMPNC+7hocGHmG6Jj9fF7oqWtNhuUlswmYRjeEZ2zPu4u+xgpHvebyPQmIm3M/MuoTZsM/6jMuUW/pVE7NssiIhlmvs/4PA7D8NP6va3M/FKtUEsw86/1TBwoDpjnMfPRqD0Mw9/k8/lrwjB82nrfLH3Ny53nJ02TQRiGD+rj7WMz2iT69ej+M3MuDMNPM/N7zO8Lw/C+sb+2PMx8udmXTJj5DcZx5zHzIfsYzV+jeD0DZv6K+XlhGD4lIudrB7AqFArv0Aq2BDNfoN+fZuY7zLYIZn5URNqZeQEz7zTko7lc7kLjPN9hff8jUT/Q/9rX/rOlLyl+3s+Zudk+TveVucy8zziWmfkr0SqBmVvDMBxjbg7D8IDRf89h5iNGWzczn6nPYw4z32O+V080S6bBMAwfMdsLhcLHorZ8Pn9tOdMuM4fM/EZ9fh8128IwfNAw/b2ZmYeMtiPM/CYdaEPMfA0z95vvZ+aSv6WeGXeAcIGeRZc6qJY9TURDSql+AD/XS8GoTQA8Fr1XKbXEnFGJyAsAenSURrm/0uqCmecCeL3x3q1E9G96RmQyZrkpIsvNmbyIDBPRmJk4EYmO9hjz/QDWWDP8/UR0wD4umnGapgXN+igqRJtaTpgVofj9r9PRKwjD8PXm7zQhoiehS0SLSIuImIEMw2EY7ipzbkNUvD/D4znPNbZJgYlovX7vce3EvNtoB4C8OVNMp9NX6JkiUDzf76fT6XsBnBABpa+5fb1HtSmgdM2JaBMRHbeP1X2jWUReZawCBojofxPRY7/9puJqyXw9Hsx84QTHXqeVXhuAzxPRHPsAFO/L4/q/MwCcF32eVoq3AXiSiJiIWCn1hDYtRu8VAIP6ZSAi45l41kpxS+k5VgRWbyqVMleKZ1q/Z4/u56z7w5hrqh3yJURkvVJq0D5OX/uLzXutV+CfJaIjKJqMjhOR7VweNvrv/KjPo3iPegAcpWJ/Owzgp2PeWWzrRfFaNiqlSoEBKH7fo8b/zyk3Fupn+d1agb/Mav6NjgwMtMPcNB3+FMD/JaK87rcbAQxEjdrSsMc4vm454aK5RETm6U5bQin1dPR/IppvDuDaJhlFUKUALDWWu0JEfSIyT0ebmH8n2GeZ+Z1KKVMRfIeIQqXUyfwxdmd6QSrcLayMQthYLqQQxWMDAGOUa+SvQHH1Nce0b5sQ0axCofBaZl5JRF80ww8j9OCyKXoAAbTp6x0xGgQB2deSmReVc9LbaHt2yQkJIPo+kxHr9RE98EOHs747Gq90hNH39HFj/AQTkCWi+aYJTJvdTghxhb4/RLTSEP1cKXVYR8pMCm3qHNcnowfXWSJyo+XXKyEiOQDR89AKYHnUppQaVEo9Y4Wztlurwh79BxFpUkqV3m9CRC0icj2ABdZvPWL5DMdEO4rIpnLhtCi2pQHYfoOSOcyGmc82Qlqhf/eY58rqTyCi543nZ4lpzgZw1FCeAFBabaD4WTuN9qXMbCrOYQAb9P8DAKus0OcSInKhiJwO4CxTTkQP6fYMgNONfhxqRVpS9LlcboYZhAPgEIB9xuu6pexFc8ha8ztEJA8gJyJL9bL+b0zNrWeCUQ5EGkDJvqwHiT8EsFFENll/YyKpdCy7GZI3GATBj3Vb2UE5QjtFzRnt5vGUgIl2tp1nyohoTCihxQwiMm2mHIZhydeSTqfnmQEEIjKqrx9Q9C39HoBblVKLjXbTv1MIw3C7MQAst2y4swDcbV9LAA+JSDm7vs2ZSilzddhLRDvMA0RkjJ1XRJ4zruVlRLTaaHsUwF4Ur5utQMrmH4hIs7ZfR+QB7C036OmB4oNGHgAT0e26edIKBECj9jkAxc8THfoJFH/DIgBXicjfEVFWt5uDNURkRzQzFZFZpqNaRAYBbDePB3CalTO021iRLDGVg4iw5Rf4I2Y+zQw7J6L90SxdD4RjfGtKqV+bry0WmL4kvWJ6cuwhRUQkrZRaYg3SWy1/pRpvQqWf7dPM1ZFWAp0islyHBP+Z0SYi8jOjH5xrraz2E9FxfWyTObHS7zV9MR0A3miFRueI6AndngGwImrTvp4xFgul1HwATzPzA8z8AIDvGhPluiZWBaJnHaaJKCUiD4rIegAPK6VeaSzZhwF8OzLv6MHOnC1CR/PMMP8AtDDzHmvQWENEZsTECwMDA9HgZCsQs1OmiWi11dk2GLP4cRGRWUQ0N3rNzAzgibFH/RZtUjBXSINBEJRyB0RkVZSHol8/rU14Ea8TkdfoNgD4oY5tj+gPgsB03p1t/i4q0lzmepLheB8XEXmJ+XocRWtHs5Vmfcz8J+ZgLiLfRXEVA232MSmba0NEzdq0ETEcKSEbEVltno+I7I7Ox1YglYRY6hWYOaiMisi/yG8d+m0icqtSKjpmr4j82miPrlnUt1ab+Ts6OuuI8Zr081CayWqFHT0vF1kD7DYRMVf7C5RS77SO2auVLnR/NBVCPpqll6NQKKw1n219ruMNillzhaCd5y9Y/WUGgNIKRK8mIwVGZVYALxWRJ0VkvYh8z7QsiMjjQRB833h9gfWcrzee6RkiUnpuAQyJyK8i5auV/x9a0YbdACLF2yoiy4y2QhAEY8zk6XT6x0EQvDIIgiv130fGy4mqN2JTINr/caYZ0kbFMLYZRNRKROZMagjArUR0j6EIuqyQwnExzWKalwIoPdwAnmtubh7WUTMzLQVh5nfMAGDmkRQAbDmJLyBipTlT1jOc3WMPGcNCy2562LST2uYBrYxKMzwiyhphiY8A+FdzlqSzt0vhoQBs81pZRGQnEU1ostOD2eWWuGRTRvGY2UQ0JlRRKfWEbusyZ5tE1B8EwWYAzTr2f9wQTxMdwVa6Xzrr+gTbsj7fV1sh4U8BCHWIuW0CPen3E1GnqUCIqE8nhvbr12QkrTEz/5PORi71PWZ+Wod0wzYfAXjOylpOA1gYvV+KNrRtkQ+xTHjug0R0X6Sw9PvGhIyLyLPmLN0aD7qJaEz0kAkRnWVZF54zQ91NRKTRCoHNaRNTCRFZaEURDkdRTnoCYUdRpZVSrUTUYkUCblVKvUcnJUJPBtZYk6enIgVCRK0ATN/gABF9w/TNEtEqKzt/h7HaX2WOZdpstl1Pkv5HGIbb7D8R+ZxpMaln4lQgjeaMXMueFJE7rZkyAPyUiD5rljogovOtGfgBEflKub8o9FUfF4jI71lK4jwAPxCRO8dzOKMYFdRmDkhENFgoFA6PPao8zLzKUkY7TYenDREtscx3B0ybroiMWc4T0dNE9ANzBovi9/YAuEkPLqZS7jXi3LPat1NCRL5vX0f9d1s5E5BFs7ZJA3owC8PwF+YBInKWOXkQkWOGietMU7noCKm/0/fn+xPlCFica/YRAMfKzYK1T+cKq2rAuQC+q7+zlGxZKSLSZa1mj2qns+3MhYj8l1Lqm0RkmqgKSqmt0eTEzj0iIlshZ4nInOmGYRju1Y7clG3+UUo9Fobho2ZAgvVMQClVMpmKyJgVjH6myvYDY3JomnpNf5tNu4iYPorRIAjGmHnCMFxqzfIPaDMe9GTLnBxBRO4VkYdMmZZ/jojMCeUMM4Ch2FXD56I+LiILLJPpIBH9XEQ2RwL7umnfTB7FZ2tMIIVWyjm9OnuJUmqF+UdEy0XkaAXPWF0QmwLRg0xJs+sl4T8R0Z8AeNg8UETWWVocZWZUDxDRh+0/pdRHzJIHInK2nT+h8x9eo/9Mm/kYGhoaOgCUlJ6IDKRSqRMGJBsRIaXUasu8sN2cxZjoqI4Vlk14HxEN6vY2c8amlcbjOkrFVDIAcJeO5bcTJncYday6zAgYEckT0Ufta0lEHw6C4N9/+xHl0YOnGYwwnEqlzKQqEpFSGKuWbYgeOhG5xnT8E1EjEb1U359XjufQtBGRck7fcnk+s+woGqXUUiJ6tf7O0822StAlOEyT0yGtwP7DVPLM3E1En9bmKTOgZCia4Wv/wxgTDYAt1usZImKWGMmLyBb9/047R0KbcdZrc8sJ6Bn0Rv1/ss2NOoJvvEHuBL+BDqCwTZgRi6xAj1HTiawDEk63FMjuSPmJyDnmZESb1/4IwPssPw+I6BJzdj8yMtJhRX8NBUFwwHi91oqcPADgEBH9q3FMCf1bd0SmvzKBFJu1clA6tLqcOXhc02C9UdGDOkXaLAdnTs8OjwF4zLrxy0Wk5IDWA+zFRjsA/JqICuX+ogP0wPWBSgcgm0KhsMSKQOolov3G67LoAWCRtUzepn9zOQLtEAV0pxSR7UYI7+nWA9dPRFt1Ylcp1FFENhPR3+hrMMYnYdq/wzA80zI3HNKzoBOuZSXmOu1fMgsIduukxej1OgDXR6+ZWYjou7qtHcBkY+BPiArTg4Tth4lCYm1+1/BFOEFPekzRbq28Nuo+DhTP6V/1YDzLUiADerCCiLSVWXWNKeMB4Hctc11vEAS/QbHfLrau0RFtgjpsRvZZHNB1taAj9MxZuhDRk+PNkm1TL4CRMAz3jXc8gHnWLD6wVm+tSqlrDJ+Y6HD/aLJkm0sPEtExInpGRDaaDUR0gWn6DoKgw/TtAOgzlao9USWijfp3/D9mti0lEJE8M+82fmtpJa6ZgeLnjCilXktE/2gZDUYm8o3WG1MaaCuk0wzHFJERrdkFwI/N2blSisysU+2QNp2jEJHrwzC8c5y/m3ViXxcRlTqbnol9XETeoP/eyMylpammNLNRSp1lFS7sYuZv2d/HzN9kZtOckLUcgAWdYzHeYByISGnGKSIQkZLjjZkvMp83EdkeRacR0Y0iMkdE5vT19f2OUqpbR5KMiXMPgqBkAiGiMcEMRNQM4A77d+m/f2fmCf0lOtzSXDG2i8jt+v0/FpH/Z5qotF/ip/q9b418Ayj+1kMicrVxj/5EO1BNTrAXi8hMbQY0edB6DZ3I9l5Txsz/2/i+NzDzz8z2SqrOisiYVa5eYQkRrQewKrpHAP6HLlRoB00c06V3oFdm9m++WSf2vUJEbgXwGdP/AeD70co7lUotsxT6wYGBgRH9rH3DXBEZxzxl9E87a3tQRCaaOLWbFR4ADAZBMNFK3c7r6RCRf2DmVzPzdcx8n+WjGyaiu4iItQ9jTHQjgGeJKNR/d1lty/TqECg6sBda1biPaQULEQnsqhMAIrPeAcsUBmjFEASB6b8ZM0kkojcz84d1UvGnAPyN9Sz/p1LKrijgsWHmd+uZhEjRi7gnivMWkUwYhhvNdl2EbBaKcdMXMnOf2T4RzPwd7bR6vZmpy8x7mbkUYqeXlA9Z7/1qFFsfhuFPzLbxCMNwFzObM7YuZt4btTPzIDO/Nmq3Yeb5Zga+zpJfi+JnURiG3y99WbG9bPXdCGY+w8ykDcNwJMqNEREVhuG3xsuYtmHmPma2Z3wl9Od9xn7feOjf9oEomzkMwzFF+XQ2cukJY+az7GJ0unruGJj5QmYeMY45bhbfM457lVnwMQzDfrNPoPibflD6suJnjTdrB4rHp8oURbQTzcYgIp+2jv9p1O+kmK38sNk+EWEYbmTm+dF7C4XCx8z7y8z3R4UrdRb49rGfIBJlwKP4vF0ShmGpCCMz79Y+vbLowbF0j3RhwrLVtlE8fk0YhmMyscejWNAg/IpxbdrDMBxT0SAMw88an/0yZh4w3s/M/KdG+yes95auOzPPDcPQzCAPdcXqqJ9/3qwsIcXPPxQVhtSfMSYbfyKYeT8z28ExdU2cKxA7hPN4pPmJKBeZNCJ0TPnFKM6oVloz3JOxU5t/XmOZfp6LZnnQD/54IaHaDFXpzT2oM2GB4ntnm+YJXXNpW+noE7FDNge0XRUA0kRkmrdgRziVwY6g2aeX6tDBDAtsR+AEjJykiGLKzM8ZD/3M9AL4C53tzfl8frmZyKfrkt1nmT5K2cYnYZ0VIr7LCAEHiucQAHiNFe32tI54K8HMk8oD0Xky5uo6JKIJ7dplsrY3RCsA/fs/o/vBuOhBaJ9S6i910AUABEqpxdbqZLdxLfIAxpRm0femlPSXSqUW6FVpxFH9Nx6nWwES3dGzPQ47AdwjJ64sx6DznO5WSn3KCC6YZ1WGECIya9M9D6Dk06BiVMGNhgKyVy/PGNd9jWU6PBb5ZnT2/Y/tFYZOhjV9KP8kIidE/pno+3acmT9DRLYFpK6JTYHomlU7oz9tGzaL1t0rIs8bxxxi5hV6ptohIvvN94/3x8w7dc2nDICLrO/8qbUhkgJw2PqMHhSdhR06BvyE77D/iOhha3OceSKyz/jeZ05SquB08/MAPGyUN2nT9vGobVuZDO8xMPNSndcQnd8DkUmEiBp1CZETfke5PwCbTuL3Ubq43gnvleL92CYivwRwCxFdTUT/GF0rpdQqESldYyJ6wi4To81Vu6xzGmOC0SuWeQD2GMc9VCYDvVHH6O/S57ZTRH5s2NYj7Ps+kTkGWoGa5/iQ6fcoh4h0mt+hlBpjbiOinwP4YxF5gJnHKBJd/n+L3lfndUT0/xlRRIF2sJvXK3LkgogkDMOf6fsStT+Ty+VK91iv/Ev9R1dQKPm0yrDY+r7HrOdhDLoMyk0AvqCfedNvCQB9+nd/hIjerX19QNG/0w6g2/i+HWaRT13l91fW+cwWkblaicwz24iodN3DMFxs/m4ietSahPxaRDaY7xeRB838FSLaQ0S/LyL368jH0pt1vstOAP+HiN4YBMHtE5i165JKZ6WTRkTssgt5Xf8qalc62ap0DlF9Kb38PmHviPHQeQsFO29E1+EpdQj9Xa1molj0nTr8105gK0v0nui1DpM16/SEEz2A2i5vrpQKSqkoM1bpc1QAcPz4cbS1tfWVSdIroSvVllZseoUXxcErPcCcNDkOAI4dOxZ2dHRMdO4nXEMTPXDltR17zDlHBSiNY0MdIFB6qHQBujHJnjrHYsxn2b8ZwKhSaoxi0OfaZvXDYXuXxZ6enrb29nbz95TuRznK/Y6J7jeK17WjtfW3Cx29C+CYvAl9vs369y8A0KH75h6dVzRQ7j36eDPD3O73aQAt0bOm79Hx6Jraz9vRo0fznZ2d4+YC6bpqpp/ohGtfDt1nWnUgRbQVwCG9oh/UIbT2ZCHd19c3w7p2Y/pDmb4AXQ+toBM+zTGmtCug/bvL3XddadfsG2V/q36mZwCYr/2/I3oS2fdi3InQ4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/F4PB6Px+PxeDwej8fj8Xg8Ho/H4/G45/8HLrjXzsmO5nkAAAAASUVORK5CYII=" alt="RDM-7"></div>
         <div class="top-controls">
-            <!-- Mobile-only sidebar toggles (hidden on desktop via CSS) -->
-            <button class="btn btn-secondary btn-icon mobile-only-btn" id="mobLeftBtn" onclick="toggleMobileSidebar('left')" title="Signals"
-                style="display:none;">&#9776;</button>
+            <!-- Mobile-only hamburger: opens the layout menu as a sheet on phones -->
+            <button class="mobile-burger" onclick="openMobileMenu()" title="Menu">&#9776;</button>
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
                 <button class="header-pill" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
@@ -2553,8 +2656,6 @@
             <button class="header-pill sync-active" id="pillAutoSync" onclick="toggleAutoSync()" title="Save changes to the device 1 second after your last edit. Disable for manual-only saving via the Save button.">Auto-save</button>
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
             <div class="header-divider"></div>
-            <button class="btn btn-secondary btn-icon mobile-only-btn" id="mobRightBtn" onclick="toggleMobileSidebar('right')" title="Properties"
-                style="display:none;">&#9881;</button>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
         </div>
         <!-- Hidden elements for JS compatibility -->
@@ -2774,6 +2875,40 @@
         <label>Rot<input id="mobSelRot" type="number" min="0" max="359" oninput="applyMobileSel()"></label>
         <button class="btn btn-secondary btn-icon" style="min-height:34px; color:hsl(0,70%,60%);" onclick="deleteWidget()" title="Delete widget">&times;</button>
     </div>
+
+    <!-- Mobile floating zoom bar (auto-fades after 3s of no interaction) -->
+    <div id="mobileZoomBar" aria-hidden="true">
+        <button onclick="zoomBy(-0.1)" title="Zoom out">&minus;</button>
+        <button onclick="zoomToFit()" id="mobileZoomLabel" title="Fit to screen">Fit</button>
+        <button onclick="zoomBy(0.1)" title="Zoom in">+</button>
+    </div>
+
+    <!-- Mobile bottom nav (icons open slide-up sheets for Widgets / Properties / Layers / More) -->
+    <nav id="mobileActionBar" role="toolbar" aria-label="Primary actions">
+        <button data-action="widgets" title="Widgets">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Widgets</span>
+        </button>
+        <button data-action="properties" title="Properties">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor"/></svg>
+            <span>Props</span>
+        </button>
+        <button data-action="sim" id="mobileSimBtn" title="Toggle simulation">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><polygon points="6,4 20,12 6,20" fill="currentColor"/></svg>
+            <span>Sim</span>
+        </button>
+        <button data-action="layers" title="Layers">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7"><polygon points="12,3 22,8 12,13 2,8"/><polyline points="2,12 12,17 22,12"/><polyline points="2,16 12,21 22,16"/></svg>
+            <span>Layers</span>
+        </button>
+        <button data-action="more" title="More">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+            <span>More</span>
+        </button>
+    </nav>
+
+    <!-- Dim overlay behind an open mobile sheet -->
+    <div id="mobileSheetBackdrop" aria-hidden="true"></div>
 
     <footer>
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
@@ -10007,29 +10142,151 @@
             _sigCardsTimer = setInterval(_pollLiveSignalValues, 500);
         });
 
-        /* ── Mobile sidebar toggles + selection toolbar ─────────────── */
+        /* ── Studio-style mobile UX: bottom nav + slide-up sheet ────── */
 
-        function toggleMobileSidebar(side) {
-            const w = document.getElementById('workspaceGrid');
-            if (!w) return;
-            const other = side === 'left' ? 'right' : 'left';
-            w.classList.remove(`mobile-${other}-open`);
-            w.classList.toggle(`mobile-${side}-open`);
+        /* Open the right sidebar as a sheet (phone) or drawer (tablet),
+         * switched to the given tab name. Reuses the existing
+         * switchRightTab infrastructure so the same panels show on
+         * desktop AND mobile without duplicate DOM. */
+        function openSidebarTab(tab) {
+            if (typeof switchRightTab === 'function') switchRightTab(tab);
+            const sidebar = document.querySelector('.sidebar-right');
+            const backdrop = document.getElementById('mobileSheetBackdrop');
+            if (!sidebar) return;
+            sidebar.classList.add('mobile-open');
+            sidebar.classList.remove('sheet-full');
+            if (backdrop) backdrop.classList.add('active');
         }
 
-        /* Close mobile sidebars when user taps the dim overlay */
-        document.addEventListener('click', (e) => {
-            const w = document.getElementById('workspaceGrid');
-            if (!w) return;
-            if (!w.classList.contains('mobile-left-open') &&
-                !w.classList.contains('mobile-right-open')) return;
-            /* Ignore clicks inside the sidebars or on the toggle buttons */
-            if (e.target.closest('.sidebar-left, .sidebar-right, .mobile-only-btn, .layout-menu')) return;
-            /* Only close on taps in the grid itself (the ::before dim area) */
-            if (e.target === w || e.target.closest('.main-stage')) {
-                w.classList.remove('mobile-left-open', 'mobile-right-open');
+        function closeMobileSheet() {
+            const sidebar = document.querySelector('.sidebar-right');
+            const backdrop = document.getElementById('mobileSheetBackdrop');
+            if (sidebar) sidebar.classList.remove('mobile-open', 'sheet-full');
+            if (backdrop) backdrop.classList.remove('active');
+            closeLayoutMenu();  /* kill any open hamburger menu */
+        }
+
+        /* Bottom-nav icon dispatcher */
+        function mobileAction(action) {
+            switch (action) {
+                case 'widgets':    openSidebarTab('widgets'); break;
+                case 'properties': openSidebarTab('properties'); break;
+                case 'layers':     openSidebarTab('layers'); break;
+                case 'sim':        if (typeof toggleSimulation === 'function') toggleSimulation(); break;
+                case 'more':       openMobileMenu(); break;
             }
+        }
+
+        /* Event delegation for the bottom nav */
+        document.addEventListener('DOMContentLoaded', () => {
+            const bar = document.getElementById('mobileActionBar');
+            if (bar) bar.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-action]');
+                if (btn) mobileAction(btn.getAttribute('data-action'));
+            });
         });
+
+        /* Hamburger + "More" button share behaviour: show the layout menu.
+         * On mobile it's styled as a sheet-like dropdown via CSS. */
+        function openMobileMenu() {
+            if (typeof toggleLayoutMenu === 'function') {
+                toggleLayoutMenu();
+            }
+        }
+
+        /* Backdrop click = dismiss whatever's open */
+        document.addEventListener('DOMContentLoaded', () => {
+            const bd = document.getElementById('mobileSheetBackdrop');
+            if (bd) bd.addEventListener('click', closeMobileSheet);
+        });
+
+        /* Drag-to-expand/dismiss the bottom sheet (phone-only visually;
+         * on tablets the drawer is side-sliding and the handle is hidden). */
+        function _setupSheetDrag() {
+            const sheet = document.querySelector('.sidebar-right');
+            if (!sheet) return;
+            let startY = 0, startH = 0, dragging = false, baseTransform = '';
+            const onDown = (e) => {
+                /* Only engage when the touch starts on the drag handle area
+                 * (top ~20px of the sheet) and we're in bottom-sheet mode. */
+                if (!sheet.classList.contains('mobile-open')) return;
+                const rect = sheet.getBoundingClientRect();
+                const y = (e.touches ? e.touches[0].clientY : e.clientY);
+                if (y - rect.top > 20) return;
+                dragging = true;
+                startY = y;
+                startH = rect.height;
+                baseTransform = sheet.style.transform;
+                sheet.style.transition = 'none';
+            };
+            const onMove = (e) => {
+                if (!dragging) return;
+                const y = (e.touches ? e.touches[0].clientY : e.clientY);
+                const dy = y - startY;
+                /* Drag down translates the sheet off-screen; drag up pops
+                 * it to full height. */
+                if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+                else sheet.style.transform = `translateY(0)`;
+            };
+            const onUp = (e) => {
+                if (!dragging) return;
+                dragging = false;
+                sheet.style.transition = '';
+                sheet.style.transform = '';
+                const y = (e.changedTouches ? e.changedTouches[0].clientY : e.clientY);
+                const dy = y - startY;
+                if (dy > 80) {
+                    closeMobileSheet();
+                } else if (dy < -40) {
+                    sheet.classList.add('sheet-full');
+                }
+            };
+            sheet.addEventListener('pointerdown', onDown);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            sheet.addEventListener('touchstart', onDown, { passive: true });
+            document.addEventListener('touchmove', onMove, { passive: true });
+            document.addEventListener('touchend', onUp);
+        }
+        document.addEventListener('DOMContentLoaded', _setupSheetDrag);
+
+        /* Zoom bar auto-fade: bright on activity, dim after 3s idle */
+        let _zoomFadeTimer = null;
+        function _zoomBarActivity() {
+            const bar = document.getElementById('mobileZoomBar');
+            if (!bar) return;
+            bar.classList.remove('faded');
+            if (_zoomFadeTimer) clearTimeout(_zoomFadeTimer);
+            _zoomFadeTimer = setTimeout(() => bar.classList.add('faded'), 3000);
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const bar = document.getElementById('mobileZoomBar');
+            if (bar) {
+                bar.addEventListener('pointerdown', _zoomBarActivity);
+                _zoomBarActivity();
+            }
+            /* Also bump the fade timer on canvas interactions so the user
+             * sees the bar when they're actively placing widgets. */
+            const stage = document.querySelector('.main-stage');
+            if (stage) stage.addEventListener('pointerdown', _zoomBarActivity);
+        });
+
+        /* Mirror sim state onto the bottom-nav Sim button */
+        function _updateMobileSimBtn() {
+            const btn = document.getElementById('mobileSimBtn');
+            if (!btn) return;
+            btn.classList.toggle('sim-on', !!_simActive);
+        }
+        /* Hook into _updateSimButton - wrap the existing function */
+        (function(){
+            const orig = window._updateSimButton;
+            if (typeof orig === 'function') {
+                window._updateSimButton = function(){
+                    orig.apply(this, arguments);
+                    _updateMobileSimBtn();
+                };
+            }
+        })();
 
         function updateMobileSelToolbar() {
             const tb = document.getElementById('mobileSelToolbar');
