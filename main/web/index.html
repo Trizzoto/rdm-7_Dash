@@ -3494,12 +3494,11 @@
                     { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
                     { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                     { name: "limiter_effect", label: "Limiter Effect", type: "select", options: [
-                        { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar+Circles" },
-                        { v: 3, l: "Circles" }, { v: 4, l: "Bar Solid" }, { v: 5, l: "Bar+Circles Solid" },
-                        { v: 6, l: "Circles Solid" }
+                        { v: 0, l: "None" }, { v: 1, l: "Bar Flash" }, { v: 2, l: "Bar Solid" }
                     ], def: 0, cat: "appearance" },
                     { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
-                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true }
+                    { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
+                    { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", min: 50, max: 1000, step: 50 }
                 ]
             },
             "panel": {

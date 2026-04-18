@@ -833,8 +833,14 @@ static const char *COLOR_OPTS =
     "Green\nCyan\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nCustom...";
 
 static const char *LIMITER_EFFECT_OPTS =
-    "None\nBar Flash\nBar+Circles Flash\nCircles Flash\n"
-    "Bar Solid\nBar+Circles Solid\nCircles Solid";
+    "None\nBar Flash\nBar Solid";
+
+/* Flash speed options in 50 ms steps from 50 to 1000. Maps 1:1 to
+ * rpm_flash_speed_dropdown_event_cb (idx 0 = 50 ms, idx 19 = 1000 ms). */
+static const char *FLASH_SPEED_OPTS =
+    "50 ms\n100 ms\n150 ms\n200 ms\n250 ms\n300 ms\n350 ms\n400 ms\n"
+    "450 ms\n500 ms\n550 ms\n600 ms\n650 ms\n700 ms\n750 ms\n800 ms\n"
+    "850 ms\n900 ms\n950 ms\n1000 ms";
 
 /** Map an RPM value (3000-12000, step 200) to a dropdown index. */
 static uint16_t _rpm_to_idx(int32_t rpm) {
@@ -859,18 +865,18 @@ static uint16_t _theme_color_idx(lv_color_t c) {
     return 10; /* Custom */
 }
 
-/** Map limiter_effect enum to dropdown index. */
+/** Map limiter_effect enum to dropdown index. Now 1:1 since the enum was
+ *  collapsed to {0=None, 1=Bar Flash, 2=Bar Solid}; older "circles" modes
+ *  are migrated at JSON load time in _rpm_bar_from_json. */
 static uint16_t _limiter_effect_to_idx(uint8_t effect) {
-    switch (effect) {
-    case 0: return 0; /* None */
-    case 2: return 1; /* Bar Flash */
-    case 3: return 2; /* Bar+Circles Flash */
-    case 4: return 3; /* Circles Flash */
-    case 5: return 4; /* Bar Solid */
-    case 6: return 5; /* Bar+Circles Solid */
-    case 7: return 6; /* Circles Solid */
-    default: return 0;
-    }
+    return effect <= 2 ? (uint16_t)effect : 0;
+}
+
+/** Map flash_speed_ms (50..1000 in 50 ms steps) to dropdown index. */
+static uint16_t _flash_speed_to_idx(uint16_t ms) {
+    if (ms < 50)   ms = 50;
+    if (ms > 1000) ms = 1000;
+    return (uint16_t)((ms - 50) / 50);
 }
 
 static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
@@ -920,6 +926,15 @@ static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
                                                COLOR_OPTS, 0);
     lv_dropdown_set_selected(lcol_dd, _theme_color_idx(rd->limiter_color));
     lv_obj_add_event_cb(lcol_dd, rpm_limiter_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* Flash speed only matters for effect = Bar Flash. We always render the
+     * dropdown though — UX is clearer than greying it out, and tweaking it
+     * while in None/Solid is a no-op until the user switches back to Flash. */
+    lv_obj_t *fs_dd = settings_add_dropdown(lim_sec, "Flash Speed:",
+                                             FLASH_SPEED_OPTS, 0);
+    lv_dropdown_set_selected(fs_dd, _flash_speed_to_idx(rd->flash_speed_ms));
+    lv_obj_add_event_cb(fs_dd, rpm_flash_speed_dropdown_event_cb,
                          LV_EVENT_VALUE_CHANGED, NULL);
 }
 

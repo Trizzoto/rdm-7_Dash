@@ -67,6 +67,43 @@ static int current_canbus_rpm = 0; // Store the current CAN bus RPM value
 // CAN timeout tracking
 static bool rpm_color_needs_update = false;
 static lv_color_t new_rpm_color;
+
+/* ── Limiter flash state ──────────────────────────────────────────────────
+ * The flash effect (limiter_effect == 1) is driven by a single periodic
+ * timer that toggles s_flash_state. set_rpm_value() calls _apply_limiter_effect()
+ * which paints the bar in either bar_color (off-flash) or limiter_color (on-flash
+ * / solid). The timer is recreated whenever flash_speed_ms changes.
+ *
+ * limiter_effect values:
+ *   0 = None      — _apply_limiter_effect repaints the normal bar_color
+ *   1 = Bar Flash — bar toggles between bar_color and limiter_color at flash_speed_ms
+ *   2 = Bar Solid — bar stays solid limiter_color (no animation) */
+static bool          s_flash_state    = false;       /* current flash phase */
+static lv_timer_t   *s_flash_timer    = NULL;        /* shared LVGL timer */
+static uint16_t      s_flash_timer_ms = 0;           /* current period the timer was created with */
+
+static void _apply_limiter_effect(void);
+
+static void _rpm_flash_timer_cb(lv_timer_t *timer) {
+    (void)timer;
+    s_flash_state = !s_flash_state;
+    _apply_limiter_effect();
+}
+
+/* (Re)create the flash timer if `desired_ms` differs from the active period.
+ * Pass 0 to tear it down. */
+static void _ensure_flash_timer(uint16_t desired_ms) {
+    if (desired_ms == s_flash_timer_ms) return;
+    if (s_flash_timer) {
+        lv_timer_del(s_flash_timer);
+        s_flash_timer    = NULL;
+        s_flash_timer_ms = 0;
+    }
+    if (desired_ms > 0) {
+        s_flash_timer = lv_timer_create(_rpm_flash_timer_cb, desired_ms, NULL);
+        s_flash_timer_ms = desired_ms;
+    }
+}
 void rpm_gauge_roller_event_cb(lv_event_t *e) {
 	lv_obj_t *roller = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(roller);
@@ -201,32 +238,35 @@ void check_rpm_color_update(lv_timer_t *timer) {
 	}
 }
 
-// RPM Limiter Effect event callbacks
+// RPM Limiter Effect event callback. Dropdown options map 1:1 to enum:
+//   0 = None, 1 = Bar Flash, 2 = Bar Solid
 void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e) {
 	lv_obj_t *dropdown = lv_event_get_target(e);
 	uint16_t selected = lv_dropdown_get_selected(dropdown);
 
-	// Map dropdown selection to effect type (0=None, 2=Bar Flash, 3=Bar &
-	// Circles Flash, 4=Circles Flash, 5=Bar Solid, 6=Bar & Circles Solid,
-	// 7=Circles Solid)
-	uint8_t effect_type = 0;
-	if (selected == 1) {
-		effect_type = 2; // Bar Flash only
-	} else if (selected == 2) {
-		effect_type = 3; // Bar & Circles Flash (combined effect)
-	} else if (selected == 3) {
-		effect_type = 4; // Circles Flash only
-	} else if (selected == 4) {
-		effect_type = 5; // Bar Solid only
-	} else if (selected == 5) {
-		effect_type = 6; // Bar & Circles Solid
-	} else if (selected == 6) {
-		effect_type = 7; // Circles Solid only
-	}
-
-	// Update configuration
 	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
-	if (rd) rd->limiter_effect = effect_type;
+	if (rd) {
+		rd->limiter_effect = (uint8_t)(selected > 2 ? 0 : selected);
+		/* Tear down or rebuild the flash timer based on the new effect.
+		 * Solid mode (2) doesn't need the timer; only flash mode (1) does. */
+		_ensure_flash_timer(rd->limiter_effect == 1 ? rd->flash_speed_ms : 0);
+		_apply_limiter_effect();
+	}
+}
+
+// RPM Flash Speed event callback. Dropdown index → flash period in ms.
+void rpm_flash_speed_dropdown_event_cb(lv_event_t *e) {
+	lv_obj_t *dropdown = lv_event_get_target(e);
+	uint16_t selected = lv_dropdown_get_selected(dropdown);
+	/* Options (50ms steps): 50, 100, 150, 200, ... 1000  → 20 entries */
+	uint16_t ms = (uint16_t)(50 + selected * 50);
+	if (ms < 50)   ms = 50;
+	if (ms > 1000) ms = 1000;
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (rd) {
+		rd->flash_speed_ms = ms;
+		if (rd->limiter_effect == 1) _ensure_flash_timer(ms);
+	}
 }
 
 void rpm_limiter_roller_event_cb(lv_event_t *e) {
@@ -415,8 +455,8 @@ static void limiter_color_wheel_ok_event_cb(lv_event_t *e) {
 		if (rd) rd->limiter_color = selected_limiter_custom_color;
 	}
 
-	// Limiter circles color update removed - only bar flash effect is
-	// supported
+	// Apply the new limiter color immediately (bar repaints on next frame).
+	_apply_limiter_effect();
 
 	// Close the popup
 	if (limiter_color_wheel_popup) {
@@ -546,6 +586,59 @@ void set_rpm_value(int rpm) {
 		lv_bar_set_value(rpm_bar_gauge, scaled_rpm, LV_ANIM_OFF);
 	}
 
+	// Limiter overlay: repaint the bar based on whether we crossed the limiter.
+	_apply_limiter_effect();
+}
+
+/* Repaint the bar's background according to limiter_effect + current RPM.
+ *
+ *   - effect 0 (None):       bar stays bar_color regardless of RPM
+ *   - effect 1 (Bar Flash):  if RPM >= limiter_value, toggle between bar_color
+ *                            and limiter_color driven by s_flash_state. Below
+ *                            the threshold, bar reverts to bar_color.
+ *   - effect 2 (Bar Solid):  if RPM >= limiter_value, bar goes solid
+ *                            limiter_color. Below the threshold, bar reverts.
+ *
+ * Safe to call from any context that already holds the LVGL mutex (set_rpm_value
+ * is called from update_rpm_ui which runs on the LVGL task; the flash timer
+ * callback also runs on the LVGL task). */
+static void _apply_limiter_effect(void) {
+	if (!rpm_bar_gauge || !lv_obj_is_valid(rpm_bar_gauge)) return;
+
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	lv_color_t base = rd ? rd->bar_color : THEME_COLOR_GREEN;
+	uint8_t   effect = rd ? rd->limiter_effect : 0;
+	int32_t   trigger = rd ? rd->limiter_value : INT32_MAX;
+	lv_color_t lim_c = rd ? rd->limiter_color : THEME_COLOR_RED;
+
+	bool over_limiter = (current_canbus_rpm >= trigger);
+
+	/* Pick the colour for the FILLED portion (PART_INDICATOR). */
+	lv_color_t fill = base;
+	if (over_limiter) {
+		if (effect == 1) {           /* Bar Flash */
+			fill = s_flash_state ? lim_c : base;
+		} else if (effect == 2) {    /* Bar Solid */
+			fill = lim_c;
+		}
+	}
+
+	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
+	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
+	                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
+
+	/* The empty portion (PART_MAIN) only changes when the limiter is on,
+	 * so the redline strip and normal bar bg stay untouched at idle. When
+	 * the limiter triggers, the WHOLE bar takes the limiter colour for
+	 * maximum visibility. */
+	if (over_limiter && effect != 0) {
+		lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
+		                           LV_PART_MAIN | LV_STATE_DEFAULT);
+	} else {
+		lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
+		                           LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 }
 void update_redline_position(void) {
 	if (!rpm_redline_zone)
@@ -895,6 +988,14 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 		night_mode_subscribe(_rpm_bar_night_cb, w);
 		_rpm_bar_apply_night_mode(w, night_mode_is_active());
 	}
+
+	/* Spin up the limiter flash timer if the loaded layout uses Bar Flash.
+	 * For Bar Solid (effect=2) we skip the timer; _apply_limiter_effect()
+	 * paints the static limiter colour on each set_rpm_value() call. */
+	if (rbd && rbd->limiter_effect == 1)
+		_ensure_flash_timer(rbd->flash_speed_ms ? rbd->flash_speed_ms : 200);
+	else
+		_ensure_flash_timer(0);
 }
 static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
@@ -913,6 +1014,7 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_effect", rd->limiter_effect);
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
+	cJSON_AddNumberToObject(cfg, "flash_speed", rd->flash_speed_ms);
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
 	/* Night-mode overrides — emit only fields that have an override set */
@@ -949,6 +1051,21 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) rd->limiter_value = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_color");
 	if (cJSON_IsNumber(item)) rd->limiter_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_speed");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 50)   v = 50;
+		if (v > 1000) v = 1000;
+		rd->flash_speed_ms = (uint16_t)v;
+	}
+	/* Migrate old "circles"-mode enum values (1, 3, 4, 5, 6, 7) to the new
+	 * 3-value enum: 0=None, 1=Bar Flash, 2=Bar Solid. Old "Bar+Circles Flash"
+	 * (3) and "Bar Flash" (2) collapse to 1; old "Bar Solid"/"Bar+Circles Solid"
+	 * (5, 6) collapse to 2; old circles-only modes (1, 4, 7) are now None. */
+	if (rd->limiter_effect == 2 || rd->limiter_effect == 3) rd->limiter_effect = 1;
+	else if (rd->limiter_effect == 5 || rd->limiter_effect == 6) rd->limiter_effect = 2;
+	else if (rd->limiter_effect > 2) rd->limiter_effect = 0;
+
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(rd->signal_name, item->valuestring, sizeof(rd->signal_name));
@@ -1009,6 +1126,9 @@ static void _rpm_bar_destroy(widget_t *w) {
 			signal_unsubscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 		night_mode_unsubscribe(_rpm_bar_night_cb, w);
 		widget_rules_free(w);
+		/* Tear down the shared limiter flash timer — it references nothing
+		 * widget-specific but there's no point running it without a bar. */
+		_ensure_flash_timer(0);
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;
@@ -1069,6 +1189,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->limiter_effect = 0;
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */
+	rd->flash_speed_ms = 200;
 
 	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;

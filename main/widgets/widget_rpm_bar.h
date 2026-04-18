@@ -18,9 +18,15 @@ typedef struct {
 	int32_t  gauge_max;
 	int32_t  redline;
 	lv_color_t bar_color;
-	uint8_t  limiter_effect;   /* 0=None, 1=Warning Circles, 2=Bar Flash, 3=Combined */
+	/* Limiter effect: applied when RPM >= limiter_value.
+	 *   0 = None       — no visual change at the limiter threshold
+	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color
+	 *                    every flash_speed_ms milliseconds
+	 *   2 = Bar Solid  — bar background goes solid limiter_color (no flashing) */
+	uint8_t  limiter_effect;
 	int32_t  limiter_value;
 	lv_color_t limiter_color;
+	uint16_t flash_speed_ms;   /* default 200, range 50..1000 — flash period for effect=1 */
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* Night-mode appearance overrides (only applied when night_mode active) */
@@ -49,7 +55,7 @@ void update_rpm_lines(lv_obj_t *parent);
 /** Create the full RPM bar (base panels + bar widget + redline zone). */
 void create_rpm_bar_gauge(lv_obj_t *parent_screen);
 
-/** Clear stale static pointers (rpm_lights_circles etc.) on layout reload. */
+/** Clear stale static pointers (tick mark lines and labels) on layout reload. */
 void widget_rpm_bar_clear_stale_pointers(void);
 
 /** Timer callback for deferred RPM colour update. */
@@ -64,6 +70,7 @@ void rpm_color_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e);
+void rpm_flash_speed_dropdown_event_cb(lv_event_t *e);
 /** Color-wheel popup creators. */
 void create_rpm_color_wheel_popup(void);
 void create_limiter_color_wheel_popup(void);

@@ -221,9 +221,6 @@ void bar_in_range_color_event_cb(lv_event_t *e) {
 	}
 }
 
-// Limiter circles color update function removed - only bar flash effect is
-// supported
-
 static void bar_low_color_wheel_ok_event_cb(lv_event_t *e) {
 	bar_data_t *bd = _lookup_bar_data_by_value_id(bar_low_color_value_id);
 	if (bd) bd->bar_low_color = selected_bar_low_custom_color;
