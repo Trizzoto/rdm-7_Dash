@@ -64,6 +64,11 @@
             justify-content: space-between;
             z-index: 100;
             flex-shrink: 0;
+            /* Wrap when the row is wider than the viewport (laptop screens
+             * narrower than ~1400px were clipping the Save button off the
+             * right edge). Small row-gap keeps a second line snug. */
+            flex-wrap: wrap;
+            row-gap: 4px;
         }
 
         header .title {
