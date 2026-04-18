@@ -2500,7 +2500,7 @@
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" onclick="captureScreenshot()">Sync</button>
             <div class="header-divider"></div>
-            <button class="header-pill sync-active" id="pillAutoSync" onclick="toggleAutoSync()" title="Auto-pull layout changes from device every 3s when you have no unsaved edits. Disable for fully manual control.">Auto-sync</button>
+            <button class="header-pill sync-active" id="pillAutoSync" onclick="toggleAutoSync()" title="Save changes to the device 1 second after your last edit. Disable for manual-only saving via the Save button.">Auto-save</button>
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
             <div class="header-divider"></div>
             <button class="btn btn-secondary btn-icon mobile-only-btn" id="mobRightBtn" onclick="toggleMobileSidebar('right')" title="Properties"
@@ -3494,6 +3494,13 @@
 
             // Auto-Save Draft to Local Storage
             try { localStorage.setItem('rdm7_draft', snap); } catch (e) { }
+
+            /* Debounced auto-save to the device: every edit schedules a
+             * save 1s after the last edit. Replaces the old auto-sync
+             * polling which pulled from device on a 3s timer. Users can
+             * still disable via the Auto-save pill for a manual-only
+             * workflow. See _scheduleAutoSave below. */
+            if (typeof _scheduleAutoSave === 'function') _scheduleAutoSave();
         }
 
         function _restoreSelection(oldWidgets) {
@@ -7938,7 +7945,10 @@
             } catch (e) { updateStatus(`Error loading layout ${name}`, true); }
         }
 
-        async function saveActiveLayout() {
+        async function saveActiveLayout(opts) {
+            /* opts.silent = true skips the overwrite confirm prompt. Used by
+             * the auto-save path so every edit doesn't pop a dialog. */
+            const silent = opts && opts.silent;
             const payload = buildFirmwarePayload();
             const isSplash = currentScreenMode === 'splash';
             const layoutName = currentLayout.name || 'default';
@@ -7949,8 +7959,8 @@
                 payload.name = '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default');
             }
 
-            /* Confirm which layout will be overwritten (skip for splash). */
-            if (!isSplash) {
+            /* Confirm which layout will be overwritten (skip for splash and auto-save). */
+            if (!isSplash && !silent) {
                 const deviceActive = layoutSelect.value || '';
                 if (deviceActive && deviceActive !== layoutName) {
                     if (!confirm(`This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`)) return;
@@ -9094,48 +9104,59 @@
             } catch (e) { /* offline or error, skip */ }
         }
 
-        /* Auto-sync on/off - pulls layout changes from the device every 3s
-         * so a second editor tab or a factory reset is reflected without a
-         * manual refresh. Can be disabled for fully manual control; the
-         * preference is persisted in localStorage. */
-        function _startAutoSync() {
-            if (_syncTimer) return;
-            _syncTimer = setInterval(syncFromDevice, 3000);
+        /* Auto-save: debounce every edit by 1s and push straight to the
+         * device via /api/layout/save. Replaces the old 3s poll-based
+         * auto-sync - this is what users actually expect when they enable
+         * "auto-sync": save without having to tap Save. Preference persisted
+         * in localStorage. Works alongside the live-preview push that
+         * already fires on every edit for immediate visual feedback. */
+        let _autoSaveTimer = null;
+        let _autoSaveEnabled = true;
+        const AUTOSAVE_DEBOUNCE_MS = 1000;
+
+        function _scheduleAutoSave() {
+            if (!_autoSaveEnabled) return;
+            if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+            _autoSaveTimer = setTimeout(() => {
+                _autoSaveTimer = null;
+                /* Skip if saveActiveLayout isn't ready or currentLayout is
+                 * somehow empty - never want to stomp the device with junk. */
+                if (!currentLayout || !Array.isArray(currentLayout.widgets)) return;
+                if (typeof saveActiveLayout === 'function') saveActiveLayout({ silent: true });
+            }, AUTOSAVE_DEBOUNCE_MS);
         }
-        function _stopAutoSync() {
-            if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
-        }
-        function toggleAutoSync() {
+
+        function toggleAutoSync() {  /* name kept for the onclick binding */
             const pill = document.getElementById('pillAutoSync');
             if (!pill) return;
-            const on = !pill.classList.contains('sync-active');
-            pill.classList.toggle('sync-active', on);
-            pill.textContent = on ? 'Auto-sync' : 'Manual';
-            if (on) {
-                _startAutoSync();
-                updateStatus('Auto-sync on - pulling changes every 3s');
+            _autoSaveEnabled = !pill.classList.contains('sync-active');
+            pill.classList.toggle('sync-active', _autoSaveEnabled);
+            pill.textContent = _autoSaveEnabled ? 'Auto-save' : 'Manual';
+            if (_autoSaveEnabled) {
+                updateStatus('Auto-save on - edits persist 1s after you stop');
             } else {
-                _stopAutoSync();
-                updateStatus('Auto-sync off - changes stay local until you Save');
+                if (_autoSaveTimer) { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; }
+                updateStatus('Auto-save off - tap Save to persist changes');
             }
-            try { localStorage.setItem('rdm7_autosync', on ? '1' : '0'); } catch (e) {}
+            try { localStorage.setItem('rdm7_autosave', _autoSaveEnabled ? '1' : '0'); } catch (e) {}
         }
+
         /* Apply persisted preference on load (default = on) */
-        (function _initAutoSync() {
-            let on = true;
+        (function _initAutoSave() {
             try {
-                const v = localStorage.getItem('rdm7_autosync');
-                if (v === '0') on = false;
+                const v = localStorage.getItem('rdm7_autosave');
+                if (v === '0') _autoSaveEnabled = false;
             } catch (e) {}
             const pill = document.getElementById('pillAutoSync');
             if (pill) {
-                pill.classList.toggle('sync-active', on);
-                pill.textContent = on ? 'Auto-sync' : 'Manual';
+                pill.classList.toggle('sync-active', _autoSaveEnabled);
+                pill.textContent = _autoSaveEnabled ? 'Auto-save' : 'Manual';
             }
-            if (on) _startAutoSync();
         })();
+
         window.addEventListener('beforeunload', () => {
-            _stopAutoSync();
+            if (_autoSaveTimer) { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; }
+            if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
         });
 
         /* ── ECU Context (Phase 4) ──────────────────────────────────── */
