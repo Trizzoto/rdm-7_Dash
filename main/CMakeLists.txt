@@ -69,6 +69,7 @@ idf_component_register(
         "ui/screens/ui_Screen4.c"
         "ui/screens/ui_wifi.c"
         "ui/screens/ui_diagnostics.c"
+        "ui/screens/ui_peaks.c"
         "ui/screens/first_run_wizard.c"
         "ui/fonts/ui_font_fugaz_14.c"
         "ui/fonts/ui_font_fugaz_17.c"

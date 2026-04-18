@@ -8,6 +8,7 @@
 #include "esp_netif.h"
 #include "ui_wifi.h"
 #include "ui_diagnostics.h"
+#include "screens/ui_peaks.h"
 #include "ota_handler.h"
 #include "nvs_flash.h"
 #include "version.h"
@@ -1464,6 +1465,23 @@ static void _reset_peaks_btn_cb(lv_event_t *e) {
     signal_reset_peaks();
 }
 
+/* Open the Signal Peaks live-table screen. Same defer-then-show pattern as
+ * the diagnostics launcher so the underlying screen has already loaded by
+ * the time peaks_ui_show() flips screens. */
+static void _show_peaks_async(void *arg) {
+    (void)arg;
+    peaks_ui_show();
+}
+
+static void _view_peaks_btn_cb(lv_event_t *e) {
+    (void)e;
+    lv_obj_t *ret = device_settings_return_screen;
+    if (ret && lv_obj_is_valid(ret)) {
+        lv_scr_load(ret);
+    }
+    lv_async_call(_show_peaks_async, NULL);
+}
+
 /* Map dropdown index ↔ rate Hz. Order MUST match the static options string
  * passed to lv_dropdown_set_options_static in the build code below:
  *   0=1, 1=2, 2=5, 3=10, 4=20, 5=50, 6=100, 7=200, 8=Max(0). */
@@ -1965,10 +1983,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(s_night_btn_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(night_btn, _night_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    // Data Logging section — full width. Slightly taller to fit the new
-    // "Rate" dropdown alongside the start/stop button.
-    lv_obj_t *log_section = lv_obj_create(content);
-    lv_obj_set_size(log_section, lv_pct(100), 90);
+    /* ── Logging + Peaks row ──────────────────────────────────────────────
+     * Two sections side-by-side. Left = DATA LOGGING (Start/Stop, Rate
+     * dropdown, status). Right = PEAK HOLD (View, Reset). Both are full-
+     * height of the row; the row itself is full-width with a small gap. */
+    lv_obj_t *log_row = lv_obj_create(content);
+    lv_obj_set_size(log_row, lv_pct(100), 90);
+    lv_obj_set_style_bg_opa(log_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(log_row, 0, 0);
+    lv_obj_set_style_pad_all(log_row, 0, 0);
+    lv_obj_set_style_pad_gap(log_row, 8, 0);
+    lv_obj_set_flex_flow(log_row, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(log_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* ── LEFT: DATA LOGGING ─────────────────────────────────────────────── */
+    lv_obj_t *log_section = lv_obj_create(log_row);
+    /* flex_grow + 0-width lets both children share the row 50/50 */
+    lv_obj_set_size(log_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(log_section, 1);
     lv_obj_set_style_bg_color(log_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(log_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(log_section, THEME_RADIUS_NORMAL, 0);
@@ -1985,7 +2017,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_letter_space(log_title, 1, 0);
 
     s_log_btn = lv_btn_create(log_section);
-    lv_obj_set_size(s_log_btn, 140, 30);
+    lv_obj_set_size(s_log_btn, 130, 30);
     lv_obj_align(s_log_btn, LV_ALIGN_TOP_LEFT, 0, 22);
     lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(s_log_btn, LV_OPA_80, LV_STATE_PRESSED);
@@ -2006,8 +2038,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     s_log_rate_dd = lv_dropdown_create(log_section);
     lv_dropdown_set_options_static(s_log_rate_dd,
         "1 Hz\n2 Hz\n5 Hz\n10 Hz\n20 Hz\n50 Hz\n100 Hz\n200 Hz\nMax");
-    lv_obj_set_size(s_log_rate_dd, 110, 30);
-    lv_obj_align(s_log_rate_dd, LV_ALIGN_TOP_LEFT, 150, 22);
+    lv_obj_set_size(s_log_rate_dd, 90, 30);
+    lv_obj_align(s_log_rate_dd, LV_ALIGN_TOP_LEFT, 138, 22);
     lv_obj_set_style_bg_color(s_log_rate_dd, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_border_color(s_log_rate_dd, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_border_width(s_log_rate_dd, 1, 0);
@@ -2025,24 +2057,59 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
 
-    /* Reset Peaks button — wipes all signal peak/min so a new tuning
-     * session starts fresh. Lives in the same section since users typically
-     * reset peaks at the start of a logged session. */
-    lv_obj_t *peak_btn = lv_btn_create(log_section);
-    lv_obj_set_size(peak_btn, 110, 30);
-    lv_obj_align(peak_btn, LV_ALIGN_TOP_RIGHT, 0, 22);
-    lv_obj_set_style_bg_color(peak_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(peak_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(peak_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(peak_btn, 1, 0);
-    lv_obj_set_style_border_color(peak_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(peak_btn, 0, 0);
-    lv_obj_t *peak_lbl = lv_label_create(peak_btn);
-    lv_label_set_text(peak_lbl, "Reset Peaks");
-    lv_obj_center(peak_lbl);
-    lv_obj_set_style_text_font(peak_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(peak_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(peak_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+    /* ── RIGHT: PEAK HOLD ──────────────────────────────────────────────── */
+    lv_obj_t *peak_section = lv_obj_create(log_row);
+    lv_obj_set_size(peak_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(peak_section, 1);
+    lv_obj_set_style_bg_color(peak_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(peak_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(peak_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(peak_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(peak_section, 1, 0);
+    lv_obj_set_style_pad_all(peak_section, 12, 0);
+    lv_obj_clear_flag(peak_section, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *peak_title = lv_label_create(peak_section);
+    lv_label_set_text(peak_title, "PEAK HOLD");
+    lv_obj_align(peak_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(peak_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(peak_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(peak_title, 1, 0);
+
+    /* View Peaks — opens the live signal table screen */
+    lv_obj_t *view_btn = lv_btn_create(peak_section);
+    lv_obj_set_size(view_btn, 110, 30);
+    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_bg_color(view_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(view_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(view_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(view_btn, 1, 0);
+    lv_obj_set_style_border_color(view_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(view_btn, 0, 0);
+    lv_obj_t *view_lbl = lv_label_create(view_btn);
+    lv_label_set_text(view_lbl, "View Peaks");
+    lv_obj_center(view_lbl);
+    lv_obj_set_style_text_font(view_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Reset Peaks — wipes all signal peak/min so a new tuning session starts
+     * fresh. Sits to the right of View. */
+    lv_obj_t *reset_btn = lv_btn_create(peak_section);
+    lv_obj_set_size(reset_btn, 110, 30);
+    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 118, 22);
+    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(reset_btn, 1, 0);
+    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Reset Peaks");
+    lv_obj_center(reset_lbl);
+    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
 
     _update_log_ui();
 
