@@ -413,6 +413,16 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 										  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_img_opa(warning_circles[warning_idx], new_opa,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		/* Lock-step: keep the hidden night image's recolor/opa in sync so it
+		 * looks correct the moment night mode swaps visibility. */
+		if (wd && wd->night_img_obj && lv_obj_is_valid(wd->night_img_obj)) {
+			lv_obj_set_style_img_recolor(wd->night_img_obj, new_color,
+			                              LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(wd->night_img_obj, LV_OPA_COVER,
+			                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_opa(wd->night_img_obj, new_opa,
+			                          LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
 	} else {
 		/* Circle mode: use bg_color and bg_opa */
 		lv_obj_set_style_bg_color(warning_circles[warning_idx], new_color,
@@ -895,6 +905,32 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 			lv_obj_set_style_img_opa(warning_circles[i], init_opa,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 			wd_style->img_obj = warning_circles[i];
+
+			/* Night-mode dual-object: if a different night image is set,
+			 * load it as a hidden sibling. _warning_apply_night_mode toggles
+			 * visibility between the two; update_warning_ui_immediate keeps
+			 * recolor/opa in sync on both. */
+			if (wd_style->night.has_image_name &&
+			    wd_style->night.image_name[0] != '\0' &&
+			    strncmp(wd_style->night.image_name, wd_style->image_name,
+			            sizeof(wd_style->night.image_name)) != 0) {
+				wd_style->night_img_dsc = rdm_image_load(wd_style->night.image_name);
+				if (wd_style->night_img_dsc) {
+					wd_style->night_img_obj = lv_img_create(parent);
+					lv_img_set_src(wd_style->night_img_obj, wd_style->night_img_dsc);
+					lv_obj_set_align(wd_style->night_img_obj, LV_ALIGN_CENTER);
+					lv_obj_set_pos(wd_style->night_img_obj,
+					               warning_positions[i].x, warning_positions[i].y);
+					lv_obj_set_style_img_recolor(wd_style->night_img_obj, init_color,
+					                              LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_set_style_img_recolor_opa(wd_style->night_img_obj,
+					                                  LV_OPA_COVER,
+					                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_set_style_img_opa(wd_style->night_img_obj, init_opa,
+					                          LV_PART_MAIN | LV_STATE_DEFAULT);
+					lv_obj_add_flag(wd_style->night_img_obj, LV_OBJ_FLAG_HIDDEN);
+				}
+			}
 		} else {
 			/* Image load failed, fall back to circle mode */
 			ESP_LOGW(TAG, "Image '%s' not found for warning %d, using circle", wd_style->image_name, i);
@@ -1188,6 +1224,14 @@ static void _warning_destroy(widget_t *w) {
 		rdm_image_free(wd->img_dsc);
 		wd->img_dsc = NULL;
 		wd->img_obj = NULL;
+		/* Night image sibling is a child of the same parent; explicitly
+		 * delete since it isn't reached via w->root cascade. */
+		if (wd->night_img_obj && lv_obj_is_valid(wd->night_img_obj)) {
+			lv_obj_del(wd->night_img_obj);
+		}
+		wd->night_img_obj = NULL;
+		rdm_image_free(wd->night_img_dsc);
+		wd->night_img_dsc = NULL;
 	}
 	free(w->type_data);
 	free(w);
@@ -1251,10 +1295,12 @@ static void _warning_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 	}
 }
 
-/* Re-apply colors/image based on current night-mode state. Called by
- * night_mode subscribers. Image swap is not supported at runtime — swapping
- * the image requires re-creating the LVGL image object, so we only apply
- * colors here. TODO: image swap via re-create if needed. */
+/* Re-apply colors and (when configured) swap day↔night image based on
+ * current night-mode state. Colors are live-mutable and applied directly.
+ * For the image-swap case, a sibling night_img_obj was created at build
+ * time; we toggle visibility between day (warning_circles[slot]) and
+ * night (wd->night_img_obj). Both images are kept in recolor sync by
+ * update_warning_ui_immediate, so the swap is instant and seamless. */
 static void _warning_apply_night_mode(widget_t *w, bool active) {
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
 	warning_data_t *wd = (warning_data_t *)w->type_data;
@@ -1270,15 +1316,37 @@ static void _warning_apply_night_mode(widget_t *w, bool active) {
 	lv_color_t cur = wd->current_state ? active_c : inactive_c;
 	uint8_t cur_opa = wd->current_state ? wd->active_opa : wd->inactive_opa;
 
+	/* Day↔night image visibility swap (only when both objects exist) */
+	bool day_valid = (slot < 8) && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot]);
+	bool night_valid = wd->night_img_obj && lv_obj_is_valid(wd->night_img_obj);
+	if (day_valid && night_valid && wd->img_obj != NULL) {
+		if (active) {
+			lv_obj_add_flag(warning_circles[slot], LV_OBJ_FLAG_HIDDEN);
+			lv_obj_clear_flag(wd->night_img_obj, LV_OBJ_FLAG_HIDDEN);
+		} else {
+			lv_obj_clear_flag(warning_circles[slot], LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag(wd->night_img_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+	}
+
 	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot])) {
 		if (wd->img_obj != NULL) {
-			/* Image mode */
+			/* Image mode — apply to both day and night images so they stay in
+			 * sync. The hidden one doesn't render but is ready for swap. */
 			lv_obj_set_style_img_recolor(warning_circles[slot], cur,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_img_recolor_opa(warning_circles[slot], LV_OPA_COVER,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_img_opa(warning_circles[slot], cur_opa,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
+			if (night_valid) {
+				lv_obj_set_style_img_recolor(wd->night_img_obj, cur,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(wd->night_img_obj, LV_OPA_COVER,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_opa(wd->night_img_obj, cur_opa,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
 		} else {
 			/* Circle mode */
 			lv_obj_set_style_bg_color(warning_circles[slot], cur,

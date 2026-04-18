@@ -30,8 +30,14 @@ typedef struct {
 	lv_color_t    recolor;        /* default: 0x000000 (no effect at opa 0) */
 	uint8_t       recolor_opa;    /* default: 0 (disabled), 255 = full overlay */
 	uint16_t      image_scale;    /* LVGL zoom: 256 = 100%, 128 = 50%, 512 = 200% */
-	lv_img_dsc_t *img_dsc;        /* runtime: PSRAM-loaded image descriptor */
-	lv_obj_t     *img_obj;        /* runtime: LVGL image object */
+	lv_img_dsc_t *img_dsc;        /* runtime: PSRAM-loaded image descriptor (day) */
+	lv_obj_t     *img_obj;        /* runtime: LVGL image object (day) */
+	/* Night-mode dual-object pattern: when night.has_image_name is set, we
+	 * load a second descriptor + lv_img and toggle visibility on the
+	 * day/night transition. This avoids LVGL v8's single-source limitation
+	 * for live image swap. NULL = day image is reused (only recolor differs). */
+	lv_img_dsc_t *night_img_dsc; /* runtime: night-image descriptor (or NULL) */
+	lv_obj_t     *night_img_obj; /* runtime: night LVGL image object (or NULL) */
 	/* Night-mode appearance overrides */
 	image_night_overrides_t night;
 } image_data_t;

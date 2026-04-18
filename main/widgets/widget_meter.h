@@ -75,6 +75,17 @@ typedef struct {
 	int16_t  signal_index;
 	/* Night-mode appearance overrides */
 	meter_night_overrides_t night;
+	/* Night-mode dual-meter pattern: when any "baked-in" night property is
+	 * set (tick colors, line needle color, needle image, bg image), a second
+	 * meter is created with those night values baked in. apply_night_mode()
+	 * toggles visibility instead of mutating live. The signal callback
+	 * updates both needles in lock-step. */
+	lv_obj_t            *night_meter;        /* sibling night meter (or NULL) */
+	lv_meter_scale_t    *night_scale;
+	lv_meter_indicator_t *night_needle;
+	lv_meter_scale_t    *night_needle_scale; /* for offset-rotated needle */
+	lv_img_dsc_t        *night_needle_img_dsc;
+	lv_img_dsc_t        *night_bg_img_dsc;
 } meter_data_t;
 
 /**

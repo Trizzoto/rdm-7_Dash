@@ -40,6 +40,13 @@ typedef struct {
 	/* Runtime LVGL pointers (not serialized) */
 	lv_img_dsc_t *img_dsc;          /* loaded RDMIMG descriptor, or NULL */
 	lv_obj_t     *img_obj;          /* LVGL image object, or NULL */
+	/* Dual-object night image swap: when night.image_name is set and differs
+	 * from the day image, a sibling lv_img is created with the night image
+	 * source. _warning_apply_night_mode toggles visibility between the two.
+	 * Color recolors are applied to both in lock-step by
+	 * update_warning_ui_immediate. NULL when no separate night image. */
+	lv_img_dsc_t *night_img_dsc;
+	lv_obj_t     *night_img_obj;
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	warning_night_overrides_t night;
 } warning_data_t;

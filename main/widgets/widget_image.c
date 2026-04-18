@@ -123,7 +123,7 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Try to load the image from LittleFS */
+	/* Try to load the day image from LittleFS */
 	if (id->image_name[0] != '\0') {
 		id->img_dsc = rdm_image_load(id->image_name);
 		if (id->img_dsc) {
@@ -147,6 +147,37 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 			lv_obj_set_align(lbl, LV_ALIGN_CENTER);
 			lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888),
 										LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+	}
+
+	/* If a night-mode image override is set and differs from the day image,
+	 * load it now and create a hidden night lv_img. apply_night_mode() will
+	 * toggle visibility instead of re-loading the descriptor. */
+	if (id->night.has_image_name &&
+		id->night.image_name[0] != '\0' &&
+		strncmp(id->night.image_name, id->image_name, sizeof(id->night.image_name)) != 0) {
+		id->night_img_dsc = rdm_image_load(id->night.image_name);
+		if (id->night_img_dsc) {
+			id->night_img_obj = lv_img_create(cont);
+			lv_img_set_src(id->night_img_obj, id->night_img_dsc);
+			lv_obj_set_align(id->night_img_obj, LV_ALIGN_CENTER);
+			if (id->image_scale != 256)
+				lv_img_set_zoom(id->night_img_obj, id->image_scale);
+			lv_obj_set_style_img_opa(id->night_img_obj, id->opacity,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+			/* Apply night recolor immediately if set, so first reveal looks right. */
+			if (id->night.has_recolor) {
+				lv_obj_set_style_img_recolor(id->night_img_obj, id->night.recolor,
+											  LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(id->night_img_obj, LV_OPA_COVER,
+												  LV_PART_MAIN | LV_STATE_DEFAULT);
+			} else if (id->recolor_opa > 0) {
+				lv_obj_set_style_img_recolor(id->night_img_obj, id->recolor,
+											  LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(id->night_img_obj, id->recolor_opa,
+												  LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
+			lv_obj_add_flag(id->night_img_obj, LV_OBJ_FLAG_HIDDEN);
 		}
 	}
 
@@ -233,29 +264,48 @@ static void _image_destroy(widget_t *w) {
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (id) {
 		rdm_image_free(id->img_dsc);
+		rdm_image_free(id->night_img_dsc);
 		free(id);
 	}
 	free(w);
 }
 
-/* Re-apply recolor based on current night-mode state. Image swap is not
- * performed at runtime — swapping requires re-loading the LVGL image.
- * TODO: image swap via re-create if needed. */
+/* Toggle day/night visibility (dual-object pattern) and apply recolor.
+ * - If a night image was loaded, swap visibility between day and night objects.
+ * - For the visible object, apply the appropriate recolor based on night state.
+ * This avoids LVGL v8's single-source limitation for live image swap. */
 static void _image_apply_night_mode(widget_t *w, bool active) {
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
 	image_data_t *id = (image_data_t *)w->type_data;
-	if (!id || !id->img_obj || !lv_obj_is_valid(id->img_obj)) return;
+	if (!id) return;
 
-	lv_color_t rc = NIGHT_PICK_COLOR(active, id->night, recolor, id->recolor);
+	bool day_valid = id->img_obj && lv_obj_is_valid(id->img_obj);
+	bool night_valid = id->night_img_obj && lv_obj_is_valid(id->night_img_obj);
 
-	/* If no recolor opa is set on day side and we're in night mode, force a
-	 * subtle recolor. Otherwise respect the widget's configured recolor_opa. */
-	if (id->recolor_opa > 0 || (active && id->night.has_recolor)) {
-		lv_obj_set_style_img_recolor(id->img_obj, rc,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_img_recolor_opa(id->img_obj,
-			(active && id->night.has_recolor) ? LV_OPA_COVER : id->recolor_opa,
-			LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Visibility swap when both objects exist */
+	if (day_valid && night_valid) {
+		if (active) {
+			lv_obj_add_flag(id->img_obj, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_clear_flag(id->night_img_obj, LV_OBJ_FLAG_HIDDEN);
+		} else {
+			lv_obj_clear_flag(id->img_obj, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag(id->night_img_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+	}
+
+	/* Recolor on whichever object is currently visible. When the night object
+	 * exists it already has its colors baked in at create time, so we only
+	 * need to handle the day object's recolor for the case where ONLY a
+	 * recolor override exists (no separate night image). */
+	if (day_valid && !night_valid) {
+		lv_color_t rc = NIGHT_PICK_COLOR(active, id->night, recolor, id->recolor);
+		if (id->recolor_opa > 0 || (active && id->night.has_recolor)) {
+			lv_obj_set_style_img_recolor(id->img_obj, rc,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(id->img_obj,
+				(active && id->night.has_recolor) ? LV_OPA_COVER : id->recolor_opa,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
 	}
 }
 
