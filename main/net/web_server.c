@@ -3628,7 +3628,7 @@ esp_err_t web_server_start(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
 	config.stack_size = 5120;
-	config.max_uri_handlers = 64;
+	config.max_uri_handlers = 80;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */

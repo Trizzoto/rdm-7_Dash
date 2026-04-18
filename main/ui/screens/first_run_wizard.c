@@ -257,8 +257,10 @@ static void _btn_skip_cb(lv_event_t *e) {
 
 static void _btn_wifi_join_cb(lv_event_t *e) {
     (void)e;
-    /* Jumping into WiFi setup - keep the wizard flag unset so the user
-     * can return to it next boot if they abandon the WiFi screen. */
+    /* Tapping Join counts as wizard completion - the user actively chose
+     * a connection path, so no reason to ask again on next boot. They can
+     * re-run the wizard from Device Settings -> "Run Setup Wizard" if
+     * they need to revisit it. */
     bool reload = s_ecu_applied;
     s_ecu_applied = false;
 
@@ -266,7 +268,8 @@ static void _btn_wifi_join_cb(lv_event_t *e) {
         /* Reload dashboard FIRST, then open WiFi UI. Inline-close the
          * wizard state here (mirrors _close_wizard non-reload path but
          * without queuing a redundant overlay del_async). */
-        ESP_LOGI(TAG, "First-run wizard -> WiFi (reload dashboard first)");
+        config_store_save_first_run_done(true);
+        ESP_LOGI(TAG, "First-run wizard completed (WiFi Join + ECU reload)");
         can_bus_test_set_ui_callback(NULL);
         if (can_bus_test_is_running()) can_bus_test_cancel();
         lv_obj_t *overlay_to_free = s_overlay;
@@ -276,7 +279,8 @@ static void _btn_wifi_join_cb(lv_event_t *e) {
         for (int i = 0; i < 4; i++) s_scan_results[i] = NULL;
         lv_async_call(_deferred_reload_then_wifi, overlay_to_free);
     } else {
-        _close_wizard(false);
+        ESP_LOGI(TAG, "First-run wizard completed (WiFi Join)");
+        _close_wizard(true);
         wifi_ui_show();
     }
 }
