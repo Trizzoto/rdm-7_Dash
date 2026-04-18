@@ -90,8 +90,8 @@ esp_err_t generate_default_layout(void) {
 	cJSON_AddStringToObject(root, "name", "default");
 	cJSON_AddNumberToObject(root, "screen_w", SCREEN_W);
 	cJSON_AddNumberToObject(root, "screen_h", SCREEN_H);
-	cJSON_AddStringToObject(root, "ecu", "MaxxECU");
-	cJSON_AddStringToObject(root, "ecu_version", "1.3");
+	cJSON_AddStringToObject(root, "ecu", "");
+	cJSON_AddStringToObject(root, "ecu_version", "");
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
 
@@ -122,9 +122,15 @@ esp_err_t generate_default_layout(void) {
 
 	/* ── Panels (8 slots) ───────────────────────────────────────────────── */
 	{
-		static const char * const labels[8] = {
-			"VALUE 1", "VALUE 2", "VALUE 3", "VALUE 4",
-			"VALUE 5", "VALUE 6", "VALUE 7", "VALUE 8"
+		static const struct { const char *label; const char *signal; } panel_cfg[8] = {
+			{ "IGNITION",  "IGNITION"        },
+			{ "MAP",       "MAP"             },
+			{ "THROTTLE",  "THROTTLE"        },
+			{ "COOLANT",   "COOLANT_TEMP"    },
+			{ "INTAKE",    "INTAKE_AIR_TEMP" },
+			{ "LAMBDA",    "LAMBDA"          },
+			{ "OIL TEMP",  "OIL_TEMP"        },
+			{ "FUEL TRIM", "FUEL_TRIM"       },
 		};
 
 		for (int i = 0; i < 8; i++) {
@@ -132,26 +138,29 @@ esp_err_t generate_default_layout(void) {
 			snprintf(id, sizeof(id), "panel_%d", i);
 			cJSON *cfg = cJSON_CreateObject();
 			cJSON_AddNumberToObject(cfg, "slot", i);
-			cJSON_AddStringToObject(cfg, "label", labels[i]);
+			cJSON_AddStringToObject(cfg, "label", panel_cfg[i].label);
+			cJSON_AddStringToObject(cfg, "signal_name", panel_cfg[i].signal);
 			_add_widget(arr, "panel", id, s_panel_pos[i].x, s_panel_pos[i].y,
 						155, 92, cfg);
 		}
 	}
 
-	/* ── Bars (2 slots) ─────────────────────────────────────────────────── */
+	/* ── Bars (2 slots) - left=coolant, right=throttle ──────────────────── */
 	{
 		cJSON *cfg0 = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg0, "slot", 0);
-		cJSON_AddStringToObject(cfg0, "label", "BAR 1");
+		cJSON_AddStringToObject(cfg0, "label", "COOLANT");
+		cJSON_AddStringToObject(cfg0, "signal_name", "COOLANT_TEMP");
 		cJSON_AddNumberToObject(cfg0, "bar_low", 0);
-		cJSON_AddNumberToObject(cfg0, "bar_high", 100);
+		cJSON_AddNumberToObject(cfg0, "bar_high", 120);
 		cJSON_AddNumberToObject(cfg0, "bar_low_color", 31);
 		cJSON_AddNumberToObject(cfg0, "bar_high_color", 63488);
 		_add_widget(arr, "bar", "bar_0", -240, 209, 300, 30, cfg0);
 
 		cJSON *cfg1 = cJSON_CreateObject();
 		cJSON_AddNumberToObject(cfg1, "slot", 1);
-		cJSON_AddStringToObject(cfg1, "label", "BAR 2");
+		cJSON_AddStringToObject(cfg1, "label", "THROTTLE");
+		cJSON_AddStringToObject(cfg1, "signal_name", "THROTTLE");
 		cJSON_AddNumberToObject(cfg1, "bar_low", 0);
 		cJSON_AddNumberToObject(cfg1, "bar_high", 100);
 		cJSON_AddNumberToObject(cfg1, "bar_low_color", 31);
@@ -199,6 +208,7 @@ esp_err_t generate_default_layout(void) {
 	{
 		cJSON *cfg = cJSON_CreateObject();
 		cJSON_AddStringToObject(cfg, "static_text", "---");
+		cJSON_AddStringToObject(cfg, "signal_name", "VEHICLE_SPEED");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);
 		cJSON_AddStringToObject(cfg, "font", "fugaz_56");
@@ -219,6 +229,7 @@ esp_err_t generate_default_layout(void) {
 	{
 		cJSON *cfg = cJSON_CreateObject();
 		cJSON_AddStringToObject(cfg, "static_text", "---");
+		cJSON_AddStringToObject(cfg, "signal_name", "RPM");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);
 		cJSON_AddStringToObject(cfg, "font", "fugaz_28");
@@ -226,23 +237,26 @@ esp_err_t generate_default_layout(void) {
 		_add_widget(arr, "text", "text_2", 0, -133, 120, 30, cfg);
 	}
 
-	/* ── Signals (unbound — all CAN IDs = 0, user assigns via editor) ──── */
+	/* ── Signals - normalized names, unbound on fresh boot. When the user
+	 *    picks an ECU in the wizard or Device Settings, ecu_preset_apply_to_
+	 *    layout() rewrites this array with real CAN decode parameters. */
 	cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
 	static const struct { const char *name; int can_id; int bit_start; int bit_length;
 		     double scale; double offset; int is_signed; int endian; } sig_defs[] = {
-		{ "RPM",           864,  0, 16, 1.0,   0, 0, 0 },  /* Haltech Nexus: 0x360, big-endian */
-		{ "GEAR",          864, 48, 16, 1.0,   0, 0, 0 },  /* Haltech Nexus: 0x360 bit 48, big-endian */
-		{ "VEHICLE_SPEED",   0,  0, 16, 0.1,   0, 0, 1 },
-		{ "COOLANT_TEMP",    0,  0, 16, 0.1,   0, 0, 1 },
-		{ "THROTTLE",        0,  0, 16, 0.1,   0, 0, 1 },
+		{ "RPM",             0,  0, 16, 1.0,   0, 0, 0 },
 		{ "MAP",             0,  0, 16, 0.1,   0, 0, 1 },
+		{ "THROTTLE",        0,  0, 16, 0.1,   0, 0, 1 },
+		{ "COOLANT_TEMP",    0,  0, 16, 0.1,   0, 0, 1 },
+		{ "INTAKE_AIR_TEMP", 0,  0, 16, 0.1,   0, 0, 1 },
 		{ "LAMBDA",          0,  0, 16, 0.001, 0, 0, 1 },
 		{ "OIL_TEMP",        0,  0, 16, 0.1,   0, 0, 1 },
-		{ "FUEL_PRESSURE",   0,  0, 16, 0.1,   0, 0, 1 },
-		{ "INTAKE_AIR_TEMP", 0,  0, 16, 0.1,   0, 0, 1 },
 		{ "OIL_PRESSURE",    0,  0, 16, 0.1,   0, 0, 1 },
+		{ "FUEL_PRESSURE",   0,  0, 16, 0.1,   0, 0, 1 },
+		{ "IGNITION",        0,  0, 16, 0.1,   0, 1, 0 },
+		{ "VEHICLE_SPEED",   0,  0, 16, 0.1,   0, 0, 1 },
+		{ "GEAR",            0,  0, 16, 1.0,   0, 0, 0 },
 		{ "BATTERY_VOLTAGE", 0,  0, 16, 0.01,  0, 0, 1 },
-		{ "BOOST",           0,  0, 16, 0.1,   0, 1, 1 },
+		{ "FUEL_TRIM",       0,  0, 16, 0.1,   0, 1, 1 },
 		{ "EGT",             0,  0, 16, 0.1,   0, 0, 1 },
 	};
 	for (int i = 0; i < (int)(sizeof(sig_defs)/sizeof(sig_defs[0])); i++) {

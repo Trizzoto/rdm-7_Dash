@@ -23,7 +23,6 @@
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
-#include "esp_idf_version.h"
 #include "esp_timer.h"
 #include "driver/twai.h"
 #include <stdio.h>
@@ -431,7 +430,7 @@ static void _create(void)
 	_add_kv(wf_card, "AP");
 	_add_kv(wf_card, "AP IP");
 
-	/* SYSTEM — 5 KV rows + ESP-IDF static row */
+	/* SYSTEM — 5 KV rows */
 	lv_obj_t *sys_card = _make_card(body, CARD_W, CARD_H,
 	                                  "SYSTEM", THEME_COLOR_ACCENT_BLUE);
 	_add_kv(sys_card, "Uptime");
@@ -453,26 +452,6 @@ static void _create(void)
 	_add_kv(sig_card, "Total");
 	_add_kv(sig_card, "Fresh");
 	_add_kv(sig_card, "Stale");
-
-	/* Static one-shot system info */
-	{
-		lv_obj_t *idf_row = lv_obj_create(sys_card);
-		lv_obj_set_size(idf_row, lv_pct(100), LV_SIZE_CONTENT);
-		lv_obj_set_style_bg_opa(idf_row, LV_OPA_TRANSP, 0);
-		lv_obj_set_style_border_width(idf_row, 0, 0);
-		lv_obj_set_style_pad_all(idf_row, 0, 0);
-		lv_obj_clear_flag(idf_row, LV_OBJ_FLAG_SCROLLABLE);
-		lv_obj_t *l = lv_label_create(idf_row);
-		lv_label_set_text(l, "ESP-IDF");
-		lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-		lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
-		lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
-		lv_obj_t *v = lv_label_create(idf_row);
-		lv_label_set_text(v, esp_get_idf_version());
-		lv_obj_set_style_text_font(v, THEME_FONT_TINY, 0);
-		lv_obj_set_style_text_color(v, THEME_COLOR_TEXT_PRIMARY, 0);
-		lv_obj_align(v, LV_ALIGN_RIGHT_MID, 0, 0);
-	}
 
 	/* Initial paint so the screen is populated before the timer ticks */
 	_refresh(NULL);

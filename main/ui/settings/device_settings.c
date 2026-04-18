@@ -17,6 +17,8 @@
 #include "ui_helpers.h"
 #include "screens/ui_Screen3.h"
 #include "screens/first_run_wizard.h"
+#include "screens/ui_ecu_picker.h"
+#include "layout/ecu_presets.h"
 #include "system/night_mode.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
@@ -116,6 +118,9 @@ static lv_obj_t  *s_scan_cancel_btn    = NULL;
 
 /* Bitrate dropdown pointer for scan apply */
 static lv_obj_t  *s_bitrate_dropdown   = NULL;
+
+/* ECU selection row (CAN BUS section) */
+static lv_obj_t  *s_ecu_value_label    = NULL;
 
 // AP hotspot status label
 static lv_obj_t* ap_status_label = NULL;
@@ -1548,6 +1553,52 @@ static void _run_wizard_btn_cb(lv_event_t *e) {
     lv_async_call(_show_wizard_async, NULL);
 }
 
+/* ── ECU selection ───────────────────────────────────────────────────── */
+
+/* Compose the "Make Version" or "Not selected" label for the current ECU. */
+static void _ecu_label_compose(char *buf, size_t n) {
+    char make[32] = {0}, ver[32] = {0};
+    if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
+        make[0] && ver[0]) {
+        const ecu_preset_t *p = ecu_preset_find(make, ver);
+        if (p && p->display) { snprintf(buf, n, "%s", p->display); return; }
+        snprintf(buf, n, "%s %s", make, ver);
+        return;
+    }
+    snprintf(buf, n, "Not selected");
+}
+
+/* Runs on the LVGL async queue so the picker's overlay del_async has
+ * processed first. Without this deferral, lv_obj_del(old) races against
+ * the pending async-del of the picker's overlay (same crash pattern as
+ * the first_run_wizard Finish flow). */
+static void _deferred_reload_after_ecu(void *arg) {
+    (void)arg;
+    lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
+    ui_Screen3_screen_init();
+    lv_scr_load(ui_Screen3);
+    if (old && old != ui_Screen3 && lv_obj_is_valid(old))
+        lv_obj_del(old);
+}
+
+static void _ecu_picker_done_cb(bool applied, void *ctx) {
+    (void)ctx;
+    /* Refresh the value label. */
+    if (s_ecu_value_label && lv_obj_is_valid(s_ecu_value_label)) {
+        char txt[64];
+        _ecu_label_compose(txt, sizeof(txt));
+        lv_label_set_text(s_ecu_value_label, txt);
+    }
+    if (applied) {
+        lv_async_call(_deferred_reload_after_ecu, NULL);
+    }
+}
+
+static void _ecu_btn_cb(lv_event_t *e) {
+    (void)e;
+    ecu_picker_open("default", true, _ecu_picker_done_cb, NULL);
+}
+
 /* ── Factory Reset ────────────────────────────────────────────────────── */
 
 static void _factory_reset_confirm_cb(lv_event_t *e) {
@@ -1699,19 +1750,22 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_width(content, 4, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(content, THEME_RADIUS_SMALL, LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
 
-    // First row container
+    // First row container - equal-width siblings via flex_grow (matches
+    // the DATA LOGGING / PEAK HOLD pattern). Height 160 gives the CAN BUS
+    // section room for both the bitrate dropdown AND the ECU row.
     lv_obj_t* first_row = lv_obj_create(content);
-    lv_obj_set_size(first_row, lv_pct(100), 120);
+    lv_obj_set_size(first_row, lv_pct(100), 160);
     lv_obj_set_style_bg_opa(first_row, 0, 0);
     lv_obj_set_style_border_width(first_row, 0, 0);
     lv_obj_set_style_pad_all(first_row, 0, 0);
+    lv_obj_set_style_pad_gap(first_row, 8, 0);
     lv_obj_clear_flag(first_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(first_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(first_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     // CAN Bus Configuration Section
     lv_obj_t* can_section = lv_obj_create(first_row);
-    lv_obj_set_size(can_section, lv_pct(48), 120);
+    lv_obj_set_size(can_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(can_section, 1);
     lv_obj_set_style_bg_color(can_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(can_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(can_section, THEME_RADIUS_NORMAL, 0);
@@ -1752,9 +1806,40 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_add_event_cb(bitrate_dd, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     s_bitrate_dropdown = bitrate_dd;
 
+    // ECU row (auto-configures default layout with your ECU's CAN broadcast)
+    lv_obj_t* ecu_label = lv_label_create(can_section);
+    lv_label_set_text(ecu_label, "ECU Type");
+    lv_obj_align(ecu_label, LV_ALIGN_TOP_LEFT, 0, 90);
+    lv_obj_set_style_text_font(ecu_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(ecu_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    lv_obj_t* ecu_btn = lv_btn_create(can_section);
+    lv_obj_set_size(ecu_btn, lv_pct(62), 32);
+    lv_obj_align(ecu_btn, LV_ALIGN_TOP_LEFT, 80, 86);
+    lv_obj_set_style_bg_color(ecu_btn, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(ecu_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ecu_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(ecu_btn, 1, 0);
+    lv_obj_set_style_radius(ecu_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(ecu_btn, 0, 0);
+
+    s_ecu_value_label = lv_label_create(ecu_btn);
+    {
+        char txt[64];
+        _ecu_label_compose(txt, sizeof(txt));
+        lv_label_set_text(s_ecu_value_label, txt);
+    }
+    lv_label_set_long_mode(s_ecu_value_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_ecu_value_label, lv_pct(95));
+    lv_obj_align(s_ecu_value_label, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(s_ecu_value_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_ecu_value_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(ecu_btn, _ecu_btn_cb, LV_EVENT_CLICKED, NULL);
+
     // Device Information Section
     lv_obj_t* info_section = lv_obj_create(first_row);
-    lv_obj_set_size(info_section, lv_pct(48), 120);
+    lv_obj_set_size(info_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(info_section, 1);
     lv_obj_set_style_bg_color(info_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(info_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(info_section, THEME_RADIUS_NORMAL, 0);
@@ -1802,19 +1887,21 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    // Second row container
+    // Second row container - same flex_grow pattern; height matches tallest
+    // child (DISPLAY = 260 for rotation + night-mode + dimmer buttons).
     lv_obj_t* second_row = lv_obj_create(content);
-    lv_obj_set_size(second_row, lv_pct(100), 200);
+    lv_obj_set_size(second_row, lv_pct(100), 260);
     lv_obj_set_style_bg_opa(second_row, 0, 0);
     lv_obj_set_style_border_width(second_row, 0, 0);
     lv_obj_set_style_pad_all(second_row, 0, 0);
+    lv_obj_set_style_pad_gap(second_row, 8, 0);
     lv_obj_clear_flag(second_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(second_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(second_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     // Network & Updates Section
     lv_obj_t* network_section = lv_obj_create(second_row);
-    lv_obj_set_size(network_section, lv_pct(48), 200);
+    lv_obj_set_size(network_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(network_section, 1);
     lv_obj_set_style_bg_color(network_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(network_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(network_section, THEME_RADIUS_NORMAL, 0);
@@ -1884,7 +1971,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
 
     // Display Settings Section — expanded to fit rotation + night-mode buttons
     lv_obj_t* display_section = lv_obj_create(second_row);
-    lv_obj_set_size(display_section, lv_pct(48), 260);
+    lv_obj_set_size(display_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(display_section, 1);
     lv_obj_set_style_bg_color(display_section, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(display_section, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(display_section, THEME_RADIUS_NORMAL, 0);

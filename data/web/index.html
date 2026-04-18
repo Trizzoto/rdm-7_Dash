@@ -2204,6 +2204,12 @@
                 <option value="splash">Splash Screen</option>
             </select>
             <div class="header-divider"></div>
+            <select id="ecuSelect" onchange="onEcuChange(this.value)"
+                title="Auto-configure default layout for your ECU"
+                style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;">
+                <option value="">ECU: None</option>
+            </select>
+            <div class="header-divider"></div>
             <select id="layoutSelect"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;"></select>
             <div class="layout-menu-wrap" id="layoutMenuWrap">
@@ -8990,12 +8996,62 @@
             } catch (e) { /* device offline */ }
         }
 
+        /* Device ECU selector - populates dropdown from /api/ecu/list and
+         * pre-selects the saved ECU from /api/ecu/current. */
+        async function populateEcuSelect() {
+            const sel = document.getElementById('ecuSelect');
+            if (!sel) return;
+            try {
+                const [listR, curR] = await Promise.all([
+                    fetch('/api/ecu/list'), fetch('/api/ecu/current')
+                ]);
+                if (!listR.ok || !curR.ok) return;
+                const list = await listR.json();
+                const cur  = await curR.json();
+                sel.innerHTML = '<option value="">ECU: None</option>' +
+                    list.map(e => `<option value="${e.make}||${e.version}">ECU: ${e.display}</option>`).join('');
+                const curKey = cur.make ? `${cur.make}||${cur.version}` : '';
+                sel.value = curKey;
+            } catch (e) { /* silent - device may be offline */ }
+        }
+
+        async function onEcuChange(val) {
+            if (!confirm(
+                val ? 'Apply this ECU preset? This will overwrite your layout signals with the ECU default decode.'
+                    : 'Clear ECU selection? Signal CAN IDs will remain but will not be auto-updated.')) {
+                populateEcuSelect();
+                return;
+            }
+            let body;
+            if (val) {
+                const [make, version] = val.split('||');
+                body = JSON.stringify({ make, version });
+            } else {
+                body = JSON.stringify({ make: '', version: '' });
+            }
+            try {
+                const r = await fetch('/api/ecu/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body
+                });
+                if (!r.ok) throw new Error(await r.text());
+                updateStatus(val ? 'ECU preset applied - reloading layout...' : 'ECU cleared');
+                /* Layout reloads on device; refresh local layout copy. */
+                setTimeout(() => { fetchLayouts(); loadLayout(); }, 800);
+            } catch (e) {
+                updateStatus('ECU change failed: ' + e.message);
+                populateEcuSelect();
+            }
+        }
+
         /* Start */
         initScreenSizeSelector();
         initPalette();
         fetchDeviceInfo().then(() => {
             fetchPresets().then(() => populateEcuContextSelect());
             fetchLayouts();
+            populateEcuSelect();
         });
         _refreshImageList();
         _refreshFontList();

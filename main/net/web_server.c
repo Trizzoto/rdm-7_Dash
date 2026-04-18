@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "layout/layout_manager.h"
+#include "layout/ecu_presets.h"
 #include "lvgl.h"
 #include "storage/sd_manager.h"
 #include "system/device_id.h"
@@ -663,6 +664,101 @@ static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
 											 .method = HTTP_GET,
 											 .handler = presets_list_handler,
 											 .user_ctx = NULL};
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  ECU selection endpoints
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* GET /api/ecu/list - returns the array of ECU presets from ecu_presets.c */
+static esp_err_t ecu_list_handler(httpd_req_t *req) {
+	cJSON *root = cJSON_CreateArray();
+	for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
+		cJSON *item = cJSON_CreateObject();
+		cJSON_AddStringToObject(item, "make",    ECU_PRESETS[i].make);
+		cJSON_AddStringToObject(item, "version", ECU_PRESETS[i].version);
+		cJSON_AddStringToObject(item, "display", ECU_PRESETS[i].display);
+		cJSON_AddItemToArray(root, item);
+	}
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t r = httpd_resp_send(req, s, strlen(s));
+	free(s);
+	return r;
+}
+
+/* GET /api/ecu/current - returns {"make":"...","version":"..."} or empty strings */
+static esp_err_t ecu_current_handler(httpd_req_t *req) {
+	char make[32] = {0}, ver[32] = {0};
+	config_store_load_ecu(make, sizeof(make), ver, sizeof(ver));
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "make", make);
+	cJSON_AddStringToObject(root, "version", ver);
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t r = httpd_resp_send(req, s, strlen(s));
+	free(s);
+	return r;
+}
+
+/* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
+static esp_err_t ecu_set_handler(httpd_req_t *req) {
+	char buf[128];
+	if (req->content_len >= sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
+	buf[n] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
+	const cJSON *jm = cJSON_GetObjectItemCaseSensitive(root, "make");
+	const cJSON *jv = cJSON_GetObjectItemCaseSensitive(root, "version");
+	if (!cJSON_IsString(jm) || !cJSON_IsString(jv)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing fields");
+		return ESP_FAIL;
+	}
+	const char *make = jm->valuestring;
+	const char *ver  = jv->valuestring;
+
+	if (make[0] && ver[0]) {
+		const ecu_preset_t *p = ecu_preset_find(make, ver);
+		if (!p) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Unknown ECU");
+			return ESP_FAIL;
+		}
+		char active[LAYOUT_MAX_NAME] = {0};
+		layout_manager_get_active(active, sizeof(active));
+		if (active[0] == '\0') strcpy(active, "default");
+		if (ecu_preset_apply_to_layout(active, p) != ESP_OK) {
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Apply failed");
+			return ESP_FAIL;
+		}
+		config_store_save_ecu(make, ver);
+		lv_async_call(_deferred_screen_reload, NULL);
+	} else {
+		config_store_save_ecu("", "");
+	}
+	cJSON_Delete(root);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", 11);
+}
+
+static const httpd_uri_t ecu_list_uri    = { .uri = "/api/ecu/list",    .method = HTTP_GET,  .handler = ecu_list_handler,    .user_ctx = NULL };
+static const httpd_uri_t ecu_current_uri = { .uri = "/api/ecu/current", .method = HTTP_GET,  .handler = ecu_current_handler, .user_ctx = NULL };
+static const httpd_uri_t ecu_set_uri     = { .uri = "/api/ecu/set",     .method = HTTP_POST, .handler = ecu_set_handler,     .user_ctx = NULL };
 
 /* ── Custom signal presets (stored as JSON in /lfs/presets/) ──────────── */
 
@@ -3566,6 +3662,9 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &layout_preview_uri);
 	REGISTER_URI(server, &layout_list_uri);
 	REGISTER_URI(server, &presets_list_uri);
+	REGISTER_URI(server, &ecu_list_uri);
+	REGISTER_URI(server, &ecu_current_uri);
+	REGISTER_URI(server, &ecu_set_uri);
 	REGISTER_URI(server, &custom_presets_list_uri);
 	REGISTER_URI(server, &custom_preset_save_uri);
 	REGISTER_URI(server, &custom_preset_delete_uri);

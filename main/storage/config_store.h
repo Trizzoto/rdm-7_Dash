@@ -107,6 +107,14 @@ esp_err_t config_store_load_night_mode(night_mode_config_t *cfg);
 esp_err_t config_store_save_log_rate_hz(uint16_t hz);
 esp_err_t config_store_load_log_rate_hz(uint16_t *hz);
 
+/* ── ECU selection (auto-configures default layout signal bindings) ─────
+ * Persists the user's selected ECU make + version. Loaded on first-run
+ * wizard completion and in Device Settings to auto-populate the active
+ * layout's signals[] array via ecu_preset_apply_to_layout(). */
+esp_err_t config_store_save_ecu(const char *make, const char *version);
+esp_err_t config_store_load_ecu(char *make, size_t m_len,
+                                char *version, size_t v_len);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

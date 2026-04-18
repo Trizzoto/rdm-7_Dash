@@ -446,6 +446,41 @@ esp_err_t config_store_load_log_rate_hz(uint16_t *hz)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  ECU SELECTION (make + version)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_ECU "ecu_cfg"
+
+esp_err_t config_store_save_ecu(const char *make, const char *version)
+{
+    if (!make || !version) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_ECU, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(handle, "make", make);
+    if (err == ESP_OK) err = nvs_set_str(handle, "version", version);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_ecu(char *make, size_t m_len,
+                                char *version, size_t v_len)
+{
+    if (!make || !version || m_len == 0 || v_len == 0) return ESP_ERR_INVALID_ARG;
+    make[0] = '\0';
+    version[0] = '\0';
+    nvs_handle_t handle;
+    if (nvs_open(NS_ECU, NVS_READONLY, &handle) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    size_t n = m_len;
+    esp_err_t err_m = nvs_get_str(handle, "make", make, &n);
+    n = v_len;
+    esp_err_t err_v = nvs_get_str(handle, "version", version, &n);
+    nvs_close(handle);
+    if (err_m != ESP_OK || err_v != ESP_OK) { make[0] = '\0'; version[0] = '\0'; return ESP_ERR_NOT_FOUND; }
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FIRST-RUN FLAG (#17)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_FIRST_RUN "first_run"

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "config_bridge.h"
+#include "storage/config_store.h"
 
 extern uint8_t current_value_id;
 
@@ -269,6 +270,40 @@ const preconfig_item_t preconfig_items[] = {
     { "MaxxECU", "1.3", "VVT INTAKE CAM 2 POS", "541", 1, 32, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "WASTEGATE PRESSURE", "537", 1, 16, 16, 0.1, 0, 0, false },
     { "MaxxECU", "1.3", "WHEEL SLIP", "523", 1, 32, 16, 0.1, 0, 0, false },
+
+/* ── ECU Master Black / Classic (Base CAN ID = 0x600, Intel LE) ───────── */
+{ "ECU Master", "Black/Classic", "RPM",                "600", 1,  0, 16, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "THROTTLE %",         "600", 1, 16,  8, 0.5,        0,        1, false },
+{ "ECU Master", "Black/Classic", "INTAKE AIR TEMP",    "600", 1, 24,  8, 1.0,        0,        0, true  },
+{ "ECU Master", "Black/Classic", "MAP (kPa)",          "600", 1, 32, 16, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "VEHICLE SPEED",      "602", 1,  0, 16, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "OIL TEMP",           "602", 1, 24,  8, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "OIL PRESSURE (kPa)", "602", 1, 32,  8, 6.25,       0,        1, false },
+{ "ECU Master", "Black/Classic", "FUEL PRESSURE (kPa)","602", 1, 40,  8, 6.25,       0,        1, false },
+{ "ECU Master", "Black/Classic", "COOLANT TEMP",       "602", 1, 48, 16, 1.0,        0,        0, true  },
+{ "ECU Master", "Black/Classic", "IGNITION ANGLE",     "603", 1,  0,  8, 0.5,        0,        1, true  },
+{ "ECU Master", "Black/Classic", "LAMBDA",             "603", 1, 16,  8, 0.0078125,  0,        3, false },
+{ "ECU Master", "Black/Classic", "LAMBDA CORRECTION",  "603", 1, 24,  8, 0.5,        -100,     1, false },
+{ "ECU Master", "Black/Classic", "EGT 1",              "603", 1, 32, 16, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "EGT 2",              "603", 1, 48, 16, 1.0,        0,        0, false },
+{ "ECU Master", "Black/Classic", "GEAR",               "604", 1,  0,  8, 1.0,        0,        0, true  },
+{ "ECU Master", "Black/Classic", "BATTERY VOLT",       "604", 1, 16, 16, 0.027,      0,        2, false },
+{ "ECU Master", "Black/Classic", "BOOST TARGET",       "607", 1,  0, 16, 1.0,        0,        0, false },
+
+/* ── MegaSquirt MS3-Pro (Base CAN ID = 0x5F0, Motorola BE, metric) ────── */
+{ "MegaSquirt", "MS3-Pro", "RPM",             "5F0", 0, 48, 16, 1.0,       0,         0, false },
+{ "MegaSquirt", "MS3-Pro", "IGNITION ANGLE",  "5F1", 0,  0, 16, 0.1,       0,         1, true  },
+{ "MegaSquirt", "MS3-Pro", "MAP (kPa)",       "5F2", 0, 16, 16, 0.1,       0,         1, true  },
+{ "MegaSquirt", "MS3-Pro", "INTAKE AIR TEMP", "5F2", 0, 32, 16, 0.0555556, -17.7778,  1, true  },
+{ "MegaSquirt", "MS3-Pro", "COOLANT TEMP",    "5F2", 0, 48, 16, 0.0555556, -17.7778,  1, true  },
+{ "MegaSquirt", "MS3-Pro", "THROTTLE %",      "5F3", 0,  0, 16, 0.1,       0,         1, true  },
+{ "MegaSquirt", "MS3-Pro", "BATTERY VOLT",    "5F3", 0, 16, 16, 0.1,       0,         1, true  },
+{ "MegaSquirt", "MS3-Pro", "FUEL TRIM B1",    "5F4", 0, 16, 16, 0.1,       -100,      1, true  },
+{ "MegaSquirt", "MS3-Pro", "EGT 1",           "606", 0,  0, 16, 0.0555556, -17.7778,  1, true  },
+{ "MegaSquirt", "MS3-Pro", "GEAR",            "611", 0, 48,  8, 1.0,       0,         0, true  },
+{ "MegaSquirt", "MS3-Pro", "VEHICLE SPEED",   "612", 0,  0, 16, 0.36,      0,         1, false },
+{ "MegaSquirt", "MS3-Pro", "FUEL PRESSURE",   "615", 0,  0, 16, 0.1,       0,         1, true  },
+{ "MegaSquirt", "MS3-Pro", "LAMBDA (AFR1)",   "5FF", 0,  0,  8, 0.0068027, 0,         3, false },
 
 /* ── Link ECU — Generic Dash (Base CAN ID = 0x3E8 / 1000) ───────────── */
 { "Link ECU", "Generic Dash", "ENGINE SPEED",          "3E8", 1, 16, 16, 1.0,    0,    0, false },
@@ -908,6 +943,53 @@ static lv_obj_t *make_col_row(lv_obj_t *list, const char *text)
 }
 
 /* ── Populate helpers ────────────────────────────────────────────────────── */
+/* ── Auto-select the brand + version saved in NVS (config_store_load_ecu).
+ * Called right after the brand list is populated. If the saved ECU maps
+ * to a row in the list, highlight it and cascade to populate the version
+ * column; if a matching version is present, highlight that too. No-op if
+ * the NVS key is empty (Custom / None / first run). */
+static void _preselect_ecu_from_nvs(picker_st_t *st, lv_obj_t *brand_list)
+{
+    if (!st || !brand_list) return;
+    char ecu_make[32] = {0}, ecu_ver[32] = {0};
+    if (config_store_load_ecu(ecu_make, sizeof(ecu_make),
+                              ecu_ver, sizeof(ecu_ver)) != ESP_OK)
+        return;
+    if (ecu_make[0] == '\0') return;
+
+    uint32_t nb = lv_obj_get_child_cnt(brand_list);
+    for (uint32_t i = 0; i < nb; i++) {
+        lv_obj_t *row = lv_obj_get_child(brand_list, i);
+        if (!row) continue;
+        lv_obj_t *lbl = lv_obj_get_child(row, 0);
+        if (!lbl) continue;
+        const char *txt = lv_label_get_text(lbl);
+        if (!txt || strcmp(txt, ecu_make) != 0) continue;
+
+        strncpy(st->sel_brand, ecu_make, sizeof(st->sel_brand) - 1);
+        set_row_hi(row, true);
+        st->hi_brand = row;
+        populate_ver_col(st);
+        if (ecu_ver[0] == '\0') return;
+
+        uint32_t nv = lv_obj_get_child_cnt(st->ver_list);
+        for (uint32_t j = 0; j < nv; j++) {
+            lv_obj_t *vrow = lv_obj_get_child(st->ver_list, j);
+            if (!vrow) continue;
+            lv_obj_t *vlbl = lv_obj_get_child(vrow, 0);
+            if (!vlbl) continue;
+            const char *vtxt = lv_label_get_text(vlbl);
+            if (!vtxt || strcmp(vtxt, ecu_ver) != 0) continue;
+            strncpy(st->sel_ver, ecu_ver, sizeof(st->sel_ver) - 1);
+            set_row_hi(vrow, true);
+            st->hi_ver = vrow;
+            populate_sig_col(st);
+            return;
+        }
+        return;
+    }
+}
+
 static void populate_ver_col(picker_st_t *st)
 {
     lv_obj_clean(st->ver_list);
@@ -1131,6 +1213,8 @@ static void _open_picker_overlay(uint8_t value_id,
         lv_obj_add_event_cb(row, brand_click_cb,  LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(row, col_txt_free_cb, LV_EVENT_DELETE, ctx);
     }
+
+    _preselect_ecu_from_nvs(st, brand_list);
 }
 
 /* ── Public wrappers ────────────────────────────────────────────────────── */
@@ -1169,6 +1253,8 @@ static void _populate_brands(lv_obj_t *brand_list, picker_st_t *st)
         lv_obj_add_event_cb(row, brand_click_cb,  LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(row, col_txt_free_cb, LV_EVENT_DELETE, ctx);
     }
+
+    _preselect_ecu_from_nvs(st, brand_list);
 }
 
 void build_preset_picker_embedded(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
