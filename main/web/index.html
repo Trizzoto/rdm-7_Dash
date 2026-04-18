@@ -1171,6 +1171,24 @@
             background: #363636;
         }
 
+        /* SIM pill gets an unmistakable "hot" look when active so no one
+         * mistakes simulated data for real CAN data. */
+        .header-pill.sim-active {
+            background: hsl(28, 85%, 48%);
+            color: hsl(30, 100%, 96%);
+            border-color: hsl(28, 90%, 58%);
+            font-weight: 700;
+            box-shadow: 0 0 6px hsla(28, 90%, 55%, 0.45);
+            animation: sim-pulse 1.6s ease-in-out infinite;
+        }
+        .header-pill.sim-active:hover {
+            background: hsl(28, 90%, 54%);
+        }
+        @keyframes sim-pulse {
+            0%, 100% { box-shadow: 0 0 6px hsla(28, 90%, 55%, 0.45); }
+            50%      { box-shadow: 0 0 12px hsla(28, 90%, 55%, 0.75); }
+        }
+
         .header-divider {
             width: 1px;
             height: 20px;
@@ -2486,7 +2504,8 @@
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" onclick="captureScreenshot()">Sync</button>
             <div class="header-divider"></div>
-            <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min→max for visual testing">Simulate</button>
+            <button class="header-pill active" id="pillAutoSync" onclick="toggleAutoSync()" title="Auto-pull layout changes from device every 3s when you have no unsaved edits. Disable for fully manual control.">Auto-sync</button>
+            <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
             <div class="header-divider"></div>
             <button class="btn btn-secondary btn-icon mobile-only-btn" id="mobRightBtn" onclick="toggleMobileSidebar('right')" title="Properties"
                 style="display:none;">&#9881;</button>
@@ -4526,8 +4545,13 @@
             if (!btn) return;
             const name = currentLayout.name || 'default';
             const isDefault = name === 'default';
-            btn.textContent = isDefault ? 'Apply (preview)' : `Apply → ${name}`;
-            btn.title = isDefault ? 'Preview only — default layout cannot be overwritten' : `Save and apply to "${name}"`;
+            /* Default layout is factory-protected: "Preview" pushes the live
+             * state to the device via /api/layout/preview but doesn't write
+             * to disk. Named layouts: "Save" persists + applies. */
+            btn.textContent = isDefault ? 'Preview' : 'Save';
+            btn.title = isDefault
+                ? 'Push these edits live to the device for testing. Default layout is factory-protected - save changes to a new named layout to keep them across reboots.'
+                : `Save + apply to "${name}"`;
         }
 
         function renderEditor() {
@@ -6211,8 +6235,8 @@
         function _updateSimButton() {
             const btn = document.getElementById('pillSimulate');
             if (!btn) return;
-            if (_simActive) btn.classList.add('active');
-            else btn.classList.remove('active');
+            btn.classList.toggle('sim-active', _simActive);
+            btn.textContent = _simActive ? 'SIM ON' : 'SIM';
         }
         async function _pollSimState() {
             try {
@@ -9076,9 +9100,47 @@
             } catch (e) { /* offline or error, skip */ }
         }
 
-        _syncTimer = setInterval(syncFromDevice, 3000);
-        window.addEventListener('beforeunload', () => {
+        /* Auto-sync on/off - pulls layout changes from the device every 3s
+         * so a second editor tab or a factory reset is reflected without a
+         * manual refresh. Can be disabled for fully manual control; the
+         * preference is persisted in localStorage. */
+        function _startAutoSync() {
+            if (_syncTimer) return;
+            _syncTimer = setInterval(syncFromDevice, 3000);
+        }
+        function _stopAutoSync() {
             if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
+        }
+        function toggleAutoSync() {
+            const pill = document.getElementById('pillAutoSync');
+            const on = !pill.classList.contains('active');
+            pill.classList.toggle('active', on);
+            pill.textContent = on ? 'Auto-sync' : 'Manual';
+            if (on) {
+                _startAutoSync();
+                updateStatus('Auto-sync on - pulling changes every 3s');
+            } else {
+                _stopAutoSync();
+                updateStatus('Auto-sync off - changes stay local until you Save');
+            }
+            try { localStorage.setItem('rdm7_autosync', on ? '1' : '0'); } catch (e) {}
+        }
+        /* Apply persisted preference on load (default = on) */
+        (function _initAutoSync() {
+            let on = true;
+            try {
+                const v = localStorage.getItem('rdm7_autosync');
+                if (v === '0') on = false;
+            } catch (e) {}
+            const pill = document.getElementById('pillAutoSync');
+            if (pill) {
+                pill.classList.toggle('active', on);
+                pill.textContent = on ? 'Auto-sync' : 'Manual';
+            }
+            if (on) _startAutoSync();
+        })();
+        window.addEventListener('beforeunload', () => {
+            _stopAutoSync();
         });
 
         /* ── ECU Context (Phase 4) ──────────────────────────────────── */

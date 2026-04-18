@@ -145,13 +145,15 @@ static void refresh_wifi_status(void) {
         lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
 
-    // Update web server status — show STA IP if connected, else AP IP if AP active
+    // Update web server status — show STA IP if connected, else AP IP if AP active.
+    // mDNS advertises "rdm7" on both netifs so rdm7.local works in both modes.
     if (sta_ssid && sta_ssid[0] != '\0') {
         esp_netif_ip_info_t ip_info;
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            char web_text[64];
-            snprintf(web_text, sizeof(web_text), "Web: http://" IPSTR, IP2STR(&ip_info.ip));
+            char web_text[96];
+            snprintf(web_text, sizeof(web_text),
+                     "Web: rdm7.local or " IPSTR, IP2STR(&ip_info.ip));
             lv_label_set_text(web_status_label, web_text);
             lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
         } else {
@@ -161,7 +163,7 @@ static void refresh_wifi_status(void) {
     } else {
         /* Check if AP mode provides an alternative */
         if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
-            lv_label_set_text(web_status_label, "Web: http://192.168.4.1");
+            lv_label_set_text(web_status_label, "Web: rdm7.local or 192.168.4.1");
             lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
         } else {
             lv_label_set_text(web_status_label, "Web: Connect WiFi first");
@@ -174,8 +176,9 @@ static void refresh_wifi_status(void) {
         if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
             wifi_sta_list_t sta_list;
             esp_wifi_ap_get_sta_list(&sta_list);
-            char ap_text[64];
-            snprintf(ap_text, sizeof(ap_text), "Hotspot: %s (%d client%s)",
+            char ap_text[96];
+            snprintf(ap_text, sizeof(ap_text),
+                     "Hotspot: %s - rdm7.local or 192.168.4.1 (%d client%s)",
                      wifi_manager_get_ap_ssid(), sta_list.num,
                      sta_list.num == 1 ? "" : "s");
             lv_label_set_text(ap_status_label, ap_text);
