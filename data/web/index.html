@@ -1172,14 +1172,16 @@
         }
 
         /* SIM active state uses the system "connected/live" green the rest
-         * of the UI already uses for status indicators. */
-        .header-pill.sim-active {
+         * of the UI already uses for status indicators. Same for Auto-sync. */
+        .header-pill.sim-active,
+        .header-pill.sync-active {
             background: hsl(140, 60%, 30%);
             color: hsl(140, 60%, 92%);
             border-color: hsl(140, 60%, 55%);
             font-weight: 600;
         }
-        .header-pill.sim-active:hover {
+        .header-pill.sim-active:hover,
+        .header-pill.sync-active:hover {
             background: hsl(140, 60%, 34%);
         }
 
@@ -2498,7 +2500,7 @@
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" onclick="captureScreenshot()">Sync</button>
             <div class="header-divider"></div>
-            <button class="header-pill active" id="pillAutoSync" onclick="toggleAutoSync()" title="Auto-pull layout changes from device every 3s when you have no unsaved edits. Disable for fully manual control.">Auto-sync</button>
+            <button class="header-pill sync-active" id="pillAutoSync" onclick="toggleAutoSync()" title="Auto-pull layout changes from device every 3s when you have no unsaved edits. Disable for fully manual control.">Auto-sync</button>
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
             <div class="header-divider"></div>
             <button class="btn btn-secondary btn-icon mobile-only-btn" id="mobRightBtn" onclick="toggleMobileSidebar('right')" title="Properties"
@@ -9107,8 +9109,9 @@
         }
         function toggleAutoSync() {
             const pill = document.getElementById('pillAutoSync');
-            const on = !pill.classList.contains('active');
-            pill.classList.toggle('active', on);
+            if (!pill) return;
+            const on = !pill.classList.contains('sync-active');
+            pill.classList.toggle('sync-active', on);
             pill.textContent = on ? 'Auto-sync' : 'Manual';
             if (on) {
                 _startAutoSync();
@@ -9128,7 +9131,7 @@
             } catch (e) {}
             const pill = document.getElementById('pillAutoSync');
             if (pill) {
-                pill.classList.toggle('active', on);
+                pill.classList.toggle('sync-active', on);
                 pill.textContent = on ? 'Auto-sync' : 'Manual';
             }
             if (on) _startAutoSync();

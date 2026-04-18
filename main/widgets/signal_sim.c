@@ -12,15 +12,13 @@
 #include <string.h>
 
 #define SIM_MAX_SIGNALS 128
-/* Tick rate chosen so the LVGL task has long stretches of pure-render
- * time between sim bursts. 50ms ticks were still dropping FPS to ~20
- * even with batch-spreading, because the timer callback itself competes
- * with the display refresh. 200ms / 2-signal batch keeps the visual
- * sweep perceptible (each signal updates every ~1-1.5s) while letting
- * the renderer stay near its 50fps base. */
-#define SIM_TIMER_PERIOD_MS 200
+#define SIM_TIMER_PERIOD_MS 50
 #define SIM_CYCLE_MS 3000
-#define SIM_BATCH_PER_TICK 2
+/* How many signals to inject per timer tick. Updating every signal in a
+ * single burst floods the LVGL task with invalidations. Spreading ~4 per
+ * 50ms tick still covers 15-20 signals in under half a second while
+ * leaving the render pipeline time to breathe. */
+#define SIM_BATCH_PER_TICK 4
 
 static const char *TAG = "signal_sim";
 

@@ -712,6 +712,24 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value) {
 	if (rpm_bar_gauge == NULL || lv_obj_get_screen(rpm_bar_gauge) == NULL) {
 		return;
 	}
+	/* Early-out: the signal system fires on every value change, but the
+	 * bar and label only need re-rendering when the INTEGER rpm changes.
+	 * Without this gate the sim (and noisy real CAN signals) forces a
+	 * full bar invalidate + text reflow ~20 Hz, which alone is enough to
+	 * drag dashboard FPS down. */
+	static int s_last_rpm = -1;
+	static char s_last_str[16] = "";
+	if (rpm_value == s_last_rpm && rpm_str &&
+	    strncmp(rpm_str, s_last_str, sizeof(s_last_str)) == 0) {
+		return;
+	}
+	s_last_rpm = rpm_value;
+	if (rpm_str) {
+		size_t n = strlen(rpm_str);
+		if (n >= sizeof(s_last_str)) n = sizeof(s_last_str) - 1;
+		memcpy(s_last_str, rpm_str, n);
+		s_last_str[n] = '\0';
+	}
 	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
 		lv_label_set_text(ui_RPM_Value, rpm_str);
 	set_rpm_value(rpm_value);
