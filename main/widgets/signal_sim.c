@@ -1,5 +1,18 @@
+/* signal_sim.c - build fake CAN frames and dispatch them through the real
+ * signal_dispatch_frame path. This is MUCH closer to how actual CAN traffic
+ * hits the dashboard: bursts are coalesced per-frame (multiple signals on
+ * one CAN ID move together), the change-detection gate in signal_dispatch_frame
+ * runs as normal, and widget callbacks see the same code path they would with
+ * a real ECU connected. FPS behaviour should match real-CAN behaviour because
+ * it IS the real-CAN code path.
+ *
+ * Previous implementation used signal_inject_test_value() which bypassed the
+ * decode layer entirely and caused inconsistent perf vs. real CAN.
+ */
+
 #include "signal_sim.h"
 #include "signal.h"
+#include "can_decode.h"
 #include "widget_types.h"
 #include "widget_registry.h"
 #include "widget_meter.h"
@@ -12,13 +25,14 @@
 #include <string.h>
 
 #define SIM_MAX_SIGNALS 128
+#define SIM_MAX_FRAMES  64    /* unique CAN IDs per layout */
+/* 50ms tick = 20 Hz frame rate, roughly matching a typical Haltech/MaxxECU
+ * 20-50 Hz broadcast. Each tick emits ONE frame per unique CAN ID, so the
+ * real cost is O(frames) not O(signals). A layout with 15 signals on 5
+ * distinct CAN IDs produces 5 frames/tick = 100 frames/sec, well below
+ * what real CAN puts on the wire. */
 #define SIM_TIMER_PERIOD_MS 50
 #define SIM_CYCLE_MS 3000
-/* How many signals to inject per timer tick. Updating every signal in a
- * single burst floods the LVGL task with invalidations. Spreading ~4 per
- * 50ms tick still covers 15-20 signals in under half a second while
- * leaving the render pipeline time to breathe. */
-#define SIM_BATCH_PER_TICK 4
 
 static const char *TAG = "signal_sim";
 
@@ -27,14 +41,20 @@ typedef struct {
     float max;
 } sim_bounds_t;
 
-static bool         s_sim_active = false;
-static lv_timer_t  *s_sim_timer  = NULL;
-static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
-static float        s_phase[SIM_MAX_SIGNALS];
-static uint16_t     s_cached_count = 0;
-/* Cursor for the spread-update pattern. Each tick processes
- * SIM_BATCH_PER_TICK signals starting here, then advances. */
-static uint16_t     s_sim_cursor   = 0;
+typedef struct {
+    uint32_t can_id;        /* 0 = unused slot */
+    uint8_t  max_end_byte;  /* Highest byte touched by any signal (for DLC) */
+} sim_frame_t;
+
+static bool          s_sim_active = false;
+static lv_timer_t   *s_sim_timer  = NULL;
+static sim_bounds_t  s_bounds[SIM_MAX_SIGNALS];
+static float         s_phase[SIM_MAX_SIGNALS];
+static uint16_t      s_cached_count = 0;
+static sim_frame_t   s_frames[SIM_MAX_FRAMES];
+static uint16_t      s_frame_count = 0;
+
+/* ── Bounds ------------------------------------------------------------- */
 
 static void _build_bounds(uint16_t count)
 {
@@ -102,11 +122,77 @@ static void _build_bounds(uint16_t count)
 
 static void _init_phases(uint16_t count)
 {
-    /* All signals start at phase 0 so they sweep in sync */
+    /* Stagger phases slightly so frames for different CAN IDs don't all
+     * peak at the same moment - looks more like real bursty CAN traffic. */
     for (uint16_t i = 0; i < count && i < SIM_MAX_SIGNALS; i++) {
-        s_phase[i] = 0.0f;
+        s_phase[i] = ((float)(i * 37) / 256.0f);
+        while (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;
     }
 }
+
+/* ── Build the list of unique CAN IDs to dispatch each tick ------------- */
+
+static void _build_frame_list(uint16_t count)
+{
+    s_frame_count = 0;
+    for (uint16_t i = 0; i < count && i < SIM_MAX_SIGNALS; i++) {
+        signal_t *sig = signal_get_by_index(i);
+        if (!sig || sig->can_id == 0) continue;  /* skip internal signals */
+
+        /* Find or create a frame slot for this CAN ID */
+        int frame_idx = -1;
+        for (uint16_t f = 0; f < s_frame_count; f++) {
+            if (s_frames[f].can_id == sig->can_id) {
+                frame_idx = (int)f;
+                break;
+            }
+        }
+        if (frame_idx < 0) {
+            if (s_frame_count >= SIM_MAX_FRAMES) continue;
+            frame_idx = s_frame_count++;
+            s_frames[frame_idx].can_id = sig->can_id;
+            s_frames[frame_idx].max_end_byte = 0;
+        }
+
+        uint8_t end_byte = (uint8_t)((sig->bit_start + sig->bit_length - 1) / 8);
+        if (end_byte > s_frames[frame_idx].max_end_byte) {
+            s_frames[frame_idx].max_end_byte = end_byte;
+        }
+    }
+    ESP_LOGI(TAG, "Built frame list: %u unique CAN IDs from %u signals",
+             s_frame_count, count);
+}
+
+/* ── Inverse decode: compute the raw bit field for a target engineering
+ *    value. can_pack_bits takes an unsigned raw, so we clamp negative raws
+ *    into the bit_length's 2's-complement range if the signal is signed. */
+
+static uint32_t _value_to_raw(const signal_t *sig, float value)
+{
+    float scale = sig->scale;
+    if (scale == 0.0f) scale = 1.0f;
+    float raw_f = (value - sig->offset) / scale;
+
+    int32_t raw_i = (int32_t)raw_f;
+
+    uint32_t mask = sig->bit_length >= 32 ? 0xFFFFFFFFu
+                                          : ((1u << sig->bit_length) - 1);
+    if (sig->is_signed) {
+        /* Clamp to 2's-complement range for bit_length */
+        int32_t max_pos = (int32_t)(mask >> 1);
+        int32_t min_neg = -max_pos - 1;
+        if (raw_i > max_pos) raw_i = max_pos;
+        if (raw_i < min_neg) raw_i = min_neg;
+    } else {
+        if (raw_i < 0) raw_i = 0;
+        if ((uint32_t)raw_i > mask) raw_i = (int32_t)mask;
+    }
+    return ((uint32_t)raw_i) & mask;
+}
+
+/* ── Per-tick: build each frame from the signals that share its CAN ID,
+ *    then dispatch through the real CAN path. This is the key change that
+ *    makes sim behave identically to real CAN traffic. */
 
 static void _sim_timer_cb(lv_timer_t *timer)
 {
@@ -119,42 +205,49 @@ static void _sim_timer_cb(lv_timer_t *timer)
     if (count != s_cached_count) {
         _build_bounds(count);
         _init_phases(count);
+        _build_frame_list(count);
         s_cached_count = count;
-        s_sim_cursor = 0;
     }
 
     const float delta = (float)SIM_TIMER_PERIOD_MS / (float)SIM_CYCLE_MS;
 
-    /* Advance phase for EVERY signal every tick so simulated time stays
-     * smooth, but only inject updates for a small batch per tick to keep
-     * LVGL from choking on burst invalidations. Every signal still gets
-     * refreshed within ceil(count / BATCH) ticks -> ~200-400ms cycle. */
+    /* Advance phase for every bound signal */
     for (uint16_t i = 0; i < count; i++) {
         signal_t *sig = signal_get_by_index(i);
-        if (!sig || sig->can_id == 0) continue;  /* skip internal signals */
+        if (!sig || sig->can_id == 0) continue;
         s_phase[i] += delta;
         if (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;
     }
 
-    uint16_t injected = 0;
-    uint16_t scanned = 0;
-    while (injected < SIM_BATCH_PER_TICK && scanned < count) {
-        uint16_t i = s_sim_cursor;
-        s_sim_cursor = (uint16_t)((s_sim_cursor + 1) % count);
-        scanned++;
+    /* For each unique CAN ID, build an 8-byte frame with all its signals
+     * packed in, then hand it to signal_dispatch_frame as if it had just
+     * arrived on the bus. */
+    for (uint16_t f = 0; f < s_frame_count; f++) {
+        uint32_t can_id = s_frames[f].can_id;
+        uint8_t  frame[8] = {0};
 
-        signal_t *sig = signal_get_by_index(i);
-        if (!sig || sig->can_id == 0) continue;
+        for (uint16_t i = 0; i < count; i++) {
+            signal_t *sig = signal_get_by_index(i);
+            if (!sig || sig->can_id != can_id) continue;
 
-        /* Triangle wave: ramp up 0-0.5, ramp down 0.5-1.0 */
-        float t = s_phase[i] < 0.5f
-                    ? s_phase[i] * 2.0f
-                    : (1.0f - s_phase[i]) * 2.0f;
-        float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
-        signal_inject_test_value(sig->name, value);
-        injected++;
+            /* Triangle wave: 0 -> max -> 0 */
+            float t = s_phase[i] < 0.5f
+                        ? s_phase[i] * 2.0f
+                        : (1.0f - s_phase[i]) * 2.0f;
+            float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
+
+            uint32_t raw = _value_to_raw(sig, value);
+            can_pack_bits(frame, sig->bit_start, sig->bit_length, raw, sig->endian);
+        }
+
+        uint8_t dlc = (uint8_t)(s_frames[f].max_end_byte + 1);
+        if (dlc < 1) dlc = 1;
+        if (dlc > 8) dlc = 8;
+        signal_dispatch_frame(can_id, frame, dlc);
     }
 }
+
+/* ── Public API --------------------------------------------------------- */
 
 void signal_sim_start(void)
 {
@@ -165,13 +258,14 @@ void signal_sim_start(void)
 
     _build_bounds(count);
     _init_phases(count);
+    _build_frame_list(count);
     s_cached_count = count;
-    s_sim_cursor = 0;
 
     s_sim_active = true;
     s_sim_timer = lv_timer_create(_sim_timer_cb, SIM_TIMER_PERIOD_MS, NULL);
 
-    ESP_LOGI(TAG, "Signal simulator started (%u signals)", count);
+    ESP_LOGI(TAG, "Signal simulator started (%u signals, %u frames)",
+             count, s_frame_count);
 }
 
 void signal_sim_stop(void)
