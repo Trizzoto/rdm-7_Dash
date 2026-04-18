@@ -20,6 +20,7 @@ static lv_obj_t *wifi_screen       = NULL;
 static lv_obj_t *wifi_toggle       = NULL;
 static lv_obj_t *ap_toggle         = NULL;
 static lv_obj_t *boot_toggle       = NULL;
+static lv_obj_t *ap_boot_toggle    = NULL;  /* Hotspot-on-boot */
 static lv_obj_t *ap_ssid_label     = NULL;
 static lv_obj_t *ap_ip_label       = NULL;
 static lv_obj_t *ap_pass_input     = NULL;
@@ -65,6 +66,7 @@ static void _back_btn_cb(lv_event_t *e);
 static void _wifi_toggle_cb(lv_event_t *e);
 static void _ap_toggle_cb(lv_event_t *e);
 static void _boot_toggle_cb(lv_event_t *e);
+static void _ap_boot_toggle_cb(lv_event_t *e);
 static void _scan_btn_cb(lv_event_t *e);
 static void _network_item_cb(lv_event_t *e);
 static void _password_connect_cb(lv_event_t *e);
@@ -378,6 +380,28 @@ static void _create_screen(void)
     _style_switch(boot_toggle);
     lv_obj_add_event_cb(boot_toggle, _boot_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    /* Hotspot on Boot toggle row (default off). When enabled, the AP is
+     * started at boot alongside station mode so a phone can connect to
+     * the dash without it ever having seen a WiFi network. */
+    lv_obj_t *ap_boot_row = lv_obj_create(wifi_dependent_section);
+    lv_obj_set_size(ap_boot_row, LV_PCT(100), 32);
+    lv_obj_set_style_bg_opa(ap_boot_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ap_boot_row, 0, 0);
+    lv_obj_set_style_pad_all(ap_boot_row, 0, 0);
+    lv_obj_clear_flag(ap_boot_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *ap_boot_lbl = lv_label_create(ap_boot_row);
+    lv_label_set_text(ap_boot_lbl, "Hotspot on Boot");
+    lv_obj_set_style_text_font(ap_boot_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(ap_boot_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(ap_boot_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    ap_boot_toggle = lv_switch_create(ap_boot_row);
+    lv_obj_set_size(ap_boot_toggle, 44, 22);
+    lv_obj_align(ap_boot_toggle, LV_ALIGN_RIGHT_MID, 0, 0);
+    _style_switch(ap_boot_toggle);
+    lv_obj_add_event_cb(ap_boot_toggle, _ap_boot_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     /* == RIGHT PANEL (available networks) ================================ */
     right_panel = lv_obj_create(body);
     lv_obj_set_size(right_panel, 390, 396);
@@ -442,6 +466,9 @@ static void _create_screen(void)
     if (boot_cfg.wifi_on_boot) {
         lv_obj_add_state(boot_toggle, LV_STATE_CHECKED);
     }
+    if (boot_cfg.ap_enabled) {
+        lv_obj_add_state(ap_boot_toggle, LV_STATE_CHECKED);
+    }
 
     /* Load AP password into input */
     rdm_ap_config_t ap_cfg;
@@ -486,6 +513,7 @@ static void _destroy_screen(void)
     wifi_toggle = NULL;
     ap_toggle = NULL;
     boot_toggle = NULL;
+    ap_boot_toggle = NULL;
     ap_ssid_label = NULL;
     ap_ip_label = NULL;
     ap_pass_input = NULL;
@@ -1118,6 +1146,19 @@ static void _boot_toggle_cb(lv_event_t *e)
     config_store_save_wifi_boot(&boot_cfg);
 
     ESP_LOGI(TAG, "WiFi on boot: %s", checked ? "enabled" : "disabled");
+}
+
+static void _ap_boot_toggle_cb(lv_event_t *e)
+{
+    (void)e;
+    bool checked = lv_obj_has_state(ap_boot_toggle, LV_STATE_CHECKED);
+
+    wifi_boot_config_t boot_cfg;
+    config_store_load_wifi_boot(&boot_cfg);
+    boot_cfg.ap_enabled = checked;
+    config_store_save_wifi_boot(&boot_cfg);
+
+    ESP_LOGI(TAG, "Hotspot on boot: %s", checked ? "enabled" : "disabled");
 }
 
 

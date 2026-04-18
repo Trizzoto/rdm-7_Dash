@@ -35,6 +35,7 @@
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
 #include "widgets/signal.h"
+#include "widgets/signal_sim.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -51,6 +52,9 @@ static lv_obj_t *s_log_btn = NULL;
 static lv_obj_t *s_log_btn_label = NULL;
 static lv_obj_t *s_log_status_label = NULL;
 static lv_obj_t *s_log_rate_dd = NULL;
+
+/* Signal simulator toggle (demo mode) */
+static lv_obj_t *s_sim_btn_label = NULL;
 
 /* Display rotation + night-mode (#23) */
 static lv_obj_t *s_rotation_btn_label = NULL;
@@ -1465,6 +1469,21 @@ static void _log_toggle_btn_cb(lv_event_t *e) {
 
 /* Wipe peak/min for every signal in the registry. Affects all panels with
  * show_peak set (they pull current peak/min on the next signal update). */
+static void _sim_toggle_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (signal_sim_is_active()) {
+        signal_sim_stop();
+    } else {
+        signal_sim_start();
+    }
+    if (s_sim_btn_label && lv_obj_is_valid(s_sim_btn_label)) {
+        bool on = signal_sim_is_active();
+        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
+        lv_obj_set_style_text_color(s_sim_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+}
+
 static void _reset_peaks_btn_cb(lv_event_t *e) {
     (void)e;
     signal_reset_peaks();
@@ -2198,6 +2217,29 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(reset_peaks_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(reset_peaks_lbl, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(reset_peaks_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Simulate toggle - drives all signals with a triangle wave through
+     * signal_sim for demo / showroom mode. Persists until manually
+     * toggled off or the device reboots. */
+    lv_obj_t *sim_btn = lv_btn_create(peak_section);
+    lv_obj_set_size(sim_btn, 110, 30);
+    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 236, 22);
+    lv_obj_set_style_bg_color(sim_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(sim_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(sim_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(sim_btn, 1, 0);
+    lv_obj_set_style_border_color(sim_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(sim_btn, 0, 0);
+    s_sim_btn_label = lv_label_create(sim_btn);
+    {
+        bool on = signal_sim_is_active();
+        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
+        lv_obj_set_style_text_color(s_sim_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    lv_obj_center(s_sim_btn_label);
+    lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
 
     _update_log_ui();
 
