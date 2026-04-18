@@ -2217,13 +2217,16 @@
                 <div class="layout-menu" id="layoutMenu">
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()">New Layout...</div>
                     <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()">Rename...</div>
+                    <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)">Delete Layout</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()">Import .rdm</div>
                     <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()">Export .rdm</div>
                     <div class="layout-menu-sep"></div>
+                    <div class="layout-menu-item" onclick="openDeviceInfo(); closeLayoutMenu()">Device Info...</div>
+                    <div class="layout-menu-item" onclick="openSignalDashboard(); closeLayoutMenu()">Signal Dashboard...</div>
+                    <div class="layout-menu-item" onclick="openDataLogger(); closeLayoutMenu()">Data Logger...</div>
+                    <div class="layout-menu-item" onclick="openFuelCalibration(); closeLayoutMenu()">Fuel Calibration...</div>
                     <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()">Dimmer Settings...</div>
-                    <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)">Delete Layout</div>
                 </div>
             </div>
             <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
@@ -2316,6 +2319,91 @@
     </div>
 
     <!-- Dimmer Settings Modal -->
+    <!-- Device Info modal -->
+    <div id="deviceInfoModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDeviceInfo()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <span style="font-weight:600; font-size:14px;">Device Info</span>
+                <button class="close-btn" onclick="closeDeviceInfo()" style="font-size:18px;">&times;</button>
+            </div>
+            <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px;">
+                <span style="color:var(--text-muted);">Loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signal Dashboard modal -->
+    <div id="signalDashModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeSignalDashboard()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:720px; max-width:95vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <span style="font-weight:600; font-size:14px;">Signal Dashboard <span id="sigDashCount" style="color:var(--text-muted); font-weight:400; font-size:11px; margin-left:6px;"></span></span>
+                <button class="close-btn" onclick="closeSignalDashboard()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md);">
+                <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                    <thead style="position:sticky; top:0; background:var(--panel-elevated); z-index:1;">
+                        <tr style="text-align:left;">
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Name</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Value</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Min</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border); text-align:right;">Max</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Unit</th>
+                            <th style="padding:8px 10px; border-bottom:1px solid var(--border);">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sigDashBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Logger modal -->
+    <div id="dataLoggerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDataLogger()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:520px; max-width:90vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <span style="font-weight:600; font-size:14px;">Data Logger</span>
+                <button class="close-btn" onclick="closeDataLogger()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:12px;">
+                <label style="font-size:11px; color:var(--text-muted); flex:1;">Sample Rate
+                    <select id="logRateSelect" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                        <option value="1">1 Hz</option>
+                        <option value="2">2 Hz</option>
+                        <option value="5">5 Hz</option>
+                        <option value="10" selected>10 Hz</option>
+                        <option value="20">20 Hz</option>
+                        <option value="50">50 Hz</option>
+                        <option value="100">100 Hz</option>
+                        <option value="200">200 Hz</option>
+                        <option value="0">Max</option>
+                    </select>
+                </label>
+                <button id="logToggleBtn" class="btn" style="padding:7px 16px;" onclick="toggleDataLogger()">Start</button>
+            </div>
+            <div id="logStatusLine" style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Idle</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Logs on SD card</div>
+            <div id="logList" style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md); font-size:11px; min-height:120px; max-height:260px;"></div>
+        </div>
+    </div>
+
+    <!-- Fuel Calibration modal -->
+    <div id="fuelCalibModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeFuelCalibration()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <span style="font-weight:600; font-size:14px;">Fuel Calibration</span>
+                <button class="close-btn" onclick="closeFuelCalibration()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
+                With a known fuel level in the tank, tap the matching button to set the calibration point. Do Empty first, then Full.
+            </div>
+            <div id="fuelStatus" style="font-size:12px; margin-bottom:12px; padding:10px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md);">Loading...</div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="fuelSetEmpty()">Set Empty</button>
+                <button class="btn" style="flex:1;" onclick="fuelSetFull()">Set Full</button>
+            </div>
+        </div>
+    </div>
+
     <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:380px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -9134,6 +9222,277 @@
             } catch (e) {
                 updateStatus('Failed to save dimmer settings', true);
             }
+        }
+
+        /* ── Device Info modal ──────────────────────────────────────── */
+
+        function _fmtBytes(n) {
+            if (!Number.isFinite(n)) return '-';
+            if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+            if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+            return n + ' B';
+        }
+
+        function _fmtUptime(sec) {
+            if (!Number.isFinite(sec)) return '-';
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = Math.floor(sec % 60);
+            if (d) return `${d}d ${h}h ${m}m`;
+            if (h) return `${h}h ${m}m ${s}s`;
+            if (m) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        async function openDeviceInfo() {
+            const modal = document.getElementById('deviceInfoModal');
+            const body  = document.getElementById('deviceInfoBody');
+            modal.style.display = 'flex';
+            body.innerHTML = '<span style="color:var(--text-muted);">Loading...</span>';
+            try {
+                const r = await fetch('/api/device/info');
+                if (!r.ok) throw new Error(r.status);
+                const d = await r.json();
+                const rows = [
+                    ['Serial',        d.serial || '-'],
+                    ['Firmware',      d.firmware_version || d.version || '-'],
+                    ['Screen',        (d.screen_w || d.width || '-') + ' x ' + (d.screen_h || d.height || '-')],
+                    ['Uptime',        _fmtUptime(d.uptime_s)],
+                    ['Free heap',     _fmtBytes(d.free_heap)],
+                    ['Free PSRAM',    _fmtBytes(d.free_psram)],
+                    ['WiFi SSID',     d.wifi_ssid || '-'],
+                    ['WiFi IP',       d.wifi_ip || '-'],
+                ];
+                body.innerHTML = rows.map(([k, v]) =>
+                    `<span style="color:var(--text-muted);">${k}</span><span style="font-family:'JetBrains Mono',monospace;">${v}</span>`
+                ).join('');
+            } catch (e) {
+                body.innerHTML = '<span style="color:hsl(0,70%,60%); grid-column:span 2;">Failed to load device info</span>';
+            }
+        }
+
+        function closeDeviceInfo() {
+            document.getElementById('deviceInfoModal').style.display = 'none';
+        }
+
+        /* ── Signal Dashboard modal ─────────────────────────────────── */
+
+        let _sigDashTimer = null;
+
+        async function _refreshSignalDashboard() {
+            try {
+                const r = await fetch('/api/signals/values');
+                if (!r.ok) return;
+                const data = await r.json();
+                const sigs = Array.isArray(data) ? data : (data.signals || []);
+                const body = document.getElementById('sigDashBody');
+                if (!body) return;
+                document.getElementById('sigDashCount').textContent = `(${sigs.length} signals)`;
+                body.innerHTML = sigs.map(s => {
+                    const fresh = !s.stale;
+                    const statusColor = fresh ? 'hsl(140,60%,55%)' : 'hsl(0,60%,55%)';
+                    const statusText  = fresh ? 'LIVE' : 'STALE';
+                    const fmt = (v) => (v == null) ? '-' : (Number.isInteger(v) ? v : Number(v).toFixed(3));
+                    return `<tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:6px 10px;">${s.name || '-'}</td>
+                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace;">${fmt(s.value)}</td>
+                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.min)}</td>
+                        <td style="padding:6px 10px; text-align:right; font-family:'JetBrains Mono',monospace; color:var(--text-muted);">${fmt(s.max)}</td>
+                        <td style="padding:6px 10px; color:var(--text-muted);">${s.unit || ''}</td>
+                        <td style="padding:6px 10px; color:${statusColor}; font-size:10px; font-weight:600;">${statusText}</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { /* silent */ }
+        }
+
+        function openSignalDashboard() {
+            document.getElementById('signalDashModal').style.display = 'flex';
+            _refreshSignalDashboard();
+            if (_sigDashTimer) clearInterval(_sigDashTimer);
+            _sigDashTimer = setInterval(_refreshSignalDashboard, 500);
+        }
+
+        function closeSignalDashboard() {
+            document.getElementById('signalDashModal').style.display = 'none';
+            if (_sigDashTimer) { clearInterval(_sigDashTimer); _sigDashTimer = null; }
+        }
+
+        /* ── Data Logger modal ──────────────────────────────────────── */
+
+        let _logStatusTimer = null;
+
+        async function _refreshLogStatus() {
+            try {
+                const [statusR, listR, configR] = await Promise.all([
+                    fetch('/api/log/status'),
+                    fetch('/api/log/list'),
+                    fetch('/api/log/config'),
+                ]);
+                let running = false;
+                if (statusR.ok) {
+                    const s = await statusR.json();
+                    running = !!s.running;
+                    const line = document.getElementById('logStatusLine');
+                    if (line) {
+                        if (running) {
+                            line.textContent = `Recording ${s.file || ''} - ${s.samples || 0} samples @ ${s.rate_hz || 0} Hz`;
+                            line.style.color = 'hsl(140,60%,55%)';
+                        } else {
+                            line.textContent = 'Idle';
+                            line.style.color = 'var(--text-muted)';
+                        }
+                    }
+                    const btn = document.getElementById('logToggleBtn');
+                    if (btn) btn.textContent = running ? 'Stop' : 'Start';
+                }
+                if (configR.ok) {
+                    const cfg = await configR.json();
+                    const dd = document.getElementById('logRateSelect');
+                    if (dd && cfg.rate_hz != null) dd.value = String(cfg.rate_hz);
+                }
+                if (listR.ok) {
+                    const files = await listR.json();
+                    const arr = Array.isArray(files) ? files : (files.files || []);
+                    const el = document.getElementById('logList');
+                    if (el) {
+                        el.innerHTML = arr.length === 0
+                            ? '<div style="padding:20px; text-align:center; color:var(--text-muted);">No log files on SD card</div>'
+                            : arr.map(f => {
+                                const name = typeof f === 'string' ? f : (f.name || f.file || '');
+                                const size = typeof f === 'object' ? _fmtBytes(f.size) : '';
+                                return `<div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-bottom:1px solid var(--border);">
+                                    <span>${name} <span style="color:var(--text-muted); margin-left:8px;">${size}</span></span>
+                                    <span>
+                                        <a href="/api/log/download?file=${encodeURIComponent(name)}" download="${name}" class="btn btn-secondary" style="padding:2px 10px; font-size:10px; text-decoration:none;">Download</a>
+                                        <button class="btn btn-secondary" style="padding:2px 10px; font-size:10px; color:hsl(0,70%,60%);" onclick="deleteLogFile('${name}')">Delete</button>
+                                    </span>
+                                </div>`;
+                            }).join('');
+                    }
+                }
+            } catch (e) { /* silent */ }
+        }
+
+        async function toggleDataLogger() {
+            const btn = document.getElementById('logToggleBtn');
+            const running = btn && btn.textContent === 'Stop';
+            try {
+                if (running) {
+                    await fetch('/api/log/stop', { method: 'POST' });
+                } else {
+                    const rate = parseInt(document.getElementById('logRateSelect').value);
+                    await fetch('/api/log/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rate_hz: rate })
+                    });
+                }
+                _refreshLogStatus();
+            } catch (e) {
+                updateStatus('Data logger command failed', true);
+            }
+        }
+
+        async function deleteLogFile(name) {
+            if (!confirm(`Delete ${name}?`)) return;
+            try {
+                await fetch('/api/log/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file: name })
+                });
+                _refreshLogStatus();
+            } catch (e) {
+                updateStatus('Failed to delete log file', true);
+            }
+        }
+
+        /* Rate-change handler (live-update while logging) */
+        document.addEventListener('DOMContentLoaded', () => {
+            const dd = document.getElementById('logRateSelect');
+            if (dd) dd.addEventListener('change', async () => {
+                const rate = parseInt(dd.value);
+                try {
+                    await fetch('/api/log/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rate_hz: rate })
+                    });
+                } catch (e) { /* silent */ }
+            });
+        });
+
+        function openDataLogger() {
+            document.getElementById('dataLoggerModal').style.display = 'flex';
+            _refreshLogStatus();
+            if (_logStatusTimer) clearInterval(_logStatusTimer);
+            _logStatusTimer = setInterval(_refreshLogStatus, 1000);
+        }
+
+        function closeDataLogger() {
+            document.getElementById('dataLoggerModal').style.display = 'none';
+            if (_logStatusTimer) { clearInterval(_logStatusTimer); _logStatusTimer = null; }
+        }
+
+        /* ── Fuel Calibration modal ─────────────────────────────────── */
+
+        let _fuelTimer = null;
+
+        async function _refreshFuelStatus() {
+            try {
+                const r = await fetch('/api/fuel/status');
+                if (!r.ok) throw new Error(r.status);
+                const d = await r.json();
+                const el = document.getElementById('fuelStatus');
+                if (!el) return;
+                const level = d.level_pct != null ? d.level_pct.toFixed(1) + '%' : '-';
+                const raw   = d.raw_value != null ? d.raw_value : '-';
+                const eRaw  = d.empty_raw != null ? d.empty_raw : 'not set';
+                const fRaw  = d.full_raw  != null ? d.full_raw  : 'not set';
+                el.innerHTML = `
+                    <div style="display:grid; grid-template-columns:auto 1fr; row-gap:4px; column-gap:14px;">
+                        <span style="color:var(--text-muted);">Current level</span><span style="font-family:'JetBrains Mono',monospace;">${level}</span>
+                        <span style="color:var(--text-muted);">Raw reading</span><span style="font-family:'JetBrains Mono',monospace;">${raw}</span>
+                        <span style="color:var(--text-muted);">Empty calibration</span><span style="font-family:'JetBrains Mono',monospace;">${eRaw}</span>
+                        <span style="color:var(--text-muted);">Full calibration</span><span style="font-family:'JetBrains Mono',monospace;">${fRaw}</span>
+                    </div>`;
+            } catch (e) {
+                const el = document.getElementById('fuelStatus');
+                if (el) el.innerHTML = '<span style="color:hsl(0,70%,60%);">No fuel signal available</span>';
+            }
+        }
+
+        async function fuelSetEmpty() {
+            if (!confirm('Set current raw reading as empty calibration?')) return;
+            try {
+                const r = await fetch('/api/fuel/set-empty', { method: 'POST' });
+                if (!r.ok) throw new Error(r.status);
+                updateStatus('Empty calibration saved');
+                _refreshFuelStatus();
+            } catch (e) { updateStatus('Failed to set empty', true); }
+        }
+
+        async function fuelSetFull() {
+            if (!confirm('Set current raw reading as full calibration?')) return;
+            try {
+                const r = await fetch('/api/fuel/set-full', { method: 'POST' });
+                if (!r.ok) throw new Error(r.status);
+                updateStatus('Full calibration saved');
+                _refreshFuelStatus();
+            } catch (e) { updateStatus('Failed to set full', true); }
+        }
+
+        function openFuelCalibration() {
+            document.getElementById('fuelCalibModal').style.display = 'flex';
+            _refreshFuelStatus();
+            if (_fuelTimer) clearInterval(_fuelTimer);
+            _fuelTimer = setInterval(_refreshFuelStatus, 1000);
+        }
+
+        function closeFuelCalibration() {
+            document.getElementById('fuelCalibModal').style.display = 'none';
+            if (_fuelTimer) { clearInterval(_fuelTimer); _fuelTimer = null; }
         }
 
     </script>
