@@ -2382,18 +2382,15 @@
                 style="display:none;">&#9776;</button>
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
-                <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
-                <button class="header-pill active" id="pillCrosshair" onclick="toggleHeaderPill(this, 'crosshair')">Crosshair</button>
+                <button class="header-pill" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
                 <button class="header-pill" id="pillDayNight" onclick="toggleEditorMode()" title="Preview day or night mode">Day</button>
             </div>
-            <!-- Hidden checkboxes for JS compatibility -->
+            <!-- Hidden elements for JS compatibility. The firmware-hosted editor
+                 only runs on the 7" dash, so screenSizeSelect is hidden; the JS
+                 that populates it still runs harmlessly. -->
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
-            <input type="checkbox" id="showWidgetsToggle" checked style="display:none;">
-            <div class="header-divider"></div>
-            <select id="screenSizeSelect" onchange="switchScreenSize(this.value)"
-                style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;"
-                title="Target display size">
-            </select>
+            <input type="checkbox" id="showWidgetsToggle" style="display:none;">
+            <select id="screenSizeSelect" style="display:none;" onchange="switchScreenSize(this.value)"></select>
             <div class="header-divider"></div>
             <select id="screenModeSelect" onchange="switchScreenMode(this.value)"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;">
@@ -2497,7 +2494,9 @@
                 <div class="display-bezel bezel-on" id="canvasContainer" style="transform: scale(1) translate(0px, 0px);">
                     <div class="canvas-container">
                         <canvas id="screenshotCanvas" width="800" height="480"></canvas>
-                        <div id="interactionLayer">
+                        <!-- hide-crosshair matches the removed pill's default;
+                             hide-widgets matches the Widgets pill starting deselected. -->
+                        <div id="interactionLayer" class="hide-crosshair hide-widgets">
                             <div id="guideX" class="smart-guide-x"></div>
                             <div id="guideY" class="smart-guide-y"></div>
                         </div>
