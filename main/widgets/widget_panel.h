@@ -48,6 +48,15 @@ typedef struct {
 	int8_t     value_y_offset;       /* default: 9 */
 	int8_t     custom_text_x_offset; /* default: 41 */
 	int8_t     custom_text_y_offset; /* default: 32 */
+	/* Peak hold display: when non-zero, render a small line below the value.
+	 *   0 = off (default)
+	 *   1 = MAX  ("MAX 7184")
+	 *   2 = MIN  ("MIN 0")
+	 *   3 = both ("MIN 0 / MAX 7184")
+	 * Tracking is always-on at the signal layer (signal_t.peak_value/min_value);
+	 * this field only controls visibility. Reset is signal-wide (signal_reset_peak)
+	 * via the long-press menu. */
+	uint8_t    show_peak;
 	char       signal_name[32];
 	int16_t    signal_index;
 	/* LVGL object pointers (runtime only) */
@@ -55,6 +64,7 @@ typedef struct {
 	lv_obj_t  *header_label;
 	lv_obj_t  *value_label;
 	lv_obj_t  *custom_text_label;
+	lv_obj_t  *peak_label;            /* runtime: small "MAX X" line under value */
 	/* Display-state cache: used by _panel_on_signal to early-out when
 	 * a new signal update would render the same thing as last time.
 	 * Collapses a 60 Hz restyle storm to just the visible transitions. */

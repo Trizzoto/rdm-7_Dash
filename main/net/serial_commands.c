@@ -23,6 +23,7 @@
 #include "layout/layout_manager.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
+#include "storage/signal_replay.h"
 #include "storage/sd_manager.h"
 #include "system/device_id.h"
 #include "system/rdm_settings.h"
@@ -1251,6 +1252,72 @@ static void _handle_log_config_set(int id, cJSON *params)
     _send_ok(id);
 }
 
+/* ── Signal Replay (CSV playback through signal system) ─────────────────── */
+
+typedef struct {
+    char  path[96];
+    float speed;
+    bool  loop;
+} serial_replay_args_t;
+
+static void _deferred_serial_replay_start(void *arg)
+{
+    serial_replay_args_t *a = (serial_replay_args_t *)arg;
+    if (a) {
+        signal_replay_start(a->path, a->speed, a->loop);
+        free(a);
+    }
+}
+
+static void _deferred_serial_replay_stop(void *arg)
+{
+    (void)arg;
+    signal_replay_stop();
+}
+
+static void _handle_replay_start(int id, cJSON *params)
+{
+    if (!params) { _send_error(id, "params required"); return; }
+    cJSON *file_item  = cJSON_GetObjectItemCaseSensitive(params, "file");
+    cJSON *speed_item = cJSON_GetObjectItemCaseSensitive(params, "speed");
+    cJSON *loop_item  = cJSON_GetObjectItemCaseSensitive(params, "loop");
+    if (!cJSON_IsString(file_item) || !file_item->valuestring) {
+        _send_error(id, "file (string) required");
+        return;
+    }
+    serial_replay_args_t *a = (serial_replay_args_t *)calloc(1, sizeof(*a));
+    if (!a) { _send_error(id, "OOM"); return; }
+    const char *fn = file_item->valuestring;
+    if (fn[0] == '/') {
+        strncpy(a->path, fn, sizeof(a->path) - 1);
+    } else {
+        snprintf(a->path, sizeof(a->path), "/sdcard/logs/%s", fn);
+    }
+    a->speed = cJSON_IsNumber(speed_item) ? (float)speed_item->valuedouble : 1.0f;
+    a->loop  = cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item);
+    lv_async_call(_deferred_serial_replay_start, a);
+    _send_ok(id);
+}
+
+static void _handle_replay_stop(int id, cJSON *params)
+{
+    (void)params;
+    lv_async_call(_deferred_serial_replay_stop, NULL);
+    _send_ok(id);
+}
+
+static void _handle_replay_status(int id, cJSON *params)
+{
+    (void)params;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddBoolToObject(r, "active", signal_replay_is_active());
+    cJSON_AddStringToObject(r, "file", signal_replay_get_file());
+    cJSON_AddNumberToObject(r, "row", signal_replay_get_row());
+    cJSON_AddNumberToObject(r, "total_rows", signal_replay_get_total_rows());
+    cJSON_AddNumberToObject(r, "speed", (double)signal_replay_get_speed());
+    _send_response(id, r, NULL);
+}
+
 static void _handle_log_list(int id, cJSON *params)
 {
     (void)params;
@@ -1655,6 +1722,9 @@ static const cmd_entry_t s_dispatch_table[] = {
     { "log.download.chunk", _handle_log_download_chunk },
     { "log.config.get",     _handle_log_config_get },
     { "log.config.set",     _handle_log_config_set },
+    { "replay.start",       _handle_replay_start },
+    { "replay.stop",        _handle_replay_stop },
+    { "replay.status",      _handle_replay_status },
     /* SD Card */
     { "sd.status",          _handle_sd_status },
     { "sd.files",           _handle_sd_files },

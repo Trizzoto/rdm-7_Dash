@@ -1,6 +1,7 @@
 #include "widget_panel.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include <float.h>  /* FLT_MAX for peak/min sentinels */
 #include "can/can_decode.h"
 #include "driver/twai.h"
 #include "esp_log.h"
@@ -420,6 +421,48 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 		lv_obj_set_style_border_opa(menu_panel_boxes[slot], 255,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+
+	/* Peak hold display. Reads peak_value/min_value from the signal layer
+	 * (always tracked) and renders into a small label below the value. We
+	 * only update when show_peak is non-zero AND we have a valid signal,
+	 * which keeps the cost essentially zero for the common case. */
+	if (pd->show_peak != 0 && pd->peak_label &&
+	    lv_obj_is_valid(pd->peak_label) && pd->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index(pd->signal_index);
+		char pk_buf[40];
+		if (!sig || (sig->peak_value == -FLT_MAX && sig->min_value == FLT_MAX)) {
+			pk_buf[0] = '\0';  /* no data yet */
+		} else {
+			float pk = sig->peak_value;
+			float mn = sig->min_value;
+			int dec = pd->decimals;
+			switch (pd->show_peak) {
+				case 1: /* MAX */
+					if (pk == -FLT_MAX) snprintf(pk_buf, sizeof(pk_buf), "MAX —");
+					else if (dec == 0)  snprintf(pk_buf, sizeof(pk_buf), "MAX %d", (int)pk);
+					else                snprintf(pk_buf, sizeof(pk_buf), "MAX %.*f", dec, (double)pk);
+					break;
+				case 2: /* MIN */
+					if (mn == FLT_MAX)  snprintf(pk_buf, sizeof(pk_buf), "MIN —");
+					else if (dec == 0)  snprintf(pk_buf, sizeof(pk_buf), "MIN %d", (int)mn);
+					else                snprintf(pk_buf, sizeof(pk_buf), "MIN %.*f", dec, (double)mn);
+					break;
+				case 3: /* both */ {
+					char a[16], b[16];
+					if (mn == FLT_MAX) snprintf(a, sizeof(a), "—");
+					else if (dec == 0) snprintf(a, sizeof(a), "%d", (int)mn);
+					else               snprintf(a, sizeof(a), "%.*f", dec, (double)mn);
+					if (pk == -FLT_MAX) snprintf(b, sizeof(b), "—");
+					else if (dec == 0)  snprintf(b, sizeof(b), "%d", (int)pk);
+					else                snprintf(b, sizeof(b), "%.*f", dec, (double)pk);
+					snprintf(pk_buf, sizeof(pk_buf), "%s/%s", a, b);
+					break;
+				}
+				default: pk_buf[0] = '\0';
+			}
+		}
+		lv_label_set_text(pd->peak_label, pk_buf);
+	}
 }
 
 /* Forward declarations — used by _panel_create / _panel_destroy below but
@@ -508,11 +551,35 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	if (strlen(pd->custom_text) == 0)
 		lv_obj_add_flag(ctxt, LV_OBJ_FLAG_HIDDEN);
 
+	/* Peak/min display (under the value, in muted body font). Created
+	 * always but hidden when show_peak == 0; toggling visibility is cheaper
+	 * than tearing down and rebuilding the label when the user changes the
+	 * setting from the config modal. */
+	lv_obj_t *pk = lv_label_create(box);
+	lv_label_set_text(pk, "");
+	lv_obj_set_style_text_color(pk, THEME_COLOR_TEXT_MUTED,
+	                             LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(pk, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_font(pk, THEME_FONT_TINY,
+	                            LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_align(pk, LV_TEXT_ALIGN_CENTER,
+	                             LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_width(pk, w->w - 10);
+	lv_label_set_long_mode(pk, LV_LABEL_LONG_CLIP);
+	lv_obj_set_x(pk, 0);
+	/* Position just below the value label — value_y_offset is typically +9
+	 * relative to centre, so peak goes at value+22 to clear the digits. */
+	lv_obj_set_y(pk, pd->value_y_offset + 22);
+	lv_obj_set_align(pk, LV_ALIGN_CENTER);
+	if (pd->show_peak == 0)
+		lv_obj_add_flag(pk, LV_OBJ_FLAG_HIDDEN);
+
 	/* Store per-instance pointers so signal callback uses the right objects */
 	pd->box = box;
 	pd->header_label = hdr;
 	pd->value_label = val;
 	pd->custom_text_label = ctxt;
+	pd->peak_label = pk;
 
 	/* Also assign to global arrays for backward compat (config modal, RPM limiter) */
 	if (slot < 8) {
@@ -558,6 +625,8 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddStringToObject(cfg, "label", pd->label);
 	cJSON_AddStringToObject(cfg, "custom_text", pd->custom_text);
 	cJSON_AddNumberToObject(cfg, "decimals", pd->decimals);
+	if (pd->show_peak != 0)
+		cJSON_AddNumberToObject(cfg, "show_peak", pd->show_peak);
 	if (pd->warning_high_enabled) {
 		cJSON_AddBoolToObject(cfg, "warning_high_enabled", true);
 		cJSON_AddNumberToObject(cfg, "warning_high_threshold", pd->warning_high_threshold);
@@ -638,6 +707,13 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	if (cJSON_IsNumber(item)) pd->decimals = (uint8_t)item->valueint;
+
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_peak");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0 || v > 3) v = 0;
+		pd->show_peak = (uint8_t)v;
+	}
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "warning_high_enabled");
 	if (cJSON_IsBool(item)) pd->warning_high_enabled = cJSON_IsTrue(item);

@@ -2235,6 +2235,8 @@
             </div>
             <input type="file" id="importRdmInput" accept=".rdm" style="display:none">
             <div class="header-divider"></div>
+            <button class="btn btn-secondary btn-icon" onclick="undo()" title="Undo (Ctrl+Z)">↶</button>
+            <button class="btn btn-secondary btn-icon" onclick="redo()" title="Redo (Ctrl+Y)">↷</button>
             <button class="btn btn-secondary" onclick="resetView()">Reset</button>
             <button class="btn btn-secondary btn-icon" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" onclick="captureScreenshot()">Sync</button>
@@ -3507,6 +3509,9 @@
                     { name: "label", label: "Header Label", type: "text", def: "", cat: "data" },
                     { name: "custom_text", label: "Unit Text", type: "text", def: "", cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    { name: "show_peak", label: "Peak Hold", type: "select", options: [
+                        { v: 0, l: "Off" }, { v: 1, l: "Max" }, { v: 2, l: "Min" }, { v: 3, l: "Min/Max" }
+                    ], def: 0, cat: "data" },
                     { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "high" },
                     { name: "warning_high_threshold", label: "Threshold", type: "stepper", min: -99999, max: 99999, def: 0, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
                     { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },

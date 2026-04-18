@@ -28,6 +28,7 @@
 #include "storage/boot_assets.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
+#include "storage/signal_replay.h"
 #include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -3066,6 +3067,134 @@ static const httpd_uri_t log_config_post_uri = {
 	.handler = _log_config_post_handler, .user_ctx = NULL
 };
 
+/* ── Signal Replay API ────────────────────────────────────────────────────
+ *   POST /api/replay/start   { "file":"log_42.csv", "speed":1.0, "loop":false }
+ *   POST /api/replay/stop    {}
+ *   GET  /api/replay/status  { active, file, row, total_rows, speed }
+ *
+ * `file` is just the basename in /sdcard/logs/ (matches /api/log/list output).
+ */
+
+typedef struct {
+	char  path[96];
+	float speed;
+	bool  loop;
+} replay_start_args_t;
+
+static void _deferred_replay_start(void *arg)
+{
+	replay_start_args_t *a = (replay_start_args_t *)arg;
+	if (a) {
+		signal_replay_start(a->path, a->speed, a->loop);
+		free(a);
+	}
+}
+
+static void _deferred_replay_stop(void *arg)
+{
+	(void)arg;
+	signal_replay_stop();
+}
+
+static esp_err_t _replay_start_handler(httpd_req_t *req)
+{
+	if (!sd_manager_is_mounted()) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+		                     "SD card not mounted");
+		return ESP_OK;
+	}
+	if (req->content_len <= 0 || req->content_len >= 256) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body required");
+		return ESP_OK;
+	}
+	char buf[256];
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
+		return ESP_OK;
+	}
+	buf[received] = '\0';
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_OK;
+	}
+	cJSON *file_item  = cJSON_GetObjectItemCaseSensitive(root, "file");
+	cJSON *speed_item = cJSON_GetObjectItemCaseSensitive(root, "speed");
+	cJSON *loop_item  = cJSON_GetObjectItemCaseSensitive(root, "loop");
+	if (!cJSON_IsString(file_item) || !file_item->valuestring) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'file'");
+		return ESP_OK;
+	}
+	replay_start_args_t *a = calloc(1, sizeof(*a));
+	if (!a) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_OK;
+	}
+	/* Allow either a basename ("log_42.csv") or a full path. Normalize to a
+	 * full /sdcard/logs/ path if it doesn't start with one. */
+	const char *fn = file_item->valuestring;
+	if (fn[0] == '/') {
+		strncpy(a->path, fn, sizeof(a->path) - 1);
+	} else {
+		snprintf(a->path, sizeof(a->path), "/sdcard/logs/%s", fn);
+	}
+	a->speed = cJSON_IsNumber(speed_item) ? (float)speed_item->valuedouble : 1.0f;
+	a->loop  = cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item);
+	cJSON_Delete(root);
+
+	lv_async_call(_deferred_replay_start, a);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _replay_stop_handler(httpd_req_t *req)
+{
+	lv_async_call(_deferred_replay_stop, NULL);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _replay_status_handler(httpd_req_t *req)
+{
+	bool active = signal_replay_is_active();
+	const char *file = signal_replay_get_file();
+	uint32_t row = signal_replay_get_row();
+	uint32_t total = signal_replay_get_total_rows();
+	float speed = signal_replay_get_speed();
+
+	const char *basename = file;
+	const char *p = strrchr(file, '/');
+	if (p) basename = p + 1;
+
+	char buf[224];
+	snprintf(buf, sizeof(buf),
+	         "{\"active\":%s,\"file\":\"%s\",\"row\":%lu,"
+	         "\"total_rows\":%lu,\"speed\":%.2f}",
+	         active ? "true" : "false", basename,
+	         (unsigned long)row, (unsigned long)total, (double)speed);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, buf);
+	return ESP_OK;
+}
+
+static const httpd_uri_t replay_start_uri = {
+	.uri = "/api/replay/start", .method = HTTP_POST,
+	.handler = _replay_start_handler, .user_ctx = NULL
+};
+static const httpd_uri_t replay_stop_uri = {
+	.uri = "/api/replay/stop", .method = HTTP_POST,
+	.handler = _replay_stop_handler, .user_ctx = NULL
+};
+static const httpd_uri_t replay_status_uri = {
+	.uri = "/api/replay/status", .method = HTTP_GET,
+	.handler = _replay_status_handler, .user_ctx = NULL
+};
+
 /* ── Device Info API ───────────────────────────────────────────────────── */
 
 static esp_err_t _device_info_handler(httpd_req_t *req) {
@@ -3480,6 +3609,9 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &log_delete_uri);
 	REGISTER_URI(server, &log_config_get_uri);
 	REGISTER_URI(server, &log_config_post_uri);
+	REGISTER_URI(server, &replay_start_uri);
+	REGISTER_URI(server, &replay_stop_uri);
+	REGISTER_URI(server, &replay_status_uri);
 	static const httpd_uri_t signal_values_uri = {
 		.uri = "/api/signals/values",
 		.method = HTTP_GET,

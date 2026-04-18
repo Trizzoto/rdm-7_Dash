@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "ui_wifi.h"
+#include "ui_diagnostics.h"
 #include "ota_handler.h"
 #include "nvs_flash.h"
 #include "version.h"
@@ -1456,6 +1457,13 @@ static void _log_toggle_btn_cb(lv_event_t *e) {
     _update_log_ui();
 }
 
+/* Wipe peak/min for every signal in the registry. Affects all panels with
+ * show_peak set (they pull current peak/min on the next signal update). */
+static void _reset_peaks_btn_cb(lv_event_t *e) {
+    (void)e;
+    signal_reset_peaks();
+}
+
 /* Map dropdown index ↔ rate Hz. Order MUST match the static options string
  * passed to lv_dropdown_set_options_static in the build code below:
  *   0=1, 1=2, 2=5, 3=10, 4=20, 5=50, 6=100, 7=200, 8=Max(0). */
@@ -1483,6 +1491,25 @@ static void _log_rate_dd_cb(lv_event_t *e) {
     lv_obj_t *dd = lv_event_get_target(e);
     uint16_t idx = lv_dropdown_get_selected(dd);
     data_logger_set_rate_hz(_log_rate_idx_to_hz(idx));
+}
+
+/* ── System Diagnostics launcher ──────────────────────────────────────── */
+
+static void _show_diag_async(void *arg) {
+    (void)arg;
+    diagnostics_ui_show();
+}
+
+static void _diag_btn_cb(lv_event_t *e) {
+    (void)e;
+    /* Same pattern as the wizard launcher: drop back to the dashboard so the
+     * diagnostics screen has a clean backdrop, then show on the next tick so
+     * the screen-load fully commits before we paint. */
+    lv_obj_t *ret = device_settings_return_screen;
+    if (ret && lv_obj_is_valid(ret)) {
+        lv_scr_load(ret);
+    }
+    lv_async_call(_show_diag_async, NULL);
 }
 
 /* ── Re-run First-Run Wizard ──────────────────────────────────────────── */
@@ -1998,6 +2025,25 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
 
+    /* Reset Peaks button — wipes all signal peak/min so a new tuning
+     * session starts fresh. Lives in the same section since users typically
+     * reset peaks at the start of a logged session. */
+    lv_obj_t *peak_btn = lv_btn_create(log_section);
+    lv_obj_set_size(peak_btn, 110, 30);
+    lv_obj_align(peak_btn, LV_ALIGN_TOP_RIGHT, 0, 22);
+    lv_obj_set_style_bg_color(peak_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(peak_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(peak_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(peak_btn, 1, 0);
+    lv_obj_set_style_border_color(peak_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(peak_btn, 0, 0);
+    lv_obj_t *peak_lbl = lv_label_create(peak_btn);
+    lv_label_set_text(peak_lbl, "Reset Peaks");
+    lv_obj_center(peak_lbl);
+    lv_obj_set_style_text_font(peak_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(peak_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(peak_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
     _update_log_ui();
 
     if (s_log_status_timer) {
@@ -2120,6 +2166,22 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     s_rx_rate = 0;
 
     refresh_can_diagnostics();
+
+    // System Diagnostics button — opens the read-only health screen
+    lv_obj_t* diag_btn = lv_btn_create(content);
+    lv_obj_set_size(diag_btn, lv_pct(100), 34);
+    lv_obj_set_style_bg_color(diag_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(diag_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(diag_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(diag_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(diag_btn, 1, 0);
+    lv_obj_set_style_shadow_width(diag_btn, 0, 0);
+    lv_obj_t* diag_label = lv_label_create(diag_btn);
+    lv_label_set_text(diag_label, "System Diagnostics");
+    lv_obj_center(diag_label);
+    lv_obj_set_style_text_font(diag_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(diag_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(diag_btn, _diag_btn_cb, LV_EVENT_CLICKED, NULL);
 
     // Run Setup Wizard button — opens the first-run overlay again
     lv_obj_t* wizard_btn = lv_btn_create(content);
