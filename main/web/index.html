@@ -1171,22 +1171,16 @@
             background: #363636;
         }
 
-        /* SIM pill gets an unmistakable "hot" look when active so no one
-         * mistakes simulated data for real CAN data. */
+        /* SIM active state uses the system "connected/live" green the rest
+         * of the UI already uses for status indicators. */
         .header-pill.sim-active {
-            background: hsl(28, 85%, 48%);
-            color: hsl(30, 100%, 96%);
-            border-color: hsl(28, 90%, 58%);
-            font-weight: 700;
-            box-shadow: 0 0 6px hsla(28, 90%, 55%, 0.45);
-            animation: sim-pulse 1.6s ease-in-out infinite;
+            background: hsl(140, 60%, 30%);
+            color: hsl(140, 60%, 92%);
+            border-color: hsl(140, 60%, 55%);
+            font-weight: 600;
         }
         .header-pill.sim-active:hover {
-            background: hsl(28, 90%, 54%);
-        }
-        @keyframes sim-pulse {
-            0%, 100% { box-shadow: 0 0 6px hsla(28, 90%, 55%, 0.45); }
-            50%      { box-shadow: 0 0 12px hsla(28, 90%, 55%, 0.75); }
+            background: hsl(140, 60%, 34%);
         }
 
         .header-divider {
