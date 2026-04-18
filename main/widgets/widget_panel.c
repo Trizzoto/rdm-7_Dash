@@ -438,21 +438,21 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 			int dec = pd->decimals;
 			switch (pd->show_peak) {
 				case 1: /* MAX */
-					if (pk == -FLT_MAX) snprintf(pk_buf, sizeof(pk_buf), "MAX —");
+					if (pk == -FLT_MAX) snprintf(pk_buf, sizeof(pk_buf), "MAX -");
 					else if (dec == 0)  snprintf(pk_buf, sizeof(pk_buf), "MAX %d", (int)pk);
 					else                snprintf(pk_buf, sizeof(pk_buf), "MAX %.*f", dec, (double)pk);
 					break;
 				case 2: /* MIN */
-					if (mn == FLT_MAX)  snprintf(pk_buf, sizeof(pk_buf), "MIN —");
+					if (mn == FLT_MAX)  snprintf(pk_buf, sizeof(pk_buf), "MIN -");
 					else if (dec == 0)  snprintf(pk_buf, sizeof(pk_buf), "MIN %d", (int)mn);
 					else                snprintf(pk_buf, sizeof(pk_buf), "MIN %.*f", dec, (double)mn);
 					break;
 				case 3: /* both */ {
 					char a[16], b[16];
-					if (mn == FLT_MAX) snprintf(a, sizeof(a), "—");
+					if (mn == FLT_MAX) snprintf(a, sizeof(a), "-");
 					else if (dec == 0) snprintf(a, sizeof(a), "%d", (int)mn);
 					else               snprintf(a, sizeof(a), "%.*f", dec, (double)mn);
-					if (pk == -FLT_MAX) snprintf(b, sizeof(b), "—");
+					if (pk == -FLT_MAX) snprintf(b, sizeof(b), "-");
 					else if (dec == 0)  snprintf(b, sizeof(b), "%d", (int)pk);
 					else                snprintf(b, sizeof(b), "%.*f", dec, (double)pk);
 					snprintf(pk_buf, sizeof(pk_buf), "%s/%s", a, b);

@@ -88,7 +88,7 @@ static lv_obj_t *_add_kv(lv_obj_t *parent, const char *name)
 	lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
 	lv_obj_t *val_lbl = lv_label_create(row);
-	lv_label_set_text(val_lbl, "—");
+	lv_label_set_text(val_lbl, "-");
 	lv_obj_set_style_text_font(val_lbl, THEME_FONT_TINY, 0);
 	lv_obj_set_style_text_color(val_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_align(val_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -205,8 +205,8 @@ static void _refresh(lv_timer_t *t)
 	} else {
 		lv_label_set_text(_kv("SD"), "Not mounted");
 		lv_obj_set_style_text_color(_kv("SD"), THEME_COLOR_TEXT_MUTED, 0);
-		lv_label_set_text(_kv("Usage"), "—");
-		lv_label_set_text(_kv("Free"), "—");
+		lv_label_set_text(_kv("Usage"), "-");
+		lv_label_set_text(_kv("Free"), "-");
 	}
 
 	/* ── WiFi ── */
@@ -217,13 +217,13 @@ static void _refresh(lv_timer_t *t)
 	    wstate == WIFI_MGR_STATE_FAILED    ? THEME_COLOR_STATUS_ERROR :
 	                                          THEME_COLOR_TEXT_MUTED, 0);
 	const char *ssid = wifi_manager_get_connected_ssid();
-	lv_label_set_text(_kv("SSID"), (ssid && ssid[0]) ? ssid : "—");
+	lv_label_set_text(_kv("SSID"), (ssid && ssid[0]) ? ssid : "-");
 	const char *ip = wifi_manager_get_sta_ip();
-	lv_label_set_text(_kv("STA IP"), (ip && ip[0]) ? ip : "—");
+	lv_label_set_text(_kv("STA IP"), (ip && ip[0]) ? ip : "-");
 	lv_label_set_text(_kv("AP"),
 	                  wifi_manager_is_ap_enabled() ? "Enabled" : "Disabled");
 	const char *apip = wifi_manager_get_ap_ip();
-	lv_label_set_text(_kv("AP IP"), (apip && apip[0]) ? apip : "—");
+	lv_label_set_text(_kv("AP IP"), (apip && apip[0]) ? apip : "-");
 
 	/* ── Signals ── */
 	uint16_t total_sigs = signal_get_count();

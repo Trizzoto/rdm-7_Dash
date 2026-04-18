@@ -87,7 +87,7 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 
 	/* Three value columns, right-aligned, each ~20% wide. Order: cur, min, max */
 	lv_obj_t *cur = lv_label_create(row);
-	lv_label_set_text(cur, "—");
+	lv_label_set_text(cur, "-");
 	lv_obj_set_style_text_font(cur, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(cur, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_align(cur, LV_TEXT_ALIGN_RIGHT, 0);
@@ -95,7 +95,7 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 	lv_obj_align(cur, LV_ALIGN_LEFT_MID, lv_pct(40), 0);
 
 	lv_obj_t *mn = lv_label_create(row);
-	lv_label_set_text(mn, "—");
+	lv_label_set_text(mn, "-");
 	lv_obj_set_style_text_font(mn, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(mn, THEME_COLOR_STATUS_CONNECTED, 0);
 	lv_obj_set_style_text_align(mn, LV_TEXT_ALIGN_RIGHT, 0);
@@ -103,7 +103,7 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 	lv_obj_align(mn, LV_ALIGN_LEFT_MID, lv_pct(60), 0);
 
 	lv_obj_t *mx = lv_label_create(row);
-	lv_label_set_text(mx, "—");
+	lv_label_set_text(mx, "-");
 	lv_obj_set_style_text_font(mx, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(mx, THEME_COLOR_ACCENT_AMBER, 0);
 	lv_obj_set_style_text_align(mx, LV_TEXT_ALIGN_RIGHT, 0);
@@ -154,7 +154,7 @@ static void _refresh(lv_timer_t *t)
 		if (!sig) continue;
 
 		if (sig->is_stale) {
-			lv_label_set_text(s_rows[i].cur_lbl, "—");
+			lv_label_set_text(s_rows[i].cur_lbl, "-");
 			lv_obj_set_style_text_color(s_rows[i].cur_lbl,
 			                             THEME_COLOR_TEXT_MUTED, 0);
 		} else {
@@ -165,13 +165,13 @@ static void _refresh(lv_timer_t *t)
 		}
 
 		if (sig->min_value == FLT_MAX) {
-			lv_label_set_text(s_rows[i].min_lbl, "—");
+			lv_label_set_text(s_rows[i].min_lbl, "-");
 		} else {
 			_format_value(sig->min_value, buf, sizeof(buf));
 			lv_label_set_text(s_rows[i].min_lbl, buf);
 		}
 		if (sig->peak_value == -FLT_MAX) {
-			lv_label_set_text(s_rows[i].max_lbl, "—");
+			lv_label_set_text(s_rows[i].max_lbl, "-");
 		} else {
 			_format_value(sig->peak_value, buf, sizeof(buf));
 			lv_label_set_text(s_rows[i].max_lbl, buf);
