@@ -4540,14 +4540,13 @@
             const btn = document.getElementById('applyBtn');
             if (!btn) return;
             const name = currentLayout.name || 'default';
-            const isDefault = name === 'default';
-            /* Default layout is factory-protected: "Preview" pushes the live
-             * state to the device via /api/layout/preview but doesn't write
-             * to disk. Named layouts: "Save" persists + applies. */
-            btn.textContent = isDefault ? 'Preview' : 'Save';
-            btn.title = isDefault
-                ? 'Push these edits live to the device for testing. Default layout is factory-protected - save changes to a new named layout to keep them across reboots.'
-                : `Save + apply to "${name}"`;
+            /* Always a save: layout_manager_save_raw has no special handling
+             * for "default" - it writes whatever name is passed, and edits
+             * to default are preserved across reboots. Live preview happens
+             * automatically via the debounced /api/layout/preview push on
+             * every edit, so the button doesn't need a separate Preview. */
+            btn.textContent = 'Save';
+            btn.title = `Save + apply to "${name}"`;
         }
 
         function renderEditor() {
@@ -7943,7 +7942,6 @@
             const payload = buildFirmwarePayload();
             const isSplash = currentScreenMode === 'splash';
             const layoutName = currentLayout.name || 'default';
-            const isDefault = !isSplash && layoutName === 'default';
 
             /* Splash layouts save as _splash_<name> */
             if (isSplash) {
@@ -7951,8 +7949,8 @@
                 payload.name = '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default');
             }
 
-            /* Confirm which layout will be overwritten */
-            if (!isSplash && !isDefault) {
+            /* Confirm which layout will be overwritten (skip for splash). */
+            if (!isSplash) {
                 const deviceActive = layoutSelect.value || '';
                 if (deviceActive && deviceActive !== layoutName) {
                     if (!confirm(`This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`)) return;
@@ -7960,18 +7958,18 @@
             }
 
             try {
-                updateStatus('Applying layout...');
-                /* Default layout: apply only (don't overwrite on disk).
-                 * Splash and named layouts: save + apply. */
-                const url = isDefault ? '/api/layout/preview' : '/api/layout/save';
-                const response = await fetch(url, {
+                updateStatus('Saving layout...');
+                /* Always persist + apply. layout_manager_save_raw has no
+                 * special-case for "default" - edits to default.json are
+                 * preserved across reboots (CLAUDE.md). */
+                const response = await fetch('/api/layout/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 if (!response.ok) throw new Error();
-                updateStatus(isSplash ? 'Splash applied' : 'Applied to device');
-                showToast(isSplash ? 'Splash applied' : 'Applied to device', 'success');
+                updateStatus(isSplash ? 'Splash saved' : 'Saved to device');
+                showToast(isSplash ? 'Splash saved' : 'Saved to device', 'success');
                 _editingActive = false;
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
