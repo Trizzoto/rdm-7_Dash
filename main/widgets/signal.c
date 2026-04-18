@@ -256,6 +256,9 @@ void signal_inject_test_value(const char *name, float value)
     signal_t *sig = &s_signals[idx];
     uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
 
+    bool was_stale = sig->is_stale;
+    bool changed   = (value != sig->current_value);
+
     sig->current_value  = value;
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
@@ -266,7 +269,12 @@ void signal_inject_test_value(const char *name, float value)
         if (value < sig->min_value)  sig->min_value  = value;
     }
 
-    notify_subscribers(sig);
+    /* Match signal_dispatch_frame: only repaint widgets when the value
+     * actually changed or the signal was stale. Cuts redundant LVGL
+     * invalidations when the sim (or replay) re-injects the same value. */
+    if (was_stale || changed) {
+        notify_subscribers(sig);
+    }
 }
 
 /* ── Timeout checking ───────────────────────────────────────────────────── */

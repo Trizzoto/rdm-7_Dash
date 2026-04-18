@@ -14,6 +14,12 @@
 #define SIM_MAX_SIGNALS 128
 #define SIM_TIMER_PERIOD_MS 50
 #define SIM_CYCLE_MS 3000
+/* How many signals to inject per timer tick. Updating every signal in a
+ * single burst floods the LVGL task with invalidations and tanks the
+ * dashboard framerate (~19 fps observed). Spreading ~4 per 50ms tick
+ * still covers 15-20 signals in under half a second while leaving the
+ * render pipeline time to breathe. */
+#define SIM_BATCH_PER_TICK 4
 
 static const char *TAG = "signal_sim";
 
@@ -27,6 +33,9 @@ static lv_timer_t  *s_sim_timer  = NULL;
 static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
 static float        s_phase[SIM_MAX_SIGNALS];
 static uint16_t     s_cached_count = 0;
+/* Cursor for the spread-update pattern. Each tick processes
+ * SIM_BATCH_PER_TICK signals starting here, then advances. */
+static uint16_t     s_sim_cursor   = 0;
 
 static void _build_bounds(uint16_t count)
 {
@@ -112,27 +121,39 @@ static void _sim_timer_cb(lv_timer_t *timer)
         _build_bounds(count);
         _init_phases(count);
         s_cached_count = count;
+        s_sim_cursor = 0;
     }
 
     const float delta = (float)SIM_TIMER_PERIOD_MS / (float)SIM_CYCLE_MS;
 
+    /* Advance phase for EVERY signal every tick so simulated time stays
+     * smooth, but only inject updates for a small batch per tick to keep
+     * LVGL from choking on burst invalidations. Every signal still gets
+     * refreshed within ceil(count / BATCH) ticks -> ~200-400ms cycle. */
     for (uint16_t i = 0; i < count; i++) {
         signal_t *sig = signal_get_by_index(i);
-        if (!sig) continue;
-
-        /* Skip internal signals (can_id 0) — leave real sensor values */
-        if (sig->can_id == 0) continue;
-
+        if (!sig || sig->can_id == 0) continue;  /* skip internal signals */
         s_phase[i] += delta;
         if (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;
+    }
+
+    uint16_t injected = 0;
+    uint16_t scanned = 0;
+    while (injected < SIM_BATCH_PER_TICK && scanned < count) {
+        uint16_t i = s_sim_cursor;
+        s_sim_cursor = (uint16_t)((s_sim_cursor + 1) % count);
+        scanned++;
+
+        signal_t *sig = signal_get_by_index(i);
+        if (!sig || sig->can_id == 0) continue;
 
         /* Triangle wave: ramp up 0-0.5, ramp down 0.5-1.0 */
         float t = s_phase[i] < 0.5f
                     ? s_phase[i] * 2.0f
                     : (1.0f - s_phase[i]) * 2.0f;
-
         float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
         signal_inject_test_value(sig->name, value);
+        injected++;
     }
 }
 
@@ -146,6 +167,7 @@ void signal_sim_start(void)
     _build_bounds(count);
     _init_phases(count);
     s_cached_count = count;
+    s_sim_cursor = 0;
 
     s_sim_active = true;
     s_sim_timer = lv_timer_create(_sim_timer_cb, SIM_TIMER_PERIOD_MS, NULL);
