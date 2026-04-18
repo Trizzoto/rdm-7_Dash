@@ -628,17 +628,12 @@ static void _apply_limiter_effect(void) {
 	lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
 	                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	/* The empty portion (PART_MAIN) only changes when the limiter is on,
-	 * so the redline strip and normal bar bg stay untouched at idle. When
-	 * the limiter triggers, the WHOLE bar takes the limiter colour for
-	 * maximum visibility. */
-	if (over_limiter && effect != 0) {
-		lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
-		                           LV_PART_MAIN | LV_STATE_DEFAULT);
-	} else {
-		lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
-		                           LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
+	/* PART_MAIN is the empty (unfilled) portion of the track. Keep it at
+	 * the normal background so the fill-vs-empty boundary stays visible
+	 * while the limiter effect is active - the driver needs to see the
+	 * actual RPM level, not a solid-coloured bar that looks 100% full. */
+	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
+	                           LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 void update_redline_position(void) {
 	if (!rpm_redline_zone)
