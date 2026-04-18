@@ -26,13 +26,17 @@
 
 #define SIM_MAX_SIGNALS 128
 #define SIM_MAX_FRAMES  64    /* unique CAN IDs per layout */
-/* 50ms tick = 20 Hz frame rate, roughly matching a typical Haltech/MaxxECU
- * 20-50 Hz broadcast. Each tick emits ONE frame per unique CAN ID, so the
- * real cost is O(frames) not O(signals). A layout with 15 signals on 5
- * distinct CAN IDs produces 5 frames/tick = 100 frames/sec, well below
- * what real CAN puts on the wire. */
+/* 50ms tick = 20 Hz frame rate, roughly matching a typical 20-50 Hz ECU
+ * broadcast. Cycle = how long it takes each signal to sweep min->max->min.
+ * Real CAN has most signals near-constant (coolant temp, battery, oil
+ * temp) so their early-out gates skip widget redraws - only the live
+ * signals (RPM, speed, lambda) repaint continuously. A 3-second cycle
+ * forced EVERY signal to cross integer boundaries multiple times per
+ * second = every widget redrew every tick = FPS tanked. 20s matches what
+ * real driving looks like: slow sweep, most integer values stable, early
+ * outs fire. */
 #define SIM_TIMER_PERIOD_MS 50
-#define SIM_CYCLE_MS 3000
+#define SIM_CYCLE_MS 20000
 
 static const char *TAG = "signal_sim";
 
