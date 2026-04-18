@@ -465,13 +465,10 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 
 	bool is_splash = (strncmp(layout_name, "_splash_", 8) == 0);
 
-	/* Protect the default layout from being overwritten via web editor */
-	if (!is_splash && strcmp(layout_name, "default") == 0) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Cannot overwrite default layout");
-		return ESP_FAIL;
-	}
+	/* User edits to "default" are deliberately preserved across reboots
+	 * (see CLAUDE.md). The old "cannot overwrite default" rejection broke
+	 * the auto-save flow and conflicted with the documented behaviour.
+	 * Factory reset remains the way to restore the compiled-in default. */
 
 	// Persist raw JSON to LittleFS
 	esp_err_t err = layout_manager_save_raw(layout_name, root);

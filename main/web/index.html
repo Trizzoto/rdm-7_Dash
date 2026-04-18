@@ -58,17 +58,33 @@
         header {
             background: #000;
             border-bottom: 1px solid var(--border);
-            padding: 8px 16px;
+            padding: 6px 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             z-index: 100;
             flex-shrink: 0;
-            /* Wrap when the row is wider than the viewport (laptop screens
-             * narrower than ~1400px were clipping the Save button off the
-             * right edge). Small row-gap keeps a second line snug. */
-            flex-wrap: wrap;
-            row-gap: 4px;
+            /* Single row on desktop. Buttons/pills below are compact enough
+             * to fit 1280px+ viewports. If you're on something narrower the
+             * mobile @media rule below kicks in. */
+            flex-wrap: nowrap;
+            gap: 4px;
+            overflow-x: auto;
+        }
+        /* Compact header controls so a laptop (1280px+) fits everything on
+         * one line. Dividers shrink too. */
+        header .header-pill,
+        header .btn {
+            padding: 4px 7px;
+            font-size: 11px;
+        }
+        header .btn-icon { padding: 4px 6px; }
+        header .header-divider {
+            margin: 0 2px;
+        }
+        header select {
+            padding: 4px 6px !important;
+            font-size: 11px !important;
         }
 
         header .title {
@@ -7951,8 +7967,12 @@
         }
 
         async function saveActiveLayout(opts) {
-            /* opts.silent = true skips the overwrite confirm prompt. Used by
-             * the auto-save path so every edit doesn't pop a dialog. */
+            /* opts.silent = true skips the overwrite confirm prompt AND skips
+             * the device-side dashboard rebuild (apply=0). Used by auto-save
+             * so every edit doesn't redraw the whole screen - the live
+             * preview push (triggerPreview) is already keeping the device
+             * screen in sync. Manual Save button remains apply=1 so the
+             * user gets a confirmed full-reload when they tap it. */
             const silent = opts && opts.silent;
             const payload = buildFirmwarePayload();
             const isSplash = currentScreenMode === 'splash';
@@ -7973,11 +7993,9 @@
             }
 
             try {
-                updateStatus('Saving layout...');
-                /* Always persist + apply. layout_manager_save_raw has no
-                 * special-case for "default" - edits to default.json are
-                 * preserved across reboots (CLAUDE.md). */
-                const response = await fetch('/api/layout/save', {
+                updateStatus(silent ? 'Auto-saving...' : 'Saving layout...');
+                const url = silent ? '/api/layout/save?apply=0' : '/api/layout/save';
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
