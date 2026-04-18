@@ -401,11 +401,19 @@ static void _create(void)
 	lv_obj_set_style_radius(body, 2, LV_PART_SCROLLBAR);
 	lv_obj_set_style_width(body, 4, LV_PART_SCROLLBAR);
 
-	/* (SCREEN_W - 16 padding - 12 gap) / 3 ≈ 257 */
+	/* All cards share the same fixed footprint for a uniform grid look.
+	 *   width  = (SCREEN_W - 16 padding - 12 gap) / 3   ≈ 257
+	 *   height = sized for the 6-row max (CAN, SYSTEM); shorter cards leave
+	 *            empty space at the bottom rather than mismatched heights.
+	 *
+	 * Math: pad_all(10) + title(~16) + pad_gap(4) + 6 rows × (16+4 gap)
+	 *       + pad_all(10) - 4 (last gap) = 28 + 120 - 4 = ~144. Round to
+	 *       150 for a little breathing room. */
 	const lv_coord_t CARD_W = (SCREEN_W - 16 - 12) / 3;
+	const lv_coord_t CARD_H = 150;
 
-	/* CAN BUS — tallest at 6 rows */
-	lv_obj_t *can_card = _make_card(body, CARD_W, LV_SIZE_CONTENT,
+	/* CAN BUS */
+	lv_obj_t *can_card = _make_card(body, CARD_W, CARD_H,
 	                                  "CAN BUS", THEME_COLOR_ACCENT_BLUE);
 	_add_kv(can_card, "State");
 	_add_kv(can_card, "Pending RX");
@@ -414,8 +422,8 @@ static void _create(void)
 	_add_kv(can_card, "Bus errors");
 	_add_kv(can_card, "RX missed");
 
-	/* WiFi — 5 rows */
-	lv_obj_t *wf_card = _make_card(body, CARD_W, LV_SIZE_CONTENT,
+	/* WiFi */
+	lv_obj_t *wf_card = _make_card(body, CARD_W, CARD_H,
 	                                 "WI-FI", THEME_COLOR_ACCENT_BLUE);
 	_add_kv(wf_card, "WiFi");
 	_add_kv(wf_card, "SSID");
@@ -423,8 +431,8 @@ static void _create(void)
 	_add_kv(wf_card, "AP");
 	_add_kv(wf_card, "AP IP");
 
-	/* SYSTEM — 5 rows + ESP-IDF static row */
-	lv_obj_t *sys_card = _make_card(body, CARD_W, LV_SIZE_CONTENT,
+	/* SYSTEM — 5 KV rows + ESP-IDF static row */
+	lv_obj_t *sys_card = _make_card(body, CARD_W, CARD_H,
 	                                  "SYSTEM", THEME_COLOR_ACCENT_BLUE);
 	_add_kv(sys_card, "Uptime");
 	_add_kv(sys_card, "Free heap");
@@ -432,15 +440,15 @@ static void _create(void)
 	_add_kv(sys_card, "Logger");
 	_add_kv(sys_card, "Replay");
 
-	/* SD CARD — short, 3 rows */
-	lv_obj_t *sd_card = _make_card(body, CARD_W, LV_SIZE_CONTENT,
+	/* SD CARD */
+	lv_obj_t *sd_card = _make_card(body, CARD_W, CARD_H,
 	                                 "SD CARD", THEME_COLOR_ACCENT_AMBER);
 	_add_kv(sd_card, "SD");
 	_add_kv(sd_card, "Usage");
 	_add_kv(sd_card, "Free");
 
-	/* SIGNALS — short, 3 rows */
-	lv_obj_t *sig_card = _make_card(body, CARD_W, LV_SIZE_CONTENT,
+	/* SIGNALS */
+	lv_obj_t *sig_card = _make_card(body, CARD_W, CARD_H,
 	                                  "SIGNALS", THEME_COLOR_ACCENT_AMBER);
 	_add_kv(sig_card, "Total");
 	_add_kv(sig_card, "Fresh");
