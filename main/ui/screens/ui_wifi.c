@@ -739,6 +739,17 @@ static void _sanitize_ssid(const char *src, char *dst, size_t dst_size)
  * Scan results list population
  * ========================================================================= */
 
+/* Returns true if the given SSID is in the multi-network saved list. */
+static bool _ssid_is_saved(const wifi_credentials_t *list, uint8_t list_count,
+                           const char *ssid)
+{
+    if (!ssid || ssid[0] == '\0') return false;
+    for (uint8_t i = 0; i < list_count; i++) {
+        if (strcmp(list[i].ssid, ssid) == 0) return true;
+    }
+    return false;
+}
+
 static void _populate_scan_list(void)
 {
     if (!wifi_list) return;
@@ -748,21 +759,29 @@ static void _populate_scan_list(void)
     wifi_mgr_ap_record_t records[MAX_SCAN_RESULTS];
     uint16_t count = wifi_manager_get_scan_results(records, MAX_SCAN_RESULTS);
 
-    /* Load saved credentials to check for saved network */
-    wifi_credentials_t saved_creds = {0};
-    bool has_saved = (config_store_load_wifi(&saved_creds) == ESP_OK &&
-                      saved_creds.ssid[0] != '\0');
+    /* Load the full multi-SSID saved list — any network in the list gets the
+     * "saved" highlight + per-row Forget button. (Was previously slot-0 only.) */
+    wifi_credentials_t saved_list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    uint8_t saved_count = 0;
+    config_store_load_wifi_list(saved_list, &saved_count);
 
-    if (count == 0) {
+    if (count == 0 && saved_count == 0) {
         lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks found");
         lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
         return;
     }
 
+    if (count == 0) {
+        /* No scan results but we have saved networks — fall through to the
+         * "out of range" loop at the bottom so they're at least manageable. */
+        lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks in range");
+        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
+    }
+
     for (uint16_t i = 0; i < count; i++) {
-        bool is_saved = (has_saved &&
-                         strcmp(records[i].ssid, saved_creds.ssid) == 0);
+        bool is_saved = _ssid_is_saved(saved_list, saved_count, records[i].ssid);
 
         /* Sanitize SSID for display (font may lack non-ASCII glyphs) */
         char safe_ssid[33];
@@ -788,7 +807,15 @@ static void _populate_scan_list(void)
             /* Highlight saved network in blue */
             lv_obj_set_style_text_color(btn, THEME_COLOR_STATUS_CONNECTED, 0);
 
-            /* Add a small "Forget" button on the right side */
+            /* Add a small "Forget" button on the right side. Per-row SSID
+             * context is passed via user_data so we forget the right entry
+             * (was previously slot-0 only). */
+            char *forget_ssid = lv_mem_alloc(33);
+            if (forget_ssid) {
+                strncpy(forget_ssid, records[i].ssid, 32);
+                forget_ssid[32] = '\0';
+            }
+
             lv_obj_t *forget_btn_inline = lv_btn_create(btn);
             lv_obj_set_size(forget_btn_inline, 56, 22);
             lv_obj_align(forget_btn_inline, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -799,7 +826,7 @@ static void _populate_scan_list(void)
             lv_obj_set_style_radius(forget_btn_inline, THEME_RADIUS_SMALL, 0);
             lv_obj_set_style_shadow_width(forget_btn_inline, 0, 0);
             lv_obj_set_style_pad_all(forget_btn_inline, 0, 0);
-            lv_obj_add_event_cb(forget_btn_inline, _forget_cb, LV_EVENT_CLICKED, NULL);
+            lv_obj_add_event_cb(forget_btn_inline, _forget_cb, LV_EVENT_ALL, forget_ssid);
 
             lv_obj_t *fgt_lbl = lv_label_create(forget_btn_inline);
             lv_label_set_text(fgt_lbl, "Forget");
@@ -817,6 +844,72 @@ static void _populate_scan_list(void)
             ssid_copy[32] = '\0';
         }
         lv_obj_add_event_cb(btn, _network_item_cb, LV_EVENT_ALL, ssid_copy);
+    }
+
+    /* Append "Saved (out of range)" entries — known networks that didn't
+     * appear in the scan, so the user can still forget them or auto-connect
+     * if they roam back into range. */
+    bool any_out_of_range = false;
+    for (uint8_t s = 0; s < saved_count; s++) {
+        bool in_scan = false;
+        for (uint16_t i = 0; i < count; i++) {
+            if (strcmp(records[i].ssid, saved_list[s].ssid) == 0) {
+                in_scan = true;
+                break;
+            }
+        }
+        if (in_scan) continue;
+
+        /* Section header before the first out-of-range entry */
+        if (!any_out_of_range) {
+            lv_obj_t *hdr = lv_list_add_text(wifi_list, "SAVED (out of range)");
+            lv_obj_set_style_text_font(hdr, THEME_FONT_TINY, 0);
+            lv_obj_set_style_text_color(hdr, THEME_COLOR_TEXT_MUTED, 0);
+            lv_obj_set_style_pad_top(hdr, 8, 0);
+            any_out_of_range = true;
+        }
+
+        char safe_ssid[33];
+        _sanitize_ssid(saved_list[s].ssid, safe_ssid, sizeof(safe_ssid));
+
+        lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, safe_ssid);
+        lv_obj_set_style_bg_color(btn, THEME_COLOR_SECTION_BG, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
+        lv_obj_set_style_text_font(btn, THEME_FONT_SMALL, 0);
+        /* Dim out-of-range so they read as "saved but unreachable" */
+        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_text_opa(btn, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_ver(btn, 6, 0);
+
+        /* Forget button — same per-row pattern, dispatches to _forget_cb */
+        char *forget_ssid = lv_mem_alloc(33);
+        if (forget_ssid) {
+            strncpy(forget_ssid, saved_list[s].ssid, 32);
+            forget_ssid[32] = '\0';
+        }
+        lv_obj_t *forget_btn = lv_btn_create(btn);
+        lv_obj_set_size(forget_btn, 56, 22);
+        lv_obj_align(forget_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_bg_color(forget_btn, THEME_COLOR_BTN_DANGER_BG, 0);
+        lv_obj_set_style_bg_opa(forget_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(forget_btn, THEME_COLOR_STATUS_ERROR, 0);
+        lv_obj_set_style_border_width(forget_btn, 1, 0);
+        lv_obj_set_style_radius(forget_btn, THEME_RADIUS_SMALL, 0);
+        lv_obj_set_style_shadow_width(forget_btn, 0, 0);
+        lv_obj_set_style_pad_all(forget_btn, 0, 0);
+        lv_obj_add_event_cb(forget_btn, _forget_cb, LV_EVENT_ALL, forget_ssid);
+
+        lv_obj_t *fgt_lbl = lv_label_create(forget_btn);
+        lv_label_set_text(fgt_lbl, "Forget");
+        lv_obj_set_style_text_font(fgt_lbl, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(fgt_lbl, THEME_COLOR_STATUS_ERROR, 0);
+        lv_obj_center(fgt_lbl);
+
+        /* Row tap is a no-op for out-of-range — there's nothing to connect to.
+         * If the user wants to connect, they need to wait for it to appear in
+         * the next scan. */
     }
 }
 
@@ -1084,6 +1177,49 @@ static void _scan_btn_cb(lv_event_t *e)
     ESP_LOGI(TAG, "Scan initiated");
 }
 
+/* Look up an SSID's saved credentials. Returns true if found and copies the
+ * full record into *out. Walks the multi-list — same source of truth used by
+ * the wifi manager's auto-reconnect path. */
+static bool _find_saved_credentials(const char *ssid, wifi_credentials_t *out)
+{
+    if (!ssid || !out) return false;
+    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT];
+    uint8_t list_count = 0;
+    if (config_store_load_wifi_list(list, &list_count) != ESP_OK) return false;
+    for (uint8_t i = 0; i < list_count; i++) {
+        if (strcmp(list[i].ssid, ssid) == 0) {
+            *out = list[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Initiate a connect using already-known credentials. Used both by the
+ * tap-on-saved-network path (no password prompt) and the Saved Networks
+ * card (below). Updates slot 0 so auto_connect on next boot picks the
+ * most-recently-used network. */
+static void _connect_using_saved(const wifi_credentials_t *creds)
+{
+    if (!creds || creds->ssid[0] == '\0') return;
+
+    ESP_LOGI(TAG, "Connecting to saved network '%s' (no prompt)", creds->ssid);
+
+    wifi_credentials_t to_save = *creds;
+    to_save.auto_connect = true;
+    config_store_save_wifi(&to_save);
+
+    wifi_manager_connect(creds->ssid, creds->password);
+
+    if (connect_timeout_timer) {
+        lv_timer_del(connect_timeout_timer);
+        connect_timeout_timer = NULL;
+    }
+    connect_timeout_timer = lv_timer_create(_connect_timeout_cb,
+                                             CONNECT_TIMEOUT_MS, NULL);
+    lv_timer_set_repeat_count(connect_timeout_timer, 1);
+}
+
 static void _network_item_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -1091,7 +1227,14 @@ static void _network_item_cb(lv_event_t *e)
 
     if (code == LV_EVENT_CLICKED) {
         if (!ssid) return;
-        _show_password_modal(ssid);
+        /* If this SSID is already saved, skip the password modal and
+         * connect using the stored password. */
+        wifi_credentials_t saved = {0};
+        if (_find_saved_credentials(ssid, &saved)) {
+            _connect_using_saved(&saved);
+        } else {
+            _show_password_modal(ssid);
+        }
     } else if (code == LV_EVENT_DELETE) {
         if (ssid) lv_mem_free(ssid);
     }
@@ -1105,7 +1248,12 @@ static void _password_connect_cb(lv_event_t *e)
     const char *password = lv_textarea_get_text(password_input);
     ESP_LOGI(TAG, "Connecting to '%s'", selected_ssid);
 
-    /* Save credentials */
+    /* Save credentials to slot 0 (auto-connect target) AND to the multi-list
+     * (so it appears as a saved network in the Saved Networks card and
+     * subsequent scans). wifi_manager.c also adds to the list on a successful
+     * connection event, but we add eagerly here so the UI reflects the save
+     * even if the connect fails — matches the user's mental model of
+     * "I typed the password, it's saved now." */
     wifi_credentials_t creds = {0};
     strncpy(creds.ssid, selected_ssid, sizeof(creds.ssid) - 1);
     if (password) {
@@ -1113,6 +1261,7 @@ static void _password_connect_cb(lv_event_t *e)
     }
     creds.auto_connect = true;
     config_store_save_wifi(&creds);
+    config_store_add_wifi(&creds);
 
     /* Initiate connection */
     wifi_manager_connect(selected_ssid, password);
@@ -1137,10 +1286,41 @@ static void _password_cancel_cb(lv_event_t *e)
 
 static void _forget_cb(lv_event_t *e)
 {
-    (void)e;
-    wifi_manager_forget();
-    ESP_LOGI(TAG, "Network forgotten");
-    /* Refresh scan list to remove the blue highlight */
+    lv_event_code_t code = lv_event_get_code(e);
+    char *ssid = (char *)lv_event_get_user_data(e);
+
+    if (code == LV_EVENT_DELETE) {
+        if (ssid) lv_mem_free(ssid);
+        return;
+    }
+
+    if (code != LV_EVENT_CLICKED) return;
+
+    if (!ssid || ssid[0] == '\0') {
+        /* Fallback to legacy behavior — clear slot 0 + disconnect. */
+        wifi_manager_forget();
+        ESP_LOGI(TAG, "Network forgotten (legacy slot-0)");
+        _populate_scan_list();
+        return;
+    }
+
+    /* Remove from the multi-list */
+    esp_err_t err = config_store_remove_wifi(ssid);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "config_store_remove_wifi('%s') -> %s",
+                 ssid, esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Forgotten saved network '%s'", ssid);
+    }
+
+    /* If the forgotten SSID is the active connection, also disconnect and
+     * clear slot 0 so we don't auto-reconnect to it on next boot. */
+    const char *connected = wifi_manager_get_connected_ssid();
+    if (connected && strcmp(connected, ssid) == 0) {
+        ESP_LOGI(TAG, "Forgetting active network — disconnecting");
+        wifi_manager_forget();
+    }
+
     _populate_scan_list();
 }
 
