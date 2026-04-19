@@ -41,10 +41,19 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		if (v < md->min) v = md->min;
 		if (v > md->max) v = md->max;
 	}
-	lv_meter_set_indicator_value(md->meter, md->needle, v);
-	/* Drive the night meter in lock-step so the swap looks continuous. */
-	if (md->night_meter && md->night_needle && lv_obj_is_valid(md->night_meter)) {
+	/* Only drive whichever meter is currently visible. Updating the hidden
+	 * sibling costs an LVGL indicator recompute + invalidation-mark that
+	 * nobody ever sees — with meters bound to fast-moving sim signals
+	 * (RPM etc.) this is a measurable chunk of the per-frame budget.
+	 * When night mode toggles, _meter_apply_night_mode immediately pushes
+	 * the current value into the newly-visible meter so the swap stays
+	 * continuous. */
+	if (md->night_meter && md->night_needle && lv_obj_is_valid(md->night_meter) &&
+	    !lv_obj_has_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN)) {
 		lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
+	} else if (md->meter && md->needle &&
+	           !lv_obj_has_flag(md->meter, LV_OBJ_FLAG_HIDDEN)) {
+		lv_meter_set_indicator_value(md->meter, md->needle, v);
 	}
 }
 
@@ -57,11 +66,185 @@ static void _meter_night_cb(bool active, void *user_data);
  * builds a sibling "night meter" with the night values pre-baked, and
  * apply_night_mode toggles visibility instead of mutating styles. */
 static inline bool _meter_needs_night_meter(const meter_data_t *md) {
+#if NIGHT_MODE_DISABLED
+	(void)md;
+	return false;
+#else
 	return md->night.has_minor_tick_color ||
 	       md->night.has_major_tick_color ||
 	       md->night.has_needle_color     ||
 	       md->night.has_needle_image_name ||
 	       md->night.has_bg_image_name;
+#endif
+}
+
+/* Point at fraction num/den along the needle from pivot (p1) toward tip, with
+ * a perpendicular offset of `perp` pixels (positive = left-of-needle facing
+ * from pivot toward tip, negative = right). Shared by every polygon style
+ * below to keep the geometry readable. */
+static inline lv_point_t _tip_pt(const lv_point_t *p1, int32_t dx, int32_t dy,
+                                 int32_t len, int32_t num, int32_t den,
+                                 int32_t perp) {
+	lv_point_t p;
+	p.x = p1->x + (dx * num) / den + (-dy * perp) / len;
+	p.y = p1->y + (dy * num) / den + ( dx * perp) / len;
+	return p;
+}
+
+/* Custom needle tip renderer. Hooks LV_EVENT_DRAW_PART_BEGIN / _END on the
+ * meter; LVGL fires DRAW_PART_NEEDLE_LINE for each line-needle indicator with
+ * the pivot (p1), tip (p2), and line_dsc already populated.
+ *
+ * Styles (all use the line's color and scale their proportions with the
+ * configured needle width, so they look consistent on big and small meters):
+ *   0 Flat    — plain line end, LVGL default (early return)
+ *   1 Rounded — mutate line_dsc->round_start/round_end on BEGIN (soft caps)
+ *   2 Lance   — uniform shaft for 90% of length, short tapered tip (classic
+ *               sword-hand / premium aviation-watch look)
+ *   3 Dagger  — full taper from wide pivot base to a sharp apex at the tip
+ *   4 Spade   — tapered trapezoid: wide base narrows toward the tip but
+ *               terminates in a short flat cap instead of a point (reads
+ *               more "blunt" and refined than Dagger)
+ *   5 Diamond — dauphine / rhombus shape, pointed at both pivot and tip,
+ *               widest at mid-length (classy watchmaker feel)
+ *
+ * Polygon styles (2-5) hide the built-in line at BEGIN and draw custom
+ * geometry via lv_draw_polygon at END. Integer-only math (lv_sqrt) — no
+ * libm pull-in. Tip styles are ignored for image needles. */
+static void _meter_needle_draw_cb(lv_event_t *e) {
+	lv_event_code_t code = lv_event_get_code(e);
+	if (code != LV_EVENT_DRAW_PART_BEGIN && code != LV_EVENT_DRAW_PART_END) return;
+
+	lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+	if (!dsc) return;
+	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
+	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
+
+	meter_data_t *md = (meter_data_t *)lv_event_get_user_data(e);
+	if (!md) return;
+	uint8_t style = md->needle_tip_style;
+	if (style == 0) return;
+
+	lv_draw_line_dsc_t *line_dsc = dsc->line_dsc;
+
+	if (code == LV_EVENT_DRAW_PART_BEGIN) {
+		if (style == 1) {
+			line_dsc->round_start = 1;
+			line_dsc->round_end   = 1;
+		} else if (style >= 2 && style <= 5) {
+			/* Polygon styles replace the line — hide the original. */
+			line_dsc->opa = LV_OPA_TRANSP;
+		}
+		return;
+	}
+
+	/* DRAW_PART_END: only polygon styles have custom geometry. */
+	if (style < 2 || style > 5) return;
+
+	const lv_point_t *p1 = dsc->p1;   /* pivot */
+	const lv_point_t *p2 = dsc->p2;   /* tip   */
+	int32_t dx = p2->x - p1->x;
+	int32_t dy = p2->y - p1->y;
+	uint32_t len_sq = (uint32_t)(dx * dx + dy * dy);
+	if (len_sq == 0) return;
+	lv_sqrt_res_t sres;
+	lv_sqrt(len_sq, &sres, 0x800);
+	int32_t len = sres.i;
+	if (len == 0) return;
+
+	int32_t width = line_dsc->width > 0 ? line_dsc->width : md->needle_width;
+
+	lv_draw_rect_dsc_t rdsc;
+	lv_draw_rect_dsc_init(&rdsc);
+	rdsc.bg_color     = line_dsc->color;
+	rdsc.bg_opa       = LV_OPA_COVER;
+	rdsc.border_width = 0;
+
+	lv_point_t pts[6];
+	uint16_t   npts = 0;
+
+	/* Three user-exposed knobs. Each defaults to "auto" (0), which keeps the
+	 * style's original built-in look; any non-zero value overrides it. */
+	int32_t ov_base  = md->needle_tip_base_w;
+	int32_t ov_point = md->needle_tip_point_w;
+	int32_t ov_taper = md->needle_tip_taper;
+	if (ov_taper > 100) ov_taper = 100;
+
+	switch (style) {
+	case 2: {
+		/* Lance: uniform shaft for `shaft%` of length, then narrows to the
+		 * tip. If point_w > 0 the tip is a flat cap instead of a sharp point
+		 * (turns Lance into a miniature Spade-like hand). */
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 1);
+		int32_t shaft   = ov_taper > 0 ? ov_taper : 90;
+		int32_t cap_w   = ov_point;
+		pts[0] = _tip_pt(p1, dx, dy, len, 0,     100,  half_w);
+		pts[1] = _tip_pt(p1, dx, dy, len, shaft, 100,  half_w);
+		if (cap_w > 0) {
+			pts[2] = _tip_pt(p1, dx, dy, len, 100, 100,  cap_w);
+			pts[3] = _tip_pt(p1, dx, dy, len, 100, 100, -cap_w);
+			pts[4] = _tip_pt(p1, dx, dy, len, shaft, 100, -half_w);
+			pts[5] = _tip_pt(p1, dx, dy, len, 0,     100, -half_w);
+			npts = 6;
+		} else {
+			pts[2] = *p2;
+			pts[3] = _tip_pt(p1, dx, dy, len, shaft, 100, -half_w);
+			pts[4] = _tip_pt(p1, dx, dy, len, 0,     100, -half_w);
+			npts = 5;
+		}
+		break;
+	}
+	case 3: {
+		/* Dagger: wide base, sharp apex. If the user sets point_w or taper
+		 * it morphs into a Spade-style trapezoid — useful for dialing in
+		 * "pointy but not a stabby point". */
+		int32_t half_w = ov_base > 0 ? ov_base : (width / 2 + 2);
+		if (ov_point > 0 || (ov_taper > 0 && ov_taper < 100)) {
+			int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+			int32_t cap_w   = ov_point > 0 ? ov_point : 1;
+			pts[0] = _tip_pt(p1, dx, dy, len, 0,       100,  half_w);
+			pts[1] = _tip_pt(p1, dx, dy, len, cap_pos, 100,  cap_w);
+			pts[2] = _tip_pt(p1, dx, dy, len, cap_pos, 100, -cap_w);
+			pts[3] = _tip_pt(p1, dx, dy, len, 0,       100, -half_w);
+			npts = 4;
+		} else {
+			pts[0] = _tip_pt(p1, dx, dy, len, 0, 1,  half_w);
+			pts[1] = *p2;
+			pts[2] = _tip_pt(p1, dx, dy, len, 0, 1, -half_w);
+			npts = 3;
+		}
+		break;
+	}
+	case 4: {
+		/* Spade: tapered trapezoid terminating in a flat cap. */
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 2);
+		int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+		int32_t cap_w   = ov_point > 0 ? ov_point : 1;
+		pts[0] = _tip_pt(p1, dx, dy, len, 0,       100,  half_w);
+		pts[1] = _tip_pt(p1, dx, dy, len, cap_pos, 100,  cap_w);
+		pts[2] = _tip_pt(p1, dx, dy, len, cap_pos, 100, -cap_w);
+		pts[3] = _tip_pt(p1, dx, dy, len, 0,       100, -half_w);
+		npts = 4;
+		break;
+	}
+	case 5: {
+		/* Diamond / Dauphine: pointed at both ends, widest at `taper%`.
+		 * For this style point_w is unused — the tip is always a sharp apex
+		 * at p2; tuning the "pointedness" is done via base_w instead. */
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 3);
+		int32_t mid_pos = ov_taper > 0 ? ov_taper : 50;
+		pts[0] = *p1;
+		pts[1] = _tip_pt(p1, dx, dy, len, mid_pos, 100,  half_w);
+		pts[2] = *p2;
+		pts[3] = _tip_pt(p1, dx, dy, len, mid_pos, 100, -half_w);
+		npts = 4;
+		break;
+	}
+	default:
+		return;
+	}
+
+	lv_draw_polygon(dsc->draw_ctx, &rdsc, pts, npts);
 }
 
 /* Build a single meter (day or night). When `use_night` is true, any field
@@ -120,8 +303,15 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range, (int32_t)md->start_angle);
 	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
-	lv_meter_set_scale_ticks(m, scale, mtc, md->minor_tick_width, md->minor_tick_length, mintc);
-	lv_meter_set_scale_major_ticks(m, scale, mte, md->major_tick_width, md->major_tick_length, majtc, md->label_gap);
+	/* show_ticks=false zeroes the widths so LVGL draws no tick marks. Range
+	 * + count still need to be set so the needle angle math stays correct —
+	 * only the visible lines go away. */
+	uint8_t minor_w = md->show_ticks ? md->minor_tick_width : 0;
+	uint8_t minor_l = md->show_ticks ? md->minor_tick_length : 0;
+	uint8_t major_w = md->show_ticks ? md->major_tick_width : 0;
+	uint8_t major_l = md->show_ticks ? md->major_tick_length : 0;
+	lv_meter_set_scale_ticks(m, scale, mtc, minor_w, minor_l, mintc);
+	lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc, md->label_gap);
 
 	/* Tick label color/font */
 	lv_obj_set_style_text_color(m, tlc, LV_PART_TICKS);
@@ -169,6 +359,13 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	}
 
 	lv_meter_set_indicator_value(m, needle, md->min);
+
+	/* Custom needle-tip hook. Fires for every DRAW_PART — the callback gates
+	 * on style==0 so the fast path is just a couple of pointer loads when
+	 * the feature is off. Tip styles are ignored when drawing image needles
+	 * (different part type); line needles handle all 4 styles. */
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
 
 	*out_meter = m;
 	*out_scale = scale;
@@ -229,24 +426,14 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	md->needle = needle;
 	md->needle_scale = needle_scale;
 
-	/* Build night meter as sibling, hidden by default */
-	if (needs_night) {
-		lv_obj_t *nm = NULL;
-		lv_meter_scale_t *nscale = NULL;
-		lv_meter_indicator_t *nneedle = NULL;
-		lv_meter_scale_t *nneedle_scale = NULL;
-		_meter_build_one(md, meter_parent, true, &nm, &nscale, &nneedle, &nneedle_scale,
-		                 &md->night_needle_img_dsc, &md->night_bg_img_dsc);
-		if (nm) {
-			lv_obj_set_size(nm, (lv_coord_t)w->w, (lv_coord_t)w->h);
-			lv_obj_set_align(nm, LV_ALIGN_CENTER);
-			lv_obj_add_flag(nm, LV_OBJ_FLAG_HIDDEN);
-			md->night_meter = nm;
-			md->night_scale = nscale;
-			md->night_needle = nneedle;
-			md->night_needle_scale = nneedle_scale;
-		}
-	}
+	/* Night meter build is deferred to _meter_apply_night_mode — see the
+	 * _meter_build_night_lazy helper below. Keeping two lv_meter objects
+	 * in the tree (even with the night one hidden) was forcing LVGL to
+	 * walk + skip the hidden meter every refresh; when adjacent widgets'
+	 * dirty rects landed on the container, the extra bookkeeping dragged
+	 * through the redraw pipeline. Deferring the build means layouts
+	 * that never engage night mode pay zero overhead for the override
+	 * config being present. */
 
 	w->root = cont ? cont : m;
 
@@ -325,6 +512,14 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_color", (int)md->needle_color.full);
 	if (md->needle_r_mod != -10)
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
+	if (md->needle_tip_style != 0)
+		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
+	if (md->needle_tip_base_w != 0)
+		cJSON_AddNumberToObject(cfg, "needle_tip_base_w", md->needle_tip_base_w);
+	if (md->needle_tip_point_w != 0)
+		cJSON_AddNumberToObject(cfg, "needle_tip_point_w", md->needle_tip_point_w);
+	if (md->needle_tip_taper != 0)
+		cJSON_AddNumberToObject(cfg, "needle_tip_taper", md->needle_tip_taper);
 	if (md->needle_ball_size != 10)
 		cJSON_AddNumberToObject(cfg, "needle_ball_size", md->needle_ball_size);
 	if (md->needle_ball_color.full != lv_color_white().full)
@@ -357,6 +552,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
 	if (md->tick_label_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "tick_label_color", (int)md->tick_label_color.full);
+	if (!md->show_ticks)
+		cJSON_AddBoolToObject(cfg, "show_ticks", false);
 	if (!md->show_tick_labels)
 		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
 
@@ -441,6 +638,14 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_r_mod");
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
+	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
+	if (cJSON_IsNumber(ap)) md->needle_tip_base_w = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_point_w");
+	if (cJSON_IsNumber(ap)) md->needle_tip_point_w = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_taper");
+	if (cJSON_IsNumber(ap)) md->needle_tip_taper = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_ball_size");
 	if (cJSON_IsNumber(ap)) md->needle_ball_size = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_ball_color");
@@ -479,6 +684,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_color");
 	if (cJSON_IsNumber(ap)) md->tick_label_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+	if (cJSON_IsBool(ap)) md->show_ticks = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
 	if (cJSON_IsBool(ap)) md->show_tick_labels = cJSON_IsTrue(ap);
 
@@ -573,26 +780,87 @@ static void _meter_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	(void)nc;
 }
 
+/* Lazily build the night meter the first time night mode actually engages.
+ * Extracted from _meter_create so we only pay the cost of the second
+ * lv_meter when the user toggles into night. The day meter's parent is the
+ * shared container (when _meter_needs_night_meter is true) so we just add
+ * the sibling and hide it so the caller's visibility swap works as before.
+ * No-op if the meter doesn't need a dual-meter pattern, or if the lazy
+ * build already happened. */
+static void _meter_build_night_lazy(widget_t *w) {
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !md->meter) return;
+	if (md->night_meter) return;                 /* already built */
+	if (!_meter_needs_night_meter(md)) return;   /* no baked overrides */
+
+	lv_obj_t *parent = lv_obj_get_parent(md->meter);
+	if (!parent) return;
+
+	lv_obj_t *nm = NULL;
+	lv_meter_scale_t *nscale = NULL;
+	lv_meter_indicator_t *nneedle = NULL;
+	lv_meter_scale_t *nneedle_scale = NULL;
+	_meter_build_one(md, parent, true, &nm, &nscale, &nneedle, &nneedle_scale,
+	                 &md->night_needle_img_dsc, &md->night_bg_img_dsc);
+	if (!nm) return;
+
+	lv_coord_t mw = lv_obj_get_width(md->meter);
+	lv_coord_t mh = lv_obj_get_height(md->meter);
+	lv_obj_set_size(nm, mw, mh);
+	lv_obj_set_align(nm, LV_ALIGN_CENTER);
+	lv_obj_add_flag(nm, LV_OBJ_FLAG_HIDDEN);
+	md->night_meter        = nm;
+	md->night_scale        = nscale;
+	md->night_needle       = nneedle;
+	md->night_needle_scale = nneedle_scale;
+}
+
 /* Apply night-mode state. Two paths:
- *   A) night_meter exists: a sibling meter was built with all night values
- *      baked in (tick colors, needle color, needle/bg image). We just toggle
- *      visibility — instant swap, no live mutation needed.
- *   B) no night_meter: only runtime-mutable color overrides are configured
- *      (bg/border/ball/tick label). Mutate them on the day meter directly. */
+ *   A) night_meter exists (or gets built lazily): a sibling meter was built
+ *      with all night values baked in (tick colors, needle color, needle/bg
+ *      image). We just toggle visibility — instant swap, no live mutation.
+ *   B) no night_meter needed: only runtime-mutable color overrides are
+ *      configured (bg/border/ball/tick label). Mutate them on the day meter
+ *      directly. */
 static void _meter_apply_night_mode(widget_t *w, bool active) {
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (!md || !md->meter) return;
 
+	/* Build the sibling meter now if it hasn't been created yet and the
+	 * widget needs one. Pays the create cost on the first night activation
+	 * (or first call with active=false+has_overrides, which is a no-op
+	 * elsewhere), then never again. */
+	if (active) _meter_build_night_lazy(w);
+
 	bool has_night_obj = md->night_meter && lv_obj_is_valid(md->night_meter);
 
 	if (has_night_obj) {
 		/* Path A: visibility swap. Both meters already have correct colors
-		 * baked in for their respective state, so no live mutation needed. */
+		 * baked in for their respective state, so no live mutation needed.
+		 *
+		 * Since _meter_on_signal only drives the visible meter for perf,
+		 * the meter we're about to reveal has a stale needle position.
+		 * Catch it up to the current signal value before un-hiding so the
+		 * swap is visually seamless. */
+		signal_t *sig = (md->signal_index >= 0)
+			? signal_get_by_index((uint16_t)md->signal_index) : NULL;
+		int32_t v = md->min;
+		if (sig && !sig->is_stale) {
+			float fv = sig->current_value;
+			if (fv < (float)md->min) fv = (float)md->min;
+			if (fv > (float)md->max) fv = (float)md->max;
+			v = (int32_t)fv;
+		}
+
 		if (active) {
+			if (md->night_needle)
+				lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
 			lv_obj_add_flag(md->meter, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_clear_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN);
 		} else {
+			if (md->needle)
+				lv_meter_set_indicator_value(md->meter, md->needle, v);
 			lv_obj_clear_flag(md->meter, LV_OBJ_FLAG_HIDDEN);
 			lv_obj_add_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN);
 		}
@@ -657,10 +925,15 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_width = 4;
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
+	md->needle_tip_style   = 0;
+	md->needle_tip_base_w  = 0;
+	md->needle_tip_point_w = 0;
+	md->needle_tip_taper   = 0;
 	md->needle_ball_size = 10;
 	md->needle_ball_color = lv_color_white();
 	/* Tick label defaults */
 	md->tick_label_color = lv_color_white();
+	md->show_ticks = true;
 	md->show_tick_labels = true;
 	/* Border defaults */
 	md->border_color = lv_color_black();

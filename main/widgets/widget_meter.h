@@ -45,6 +45,26 @@ typedef struct {
 	uint8_t    needle_width;         /* default: 4 */
 	lv_color_t needle_color;         /* default: white (0xFFFFFF) */
 	int16_t    needle_r_mod;         /* default: -10 */
+	/* Tip style for line needles (ignored when needle_image_name is set):
+	 *   0 = Flat    (plain line end, LVGL default)
+	 *   1 = Rounded (soft round caps)
+	 *   2 = Lance   (uniform shaft + short tapered tip)
+	 *   3 = Dagger  (full taper from wide base to sharp point)
+	 *   4 = Spade   (full taper with a blunt flat cap at the tip)
+	 *   5 = Diamond (dauphine/rhombus — pointed at both ends, wide in the middle)
+	 * Rendered via an LV_EVENT_DRAW_PART hook in widget_meter.c. */
+	uint8_t    needle_tip_style;     /* default: 0 */
+	/* Per-style tuning knobs. All default to 0 meaning "use the built-in
+	 * default for the selected style" — so a plain style change needs no
+	 * extra config, and dialing in uses familiar pixel / percent units:
+	 *   needle_tip_base_w  — half-width at the wide end (px)
+	 *   needle_tip_point_w — half-width at the pointed end / cap (px)
+	 *   needle_tip_taper   — percent along the needle where narrowing begins
+	 *                        (Lance shaft end, Spade cap position, Diamond
+	 *                        widest-point location) */
+	uint8_t    needle_tip_base_w;    /* default: 0 (auto) */
+	uint8_t    needle_tip_point_w;   /* default: 0 (auto) */
+	uint8_t    needle_tip_taper;     /* default: 0 (auto), range 1-100 */
 	/* Needle center ball (LV_PART_INDICATOR) */
 	uint8_t    needle_ball_size;     /* default: 10 (diameter in px, 0 = hidden) */
 	lv_color_t needle_ball_color;    /* default: white (0xFFFFFF) */
@@ -70,6 +90,7 @@ typedef struct {
 	int8_t     label_gap;            /* default: 10 — distance from major tick to label */
 	char       tick_label_font[32];  /* default: "" — font for tick value labels */
 	lv_color_t tick_label_color;    /* default: white (0xFFFFFF) */
+	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
 	char     signal_name[32];
 	int16_t  signal_index;

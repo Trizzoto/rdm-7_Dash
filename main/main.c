@@ -28,6 +28,7 @@
 #include "lvgl.h"
 #include "lvgl_helpers.h"
 #include "net/mdns_service.h"
+#include "net/dns_hijack.h"
 #include "net/uart_protocol.h"
 #include "net/wifi_manager.h"
 #include "nvs.h"
@@ -178,6 +179,54 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
 	}
 #endif
 	return high_task_awoken == pdTRUE;
+}
+
+/* Dirty-rect-topology diagnostic. LVGL calls this once per refresh where
+ * anything was drawn; `px_num` is the sum of unjoined dirty-rect areas for
+ * the frame (see lv_refr.c:620), i.e. the real on-screen invalidation load
+ * *after* the join cascade has run. Aggregate over ~1s and log average
+ * px/frame as a % of the full screen: sustained near-100% with sim on
+ * confirms the join cascade is merging everything to near-full-screen,
+ * while a drop to low double digits when a couple of widgets stop ticking
+ * would confirm the topology cliff.
+ * Safe to leave in: one ESP_LOGI per second, no work on hot path. */
+static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
+								 uint32_t px_num) {
+	static uint32_t s_start_ms   = 0;
+	static uint32_t s_frame_cnt  = 0;
+	static uint64_t s_px_sum     = 0;
+	static uint64_t s_elaps_sum  = 0;
+
+	uint32_t now = lv_tick_get();
+	if (s_start_ms == 0) s_start_ms = now;
+
+	s_frame_cnt++;
+	s_px_sum    += px_num;
+	s_elaps_sum += elaps_ms;
+
+	uint32_t window = now - s_start_ms;
+	if (window >= 1000 && s_frame_cnt > 0) {
+		const uint32_t screen_px = (uint32_t)drv->hor_res * drv->ver_res;
+		uint32_t avg_px     = (uint32_t)(s_px_sum / s_frame_cnt);
+		uint32_t avg_elaps  = (uint32_t)(s_elaps_sum / s_frame_cnt);
+		uint32_t avg_pct    = screen_px
+								? (uint32_t)((s_px_sum * 100ULL) /
+											 ((uint64_t)screen_px * s_frame_cnt))
+								: 0;
+		uint32_t fps_x10    = (s_frame_cnt * 10000U) / window;
+		ESP_LOGI("refr_diag",
+				 "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% of screen) avg_render=%lu ms",
+				 (unsigned long)(fps_x10 / 10),
+				 (unsigned long)(fps_x10 % 10),
+				 (unsigned long)s_frame_cnt,
+				 (unsigned long)avg_px,
+				 (unsigned long)avg_pct,
+				 (unsigned long)avg_elaps);
+		s_start_ms  = now;
+		s_frame_cnt = 0;
+		s_px_sum    = 0;
+		s_elaps_sum = 0;
+	}
 }
 
 static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
@@ -421,6 +470,15 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
 				 wifi_get_ap_ssid());
 		ESP_LOGI(TAG, "==============================");
 	}
+
+	/* Answer DNS on :53. Without this, phones on the AP have no DNS and
+	 * Android/iOS mark the hotspot as "no internet", silently refusing to
+	 * route browser traffic to it. The hijack returns 192.168.4.1 for all
+	 * queries, which (together with the captive-portal HTTP handlers)
+	 * triggers the "Sign in to network" sheet on phones. */
+	if (dns_hijack_start() != ESP_OK) {
+		ESP_LOGW(TAG, "DNS hijack failed to start — captive portal won't trigger on phones");
+	}
 }
 
 void app_main(void) {
@@ -596,13 +654,25 @@ void app_main(void) {
 				.mirror_y = 0,
 			},
 	};
-	/* Initialize touch */
+	/* Initialize touch, with up to 3 retries. Some GT911 units need more
+	 * than the standard 30ms post-reset stabilization — if VCC ramp is slow
+	 * or there's slight I2C bus noise, the first read can fail even though
+	 * the controller is fine. A short 100ms wait + retry clears it. */
 	ESP_LOGI(TAG, "Initialize touch controller GT911");
-	esp_err_t touch_ret =
-		esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, &tp);
+	esp_err_t touch_ret = ESP_FAIL;
+	for (int attempt = 1; attempt <= 3; ++attempt) {
+		touch_ret = esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, &tp);
+		if (touch_ret == ESP_OK) {
+			if (attempt > 1) ESP_LOGI(TAG, "Touch init succeeded on attempt %d", attempt);
+			break;
+		}
+		ESP_LOGW(TAG, "Touch init attempt %d failed (0x%x), retrying after 100ms...",
+				 attempt, touch_ret);
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
 	if (touch_ret != ESP_OK) {
 		ESP_LOGW(TAG,
-				 "Touch controller GT911 initialization failed (0x%x), "
+				 "Touch controller GT911 initialization failed (0x%x) after 3 attempts, "
 				 "continuing without touch...",
 				 touch_ret);
 		tp = NULL; // Set to NULL to indicate no touch available
@@ -688,6 +758,7 @@ void app_main(void) {
 	disp_drv.flush_cb = example_lvgl_flush_cb;
 	disp_drv.draw_buf = &disp_buf;
 	disp_drv.user_data = panel_handle;
+	disp_drv.monitor_cb = rdm7_lvgl_monitor_cb;
 #if CONFIG_EXAMPLE_DOUBLE_FB
 	disp_drv.full_refresh =
 		false; // the full_refresh mode can maintain the synchronization between
@@ -809,7 +880,7 @@ void app_main(void) {
 	 * logs remain visible on the USB-UART bridge past this point. Desktop app
 	 * cannot connect while this is enabled. Flip back to 0 for production. */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 0
+#define RDM7_DEBUG_KEEP_CONSOLE 1
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
 	ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "

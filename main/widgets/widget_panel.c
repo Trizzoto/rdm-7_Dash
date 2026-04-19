@@ -110,18 +110,33 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 		ap = pd->warning_low_apply_panel;
 	}
 
+	/* Baseline colors must honour night mode: when no warning is active, the
+	 * label/value/border should fall back to the per-widget night override
+	 * (if any) instead of the day theme. Otherwise every CAN frame this path
+	 * runs would repaint over _panel_apply_night_mode and "merge" the look. */
+	bool night_on = night_mode_is_active();
+	lv_color_t base_label = pd
+		? NIGHT_PICK_COLOR(night_on, pd->night, label_color, pd->label_color)
+		: THEME_COLOR_TEXT_PRIMARY;
+	lv_color_t base_value = pd
+		? NIGHT_PICK_COLOR(night_on, pd->night, value_color, pd->value_color)
+		: THEME_COLOR_TEXT_PRIMARY;
+	lv_color_t base_border = pd
+		? NIGHT_PICK_COLOR(night_on, pd->night, border_color, pd->border_color)
+		: THEME_COLOR_PANEL;
+
 	if (ui_Label[i] && lv_obj_is_valid(ui_Label[i]))
 		lv_obj_set_style_text_color(ui_Label[i],
-			al ? wc : THEME_COLOR_TEXT_PRIMARY,
+			al ? wc : base_label,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (ui_Value[i] && lv_obj_is_valid(ui_Value[i]))
 		lv_obj_set_style_text_color(ui_Value[i],
-			av ? wc : THEME_COLOR_TEXT_PRIMARY,
+			av ? wc : base_value,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (ui_Box[i] && lv_obj_is_valid(ui_Box[i]) &&
 		lv_obj_get_screen(ui_Box[i]) != NULL) {
 		lv_obj_set_style_border_color(ui_Box[i],
-			ap ? wc : THEME_COLOR_PANEL,
+			ap ? wc : base_border,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(ui_Box[i], 3,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -132,7 +147,7 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 		ui_MenuScreen && lv_obj_is_valid(ui_MenuScreen) &&
 		lv_scr_act() == ui_MenuScreen) {
 		lv_obj_set_style_border_color(menu_panel_boxes[i],
-			ap ? wc : THEME_COLOR_PANEL,
+			ap ? wc : base_border,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(menu_panel_boxes[i], 3,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -368,58 +383,66 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	                     ((uint8_t)apply_value << 1 ) |
 	                     ((uint8_t)apply_panel << 2 ) |
 	                     ((uint8_t)(is_stale ? 1 : 0) << 7);
-	if (strncmp(pd->last_display, display_str, sizeof(pd->last_display)) == 0 &&
-	    pd->last_warn_state == warn_state) {
+	bool text_changed  = (strncmp(pd->last_display, display_str,
+	                              sizeof(pd->last_display)) != 0);
+	bool state_changed = (pd->last_warn_state != warn_state);
+	if (!text_changed && !state_changed) {
 		return;
 	}
 	/* Cache the display string. Use memcpy(size-1) + manual null terminator
 	 * — GCC's -Wstringop-truncation false-flags safe_strncpy here because
 	 * it cannot prove display_str's length at compile time. */
-	size_t copy_len = strnlen(display_str, sizeof(pd->last_display) - 1);
-	memcpy(pd->last_display, display_str, copy_len);
-	pd->last_display[copy_len] = '\0';
+	if (text_changed) {
+		size_t copy_len = strnlen(display_str, sizeof(pd->last_display) - 1);
+		memcpy(pd->last_display, display_str, copy_len);
+		pd->last_display[copy_len] = '\0';
+	}
 	pd->last_warn_state = warn_state;
 
 	/* Update this widget's own LVGL objects directly (per-instance pointers).
-	 * This is the authoritative path — avoids cross-talk via global arrays
-	 * if two panels share a slot due to misconfiguration. */
-	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
+	 * Style sets in LVGL v8 unconditionally invalidate regardless of whether
+	 * the prop value actually changed (see lv_obj_style.c: set_local_style_prop
+	 * just calls lv_obj_refresh_style), and the panel box is the biggest
+	 * rect on the widget. So we gate the style writes on an actual state
+	 * transition — dropping ~5 box/label invalidations per tick per panel
+	 * down to 1 (the label text change) in the common no-alert sim path.
+	 * border_width / border_opa are never runtime-animated; they're set
+	 * once in _panel_create and not touched here. */
+	if (text_changed && pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_label_set_text(pd->value_label, display_str);
-		lv_color_t val_color = apply_value ? warn_color : pd->value_color;
-		lv_obj_set_style_text_color(pd->value_label, val_color,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
-	if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
-		lv_color_t lbl_color = apply_label ? warn_color : pd->label_color;
-		lv_obj_set_style_text_color(pd->header_label, lbl_color,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
-	if (pd->box && lv_obj_is_valid(pd->box)) {
-		lv_color_t bdr_color = apply_panel ? warn_color : pd->border_color;
-		lv_obj_set_style_border_color(pd->box, bdr_color,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(pd->box, pd->border_width,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(pd->box, 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (state_changed) {
+		if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
+			lv_color_t val_color = apply_value ? warn_color : pd->value_color;
+			lv_obj_set_style_text_color(pd->value_label, val_color,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
+			lv_color_t lbl_color = apply_label ? warn_color : pd->label_color;
+			lv_obj_set_style_text_color(pd->header_label, lbl_color,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		if (pd->box && lv_obj_is_valid(pd->box)) {
+			lv_color_t bdr_color = apply_panel ? warn_color : pd->border_color;
+			lv_obj_set_style_border_color(pd->box, bdr_color,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
 	}
 
-	/* Update menu panel preview if the menu screen is active */
-	if (slot < 8 && menu_panel_value_labels[slot] &&
-		lv_obj_is_valid(menu_panel_value_labels[slot]) && ui_MenuScreen &&
-		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+	/* Update menu panel preview if the menu screen is active. Same gating
+	 * strategy as above — text on change, border color on state transition. */
+	bool menu_active = (slot < 8 && ui_MenuScreen &&
+	                    lv_obj_is_valid(ui_MenuScreen) &&
+	                    lv_scr_act() == ui_MenuScreen);
+	if (menu_active && text_changed && menu_panel_value_labels[slot] &&
+		lv_obj_is_valid(menu_panel_value_labels[slot])) {
 		lv_label_set_text(menu_panel_value_labels[slot], display_str);
 	}
-	if (slot < 8 && menu_panel_boxes[slot] &&
-		lv_obj_is_valid(menu_panel_boxes[slot]) && ui_MenuScreen &&
-		lv_obj_is_valid(ui_MenuScreen) && lv_scr_act() == ui_MenuScreen) {
+	if (menu_active && state_changed && menu_panel_boxes[slot] &&
+		lv_obj_is_valid(menu_panel_boxes[slot])) {
 		lv_obj_set_style_border_color(menu_panel_boxes[slot],
 			apply_panel ? warn_color : THEME_COLOR_PANEL,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(menu_panel_boxes[slot], 3,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_opa(menu_panel_boxes[slot], 255,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
 	/* Peak hold display. Reads peak_value/min_value from the signal layer
