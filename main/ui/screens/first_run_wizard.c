@@ -75,16 +75,6 @@ static void _deferred_reload_after_wizard(void *arg) {
         lv_obj_del(old);
 }
 
-/* Same as above, but also opens the WiFi UI on top of the fresh dashboard
- * after the reload completes. Used when the user applied an ECU in step 2
- * and then chose WiFi Join on step 3. wifi_ui_show captures lv_scr_act()
- * as its return screen, so calling it AFTER the reload means returning
- * from WiFi lands on the new dashboard with the correct ECU signals. */
-static void _deferred_reload_then_wifi(void *arg) {
-    _deferred_reload_after_wizard(arg);
-    wifi_ui_show();
-}
-
 /* Tear down the overlay. If mark_done is true, also set the NVS flag so the
  * wizard never shows again; otherwise it re-appears on the next boot. */
 static void _close_wizard(bool mark_done) {
