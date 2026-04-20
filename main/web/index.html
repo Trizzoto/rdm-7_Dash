@@ -412,30 +412,40 @@
             .workspace:not(.left-collapsed) #leftResize { visibility: visible; }
         }
 
-        /* ── Compact desktop tier (900-1199px) ──────────────────────
-         * Between full desktop and the touch/mobile drawer. Keeps the
-         * desktop feel (inline header, no drawer) but trims the items
-         * that push Save/Apply off-screen at narrower widths. The
-         * hamburger appears so everything removed from the header is
-         * still reachable via the slide-in menu. */
-        @media (min-width: 901px) and (max-width: 1199px) {
+        /* ── Progressive header tiers (no dead zones) ───────────────
+         * Desktop tier full-inline needs ~1329px (title + 21 controls +
+         * 10px flex gaps + padding). Pre-1.1.1 we only shed items
+         * below 1200px, leaving a 1200-1329 overflow zone where the
+         * rightmost items got clipped and the hamburger wasn't yet
+         * available. Fix: three cascading max-width tiers so items
+         * shed BEFORE overflow in each tier.
+         *
+         * Tier A  (>= 1400px)  full desktop — no rules below fire
+         * Tier B  (<= 1399px)  burger shows; drop rarely-used buttons
+         * Tier C  (<= 1199px)  additionally drop Dashboard + ECU selects
+         * Tier D  (<= 900 OR touch)  drawer layout — existing rule
+         */
+        @media (max-width: 1399px) {
             .mobile-burger { display: inline-flex; }
-            header #screenModeSelect,
-            header #ecuSelect,
-            header #splashSelect,
-            header #splashFadeLabel,
-            header .layout-menu-wrap,
             header #helpBtn,
             header #resetBtnHdr,
             header #syncBtn,
-            header .btn-icon {
+            header .btn-icon,
+            header .layout-menu-wrap {
                 display: none !important;
             }
-            /* Tighten divider spacing so the remaining controls group
-             * without stretching — 2 remaining dividers in this tier. */
             header .header-divider { margin: 0 1px; }
-            /* Allow the layout selector to shrink gracefully. */
+            /* Cap the layout dropdown so a very long layout name can't
+             * single-handedly push Save off-screen. */
             header #layoutSelect { max-width: 180px; }
+        }
+        @media (max-width: 1199px) {
+            header #screenModeSelect,
+            header #ecuSelect,
+            header #splashSelect,
+            header #splashFadeLabel {
+                display: none !important;
+            }
         }
 
         /* ── Studio-style mobile pattern ────────────────────────────
