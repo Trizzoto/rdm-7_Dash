@@ -5,3 +5,9 @@ dependencies:
   espressif/esp_lcd_touch_gt911: "1.1.0"
   joltwallet/littlefs: ">=1.0.0"
   espressif/mdns: "^1.2.0"
+  # Software JPEG encoder — used by system/display_capture_jpeg.c to
+  # compress full-screen RGB565 captures to ~30 KB JPEGs before sending
+  # them over WiFi (screenshots, live preview, MJPEG streaming). The
+  # ESP32-S3 has no hardware JPEG codec, so this is CPU-bound (~100 ms
+  # per 800x480 frame). Component manager fetches on next `idf.py build`.
+  espressif/esp_new_jpeg: "^0.6.0"

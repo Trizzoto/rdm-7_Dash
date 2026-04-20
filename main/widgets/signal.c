@@ -19,6 +19,8 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "nvs.h"
+#include "lvgl.h"
 
 #include <float.h>
 #include <string.h>
@@ -27,6 +29,10 @@ static const char *TAG = "signal";
 
 static signal_t *s_signals     = NULL;
 static uint16_t  s_signal_count = 0;
+
+/* Peak persistence state — see bottom of file for the implementation. */
+static bool        s_peaks_dirty       = false;
+static lv_timer_t *s_peaks_save_timer  = NULL;
 
 /* ── Registry lifecycle ─────────────────────────────────────────────────── */
 
@@ -222,8 +228,8 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 
         /* Update peak/min tracking */
         if (sig->tracking_active) {
-            if (decoded > sig->peak_value) sig->peak_value = decoded;
-            if (decoded < sig->min_value)  sig->min_value  = decoded;
+            if (decoded > sig->peak_value) { sig->peak_value = decoded; s_peaks_dirty = true; }
+            if (decoded < sig->min_value)  { sig->min_value  = decoded; s_peaks_dirty = true; }
         }
 
         sig->last_update_ms = now_ms;
@@ -263,10 +269,15 @@ void signal_inject_test_value(const char *name, float value)
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
 
-    /* Update peak/min tracking */
-    if (sig->tracking_active) {
-        if (value > sig->peak_value) sig->peak_value = value;
-        if (value < sig->min_value)  sig->min_value  = value;
+    /* Update peak/min tracking — but skip when the simulator is driving,
+     * because the triangle-wave sweep would otherwise poison the real
+     * recorded peaks/mins (a 0-100 sweep on a temperature signal would
+     * pin peak=100/min=0 even after the sim stops). Replay is still
+     * allowed through this branch: it plays back real logged data that
+     * the user probably DOES want reflected in the peak/min stats. */
+    if (sig->tracking_active && !signal_sim_is_active()) {
+        if (value > sig->peak_value) { sig->peak_value = value; s_peaks_dirty = true; }
+        if (value < sig->min_value)  { sig->min_value  = value; s_peaks_dirty = true; }
     }
 
     /* Match signal_dispatch_frame: only repaint widgets when the value
@@ -306,6 +317,10 @@ void signal_reset_peaks(void)
         s_signals[i].peak_value = -FLT_MAX;
         s_signals[i].min_value  = FLT_MAX;
     }
+    /* Flush to NVS immediately so a power-cycle right after "Reset All"
+     * doesn't re-hydrate the old peaks from stale storage. */
+    s_peaks_dirty = true;
+    signal_peaks_save_now();
 }
 
 void signal_reset_peak(int16_t signal_index)
@@ -314,6 +329,7 @@ void signal_reset_peak(int16_t signal_index)
         (uint16_t)signal_index >= s_signal_count) return;
     s_signals[signal_index].peak_value = -FLT_MAX;
     s_signals[signal_index].min_value  = FLT_MAX;
+    s_peaks_dirty = true;
 }
 
 float signal_get_peak(int16_t signal_index)
@@ -328,4 +344,121 @@ float signal_get_min(int16_t signal_index)
     if (!s_signals || signal_index < 0 ||
         (uint16_t)signal_index >= s_signal_count) return FLT_MAX;
     return s_signals[signal_index].min_value;
+}
+
+/* ── Persistence ────────────────────────────────────────────────────────── */
+
+#define PEAK_NS   "sig_peaks"
+#define PEAK_KEY  "v1"
+
+typedef struct {
+    char  name[32];
+    float peak;
+    float min;
+} _peak_record_t;
+
+void signal_peaks_load(void)
+{
+    if (!s_signals) return;
+
+    nvs_handle_t h;
+    if (nvs_open(PEAK_NS, NVS_READONLY, &h) != ESP_OK) return;
+
+    size_t sz = 0;
+    if (nvs_get_blob(h, PEAK_KEY, NULL, &sz) != ESP_OK || sz == 0 ||
+        (sz % sizeof(_peak_record_t)) != 0) {
+        nvs_close(h);
+        return;
+    }
+
+    _peak_record_t *buf = malloc(sz);
+    if (!buf) { nvs_close(h); return; }
+
+    if (nvs_get_blob(h, PEAK_KEY, buf, &sz) != ESP_OK) {
+        free(buf); nvs_close(h); return;
+    }
+    nvs_close(h);
+
+    uint32_t restored = 0;
+    size_t n = sz / sizeof(_peak_record_t);
+    for (size_t i = 0; i < n; i++) {
+        int16_t idx = signal_find_by_name(buf[i].name);
+        if (idx < 0) continue;  /* signal not in current layout — drop */
+        signal_t *sig = &s_signals[idx];
+        /* Don't clobber a live reading already taken since layout load — take
+         * the more extreme of persisted vs current. (Matters if this is
+         * called after some CAN frames already ran.) */
+        if (buf[i].peak > sig->peak_value) sig->peak_value = buf[i].peak;
+        if (buf[i].min  < sig->min_value)  sig->min_value  = buf[i].min;
+        restored++;
+    }
+    free(buf);
+    ESP_LOGI(TAG, "Peak/min persistence restored for %u signal(s)", (unsigned)restored);
+}
+
+void signal_peaks_save_now(void)
+{
+    if (!s_signals) return;
+
+    /* Build the blob in one pass — only signals with a recorded peak or min
+     * (i.e. not at the sentinel) are worth persisting. */
+    _peak_record_t *buf = calloc(s_signal_count, sizeof(_peak_record_t));
+    if (!buf) {
+        ESP_LOGW(TAG, "peaks save: OOM (%u bytes)",
+                 (unsigned)(s_signal_count * sizeof(_peak_record_t)));
+        return;
+    }
+
+    size_t count = 0;
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        signal_t *sig = &s_signals[i];
+        bool has_peak = (sig->peak_value != -FLT_MAX);
+        bool has_min  = (sig->min_value  !=  FLT_MAX);
+        if (!has_peak && !has_min) continue;
+
+        strncpy(buf[count].name, sig->name, sizeof(buf[count].name) - 1);
+        buf[count].name[sizeof(buf[count].name) - 1] = '\0';
+        buf[count].peak = has_peak ? sig->peak_value : -FLT_MAX;
+        buf[count].min  = has_min  ? sig->min_value  :  FLT_MAX;
+        count++;
+    }
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(PEAK_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        free(buf);
+        ESP_LOGW(TAG, "peaks save: nvs_open failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    if (count == 0) {
+        /* Erase the blob entirely when there's nothing meaningful — happens
+         * after Reset All before any fresh CAN traffic. */
+        nvs_erase_key(h, PEAK_KEY);
+    } else {
+        err = nvs_set_blob(h, PEAK_KEY, buf, count * sizeof(_peak_record_t));
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "peaks save: nvs_set_blob failed: %s", esp_err_to_name(err));
+        }
+    }
+    nvs_commit(h);
+    nvs_close(h);
+    free(buf);
+
+    s_peaks_dirty = false;
+}
+
+static void _peaks_autosave_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_peaks_dirty) signal_peaks_save_now();
+}
+
+void signal_peaks_start_autosave(void)
+{
+    if (s_peaks_save_timer) return;
+    /* 30s debounce — infrequent enough for flash endurance (worst case
+     * ~2880 writes/day, well within ESP32 NVS wear-leveling budget) but
+     * frequent enough to keep power-cut loss bounded. */
+    s_peaks_save_timer = lv_timer_create(_peaks_autosave_cb, 30000, NULL);
 }

@@ -11,3 +11,9 @@ cmake_debug*.log
 
 # ESP-IDF generated
 sdkconfig.old
+
+# ESP-IDF managed components (auto-fetched from idf_component.yml + dependencies.lock)
+managed_components/
+
+# Local build scratch
+_build_tmp.bat

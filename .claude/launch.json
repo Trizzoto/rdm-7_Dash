@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mobile-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/mobile-dev-server.js"],
+      "port": 8180
+    }
+  ]
+}

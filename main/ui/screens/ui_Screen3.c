@@ -23,6 +23,7 @@
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
 #include "widgets/widget_rpm_bar.h"
+#include "widgets/signal_sim.h"
 #include "widgets/widget_warning.h"
 #include <stdio.h>
 #include <string.h>
@@ -419,6 +420,23 @@ static void _bus_silent_tick_cb(lv_timer_t *t) {
     if (!s_bus_silent_badge || !lv_obj_is_valid(s_bus_silent_badge)) return;
 
     uint32_t now_ms = lv_tick_get();
+
+    /* While the signal simulator is active, hide the NO-CAN badge and keep
+     * the silence timer seeded forward. Rationale: demos in a parked car
+     * should look clean, and the simulator is producing visible motion on
+     * the gauges anyway — a flashing "NO CAN BUS" warning alongside fake
+     * data is noise. When sim stops we fall back to the real 5s silence
+     * heuristic, starting from "now" so the badge doesn't snap on
+     * instantly from the pre-sim timestamp. */
+    if (signal_sim_is_active()) {
+        s_last_rx_count = can_get_rx_frame_count();
+        s_last_rx_change_ms = now_ms;
+        if (!lv_obj_has_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_add_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
     uint32_t cnt = can_get_rx_frame_count();
     if (cnt != s_last_rx_count) {
         s_last_rx_count = cnt;

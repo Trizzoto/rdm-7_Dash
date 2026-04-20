@@ -18,7 +18,20 @@
 static const char *TAG = "mdns_service";
 static bool s_initialised = false;
 
+/* mDNS is disabled — the espressif__mdns managed component was failing
+ * to allocate memory from internal RAM (errors like `mdns_priv_alloc_packet:
+ * Cannot allocate memory`) even with 3.8MB heap free, because its Kconfig
+ * defaults pin it to `MDNS_MEMORY_ALLOC_INTERNAL`. Rather than fight the
+ * component, we've removed mDNS from the runtime path — users reach the
+ * dash via the IP shown in Device Settings, or by scanning the QR code.
+ * Flip this to 0 and re-enable the code below if mDNS is ever desired. */
+#define RDM7_MDNS_DISABLED 1
+
 esp_err_t rdm7_mdns_init(void) {
+    if (RDM7_MDNS_DISABLED) {
+        ESP_LOGI(TAG, "mDNS disabled — use IP or QR code to reach the dash");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (s_initialised) return ESP_OK;
 
     esp_err_t err = mdns_init();

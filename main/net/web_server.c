@@ -10,12 +10,17 @@
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "driver/twai.h"
+#include "net/ota_handler.h"
+#include "net/wifi_manager.h"
+#include "version.h"
 #include "layout/layout_manager.h"
 #include "layout/ecu_presets.h"
 #include "lvgl.h"
 #include "storage/sd_manager.h"
 #include "system/device_id.h"
 #include "system/rdm_settings.h"
+#include "system/remote_touch.h"
 #include "system/screen_config.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
@@ -34,6 +39,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <dirent.h>
+#include <stdlib.h>  /* atoi for /api/screenshot + /api/capture/stream query parsing */
 #include <stdbool.h>
 #include <string.h>
 #include <sys/param.h>
@@ -177,52 +183,427 @@ static esp_err_t index_handler(httpd_req_t *req) {
 	return httpd_resp_send(req, (const char *)index_html_start, len);
 }
 
-// HTTP handler for screenshot API
+/* ── Screenshot + MJPEG stream handlers ──────────────────────────────────
+ * /api/screenshot           — single JPEG (default) or raw RGB565 with ?raw=1
+ *                             Optional ?q=1..100 (default 75) for JPEG quality.
+ * /api/screenshot/raw       — legacy alias for the raw RGB565 format
+ * /api/capture/stream       — continuous multipart-MJPEG suitable for OBS /
+ *                             ffmpeg / <img src>. Runs until the client drops.
+ *
+ * JPEG is ~25–40 KB per frame vs 750 KB raw → 20× less WiFi bandwidth. Over
+ * AP mode that's the difference between "1 frame every 3 seconds" and "8–12
+ * fps continuous streaming." */
+
+static int _query_int(httpd_req_t *req, const char *key, int fallback) {
+	size_t qlen = httpd_req_get_url_query_len(req);
+	if (qlen == 0 || qlen > 256) return fallback;
+	char buf[257];
+	if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) return fallback;
+	char vbuf[16];
+	if (httpd_query_key_value(buf, key, vbuf, sizeof(vbuf)) != ESP_OK) return fallback;
+	int v = atoi(vbuf);
+	return v ? v : fallback;
+}
+
 static esp_err_t screenshot_handler(httpd_req_t *req) {
-	ESP_LOGI(TAG, "Screenshot requested");
+	/* Default to JPEG; raw=1 forces the original RGB565 output.
+	 *   ?q=N        JPEG quality 1-100 (default 85)
+	 *   ?full=1     native 800x480 (recording); omit for downsampled 400x240
+	 *   ?smooth=1   2x2 box-average downsample (smoother but ~15 ms slower)
+	 *   ?raw=1      raw RGB565 instead of JPEG */
+	bool want_raw = (_query_int(req, "raw",    0) == 1);
+	bool full_res = (_query_int(req, "full",   0) == 1);
+	bool smooth   = (_query_int(req, "smooth", 0) == 1);
+	int  quality  = _query_int(req, "q", 85);
 
-	uint8_t *screenshot_buffer = NULL;
-	size_t screenshot_size = 0;
+	uint8_t *buf = NULL;
+	size_t   size = 0;
+	esp_err_t ret = want_raw
+	    ? display_capture_screenshot(&buf, &size)
+	    : display_capture_screenshot_jpeg(quality, full_res, smooth, &buf, &size);
 
-	esp_err_t ret =
-		display_capture_screenshot(&screenshot_buffer, &screenshot_size);
+	/* If JPEG encoding isn't compiled in yet (pre-component-fetch state),
+	 * gracefully fall through to raw so the endpoint still works. */
+	if (!want_raw && ret == ESP_ERR_NOT_SUPPORTED) {
+		ESP_LOGW(TAG, "JPEG not available, falling back to raw");
+		ret = display_capture_screenshot(&buf, &size);
+		want_raw = true;
+	}
+
 	if (ret != ESP_OK) {
-		ESP_LOGE(TAG, "Failed to capture screenshot: %s", esp_err_to_name(ret));
+		ESP_LOGE(TAG, "Capture failed: %s", esp_err_to_name(ret));
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-							"Screenshot capture failed");
+		                     "Screenshot capture failed");
 		return ESP_FAIL;
 	}
 
-	// Set headers for binary data
-	httpd_resp_set_type(req, "application/octet-stream");
+	httpd_resp_set_type(req, want_raw ? "application/octet-stream" : "image/jpeg");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+	httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
 
-	// Send the screenshot data
-	esp_err_t send_ret =
-		httpd_resp_send(req, (const char *)screenshot_buffer, screenshot_size);
+	esp_err_t send_ret = httpd_resp_send(req, (const char *)buf, size);
+	display_capture_free_buffer(buf);
+	ESP_LOGI(TAG, "Screenshot sent: %zu bytes (%s)", size,
+	         want_raw ? "raw" : "jpeg");
+	return send_ret;
+}
 
-	// Clean up
-	display_capture_free_buffer(screenshot_buffer);
+/* MJPEG: continuous multipart stream over one HTTP connection.
+ * Content-Type: multipart/x-mixed-replace; boundary=frame
+ *
+ * Defaults are tuned for ambient "see what's on the dash from Studio" use:
+ *     fps=5, q=55  → ~30 KB/frame, ~70 ms encode.
+ * Override per-URL for recording:
+ *     /api/capture/stream?fps=15&q=80   (smoother, sharper, higher CPU)
+ *
+ * Frame-skip: the loop compares display_capture_shadow_seq() to the value
+ * at the last encode. If the counter hasn't moved, the dashboard hasn't
+ * drawn anything new and we resend the previously-cached JPEG unchanged —
+ * skipping the ~70-150 ms encode + shadow memcpy entirely. This makes a
+ * static-UI stream nearly free (just the occasional keepalive send).
+ *
+ * Browsers, OBS's "Browser" source, and ffmpeg all decode this format:
+ *   ffmpeg -i http://<dash>/api/capture/stream -c:v libx264 out.mp4 */
+#define MJPEG_BOUNDARY "\r\n--frame\r\n"
+static esp_err_t mjpeg_stream_handler(httpd_req_t *req) {
+	int quality    = _query_int(req, "q",     70);  /* was 55; bumped for nicer recording */
+	int target_fps = _query_int(req, "fps",   5);   /* 5 is plenty for preview */
+	bool full_res  = (_query_int(req, "full",   0) == 1);  /* default downsampled */
+	bool smooth    = (_query_int(req, "smooth", 0) == 1);  /* box-average if set */
+	if (target_fps < 1)  target_fps = 1;
+	if (target_fps > 30) target_fps = 30;
+	int frame_budget_ms = 1000 / target_fps;
 
-	if (send_ret == ESP_OK) {
-		ESP_LOGI(TAG, "Screenshot sent successfully (%zu bytes)",
-				 screenshot_size);
-	} else {
-		ESP_LOGE(TAG, "Failed to send screenshot");
+	/* Keepalive: even when nothing changes, send the cached frame every
+	 * keepalive_ms so the browser doesn't stall its <img> repaint and
+	 * proxies don't decide the connection is dead. */
+	const int keepalive_ms = 1000;
+
+	httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+	httpd_resp_set_hdr(req, "Pragma", "no-cache");
+
+	ESP_LOGI(TAG, "MJPEG stream starting (q=%d, target_fps=%d, frame-skip on)",
+	         quality, target_fps);
+
+	uint8_t *cached_jpg    = NULL;  /* last encoded JPEG; reused when shadow seq unchanged */
+	size_t   cached_size   = 0;
+	uint32_t last_seq      = 0xFFFFFFFFu;  /* force first encode */
+	int64_t  last_send_us  = 0;
+
+	while (1) {
+		int64_t loop_start = esp_timer_get_time();
+		uint32_t cur_seq   = display_capture_shadow_seq();
+		bool     ui_changed = (cur_seq != last_seq);
+		int64_t  since_send_ms = (loop_start - last_send_us) / 1000;
+		bool     need_keepalive = (since_send_ms >= keepalive_ms);
+
+		/* Re-encode only if UI actually changed OR we have no cache yet. */
+		if (ui_changed || !cached_jpg) {
+			uint8_t *fresh = NULL;
+			size_t   fresh_size = 0;
+			esp_err_t r = display_capture_screenshot_jpeg(quality, full_res, smooth, &fresh, &fresh_size);
+			if (r == ESP_OK) {
+				if (cached_jpg) display_capture_free_buffer(cached_jpg);
+				cached_jpg  = fresh;
+				cached_size = fresh_size;
+				last_seq    = cur_seq;
+			} else if (!cached_jpg) {
+				/* No cache, and the fresh encode failed. Bail — client will
+				 * see a short stream and can reconnect. */
+				ESP_LOGW(TAG, "MJPEG: first capture failed (%s), ending",
+				         esp_err_to_name(r));
+				break;
+			}
+			/* else: keep serving the stale cache until the next change */
+		} else if (!need_keepalive) {
+			/* Nothing to send and the keepalive window hasn't elapsed —
+			 * doze briefly and loop. Lets the CPU sleep during static UI. */
+			vTaskDelay(pdMS_TO_TICKS(frame_budget_ms));
+			continue;
+		}
+
+		/* Send the current cache (either fresh or re-broadcast). */
+		char hdr[128];
+		int hdr_len = snprintf(hdr, sizeof(hdr),
+		    MJPEG_BOUNDARY
+		    "Content-Type: image/jpeg\r\n"
+		    "Content-Length: %u\r\n\r\n",
+		    (unsigned)cached_size);
+
+		if (httpd_resp_send_chunk(req, hdr, hdr_len) != ESP_OK ||
+		    httpd_resp_send_chunk(req, (const char *)cached_jpg, cached_size) != ESP_OK) {
+			ESP_LOGI(TAG, "MJPEG client disconnected");
+			break;
+		}
+		last_send_us = esp_timer_get_time();
+
+		/* Pace to target fps. Any overshoot from a slow encode is absorbed;
+		 * no sleep if we blew the budget. */
+		int64_t elapsed_ms = (last_send_us - loop_start) / 1000;
+		if (elapsed_ms < frame_budget_ms) {
+			vTaskDelay(pdMS_TO_TICKS(frame_budget_ms - elapsed_ms));
+		}
 	}
 
-	return send_ret;
+	if (cached_jpg) display_capture_free_buffer(cached_jpg);
+	httpd_resp_send_chunk(req, NULL, 0);
+	return ESP_OK;
+}
+
+/* ── /api/touch — remote touch injection ─────────────────────────────────
+ * POST body (JSON):
+ *   { "x": 120, "y": 240, "state": "down" | "move" | "up" }     inject an event
+ *   { "enabled": true | false }                                  toggle on/off
+ * Fields can combine — a single POST can both toggle and inject.
+ *
+ * GET /api/touch returns { "enabled": <bool> } for the web UI to sync.
+ *
+ * Coordinates are in device pixels (0..799, 0..479). The web UI is
+ * responsible for scaling from CSS-pixel events on the Live Preview image
+ * to device coords before sending. */
+static esp_err_t api_touch_post_handler(httpd_req_t *req) {
+	/* Read the body (max 256 bytes is plenty for this tiny JSON payload) */
+	char body[257];
+	int total = req->content_len;
+	if (total <= 0 || total >= (int)sizeof(body)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+		return ESP_FAIL;
+	}
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[got] = '\0';
+
+	cJSON *root = cJSON_Parse(body);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
+		return ESP_FAIL;
+	}
+
+	/* Optional: flip the master enable */
+	cJSON *en = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (cJSON_IsBool(en)) {
+		remote_touch_set_enabled(cJSON_IsTrue(en));
+	}
+
+	/* Optional: inject a pointer event */
+	cJSON *x_js = cJSON_GetObjectItemCaseSensitive(root, "x");
+	cJSON *y_js = cJSON_GetObjectItemCaseSensitive(root, "y");
+	cJSON *s_js = cJSON_GetObjectItemCaseSensitive(root, "state");
+	if (cJSON_IsNumber(x_js) && cJSON_IsNumber(y_js) && cJSON_IsString(s_js)) {
+		const char *s = s_js->valuestring;
+		bool pressed = (strcmp(s, "down") == 0) || (strcmp(s, "move") == 0);
+		/* Log at INFO level on transitions, DEBUG on moves — so the serial
+		 * monitor shows touch events arriving without drowning in drag spam. */
+		if (strcmp(s, "down") == 0 || strcmp(s, "up") == 0) {
+			ESP_LOGI(TAG, "touch %s @ (%d, %d) enabled=%d",
+			         s, x_js->valueint, y_js->valueint,
+			         remote_touch_is_enabled());
+		} else {
+			ESP_LOGD(TAG, "touch move @ (%d, %d)",
+			         x_js->valueint, y_js->valueint);
+		}
+		remote_touch_set((int16_t)x_js->valueint, (int16_t)y_js->valueint, pressed);
+	}
+
+	cJSON_Delete(root);
+
+	/* Reply with the current enable state so the UI can sync */
+	char out[48];
+	snprintf(out, sizeof(out), "{\"enabled\":%s}",
+	         remote_touch_is_enabled() ? "true" : "false");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t api_touch_get_handler(httpd_req_t *req) {
+	char out[48];
+	snprintf(out, sizeof(out), "{\"enabled\":%s}",
+	         remote_touch_is_enabled() ? "true" : "false");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
+}
+
+/* ── /api/indicator/test — force wire-mode indicator state ────────────────
+ * Indicator widgets in Wire input-source mode don't subscribe to CAN
+ * signals — they're driven directly by GPIO pin state through
+ * `indicator_apply_analog_state()`. To let Studio's TEST ACTIVE button
+ * preview the active visual, this endpoint calls that function with
+ * caller-supplied state. For CAN-mode indicators the normal
+ * /api/signal/inject path works; this is wire-only.
+ *
+ * POST body: {"slot": 0|1, "active": true|false}
+ *   - slot 0 = LEFT indicator, slot 1 = RIGHT
+ *   - Both slots' state are sent each call; we preserve the OTHER slot's
+ *     current state so toggling left doesn't accidentally clear right. */
+extern void indicator_apply_analog_state(bool left_on, bool right_on);
+
+static bool s_ind_test_left  = false;
+static bool s_ind_test_right = false;
+
+static void _ind_test_apply_cb(void *param) {
+	(void)param;
+	indicator_apply_analog_state(s_ind_test_left, s_ind_test_right);
+}
+
+static esp_err_t api_indicator_test_post_handler(httpd_req_t *req) {
+	char body[128];
+	int total = req->content_len;
+	if (total <= 0 || total >= (int)sizeof(body)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+		return ESP_FAIL;
+	}
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[got] = '\0';
+
+	cJSON *root = cJSON_Parse(body);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *slot_js   = cJSON_GetObjectItemCaseSensitive(root, "slot");
+	cJSON *active_js = cJSON_GetObjectItemCaseSensitive(root, "active");
+	int  slot   = cJSON_IsNumber(slot_js)   ? slot_js->valueint      : -1;
+	bool active = cJSON_IsBool(active_js)   ? cJSON_IsTrue(active_js) : false;
+
+	if (slot == 0) s_ind_test_left  = active;
+	else if (slot == 1) s_ind_test_right = active;
+	else {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "slot must be 0 or 1");
+		return ESP_FAIL;
+	}
+	cJSON_Delete(root);
+
+	ESP_LOGI(TAG, "indicator test slot=%d active=%d (L=%d R=%d)",
+	         slot, active, s_ind_test_left, s_ind_test_right);
+
+	/* indicator_apply_analog_state touches LVGL — dispatch via lv_async_call
+	 * so it runs on the LVGL task, not the httpd worker. */
+	lv_async_call(_ind_test_apply_cb, NULL);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
 }
 
 // URI handlers
 static const httpd_uri_t index_uri = {
 	.uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
 
+/* ── Captive portal probe handlers ───────────────────────────────────────
+ * When a phone joins the dash hotspot, its OS probes well-known URLs to
+ * detect internet connectivity. Without a response, iOS backgrounds the
+ * connection (preferring cellular) and Android shows "No internet" —
+ * making the dash unreachable even though the AP is up.
+ *
+ * By responding with a 302 redirect to the editor, we trigger the OS
+ * "Sign in to network" captive-portal sheet, which loads the dash web
+ * editor in a mini-browser. iOS, Android 5+, and Windows all recognise
+ * this pattern. References:
+ *   - Apple:    /hotspot-detect.html, /library/test/success.html
+ *   - Android:  /generate_204, /gen_204, /generate204
+ *   - Windows:  /connecttest.txt, /ncsi.txt, /redirect
+ *   - Firefox:  /success.txt
+ */
+static esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
+	ESP_LOGI(TAG, "Captive portal probe: %s", req->uri);
+	/* Build Location from the Host header so we redirect to whichever IP
+	 * the client used (192.168.4.1 on AP, STA IP on LAN). Falls back to
+	 * the AP IP if Host is unavailable. */
+	char host[48] = "192.168.4.1";
+	size_t h_len = httpd_req_get_hdr_value_len(req, "Host");
+	if (h_len > 0 && h_len < sizeof(host)) {
+		httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+	}
+	char loc[96];
+	snprintf(loc, sizeof(loc), "http://%s/", host);
+	httpd_resp_set_status(req, "302 Found");
+	httpd_resp_set_hdr(req, "Location", loc);
+	httpd_resp_set_type(req, "text/html; charset=UTF-8");
+	/* Non-empty body is required for iOS to treat this as a real
+	 * captive portal (bare 302 is ignored on some versions). */
+	const char *body =
+		"<!doctype html><html><head>"
+		"<meta http-equiv=\"refresh\" content=\"0;url=http://192.168.4.1/\">"
+		"<title>RDM-7 Dash</title></head>"
+		"<body>Redirecting to dash editor&hellip;</body></html>";
+	return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t cp_ios_uri = {
+	.uri = "/hotspot-detect.html", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_ios2_uri = {
+	.uri = "/library/test/success.html", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_android_uri = {
+	.uri = "/generate_204", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_android2_uri = {
+	.uri = "/gen_204", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_android3_uri = {
+	.uri = "/generate204", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_win_uri = {
+	.uri = "/connecttest.txt", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_win2_uri = {
+	.uri = "/ncsi.txt", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_win3_uri = {
+	.uri = "/redirect", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+static const httpd_uri_t cp_firefox_uri = {
+	.uri = "/success.txt", .method = HTTP_GET,
+	.handler = captive_portal_redirect_handler, .user_ctx = NULL};
+
 static const httpd_uri_t screenshot_uri = {.uri = "/screenshot",
 										   .method = HTTP_GET,
 										   .handler = screenshot_handler,
 										   .user_ctx = NULL};
+
+/* New canonical endpoints (both point at the same handlers as above). The
+ * old /screenshot stays for backwards compat with existing web editor code. */
+static const httpd_uri_t api_screenshot_uri = {
+    .uri = "/api/screenshot", .method = HTTP_GET,
+    .handler = screenshot_handler, .user_ctx = NULL};
+
+static const httpd_uri_t api_capture_stream_uri = {
+    .uri = "/api/capture/stream", .method = HTTP_GET,
+    .handler = mjpeg_stream_handler, .user_ctx = NULL};
+
+static const httpd_uri_t api_touch_post_uri = {
+    .uri = "/api/touch", .method = HTTP_POST,
+    .handler = api_touch_post_handler, .user_ctx = NULL};
+
+static const httpd_uri_t api_indicator_test_post_uri = {
+    .uri = "/api/indicator/test", .method = HTTP_POST,
+    .handler = api_indicator_test_post_handler, .user_ctx = NULL};
+
+static const httpd_uri_t api_touch_get_uri = {
+    .uri = "/api/touch", .method = HTTP_GET,
+    .handler = api_touch_get_handler, .user_ctx = NULL};
 
 // Lightweight version check — web editor polls this to avoid fetching the
 // full layout JSON on every sync cycle.
@@ -2118,11 +2499,13 @@ static esp_err_t _fuel_set_full_handler(httpd_req_t *req) {
  */
 
 static esp_err_t _signal_values_handler(httpd_req_t *req) {
-	if (!example_lvgl_lock(500)) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
-	}
-
+	/* No LVGL lock needed — signal_get_by_index() is a simple array lookup
+	 * into a static registry, and the fields we read (name, current_value,
+	 * is_stale) are word-sized or char arrays that are atomic-enough for a
+	 * read-only snapshot. The old 500 ms lock timeout was causing the mobile
+	 * editor (which polls this every 3 s) to hit 500 "LVGL busy" errors
+	 * whenever the signal simulator was running and the LVGL task held the
+	 * mutex for extended periods during frame dispatch. */
 	uint16_t count = signal_get_count();
 	cJSON *root = cJSON_CreateObject();
 	cJSON *arr  = cJSON_AddArrayToObject(root, "signals");
@@ -2137,8 +2520,6 @@ static esp_err_t _signal_values_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
 		cJSON_AddItemToArray(arr, obj);
 	}
-
-	example_lvgl_unlock();
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
@@ -3300,10 +3681,8 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	get_device_serial(serial);
 	cJSON_AddStringToObject(root, "serial", serial);
 
-	const esp_app_desc_t *desc = esp_app_get_description();
-	cJSON_AddStringToObject(root, "version", desc->version);
+	/* Firmware version intentionally omitted from this endpoint — UI hides it. */
 	cJSON_AddNumberToObject(root, "schema", LAYOUT_SCHEMA_VERSION);
-	cJSON_AddStringToObject(root, "project", desc->project_name);
 
 	const screen_profile_t *scr = screen_get_profile();
 	cJSON *display = cJSON_AddObjectToObject(root, "display");
@@ -3323,6 +3702,85 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	esp_flash_get_size(NULL, &flash_size);
 	cJSON_AddNumberToObject(hw, "flash_mb",
 		(double)flash_size / (1024 * 1024));
+
+	/* Live system stats — what the on-device Diagnostics screen shows. */
+	cJSON *sys = cJSON_AddObjectToObject(root, "system");
+	cJSON_AddNumberToObject(sys, "uptime_s",
+		(double)(esp_timer_get_time() / 1000000ULL));
+	cJSON_AddNumberToObject(sys, "heap_free",
+		(double)esp_get_free_heap_size());
+	cJSON_AddNumberToObject(sys, "heap_min_free",
+		(double)esp_get_minimum_free_heap_size());
+	cJSON_AddNumberToObject(sys, "psram_free",
+		(double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+	cJSON_AddBoolToObject(sys, "logger_active",   data_logger_is_active());
+	cJSON_AddBoolToObject(sys, "replay_active",   signal_replay_is_active());
+
+	/* CAN bus */
+	cJSON *can = cJSON_AddObjectToObject(root, "can");
+	twai_status_info_t ts;
+	if (twai_get_status_info(&ts) == ESP_OK) {
+		const char *state_str = "unknown";
+		switch (ts.state) {
+			case TWAI_STATE_STOPPED:      state_str = "stopped";      break;
+			case TWAI_STATE_RUNNING:      state_str = "running";      break;
+			case TWAI_STATE_BUS_OFF:      state_str = "bus_off";      break;
+			case TWAI_STATE_RECOVERING:   state_str = "recovering";   break;
+		}
+		cJSON_AddStringToObject(can, "state", state_str);
+		cJSON_AddNumberToObject(can, "rx_pending",  ts.msgs_to_rx);
+		cJSON_AddNumberToObject(can, "tx_errors",   ts.tx_error_counter);
+		cJSON_AddNumberToObject(can, "rx_errors",   ts.rx_error_counter);
+		cJSON_AddNumberToObject(can, "bus_errors",  ts.bus_error_count);
+		cJSON_AddNumberToObject(can, "rx_missed",   ts.rx_missed_count);
+	} else {
+		cJSON_AddStringToObject(can, "state", "unavailable");
+	}
+
+	/* WiFi */
+	cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
+	wifi_mgr_state_t ws = wifi_manager_get_state();
+	const char *ws_str = "off";
+	switch (ws) {
+		case WIFI_MGR_STATE_OFF:         ws_str = "off";         break;
+		case WIFI_MGR_STATE_IDLE:        ws_str = "idle";        break;
+		case WIFI_MGR_STATE_SCANNING:    ws_str = "scanning";    break;
+		case WIFI_MGR_STATE_CONNECTING:  ws_str = "connecting";  break;
+		case WIFI_MGR_STATE_CONNECTED:   ws_str = "connected";   break;
+		case WIFI_MGR_STATE_AP_ONLY:     ws_str = "ap_only";     break;
+		case WIFI_MGR_STATE_FAILED:      ws_str = "failed";      break;
+	}
+	cJSON_AddStringToObject(wifi, "state", ws_str);
+	cJSON_AddStringToObject(wifi, "ssid",   wifi_manager_get_connected_ssid() ? wifi_manager_get_connected_ssid() : "");
+	cJSON_AddStringToObject(wifi, "sta_ip", wifi_manager_get_sta_ip() ? wifi_manager_get_sta_ip() : "");
+	cJSON_AddBoolToObject  (wifi, "ap_enabled", wifi_manager_is_ap_enabled());
+	cJSON_AddStringToObject(wifi, "ap_ssid", wifi_manager_get_ap_ssid() ? wifi_manager_get_ap_ssid() : "");
+	cJSON_AddStringToObject(wifi, "ap_ip",   wifi_manager_get_ap_ip() ? wifi_manager_get_ap_ip() : "");
+
+	/* SD card */
+	cJSON *sd = cJSON_AddObjectToObject(root, "sd");
+	bool sd_mounted = sd_manager_is_mounted();
+	cJSON_AddBoolToObject(sd, "mounted", sd_mounted);
+	if (sd_mounted) {
+		size_t total_b = 0, used_b = 0, free_b = 0;
+		if (sd_manager_get_info(&total_b, &used_b, &free_b) == ESP_OK) {
+			cJSON_AddNumberToObject(sd, "total", (double)total_b);
+			cJSON_AddNumberToObject(sd, "used",  (double)used_b);
+			cJSON_AddNumberToObject(sd, "free",  (double)free_b);
+		}
+	}
+
+	/* Signals summary */
+	cJSON *sigs = cJSON_AddObjectToObject(root, "signals");
+	uint16_t sig_total = signal_get_count();
+	uint16_t sig_fresh = 0;
+	for (uint16_t i = 0; i < sig_total; i++) {
+		signal_t *s = signal_get_by_index(i);
+		if (s && !s->is_stale) sig_fresh++;
+	}
+	cJSON_AddNumberToObject(sigs, "total", sig_total);
+	cJSON_AddNumberToObject(sigs, "fresh", sig_fresh);
+	cJSON_AddNumberToObject(sigs, "stale", (int)sig_total - (int)sig_fresh);
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
@@ -3515,6 +3973,124 @@ static const httpd_uri_t system_reboot_uri = {
 	.handler = _system_reboot_handler, .user_ctx = NULL
 };
 
+/* ── OTA update API ───────────────────────────────────────────────────────
+ * Three endpoints so the web UI can do a background "is there an update?"
+ * check on page load and surface a banner, plus trigger the actual install
+ * when the user accepts:
+ *
+ *   GET  /api/ota/status  — cached state: current + latest version, progress,
+ *                           release notes, file size. Safe to poll.
+ *   POST /api/ota/check   — kicks off check_for_update() on a background
+ *                           task (the call itself blocks ~5-45s on GitHub's
+ *                           API, so it can't run inside the HTTPD handler).
+ *                           Returns 202 immediately.
+ *   POST /api/ota/start   — begins the actual download + flash via
+ *                           start_ota_update_task() (already non-blocking).
+ *
+ * The check task spawns with a small stack because check_for_update manages
+ * its own HTTPS client + buffer internally. */
+
+static const char *_ota_status_string(ota_status_t s) {
+	switch (s) {
+		case OTA_IDLE:                 return "idle";
+		case OTA_CHECKING:             return "checking";
+		case OTA_NO_UPDATE_AVAILABLE:  return "no_update";
+		case OTA_UPDATE_AVAILABLE:     return "available";
+		case OTA_UPDATE_IN_PROGRESS:   return "installing";
+		case OTA_UPDATE_COMPLETED:     return "completed";
+		case OTA_UPDATE_FAILED:        return "failed";
+		default:                       return "unknown";
+	}
+}
+
+static esp_err_t _ota_status_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	ota_status_t st = get_ota_status();
+	const char *latest = get_latest_version();
+	const char *notes  = get_release_notes();
+	float size_mb      = get_update_file_size_mb();
+	int progress       = get_ota_progress();
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "status",          _ota_status_string(st));
+	cJSON_AddStringToObject(root, "current_version", FIRMWARE_VERSION);
+	cJSON_AddStringToObject(root, "latest_version",  latest ? latest : "");
+	cJSON_AddStringToObject(root, "release_notes",   notes  ? notes  : "");
+	cJSON_AddNumberToObject(root, "file_size_mb",    size_mb);
+	cJSON_AddNumberToObject(root, "progress",        progress);
+	cJSON_AddBoolToObject  (root, "update_available", st == OTA_UPDATE_AVAILABLE);
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_sendstr(req, json ? json : "{}");
+	free(json);
+	return ESP_OK;
+}
+
+/* Background-task wrapper: the HTTPD handler returns 202 immediately;
+ * check_for_update runs here and mutates the shared OTA state. Stack
+ * sized for HTTPS + cJSON parse of the GitHub release payload. */
+static void _ota_check_task(void *arg) {
+	(void)arg;
+	check_for_update();
+	vTaskDelete(NULL);
+}
+
+static esp_err_t _ota_check_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	/* Skip if a check is already in flight to avoid stacking tasks. */
+	if (get_ota_status() == OTA_CHECKING) {
+		httpd_resp_set_status(req, "202 Accepted");
+		httpd_resp_sendstr(req, "{\"status\":\"checking\"}");
+		return ESP_OK;
+	}
+
+	BaseType_t ok = xTaskCreate(_ota_check_task, "ota_check", 6144,
+	                            NULL, 5, NULL);
+	if (ok != pdPASS) {
+		httpd_resp_set_status(req, "503 Service Unavailable");
+		httpd_resp_sendstr(req, "{\"error\":\"failed to start check task\"}");
+		return ESP_OK;
+	}
+	httpd_resp_set_status(req, "202 Accepted");
+	httpd_resp_sendstr(req, "{\"status\":\"checking\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _ota_start_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+
+	ota_status_t st = get_ota_status();
+	if (st != OTA_UPDATE_AVAILABLE) {
+		httpd_resp_set_status(req, "409 Conflict");
+		httpd_resp_sendstr(req, "{\"error\":\"no update available — run /api/ota/check first\"}");
+		return ESP_OK;
+	}
+
+	start_ota_update_task();
+	httpd_resp_set_status(req, "202 Accepted");
+	httpd_resp_sendstr(req, "{\"status\":\"installing\"}");
+	return ESP_OK;
+}
+
+static const httpd_uri_t ota_status_uri = {
+	.uri = "/api/ota/status", .method = HTTP_GET,
+	.handler = _ota_status_handler, .user_ctx = NULL
+};
+static const httpd_uri_t ota_check_uri = {
+	.uri = "/api/ota/check", .method = HTTP_POST,
+	.handler = _ota_check_handler, .user_ctx = NULL
+};
+static const httpd_uri_t ota_start_uri = {
+	.uri = "/api/ota/start", .method = HTTP_POST,
+	.handler = _ota_start_handler, .user_ctx = NULL
+};
+
 /* ── WiFi Config API ──────────────────────────────────────────────────── */
 
 static esp_err_t _wifi_config_get_handler(httpd_req_t *req) {
@@ -3649,9 +4225,26 @@ esp_err_t web_server_start(void) {
 	};
 	REGISTER_URI(server, &cors_options_uri);
 
+	/* Captive portal probe URIs — register before any wildcard handler
+	 * so the specific paths aren't shadowed. */
+	REGISTER_URI(server, &cp_ios_uri);
+	REGISTER_URI(server, &cp_ios2_uri);
+	REGISTER_URI(server, &cp_android_uri);
+	REGISTER_URI(server, &cp_android2_uri);
+	REGISTER_URI(server, &cp_android3_uri);
+	REGISTER_URI(server, &cp_win_uri);
+	REGISTER_URI(server, &cp_win2_uri);
+	REGISTER_URI(server, &cp_win3_uri);
+	REGISTER_URI(server, &cp_firefox_uri);
+
 	// Register URI handlers
 	REGISTER_URI(server, &index_uri);
 	REGISTER_URI(server, &screenshot_uri);
+	REGISTER_URI(server, &api_screenshot_uri);
+	REGISTER_URI(server, &api_capture_stream_uri);
+	REGISTER_URI(server, &api_touch_post_uri);
+	REGISTER_URI(server, &api_indicator_test_post_uri);
+	REGISTER_URI(server, &api_touch_get_uri);
 	REGISTER_URI(server, &layout_version_uri);
 	REGISTER_URI(server, &layout_current_uri);
 	REGISTER_URI(server, &layout_raw_uri);
@@ -3693,6 +4286,9 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &can_config_post_uri);
 	REGISTER_URI(server, &system_health_uri);
 	REGISTER_URI(server, &system_reboot_uri);
+	REGISTER_URI(server, &ota_status_uri);
+	REGISTER_URI(server, &ota_check_uri);
+	REGISTER_URI(server, &ota_start_uri);
 	REGISTER_URI(server, &wifi_config_get_uri);
 	REGISTER_URI(server, &wifi_config_post_uri);
 	REGISTER_URI(server, &dimmer_config_get_uri);

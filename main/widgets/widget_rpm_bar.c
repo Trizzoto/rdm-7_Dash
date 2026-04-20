@@ -40,6 +40,22 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value);
 static lv_obj_t *rpm_lines_parent = NULL;
 static lv_obj_t *s_rpm_container = NULL;
 
+/* Live container dimensions — drive proportional scaling of the bar gauge,
+ * Panel9 colour swatch, redline zone, and tick marks/labels. Defaults to the
+ * stock 800x55 layout; updated by widget_rpm_bar_create() and _rpm_bar_resize(). */
+static int s_container_w = 800;
+static int s_container_h = 55;
+
+/* Pick the closest pre-compiled Fugaz face for the requested pixel height.
+ * The dashboard ships compiled bitmap fonts at 14/17/28/56 px (no TTF fallback
+ * for Fugaz), so we bucket to the nearest. */
+static const lv_font_t *_pick_tick_font(int desired_px) {
+	if (desired_px >= 42) return &ui_font_fugaz_56;
+	if (desired_px >= 22) return &ui_font_fugaz_28;
+	if (desired_px >= 15) return &ui_font_fugaz_17;
+	return &ui_font_fugaz_14;
+}
+
 /* menu_rpm_value_label is owned by menu_screen.c */
 extern lv_obj_t *menu_rpm_value_label;
 
@@ -648,9 +664,12 @@ void update_redline_position(void) {
 	if (redline_percentage < 0.0f)
 		redline_percentage = 0.0f;
 
-	// Screen and RPM bar dimensions
-	const lv_coord_t screen_width = 800; // Full screen width
-	const lv_coord_t bar_width = 765;
+	/* Scale geometry to the live container size (defaults: 800-wide container,
+	 * 765-px bar fill region). */
+	float sx = (float)s_container_w / 800.0f;
+
+	const lv_coord_t screen_width = (lv_coord_t)s_container_w;
+	const lv_coord_t bar_width = (lv_coord_t)(765.0f * sx + 0.5f);
 	const lv_coord_t screen_right_edge =
 		screen_width / 2; // Right edge relative to center
 
@@ -658,7 +677,7 @@ void update_redline_position(void) {
 	// screen to redline position
 	lv_coord_t redline_rpm_position =
 		-(bar_width / 2) +
-		(redline_percentage * bar_width); // RPM position on bar
+		(lv_coord_t)(redline_percentage * bar_width); // RPM position on bar
 	lv_coord_t redline_width =
 		screen_right_edge -
 		redline_rpm_position; // From redline to right edge of screen
@@ -666,7 +685,6 @@ void update_redline_position(void) {
 	// If redline is at or beyond max RPM, hide the zone
 	if (redline_percentage >= 1.0f || redline_width <= 0) {
 		lv_obj_add_flag(rpm_redline_zone, LV_OBJ_FLAG_HIDDEN);
-		printf("Redline zone hidden (redline at or beyond max RPM)\n");
 		return;
 	}
 
@@ -676,12 +694,6 @@ void update_redline_position(void) {
 	// Position so it starts at redline RPM position and extends to
 	// right edge
 	lv_obj_set_x(rpm_redline_zone, redline_rpm_position + (redline_width / 2));
-
-	printf("Redline updated: %d RPM at %.1f%% (zone: from RPM pos %d "
-		   "to screen "
-		   "edge, width=%d)\n",
-		   rpm_redline_value, redline_percentage * 100, redline_rpm_position,
-		   redline_width);
 }
 /* Async update payload for lv_async_call(update_rpm_ui, ...) */
 typedef struct {
@@ -739,10 +751,15 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	rpm_bar_data_t *rd_bar = _lookup_rpm_bar_data();
 	lv_color_t saved_color = rd_bar ? rd_bar->bar_color : THEME_COLOR_GREEN;
 
-	/* Panel9 — color indicator square at left edge.
-	 * Inside the 800x55 container, center-relative: (-373, 0). */
-	ui_Panel9 =
-		create_panel(container, 55, 55, -373, 0, 0, saved_color, 0);
+	/* Scale Panel9 + bar geometry to the live container size (default 800x55). */
+	float sx = (float)s_container_w / 800.0f;
+	float sy = (float)s_container_h / 55.0f;
+
+	/* Panel9 — colour indicator square hugging the container's left edge.
+	 * Square sized to container height; positioned in center-relative coords. */
+	int panel_sq = s_container_h;
+	int panel_x  = -(s_container_w - panel_sq) / 2;
+	ui_Panel9 = create_panel(container, panel_sq, panel_sq, panel_x, 0, 0, saved_color, 0);
 
 	const float bar_extension_ratio = 782.5f / 765.0f;
 	int32_t extended_rpm_max = (int32_t)(rpm_gauge_max * bar_extension_ratio);
@@ -750,8 +767,8 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	rpm_bar_gauge = lv_bar_create(container);
 	lv_bar_set_range(rpm_bar_gauge, 0, extended_rpm_max);
 	lv_bar_set_value(rpm_bar_gauge, 0, LV_ANIM_OFF);
-	lv_obj_set_size(rpm_bar_gauge, 783, 55);
-	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, 20, 0);
+	lv_obj_set_size(rpm_bar_gauge, (lv_coord_t)(783.0f * sx + 0.5f), s_container_h);
+	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, (lv_coord_t)(20.0f * sx + 0.5f), 0);
 	lv_obj_clear_flag(rpm_bar_gauge, LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
 
 	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -772,11 +789,12 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 								 LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-	/* Redline zone — inside container, center-relative y.
-	 * Screen y=-191 → container y = -191 - (-213) = 22. */
+	/* Redline zone — inside container, center-relative y. Originally height=12
+	 * with y=22 inside the 55px container; scale both so it stays anchored to
+	 * the lower portion of the bar at any height. */
 	rpm_redline_zone = lv_obj_create(container);
-	lv_obj_set_height(rpm_redline_zone, 12);
-	lv_obj_set_y(rpm_redline_zone, 22);
+	lv_obj_set_height(rpm_redline_zone, (lv_coord_t)(12.0f * sy + 0.5f));
+	lv_obj_set_y(rpm_redline_zone, (lv_coord_t)(22.0f * sy + 0.5f));
 	lv_obj_set_align(rpm_redline_zone, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(rpm_redline_zone, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
 	lv_obj_set_style_radius(rpm_redline_zone, 0,
@@ -833,36 +851,53 @@ void update_rpm_lines(lv_obj_t *parent) {
 		num_lines = MAX_RPM_LINES;
 	}
 
-	// Get the position and size of the RPM bar
-	lv_coord_t bar_x = 18;
-	lv_coord_t bar_y_set1 = 0;	// First set starts at px (moved up 2px)
-	lv_coord_t bar_y_set2 = 42; // Second set starts at px (moved up 2px)
+	/* Scale factors against the stock 800x55 layout. sx spreads the ticks
+	 * across the wider/narrower bar; sy scales tick length, thickness, label
+	 * font and vertical placement so a taller RPM bar gets visibly chunkier
+	 * markings. */
+	float sx = (float)s_container_w / 800.0f;
+	float sy = (float)s_container_h / 55.0f;
+
+	lv_coord_t bar_x = (lv_coord_t)(18.0f * sx + 0.5f);
+	lv_coord_t bar_y_set1 = 0; // top row: anchored to container top edge
+	lv_coord_t span_px     = (lv_coord_t)(765.0f * sx + 0.5f);
+
+	/* Tallest tick (main) sets the bottom-row baseline so all bottom ticks end
+	 * flush with the container's bottom edge. */
+	lv_coord_t main_h = (lv_coord_t)(12.0f * sy + 0.5f);
+	if (main_h < 1) main_h = 1;
+
+	/* Tick label font: scale 17px nominal by sy, then snap to nearest preloaded face. */
+	const lv_font_t *tick_font = _pick_tick_font((int)(17.0f * sy + 0.5f));
+	lv_coord_t label_off       = (lv_coord_t)(7.0f * sy + 0.5f);
 
 	// For each tick, calculate its position for both sets
 	for (int i = 0; i < num_lines; i++) {
 		// Current RPM value for the tick
 		int rpm_value = i * increments;
 
-		// Calculate the x position based on rpm_value
-		lv_coord_t x_pos = bar_x + ((rpm_value * 765) / rpm_gauge_max);
+		// Calculate the x position based on rpm_value (scaled span)
+		lv_coord_t x_pos = bar_x + (lv_coord_t)(((int64_t)rpm_value * span_px) / rpm_gauge_max);
 
 		// Decide which size line/tick to draw
-		//    - Every 1000 RPM: main tick (width=3, height=13)
-		//    - Every 500 RPM: medium tick (width=2, height=11)
+		//    - Every 1000 RPM: main tick (3x12 nominal)
+		//    - Every 500 RPM:  medium tick (2x8 nominal)
 		lv_coord_t line_width;
 		lv_coord_t line_height;
 		bool add_label = false; // Only label the 1000s in the first set
 
 		if ((rpm_value % 1000) == 0) {
 			// Main tick
-			line_width = 3;
-			line_height = 12;
+			line_width  = (lv_coord_t)(3.0f * sy + 0.5f);
+			line_height = main_h;
 			add_label = true;
 		} else {
 			// Medium tick (500 RPM)
-			line_width = 2;
-			line_height = 8;
+			line_width  = (lv_coord_t)(2.0f * sy + 0.5f);
+			line_height = (lv_coord_t)(8.0f * sy + 0.5f);
 		}
+		if (line_width  < 1) line_width  = 1;
+		if (line_height < 1) line_height = 1;
 
 		// Create the first set of lines (top row)
 		lv_obj_t *line_top = lv_obj_create(parent);
@@ -892,14 +927,14 @@ void update_rpm_lines(lv_obj_t *parent) {
 			snprintf(rpm_str, sizeof(rpm_str), "%d", rpm_value / 1000);
 			lv_label_set_text(label, rpm_str);
 
-			// Style the label
+			// Style the label (font scales with container height)
 			lv_obj_set_style_text_color(label, THEME_COLOR_BG, LV_PART_MAIN);
 			lv_obj_set_style_text_opa(label, LV_OPA_COVER, LV_PART_MAIN);
-			lv_obj_set_style_text_font(label, THEME_FONT_DASH_TICK,
+			lv_obj_set_style_text_font(label, tick_font,
 									   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-			// Position the label below the line
-			lv_obj_align_to(label, line_top, LV_ALIGN_OUT_BOTTOM_MID, 0, 7);
+			// Position the label below the line (offset scales with sy)
+			lv_obj_align_to(label, line_top, LV_ALIGN_OUT_BOTTOM_MID, 0, label_off);
 
 			rpm_labels[num_rpm_lines] = label;
 		}
@@ -921,10 +956,11 @@ void update_rpm_lines(lv_obj_t *parent) {
 								 LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_clear_flag(line_bottom, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-		// Position the bottom line flat at the bottom with its height
-		// flipped
+		// Bottom row: anchor each tick to the container's bottom edge so
+		// shorter ticks slide down — matches the original 55px layout where
+		// every bottom tick ended at y=55.
 		lv_obj_set_pos(line_bottom, adjusted_x,
-					   bar_y_set2 + (13 - line_height));
+					   s_container_h - line_height);
 
 		rpm_lines[num_rpm_lines] = line_bottom;
 
@@ -949,6 +985,13 @@ lv_obj_t *widget_rpm_bar_create(lv_obj_t *parent) {
 	lv_obj_set_style_bg_opa(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Sync the container-dimension cache so create_rpm_bar_gauge / update_rpm_lines
+	 * pick up the right scale factors on first build. _rpm_bar_create() will
+	 * resize the container (and re-call _rpm_bar_resize) once the layout-loaded
+	 * w/h are applied. */
+	s_container_w = SCREEN_W;
+	s_container_h = 55;
 
 	create_rpm_bar_gauge(container);
 	update_rpm_lines(container);
@@ -981,6 +1024,8 @@ static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
 static void _rpm_bar_apply_night_mode(widget_t *w, bool active);
 static void _rpm_bar_night_cb(bool active, void *user_data);
 
+static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh);
+
 static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_t *container = widget_rpm_bar_create(parent);
 	w->root = container;
@@ -988,6 +1033,11 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	/* Apply layout-defined size and position (overrides hardcoded defaults) */
 	lv_obj_set_size(container, w->w, w->h);
 	lv_obj_set_pos(container, w->x, w->y);
+	/* Re-scale internal objects + re-render ticks so labels/lines match the
+	 * loaded size, not the 800x55 defaults baked into widget_rpm_bar_create. */
+	if (w->w != SCREEN_W || w->h != 55) {
+		_rpm_bar_resize(w, w->w, w->h);
+	}
 
 	/* Subscribe to signal if bound */
 	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
@@ -1013,6 +1063,42 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	w->w = nw;
 	w->h = nh;
+	s_container_w = nw;
+	s_container_h = nh;
+
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
+		lv_obj_set_size(s_rpm_container, nw, nh);
+
+	float sx = (float)nw / 800.0f;
+	float sy = (float)nh / 55.0f;
+
+	/* Panel9 — keep it square-ish flush against the left edge of the container. */
+	if (ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
+		int panel_sq = nh;
+		int panel_x  = -((int)nw - panel_sq) / 2;
+		lv_obj_set_size(ui_Panel9, panel_sq, panel_sq);
+		lv_obj_set_pos(ui_Panel9, panel_x, 0);
+	}
+
+	/* RPM bar gauge — width follows sx, height matches container. */
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+		lv_obj_set_size(rpm_bar_gauge, (lv_coord_t)(783.0f * sx + 0.5f), nh);
+		lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID,
+					 (lv_coord_t)(20.0f * sx + 0.5f), 0);
+	}
+
+	/* Redline zone — height + vertical anchor scale with sy; width/x are
+	 * recomputed by update_redline_position() against the new container width. */
+	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
+		lv_obj_set_height(rpm_redline_zone, (lv_coord_t)(12.0f * sy + 0.5f));
+		lv_obj_set_y(rpm_redline_zone, (lv_coord_t)(22.0f * sy + 0.5f));
+	}
+
+	/* Rebuild tick marks + labels at the new scale. */
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
+		update_rpm_lines(s_rpm_container);
+
+	update_redline_position();
 }
 static void _rpm_bar_open_settings(widget_t *w) { (void)w; }
 static void _rpm_bar_to_json(widget_t *w, cJSON *out) {

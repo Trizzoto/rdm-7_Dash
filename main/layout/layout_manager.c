@@ -230,7 +230,7 @@ esp_err_t layout_manager_init(void) {
 	}
 
 	if (s_lfs_mounted) {
-		ESP_LOGI(TAG, "LittleFS already mounted — skipping");
+		ESP_LOGD(TAG, "LittleFS already mounted — skipping");
 		return ESP_OK;
 	}
 
@@ -475,6 +475,10 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
 	signal_registry_reset();
 	_load_signals(root);
+	/* Restore persisted peak/min values for any signal name that made it
+	 * into the new layout. Stale records (signal no longer present) are
+	 * silently dropped on the next autosave. */
+	signal_peaks_load();
 
 	const cJSON *widgets_arr =
 		cJSON_GetObjectItemCaseSensitive(root, "widgets");
@@ -484,6 +488,7 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	}
 
 	const cJSON *wj = NULL;
+	uint16_t loaded_idx = 0;
 	cJSON_ArrayForEach(wj, widgets_arr) {
 		const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(wj, "type");
 		widget_type_t wtype = _type_from_str(
@@ -513,14 +518,32 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 		if (cfg_obj)
 			widget_rules_from_json(w, cfg_obj);
 
-		/* Build LVGL objects on the parent screen */
-		ESP_LOGI(TAG, "%s: Creating widget %s (type=%d, x=%d, y=%d, w=%d, h=%d)",
-				 caller, w->id, (int)wtype, (int)w->x, (int)w->y, (int)w->w, (int)w->h);
+		/* Build LVGL objects on the parent screen.
+		 * DIAGNOSTIC: log before+after so if create hangs (infinite loop in
+		 * LVGL walking a corrupt parent chain etc.), the serial monitor
+		 * tells us exactly which widget is the culprit. These can be
+		 * downgraded to ESP_LOGD once the layout-load path is proven. */
+		ESP_LOGI(TAG, "%s: create START  id=%s type=%d (slot=%u) @(%d,%d) %dx%d",
+		         caller, w->id, (int)wtype, w->slot, w->x, w->y, w->w, w->h);
 		w->create(w, parent);
-		ESP_LOGI(TAG, "%s: Created %s OK", caller, w->id);
+		ESP_LOGI(TAG, "%s: create END    id=%s", caller, w->id);
 
-		/* Yield briefly to feed the watchdog — important for layouts with many widgets */
-		vTaskDelay(pdMS_TO_TICKS(1));
+		/* Yield so the priority-0 IDLE task on CPU 1 can run and feed its
+		 * watchdog. We need vTaskDelay(1) (one actual tick = 2 ms at
+		 * CONFIG_FREERTOS_HZ=500) — NOT pdMS_TO_TICKS(1), which rounds to
+		 * zero ticks at 500 Hz and produces vTaskDelay(0). That variant
+		 * only yields to same-or-higher priority tasks, so IDLE (priority 0)
+		 * never gets scheduled and the TWDT fires after ~5 s of continuous
+		 * widget instantiation (tripped during first-boot layout load).
+		 *
+		 * Yield EVERY widget so a single slow-to-create widget (e.g., image
+		 * widget loading from LittleFS + decoding a 1+ MB RGB888 backdrop)
+		 * can't consume the 5-second budget before the next yield lands.
+		 * Cost: ~2 ms per widget × 32 widgets = ~64 ms added to boot —
+		 * imperceptible. */
+		vTaskDelay(1);
+		(void)loaded_idx;  /* retained for future diagnostics */
+		loaded_idx++;
 
 		/* Subscribe rule signals after create (needs w->root) */
 		widget_rules_subscribe(w);

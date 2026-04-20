@@ -5,6 +5,7 @@
 #include "widgets/signal_internal.h"
 #include "widgets/widget_registry.h"
 #include "system/night_mode.h"
+#include "system/remote_touch.h"
 
 /* Existing widget create functions — used as fallback */
 #include "widgets/widget_bar.h"
@@ -82,6 +83,16 @@ static void _register_widget_long_press(void) {
 		widget_t *w = s_widgets[i];
 		if (!w || !w->root) continue;
 
+		/* Images and shape panels are decoration — skip force-CLICKABLE +
+		 * event registration so pointer events fall through to whatever
+		 * real widget they visually cover. Without this, an image overlay
+		 * sitting on top of a panel would swallow the long-press that the
+		 * user intended for the panel's config modal. */
+		if (w->type == WIDGET_IMAGE || w->type == WIDGET_SHAPE_PANEL) {
+			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+			continue;
+		}
+
 		lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 
 		/* Short-tap → show MENU button (same handler as the screen itself) */
@@ -147,6 +158,7 @@ void dashboard_init(lv_obj_t *parent) {
 	font_manager_reset_instances();
 	font_manager_init();
 	signal_registry_init();
+	signal_peaks_start_autosave();
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
@@ -210,6 +222,15 @@ loaded:
 	 * place — that way the first trigger callback flips the state and
 	 * re-renders all widgets correctly. */
 	_setup_night_trigger();
+
+	/* Lazy-init the virtual touch indev for web-based CONTROL. We defer this
+	 * until here (rather than registering at boot in app_main) because
+	 * calling lv_indev_drv_register() BEFORE the dashboard widgets exist
+	 * somehow corrupts LVGL state — the first lv_obj_create() of any
+	 * panel widget then infinite-loops inside lv_obj_get_screen(). By
+	 * registering here, widgets are already built and LVGL is stable.
+	 * Idempotent — subsequent calls are a no-op. */
+	remote_touch_init(lv_disp_get_default());
 }
 
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {

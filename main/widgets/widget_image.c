@@ -14,6 +14,8 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
 #include "widget_types.h"
 
@@ -81,6 +83,14 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 		return NULL;
 	}
 
+	/* Yield to let the idle tasks run after a potentially-long fread().
+	 * A 1+ MB read from LittleFS can take several hundred ms, especially
+	 * with flash wear-leveling lookups; chaining multiple large images
+	 * during layout load can cumulatively starve IDLE1 past the TWDT
+	 * window. vTaskDelay(1) is 1 actual tick (2 ms at 500 Hz tick rate),
+	 * which is enough for IDLE1 to schedule and reset the watchdog. */
+	vTaskDelay(1);
+
 	/* Allocate and fill the LVGL image descriptor */
 	lv_img_dsc_t *dsc = calloc(1, sizeof(lv_img_dsc_t));
 	if (!dsc) {
@@ -113,12 +123,15 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (!id) return;
 
-	/* Create a container for the image */
+	/* Create a container for the image. Images are pure decoration: pointer
+	 * events must pass through so a user can still long-press a widget that
+	 * sits behind an image overlay. Clearing CLICKABLE here complements the
+	 * same gate in dashboard.c's event registration. */
 	lv_obj_t *cont = lv_obj_create(parent);
 	lv_obj_set_size(cont, w->w, w->h);
 	lv_obj_set_align(cont, LV_ALIGN_CENTER);
 	lv_obj_set_pos(cont, w->x, w->y);
-	lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 	lv_obj_set_style_bg_opa(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -153,6 +166,7 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	/* If a night-mode image override is set and differs from the day image,
 	 * load it now and create a hidden night lv_img. apply_night_mode() will
 	 * toggle visibility instead of re-loading the descriptor. */
+#if !NIGHT_MODE_DISABLED
 	if (id->night.has_image_name &&
 		id->night.image_name[0] != '\0' &&
 		strncmp(id->night.image_name, id->image_name, sizeof(id->night.image_name)) != 0) {
@@ -180,6 +194,7 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 			lv_obj_add_flag(id->night_img_obj, LV_OBJ_FLAG_HIDDEN);
 		}
 	}
+#endif /* !NIGHT_MODE_DISABLED */
 
 	w->root = cont;
 

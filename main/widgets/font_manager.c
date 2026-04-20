@@ -13,6 +13,8 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,6 +213,16 @@ const lv_font_t *font_manager_get(const char *family, uint16_t size)
 
 	ESP_LOGI(TAG, "Created font instance '%s:%u' (cache: %u/%u)",
 	         family, size, s_instance_count, FONT_MAX_INSTANCES);
+
+	/* Yield so the IDLE task on this core can run and feed its watchdog.
+	 * Creating a new TTF instance via lv_tiny_ttf_create_data_ex can take
+	 * 100–500 ms for glyph-cache preparation. During first-boot layout
+	 * instantiation with many widgets requesting distinct font sizes, the
+	 * cumulative time from inside widget-create calls can exceed the 5 s
+	 * TWDT window on IDLE1 even with inter-widget yields. vTaskDelay(1)
+	 * is 1 actual tick (2 ms at 500 Hz) — enough for IDLE to schedule. */
+	vTaskDelay(1);
+
 	return font;
 }
 

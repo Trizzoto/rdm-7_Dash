@@ -2,7 +2,35 @@
   "permissions": {
     "allow": [
       "*",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git -C \"C:/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a9f33734\" status --short 2>&1 | head -5)",
+      "Bash(git -C \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\.claude\\\\worktrees\\\\agent-a5d0ae77\" status --short | head -30)",
+      "Bash(find /c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a9f33734/main -name \"*.c\" -o -name \"*.h\" 2>/dev/null | grep -E \"\\(device_settings|can_manager|theme\\)\" | sort)",
+      "Bash(git checkout:*)",
+      "Bash(find /c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a9f33734/main -name \"*.c\" -o -name \"*.h\" 2>/dev/null | grep -E \"\\(can_|theme\\)\" | sort)",
+      "Bash(git -C \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\.claude\\\\worktrees\\\\agent-a5d0ae77\" ls-files | grep \"^main/\" | head -80)",
+      "Bash(find \"C:/Users/ruuva/workspace/RDM-7_Dash\" -path \"*/.claude/worktrees\" -prune -o -name \"sd_manager*\" -print -o -name \"config_store*\" -print 2>/dev/null | head -20)",
+      "Bash(git -C \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\.claude\\\\worktrees\\\\agent-a5d0ae77\" ls-files \"main/*.c\" \"main/*.h\" \"main/can/*\" \"main/layout/*\" \"main/widgets/*\" \"main/storage/*\" \"main/net/*\" \"main/web/*\" \"data/*\")",
+      "Bash(git -C \"C:\\\\Users\\\\ruuva\\\\workspace\\\\RDM-7_Dash\\\\.claude\\\\worktrees\\\\agent-a5d0ae77\" diff --name-only HEAD)",
+      "Bash(git merge:*)",
+      "Bash(for branch:*)",
+      "Bash(for dir:*)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a9f33734\" diff HEAD -- main/can/can_manager.c main/can/can_manager.h main/ui/settings/device_settings.c 2>/dev/null | head -300)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a3022880\" diff HEAD -- main/widgets/signal.h main/widgets/signal.c 2>/dev/null | head -300)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-ad5d851a\" diff HEAD -- main/layout/layout_manager.c main/layout/layout_manager.h 2>/dev/null | head -300)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a39fa275\" diff HEAD -- main/widgets/widget_shift_light.c main/widgets/widget_shift_light.h main/widgets/widget_types.c main/widgets/widget_types.h main/layout/layout_manager.c main/CMakeLists.txt 2>/dev/null | head -500)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a3022880\" diff HEAD -- main/widgets/widget_panel.c main/widgets/widget_bar.c main/layout/layout_manager.c main/ui/config_bridge.c main/ui/menu/config_modal.c 2>/dev/null | head -400)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-ad5d851a\" diff HEAD -- main/layout/layout_manager.c 2>/dev/null | head -200)",
+      "Bash(git -C \"/c/Users/ruuva/workspace/RDM-7_Dash/.claude/worktrees/agent-a3022880\" diff HEAD -- main/web/index.html 2>/dev/null | head -200)",
+      "Read(//c/Users/ruuva/AppData/Local/Temp/claude/C--Users-ruuva-workspace-RDM-7-Dash/tasks/**)",
+      "Bash(ls -la main/widgets/widget_shift_light.* 2>/dev/null)",
+      "Bash(grep -r \"tinyusb\\\\|TinyUSB\\\\|RNDIS\\\\|ECM\\\\|NCM\" \"C:/Users/ruuva/workspace/RDM-7_Dash\" --include=\"*.c\" --include=\"*.h\" 2>/dev/null | head -20)",
+      "Bash(git diff:*)",
+      "Bash(grep -n \"color:\\\\|background:\\\\|border:\\\\|box-shadow:\\\\|border-radius:\" main/web/index.html | grep -E \"\\(hsl|#[0-9a-f]{3,6}|rgba\\)\" | head -80)",
+      "Bash(/tmp/web_design_system.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(python3 -c:*)",
+      "Bash(python -c:*)"
     ]
   }
 }

@@ -47,6 +47,15 @@ static lv_obj_t* web_status_label = NULL;
 static lv_timer_t *s_wifi_status_timer = NULL;
 static lv_obj_t* wifi_loading_dialog = NULL;
 
+/* Web-URL QR modal (Network section → "Show QR"). Phone scans the QR,
+ * browser opens the editor directly — bypasses flaky .local resolution.
+ * Children are auto-deleted with the overlay; only the root needs tracking. */
+static lv_obj_t *s_qr_overlay   = NULL;
+static lv_obj_t *s_qr_obj       = NULL;
+static lv_obj_t *s_qr_url_lbl   = NULL;
+static lv_timer_t *s_qr_refresh_timer = NULL;
+static char       s_qr_last_url[64] = {0};
+
 // Data logging UI state
 static lv_obj_t *s_log_btn = NULL;
 static lv_obj_t *s_log_btn_label = NULL;
@@ -129,6 +138,166 @@ static lv_obj_t  *s_ecu_value_label    = NULL;
 // AP hotspot status label
 static lv_obj_t* ap_status_label = NULL;
 
+/* Resolve the current web-editor URL. Preference order:
+ *   1. STA IP — works when the device is on the user's LAN
+ *   2. AP IP  — works when phone is joined to the dash hotspot (192.168.4.1)
+ *   3. NULL   — no network available
+ * Returns true on success; url is "http://<ip>/" null-terminated. */
+/* Build the URL the user should scan to reach the web editor.
+ *
+ * Priority: if the hotspot is enabled, prefer the AP IP — the typical scan
+ * scenario is "phone connects to the dash's hotspot, then scans" which only
+ * works against the AP-side address. STA is the fallback for when the dash
+ * is on a shared network with the phone and there's no hotspot active. On
+ * concurrent APSTA the AP still wins because that's the deliberate scan
+ * target the user just enabled.
+ *
+ *   1. AP IP   (when AP enabled + started; 192.168.4.1 fallback if netif unknown)
+ *   2. STA IP  (when connected to a router and the dash shares that network)
+ *   3. NULL    — no network available
+ */
+static bool _build_web_url(char *url, size_t sz) {
+    esp_netif_ip_info_t ip_info;
+    if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+            snprintf(url, sz, "http://" IPSTR "/", IP2STR(&ip_info.ip));
+            return true;
+        }
+        /* AP default if netif query fails */
+        snprintf(url, sz, "http://192.168.4.1/");
+        return true;
+    }
+    const char *sta_ssid = wifi_manager_get_connected_ssid();
+    if (sta_ssid && sta_ssid[0] != '\0') {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+            snprintf(url, sz, "http://" IPSTR "/", IP2STR(&ip_info.ip));
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Timer tick while the QR modal is open: if the URL changed since the last
+ * tick (because the user toggled AP, STA acquired DHCP, etc.) re-render the
+ * QR in place and update the printed URL label. Cheap because lv_qrcode
+ * keeps the same host object — no overlay rebuild. Silent no-op when the
+ * URL hasn't changed. */
+static void _qr_refresh_tick_cb(lv_timer_t *t) {
+    (void)t;
+    if (!s_qr_overlay || !lv_obj_is_valid(s_qr_overlay)) return;
+    if (!s_qr_obj || !lv_obj_is_valid(s_qr_obj))         return;
+
+    char url[64];
+    if (!_build_web_url(url, sizeof(url))) return;
+    if (strncmp(url, s_qr_last_url, sizeof(s_qr_last_url)) == 0) return;
+
+    strncpy(s_qr_last_url, url, sizeof(s_qr_last_url) - 1);
+    s_qr_last_url[sizeof(s_qr_last_url) - 1] = '\0';
+    lv_qrcode_update(s_qr_obj, url, strlen(url));
+    if (s_qr_url_lbl && lv_obj_is_valid(s_qr_url_lbl)) {
+        lv_label_set_text(s_qr_url_lbl, url);
+    }
+}
+
+static void _qr_close_cb(lv_event_t *e) {
+    (void)e;
+    if (s_qr_refresh_timer) {
+        lv_timer_del(s_qr_refresh_timer);
+        s_qr_refresh_timer = NULL;
+    }
+    if (s_qr_overlay && lv_obj_is_valid(s_qr_overlay)) {
+        lv_obj_del(s_qr_overlay);
+    }
+    s_qr_overlay = NULL;
+    s_qr_obj     = NULL;
+    s_qr_url_lbl = NULL;
+    s_qr_last_url[0] = '\0';
+}
+
+static void _qr_btn_cb(lv_event_t *e) {
+    (void)e;
+    /* A stale pointer can linger if the user left Device Settings while the
+     * modal was open; re-check validity so the button still works. */
+    if (s_qr_overlay && lv_obj_is_valid(s_qr_overlay)) return;
+    s_qr_overlay = NULL;
+
+    char url[64];
+    bool have_url = _build_web_url(url, sizeof(url));
+
+    /* Modal root on lv_layer_top so it floats above Device Settings */
+    s_qr_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_qr_overlay, 400, 440);
+    lv_obj_center(s_qr_overlay);
+    lv_obj_set_style_bg_color(s_qr_overlay, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(s_qr_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_qr_overlay, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_color(s_qr_overlay, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_border_width(s_qr_overlay, 1, 0);
+    lv_obj_set_style_shadow_width(s_qr_overlay, THEME_SHADOW_W_POPUP, 0);
+    lv_obj_set_style_shadow_color(s_qr_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(s_qr_overlay, LV_OPA_50, 0);
+    lv_obj_set_style_pad_all(s_qr_overlay, 16, 0);
+    lv_obj_set_flex_flow(s_qr_overlay, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_qr_overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(s_qr_overlay, 10, 0);
+    lv_obj_clear_flag(s_qr_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(s_qr_overlay);
+    lv_label_set_text(title, "Scan with Phone");
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    if (have_url) {
+        /* Black modules on white, 280px — readable from 30-60cm away */
+        lv_obj_t *qr = lv_qrcode_create(s_qr_overlay, 280,
+                                        lv_color_hex(0x000000),
+                                        lv_color_hex(0xFFFFFF));
+        lv_qrcode_update(qr, url, strlen(url));
+        /* White quiet-zone ring around QR improves scanner hit-rate */
+        lv_obj_set_style_border_color(qr, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_width(qr, 8, 0);
+
+        lv_obj_t *url_lbl = lv_label_create(s_qr_overlay);
+        lv_label_set_text(url_lbl, url);
+        lv_obj_set_style_text_font(url_lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(url_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+
+        /* Stash pointers + current URL, then poll once a second so the QR
+         * re-renders live if the user toggles AP or the STA DHCP lease
+         * lands after the modal was already opened. */
+        s_qr_obj     = qr;
+        s_qr_url_lbl = url_lbl;
+        strncpy(s_qr_last_url, url, sizeof(s_qr_last_url) - 1);
+        s_qr_last_url[sizeof(s_qr_last_url) - 1] = '\0';
+        if (s_qr_refresh_timer) lv_timer_del(s_qr_refresh_timer);
+        s_qr_refresh_timer = lv_timer_create(_qr_refresh_tick_cb, 1000, NULL);
+    } else {
+        lv_obj_t *msg = lv_label_create(s_qr_overlay);
+        lv_label_set_text(msg,
+            "No network available.\n"
+            "Connect to WiFi or enable the hotspot\n"
+            "from the WiFi settings first.");
+        lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(msg, THEME_COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_height(msg, 280);
+    }
+
+    lv_obj_t *close_btn = lv_btn_create(s_qr_overlay);
+    lv_obj_set_size(close_btn, 120, 36);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(close_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(close_btn, 0, 0);
+    lv_obj_t *close_label = lv_label_create(close_btn);
+    lv_label_set_text(close_label, "Close");
+    lv_obj_center(close_label);
+    lv_obj_set_style_text_font(close_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(close_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(close_btn, _qr_close_cb, LV_EVENT_CLICKED, NULL);
+}
+
 // Function to refresh WiFi status displays
 static void refresh_wifi_status(void) {
     if (!wifi_status_label || !web_status_label) return;
@@ -145,15 +314,16 @@ static void refresh_wifi_status(void) {
         lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
     }
 
-    // Update web server status — show STA IP if connected, else AP IP if AP active.
-    // mDNS advertises "rdm7" on both netifs so rdm7.local works in both modes.
+    // Update web server status — show the raw IP; mDNS (.local) is disabled
+    // because the espressif__mdns component can't allocate internal-RAM
+    // buffers in this build. Users reach the dash via the IP or QR code.
     if (sta_ssid && sta_ssid[0] != '\0') {
         esp_netif_ip_info_t ip_info;
         esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            char web_text[96];
+            char web_text[64];
             snprintf(web_text, sizeof(web_text),
-                     "Web: rdm7.local or " IPSTR, IP2STR(&ip_info.ip));
+                     "Web: http://" IPSTR, IP2STR(&ip_info.ip));
             lv_label_set_text(web_status_label, web_text);
             lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
         } else {
@@ -163,7 +333,7 @@ static void refresh_wifi_status(void) {
     } else {
         /* Check if AP mode provides an alternative */
         if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
-            lv_label_set_text(web_status_label, "Web: rdm7.local or 192.168.4.1");
+            lv_label_set_text(web_status_label, "Web: http://192.168.4.1");
             lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
         } else {
             lv_label_set_text(web_status_label, "Web: Connect WiFi first");
@@ -178,7 +348,7 @@ static void refresh_wifi_status(void) {
             esp_wifi_ap_get_sta_list(&sta_list);
             char ap_text[96];
             snprintf(ap_text, sizeof(ap_text),
-                     "Hotspot: %s - rdm7.local or 192.168.4.1 (%d client%s)",
+                     "Hotspot: %s - 192.168.4.1 (%d client%s)",
                      wifi_manager_get_ap_ssid(), sta_list.num,
                      sta_list.num == 1 ? "" : "s");
             lv_label_set_text(ap_status_label, ap_text);
@@ -1240,6 +1410,12 @@ static void close_menu_event_cb(lv_event_t * e) {
         lv_obj_del(s_scan_overlay);
     }
 
+    /* Same for the web-URL QR modal */
+    if (s_qr_overlay && lv_obj_is_valid(s_qr_overlay)) {
+        lv_obj_del(s_qr_overlay);
+    }
+    s_qr_overlay = NULL;
+
     /* Cancel any running bus scan and detach UI callback */
     can_bus_test_set_ui_callback(NULL);
     if (can_bus_test_is_running()) {
@@ -1974,10 +2150,27 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     // Initial refresh of WiFi status
     refresh_wifi_status();
 
-    // Update button — secondary style
+    // Show-QR button — accent style, gives phone users a one-tap way to
+    // open the editor without having to type the IP.
+    lv_obj_t* qr_btn = lv_btn_create(network_section);
+    lv_obj_set_size(qr_btn, 110, 30);
+    lv_obj_align(qr_btn, LV_ALIGN_TOP_LEFT, 0, 115);
+    lv_obj_set_style_bg_color(qr_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_opa(qr_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(qr_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(qr_btn, 0, 0);
+    lv_obj_set_style_shadow_width(qr_btn, 0, 0);
+    lv_obj_t* qr_label = lv_label_create(qr_btn);
+    lv_label_set_text(qr_label, "Show QR");
+    lv_obj_center(qr_label);
+    lv_obj_set_style_text_font(qr_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(qr_label, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(qr_btn, _qr_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    // Update button — secondary style, moved right to make room for Show QR
     lv_obj_t* update_btn = lv_btn_create(network_section);
-    lv_obj_set_size(update_btn, 180, 30);
-    lv_obj_align(update_btn, LV_ALIGN_TOP_LEFT, 0, 115);
+    lv_obj_set_size(update_btn, 140, 30);
+    lv_obj_align(update_btn, LV_ALIGN_TOP_LEFT, 120, 115);
     lv_obj_set_style_bg_color(update_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(update_btn, LV_OPA_80, LV_STATE_PRESSED);
     lv_obj_set_style_radius(update_btn, THEME_RADIUS_NORMAL, 0);
@@ -2093,12 +2286,14 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(s_night_btn_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(night_btn, _night_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* ── Logging + Peaks row ──────────────────────────────────────────────
-     * Two sections side-by-side. Left = DATA LOGGING (Start/Stop, Rate
-     * dropdown, status). Right = PEAK HOLD (View, Reset). Both are full-
-     * height of the row; the row itself is full-width with a small gap. */
+    /* ── Logging + Peaks + Testing row ────────────────────────────────────
+     * Three sections side-by-side at equal width:
+     *   LEFT   = DATA LOGGING  (Start/Stop, Rate, status)
+     *   MIDDLE = PEAK HOLD     (View, Reset)  [all-time, NVS-persisted]
+     *   RIGHT  = TESTING       (Sim toggle) — moved out of PEAK HOLD
+     * The row grows with content; each column is full-height of the row. */
     lv_obj_t *log_row = lv_obj_create(content);
-    lv_obj_set_size(log_row, lv_pct(100), 90);
+    lv_obj_set_size(log_row, lv_pct(100), 95);
     lv_obj_set_style_bg_opa(log_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(log_row, 0, 0);
     lv_obj_set_style_pad_all(log_row, 0, 0);
@@ -2167,7 +2362,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
 
-    /* ── RIGHT: PEAK HOLD ──────────────────────────────────────────────── */
+    /* ── MIDDLE: PEAK HOLD ─────────────────────────────────────────────── */
     lv_obj_t *peak_section = lv_obj_create(log_row);
     lv_obj_set_size(peak_section, 0, lv_pct(100));
     lv_obj_set_flex_grow(peak_section, 1);
@@ -2203,8 +2398,9 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Reset Peaks — wipes all signal peak/min so a new tuning session starts
-     * fresh. Sits to the right of View. */
+    /* Reset Peaks — wipes all signal peak/min (in RAM + NVS) so a new
+     * tuning session starts fresh. Until the user presses this, the peaks
+     * are all-time records persisted across reboots by signal.c. */
     lv_obj_t *reset_peaks_btn = lv_btn_create(peak_section);
     lv_obj_set_size(reset_peaks_btn, 110, 30);
     lv_obj_align(reset_peaks_btn, LV_ALIGN_TOP_LEFT, 118, 22);
@@ -2221,12 +2417,40 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_text_color(reset_peaks_lbl, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(reset_peaks_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Simulate toggle - drives all signals with a triangle wave through
+    /* Subtitle under the buttons makes the persistence contract obvious
+     * so nobody wonders why a peak from yesterday is still showing. */
+    lv_obj_t *peak_note = lv_label_create(peak_section);
+    lv_label_set_text(peak_note, "All-time - persists until reset");
+    lv_obj_align(peak_note, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(peak_note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(peak_note, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* ── RIGHT: TESTING ────────────────────────────────────────────────── */
+    lv_obj_t *test_section = lv_obj_create(log_row);
+    lv_obj_set_size(test_section, 0, lv_pct(100));
+    lv_obj_set_flex_grow(test_section, 1);
+    lv_obj_set_style_bg_color(test_section, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(test_section, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(test_section, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_color(test_section, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(test_section, 1, 0);
+    lv_obj_set_style_pad_all(test_section, 12, 0);
+    lv_obj_clear_flag(test_section, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *test_title = lv_label_create(test_section);
+    lv_label_set_text(test_title, "TESTING");
+    lv_obj_align(test_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(test_title, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(test_title, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(test_title, 1, 0);
+
+    /* Simulate toggle — drives all signals with a triangle wave through
      * signal_sim for demo / showroom mode. Persists until manually
-     * toggled off or the device reboots. */
-    lv_obj_t *sim_btn = lv_btn_create(peak_section);
-    lv_obj_set_size(sim_btn, 110, 30);
-    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 236, 22);
+     * toggled off or the device reboots. Semantically unrelated to PEAK
+     * HOLD (where it used to live); lives in its own TESTING card now. */
+    lv_obj_t *sim_btn = lv_btn_create(test_section);
+    lv_obj_set_size(sim_btn, 130, 30);
+    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 0, 22);
     lv_obj_set_style_bg_color(sim_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(sim_btn, LV_OPA_80, LV_STATE_PRESSED);
     lv_obj_set_style_radius(sim_btn, THEME_RADIUS_NORMAL, 0);
@@ -2243,6 +2467,12 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_center(s_sim_btn_label);
     lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
     lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *test_note = lv_label_create(test_section);
+    lv_label_set_text(test_note, "Sweep all signals - demo only");
+    lv_obj_align(test_note, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(test_note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
 
     _update_log_ui();
 

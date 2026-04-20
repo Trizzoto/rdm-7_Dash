@@ -274,6 +274,18 @@
             .wst-btn.wst-danger { color: #f87171; }
             .wst-btn.wst-danger:active { background: rgba(248,113,113,0.15); }
             .wst-btn[aria-disabled="true"] { opacity: 0.35; pointer-events: none; }
+            /* Test-active toggle for boolean widgets (indicator / warning / toggle / button).
+             * Pressed state lights up green to match the "currently injecting test value" feel. */
+            .wst-test-toggle {
+                flex: 1; min-width: 0; padding: 0 14px;
+                font-weight: 700; letter-spacing: 0.04em;
+                color: var(--text-muted, #888);
+            }
+            .wst-test-toggle[aria-pressed="true"] {
+                background: rgba(34,197,94,0.18);
+                border-color: rgba(34,197,94,0.45);
+                color: hsl(142, 71%, 65%);
+            }
             .wst-step {
                 min-width: 44px; font-weight: 700; color: hsl(210,80%,60%);
                 background: rgba(45,140,235,0.12); border-color: rgba(45,140,235,0.3);
@@ -2125,7 +2137,11 @@
             top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(10,10,10,0.85);
             backdrop-filter: blur(8px);
-            z-index: 2100;
+            /* Above the mobile sheet (9999), the Signal Manager modal (2000)
+             * and the Assign Data Source modal (10000). DBC import is usually
+             * the innermost modal the user opens, so we want it to sit on top
+             * of anything that might already be visible. */
+            z-index: 10100;
             align-items: center; justify-content: center;
         }
         .dbc-modal-content {
@@ -2134,8 +2150,15 @@
             box-shadow: var(--shadow-md);
             border-radius: var(--radius-lg);
             width: min(440px, 90vw);
+            /* Cap height + inner overflow so short mobile screens can still
+             * reach the Cancel/Import footer. Without this the Import button
+             * can sit below the viewport on phones, making the modal feel
+             * broken even though it technically renders. */
+            max-height: 90vh;
             display: flex; flex-direction: column;
+            overflow: hidden;
         }
+        .dbc-modal-content .dbc-form { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
         .dbc-modal-content .signal-modal-header { border-bottom: 1px solid var(--border); }
         .dbc-form { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
         .dbc-form label {
@@ -2156,6 +2179,7 @@
             font-size: 11px; color: var(--text-muted);
             font-family: 'JetBrains Mono', monospace;
             min-height: 40px;
+            max-height: 140px; overflow-y: auto;
         }
         .dbc-footer {
             padding: 12px 20px; display: flex; justify-content: flex-end; gap: 8px;
@@ -2334,6 +2358,35 @@
         }
         .btn-assign-data:hover { border-color:var(--accent); color:var(--accent); }
 
+        /* Momentary test button for boolean widgets (indicator / warning /
+         * toggle / button). Press-and-hold UX: default state is muted; while
+         * physically held the button turns accent-blue to signal "active."
+         * Styling mirrors .btn-assign-data so it slots cleanly under the
+         * signal assign UI. */
+        .props-test-momentary {
+            width: 100%;
+            margin-top: 6px;
+            padding: 8px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: var(--radius-md);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background 0.08s, border-color 0.08s, color 0.08s;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .props-test-momentary:hover { border-color: var(--accent); color: var(--accent); }
+        .props-test-momentary.pressed {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
         /* Disabled field states */
         .field input:disabled, .field select:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -2430,6 +2483,54 @@
             style="background:transparent; border:1px solid #1a1a1a; color:#1a1a1a;">Discard</button>
     </div>
     <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Update banner. Populated + revealed by _otaAutoCheck() on page load
+         when the dash is on STA WiFi and a newer firmware is published. Hidden
+         by default; rendered before the header so it pushes layout down without
+         overlapping controls. Dismiss stashes the skipped version in
+         localStorage so the same prompt doesn't come back until the NEXT
+         release. z-index sits below all modals but above the canvas. -->
+    <div id="updateBanner" style="display:none; position:sticky; top:0; z-index:1500;
+         background:linear-gradient(90deg, hsl(210,85%,42%), hsl(210,85%,52%));
+         color:white; padding:10px 16px; font-size:12px; font-family:'Sora',sans-serif;
+         display:none; align-items:center; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,0.3);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span style="flex:1 1 auto; line-height:1.35;">
+            <strong>Firmware update available</strong>
+            <span id="updateBannerVer" style="opacity:0.85; margin-left:4px;"></span>
+        </span>
+        <button onclick="_otaShowInstall()" style="background:white; color:hsl(210,85%,42%); border:none;
+                font-weight:600; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; flex:0 0 auto;">
+            Install
+        </button>
+        <button onclick="_otaDismissBanner()" aria-label="Dismiss"
+                title="Dismiss this update — you'll be reminded when the next version ships"
+                style="background:transparent; color:white; border:none; cursor:pointer; font-size:18px;
+                padding:2px 8px; opacity:0.8; flex:0 0 auto;">×</button>
+    </div>
+
+    <!-- Install-progress modal for the OTA flow: opened by _otaShowInstall(),
+         updated by _otaPollInstall() until completion. -->
+    <div id="otaInstallModal" style="display:none; position:fixed; inset:0; z-index:10200;
+         background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border);
+             border-radius:var(--radius-lg); padding:24px; width:min(420px, 92vw);
+             display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow-md);">
+            <div style="font-weight:600; font-size:14px;">Installing firmware update</div>
+            <div id="otaInstallSummary" style="font-size:12px; color:var(--text-muted); line-height:1.5;"></div>
+            <div style="height:10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; overflow:hidden;">
+                <div id="otaInstallBar" style="height:100%; width:0%; background:hsl(210,85%,52%); transition:width 0.4s ease;"></div>
+            </div>
+            <div id="otaInstallStatus" style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">Starting…</div>
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.5;">
+                The dash will reboot automatically when the flash finishes. Don't power-cycle until you see the splash screen.
+            </div>
+        </div>
+    </div>
     <!-- Signal Manager Modal (includes Preset Picker as second view) -->
     <div id="signalModal" onclick="closeSignalManager()">
         <div class="signal-modal-content" onclick="event.stopPropagation()">
@@ -2538,7 +2639,7 @@
     </div>
 
     <!-- Assign Data Source Modal -->
-    <div id="assignModal" onclick="closeAssignModal()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
+    <div id="assignModal" onclick="closeAssignModal()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center;">
         <div class="signal-modal-content" onclick="event.stopPropagation()" style="width:min(540px, 95vw); max-height:min(580px, 90vh);">
             <div class="signal-modal-header">
                 <span>Assign Data Source</span>
@@ -2739,6 +2840,7 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
+            <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
         </div>
@@ -2786,6 +2888,13 @@
                 <div class="display-bezel bezel-on" id="canvasContainer" style="transform: scale(1) translate(0px, 0px);">
                     <div class="canvas-container">
                         <canvas id="screenshotCanvas" width="800" height="480"></canvas>
+                        <!-- Live MJPEG stream layer. Hidden by default; shown when the
+                             LIVE header pill is active. The <img src> is set to the
+                             continuous MJPEG endpoint, which the browser renders as a
+                             self-updating image — no per-frame JS needed. -->
+                        <img id="liveStreamImg" width="800" height="480"
+                             style="display:none; position:absolute; top:0; left:0; width:800px; height:480px; pointer-events:auto; cursor:crosshair; user-select:none; -webkit-user-drag:none;"
+                             draggable="false" alt="Live dashboard stream">
                         <!-- hide-crosshair matches the removed pill's default;
                              hide-widgets matches the Widgets pill starting deselected. -->
                         <div id="interactionLayer" class="hide-crosshair hide-widgets">
@@ -2826,14 +2935,23 @@
     </div>
 
     <!-- Dimmer Settings Modal -->
-    <!-- Device Info modal -->
+    <!-- Device Info modal. max-height + inner overflow so it fits on mobile; on
+         tall phones the content overflows the viewport otherwise. -->
     <div id="deviceInfoModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDeviceInfo()">
-        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex:0 0 auto;">
                 <span style="font-weight:600; font-size:14px;">Device Info</span>
                 <button class="close-btn" onclick="closeDeviceInfo()" style="font-size:18px;">&times;</button>
             </div>
-            <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px;">
+            <!-- Sync Screen button: mobile users can't easily see the editor's
+                 canvas while this modal is open, so surface the preview refresh
+                 here too. Identical action to the header's Sync button. -->
+            <button class="btn btn-secondary" onclick="captureScreenshot(); showToast('Screen synced', 'success');"
+                    style="flex:0 0 auto; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; padding:8px 12px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                Sync Screen
+            </button>
+            <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px; overflow-y:auto; flex:1 1 auto; padding-right:4px;">
                 <span style="color:var(--text-muted);">Loading...</span>
             </div>
         </div>
@@ -2993,7 +3111,10 @@
       </div>
       <div class="wst-row wst-row-test" id="wstTestRow" style="display:none;">
         <span class="wst-label">TEST</span>
+        <!-- Slider for numeric widgets (panel / bar / meter / arc / rpm_bar / shift_light / text) -->
         <input type="range" id="wstTestSlider" min="0" max="100" value="0" step="1" aria-label="Test value">
+        <!-- Toggle for boolean widgets (indicator / warning / toggle / button) — see TOGGLE_TEST_TYPES -->
+        <button class="wst-btn wst-test-toggle" id="wstTestToggle" style="display:none;" aria-pressed="false" aria-label="Toggle test active">ACTIVE</button>
         <span class="wst-test-val" id="wstTestVal">&mdash;</span>
         <button class="wst-size-btn" id="wstTestClear" aria-label="Stop test">&times;</button>
       </div>
@@ -3113,6 +3234,19 @@
                 t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
             right.querySelectorAll('.right-tab-content').forEach(c =>
                 c.classList.toggle('active', c.id === 'rightTab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
+        }
+
+        /* Called from widget-selection code paths (startDrag, context menu,
+         * layer tree). Ensures the Properties tab is active on desktop when
+         * a widget is selected, so the user isn't stuck looking at the
+         * Widgets palette while they're trying to edit props. No-op on
+         * mobile (where the right sidebar is the bottom-nav "Properties"
+         * drawer and has its own flow). */
+        function _autoShowPropertiesTab() {
+            if (window.innerWidth < 900) return;  /* mobile layout — skip */
+            const propsTab = document.querySelector('.sidebar-right .right-sidebar-tab.active');
+            if (propsTab && propsTab.textContent.trim().toLowerCase() === 'properties') return;
+            switchRightTab('properties');
         }
 
 
@@ -3637,6 +3771,13 @@
         let _parsedDbcSignals = [];
 
         function openDbcImportModal() {
+            /* Stack-cleanup: close the Signal Manager (which hosts one entry
+             * point for this button) and any mobile bottom-sheet so we don't
+             * end up with three layers fighting for z-index and input focus.
+             * Harmless on desktop when neither is open. */
+            if (typeof closeSignalManager === 'function') closeSignalManager();
+            if (typeof closeMobileSheet   === 'function') closeMobileSheet();
+
             document.getElementById('dbcImportModal').style.display = 'flex';
             document.getElementById('dbcEcuName').value = '';
             document.getElementById('dbcVersion').value = '';
@@ -4348,17 +4489,45 @@
                     { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                     { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
                     { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
-                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
-                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
-                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance" },
+                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
+                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
+                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
                     { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" },
                     { name: "needle_tip_style", label: "Needle Tip Style", type: "select", def: 0, cat: "appearance",
                       options: [ {v:0, l:"Flat"}, {v:1, l:"Rounded"}, {v:2, l:"Lance"}, {v:3, l:"Dagger"}, {v:4, l:"Spade"}, {v:5, l:"Diamond"} ] },
-                    { name: "needle_tip_base_w",  label: "Tip Base Width",  type: "stepper", min: 0, max: 30,  def: 0, cat: "appearance" },
-                    { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper", min: 0, max: 20,  def: 0, cat: "appearance" },
-                    { name: "needle_tip_taper",   label: "Tip Taper %",     type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
+                    /* Tip-tuning knobs. Stored value 0 = "use the built-in
+                     * default for the current style". `autoFn` returns the
+                     * resolved default the firmware would pick — mirrors the
+                     * same defaults used in widget_meter.c's DRAW_PART hook
+                     * so the inspector can show the effective number even
+                     * when the user hasn't entered an explicit override. */
+                    { name: "needle_tip_base_w", label: "Tip Base Width", type: "stepper-auto", min: 0, max: 30, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          var nw = cfg.needle_width || 4;
+                          switch (cfg.needle_tip_style) {
+                              case 2: return (nw >> 1) + 1;  // Lance
+                              case 3: return (nw >> 1) + 2;  // Dagger
+                              case 4: return (nw >> 1) + 2;  // Spade
+                              case 5: return (nw >> 1) + 3;  // Diamond
+                              default: return 0;
+                          }
+                      } },
+                    { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper-auto", min: 0, max: 20, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap
+                      } },
+                    { name: "needle_tip_taper", label: "Tip Taper %", type: "stepper-auto", min: 0, max: 100, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          switch (cfg.needle_tip_style) {
+                              case 2: return 90;   // Lance: shaft ends here
+                              case 3: return 100;  // Dagger: tapers across full length
+                              case 4: return 97;   // Spade: cap position
+                              case 5: return 50;   // Diamond: widest point
+                              default: return 0;
+                          }
+                      } },
                     { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", min: 0, max: 40, def: 10, cat: "appearance" },
                     { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                 ]
@@ -4949,6 +5118,7 @@
                     }
                     renderEditor();
                     updateInspector();
+                    _autoShowPropertiesTab();
                     showContextMenu(e.clientX, e.clientY);
                 };
 
@@ -5086,6 +5256,7 @@
                     renderEditor();
                     updateInspector();
                     renderSignals();
+                    _autoShowPropertiesTab();
                 };
                 layerTree.appendChild(item);
             }
@@ -5594,6 +5765,7 @@
             renderEditor();
             updateInspector();
             renderSignals();
+            _autoShowPropertiesTab();
         }
 
         function startResize(e, index, handle) {
@@ -6131,6 +6303,39 @@
                     <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
                         onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=parseInt(sl.value)+${f.step||1}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
                 </div>`;
+            } else if (f.type === 'stepper-auto') {
+                /* Stepper variant where stored value 0 means "use the style's
+                 * built-in default". f.autoFn(widgetConfig) returns the
+                 * effective value that the firmware would pick for 0; we
+                 * show that number in the input (grayed) with an AUTO chip,
+                 * and expose a reset (↺) button that writes 0 back. */
+                const sMin = f.min != null ? f.min : 0;
+                const sMax = f.max != null ? f.max : 100;
+                const wObj = currentLayout.widgets[selectedIndex];
+                const cfg = (wObj && wObj.config) ? wObj.config : {};
+                const autoVal = (typeof f.autoFn === 'function') ? (f.autoFn(cfg) || 0) : 0;
+                const storedVal = (typeof val === 'number') ? val : parseInt(val) || 0;
+                const isAuto = (storedVal === 0);
+                const shown = isAuto ? autoVal : storedVal;
+                const numberColor = isAuto ? 'var(--text-muted)' : 'var(--text)';
+                const rangeOpa    = isAuto ? 0.55 : 1;
+                const resetDim    = isAuto ? 'opacity:0.3; pointer-events:none;' : '';
+                const autoChip = isAuto
+                    ? `<span style="font-size:9px; font-family:'JetBrains Mono',monospace; font-weight:700; letter-spacing:0.5px; color:var(--text-muted); background:var(--bg); border:1px solid var(--border); border-radius:3px; padding:1px 5px; margin-right:2px;" title="Using style default — edit or use the +/− to override">AUTO</span>`
+                    : '';
+                html += `<div style="display:flex; gap:4px; align-items:center;">
+                    ${autoChip}
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var sl=btn.nextElementSibling; var ni=sl.nextElementSibling; var v=parseInt(sl.value)-${f.step||1}; if(v<${sMin})v=${sMin}; if(v===0)v=${sMin===0?1:sMin}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&lt;</button>
+                    <input type="range" min="${sMin}" max="${sMax}" value="${Math.min(shown, sMax)}" style="flex:1; opacity:${rangeOpa};"
+                        oninput="this.nextElementSibling.value=this.value; updateWidgetConfigField('${f.name}', parseInt(this.value), true)" ${disabledAttr}>
+                    <input type="number" value="${shown}" style="width:56px; text-align:center; font-size:11px; font-family:'JetBrains Mono',monospace; background:var(--bg); border:1px solid var(--border); color:${numberColor}; border-radius:var(--radius-sm); padding:2px 4px;"
+                        oninput="(function(ni){var v=parseInt(ni.value); if(isNaN(v))return; var sl=ni.previousElementSibling; if(v>parseInt(sl.max))sl.max=v; if(v<parseInt(sl.min))sl.min=v; sl.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)" ${disabledAttr}>
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=parseInt(sl.value)+${f.step||1}; if(v>${sMax})v=${sMax}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
+                    <button type="button" class="btn-secondary" title="Reset to style default (AUTO)" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:14px; ${resetDim}" ${disabledAttr}
+                        onclick="updateWidgetConfigField('${f.name}',0,true)">&#8634;</button>
+                </div>`;
             } else if (f.type === 'textarea') {
                 const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 html += `<textarea rows="3" style="resize:vertical; width:100%; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:4px 6px; font-family:inherit;" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>${escaped}</textarea>`;
@@ -6218,8 +6423,20 @@
 
             /* ── Data Accordion (open by default) ── */
             const dataFields = def.fields.filter(f => f.cat === 'data');
-            const hasSignalBinding = !['indicator', 'shape_panel', 'button', 'image', 'toggle'].includes(w.type);
-            if (dataFields.length || hasSignalBinding) {
+            /* Signal binding rules:
+             *   - shape_panel / image: decorative, no signal
+             *   - button / warning: may run without an assigned signal (test
+             *     button works locally). Still render the assign UI so the
+             *     user can attach one if they want CAN-driven behaviour.
+             *   - indicator with input_source=0 (Wire): GPIO-driven, no
+             *     signal needed → hide the assign UI
+             *   - everything else: normal signal assign flow */
+            const isIndicatorWired = (w.type === 'indicator' &&
+                                       (w.config?.input_source ?? 0) === 0);
+            const hasSignalBinding = !['shape_panel', 'image'].includes(w.type)
+                                      && !isIndicatorWired;
+            const isTestable = TOGGLE_TEST_TYPES.has(w.type);
+            if (dataFields.length || hasSignalBinding || isTestable) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
                 /* Signal binding UI */
                 if (hasSignalBinding) {
@@ -6243,31 +6460,67 @@
                         html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
                     }
                 }
-                /* ── Per-widget test control ── */
+                /* ── Per-widget test control ──
+                 * Always rendered for boolean widgets (indicator / warning /
+                 * toggle / button) regardless of signal binding — pressing
+                 * gives the user a quick live preview of the active visual.
+                 * If a signal is bound, the press injects value=1 via
+                 * /api/signal/inject and release injects value=0 (momentary
+                 * semantics like a real physical button). If no signal is
+                 * bound, the press is still a valid UX affordance — it just
+                 * doesn't propagate anywhere (no-op firmware side). */
                 const _testSig = _getWidgetSignalName(w);
-                if (_testSig) {
-                    const isToggle = TOGGLE_TEST_TYPES.has(w.type);
+                if (isTestable) {
+                    const activeVal = _testSig ? _testValues[_testSig] : undefined;
+                    const isActive = activeVal !== undefined;
+                    {
+                        /* Decide how the test button drives the widget:
+                         *   - Wire-mode indicator: /api/indicator/test by slot
+                         *     (indicator_apply_analog_state-driven, not signal)
+                         *   - Everything else with a signal: inject via
+                         *     /api/signal/inject as usual
+                         *   - No signal + no wire path: still renders the
+                         *     button for visual affordance, but press/release
+                         *     are no-ops (the widget has nothing to respond to) */
+                        let mode = '';
+                        let arg  = 'null';
+                        if (w.type === 'indicator' && isIndicatorWired) {
+                            mode = 'indicator';
+                            /* Indicator slot is stored on w.config.slot
+                             * (web UI JSON convention), NOT on w.slot —
+                             * the latter is the firmware-side widget_t
+                             * field name. Using w.slot made both left
+                             * and right indicators report slot=0. */
+                            arg  = String(w.config?.slot ?? 0);
+                        } else if (_testSig) {
+                            mode = 'signal';
+                            arg  = `'${_testSig}'`;
+                        }
+                        const pressHandler   = `_testPress('${mode}', ${arg}, this)`;
+                        const releaseHandler = `_testRelease('${mode}', ${arg}, this)`;
+                        html += `<button type="button" class="props-test-momentary"
+                                onmousedown="${pressHandler}"
+                                onmouseup="${releaseHandler}"
+                                onmouseleave="${releaseHandler}"
+                                ontouchstart="event.preventDefault();${pressHandler}"
+                                ontouchend="event.preventDefault();${releaseHandler}"
+                                ontouchcancel="${releaseHandler}">TEST ACTIVE</button>
+                        ${isActive ? `<button class="btn btn-secondary" style="margin-top:4px; width:100%; font-size:11px;" onclick="clearTestValue('${_testSig}');updateInspector()">Stop test</button>` : ''}`;
+                    }
+                } else if (_testSig) {
                     const activeVal = _testValues[_testSig];
                     const isActive = activeVal !== undefined;
-                    if (isToggle) {
-                        const checked = isActive && activeVal > 0 ? 'checked' : '';
-                        html += `<div style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
-                            <span style="font-size:11px; color:var(--text-muted); flex:1;">Test</span>
-                            <label class="switch" style="margin:0;"><input type="checkbox" ${checked} onchange="if(this.checked){setTestValue('${_testSig}',1)}else{clearTestValue('${_testSig}')}"><span class="slider round"></span></label>
-                        </div>`;
-                    } else {
-                        const b = _getTestBounds(w);
-                        const curVal = isActive ? activeVal : b.min;
-                        html += `<div style="margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
-                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-                                <span style="font-size:11px; color:var(--text-muted); flex:1;">Test Value</span>
-                                <span id="testValNum" style="font-size:12px; font-family:monospace; color:${isActive ? 'var(--accent)' : 'var(--text-muted)'}; min-width:40px; text-align:right;">${isActive ? curVal : '\u2014'}</span>
-                                ${isActive ? `<button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;" onclick="clearTestValue('${_testSig}');updateInspector()" title="Stop test">\u2715</button>` : ''}
-                            </div>
-                            <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${curVal}" style="width:100%; accent-color:var(--accent);"
-                                oninput="setTestValue('${_testSig}',parseFloat(this.value));document.getElementById('testValNum').textContent=this.value;document.getElementById('testValNum').style.color='var(--accent)'">
-                        </div>`;
-                    }
+                    const b = _getTestBounds(w);
+                    const curVal = isActive ? activeVal : b.min;
+                    html += `<div style="margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                            <span style="font-size:11px; color:var(--text-muted); flex:1;">Test Value</span>
+                            <span id="testValNum" style="font-size:12px; font-family:monospace; color:${isActive ? 'var(--accent)' : 'var(--text-muted)'}; min-width:40px; text-align:right;">${isActive ? curVal : '\u2014'}</span>
+                            ${isActive ? `<button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;" onclick="clearTestValue('${_testSig}');updateInspector()" title="Stop test">\u2715</button>` : ''}
+                        </div>
+                        <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${curVal}" style="width:100%; accent-color:var(--accent);"
+                            oninput="setTestValue('${_testSig}',parseFloat(this.value));document.getElementById('testValNum').textContent=this.value;document.getElementById('testValNum').style.color='var(--accent)'">
+                    </div>`;
                 }
 
                 dataFields.forEach(f => {
@@ -6609,6 +6862,41 @@
                 _testLastSend[signalName] = now;
             }
         }
+
+        /* Momentary-test helpers for boolean widgets (TEST ACTIVE button).
+         * Routes the press/release through the right firmware API
+         * depending on how the widget is driven:
+         *
+         *   - 'signal'    → POST /api/signal/inject   (CAN-bound widgets)
+         *   - 'indicator' → POST /api/indicator/test  (wire-mode indicators
+         *                   — they're driven by indicator_apply_analog_state,
+         *                   not by the signal subscription path)
+         *
+         * Press applies active=true/value=1, release applies false/0.
+         * .pressed CSS class drives the accent-blue pressed visual. */
+        function _testPress(mode, arg, btn) {
+            if (!btn) return;
+            btn.classList.add('pressed');
+            _testApply(mode, arg, true);
+        }
+        function _testRelease(mode, arg, btn) {
+            if (!btn || !btn.classList.contains('pressed')) return;
+            btn.classList.remove('pressed');
+            _testApply(mode, arg, false);
+        }
+        function _testApply(mode, arg, active) {
+            if (mode === 'signal' && arg) {
+                setTestValue(arg, active ? 1 : 0);
+            } else if (mode === 'indicator' && arg !== null) {
+                /* arg = slot (0 = LEFT, 1 = RIGHT) */
+                fetch('/api/indicator/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slot: arg, active: active }),
+                }).catch(() => {});
+            }
+            /* else: no-op — widget has no testable input path */
+        }
         function clearTestValue(signalName) {
             delete _testValues[signalName];
             delete _testLastSend[signalName];
@@ -6672,7 +6960,21 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
+        /* Is the viewport in the mobile bottom-sheet layout? Matches the same
+         * CSS breakpoint used to hide desktop controls. Used to suppress
+         * autofocus on search inputs (which would trigger the on-screen
+         * keyboard and fight with our modal). */
+        function _isMobileLayout() {
+            return window.matchMedia('(max-width: 900px), (hover: none) and (pointer: coarse)').matches;
+        }
+
         function openDataSourcePicker() {
+            /* Mobile: the Properties bottom-sheet was likely open when the user
+             * tapped Assign/Change — close it so our modal isn't stacked under
+             * it. Harmless on desktop (the helper is a no-op when the sheet
+             * class isn't applied). */
+            if (typeof closeMobileSheet === 'function') closeMobileSheet();
+
             const modal = document.getElementById('assignModal');
             modal.style.display = 'flex';
             document.getElementById('assignSearchInput').value = '';
@@ -6699,7 +7001,12 @@
             if (searchInput) searchInput.value = '';
             document.getElementById('ecuSearchResults').style.display = 'none';
             document.getElementById('ecuPickerList').style.display = '';
-            setTimeout(() => { if (searchInput) searchInput.focus(); }, 50);
+            /* Skip autofocus on mobile — it triggers the on-screen keyboard
+             * and covers half the signal list. Desktop still gets the quick
+             * type-to-search UX. */
+            if (!_isMobileLayout()) {
+                setTimeout(() => { if (searchInput) searchInput.focus(); }, 50);
+            }
 
             /* Build ECU list from presets */
             const ecuMap = {};
@@ -6816,7 +7123,10 @@
             footerBtn.textContent = '+ New Custom Signal';
             footerBtn.onclick = assignShowCustom;
 
-            setTimeout(() => document.getElementById('assignSearchInput').focus(), 50);
+            /* Desktop only — on mobile the keyboard would cover the list. */
+            if (!_isMobileLayout()) {
+                setTimeout(() => document.getElementById('assignSearchInput').focus(), 50);
+            }
         }
 
         function assignShowCustom() {
@@ -7083,6 +7393,14 @@
             if (fieldDef && fieldDef.type === 'checkbox') {
                 const hasChildren = def.fields.some(f => f.enabledBy === field || f.enabledBy === '!' + field);
                 if (hasChildren) updateInspector();
+            }
+
+            /* Indicator's input_source select drives whether the signal
+             * assign UI is shown in the Data accordion (Wire hides it, CAN
+             * shows it). Re-render the inspector so the UI flips
+             * immediately when the user changes the dropdown. */
+            if (w.type === 'indicator' && field === 'input_source') {
+                updateInspector();
             }
 
             pushHistory();
@@ -8330,24 +8648,262 @@
 
         async function captureScreenshot() {
             try {
-                const response = await fetch('/screenshot');
-                if (!response.ok) throw new Error();
-                const arrayBuffer = await response.arrayBuffer();
-                const uint8Array = new Uint8Array(arrayBuffer);
-
-                const imageData = ctx.createImageData(CANVAS_W, CANVAS_H);
-                const data = imageData.data;
-                for (let i = 0; i < uint8Array.length; i += 2) {
-                    const pixel565 = (uint8Array[i + 1] << 8) | uint8Array[i];
-                    const idx = (i / 2) * 4;
-                    data[idx] = ((pixel565 >> 11) & 0x1F) << 3;
-                    data[idx + 1] = ((pixel565 >> 5) & 0x3F) << 2;
-                    data[idx + 2] = (pixel565 & 0x1F) << 3;
-                    data[idx + 3] = 255;
-                }
-                ctx.putImageData(imageData, 0, 0);
+                /* Half-res (400x240) smooth-averaged JPEG for the edit-mode canvas
+                 * backdrop. Full-res was causing task-watchdog trips during active
+                 * editing because each encode pushed ~4 MB through PSRAM, fighting
+                 * LVGL for the bus and starving IDLE1 when many widgets were
+                 * redrawing (e.g., sim on + dragging a widget). Half-res is ~1 MB
+                 * PSRAM traffic — 4x less contention, still sharp enough once the
+                 * browser upscales to the canvas. Full-res stays reserved for the
+                 * LIVE preview's own polling loop (which users opt into and isn't
+                 * running simultaneously with edit invalidations). */
+                const response = await fetch('/api/screenshot?smooth=1&q=75&t=' + Date.now(),
+                                              { cache: 'no-store' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const blob = await response.blob();
+                const bmp  = await createImageBitmap(blob);
+                ctx.drawImage(bmp, 0, 0, CANVAS_W, CANVAS_H);
+                bmp.close();
             } catch (e) { console.error('Screenshot failed', e); }
         }
+
+        /* ═══ Background canvas auto-refresh ═══
+         * Keeps the edit-mode canvas backdrop in sync with the device even
+         * when LIVE is off, so users don't have to hit Sync to see the
+         * current state. Paused while LIVE is active (Live has its own
+         * 1 Hz polling). Interval intentionally slow — 3 s is enough for
+         * "I moved a widget, want to see what the device shows now"
+         * without burning CPU on constant encodes. */
+        let _bgRefreshTimer = null;
+        const _BG_REFRESH_INTERVAL_MS = 3000;
+
+        function _startBgRefresh() {
+            if (_bgRefreshTimer) return;
+            _bgRefreshTimer = setInterval(() => {
+                /* Skip if LIVE is running (its <img> is already updating) or
+                 * if the tab is hidden (browser throttles us anyway, no point
+                 * spending firmware CPU on a preview nobody's watching). */
+                if (_liveControlOn || document.hidden) return;
+                captureScreenshot();
+            }, _BG_REFRESH_INTERVAL_MS);
+        }
+        function _stopBgRefresh() {
+            if (_bgRefreshTimer) {
+                clearInterval(_bgRefreshTimer);
+                _bgRefreshTimer = null;
+            }
+        }
+
+        /* Kick it off once the page is idle so we don't race early layout
+         * loading. Safe to call repeatedly — _startBgRefresh is idempotent. */
+        window.addEventListener('load', () => {
+            setTimeout(_startBgRefresh, 2000);
+        });
+
+        /* ═══ Live Control — JS-polled mirror + remote touch injection ═══
+         *
+         * When the LIVE pill is on:
+         *   - A setTimeout loop fetches /api/screenshot (JPEG, ~25 KB,
+         *     ~150 ms round trip over WiFi) and swaps the <img> src via
+         *     object URL. Target cadence ~3 fps by default — enough to
+         *     feel live, cheap on both sides, and ROCK SOLID across
+         *     browsers (Safari / iOS / in-app webviews all cope).
+         *   - Pointer events on the image are translated to device pixel
+         *     coordinates and POSTed to /api/touch, which drives a virtual
+         *     LVGL indev that coexists with the real GT911.
+         *   - The firmware is told to enable remote touch so the events
+         *     actually reach LVGL (safety: it's off by default).
+         *
+         * Why not the /api/capture/stream MJPEG endpoint? Multipart MJPEG
+         * works in Chrome/Firefox but Safari and several mobile browsers
+         * only render the first frame — hence the "needs sync" symptom.
+         * Polling always updates. The MJPEG endpoint stays available for
+         * ffmpeg / OBS external recording where multipart is reliable. */
+        let _liveControlOn   = false;
+        let _liveLoopToken   = 0;    /* cancel stale loops across re-toggles */
+        let _lastTouchSendMs = 0;
+        const _TOUCH_SEND_THROTTLE_MS = 25;   /* ~40 Hz — plenty for drag */
+        const _LIVE_POLL_INTERVAL_MS  = 1000; /* ~1 fps — generous headroom for full-res encode */
+
+        async function _postTouch(body) {
+            try {
+                await fetch('/api/touch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } catch (e) { /* best-effort; drop silently on transient failures */ }
+        }
+
+        /* Convert a pointer event on the <img> to device pixel coords (0..799, 0..479). */
+        function _eventToDeviceXY(e) {
+            const img = document.getElementById('liveStreamImg');
+            if (!img) return null;
+            const rect = img.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            const x = Math.round(cx * 800 / rect.width);
+            const y = Math.round(cy * 480 / rect.height);
+            return {
+                x: Math.max(0, Math.min(799, x)),
+                y: Math.max(0, Math.min(479, y)),
+            };
+        }
+
+        function _liveOnPointerDown(e) {
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            e.preventDefault();
+            e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+            _postTouch({ x: p.x, y: p.y, state: 'down' });
+        }
+
+        function _liveOnPointerMove(e) {
+            if (e.buttons === 0) return;  /* only track drags */
+            const now = performance.now();
+            if (now - _lastTouchSendMs < _TOUCH_SEND_THROTTLE_MS) return;
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            _lastTouchSendMs = now;
+            _postTouch({ x: p.x, y: p.y, state: 'move' });
+        }
+
+        function _liveOnPointerUp(e) {
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId);
+            _postTouch({ x: p.x, y: p.y, state: 'up' });
+        }
+
+        /* Bind/unbind pointer handlers on the live-stream <img>. We only want
+         * them active while Live Control is on — otherwise clicking near the
+         * canvas would still ping the device. */
+        function _bindLivePointerEvents(on) {
+            const img = document.getElementById('liveStreamImg');
+            if (!img) return;
+            const fn = on ? 'addEventListener' : 'removeEventListener';
+            img[fn]('pointerdown', _liveOnPointerDown);
+            img[fn]('pointermove', _liveOnPointerMove);
+            img[fn]('pointerup',   _liveOnPointerUp);
+            img[fn]('pointercancel', _liveOnPointerUp);
+            /* Suppress the browser's default image drag + context menu so
+             * clicks on the preview feel like a genuine touch surface. */
+            img[fn]('dragstart',   preventDefault);
+            img[fn]('contextmenu', preventDefault);
+        }
+        function preventDefault(e) { e.preventDefault(); }
+
+        /* Polling loop — fetches a JPEG from /api/screenshot, swaps it into
+         * the <img> via a blob URL, waits _LIVE_POLL_INTERVAL_MS, repeats.
+         * Each loop is tagged with a token; if the user toggles LIVE off
+         * and on again, stale in-flight loops exit on the next iteration. */
+        async function _livePollLoop(token) {
+            const img = document.getElementById('liveStreamImg');
+            let prevBlobUrl = null;
+            while (_liveControlOn && token === _liveLoopToken && img) {
+                const t0 = performance.now();
+                try {
+                    /* Native 800x480 at q=85 with 4:2:2 chroma — the sharpest combination
+                     * we can produce. Encode takes ~140 ms on the ESP32-S3; paired with the
+                     * 1000 ms poll interval that's ~14% CPU while Live is on, comfortably
+                     * under the task-watchdog threshold even with SIM running.
+                     * (smooth=1 is a no-op at full resolution since there's no downsample.) */
+                    const r = await fetch('/api/screenshot?full=1&q=85&t=' + Date.now(), { cache: 'no-store' });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const blob = await r.blob();
+                    /* Bail if the user toggled off during the fetch */
+                    if (!_liveControlOn || token !== _liveLoopToken) {
+                        if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                        return;
+                    }
+                    const url = URL.createObjectURL(blob);
+                    img.src = url;
+                    if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                    prevBlobUrl = url;
+                } catch (e) {
+                    /* Transient network error — back off briefly and retry */
+                    await new Promise(res => setTimeout(res, 500));
+                    continue;
+                }
+                const elapsed = performance.now() - t0;
+                const wait = Math.max(0, _LIVE_POLL_INTERVAL_MS - elapsed);
+                await new Promise(res => setTimeout(res, wait));
+            }
+            if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+        }
+
+        async function toggleLiveControl() {
+            _liveControlOn = !_liveControlOn;
+            const pill         = document.getElementById('pillLiveControl');
+            const img          = document.getElementById('liveStreamImg');
+            const canvas       = document.getElementById('screenshotCanvas');
+            const interaction  = document.getElementById('interactionLayer');
+
+            if (_liveControlOn) {
+                /* 1) Tell the firmware to enable the virtual indev */
+                await _postTouch({ enabled: true });
+
+                /* 2) Swap visibility: live-img on, canvas + widget overlay off.
+                 *    Deselect any selected widget so its outside-canvas
+                 *    selection indicators also clear. */
+                if (img)         img.style.display = 'block';
+                if (canvas)      canvas.style.display = 'none';
+                if (interaction) interaction.style.display = 'none';
+                if (typeof deselectAll === 'function') deselectAll();
+                if (pill) pill.classList.add('active');
+
+                /* 3) Wire pointer → /api/touch BEFORE kicking the poll loop
+                 *    so the very first click after activation isn't missed. */
+                _bindLivePointerEvents(true);
+
+                /* 4) Start the polling loop. Bump the token so any prior
+                 *    loop from a previous activation exits on next iter. */
+                _liveLoopToken++;
+                _livePollLoop(_liveLoopToken);
+
+                showToast && showToast('Control ON — click/drag the preview to touch the dash', 'info');
+            } else {
+                /* 1) Detach pointer handlers first so no stragglers leak POSTs */
+                _bindLivePointerEvents(false);
+
+                /* 2) Bump token so the poll loop exits on its next iteration */
+                _liveLoopToken++;
+
+                /* 3) Disable remote touch server-side */
+                await _postTouch({ enabled: false });
+
+                /* 4) Restore canvas + widget overlay visibility */
+                if (img) {
+                    img.src = '';            /* release blob URL reference */
+                    img.style.display = 'none';
+                }
+                if (canvas)      canvas.style.display = '';
+                if (interaction) interaction.style.display = '';
+                if (pill) pill.classList.remove('active');
+
+                /* 5) Snap a fresh canvas screenshot so the static backdrop
+                 *    reflects whatever the dash is showing right now. */
+                captureScreenshot();
+                showToast && showToast('Control OFF', 'info');
+            }
+        }
+
+        /* Sync button state with firmware on page load — in case a previous
+         * tab left remote touch enabled and the user just reloaded. */
+        (async function _syncLiveControlOnLoad() {
+            try {
+                const r = await fetch('/api/touch');
+                if (!r.ok) return;
+                const j = await r.json();
+                if (j && j.enabled) {
+                    /* Match the UI to reality — call toggleLiveControl which
+                     * would flip it OFF. Instead just mark our flag and let
+                     * the user press the pill if they want it live again. */
+                    await _postTouch({ enabled: false });  /* safer to start clean */
+                }
+            } catch (e) { /* offline/no-backend — fine */ }
+        })();
 
 
         function updateStatus(msg, isError) {
@@ -9817,6 +10373,158 @@
         requestAnimationFrame(() => zoomToFit());
         window.addEventListener('resize', () => zoomToFit());
 
+        /* ── Auto firmware update check ──────────────────────────────────────
+         * Fires once per page load, throttled to one real network check per
+         * 24h via localStorage. Skipped entirely when the dash is in AP-only
+         * mode (no internet → check will fail anyway). Silent-fail on all
+         * errors — we'd rather never surface a banner than show a stale or
+         * misleading one. See firmware: /api/ota/status, /api/ota/check,
+         * /api/ota/start. */
+        const _OTA_KEY_LAST   = 'rdm7_ota_last_check';   /* epoch ms */
+        const _OTA_KEY_SKIP   = 'rdm7_ota_skip_version'; /* version string user dismissed */
+        const _OTA_CHECK_TTL  = 24 * 60 * 60 * 1000;
+        let   _otaPollTimer   = null;
+        let   _otaLatestCache = null;
+
+        function _otaDismissBanner() {
+            /* Use the cached raw version (what firmware actually returns)
+             * rather than the display-formatted span text. Comparing the
+             * same shape avoids "dismissed but keeps coming back" bugs. */
+            if (_otaLatestCache) {
+                localStorage.setItem(_OTA_KEY_SKIP, _otaLatestCache);
+            }
+            const el = document.getElementById('updateBanner');
+            if (el) el.style.display = 'none';
+        }
+
+        function _otaShowBanner(latest) {
+            const el   = document.getElementById('updateBanner');
+            const span = document.getElementById('updateBannerVer');
+            if (!el || !span) return;
+            _otaLatestCache = latest || _otaLatestCache;
+            span.textContent = latest ? `(v${latest.replace(/^v/i, '')})` : '';
+            /* The inline style leaves two display rules in the attribute — the
+             * second wins and is the real layout (flex). Flip the hidden rule
+             * directly here so the banner shows. */
+            el.style.display = 'flex';
+        }
+
+        async function _otaShowInstall() {
+            document.getElementById('updateBanner').style.display = 'none';
+            const modal = document.getElementById('otaInstallModal');
+            modal.style.display = 'flex';
+            const summary = document.getElementById('otaInstallSummary');
+            const bar     = document.getElementById('otaInstallBar');
+            const status  = document.getElementById('otaInstallStatus');
+            summary.textContent = _otaLatestCache
+                ? `Installing v${_otaLatestCache.replace(/^v/i, '')}…`
+                : 'Installing latest version…';
+            bar.style.width = '0%';
+            status.textContent = 'Starting…';
+
+            try {
+                const resp = await fetch('/api/ota/start', { method: 'POST' });
+                if (!resp.ok && resp.status !== 202) throw new Error('start failed');
+            } catch (e) {
+                status.textContent = 'Could not start — check network and try again.';
+                return;
+            }
+            _otaPollInstall();
+        }
+
+        async function _otaPollInstall() {
+            const bar    = document.getElementById('otaInstallBar');
+            const status = document.getElementById('otaInstallStatus');
+            try {
+                const r = await fetch('/api/ota/status');
+                if (r.ok) {
+                    const d = await r.json();
+                    const pct = Math.max(0, Math.min(100, d.progress || 0));
+                    bar.style.width = pct + '%';
+                    status.textContent = `${d.status || 'installing'} — ${pct}%`;
+                    if (d.status === 'completed') {
+                        status.textContent = 'Complete — dash is rebooting…';
+                        return;
+                    }
+                    if (d.status === 'failed') {
+                        status.textContent = 'Update failed. Reboot the dash and try again.';
+                        return;
+                    }
+                }
+            } catch (e) { /* silent */ }
+            setTimeout(_otaPollInstall, 2000);
+        }
+
+        async function _otaAutoCheck() {
+            /* Short-circuit 1: too soon since last check */
+            const last = parseInt(localStorage.getItem(_OTA_KEY_LAST) || '0', 10);
+            const now  = Date.now();
+            const fresh = (now - last) < _OTA_CHECK_TTL;
+
+            /* Short-circuit 2: dash is AP-only (no internet → check will fail).
+             * Read wifi.sta_ip from the device info endpoint; if there's no STA
+             * address, skip silently. */
+            let staConnected = false;
+            try {
+                const r = await fetch('/api/device/info');
+                if (r.ok) {
+                    const d = await r.json();
+                    staConnected = !!(d?.wifi?.sta_ip && d.wifi.sta_ip !== '0.0.0.0' && d.wifi.sta_ip !== '-');
+                }
+            } catch (e) { /* assume offline → skip */ return; }
+            if (!staConnected) return;
+
+            /* If a check ran recently and told us an update is available,
+             * surface the cached answer immediately (no network). */
+            if (fresh) {
+                try {
+                    const r = await fetch('/api/ota/status');
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (d.update_available && d.latest_version) {
+                            _otaLatestCache = d.latest_version;
+                            if (localStorage.getItem(_OTA_KEY_SKIP) !== d.latest_version) {
+                                _otaShowBanner(d.latest_version);
+                            }
+                        }
+                    }
+                } catch (e) { /* silent */ }
+                return;
+            }
+
+            /* Kick off a fresh check + poll status until it settles or we
+             * give up after ~45s (matches the firmware's API timeout). */
+            try { await fetch('/api/ota/check', { method: 'POST' }); }
+            catch (e) { return; }
+            localStorage.setItem(_OTA_KEY_LAST, String(now));
+
+            let attempts = 0;
+            const maxAttempts = 15;  /* 15 × 3s = 45s budget */
+            const poll = async () => {
+                attempts++;
+                try {
+                    const r = await fetch('/api/ota/status');
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    if (d.status === 'checking' && attempts < maxAttempts) {
+                        _otaPollTimer = setTimeout(poll, 3000);
+                        return;
+                    }
+                    if (d.update_available && d.latest_version) {
+                        _otaLatestCache = d.latest_version;
+                        if (localStorage.getItem(_OTA_KEY_SKIP) !== d.latest_version) {
+                            _otaShowBanner(d.latest_version);
+                        }
+                    }
+                } catch (e) { /* silent */ }
+            };
+            _otaPollTimer = setTimeout(poll, 3000);
+        }
+
+        /* Defer by a few seconds so the user sees the editor load first — no
+         * "freshly opened the app, already a banner" disorientation. */
+        setTimeout(_otaAutoCheck, 4000);
+
         /* ── Dimmer Settings ─────────────────────────────────────────── */
 
         const INTERNAL_SIGNALS = [
@@ -10746,9 +11454,10 @@
         function _wstSyncTestRow(w) {
             const row    = document.getElementById('wstTestRow');
             const slider = document.getElementById('wstTestSlider');
+            const toggle = document.getElementById('wstTestToggle');
             const valEl  = document.getElementById('wstTestVal');
             const clr    = document.getElementById('wstTestClear');
-            if (!row || !slider || !valEl || !clr) return;
+            if (!row || !slider || !toggle || !valEl || !clr) return;
             const sig = _wstGetSignalName(w);
             if (!sig) {
                 row.style.display = 'none';
@@ -10757,16 +11466,41 @@
             }
             row.style.display = '';
             document.body.classList.add('wst-has-test');
-            const b = _wstGetTestBounds(w);
-            slider.min = b.min; slider.max = b.max; slider.step = b.step;
+
             const active = (typeof _testValues !== 'undefined') && (_testValues[sig] !== undefined);
-            const cur = active ? _testValues[sig] : b.min;
-            if (document.activeElement !== slider) slider.value = cur;
-            valEl.textContent = active ? String(cur) : '\u2014';
-            valEl.classList.toggle('active', !!active);
-            clr.style.display = active ? '' : 'none';
-            slider.dataset.signal = sig;
-            clr.dataset.signal = sig;
+            const isBool = (typeof TOGGLE_TEST_TYPES !== 'undefined') && TOGGLE_TEST_TYPES.has(w.type);
+
+            if (isBool) {
+                /* Boolean widgets (indicator / warning / toggle / button) —
+                 * show a single ACTIVE toggle instead of a slider. Clicking
+                 * injects value 1; the widget's own "active" logic fires. */
+                slider.style.display = 'none';
+                toggle.style.display = '';
+                const on = active && _testValues[sig] > 0;
+                toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+                toggle.textContent = on ? 'ACTIVE' : 'TEST ACTIVE';
+                /* Show the currently-injected value while testing so users can
+                 * tell the difference between "not testing" (—) and "testing
+                 * at 0" (widget visually off by design). */
+                valEl.textContent = active ? String(_testValues[sig]) : '\u2014';
+                valEl.classList.toggle('active', !!active);
+                clr.style.display = active ? '' : 'none';
+                toggle.dataset.signal = sig;
+                clr.dataset.signal    = sig;
+            } else {
+                /* Numeric widgets — standard value slider. */
+                toggle.style.display = 'none';
+                slider.style.display = '';
+                const b = _wstGetTestBounds(w);
+                slider.min = b.min; slider.max = b.max; slider.step = b.step;
+                const cur = active ? _testValues[sig] : b.min;
+                if (document.activeElement !== slider) slider.value = cur;
+                valEl.textContent = active ? String(cur) : '\u2014';
+                valEl.classList.toggle('active', !!active);
+                clr.style.display = active ? '' : 'none';
+                slider.dataset.signal = sig;
+                clr.dataset.signal    = sig;
+            }
         }
 
         function _wstUpdate() {
@@ -10833,6 +11567,22 @@
                     if (valEl) { valEl.textContent = String(v); valEl.classList.add('active'); }
                     const clr = document.getElementById('wstTestClear');
                     if (clr) clr.style.display = '';
+                });
+            }
+            /* Boolean-widget "ACTIVE" toggle — injects signal value 1 to drive
+             * the selected indicator / warning / toggle / button widget into
+             * its active visual state. Second click injects 0 so the widget
+             * returns to its inactive visual (instead of just clearing the
+             * local test tracker while the firmware retains the last value).
+             * The × button is still available for fully disengaging. */
+            const toggleBtn = document.getElementById('wstTestToggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    const sig = toggleBtn.dataset.signal;
+                    if (!sig || typeof setTestValue !== 'function') return;
+                    const wasOn = toggleBtn.getAttribute('aria-pressed') === 'true';
+                    setTestValue(sig, wasOn ? 0 : 1);
+                    _wstUpdate();
                 });
             }
             const clearBtn = document.getElementById('wstTestClear');

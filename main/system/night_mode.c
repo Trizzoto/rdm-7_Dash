@@ -36,11 +36,19 @@ void night_mode_init(void)
 
 bool night_mode_is_active(void)
 {
+#if NIGHT_MODE_DISABLED
+    return false;
+#else
     return s_active;
+#endif
 }
 
 bool night_mode_subscribe(night_mode_change_cb_t cb, void *user_data)
 {
+#if NIGHT_MODE_DISABLED
+    (void)cb; (void)user_data;
+    return false;
+#endif
     if (!cb) return false;
     if (s_subscriber_count >= NIGHT_MODE_MAX_SUBSCRIBERS) {
         ESP_LOGW(TAG, "Subscriber table full (%u) — refusing subscribe",
@@ -86,6 +94,10 @@ static void _do_notify(void *param)
 
 void night_mode_set_active(bool active)
 {
+#if NIGHT_MODE_DISABLED
+    (void)active;
+    return;
+#endif
     if (!s_initialised) {
         ESP_LOGW(TAG, "set_active before init — ignored");
         return;

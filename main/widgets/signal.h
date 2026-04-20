@@ -165,6 +165,19 @@ float signal_get_peak(int16_t signal_index);
 /** Get the min value recorded for a signal. Returns FLT_MAX if none. */
 float signal_get_min(int16_t signal_index);
 
+/* ── Persistence ──────────────────────────────────────────────────────────
+ * Peak/min values persist across reboot in NVS until the user hits "Reset All".
+ * Call signal_peaks_load() ONCE after all signals have been registered for the
+ * active layout — stale records (signals not in this layout) are silently
+ * dropped. Call signal_peaks_save_now() to flush immediately (e.g. from the
+ * Reset-All button, to erase persisted peaks). signal_peaks_start_autosave()
+ * launches a background timer that flushes every ~30s when the peaks have
+ * changed since the last save.
+ */
+void signal_peaks_load(void);
+void signal_peaks_save_now(void);
+void signal_peaks_start_autosave(void);
+
 #ifdef __cplusplus
 }
 #endif

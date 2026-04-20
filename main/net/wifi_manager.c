@@ -43,6 +43,10 @@ static char             s_pending_pass[65]    = {0};
 
 /* Auto-connect: scan first, then connect if SSID found */
 static bool             s_auto_connect_pending = false;
+
+/* Forward-decl — definition lives below with the other helpers. Used by
+ * _process_scan_results which is emitted before the definition. */
+static bool _has_saved_sta_creds(void);
 static char             s_auto_ssid[33]        = {0};
 static char             s_auto_pass[65]        = {0};
 
@@ -293,6 +297,21 @@ static void _process_scan_results(void)
     } else {
         _set_state(WIFI_MGR_STATE_IDLE);
     }
+
+    /* Scan-only path: if we upgraded to APSTA just to run this scan (AP was
+     * on, no saved STA, user opened the WiFi settings to see available
+     * networks), the STA half keeps spamming `Haven't to connect to a
+     * suitable AP now!` because it has no target. Drop back to AP-only so
+     * the radio can serve the hotspot reliably. If the user picks a network
+     * next, `wifi_manager_connect` will re-upgrade. */
+    if (s_ap_enabled && s_connected_ssid[0] == '\0' && !_has_saved_sta_creds()) {
+        wifi_mode_t m = WIFI_MODE_NULL;
+        esp_wifi_get_mode(&m);
+        if (m == WIFI_MODE_APSTA) {
+            ESP_LOGI(TAG, "Scan complete — downgrading APSTA → AP-only (no saved STA)");
+            esp_wifi_set_mode(WIFI_MODE_AP);
+        }
+    }
 }
 
 /* ── ESP event handler ────────────────────────────────────────────────── */
@@ -427,6 +446,26 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 /* ── Lifecycle ────────────────────────────────────────────────────────── */
 
+/* Does the device have at least one saved STA SSID in NVS?
+ *
+ * When false, we should NOT start the STA interface — ESP-IDF's WiFi stack
+ * will otherwise spam `Haven't to connect to a suitable AP now!` every 500ms
+ * and steal radio time from the AP, making the hotspot unreliable (single
+ * radio, APSTA concurrent mode). Used to pick AP-only vs APSTA at boot. */
+static bool _has_saved_sta_creds(void)
+{
+    wifi_credentials_t list[CONFIG_STORE_WIFI_SLOT_COUNT] = {0};
+    uint8_t list_count = 0;
+    if (config_store_load_wifi_list(list, &list_count) == ESP_OK && list_count > 0) {
+        for (uint8_t i = 0; i < list_count; ++i) {
+            if (list[i].ssid[0] != '\0') return true;
+        }
+    }
+    wifi_credentials_t one = {0};
+    if (config_store_load_wifi(&one) == ESP_OK && one.ssid[0] != '\0') return true;
+    return false;
+}
+
 void wifi_manager_init(void)
 {
     if (s_initialized) {
@@ -478,11 +517,6 @@ void wifi_manager_start(void)
         return;
     }
 
-    ESP_LOGW(TAG, "[mem] wifi_manager_start  free_int=%u  largest_int=%u  free_psram=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-
     ESP_LOGI(TAG, "Starting WiFi radio");
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -493,18 +527,31 @@ void wifi_manager_start(void)
     config_store_load_ap_config(&ap_cfg);
     s_ap_enabled = ap_cfg.enabled;
 
-    if (s_ap_enabled) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    }
+    /* Pick mode. APSTA costs the AP radio time — the STA half keeps
+     * probing/retrying even when it has no target, which spams
+     * `Haven't to connect to a suitable AP now!` and drops AP frames.
+     * Only enable STA if there's at least one saved SSID to connect to. */
+    bool need_sta = _has_saved_sta_creds();
+    wifi_mode_t start_mode;
+    if (s_ap_enabled && need_sta)       start_mode = WIFI_MODE_APSTA;
+    else if (s_ap_enabled)              start_mode = WIFI_MODE_AP;
+    else                                start_mode = WIFI_MODE_STA;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(start_mode));
+    ESP_LOGI(TAG, "Mode: %s (AP=%d saved_sta=%d)",
+             start_mode == WIFI_MODE_APSTA ? "APSTA" :
+             start_mode == WIFI_MODE_AP    ? "AP-only" : "STA-only",
+             s_ap_enabled, need_sta);
 
     /* Configure AP if enabled */
     if (s_ap_enabled) {
         wifi_config_t ap_wifi_cfg = {0};
         strncpy((char *)ap_wifi_cfg.ap.ssid, s_ap_ssid, sizeof(ap_wifi_cfg.ap.ssid) - 1);
         ap_wifi_cfg.ap.ssid_len      = strlen(s_ap_ssid);
-        ap_wifi_cfg.ap.channel       = 1;
+        /* Channel 11 instead of 1 — in this user's RF environment channel 1
+         * was too congested to complete 802.11 auth reliably with phones
+         * (reason=15 timeouts). If other users report issues on 11, a
+         * boot-time channel scan would be a cleaner fix. */
+        ap_wifi_cfg.ap.channel        = 11;
         ap_wifi_cfg.ap.max_connection = 4;
 
         if (strlen(ap_cfg.password) >= 8) {
@@ -526,6 +573,13 @@ void wifi_manager_start(void)
     /* Disable power save — dash display is always powered, and PS mode
      * causes intermittent disconnects and increased latency. */
     esp_wifi_set_ps(WIFI_PS_NONE);
+
+    /* Force HT20 on both interfaces. Espressif's guidance for concurrent-
+     * mode and phone-facing APs is HT20 — HT40 often fails the 4-way WPA2
+     * handshake on weak or picky clients (reason=15 timeouts). Costs a
+     * little throughput but makes the hotspot reliable. */
+    if (s_ap_enabled) esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
 
     s_started = true;
 
@@ -587,6 +641,14 @@ void wifi_manager_scan(void)
         return;
     }
 
+    /* Scan requires the STA interface. If we're AP-only, upgrade. */
+    wifi_mode_t cur_mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&cur_mode);
+    if (cur_mode == WIFI_MODE_AP) {
+        ESP_LOGI(TAG, "Upgrading AP-only → APSTA for scan");
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    }
+
     ESP_LOGI(TAG, "Starting scan (non-blocking)");
 
     wifi_scan_config_t scan_cfg = {
@@ -627,6 +689,19 @@ void wifi_manager_connect(const char *ssid, const char *password)
     s_auto_connect_pending = false;
 
     ESP_LOGI(TAG, "Connecting to '%s'", ssid);
+
+    /* If we booted in AP-only mode (no saved credentials at boot) and the
+     * user is now trying to connect to a network, upgrade the mode so the
+     * STA interface actually exists. Otherwise esp_wifi_connect() would
+     * silently no-op. */
+    wifi_mode_t cur_mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&cur_mode);
+    if (cur_mode == WIFI_MODE_AP) {
+        ESP_LOGI(TAG, "Upgrading AP-only → APSTA for STA connect");
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    } else if (cur_mode == WIFI_MODE_NULL) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    }
 
     /* Store pending credentials for use in event handler */
     strncpy(s_pending_ssid, ssid, sizeof(s_pending_ssid) - 1);
@@ -702,16 +777,22 @@ void wifi_manager_forget(void)
 
 void wifi_manager_auto_connect(void)
 {
+    /* If STA interface isn't part of the current mode (AP-only at boot when
+     * no SSIDs were saved), scanning is both useless and noisy. Skip it. */
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&mode);
+    bool sta_up = (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA);
+
     wifi_credentials_t creds = {0};
     if (config_store_load_wifi(&creds) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved WiFi credentials — scanning only");
-        wifi_manager_scan();
+        ESP_LOGI(TAG, "No saved WiFi credentials — %s", sta_up ? "scanning only" : "AP-only, skipping scan");
+        if (sta_up) wifi_manager_scan();
         return;
     }
 
     if (!creds.auto_connect || creds.ssid[0] == '\0') {
-        ESP_LOGI(TAG, "Auto-connect disabled or SSID empty — scanning only");
-        wifi_manager_scan();
+        ESP_LOGI(TAG, "Auto-connect disabled or SSID empty — %s", sta_up ? "scanning only" : "AP-only, skipping scan");
+        if (sta_up) wifi_manager_scan();
         return;
     }
 
@@ -744,7 +825,9 @@ void wifi_manager_enable_ap(bool enable)
     s_ap_enabled = enable;
 
     if (enable) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        /* AP-only when no saved STA — see _has_saved_sta_creds comment */
+        wifi_mode_t new_mode = _has_saved_sta_creds() ? WIFI_MODE_APSTA : WIFI_MODE_AP;
+        ESP_ERROR_CHECK(esp_wifi_set_mode(new_mode));
 
         /* Configure AP */
         rdm_ap_config_t ap_cfg;
@@ -753,7 +836,8 @@ void wifi_manager_enable_ap(bool enable)
         wifi_config_t ap_wifi_cfg = {0};
         strncpy((char *)ap_wifi_cfg.ap.ssid, s_ap_ssid, sizeof(ap_wifi_cfg.ap.ssid) - 1);
         ap_wifi_cfg.ap.ssid_len       = strlen(s_ap_ssid);
-        ap_wifi_cfg.ap.channel        = 1;
+        /* Same channel 11 as boot path — see wifi_manager_start for rationale. */
+        ap_wifi_cfg.ap.channel        = 11;
         ap_wifi_cfg.ap.max_connection  = 4;
 
         if (strlen(ap_cfg.password) >= 8) {

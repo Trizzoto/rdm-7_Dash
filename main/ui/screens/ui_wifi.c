@@ -4,6 +4,7 @@
 #include "net/wifi_manager.h"
 #include "storage/config_store.h"
 #include "web_server.h"
+#include "net/dns_hijack.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -15,12 +16,27 @@ static const char *TAG = "wifi_ui";
 
 /* =========================================================================
  * Static UI elements
- * ========================================================================= */
+ * =========================================================================
+ *
+ * Networking model (since the mode-selector overhaul):
+ *   A single dropdown picks one of three mutually-exclusive modes —
+ *     MODE_OFF    = radios off, no STA, no AP
+ *     MODE_WIFI   = STA (client) only, try to join a saved network
+ *     MODE_AP     = Hotspot (AP) only, phones join the dash directly
+ *   A second dropdown (boot_dropdown) persists the same 3-way choice so the
+ *   board comes up in the selected mode after reboot. The previous design
+ *   had independent WiFi/Hotspot on-off switches, which let both run at once
+ *   and regularly starved the single-radio ESP32 on phones. */
+
+typedef enum {
+    WIFI_UI_MODE_OFF = 0,
+    WIFI_UI_MODE_STA = 1,
+    WIFI_UI_MODE_AP  = 2,
+} wifi_ui_mode_t;
+
 static lv_obj_t *wifi_screen       = NULL;
-static lv_obj_t *wifi_toggle       = NULL;
-static lv_obj_t *ap_toggle         = NULL;
-static lv_obj_t *boot_toggle       = NULL;
-static lv_obj_t *ap_boot_toggle    = NULL;  /* Hotspot-on-boot */
+static lv_obj_t *mode_dropdown     = NULL;  /* Off / WiFi / Hotspot */
+static lv_obj_t *boot_dropdown     = NULL;  /* Same 3 options, persisted */
 static lv_obj_t *ap_ssid_label     = NULL;
 static lv_obj_t *ap_ip_label       = NULL;
 static lv_obj_t *ap_pass_input     = NULL;
@@ -34,7 +50,6 @@ static lv_obj_t *connection_spinner = NULL;
 static lv_obj_t *scan_btn          = NULL;
 
 /* Containers for conditional visibility */
-static lv_obj_t *wifi_dependent_section = NULL;  /* everything below wifi toggle */
 static lv_obj_t *ap_info_container      = NULL;  /* AP SSID/IP rows */
 static lv_obj_t *right_panel            = NULL;   /* available networks panel */
 
@@ -63,10 +78,10 @@ static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
 
 /* Event callbacks */
 static void _back_btn_cb(lv_event_t *e);
-static void _wifi_toggle_cb(lv_event_t *e);
-static void _ap_toggle_cb(lv_event_t *e);
-static void _boot_toggle_cb(lv_event_t *e);
-static void _ap_boot_toggle_cb(lv_event_t *e);
+static void _mode_dropdown_cb(lv_event_t *e);
+static void _boot_dropdown_cb(lv_event_t *e);
+static void _apply_ui_mode(wifi_ui_mode_t mode);
+static wifi_ui_mode_t _current_mode(void);
 static void _scan_btn_cb(lv_event_t *e);
 static void _network_item_cb(lv_event_t *e);
 static void _password_connect_cb(lv_event_t *e);
@@ -246,58 +261,36 @@ static void _create_screen(void)
     lv_label_set_text(ctrl_title, "CONTROLS");
     _style_section_title(ctrl_title);
 
-    /* WiFi toggle row (always visible) */
-    lv_obj_t *wifi_row = lv_obj_create(ctrl_card);
-    lv_obj_set_size(wifi_row, LV_PCT(100), 32);
-    lv_obj_set_style_bg_opa(wifi_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(wifi_row, 0, 0);
-    lv_obj_set_style_pad_all(wifi_row, 0, 0);
-    lv_obj_clear_flag(wifi_row, LV_OBJ_FLAG_SCROLLABLE);
+    /* Mode dropdown row — replaces the old WiFi on/off + Hotspot on/off
+     * toggles with a single mutually-exclusive selector. */
+    lv_obj_t *mode_row = lv_obj_create(ctrl_card);
+    lv_obj_set_size(mode_row, LV_PCT(100), 36);
+    lv_obj_set_style_bg_opa(mode_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mode_row, 0, 0);
+    lv_obj_set_style_pad_all(mode_row, 0, 0);
+    lv_obj_clear_flag(mode_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *wifi_lbl = lv_label_create(wifi_row);
-    lv_label_set_text(wifi_lbl, "WiFi");
-    lv_obj_set_style_text_font(wifi_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(wifi_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(wifi_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t *mode_lbl = lv_label_create(mode_row);
+    lv_label_set_text(mode_lbl, "Mode");
+    lv_obj_set_style_text_font(mode_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(mode_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(mode_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
-    wifi_toggle = lv_switch_create(wifi_row);
-    lv_obj_set_size(wifi_toggle, 44, 22);
-    lv_obj_align(wifi_toggle, LV_ALIGN_RIGHT_MID, 0, 0);
-    _style_switch(wifi_toggle);
-    lv_obj_add_event_cb(wifi_toggle, _wifi_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    mode_dropdown = lv_dropdown_create(mode_row);
+    lv_dropdown_set_options_static(mode_dropdown, "Off\nWiFi (Client)\nHotspot (AP)");
+    lv_obj_set_size(mode_dropdown, 170, 30);
+    lv_obj_align(mode_dropdown, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(mode_dropdown, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(mode_dropdown, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(mode_dropdown, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(mode_dropdown, 1, 0);
+    lv_obj_set_style_radius(mode_dropdown, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_text_color(mode_dropdown, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(mode_dropdown, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(mode_dropdown, _mode_dropdown_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    /* -- WiFi-dependent section (hidden when WiFi is off) ---------------- */
-    wifi_dependent_section = lv_obj_create(ctrl_card);
-    lv_obj_set_size(wifi_dependent_section, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(wifi_dependent_section, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(wifi_dependent_section, 0, 0);
-    lv_obj_set_style_pad_all(wifi_dependent_section, 0, 0);
-    lv_obj_set_style_pad_gap(wifi_dependent_section, 6, 0);
-    lv_obj_set_flex_flow(wifi_dependent_section, LV_FLEX_FLOW_COLUMN);
-    lv_obj_clear_flag(wifi_dependent_section, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Hotspot toggle row */
-    lv_obj_t *ap_row = lv_obj_create(wifi_dependent_section);
-    lv_obj_set_size(ap_row, LV_PCT(100), 32);
-    lv_obj_set_style_bg_opa(ap_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(ap_row, 0, 0);
-    lv_obj_set_style_pad_all(ap_row, 0, 0);
-    lv_obj_clear_flag(ap_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *ap_lbl = lv_label_create(ap_row);
-    lv_label_set_text(ap_lbl, "Hotspot");
-    lv_obj_set_style_text_font(ap_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(ap_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(ap_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    ap_toggle = lv_switch_create(ap_row);
-    lv_obj_set_size(ap_toggle, 44, 22);
-    lv_obj_align(ap_toggle, LV_ALIGN_RIGHT_MID, 0, 0);
-    _style_switch(ap_toggle);
-    lv_obj_add_event_cb(ap_toggle, _ap_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    /* AP info container (hidden when hotspot is off) */
-    ap_info_container = lv_obj_create(wifi_dependent_section);
+    /* AP info container (hidden when not in Hotspot mode) */
+    ap_info_container = lv_obj_create(ctrl_card);
     lv_obj_set_size(ap_info_container, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(ap_info_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(ap_info_container, 0, 0);
@@ -360,47 +353,33 @@ static void _create_screen(void)
     lv_obj_set_style_text_font(ap_pass_error, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(ap_pass_error, THEME_COLOR_STATUS_ERROR, 0);
 
-    /* WiFi on Boot toggle row */
-    lv_obj_t *boot_row = lv_obj_create(wifi_dependent_section);
-    lv_obj_set_size(boot_row, LV_PCT(100), 32);
+    /* Boot-mode dropdown — same 3 options, persisted via config_store_save_wifi_boot.
+     * Replaces the old pair of "WiFi on Boot" / "Hotspot on Boot" toggles. */
+    lv_obj_t *boot_row = lv_obj_create(ctrl_card);
+    lv_obj_set_size(boot_row, LV_PCT(100), 36);
     lv_obj_set_style_bg_opa(boot_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(boot_row, 0, 0);
     lv_obj_set_style_pad_all(boot_row, 0, 0);
     lv_obj_clear_flag(boot_row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *boot_lbl = lv_label_create(boot_row);
-    lv_label_set_text(boot_lbl, "WiFi on Boot");
+    lv_label_set_text(boot_lbl, "Start on Boot");
     lv_obj_set_style_text_font(boot_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(boot_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_align(boot_lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
-    boot_toggle = lv_switch_create(boot_row);
-    lv_obj_set_size(boot_toggle, 44, 22);
-    lv_obj_align(boot_toggle, LV_ALIGN_RIGHT_MID, 0, 0);
-    _style_switch(boot_toggle);
-    lv_obj_add_event_cb(boot_toggle, _boot_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    /* Hotspot on Boot toggle row (default off). When enabled, the AP is
-     * started at boot alongside station mode so a phone can connect to
-     * the dash without it ever having seen a WiFi network. */
-    lv_obj_t *ap_boot_row = lv_obj_create(wifi_dependent_section);
-    lv_obj_set_size(ap_boot_row, LV_PCT(100), 32);
-    lv_obj_set_style_bg_opa(ap_boot_row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(ap_boot_row, 0, 0);
-    lv_obj_set_style_pad_all(ap_boot_row, 0, 0);
-    lv_obj_clear_flag(ap_boot_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *ap_boot_lbl = lv_label_create(ap_boot_row);
-    lv_label_set_text(ap_boot_lbl, "Hotspot on Boot");
-    lv_obj_set_style_text_font(ap_boot_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(ap_boot_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_align(ap_boot_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-
-    ap_boot_toggle = lv_switch_create(ap_boot_row);
-    lv_obj_set_size(ap_boot_toggle, 44, 22);
-    lv_obj_align(ap_boot_toggle, LV_ALIGN_RIGHT_MID, 0, 0);
-    _style_switch(ap_boot_toggle);
-    lv_obj_add_event_cb(ap_boot_toggle, _ap_boot_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    boot_dropdown = lv_dropdown_create(boot_row);
+    lv_dropdown_set_options_static(boot_dropdown, "Off\nWiFi (Client)\nHotspot (AP)");
+    lv_obj_set_size(boot_dropdown, 170, 30);
+    lv_obj_align(boot_dropdown, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(boot_dropdown, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(boot_dropdown, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(boot_dropdown, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(boot_dropdown, 1, 0);
+    lv_obj_set_style_radius(boot_dropdown, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_text_color(boot_dropdown, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(boot_dropdown, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(boot_dropdown, _boot_dropdown_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* == RIGHT PANEL (available networks) ================================ */
     right_panel = lv_obj_create(body);
@@ -453,22 +432,17 @@ static void _create_screen(void)
     lv_obj_center(scan_lbl);
 
     /* -- Load initial state ---------------------------------------------- */
-    if (wifi_manager_is_started()) {
-        lv_obj_add_state(wifi_toggle, LV_STATE_CHECKED);
-    }
-    if (wifi_manager_is_ap_enabled()) {
-        lv_obj_add_state(ap_toggle, LV_STATE_CHECKED);
-    }
+    lv_dropdown_set_selected(mode_dropdown, (uint16_t)_current_mode());
 
-    /* Load boot config */
+    /* Load boot config and map the legacy two-bool struct to the dropdown.
+     * Precedence: AP > STA > Off so an older "both on" config still loads
+     * predictably rather than silently dropping one. */
     wifi_boot_config_t boot_cfg = { .wifi_on_boot = false, .ap_enabled = false };
     config_store_load_wifi_boot(&boot_cfg);
-    if (boot_cfg.wifi_on_boot) {
-        lv_obj_add_state(boot_toggle, LV_STATE_CHECKED);
-    }
-    if (boot_cfg.ap_enabled) {
-        lv_obj_add_state(ap_boot_toggle, LV_STATE_CHECKED);
-    }
+    wifi_ui_mode_t boot_mode = WIFI_UI_MODE_OFF;
+    if (boot_cfg.ap_enabled)       boot_mode = WIFI_UI_MODE_AP;
+    else if (boot_cfg.wifi_on_boot) boot_mode = WIFI_UI_MODE_STA;
+    lv_dropdown_set_selected(boot_dropdown, (uint16_t)boot_mode);
 
     /* Load AP password into input */
     rdm_ap_config_t ap_cfg;
@@ -510,10 +484,8 @@ static void _destroy_screen(void)
         wifi_screen = NULL;
     }
     /* Clear pointers (children deleted by parent) */
-    wifi_toggle = NULL;
-    ap_toggle = NULL;
-    boot_toggle = NULL;
-    ap_boot_toggle = NULL;
+    mode_dropdown = NULL;
+    boot_dropdown = NULL;
     ap_ssid_label = NULL;
     ap_ip_label = NULL;
     ap_pass_input = NULL;
@@ -522,7 +494,6 @@ static void _destroy_screen(void)
     wifi_list = NULL;
     connection_spinner = NULL;
     scan_btn = NULL;
-    wifi_dependent_section = NULL;
     ap_info_container = NULL;
     right_panel = NULL;
 }
@@ -599,36 +570,31 @@ static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
  * Visibility management
  * ========================================================================= */
 
+/* Compute the current "UI mode" from live wifi_manager state. The state is
+ * the source of truth — the dropdown only drives intent, and the refresh
+ * timer syncs the dropdown selection to whatever is actually running. */
+static wifi_ui_mode_t _current_mode(void)
+{
+    if (!wifi_manager_is_started()) return WIFI_UI_MODE_OFF;
+    if (wifi_manager_is_ap_enabled()) return WIFI_UI_MODE_AP;
+    return WIFI_UI_MODE_STA;
+}
+
 static void _update_visibility(void)
 {
-    bool wifi_on = wifi_manager_is_started();
+    wifi_ui_mode_t mode = _current_mode();
 
-    /* WiFi-dependent controls in left panel */
-    if (wifi_dependent_section) {
-        if (wifi_on) {
-            lv_obj_clear_flag(wifi_dependent_section, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(wifi_dependent_section, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-
-    /* AP info rows only when hotspot is on */
+    /* AP info rows (SSID/IP/password) visible only in Hotspot mode */
     if (ap_info_container) {
-        bool ap_on = wifi_manager_is_ap_enabled();
-        if (wifi_on && ap_on) {
-            lv_obj_clear_flag(ap_info_container, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(ap_info_container, LV_OBJ_FLAG_HIDDEN);
-        }
+        if (mode == WIFI_UI_MODE_AP) lv_obj_clear_flag(ap_info_container, LV_OBJ_FLAG_HIDDEN);
+        else                          lv_obj_add_flag  (ap_info_container, LV_OBJ_FLAG_HIDDEN);
     }
 
-    /* Right panel (available networks) only when WiFi is on */
+    /* Available-networks list visible only in WiFi-client mode. In Hotspot
+     * mode there's no STA to scan with, so the empty list was just noise. */
     if (right_panel) {
-        if (wifi_on) {
-            lv_obj_clear_flag(right_panel, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(right_panel, LV_OBJ_FLAG_HIDDEN);
-        }
+        if (mode == WIFI_UI_MODE_STA) lv_obj_clear_flag(right_panel, LV_OBJ_FLAG_HIDDEN);
+        else                           lv_obj_add_flag  (right_panel, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -706,23 +672,12 @@ static void _refresh_status(lv_timer_t *t)
         }
     }
 
-    /* WiFi toggle sync */
-    if (wifi_toggle) {
-        bool started = wifi_manager_is_started();
-        if (started && !lv_obj_has_state(wifi_toggle, LV_STATE_CHECKED)) {
-            lv_obj_add_state(wifi_toggle, LV_STATE_CHECKED);
-        } else if (!started && lv_obj_has_state(wifi_toggle, LV_STATE_CHECKED)) {
-            lv_obj_clear_state(wifi_toggle, LV_STATE_CHECKED);
-        }
-    }
-
-    /* AP toggle sync */
-    if (ap_toggle) {
-        bool ap_on = wifi_manager_is_ap_enabled();
-        if (ap_on && !lv_obj_has_state(ap_toggle, LV_STATE_CHECKED)) {
-            lv_obj_add_state(ap_toggle, LV_STATE_CHECKED);
-        } else if (!ap_on && lv_obj_has_state(ap_toggle, LV_STATE_CHECKED)) {
-            lv_obj_clear_state(ap_toggle, LV_STATE_CHECKED);
+    /* Mode dropdown sync — keep the dropdown in step with live radio state
+     * (it may have been changed by CLI / auto-reconnect / remote APIs). */
+    if (mode_dropdown) {
+        uint16_t desired = (uint16_t)_current_mode();
+        if (lv_dropdown_get_selected(mode_dropdown) != desired) {
+            lv_dropdown_set_selected(mode_dropdown, desired);
         }
     }
 
@@ -1097,68 +1052,82 @@ static void _back_btn_cb(lv_event_t *e)
     wifi_ui_hide();
 }
 
-static void _wifi_toggle_cb(lv_event_t *e)
+/* Switch the live radio to the requested mode. Mutually exclusive:
+ *   OFF → stop radio + web server
+ *   STA → start radio with AP disabled, try auto-connect to saved network
+ *   AP  → start radio (if stopped), enable AP, disable STA side
+ * Also persists AP-enabled state in the AP config struct so a reboot is
+ * consistent with the boot dropdown.
+ */
+static void _apply_ui_mode(wifi_ui_mode_t mode)
 {
-    (void)e;
-    bool checked = lv_obj_has_state(wifi_toggle, LV_STATE_CHECKED);
-
-    if (checked) {
-        wifi_manager_start();
-        web_server_start();
-        ESP_LOGI(TAG, "WiFi started");
-        /* Try to reconnect to saved network (scans first, connects if found).
-         * Falls back to a plain scan so the network list still populates. */
-        wifi_manager_auto_connect();
-    } else {
+    switch (mode) {
+    case WIFI_UI_MODE_OFF:
+        if (wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(false);
+        dns_hijack_stop();
         web_server_stop();
         wifi_manager_stop();
-        ESP_LOGI(TAG, "WiFi stopped");
+        ESP_LOGI(TAG, "Mode → Off");
+        break;
+
+    case WIFI_UI_MODE_STA:
+        /* Ensure the radio is up before twiddling AP. wifi_manager_start is
+         * idempotent — does nothing if already running. */
+        if (!wifi_manager_is_started()) {
+            wifi_manager_start();
+            web_server_start();
+            dns_hijack_start();
+        }
+        if (wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(false);
+        wifi_manager_auto_connect();
+        ESP_LOGI(TAG, "Mode → WiFi (Client)");
+        break;
+
+    case WIFI_UI_MODE_AP:
+        if (!wifi_manager_is_started()) {
+            wifi_manager_start();
+            web_server_start();
+            dns_hijack_start();
+        }
+        if (!wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(true);
+        ESP_LOGI(TAG, "Mode → Hotspot (AP)");
+        break;
     }
 
-    _update_visibility();
-}
-
-static void _ap_toggle_cb(lv_event_t *e)
-{
-    (void)e;
-    bool checked = lv_obj_has_state(ap_toggle, LV_STATE_CHECKED);
-    wifi_manager_enable_ap(checked);
-
-    /* Persist AP enabled state to NVS so it survives reboot */
+    /* Persist AP-enabled bit to NVS so a power cycle still reflects intent
+     * if the user never touches the boot dropdown. */
     rdm_ap_config_t ap_cfg;
     config_store_load_ap_config(&ap_cfg);
-    ap_cfg.enabled = checked;
+    ap_cfg.enabled = (mode == WIFI_UI_MODE_AP);
     config_store_save_ap_config(&ap_cfg);
-
-    ESP_LOGI(TAG, "AP %s (saved to NVS)", checked ? "enabled" : "disabled");
 
     _update_visibility();
 }
 
-static void _boot_toggle_cb(lv_event_t *e)
+static void _mode_dropdown_cb(lv_event_t *e)
 {
     (void)e;
-    bool checked = lv_obj_has_state(boot_toggle, LV_STATE_CHECKED);
-
-    wifi_boot_config_t boot_cfg;
-    config_store_load_wifi_boot(&boot_cfg);
-    boot_cfg.wifi_on_boot = checked;
-    config_store_save_wifi_boot(&boot_cfg);
-
-    ESP_LOGI(TAG, "WiFi on boot: %s", checked ? "enabled" : "disabled");
+    if (!mode_dropdown) return;
+    uint16_t sel = lv_dropdown_get_selected(mode_dropdown);
+    if (sel > WIFI_UI_MODE_AP) return;
+    _apply_ui_mode((wifi_ui_mode_t)sel);
 }
 
-static void _ap_boot_toggle_cb(lv_event_t *e)
+static void _boot_dropdown_cb(lv_event_t *e)
 {
     (void)e;
-    bool checked = lv_obj_has_state(ap_boot_toggle, LV_STATE_CHECKED);
+    if (!boot_dropdown) return;
+    uint16_t sel = lv_dropdown_get_selected(boot_dropdown);
 
     wifi_boot_config_t boot_cfg;
     config_store_load_wifi_boot(&boot_cfg);
-    boot_cfg.ap_enabled = checked;
+    boot_cfg.wifi_on_boot = (sel == WIFI_UI_MODE_STA);
+    boot_cfg.ap_enabled   = (sel == WIFI_UI_MODE_AP);
     config_store_save_wifi_boot(&boot_cfg);
 
-    ESP_LOGI(TAG, "Hotspot on boot: %s", checked ? "enabled" : "disabled");
+    ESP_LOGI(TAG, "Boot mode → %s",
+             sel == WIFI_UI_MODE_OFF ? "Off" :
+             sel == WIFI_UI_MODE_STA ? "WiFi" : "Hotspot");
 }
 
 

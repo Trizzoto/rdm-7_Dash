@@ -887,6 +887,15 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	warning_data_t *wd_style = _lookup_warning_data(i);
 	bool use_image = wd_style && wd_style->image_name[0] != '\0';
 
+	/* Position/size from the registered widget_t (honours web-editor
+	 * placement); fall back to the legacy hardcoded alert-strip slot when
+	 * no widget is registered (fallback_create_all path). */
+	widget_t *wt_pos = widget_registry_find_by_type_and_slot(WIDGET_WARNING, i);
+	int16_t pos_x = wt_pos ? wt_pos->x : warning_positions[i].x;
+	int16_t pos_y = wt_pos ? wt_pos->y : warning_positions[i].y;
+	int16_t w_w   = (wt_pos && wt_pos->w > 0) ? wt_pos->w : 25;
+	int16_t w_h   = (wt_pos && wt_pos->h > 0) ? wt_pos->h : 25;
+
 	if (use_image) {
 		/* Image mode: load RDMIMG and create lv_img object */
 		wd_style->img_dsc = rdm_image_load(wd_style->image_name);
@@ -894,7 +903,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 			warning_circles[i] = lv_img_create(parent);
 			lv_img_set_src(warning_circles[i], wd_style->img_dsc);
 			lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
-			lv_obj_set_pos(warning_circles[i], warning_positions[i].x, warning_positions[i].y);
+			lv_obj_set_pos(warning_circles[i], pos_x, pos_y);
 			/* Apply color overlay using recolor */
 			lv_color_t init_color = wd_style->inactive_color;
 			uint8_t init_opa = wd_style->inactive_opa;
@@ -910,6 +919,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 			 * load it as a hidden sibling. _warning_apply_night_mode toggles
 			 * visibility between the two; update_warning_ui_immediate keeps
 			 * recolor/opa in sync on both. */
+#if !NIGHT_MODE_DISABLED
 			if (wd_style->night.has_image_name &&
 			    wd_style->night.image_name[0] != '\0' &&
 			    strncmp(wd_style->night.image_name, wd_style->image_name,
@@ -919,8 +929,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 					wd_style->night_img_obj = lv_img_create(parent);
 					lv_img_set_src(wd_style->night_img_obj, wd_style->night_img_dsc);
 					lv_obj_set_align(wd_style->night_img_obj, LV_ALIGN_CENTER);
-					lv_obj_set_pos(wd_style->night_img_obj,
-					               warning_positions[i].x, warning_positions[i].y);
+					lv_obj_set_pos(wd_style->night_img_obj, pos_x, pos_y);
 					lv_obj_set_style_img_recolor(wd_style->night_img_obj, init_color,
 					                              LV_PART_MAIN | LV_STATE_DEFAULT);
 					lv_obj_set_style_img_recolor_opa(wd_style->night_img_obj,
@@ -931,6 +940,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 					lv_obj_add_flag(wd_style->night_img_obj, LV_OBJ_FLAG_HIDDEN);
 				}
 			}
+#endif /* !NIGHT_MODE_DISABLED */
 		} else {
 			/* Image load failed, fall back to circle mode */
 			ESP_LOGW(TAG, "Image '%s' not found for warning %d, using circle", wd_style->image_name, i);
@@ -939,15 +949,15 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	}
 
 	if (!use_image) {
-		/* Circle mode — use widget w/h if available, else default 15x15 */
-		widget_t *wt = widget_registry_find_by_type_and_slot(WIDGET_WARNING, i);
-		int16_t cw = (wt && wt->w > 0) ? wt->w : 15;
-		int16_t ch = (wt && wt->h > 0) ? wt->h : 15;
+		/* Circle mode — use widget w/h from registry; fallback stays 15x15
+		 * for the legacy alert-strip path. */
+		int16_t cw = wt_pos ? w_w : 15;
+		int16_t ch = wt_pos ? w_h : 15;
 
 		warning_circles[i] = lv_obj_create(parent);
 		lv_obj_set_size(warning_circles[i], cw, ch);
-		lv_obj_set_x(warning_circles[i], warning_positions[i].x);
-		lv_obj_set_y(warning_circles[i], warning_positions[i].y);
+		lv_obj_set_x(warning_circles[i], pos_x);
+		lv_obj_set_y(warning_circles[i], pos_y);
 		lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
 		lv_obj_clear_flag(warning_circles[i], LV_OBJ_FLAG_SCROLLABLE);
 		lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
@@ -971,12 +981,12 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	warning_labels[i] = lv_label_create(parent);
 	lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
 	lv_obj_set_height(warning_labels[i], LV_SIZE_CONTENT);
-	lv_obj_set_x(warning_labels[i], warning_positions[i].x);
+	lv_obj_set_x(warning_labels[i], pos_x);
 	/* Position label just below the circle/image */
 	{
 		int16_t obj_h = lv_obj_get_height(warning_circles[i]);
 		if (obj_h <= 0) obj_h = 15;
-		lv_obj_set_y(warning_labels[i], warning_positions[i].y + obj_h / 2 + 4);
+		lv_obj_set_y(warning_labels[i], pos_y + obj_h / 2 + 4);
 	}
 	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
 	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
@@ -1003,9 +1013,17 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
 	lv_obj_t *touch_area = lv_obj_create(parent);
-	lv_obj_set_size(touch_area, 50, 80);
-	lv_obj_set_x(touch_area, warning_positions[i].x);
-	lv_obj_set_y(touch_area, warning_positions[i].y);
+	/* Touch area covers the visual widget. For the legacy alert-strip
+	 * (no widget_t registered) stay at the original 50x80 finger target. */
+	if (wt_pos) {
+		int16_t tw = w_w > 40 ? w_w : 40;
+		int16_t th = w_h > 40 ? w_h : 40;
+		lv_obj_set_size(touch_area, tw, th);
+	} else {
+		lv_obj_set_size(touch_area, 50, 80);
+	}
+	lv_obj_set_x(touch_area, pos_x);
+	lv_obj_set_y(touch_area, pos_y);
 	lv_obj_set_align(touch_area, LV_ALIGN_CENTER);
 	lv_obj_clear_flag(touch_area, LV_OBJ_FLAG_SCROLLABLE);
 	lv_obj_set_style_bg_opa(touch_area, 0, LV_PART_MAIN | LV_STATE_DEFAULT);

@@ -8,6 +8,14 @@ CONFIG_LV_USE_USER_DATA=y
 CONFIG_LV_USE_CHART=y
 CONFIG_LV_USE_PERF_MONITOR=y
 
+# Task watchdog — 15 s instead of the 5 s default. First-boot layout load
+# with many widgets, custom TTF font instances, and 1+ MB image widgets
+# can legitimately hold the LVGL task on CPU 1 for several seconds of
+# cumulative work, even with yield points sprinkled through the hot paths
+# (layout_manager, widget_image, font_manager). 15 s still catches real
+# task hangs without false-tripping on heavy boot work.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+
 # LittleFS
 CONFIG_LITTLEFS_MAX_PARTITIONS=1
 CONFIG_LITTLEFS_PAGE_SIZE=256

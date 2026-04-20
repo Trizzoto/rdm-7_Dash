@@ -3,6 +3,11 @@ set(PROJECT_NAME "esp32-firmware")
 
 
 # Include the ESP-IDF project cmake file
+if(NOT DEFINED ENV{IDF_PATH})
+    message(FATAL_ERROR "IDF_PATH environment variable is not set. "
+            "Please initialize the ESP-IDF environment (e.g., run 'export.bat' or 'export.ps1') "
+            "or set the IDF_PATH environment variable to your ESP-IDF directory.")
+endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # Add compile options

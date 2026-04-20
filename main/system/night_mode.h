@@ -22,6 +22,18 @@
 extern "C" {
 #endif
 
+/* Kill-switch for the entire night-mode system. When set to 1:
+ *   - night_mode_subscribe() refuses all subscriptions
+ *   - night_mode_is_active() always reports false
+ *   - night_mode_set_active() is a no-op
+ *   - widgets that build dual-object trees for night overrides (meter,
+ *     image, warning) skip the second object entirely
+ * This is a diagnostic off-switch — useful when night mode isn't wanted
+ * (or while debugging perf regressions that the dual-object pattern is
+ * suspected of causing). Flip to 0 to re-enable without any other code
+ * changes. */
+#define NIGHT_MODE_DISABLED 1
+
 #define NIGHT_MODE_MAX_SUBSCRIBERS 64
 
 /* Subscriber callback: fires on state change with the new active state. */

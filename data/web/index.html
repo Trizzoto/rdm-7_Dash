@@ -2125,7 +2125,11 @@
             top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(10,10,10,0.85);
             backdrop-filter: blur(8px);
-            z-index: 2100;
+            /* Above the mobile sheet (9999), the Signal Manager modal (2000)
+             * and the Assign Data Source modal (10000). DBC import is usually
+             * the innermost modal the user opens, so we want it to sit on top
+             * of anything that might already be visible. */
+            z-index: 10100;
             align-items: center; justify-content: center;
         }
         .dbc-modal-content {
@@ -2134,8 +2138,15 @@
             box-shadow: var(--shadow-md);
             border-radius: var(--radius-lg);
             width: min(440px, 90vw);
+            /* Cap height + inner overflow so short mobile screens can still
+             * reach the Cancel/Import footer. Without this the Import button
+             * can sit below the viewport on phones, making the modal feel
+             * broken even though it technically renders. */
+            max-height: 90vh;
             display: flex; flex-direction: column;
+            overflow: hidden;
         }
+        .dbc-modal-content .dbc-form { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
         .dbc-modal-content .signal-modal-header { border-bottom: 1px solid var(--border); }
         .dbc-form { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
         .dbc-form label {
@@ -2156,6 +2167,7 @@
             font-size: 11px; color: var(--text-muted);
             font-family: 'JetBrains Mono', monospace;
             min-height: 40px;
+            max-height: 140px; overflow-y: auto;
         }
         .dbc-footer {
             padding: 12px 20px; display: flex; justify-content: flex-end; gap: 8px;
@@ -2430,6 +2442,54 @@
             style="background:transparent; border:1px solid #1a1a1a; color:#1a1a1a;">Discard</button>
     </div>
     <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Update banner. Populated + revealed by _otaAutoCheck() on page load
+         when the dash is on STA WiFi and a newer firmware is published. Hidden
+         by default; rendered before the header so it pushes layout down without
+         overlapping controls. Dismiss stashes the skipped version in
+         localStorage so the same prompt doesn't come back until the NEXT
+         release. z-index sits below all modals but above the canvas. -->
+    <div id="updateBanner" style="display:none; position:sticky; top:0; z-index:1500;
+         background:linear-gradient(90deg, hsl(210,85%,42%), hsl(210,85%,52%));
+         color:white; padding:10px 16px; font-size:12px; font-family:'Sora',sans-serif;
+         display:none; align-items:center; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,0.3);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span style="flex:1 1 auto; line-height:1.35;">
+            <strong>Firmware update available</strong>
+            <span id="updateBannerVer" style="opacity:0.85; margin-left:4px;"></span>
+        </span>
+        <button onclick="_otaShowInstall()" style="background:white; color:hsl(210,85%,42%); border:none;
+                font-weight:600; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; flex:0 0 auto;">
+            Install
+        </button>
+        <button onclick="_otaDismissBanner()" aria-label="Dismiss"
+                title="Dismiss this update — you'll be reminded when the next version ships"
+                style="background:transparent; color:white; border:none; cursor:pointer; font-size:18px;
+                padding:2px 8px; opacity:0.8; flex:0 0 auto;">×</button>
+    </div>
+
+    <!-- Install-progress modal for the OTA flow: opened by _otaShowInstall(),
+         updated by _otaPollInstall() until completion. -->
+    <div id="otaInstallModal" style="display:none; position:fixed; inset:0; z-index:10200;
+         background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border);
+             border-radius:var(--radius-lg); padding:24px; width:min(420px, 92vw);
+             display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow-md);">
+            <div style="font-weight:600; font-size:14px;">Installing firmware update</div>
+            <div id="otaInstallSummary" style="font-size:12px; color:var(--text-muted); line-height:1.5;"></div>
+            <div style="height:10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; overflow:hidden;">
+                <div id="otaInstallBar" style="height:100%; width:0%; background:hsl(210,85%,52%); transition:width 0.4s ease;"></div>
+            </div>
+            <div id="otaInstallStatus" style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono',monospace;">Starting…</div>
+            <div style="font-size:11px; color:var(--text-muted); line-height:1.5;">
+                The dash will reboot automatically when the flash finishes. Don't power-cycle until you see the splash screen.
+            </div>
+        </div>
+    </div>
     <!-- Signal Manager Modal (includes Preset Picker as second view) -->
     <div id="signalModal" onclick="closeSignalManager()">
         <div class="signal-modal-content" onclick="event.stopPropagation()">
@@ -2538,7 +2598,7 @@
     </div>
 
     <!-- Assign Data Source Modal -->
-    <div id="assignModal" onclick="closeAssignModal()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
+    <div id="assignModal" onclick="closeAssignModal()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center;">
         <div class="signal-modal-content" onclick="event.stopPropagation()" style="width:min(540px, 95vw); max-height:min(580px, 90vh);">
             <div class="signal-modal-header">
                 <span>Assign Data Source</span>
@@ -2826,14 +2886,23 @@
     </div>
 
     <!-- Dimmer Settings Modal -->
-    <!-- Device Info modal -->
+    <!-- Device Info modal. max-height + inner overflow so it fits on mobile; on
+         tall phones the content overflows the viewport otherwise. -->
     <div id="deviceInfoModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDeviceInfo()">
-        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:420px; max-width:90vw; max-height:85vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex:0 0 auto;">
                 <span style="font-weight:600; font-size:14px;">Device Info</span>
                 <button class="close-btn" onclick="closeDeviceInfo()" style="font-size:18px;">&times;</button>
             </div>
-            <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px;">
+            <!-- Sync Screen button: mobile users can't easily see the editor's
+                 canvas while this modal is open, so surface the preview refresh
+                 here too. Identical action to the header's Sync button. -->
+            <button class="btn btn-secondary" onclick="captureScreenshot(); showToast('Screen synced', 'success');"
+                    style="flex:0 0 auto; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; padding:8px 12px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                Sync Screen
+            </button>
+            <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px; overflow-y:auto; flex:1 1 auto; padding-right:4px;">
                 <span style="color:var(--text-muted);">Loading...</span>
             </div>
         </div>
@@ -3637,6 +3706,13 @@
         let _parsedDbcSignals = [];
 
         function openDbcImportModal() {
+            /* Stack-cleanup: close the Signal Manager (which hosts one entry
+             * point for this button) and any mobile bottom-sheet so we don't
+             * end up with three layers fighting for z-index and input focus.
+             * Harmless on desktop when neither is open. */
+            if (typeof closeSignalManager === 'function') closeSignalManager();
+            if (typeof closeMobileSheet   === 'function') closeMobileSheet();
+
             document.getElementById('dbcImportModal').style.display = 'flex';
             document.getElementById('dbcEcuName').value = '';
             document.getElementById('dbcVersion').value = '';
@@ -4348,17 +4424,45 @@
                     { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                     { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
                     { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
-                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
-                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance" },
-                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance" },
+                    { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
+                    { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", min: -400, max: 400, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
+                    { name: "needle_angle_offset", label: "Needle Angle Offset", type: "stepper", min: -180, max: 180, def: 0, cat: "appearance", enabledBy: "needle_image_name" },
                     { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" },
                     { name: "needle_tip_style", label: "Needle Tip Style", type: "select", def: 0, cat: "appearance",
                       options: [ {v:0, l:"Flat"}, {v:1, l:"Rounded"}, {v:2, l:"Lance"}, {v:3, l:"Dagger"}, {v:4, l:"Spade"}, {v:5, l:"Diamond"} ] },
-                    { name: "needle_tip_base_w",  label: "Tip Base Width",  type: "stepper", min: 0, max: 30,  def: 0, cat: "appearance" },
-                    { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper", min: 0, max: 20,  def: 0, cat: "appearance" },
-                    { name: "needle_tip_taper",   label: "Tip Taper %",     type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
+                    /* Tip-tuning knobs. Stored value 0 = "use the built-in
+                     * default for the current style". `autoFn` returns the
+                     * resolved default the firmware would pick — mirrors the
+                     * same defaults used in widget_meter.c's DRAW_PART hook
+                     * so the inspector can show the effective number even
+                     * when the user hasn't entered an explicit override. */
+                    { name: "needle_tip_base_w", label: "Tip Base Width", type: "stepper-auto", min: 0, max: 30, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          var nw = cfg.needle_width || 4;
+                          switch (cfg.needle_tip_style) {
+                              case 2: return (nw >> 1) + 1;  // Lance
+                              case 3: return (nw >> 1) + 2;  // Dagger
+                              case 4: return (nw >> 1) + 2;  // Spade
+                              case 5: return (nw >> 1) + 3;  // Diamond
+                              default: return 0;
+                          }
+                      } },
+                    { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper-auto", min: 0, max: 20, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap
+                      } },
+                    { name: "needle_tip_taper", label: "Tip Taper %", type: "stepper-auto", min: 0, max: 100, def: 0, cat: "appearance",
+                      autoFn: function(cfg) {
+                          switch (cfg.needle_tip_style) {
+                              case 2: return 90;   // Lance: shaft ends here
+                              case 3: return 100;  // Dagger: tapers across full length
+                              case 4: return 97;   // Spade: cap position
+                              case 5: return 50;   // Diamond: widest point
+                              default: return 0;
+                          }
+                      } },
                     { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", min: 0, max: 40, def: 10, cat: "appearance" },
                     { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                 ]
@@ -6131,6 +6235,39 @@
                     <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
                         onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=parseInt(sl.value)+${f.step||1}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
                 </div>`;
+            } else if (f.type === 'stepper-auto') {
+                /* Stepper variant where stored value 0 means "use the style's
+                 * built-in default". f.autoFn(widgetConfig) returns the
+                 * effective value that the firmware would pick for 0; we
+                 * show that number in the input (grayed) with an AUTO chip,
+                 * and expose a reset (↺) button that writes 0 back. */
+                const sMin = f.min != null ? f.min : 0;
+                const sMax = f.max != null ? f.max : 100;
+                const wObj = currentLayout.widgets[selectedIndex];
+                const cfg = (wObj && wObj.config) ? wObj.config : {};
+                const autoVal = (typeof f.autoFn === 'function') ? (f.autoFn(cfg) || 0) : 0;
+                const storedVal = (typeof val === 'number') ? val : parseInt(val) || 0;
+                const isAuto = (storedVal === 0);
+                const shown = isAuto ? autoVal : storedVal;
+                const numberColor = isAuto ? 'var(--text-muted)' : 'var(--text)';
+                const rangeOpa    = isAuto ? 0.55 : 1;
+                const resetDim    = isAuto ? 'opacity:0.3; pointer-events:none;' : '';
+                const autoChip = isAuto
+                    ? `<span style="font-size:9px; font-family:'JetBrains Mono',monospace; font-weight:700; letter-spacing:0.5px; color:var(--text-muted); background:var(--bg); border:1px solid var(--border); border-radius:3px; padding:1px 5px; margin-right:2px;" title="Using style default — edit or use the +/− to override">AUTO</span>`
+                    : '';
+                html += `<div style="display:flex; gap:4px; align-items:center;">
+                    ${autoChip}
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var sl=btn.nextElementSibling; var ni=sl.nextElementSibling; var v=parseInt(sl.value)-${f.step||1}; if(v<${sMin})v=${sMin}; if(v===0)v=${sMin===0?1:sMin}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&lt;</button>
+                    <input type="range" min="${sMin}" max="${sMax}" value="${Math.min(shown, sMax)}" style="flex:1; opacity:${rangeOpa};"
+                        oninput="this.nextElementSibling.value=this.value; updateWidgetConfigField('${f.name}', parseInt(this.value), true)" ${disabledAttr}>
+                    <input type="number" value="${shown}" style="width:56px; text-align:center; font-size:11px; font-family:'JetBrains Mono',monospace; background:var(--bg); border:1px solid var(--border); color:${numberColor}; border-radius:var(--radius-sm); padding:2px 4px;"
+                        oninput="(function(ni){var v=parseInt(ni.value); if(isNaN(v))return; var sl=ni.previousElementSibling; if(v>parseInt(sl.max))sl.max=v; if(v<parseInt(sl.min))sl.min=v; sl.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)" ${disabledAttr}>
+                    <button type="button" class="btn-secondary" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:11px;" ${disabledAttr}
+                        onclick="(function(btn){var ni=btn.previousElementSibling; var sl=ni.previousElementSibling; var v=parseInt(sl.value)+${f.step||1}; if(v>${sMax})v=${sMax}; sl.value=v; ni.value=v; updateWidgetConfigField('${f.name}',v,true);})(this)">&gt;</button>
+                    <button type="button" class="btn-secondary" title="Reset to style default (AUTO)" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:14px; ${resetDim}" ${disabledAttr}
+                        onclick="updateWidgetConfigField('${f.name}',0,true)">&#8634;</button>
+                </div>`;
             } else if (f.type === 'textarea') {
                 const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 html += `<textarea rows="3" style="resize:vertical; width:100%; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:4px 6px; font-family:inherit;" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>${escaped}</textarea>`;
@@ -6672,7 +6809,21 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
+        /* Is the viewport in the mobile bottom-sheet layout? Matches the same
+         * CSS breakpoint used to hide desktop controls. Used to suppress
+         * autofocus on search inputs (which would trigger the on-screen
+         * keyboard and fight with our modal). */
+        function _isMobileLayout() {
+            return window.matchMedia('(max-width: 900px), (hover: none) and (pointer: coarse)').matches;
+        }
+
         function openDataSourcePicker() {
+            /* Mobile: the Properties bottom-sheet was likely open when the user
+             * tapped Assign/Change — close it so our modal isn't stacked under
+             * it. Harmless on desktop (the helper is a no-op when the sheet
+             * class isn't applied). */
+            if (typeof closeMobileSheet === 'function') closeMobileSheet();
+
             const modal = document.getElementById('assignModal');
             modal.style.display = 'flex';
             document.getElementById('assignSearchInput').value = '';
@@ -6699,7 +6850,12 @@
             if (searchInput) searchInput.value = '';
             document.getElementById('ecuSearchResults').style.display = 'none';
             document.getElementById('ecuPickerList').style.display = '';
-            setTimeout(() => { if (searchInput) searchInput.focus(); }, 50);
+            /* Skip autofocus on mobile — it triggers the on-screen keyboard
+             * and covers half the signal list. Desktop still gets the quick
+             * type-to-search UX. */
+            if (!_isMobileLayout()) {
+                setTimeout(() => { if (searchInput) searchInput.focus(); }, 50);
+            }
 
             /* Build ECU list from presets */
             const ecuMap = {};
@@ -6816,7 +6972,10 @@
             footerBtn.textContent = '+ New Custom Signal';
             footerBtn.onclick = assignShowCustom;
 
-            setTimeout(() => document.getElementById('assignSearchInput').focus(), 50);
+            /* Desktop only — on mobile the keyboard would cover the list. */
+            if (!_isMobileLayout()) {
+                setTimeout(() => document.getElementById('assignSearchInput').focus(), 50);
+            }
         }
 
         function assignShowCustom() {
@@ -9816,6 +9975,158 @@
         /* Auto zoom-to-fit on load + window resize */
         requestAnimationFrame(() => zoomToFit());
         window.addEventListener('resize', () => zoomToFit());
+
+        /* ── Auto firmware update check ──────────────────────────────────────
+         * Fires once per page load, throttled to one real network check per
+         * 24h via localStorage. Skipped entirely when the dash is in AP-only
+         * mode (no internet → check will fail anyway). Silent-fail on all
+         * errors — we'd rather never surface a banner than show a stale or
+         * misleading one. See firmware: /api/ota/status, /api/ota/check,
+         * /api/ota/start. */
+        const _OTA_KEY_LAST   = 'rdm7_ota_last_check';   /* epoch ms */
+        const _OTA_KEY_SKIP   = 'rdm7_ota_skip_version'; /* version string user dismissed */
+        const _OTA_CHECK_TTL  = 24 * 60 * 60 * 1000;
+        let   _otaPollTimer   = null;
+        let   _otaLatestCache = null;
+
+        function _otaDismissBanner() {
+            /* Use the cached raw version (what firmware actually returns)
+             * rather than the display-formatted span text. Comparing the
+             * same shape avoids "dismissed but keeps coming back" bugs. */
+            if (_otaLatestCache) {
+                localStorage.setItem(_OTA_KEY_SKIP, _otaLatestCache);
+            }
+            const el = document.getElementById('updateBanner');
+            if (el) el.style.display = 'none';
+        }
+
+        function _otaShowBanner(latest) {
+            const el   = document.getElementById('updateBanner');
+            const span = document.getElementById('updateBannerVer');
+            if (!el || !span) return;
+            _otaLatestCache = latest || _otaLatestCache;
+            span.textContent = latest ? `(v${latest.replace(/^v/i, '')})` : '';
+            /* The inline style leaves two display rules in the attribute — the
+             * second wins and is the real layout (flex). Flip the hidden rule
+             * directly here so the banner shows. */
+            el.style.display = 'flex';
+        }
+
+        async function _otaShowInstall() {
+            document.getElementById('updateBanner').style.display = 'none';
+            const modal = document.getElementById('otaInstallModal');
+            modal.style.display = 'flex';
+            const summary = document.getElementById('otaInstallSummary');
+            const bar     = document.getElementById('otaInstallBar');
+            const status  = document.getElementById('otaInstallStatus');
+            summary.textContent = _otaLatestCache
+                ? `Installing v${_otaLatestCache.replace(/^v/i, '')}…`
+                : 'Installing latest version…';
+            bar.style.width = '0%';
+            status.textContent = 'Starting…';
+
+            try {
+                const resp = await fetch('/api/ota/start', { method: 'POST' });
+                if (!resp.ok && resp.status !== 202) throw new Error('start failed');
+            } catch (e) {
+                status.textContent = 'Could not start — check network and try again.';
+                return;
+            }
+            _otaPollInstall();
+        }
+
+        async function _otaPollInstall() {
+            const bar    = document.getElementById('otaInstallBar');
+            const status = document.getElementById('otaInstallStatus');
+            try {
+                const r = await fetch('/api/ota/status');
+                if (r.ok) {
+                    const d = await r.json();
+                    const pct = Math.max(0, Math.min(100, d.progress || 0));
+                    bar.style.width = pct + '%';
+                    status.textContent = `${d.status || 'installing'} — ${pct}%`;
+                    if (d.status === 'completed') {
+                        status.textContent = 'Complete — dash is rebooting…';
+                        return;
+                    }
+                    if (d.status === 'failed') {
+                        status.textContent = 'Update failed. Reboot the dash and try again.';
+                        return;
+                    }
+                }
+            } catch (e) { /* silent */ }
+            setTimeout(_otaPollInstall, 2000);
+        }
+
+        async function _otaAutoCheck() {
+            /* Short-circuit 1: too soon since last check */
+            const last = parseInt(localStorage.getItem(_OTA_KEY_LAST) || '0', 10);
+            const now  = Date.now();
+            const fresh = (now - last) < _OTA_CHECK_TTL;
+
+            /* Short-circuit 2: dash is AP-only (no internet → check will fail).
+             * Read wifi.sta_ip from the device info endpoint; if there's no STA
+             * address, skip silently. */
+            let staConnected = false;
+            try {
+                const r = await fetch('/api/device/info');
+                if (r.ok) {
+                    const d = await r.json();
+                    staConnected = !!(d?.wifi?.sta_ip && d.wifi.sta_ip !== '0.0.0.0' && d.wifi.sta_ip !== '-');
+                }
+            } catch (e) { /* assume offline → skip */ return; }
+            if (!staConnected) return;
+
+            /* If a check ran recently and told us an update is available,
+             * surface the cached answer immediately (no network). */
+            if (fresh) {
+                try {
+                    const r = await fetch('/api/ota/status');
+                    if (r.ok) {
+                        const d = await r.json();
+                        if (d.update_available && d.latest_version) {
+                            _otaLatestCache = d.latest_version;
+                            if (localStorage.getItem(_OTA_KEY_SKIP) !== d.latest_version) {
+                                _otaShowBanner(d.latest_version);
+                            }
+                        }
+                    }
+                } catch (e) { /* silent */ }
+                return;
+            }
+
+            /* Kick off a fresh check + poll status until it settles or we
+             * give up after ~45s (matches the firmware's API timeout). */
+            try { await fetch('/api/ota/check', { method: 'POST' }); }
+            catch (e) { return; }
+            localStorage.setItem(_OTA_KEY_LAST, String(now));
+
+            let attempts = 0;
+            const maxAttempts = 15;  /* 15 × 3s = 45s budget */
+            const poll = async () => {
+                attempts++;
+                try {
+                    const r = await fetch('/api/ota/status');
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    if (d.status === 'checking' && attempts < maxAttempts) {
+                        _otaPollTimer = setTimeout(poll, 3000);
+                        return;
+                    }
+                    if (d.update_available && d.latest_version) {
+                        _otaLatestCache = d.latest_version;
+                        if (localStorage.getItem(_OTA_KEY_SKIP) !== d.latest_version) {
+                            _otaShowBanner(d.latest_version);
+                        }
+                    }
+                } catch (e) { /* silent */ }
+            };
+            _otaPollTimer = setTimeout(poll, 3000);
+        }
+
+        /* Defer by a few seconds so the user sees the editor load first — no
+         * "freshly opened the app, already a banner" disorientation. */
+        setTimeout(_otaAutoCheck, 4000);
 
         /* ── Dimmer Settings ─────────────────────────────────────────── */
 

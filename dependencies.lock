@@ -11,6 +11,32 @@ dependencies:
       path: C:\Users\ruuva\workspace\RDM-7_Dash\components\espressif__esp_lcd_touch_gt911
       type: local
     version: 1.1.0
+  espressif/esp_new_jpeg:
+    component_hash: e6af208a875abd0ecfc0213d3751a11b504b463ebde6930f24096047925fa5c1
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    version: 0.6.1
+  espressif/mdns:
+    component_hash: 1ebe3bd675bb9d1c58f52bc0b609b32f74e572b01c328f9e61282040c775495c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.11.0
   idf:
     source:
       type: idf
@@ -34,9 +60,11 @@ dependencies:
 direct_dependencies:
 - espressif/esp_lcd_touch
 - espressif/esp_lcd_touch_gt911
+- espressif/esp_new_jpeg
+- espressif/mdns
 - idf
 - joltwallet/littlefs
 - lvgl/lvgl
-manifest_hash: 88b1d2e5a1d3393d5596b812092aa79be1509de39edd32fff1e56a4d2edf34b5
+manifest_hash: db6afba5542bf587dc844e2af4a20eade385aab3f3131c00dbf4bb986bed2212
 target: esp32s3
 version: 2.0.0

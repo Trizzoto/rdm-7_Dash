@@ -94,6 +94,18 @@ static const char *BIT_LEN_OPTS =
     "33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n"
     "49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64";
 
+/* Forward decls for the shared color-picker plumbing — actual definitions
+ * live further down in the file alongside the color-wheel popup. Declared
+ * up here so the panel alert callbacks (which land earlier) can call them. */
+static lv_color_t _idx_to_theme_color(uint16_t idx);
+static uint16_t   _theme_color_idx   (lv_color_t c);
+static void       _open_color_wheel  (lv_color_t *target, lv_color_t initial, const char *title);
+
+/* Shared dropdown options for the 10 theme presets + Custom... Defined up
+ * here so every widget's alert/appearance builder can reference it, not
+ * just the indicator/warning code further down. */
+#define IND_COLOR_OPTS "Green\nCyan\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nGrey\nCustom..."
+
 /* ── Helper: get or auto-create signal for a widget ────────────────────── */
 
 static signal_t *ensure_signal(modal_ctx_t *ctx)
@@ -549,14 +561,22 @@ static void panel_warn_low_thresh_cb(lv_event_t *e)
     pd->warning_low_threshold = (txt && txt[0]) ? (float)atof(txt) : 0.0f;
 }
 
+/* The panel alert UI uses IND_COLOR_OPTS (10 presets + Custom...) — see the
+ * color-wheel popup plumbing further down. Color dropdowns forward to the
+ * reusable wheel when the user picks the last option. _theme_color_idx /
+ * _idx_to_theme_color map between the preset index and the concrete color. */
 static void panel_warn_high_color_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
-    uint8_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-    pd->warning_high_color = (sel == 0) ? THEME_COLOR_RED : THEME_COLOR_BLUE_PURE;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        pd->warning_high_color = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&pd->warning_high_color, pd->warning_high_color, "High Alert Colour");
+    }
 }
 
 static void panel_warn_low_color_cb(lv_event_t *e)
@@ -565,8 +585,12 @@ static void panel_warn_low_color_cb(lv_event_t *e)
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
-    uint8_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-    pd->warning_low_color = (sel == 0) ? THEME_COLOR_RED : THEME_COLOR_BLUE_PURE;
+    uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel <= 9) {
+        pd->warning_low_color = _idx_to_theme_color(sel);
+    } else {
+        _open_color_wheel(&pd->warning_low_color, pd->warning_low_color, "Low Alert Colour");
+    }
 }
 
 static void panel_warn_high_enable_cb(lv_event_t *e)
@@ -585,6 +609,56 @@ static void panel_warn_low_enable_cb(lv_event_t *e)
     if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
     pd->warning_low_enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
+/* Generic "write bool via pointer" callback for the six Apply-to checkboxes
+ * (high label / value / panel + low label / value / panel). user_data is a
+ * direct pointer to the bool in panel_data_t — keeps the wiring trivial and
+ * avoids six nearly-identical callbacks. */
+static void panel_apply_bool_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    bool *target = (bool *)lv_event_get_user_data(e);
+    if (!target) return;
+    *target = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
+/* Master alert toggle — turning it ON defaults BOTH high and low enable to
+ * true (so users who just want "alerts" don't have to hunt through two more
+ * switches); turning it OFF disables both. The per-side switches are still
+ * visible below so users can disable just one side after enabling. We stash
+ * pointers to the sub-switches in a file-local struct so we can keep their
+ * visual state in sync when master toggles. Only one config modal opens at
+ * a time — no concurrency concern. */
+static struct {
+    panel_data_t *pd;
+    lv_obj_t     *warn_box;
+    lv_obj_t     *he_sw;
+    lv_obj_t     *le_sw;
+} s_pnl_alerts;
+
+static void panel_warnings_master_toggle_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+
+    if (s_pnl_alerts.warn_box) {
+        if (on) lv_obj_clear_flag(s_pnl_alerts.warn_box, LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_add_flag  (s_pnl_alerts.warn_box, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (!s_pnl_alerts.pd) return;
+
+    if (on) {
+        s_pnl_alerts.pd->warning_high_enabled = true;
+        s_pnl_alerts.pd->warning_low_enabled  = true;
+        if (s_pnl_alerts.he_sw) lv_obj_add_state(s_pnl_alerts.he_sw, LV_STATE_CHECKED);
+        if (s_pnl_alerts.le_sw) lv_obj_add_state(s_pnl_alerts.le_sw, LV_STATE_CHECKED);
+    } else {
+        s_pnl_alerts.pd->warning_high_enabled = false;
+        s_pnl_alerts.pd->warning_low_enabled  = false;
+        if (s_pnl_alerts.he_sw) lv_obj_clear_state(s_pnl_alerts.he_sw, LV_STATE_CHECKED);
+        if (s_pnl_alerts.le_sw) lv_obj_clear_state(s_pnl_alerts.le_sw, LV_STATE_CHECKED);
+    }
 }
 
 /* =========================================================================
@@ -721,23 +795,33 @@ static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
     if (!has_warnings)
         lv_obj_add_flag(warn_box, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_add_event_cb(en_sw, warnings_toggle_cb, LV_EVENT_VALUE_CHANGED, warn_box);
+    char buf[20];
 
-    /* High warning */
+    /* ── High warning section ─────────────────────────────────────────── */
     lv_obj_t *he_sw = settings_add_switch(warn_box, "High Enabled:", pd->warning_high_enabled);
     lv_obj_add_event_cb(he_sw, panel_warn_high_enable_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    char buf[20];
     snprintf(buf, sizeof(buf), "%.2f", pd->warning_high_threshold);
     lv_obj_t *ht = settings_add_text_input(warn_box, "High Threshold:", "value", buf);
     lv_obj_add_event_cb(ht, keyboard_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ht, panel_warn_high_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    lv_obj_t *hc = settings_add_dropdown(warn_box, "High Colour:", "Red\nBlue", 0);
-    lv_dropdown_set_selected(hc, pd->warning_high_color.full == THEME_COLOR_RED.full ? 0 : 1);
+    lv_obj_t *hc = settings_add_dropdown(warn_box, "High Colour:", IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(hc, _theme_color_idx(pd->warning_high_color));
     lv_obj_add_event_cb(hc, panel_warn_high_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* Low warning */
+    /* High "Apply To" toggles — each writes directly to the corresponding
+     * bool in pd via panel_apply_bool_cb. The runtime apply logic in
+     * widget_panel.c's _panel_on_signal already honors these flags; we're
+     * just surfacing them in the UI. */
+    lv_obj_t *hal = settings_add_switch(warn_box, "  Apply to Label:", pd->warning_high_apply_label);
+    lv_obj_add_event_cb(hal, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_label);
+    lv_obj_t *hav = settings_add_switch(warn_box, "  Apply to Value:", pd->warning_high_apply_value);
+    lv_obj_add_event_cb(hav, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_value);
+    lv_obj_t *hap = settings_add_switch(warn_box, "  Apply to Panel:", pd->warning_high_apply_panel);
+    lv_obj_add_event_cb(hap, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_panel);
+
+    /* ── Low warning section ──────────────────────────────────────────── */
     lv_obj_t *le_sw = settings_add_switch(warn_box, "Low Enabled:", pd->warning_low_enabled);
     lv_obj_add_event_cb(le_sw, panel_warn_low_enable_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
@@ -746,9 +830,26 @@ static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
     lv_obj_add_event_cb(lt, keyboard_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(lt, panel_warn_low_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    lv_obj_t *lc = settings_add_dropdown(warn_box, "Low Colour:", "Red\nBlue", 0);
-    lv_dropdown_set_selected(lc, pd->warning_low_color.full == THEME_COLOR_RED.full ? 0 : 1);
+    lv_obj_t *lc = settings_add_dropdown(warn_box, "Low Colour:", IND_COLOR_OPTS, 0);
+    lv_dropdown_set_selected(lc, _theme_color_idx(pd->warning_low_color));
     lv_obj_add_event_cb(lc, panel_warn_low_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *lal = settings_add_switch(warn_box, "  Apply to Label:", pd->warning_low_apply_label);
+    lv_obj_add_event_cb(lal, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_label);
+    lv_obj_t *lav = settings_add_switch(warn_box, "  Apply to Value:", pd->warning_low_apply_value);
+    lv_obj_add_event_cb(lav, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_value);
+    lv_obj_t *lap = settings_add_switch(warn_box, "  Apply to Panel:", pd->warning_low_apply_panel);
+    lv_obj_add_event_cb(lap, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_panel);
+
+    /* Wire master toggle LAST so it can reference both sub-switches via the
+     * s_pnl_alerts scratch struct. Master uses panel-specific callback (not
+     * the generic warnings_toggle_cb) because it also defaults both sides
+     * ON when alerts are enabled, per user request. */
+    s_pnl_alerts.pd       = pd;
+    s_pnl_alerts.warn_box = warn_box;
+    s_pnl_alerts.he_sw    = he_sw;
+    s_pnl_alerts.le_sw    = le_sw;
+    lv_obj_add_event_cb(en_sw, panel_warnings_master_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* =========================================================================
@@ -1321,7 +1422,7 @@ static uint16_t _opa_to_idx(uint8_t opa) {
 }
 
 #define OPA_OPTS "100%\n78%\n59%\n39%\n27%\n20%\n10%\n0%"
-#define IND_COLOR_OPTS "Green\nCyan\nYellow\nOrange\nRed\nBlue\nPurple\nMagenta\nPink\nGrey\nCustom..."
+/* IND_COLOR_OPTS is declared near the top of the file so panel alerts can use it too. */
 
 static void build_indicator_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 {
