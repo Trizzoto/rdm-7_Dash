@@ -11321,6 +11321,12 @@
                         const clone = orig.cloneNode(true);
                         clone.id = '';
                         clone.style.cssText = 'display:block;width:100%;margin:4px 0;font-size:13px;padding:8px;height:40px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;';
+                        /* cloneNode preserves the HTML `selected` attribute, NOT the
+                         * runtime .value — so the clone defaulted to whichever
+                         * option had `selected` in the original markup even after
+                         * the user changed it. Force-sync here so the clone
+                         * accurately reflects current state on every menu open. */
+                        clone.value = orig.value;
                         clone.onchange = function() {
                             orig.value = this.value;
                             orig.dispatchEvent(new Event('change'));
