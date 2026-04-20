@@ -412,6 +412,32 @@
             .workspace:not(.left-collapsed) #leftResize { visibility: visible; }
         }
 
+        /* ── Compact desktop tier (900-1199px) ──────────────────────
+         * Between full desktop and the touch/mobile drawer. Keeps the
+         * desktop feel (inline header, no drawer) but trims the items
+         * that push Save/Apply off-screen at narrower widths. The
+         * hamburger appears so everything removed from the header is
+         * still reachable via the slide-in menu. */
+        @media (min-width: 901px) and (max-width: 1199px) {
+            .mobile-burger { display: inline-flex; }
+            header #screenModeSelect,
+            header #ecuSelect,
+            header #splashSelect,
+            header #splashFadeLabel,
+            header .layout-menu-wrap,
+            header #helpBtn,
+            header #resetBtnHdr,
+            header #syncBtn,
+            header .btn-icon {
+                display: none !important;
+            }
+            /* Tighten divider spacing so the remaining controls group
+             * without stretching — 2 remaining dividers in this tier. */
+            header .header-divider { margin: 0 1px; }
+            /* Allow the layout selector to shrink gracefully. */
+            header #layoutSelect { max-width: 180px; }
+        }
+
         /* ── Studio-style mobile pattern ────────────────────────────
          * Phone (<=600px) or landscape-short (<=500px tall):
          *   - single-column grid, canvas full-width
@@ -420,7 +446,7 @@
          * Tablet (601-900px):
          *   - .sidebar-right slides in from the right as a drawer
          *   - same bottom action bar
-         * Desktop (>900px):
+         * Desktop (>1199px):
          *   - mobile elements hidden, traditional side-by-side layout */
 
         .mobile-burger {
@@ -567,7 +593,11 @@
             header #layoutSelect,
             header #pillAutoSync,
             header #pillSimulate,
+            header #pillStream,
+            header #streamRateSel,
+            header #pillLiveControl,
             header #helpBtn,
+            header #resetBtnHdr,
             header .layout-menu-wrap,
             header .header-toggles .header-pill,
             header .btn-icon,
@@ -2832,7 +2862,7 @@
             <div class="header-divider"></div>
             <button class="btn btn-secondary btn-icon" onclick="undo()" title="Undo (Ctrl+Z)">↶</button>
             <button class="btn btn-secondary btn-icon" onclick="redo()" title="Redo (Ctrl+Y)">↷</button>
-            <button class="btn btn-secondary" onclick="resetView()">Reset</button>
+            <button class="btn btn-secondary" id="resetBtnHdr" onclick="resetView()">Reset</button>
             <button class="btn btn-secondary btn-icon" id="helpBtn" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
             <button class="btn btn-secondary" id="syncBtn" onclick="captureScreenshot()" title="Refresh the device preview thumbnail (runs automatically on Save; use this to force a refresh when the on-device screen changes)">Sync</button>
 
@@ -11208,7 +11238,8 @@
             monitor:  '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
             undo:     '<path d="M3 7v6h6"/><path d="M3.51 13a9 9 0 1 0 2.13-9.36L3 7"/>',
             redo:     '<path d="M21 7v6h-6"/><path d="M20.49 13a9 9 0 1 1-2.13-9.36L21 7"/>',
-            shop:     '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>'
+            shop:     '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+            pointer:  '<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/>'
         };
         function _iconSvg(name) {
             const path = _menuIcons[name];
@@ -11256,7 +11287,19 @@
                     { type: 'button', label: 'Device Info\u2026',      icon: 'monitor',  onclick: 'openDeviceInfo()' },
                     { type: 'button', label: 'Marketplace',            icon: 'shop',     onclick: 'openMarketplace()' }
                 ]},
-                { heading: 'View', items: [
+                /* Stream & View — replicates the header pills/dropdown that
+                 * disappear at narrow widths so phone/tablet users still
+                 * control simulation + preview stream + remote control. */
+                { heading: 'Stream & View', items: [
+                    { type: 'toggle', label: 'SIM',     icon: 'activity', getState: () => {
+                            const p = document.getElementById('pillSimulate');
+                            return !!(p && p.classList.contains('active'));
+                        }, onclick: 'toggleSimulation()' },
+                    { type: 'toggle', label: 'STREAM',  icon: 'monitor', getState: () => (typeof _streamEnabled !== 'undefined' ? _streamEnabled : true),
+                        onclick: 'toggleStream()' },
+                    { type: 'select', id: 'streamRateSel' },
+                    { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
+                        onclick: 'toggleLiveControl()' },
                     { type: 'button', label: 'Reset View', icon: 'reset', onclick: 'resetView()' },
                     { type: 'button', label: 'Help',       icon: 'help',  onclick: "document.getElementById('helpModal').style.display='flex'" }
                 ]},
@@ -11290,6 +11333,37 @@
                         const border = mi.danger ? '1px solid hsla(0,70%,50%,0.35)' : '1px solid var(--border)';
                         btn.style.cssText = 'display:flex;align-items:center;width:100%;margin:4px 0;font-size:14px;padding:0 14px;min-height:44px;background:var(--panel);border:' + border + ';color:' + color + ';border-radius:8px;cursor:pointer;text-align:left;';
                         btn.onclick = function() { closeMobileMenu(); try { eval(mi.onclick); } catch (e) { console.warn(e); } };
+                        content.appendChild(btn);
+                    } else if (mi.type === 'toggle') {
+                        /* Stateful toggle — reflects current ON/OFF via the
+                         * getState callback, fires the given onclick string
+                         * (same function the header pill calls) on tap.
+                         * Doesn't close the menu, so the user can flip
+                         * multiple toggles without reopening. */
+                        let on = false;
+                        try { on = !!(mi.getState && mi.getState()); } catch (e) { on = false; }
+                        const btn = document.createElement('button');
+                        btn.innerHTML = (mi.icon ? _iconSvg(mi.icon) : '') +
+                            '<span style="flex:1;">' + mi.label + '</span>' +
+                            '<span class="mm-toggle-state" style="font-weight:700;letter-spacing:0.05em;font-size:12px;padding:3px 10px;border-radius:12px;">' +
+                            (on ? 'ON' : 'OFF') + '</span>';
+                        const activeBorder = on ? 'hsla(140,60%,50%,0.55)' : 'var(--border)';
+                        const pillBg  = on ? 'hsla(140,60%,40%,0.22)' : 'hsla(0,0%,100%,0.06)';
+                        const pillCol = on ? 'hsl(140,60%,72%)' : 'var(--text-muted)';
+                        btn.style.cssText = 'display:flex;align-items:center;width:100%;margin:4px 0;font-size:14px;padding:0 14px;min-height:44px;background:var(--panel);border:1px solid ' + activeBorder + ';color:var(--text);border-radius:8px;cursor:pointer;text-align:left;';
+                        const pillEl = btn.querySelector('.mm-toggle-state');
+                        if (pillEl) {
+                            pillEl.style.background = pillBg;
+                            pillEl.style.color      = pillCol;
+                        }
+                        btn.onclick = function() {
+                            try { eval(mi.onclick); } catch (e) { console.warn(e); }
+                            /* Rebuild the menu to pick up the new state — simplest
+                             * path that avoids threading handles back through the
+                             * section spec. openMobileMenu is idempotent, re-enters
+                             * same state as a fresh open. */
+                            try { openMobileMenu(); } catch (e) {}
+                        };
                         content.appendChild(btn);
                     }
                 });
