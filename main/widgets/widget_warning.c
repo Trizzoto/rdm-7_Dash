@@ -400,7 +400,7 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
 	lv_color_t new_color = state ? active : inactive;
 	uint8_t active_opa = wd ? wd->active_opa : 255;
-	uint8_t inactive_opa = wd ? wd->inactive_opa : 80;
+	uint8_t inactive_opa = wd ? wd->inactive_opa : 180;
 	uint8_t new_opa = state ? active_opa : inactive_opa;
 
 	bool is_image = wd && wd->img_obj != NULL;
@@ -963,7 +963,7 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 		lv_obj_set_style_radius(warning_circles[i], wd_style ? wd_style->radius : 100,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_color_t init_color = wd_style ? wd_style->inactive_color : THEME_COLOR_INACTIVE;
-		uint8_t init_opa = wd_style ? wd_style->inactive_opa : 80;
+		uint8_t init_opa = wd_style ? wd_style->inactive_opa : 180;
 		lv_obj_set_style_bg_color(warning_circles[i], init_color,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(warning_circles[i], init_opa,
@@ -1137,7 +1137,7 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "image_name", wd->image_name);
 		if (wd->active_opa != 255)
 			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
-		if (wd->inactive_opa != 80)
+		if (wd->inactive_opa != 180)
 			cJSON_AddNumberToObject(cfg, "inactive_opa", wd->inactive_opa);
 		/* Night-mode overrides — emit only fields that have an override set */
 		{
@@ -1414,7 +1414,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	wd->image_name[0] = '\0';
 	wd->active_opa = 255;
-	wd->inactive_opa = 80;
+	wd->inactive_opa = 180;
 	wd->img_dsc = NULL;
 	wd->img_obj = NULL;
 

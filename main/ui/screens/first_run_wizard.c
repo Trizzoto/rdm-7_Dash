@@ -48,6 +48,13 @@ static lv_obj_t  *s_step3         = NULL;
  * when the wizard finishes. Reloading inline would destroy the wizard card. */
 static bool       s_ecu_applied   = false;
 
+/* WiFi return flow: when the user taps "Join a WiFi Network" we hide
+ * (but keep alive) the wizard overlay + show ui_wifi. A 200 ms polling
+ * timer watches wifi_ui_is_active(); once it flips false we re-reveal
+ * the overlay so the user lands back on step 3. */
+static bool       s_wifi_return_pending = false;
+static lv_timer_t *s_wifi_return_timer  = NULL;
+
 static const char *BR_NAMES[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -89,6 +96,11 @@ static void _close_wizard(bool mark_done) {
     }
     can_bus_test_set_ui_callback(NULL);
     if (can_bus_test_is_running()) can_bus_test_cancel();
+    if (s_wifi_return_timer) {
+        lv_timer_del(s_wifi_return_timer);
+        s_wifi_return_timer = NULL;
+    }
+    s_wifi_return_pending = false;
     if (s_overlay && lv_obj_is_valid(s_overlay))
         lv_obj_del_async(s_overlay);
     s_overlay = s_card = s_step1 = s_step3 = NULL;
@@ -255,33 +267,48 @@ static void _btn_skip_cb(lv_event_t *e) {
     _close_wizard(false);
 }
 
+static void _wizard_check_wifi_return_cb(lv_timer_t *timer);
+
 static void _btn_wifi_join_cb(lv_event_t *e) {
     (void)e;
-    /* Tapping Join counts as wizard completion - the user actively chose
-     * a connection path, so no reason to ask again on next boot. They can
-     * re-run the wizard from Device Settings -> "Run Setup Wizard" if
-     * they need to revisit it. */
-    bool reload = s_ecu_applied;
-    s_ecu_applied = false;
+    /* Open the WiFi UI on top of the wizard overlay. We keep the wizard
+     * overlay alive (attached to the dashboard screen) so when the user
+     * returns from the WiFi UI they land back on the wizard and can
+     * choose Finish Setup — the user specifically asked for this flow
+     * because they were losing their place when the wizard tore itself
+     * down on Join. First-run-done is only written when the user
+     * explicitly taps Finish Setup. */
+    ESP_LOGI(TAG, "Wizard → WiFi UI (overlay preserved for return)");
+    can_bus_test_set_ui_callback(NULL);
+    if (can_bus_test_is_running()) can_bus_test_cancel();
 
-    if (reload) {
-        /* Reload dashboard FIRST, then open WiFi UI. Inline-close the
-         * wizard state here (mirrors _close_wizard non-reload path but
-         * without queuing a redundant overlay del_async). */
-        config_store_save_first_run_done(true);
-        ESP_LOGI(TAG, "First-run wizard completed (WiFi Join + ECU reload)");
-        can_bus_test_set_ui_callback(NULL);
-        if (can_bus_test_is_running()) can_bus_test_cancel();
-        lv_obj_t *overlay_to_free = s_overlay;
-        s_overlay = s_card = s_step1 = s_step3 = NULL;
-        s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
-        s_btn_apply = s_btn_next1 = s_btn_cancel = NULL;
-        for (int i = 0; i < 4; i++) s_scan_results[i] = NULL;
-        lv_async_call(_deferred_reload_then_wifi, overlay_to_free);
-    } else {
-        ESP_LOGI(TAG, "First-run wizard completed (WiFi Join)");
-        _close_wizard(true);
-        wifi_ui_show();
+    /* Temporarily hide the overlay so the WiFi screen isn't obscured.
+     * When the user dismisses the WiFi screen, wifi_ui_hide restores the
+     * dashboard screen and we re-show the overlay below via a post-hide
+     * hook. */
+    if (s_overlay && lv_obj_is_valid(s_overlay)) {
+        lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_wifi_return_pending = true;
+    if (!s_wifi_return_timer) {
+        s_wifi_return_timer = lv_timer_create(_wizard_check_wifi_return_cb,
+                                              200, NULL);
+    }
+    wifi_ui_show();
+}
+
+/* Called from the LVGL task after WiFi UI hides. Re-reveals the wizard
+ * overlay so the user lands back on step 3. */
+static void _wizard_check_wifi_return_cb(lv_timer_t *timer) {
+    if (!s_wifi_return_pending) return;
+    if (wifi_ui_is_active()) return;  /* still up */
+    s_wifi_return_pending = false;
+    lv_timer_del(timer);
+    s_wifi_return_timer = NULL;
+    if (s_overlay && lv_obj_is_valid(s_overlay)) {
+        lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_overlay);
+        ESP_LOGI(TAG, "Returned from WiFi UI — wizard overlay restored");
     }
 }
 
@@ -366,7 +393,7 @@ static void _show_step3(void) {
 
     lv_obj_t *opt1_sub = lv_label_create(s_step3);
     lv_label_set_text(opt1_sub,
-        "Join your home/shop WiFi - dash appears at http://rdm7.local");
+        "Join your home/shop WiFi - dash will show its IP in Device Settings");
     lv_obj_align(opt1_sub, LV_ALIGN_TOP_LEFT, 30, 86);
     lv_obj_set_style_text_font(opt1_sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(opt1_sub, THEME_COLOR_TEXT_MUTED, 0);
@@ -407,7 +434,7 @@ static void _show_step3(void) {
     lv_obj_set_width(opt3_sub, BTN_W - 30);
     lv_label_set_text_fmt(opt3_sub,
         "Connect to \"%s\"  /  password: rdm7dash\n"
-        "Then open http://rdm7.local  or  http://%s",
+        "Then open http://%s in a browser",
         ap_ssid ? ap_ssid : "RDM7-????",
         ap_ip   ? ap_ip   : "192.168.4.1");
     lv_obj_align(opt3_sub, LV_ALIGN_TOP_LEFT, 30, 250);

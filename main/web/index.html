@@ -2840,6 +2840,14 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
+            <button class="header-pill" id="pillStream" onclick="toggleStream()" title="Stream ON periodically refreshes the device preview. Turn OFF on slow WiFi — the preview then only updates when you press Sync or save.">STREAM</button>
+            <select id="streamRateSel" class="btn btn-secondary" style="height:26px;padding:0 6px;" onchange="onStreamRateChange()" title="How often the preview refreshes">
+                <option value="1000">1 s</option>
+                <option value="3000" selected>3 s</option>
+                <option value="5000">5 s</option>
+                <option value="10000">10 s</option>
+                <option value="30000">30 s</option>
+            </select>
             <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
@@ -4443,7 +4451,7 @@
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                     { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance", nightOverridable: true },
-                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 80, cat: "appearance" },
+                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 180, cat: "appearance" },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true, nightKey: "border_color" },
                     { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
@@ -8675,10 +8683,18 @@
          * "I moved a widget, want to see what the device shows now"
          * without burning CPU on constant encodes. */
         let _bgRefreshTimer = null;
-        const _BG_REFRESH_INTERVAL_MS = 3000;
+        /* Stream refresh rate (also drives the CONTROL-mode poll interval).
+         * User can override via the Stream Rate dropdown — the selection
+         * is persisted in localStorage so the preference survives reloads. */
+        let _BG_REFRESH_INTERVAL_MS = parseInt(localStorage.getItem('rdm7_stream_rate') || '3000', 10) || 3000;
+        /* Stream master switch. When off, no periodic screenshot fetches —
+         * user must press Sync (or Save) to refresh the preview. Helps on
+         * bad WiFi where a slow screenshot round-trip starves the UI. */
+        let _streamEnabled = (localStorage.getItem('rdm7_stream_enabled') !== '0');
 
         function _startBgRefresh() {
             if (_bgRefreshTimer) return;
+            if (!_streamEnabled) return;  /* user switched stream off */
             _bgRefreshTimer = setInterval(() => {
                 /* Skip if LIVE is running (its <img> is already updating) or
                  * if the tab is hidden (browser throttles us anyway, no point
@@ -8693,6 +8709,67 @@
                 _bgRefreshTimer = null;
             }
         }
+
+        /* Toggle the master stream switch. When off we tear down the bg
+         * refresh and force-exit CONTROL mode (polling it without a stream
+         * makes no sense). */
+        function toggleStream() {
+            _streamEnabled = !_streamEnabled;
+            localStorage.setItem('rdm7_stream_enabled', _streamEnabled ? '1' : '0');
+            _updateStreamPill();
+            if (_streamEnabled) {
+                _startBgRefresh();
+                captureScreenshot();  /* refresh immediately so user sees effect */
+            } else {
+                _stopBgRefresh();
+                /* If CONTROL was on, turn it off — the polling image would
+                 * never update with stream disabled. */
+                if (typeof _liveControlOn !== 'undefined' && _liveControlOn) {
+                    toggleLiveControl();
+                }
+                if (typeof showToast === 'function') showToast('Stream OFF — press Sync to refresh preview', 'info');
+            }
+        }
+
+        function _updateStreamPill() {
+            const pill = document.getElementById('pillStream');
+            if (!pill) return;
+            if (_streamEnabled) {
+                pill.textContent = 'STREAM';
+                pill.classList.add('active');
+                pill.style.background = '';
+                pill.style.color = '';
+            } else {
+                pill.textContent = 'STREAM OFF';
+                pill.classList.remove('active');
+                pill.style.background = 'hsl(0, 70%, 40%)';
+                pill.style.color = '#fff';
+            }
+            const sel = document.getElementById('streamRateSel');
+            if (sel) sel.disabled = !_streamEnabled;
+        }
+
+        function onStreamRateChange() {
+            const sel = document.getElementById('streamRateSel');
+            if (!sel) return;
+            const v = parseInt(sel.value, 10);
+            if (!Number.isFinite(v) || v < 500) return;
+            _BG_REFRESH_INTERVAL_MS = v;
+            localStorage.setItem('rdm7_stream_rate', String(v));
+            /* Restart the bg refresh so the new cadence takes effect now,
+             * not on next natural interval. The CONTROL-mode poll loop
+             * reads _BG_REFRESH_INTERVAL_MS on each iteration so it picks
+             * up the change automatically. */
+            _stopBgRefresh();
+            _startBgRefresh();
+        }
+
+        /* Initial pill + dropdown sync on page load. */
+        window.addEventListener('load', () => {
+            const sel = document.getElementById('streamRateSel');
+            if (sel) sel.value = String(_BG_REFRESH_INTERVAL_MS);
+            _updateStreamPill();
+        });
 
         /* Kick it off once the page is idle so we don't race early layout
          * loading. Safe to call repeatedly — _startBgRefresh is idempotent. */
@@ -8723,7 +8800,9 @@
         let _liveLoopToken   = 0;    /* cancel stale loops across re-toggles */
         let _lastTouchSendMs = 0;
         const _TOUCH_SEND_THROTTLE_MS = 25;   /* ~40 Hz — plenty for drag */
-        const _LIVE_POLL_INTERVAL_MS  = 1000; /* ~1 fps — generous headroom for full-res encode */
+        /* CONTROL mode uses the same user-chosen refresh cadence as the
+         * background preview (_BG_REFRESH_INTERVAL_MS). Read per-iteration
+         * below so changing the Stream Rate dropdown retunes it live. */
 
         async function _postTouch(body) {
             try {
@@ -8827,13 +8906,22 @@
                     continue;
                 }
                 const elapsed = performance.now() - t0;
-                const wait = Math.max(0, _LIVE_POLL_INTERVAL_MS - elapsed);
+                const wait = Math.max(0, _BG_REFRESH_INTERVAL_MS - elapsed);
                 await new Promise(res => setTimeout(res, wait));
             }
             if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
         }
 
         async function toggleLiveControl() {
+            /* Guard: CONTROL needs the stream. Flip stream on for the user
+             * rather than silently doing nothing. */
+            if (!_liveControlOn && !_streamEnabled) {
+                if (typeof showToast === 'function') showToast('Turning stream ON — CONTROL needs live polling', 'info');
+                _streamEnabled = true;
+                localStorage.setItem('rdm7_stream_enabled', '1');
+                _updateStreamPill();
+                _startBgRefresh();
+            }
             _liveControlOn = !_liveControlOn;
             const pill         = document.getElementById('pillLiveControl');
             const img          = document.getElementById('liveStreamImg');
@@ -9829,6 +9917,20 @@
             }
 
             try {
+                /* Tell the device to switch active layout first — /api/layout/set
+                 * persists the choice to NVS and reloads the dashboard. Previously
+                 * we only fetched raw JSON into the editor, so the device stayed
+                 * on the old layout until the user hit Save/Apply. */
+                const setResp = await fetch('/api/layout/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (!setResp.ok) {
+                    const errText = await setResp.text().catch(() => '');
+                    throw new Error(errText || 'set-active failed');
+                }
+
                 const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
@@ -9877,7 +9979,7 @@
                 renderSignals();
                 updateInspector();
                 populateEcuContextSelect();
-                updateStatus(`Loaded ${name} — click Apply to send to device`);
+                updateStatus(`Switched device to ${name}`);
                 try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
             } catch (e) { updateStatus(`Error loading ${name}`, true); }
         };

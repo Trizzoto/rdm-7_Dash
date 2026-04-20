@@ -1607,7 +1607,7 @@ static void warning_opa_off_cb(lv_event_t *e) {
     warning_data_t *wd = (warning_data_t *)ctx->widget->type_data;
     static const uint8_t opa_vals[] = {255, 200, 150, 100, 70, 50, 25, 0};
     uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-    wd->inactive_opa = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 80;
+    wd->inactive_opa = (sel < sizeof(opa_vals)) ? opa_vals[sel] : 180;
 }
 
 static void build_warning_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)

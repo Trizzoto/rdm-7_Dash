@@ -274,6 +274,18 @@
             .wst-btn.wst-danger { color: #f87171; }
             .wst-btn.wst-danger:active { background: rgba(248,113,113,0.15); }
             .wst-btn[aria-disabled="true"] { opacity: 0.35; pointer-events: none; }
+            /* Test-active toggle for boolean widgets (indicator / warning / toggle / button).
+             * Pressed state lights up green to match the "currently injecting test value" feel. */
+            .wst-test-toggle {
+                flex: 1; min-width: 0; padding: 0 14px;
+                font-weight: 700; letter-spacing: 0.04em;
+                color: var(--text-muted, #888);
+            }
+            .wst-test-toggle[aria-pressed="true"] {
+                background: rgba(34,197,94,0.18);
+                border-color: rgba(34,197,94,0.45);
+                color: hsl(142, 71%, 65%);
+            }
             .wst-step {
                 min-width: 44px; font-weight: 700; color: hsl(210,80%,60%);
                 background: rgba(45,140,235,0.12); border-color: rgba(45,140,235,0.3);
@@ -2346,6 +2358,35 @@
         }
         .btn-assign-data:hover { border-color:var(--accent); color:var(--accent); }
 
+        /* Momentary test button for boolean widgets (indicator / warning /
+         * toggle / button). Press-and-hold UX: default state is muted; while
+         * physically held the button turns accent-blue to signal "active."
+         * Styling mirrors .btn-assign-data so it slots cleanly under the
+         * signal assign UI. */
+        .props-test-momentary {
+            width: 100%;
+            margin-top: 6px;
+            padding: 8px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: var(--radius-md);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: background 0.08s, border-color 0.08s, color 0.08s;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .props-test-momentary:hover { border-color: var(--accent); color: var(--accent); }
+        .props-test-momentary.pressed {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
         /* Disabled field states */
         .field input:disabled, .field select:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -2799,6 +2840,15 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
+            <button class="header-pill" id="pillStream" onclick="toggleStream()" title="Stream ON periodically refreshes the device preview. Turn OFF on slow WiFi — the preview then only updates when you press Sync or save.">STREAM</button>
+            <select id="streamRateSel" class="btn btn-secondary" style="height:26px;padding:0 6px;" onchange="onStreamRateChange()" title="How often the preview refreshes">
+                <option value="1000">1 s</option>
+                <option value="3000" selected>3 s</option>
+                <option value="5000">5 s</option>
+                <option value="10000">10 s</option>
+                <option value="30000">30 s</option>
+            </select>
+            <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
         </div>
@@ -2846,6 +2896,13 @@
                 <div class="display-bezel bezel-on" id="canvasContainer" style="transform: scale(1) translate(0px, 0px);">
                     <div class="canvas-container">
                         <canvas id="screenshotCanvas" width="800" height="480"></canvas>
+                        <!-- Live MJPEG stream layer. Hidden by default; shown when the
+                             LIVE header pill is active. The <img src> is set to the
+                             continuous MJPEG endpoint, which the browser renders as a
+                             self-updating image — no per-frame JS needed. -->
+                        <img id="liveStreamImg" width="800" height="480"
+                             style="display:none; position:absolute; top:0; left:0; width:800px; height:480px; pointer-events:auto; cursor:crosshair; user-select:none; -webkit-user-drag:none;"
+                             draggable="false" alt="Live dashboard stream">
                         <!-- hide-crosshair matches the removed pill's default;
                              hide-widgets matches the Widgets pill starting deselected. -->
                         <div id="interactionLayer" class="hide-crosshair hide-widgets">
@@ -3062,7 +3119,10 @@
       </div>
       <div class="wst-row wst-row-test" id="wstTestRow" style="display:none;">
         <span class="wst-label">TEST</span>
+        <!-- Slider for numeric widgets (panel / bar / meter / arc / rpm_bar / shift_light / text) -->
         <input type="range" id="wstTestSlider" min="0" max="100" value="0" step="1" aria-label="Test value">
+        <!-- Toggle for boolean widgets (indicator / warning / toggle / button) — see TOGGLE_TEST_TYPES -->
+        <button class="wst-btn wst-test-toggle" id="wstTestToggle" style="display:none;" aria-pressed="false" aria-label="Toggle test active">ACTIVE</button>
         <span class="wst-test-val" id="wstTestVal">&mdash;</span>
         <button class="wst-size-btn" id="wstTestClear" aria-label="Stop test">&times;</button>
       </div>
@@ -3182,6 +3242,19 @@
                 t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
             right.querySelectorAll('.right-tab-content').forEach(c =>
                 c.classList.toggle('active', c.id === 'rightTab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
+        }
+
+        /* Called from widget-selection code paths (startDrag, context menu,
+         * layer tree). Ensures the Properties tab is active on desktop when
+         * a widget is selected, so the user isn't stuck looking at the
+         * Widgets palette while they're trying to edit props. No-op on
+         * mobile (where the right sidebar is the bottom-nav "Properties"
+         * drawer and has its own flow). */
+        function _autoShowPropertiesTab() {
+            if (window.innerWidth < 900) return;  /* mobile layout — skip */
+            const propsTab = document.querySelector('.sidebar-right .right-sidebar-tab.active');
+            if (propsTab && propsTab.textContent.trim().toLowerCase() === 'properties') return;
+            switchRightTab('properties');
         }
 
 
@@ -4378,7 +4451,7 @@
                     { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                     { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
                     { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance", nightOverridable: true },
-                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 80, cat: "appearance" },
+                    { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", min: 0, max: 255, def: 180, cat: "appearance" },
                     { name: "border_width", label: "Border Width", type: "stepper", min: 0, max: 20, def: 0, cat: "appearance" },
                     { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true, nightKey: "border_color" },
                     { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
@@ -5053,6 +5126,7 @@
                     }
                     renderEditor();
                     updateInspector();
+                    _autoShowPropertiesTab();
                     showContextMenu(e.clientX, e.clientY);
                 };
 
@@ -5190,6 +5264,7 @@
                     renderEditor();
                     updateInspector();
                     renderSignals();
+                    _autoShowPropertiesTab();
                 };
                 layerTree.appendChild(item);
             }
@@ -5698,6 +5773,7 @@
             renderEditor();
             updateInspector();
             renderSignals();
+            _autoShowPropertiesTab();
         }
 
         function startResize(e, index, handle) {
@@ -6355,8 +6431,20 @@
 
             /* ── Data Accordion (open by default) ── */
             const dataFields = def.fields.filter(f => f.cat === 'data');
-            const hasSignalBinding = !['indicator', 'shape_panel', 'button', 'image', 'toggle'].includes(w.type);
-            if (dataFields.length || hasSignalBinding) {
+            /* Signal binding rules:
+             *   - shape_panel / image: decorative, no signal
+             *   - button / warning: may run without an assigned signal (test
+             *     button works locally). Still render the assign UI so the
+             *     user can attach one if they want CAN-driven behaviour.
+             *   - indicator with input_source=0 (Wire): GPIO-driven, no
+             *     signal needed → hide the assign UI
+             *   - everything else: normal signal assign flow */
+            const isIndicatorWired = (w.type === 'indicator' &&
+                                       (w.config?.input_source ?? 0) === 0);
+            const hasSignalBinding = !['shape_panel', 'image'].includes(w.type)
+                                      && !isIndicatorWired;
+            const isTestable = TOGGLE_TEST_TYPES.has(w.type);
+            if (dataFields.length || hasSignalBinding || isTestable) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
                 /* Signal binding UI */
                 if (hasSignalBinding) {
@@ -6380,31 +6468,67 @@
                         html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
                     }
                 }
-                /* ── Per-widget test control ── */
+                /* ── Per-widget test control ──
+                 * Always rendered for boolean widgets (indicator / warning /
+                 * toggle / button) regardless of signal binding — pressing
+                 * gives the user a quick live preview of the active visual.
+                 * If a signal is bound, the press injects value=1 via
+                 * /api/signal/inject and release injects value=0 (momentary
+                 * semantics like a real physical button). If no signal is
+                 * bound, the press is still a valid UX affordance — it just
+                 * doesn't propagate anywhere (no-op firmware side). */
                 const _testSig = _getWidgetSignalName(w);
-                if (_testSig) {
-                    const isToggle = TOGGLE_TEST_TYPES.has(w.type);
+                if (isTestable) {
+                    const activeVal = _testSig ? _testValues[_testSig] : undefined;
+                    const isActive = activeVal !== undefined;
+                    {
+                        /* Decide how the test button drives the widget:
+                         *   - Wire-mode indicator: /api/indicator/test by slot
+                         *     (indicator_apply_analog_state-driven, not signal)
+                         *   - Everything else with a signal: inject via
+                         *     /api/signal/inject as usual
+                         *   - No signal + no wire path: still renders the
+                         *     button for visual affordance, but press/release
+                         *     are no-ops (the widget has nothing to respond to) */
+                        let mode = '';
+                        let arg  = 'null';
+                        if (w.type === 'indicator' && isIndicatorWired) {
+                            mode = 'indicator';
+                            /* Indicator slot is stored on w.config.slot
+                             * (web UI JSON convention), NOT on w.slot —
+                             * the latter is the firmware-side widget_t
+                             * field name. Using w.slot made both left
+                             * and right indicators report slot=0. */
+                            arg  = String(w.config?.slot ?? 0);
+                        } else if (_testSig) {
+                            mode = 'signal';
+                            arg  = `'${_testSig}'`;
+                        }
+                        const pressHandler   = `_testPress('${mode}', ${arg}, this)`;
+                        const releaseHandler = `_testRelease('${mode}', ${arg}, this)`;
+                        html += `<button type="button" class="props-test-momentary"
+                                onmousedown="${pressHandler}"
+                                onmouseup="${releaseHandler}"
+                                onmouseleave="${releaseHandler}"
+                                ontouchstart="event.preventDefault();${pressHandler}"
+                                ontouchend="event.preventDefault();${releaseHandler}"
+                                ontouchcancel="${releaseHandler}">TEST ACTIVE</button>
+                        ${isActive ? `<button class="btn btn-secondary" style="margin-top:4px; width:100%; font-size:11px;" onclick="clearTestValue('${_testSig}');updateInspector()">Stop test</button>` : ''}`;
+                    }
+                } else if (_testSig) {
                     const activeVal = _testValues[_testSig];
                     const isActive = activeVal !== undefined;
-                    if (isToggle) {
-                        const checked = isActive && activeVal > 0 ? 'checked' : '';
-                        html += `<div style="display:flex; align-items:center; gap:8px; margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
-                            <span style="font-size:11px; color:var(--text-muted); flex:1;">Test</span>
-                            <label class="switch" style="margin:0;"><input type="checkbox" ${checked} onchange="if(this.checked){setTestValue('${_testSig}',1)}else{clearTestValue('${_testSig}')}"><span class="slider round"></span></label>
-                        </div>`;
-                    } else {
-                        const b = _getTestBounds(w);
-                        const curVal = isActive ? activeVal : b.min;
-                        html += `<div style="margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
-                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-                                <span style="font-size:11px; color:var(--text-muted); flex:1;">Test Value</span>
-                                <span id="testValNum" style="font-size:12px; font-family:monospace; color:${isActive ? 'var(--accent)' : 'var(--text-muted)'}; min-width:40px; text-align:right;">${isActive ? curVal : '\u2014'}</span>
-                                ${isActive ? `<button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;" onclick="clearTestValue('${_testSig}');updateInspector()" title="Stop test">\u2715</button>` : ''}
-                            </div>
-                            <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${curVal}" style="width:100%; accent-color:var(--accent);"
-                                oninput="setTestValue('${_testSig}',parseFloat(this.value));document.getElementById('testValNum').textContent=this.value;document.getElementById('testValNum').style.color='var(--accent)'">
-                        </div>`;
-                    }
+                    const b = _getTestBounds(w);
+                    const curVal = isActive ? activeVal : b.min;
+                    html += `<div style="margin:6px 0 10px; padding:6px 8px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                            <span style="font-size:11px; color:var(--text-muted); flex:1;">Test Value</span>
+                            <span id="testValNum" style="font-size:12px; font-family:monospace; color:${isActive ? 'var(--accent)' : 'var(--text-muted)'}; min-width:40px; text-align:right;">${isActive ? curVal : '\u2014'}</span>
+                            ${isActive ? `<button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;" onclick="clearTestValue('${_testSig}');updateInspector()" title="Stop test">\u2715</button>` : ''}
+                        </div>
+                        <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${curVal}" style="width:100%; accent-color:var(--accent);"
+                            oninput="setTestValue('${_testSig}',parseFloat(this.value));document.getElementById('testValNum').textContent=this.value;document.getElementById('testValNum').style.color='var(--accent)'">
+                    </div>`;
                 }
 
                 dataFields.forEach(f => {
@@ -6745,6 +6869,41 @@
                 _doInject(signalName, value);
                 _testLastSend[signalName] = now;
             }
+        }
+
+        /* Momentary-test helpers for boolean widgets (TEST ACTIVE button).
+         * Routes the press/release through the right firmware API
+         * depending on how the widget is driven:
+         *
+         *   - 'signal'    → POST /api/signal/inject   (CAN-bound widgets)
+         *   - 'indicator' → POST /api/indicator/test  (wire-mode indicators
+         *                   — they're driven by indicator_apply_analog_state,
+         *                   not by the signal subscription path)
+         *
+         * Press applies active=true/value=1, release applies false/0.
+         * .pressed CSS class drives the accent-blue pressed visual. */
+        function _testPress(mode, arg, btn) {
+            if (!btn) return;
+            btn.classList.add('pressed');
+            _testApply(mode, arg, true);
+        }
+        function _testRelease(mode, arg, btn) {
+            if (!btn || !btn.classList.contains('pressed')) return;
+            btn.classList.remove('pressed');
+            _testApply(mode, arg, false);
+        }
+        function _testApply(mode, arg, active) {
+            if (mode === 'signal' && arg) {
+                setTestValue(arg, active ? 1 : 0);
+            } else if (mode === 'indicator' && arg !== null) {
+                /* arg = slot (0 = LEFT, 1 = RIGHT) */
+                fetch('/api/indicator/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slot: arg, active: active }),
+                }).catch(() => {});
+            }
+            /* else: no-op — widget has no testable input path */
         }
         function clearTestValue(signalName) {
             delete _testValues[signalName];
@@ -7242,6 +7401,14 @@
             if (fieldDef && fieldDef.type === 'checkbox') {
                 const hasChildren = def.fields.some(f => f.enabledBy === field || f.enabledBy === '!' + field);
                 if (hasChildren) updateInspector();
+            }
+
+            /* Indicator's input_source select drives whether the signal
+             * assign UI is shown in the Data accordion (Wire hides it, CAN
+             * shows it). Re-render the inspector so the UI flips
+             * immediately when the user changes the dropdown. */
+            if (w.type === 'indicator' && field === 'input_source') {
+                updateInspector();
             }
 
             pushHistory();
@@ -8489,24 +8656,342 @@
 
         async function captureScreenshot() {
             try {
-                const response = await fetch('/screenshot');
-                if (!response.ok) throw new Error();
-                const arrayBuffer = await response.arrayBuffer();
-                const uint8Array = new Uint8Array(arrayBuffer);
-
-                const imageData = ctx.createImageData(CANVAS_W, CANVAS_H);
-                const data = imageData.data;
-                for (let i = 0; i < uint8Array.length; i += 2) {
-                    const pixel565 = (uint8Array[i + 1] << 8) | uint8Array[i];
-                    const idx = (i / 2) * 4;
-                    data[idx] = ((pixel565 >> 11) & 0x1F) << 3;
-                    data[idx + 1] = ((pixel565 >> 5) & 0x3F) << 2;
-                    data[idx + 2] = (pixel565 & 0x1F) << 3;
-                    data[idx + 3] = 255;
-                }
-                ctx.putImageData(imageData, 0, 0);
+                /* Half-res (400x240) smooth-averaged JPEG for the edit-mode canvas
+                 * backdrop. Full-res was causing task-watchdog trips during active
+                 * editing because each encode pushed ~4 MB through PSRAM, fighting
+                 * LVGL for the bus and starving IDLE1 when many widgets were
+                 * redrawing (e.g., sim on + dragging a widget). Half-res is ~1 MB
+                 * PSRAM traffic — 4x less contention, still sharp enough once the
+                 * browser upscales to the canvas. Full-res stays reserved for the
+                 * LIVE preview's own polling loop (which users opt into and isn't
+                 * running simultaneously with edit invalidations). */
+                const response = await fetch('/api/screenshot?smooth=1&q=75&t=' + Date.now(),
+                                              { cache: 'no-store' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const blob = await response.blob();
+                const bmp  = await createImageBitmap(blob);
+                ctx.drawImage(bmp, 0, 0, CANVAS_W, CANVAS_H);
+                bmp.close();
             } catch (e) { console.error('Screenshot failed', e); }
         }
+
+        /* ═══ Background canvas auto-refresh ═══
+         * Keeps the edit-mode canvas backdrop in sync with the device even
+         * when LIVE is off, so users don't have to hit Sync to see the
+         * current state. Paused while LIVE is active (Live has its own
+         * 1 Hz polling). Interval intentionally slow — 3 s is enough for
+         * "I moved a widget, want to see what the device shows now"
+         * without burning CPU on constant encodes. */
+        let _bgRefreshTimer = null;
+        /* Stream refresh rate (also drives the CONTROL-mode poll interval).
+         * User can override via the Stream Rate dropdown — the selection
+         * is persisted in localStorage so the preference survives reloads. */
+        let _BG_REFRESH_INTERVAL_MS = parseInt(localStorage.getItem('rdm7_stream_rate') || '3000', 10) || 3000;
+        /* Stream master switch. When off, no periodic screenshot fetches —
+         * user must press Sync (or Save) to refresh the preview. Helps on
+         * bad WiFi where a slow screenshot round-trip starves the UI. */
+        let _streamEnabled = (localStorage.getItem('rdm7_stream_enabled') !== '0');
+
+        function _startBgRefresh() {
+            if (_bgRefreshTimer) return;
+            if (!_streamEnabled) return;  /* user switched stream off */
+            _bgRefreshTimer = setInterval(() => {
+                /* Skip if LIVE is running (its <img> is already updating) or
+                 * if the tab is hidden (browser throttles us anyway, no point
+                 * spending firmware CPU on a preview nobody's watching). */
+                if (_liveControlOn || document.hidden) return;
+                captureScreenshot();
+            }, _BG_REFRESH_INTERVAL_MS);
+        }
+        function _stopBgRefresh() {
+            if (_bgRefreshTimer) {
+                clearInterval(_bgRefreshTimer);
+                _bgRefreshTimer = null;
+            }
+        }
+
+        /* Toggle the master stream switch. When off we tear down the bg
+         * refresh and force-exit CONTROL mode (polling it without a stream
+         * makes no sense). */
+        function toggleStream() {
+            _streamEnabled = !_streamEnabled;
+            localStorage.setItem('rdm7_stream_enabled', _streamEnabled ? '1' : '0');
+            _updateStreamPill();
+            if (_streamEnabled) {
+                _startBgRefresh();
+                captureScreenshot();  /* refresh immediately so user sees effect */
+            } else {
+                _stopBgRefresh();
+                /* If CONTROL was on, turn it off — the polling image would
+                 * never update with stream disabled. */
+                if (typeof _liveControlOn !== 'undefined' && _liveControlOn) {
+                    toggleLiveControl();
+                }
+                if (typeof showToast === 'function') showToast('Stream OFF — press Sync to refresh preview', 'info');
+            }
+        }
+
+        function _updateStreamPill() {
+            const pill = document.getElementById('pillStream');
+            if (!pill) return;
+            if (_streamEnabled) {
+                pill.textContent = 'STREAM';
+                pill.classList.add('active');
+                pill.style.background = '';
+                pill.style.color = '';
+            } else {
+                pill.textContent = 'STREAM OFF';
+                pill.classList.remove('active');
+                pill.style.background = 'hsl(0, 70%, 40%)';
+                pill.style.color = '#fff';
+            }
+            const sel = document.getElementById('streamRateSel');
+            if (sel) sel.disabled = !_streamEnabled;
+        }
+
+        function onStreamRateChange() {
+            const sel = document.getElementById('streamRateSel');
+            if (!sel) return;
+            const v = parseInt(sel.value, 10);
+            if (!Number.isFinite(v) || v < 500) return;
+            _BG_REFRESH_INTERVAL_MS = v;
+            localStorage.setItem('rdm7_stream_rate', String(v));
+            /* Restart the bg refresh so the new cadence takes effect now,
+             * not on next natural interval. The CONTROL-mode poll loop
+             * reads _BG_REFRESH_INTERVAL_MS on each iteration so it picks
+             * up the change automatically. */
+            _stopBgRefresh();
+            _startBgRefresh();
+        }
+
+        /* Initial pill + dropdown sync on page load. */
+        window.addEventListener('load', () => {
+            const sel = document.getElementById('streamRateSel');
+            if (sel) sel.value = String(_BG_REFRESH_INTERVAL_MS);
+            _updateStreamPill();
+        });
+
+        /* Kick it off once the page is idle so we don't race early layout
+         * loading. Safe to call repeatedly — _startBgRefresh is idempotent. */
+        window.addEventListener('load', () => {
+            setTimeout(_startBgRefresh, 2000);
+        });
+
+        /* ═══ Live Control — JS-polled mirror + remote touch injection ═══
+         *
+         * When the LIVE pill is on:
+         *   - A setTimeout loop fetches /api/screenshot (JPEG, ~25 KB,
+         *     ~150 ms round trip over WiFi) and swaps the <img> src via
+         *     object URL. Target cadence ~3 fps by default — enough to
+         *     feel live, cheap on both sides, and ROCK SOLID across
+         *     browsers (Safari / iOS / in-app webviews all cope).
+         *   - Pointer events on the image are translated to device pixel
+         *     coordinates and POSTed to /api/touch, which drives a virtual
+         *     LVGL indev that coexists with the real GT911.
+         *   - The firmware is told to enable remote touch so the events
+         *     actually reach LVGL (safety: it's off by default).
+         *
+         * Why not the /api/capture/stream MJPEG endpoint? Multipart MJPEG
+         * works in Chrome/Firefox but Safari and several mobile browsers
+         * only render the first frame — hence the "needs sync" symptom.
+         * Polling always updates. The MJPEG endpoint stays available for
+         * ffmpeg / OBS external recording where multipart is reliable. */
+        let _liveControlOn   = false;
+        let _liveLoopToken   = 0;    /* cancel stale loops across re-toggles */
+        let _lastTouchSendMs = 0;
+        const _TOUCH_SEND_THROTTLE_MS = 25;   /* ~40 Hz — plenty for drag */
+        /* CONTROL mode uses the same user-chosen refresh cadence as the
+         * background preview (_BG_REFRESH_INTERVAL_MS). Read per-iteration
+         * below so changing the Stream Rate dropdown retunes it live. */
+
+        async function _postTouch(body) {
+            try {
+                await fetch('/api/touch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } catch (e) { /* best-effort; drop silently on transient failures */ }
+        }
+
+        /* Convert a pointer event on the <img> to device pixel coords (0..799, 0..479). */
+        function _eventToDeviceXY(e) {
+            const img = document.getElementById('liveStreamImg');
+            if (!img) return null;
+            const rect = img.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            const x = Math.round(cx * 800 / rect.width);
+            const y = Math.round(cy * 480 / rect.height);
+            return {
+                x: Math.max(0, Math.min(799, x)),
+                y: Math.max(0, Math.min(479, y)),
+            };
+        }
+
+        function _liveOnPointerDown(e) {
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            e.preventDefault();
+            e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+            _postTouch({ x: p.x, y: p.y, state: 'down' });
+        }
+
+        function _liveOnPointerMove(e) {
+            if (e.buttons === 0) return;  /* only track drags */
+            const now = performance.now();
+            if (now - _lastTouchSendMs < _TOUCH_SEND_THROTTLE_MS) return;
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            _lastTouchSendMs = now;
+            _postTouch({ x: p.x, y: p.y, state: 'move' });
+        }
+
+        function _liveOnPointerUp(e) {
+            const p = _eventToDeviceXY(e);
+            if (!p) return;
+            e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId);
+            _postTouch({ x: p.x, y: p.y, state: 'up' });
+        }
+
+        /* Bind/unbind pointer handlers on the live-stream <img>. We only want
+         * them active while Live Control is on — otherwise clicking near the
+         * canvas would still ping the device. */
+        function _bindLivePointerEvents(on) {
+            const img = document.getElementById('liveStreamImg');
+            if (!img) return;
+            const fn = on ? 'addEventListener' : 'removeEventListener';
+            img[fn]('pointerdown', _liveOnPointerDown);
+            img[fn]('pointermove', _liveOnPointerMove);
+            img[fn]('pointerup',   _liveOnPointerUp);
+            img[fn]('pointercancel', _liveOnPointerUp);
+            /* Suppress the browser's default image drag + context menu so
+             * clicks on the preview feel like a genuine touch surface. */
+            img[fn]('dragstart',   preventDefault);
+            img[fn]('contextmenu', preventDefault);
+        }
+        function preventDefault(e) { e.preventDefault(); }
+
+        /* Polling loop — fetches a JPEG from /api/screenshot, swaps it into
+         * the <img> via a blob URL, waits _LIVE_POLL_INTERVAL_MS, repeats.
+         * Each loop is tagged with a token; if the user toggles LIVE off
+         * and on again, stale in-flight loops exit on the next iteration. */
+        async function _livePollLoop(token) {
+            const img = document.getElementById('liveStreamImg');
+            let prevBlobUrl = null;
+            while (_liveControlOn && token === _liveLoopToken && img) {
+                const t0 = performance.now();
+                try {
+                    /* Native 800x480 at q=85 with 4:2:2 chroma — the sharpest combination
+                     * we can produce. Encode takes ~140 ms on the ESP32-S3; paired with the
+                     * 1000 ms poll interval that's ~14% CPU while Live is on, comfortably
+                     * under the task-watchdog threshold even with SIM running.
+                     * (smooth=1 is a no-op at full resolution since there's no downsample.) */
+                    const r = await fetch('/api/screenshot?full=1&q=85&t=' + Date.now(), { cache: 'no-store' });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    const blob = await r.blob();
+                    /* Bail if the user toggled off during the fetch */
+                    if (!_liveControlOn || token !== _liveLoopToken) {
+                        if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                        return;
+                    }
+                    const url = URL.createObjectURL(blob);
+                    img.src = url;
+                    if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                    prevBlobUrl = url;
+                } catch (e) {
+                    /* Transient network error — back off briefly and retry */
+                    await new Promise(res => setTimeout(res, 500));
+                    continue;
+                }
+                const elapsed = performance.now() - t0;
+                const wait = Math.max(0, _BG_REFRESH_INTERVAL_MS - elapsed);
+                await new Promise(res => setTimeout(res, wait));
+            }
+            if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+        }
+
+        async function toggleLiveControl() {
+            /* Guard: CONTROL needs the stream. Flip stream on for the user
+             * rather than silently doing nothing. */
+            if (!_liveControlOn && !_streamEnabled) {
+                if (typeof showToast === 'function') showToast('Turning stream ON — CONTROL needs live polling', 'info');
+                _streamEnabled = true;
+                localStorage.setItem('rdm7_stream_enabled', '1');
+                _updateStreamPill();
+                _startBgRefresh();
+            }
+            _liveControlOn = !_liveControlOn;
+            const pill         = document.getElementById('pillLiveControl');
+            const img          = document.getElementById('liveStreamImg');
+            const canvas       = document.getElementById('screenshotCanvas');
+            const interaction  = document.getElementById('interactionLayer');
+
+            if (_liveControlOn) {
+                /* 1) Tell the firmware to enable the virtual indev */
+                await _postTouch({ enabled: true });
+
+                /* 2) Swap visibility: live-img on, canvas + widget overlay off.
+                 *    Deselect any selected widget so its outside-canvas
+                 *    selection indicators also clear. */
+                if (img)         img.style.display = 'block';
+                if (canvas)      canvas.style.display = 'none';
+                if (interaction) interaction.style.display = 'none';
+                if (typeof deselectAll === 'function') deselectAll();
+                if (pill) pill.classList.add('active');
+
+                /* 3) Wire pointer → /api/touch BEFORE kicking the poll loop
+                 *    so the very first click after activation isn't missed. */
+                _bindLivePointerEvents(true);
+
+                /* 4) Start the polling loop. Bump the token so any prior
+                 *    loop from a previous activation exits on next iter. */
+                _liveLoopToken++;
+                _livePollLoop(_liveLoopToken);
+
+                showToast && showToast('Control ON — click/drag the preview to touch the dash', 'info');
+            } else {
+                /* 1) Detach pointer handlers first so no stragglers leak POSTs */
+                _bindLivePointerEvents(false);
+
+                /* 2) Bump token so the poll loop exits on its next iteration */
+                _liveLoopToken++;
+
+                /* 3) Disable remote touch server-side */
+                await _postTouch({ enabled: false });
+
+                /* 4) Restore canvas + widget overlay visibility */
+                if (img) {
+                    img.src = '';            /* release blob URL reference */
+                    img.style.display = 'none';
+                }
+                if (canvas)      canvas.style.display = '';
+                if (interaction) interaction.style.display = '';
+                if (pill) pill.classList.remove('active');
+
+                /* 5) Snap a fresh canvas screenshot so the static backdrop
+                 *    reflects whatever the dash is showing right now. */
+                captureScreenshot();
+                showToast && showToast('Control OFF', 'info');
+            }
+        }
+
+        /* Sync button state with firmware on page load — in case a previous
+         * tab left remote touch enabled and the user just reloaded. */
+        (async function _syncLiveControlOnLoad() {
+            try {
+                const r = await fetch('/api/touch');
+                if (!r.ok) return;
+                const j = await r.json();
+                if (j && j.enabled) {
+                    /* Match the UI to reality — call toggleLiveControl which
+                     * would flip it OFF. Instead just mark our flag and let
+                     * the user press the pill if they want it live again. */
+                    await _postTouch({ enabled: false });  /* safer to start clean */
+                }
+            } catch (e) { /* offline/no-backend — fine */ }
+        })();
 
 
         function updateStatus(msg, isError) {
@@ -9432,6 +9917,20 @@
             }
 
             try {
+                /* Tell the device to switch active layout first — /api/layout/set
+                 * persists the choice to NVS and reloads the dashboard. Previously
+                 * we only fetched raw JSON into the editor, so the device stayed
+                 * on the old layout until the user hit Save/Apply. */
+                const setResp = await fetch('/api/layout/set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (!setResp.ok) {
+                    const errText = await setResp.text().catch(() => '');
+                    throw new Error(errText || 'set-active failed');
+                }
+
                 const response = await fetch(`/api/layout/raw?name=${encodeURIComponent(name)}`);
                 if (!response.ok) throw new Error();
                 currentLayout = await response.json();
@@ -9480,7 +9979,7 @@
                 renderSignals();
                 updateInspector();
                 populateEcuContextSelect();
-                updateStatus(`Loaded ${name} — click Apply to send to device`);
+                updateStatus(`Switched device to ${name}`);
                 try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
             } catch (e) { updateStatus(`Error loading ${name}`, true); }
         };
@@ -11057,9 +11556,10 @@
         function _wstSyncTestRow(w) {
             const row    = document.getElementById('wstTestRow');
             const slider = document.getElementById('wstTestSlider');
+            const toggle = document.getElementById('wstTestToggle');
             const valEl  = document.getElementById('wstTestVal');
             const clr    = document.getElementById('wstTestClear');
-            if (!row || !slider || !valEl || !clr) return;
+            if (!row || !slider || !toggle || !valEl || !clr) return;
             const sig = _wstGetSignalName(w);
             if (!sig) {
                 row.style.display = 'none';
@@ -11068,16 +11568,41 @@
             }
             row.style.display = '';
             document.body.classList.add('wst-has-test');
-            const b = _wstGetTestBounds(w);
-            slider.min = b.min; slider.max = b.max; slider.step = b.step;
+
             const active = (typeof _testValues !== 'undefined') && (_testValues[sig] !== undefined);
-            const cur = active ? _testValues[sig] : b.min;
-            if (document.activeElement !== slider) slider.value = cur;
-            valEl.textContent = active ? String(cur) : '\u2014';
-            valEl.classList.toggle('active', !!active);
-            clr.style.display = active ? '' : 'none';
-            slider.dataset.signal = sig;
-            clr.dataset.signal = sig;
+            const isBool = (typeof TOGGLE_TEST_TYPES !== 'undefined') && TOGGLE_TEST_TYPES.has(w.type);
+
+            if (isBool) {
+                /* Boolean widgets (indicator / warning / toggle / button) —
+                 * show a single ACTIVE toggle instead of a slider. Clicking
+                 * injects value 1; the widget's own "active" logic fires. */
+                slider.style.display = 'none';
+                toggle.style.display = '';
+                const on = active && _testValues[sig] > 0;
+                toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+                toggle.textContent = on ? 'ACTIVE' : 'TEST ACTIVE';
+                /* Show the currently-injected value while testing so users can
+                 * tell the difference between "not testing" (—) and "testing
+                 * at 0" (widget visually off by design). */
+                valEl.textContent = active ? String(_testValues[sig]) : '\u2014';
+                valEl.classList.toggle('active', !!active);
+                clr.style.display = active ? '' : 'none';
+                toggle.dataset.signal = sig;
+                clr.dataset.signal    = sig;
+            } else {
+                /* Numeric widgets — standard value slider. */
+                toggle.style.display = 'none';
+                slider.style.display = '';
+                const b = _wstGetTestBounds(w);
+                slider.min = b.min; slider.max = b.max; slider.step = b.step;
+                const cur = active ? _testValues[sig] : b.min;
+                if (document.activeElement !== slider) slider.value = cur;
+                valEl.textContent = active ? String(cur) : '\u2014';
+                valEl.classList.toggle('active', !!active);
+                clr.style.display = active ? '' : 'none';
+                slider.dataset.signal = sig;
+                clr.dataset.signal    = sig;
+            }
         }
 
         function _wstUpdate() {
@@ -11144,6 +11669,22 @@
                     if (valEl) { valEl.textContent = String(v); valEl.classList.add('active'); }
                     const clr = document.getElementById('wstTestClear');
                     if (clr) clr.style.display = '';
+                });
+            }
+            /* Boolean-widget "ACTIVE" toggle — injects signal value 1 to drive
+             * the selected indicator / warning / toggle / button widget into
+             * its active visual state. Second click injects 0 so the widget
+             * returns to its inactive visual (instead of just clearing the
+             * local test tracker while the firmware retains the last value).
+             * The × button is still available for fully disengaging. */
+            const toggleBtn = document.getElementById('wstTestToggle');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    const sig = toggleBtn.dataset.signal;
+                    if (!sig || typeof setTestValue !== 'function') return;
+                    const wasOn = toggleBtn.getAttribute('aria-pressed') === 'true';
+                    setTestValue(sig, wasOn ? 0 : 1);
+                    _wstUpdate();
                 });
             }
             const clearBtn = document.getElementById('wstTestClear');

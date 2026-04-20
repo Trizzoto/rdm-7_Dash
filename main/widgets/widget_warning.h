@@ -33,7 +33,7 @@ typedef struct {
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	char       image_name[64];       /* RDMIMG name; empty = circle mode */
 	uint8_t    active_opa;           /* opacity when active (default 255) */
-	uint8_t    inactive_opa;         /* opacity when inactive (default 80) */
+	uint8_t    inactive_opa;         /* opacity when inactive (default 180) */
 	bool       current_state;     /* runtime only -- NOT serialized */
 	char       signal_name[32];
 	int16_t    signal_index;
