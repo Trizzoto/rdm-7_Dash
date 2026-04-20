@@ -6532,7 +6532,15 @@
                          *     are no-ops (the widget has nothing to respond to) */
                         let mode = '';
                         let arg  = 'null';
-                        if (w.type === 'indicator' && isIndicatorWired) {
+                        if (w.type === 'warning' && !_testSig) {
+                            /* Alert (warning) without a signal — drive the
+                             * widget directly by slot via /api/warning/test.
+                             * Lets the user exercise an alert's visual
+                             * BEFORE they've wired it to CAN. Slot is on
+                             * w.config.slot (the firmware-side slot). */
+                            mode = 'warning';
+                            arg  = String(w.config?.slot ?? 0);
+                        } else if (w.type === 'indicator' && isIndicatorWired) {
                             mode = 'indicator';
                             /* Indicator slot is stored on w.config.slot
                              * (web UI JSON convention), NOT on w.slot —
@@ -6941,6 +6949,15 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ slot: arg, active: active }),
+                }).catch(() => {});
+            } else if (mode === 'warning' && arg !== null) {
+                /* arg = slot (0..7). Lets alerts be previewed without a
+                 * bound signal — firmware flips wd->current_state via
+                 * widget_warning_apply_test_state() + refreshes visual. */
+                fetch('/api/warning/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slot: parseInt(arg, 10), active: active }),
                 }).catch(() => {});
             }
             /* else: no-op — widget has no testable input path */
@@ -11651,7 +11668,12 @@
             const clr    = document.getElementById('wstTestClear');
             if (!row || !slider || !toggle || !valEl || !clr) return;
             const sig = _wstGetSignalName(w);
-            if (!sig) {
+            const isBool = (typeof TOGGLE_TEST_TYPES !== 'undefined') && TOGGLE_TEST_TYPES.has(w.type);
+            /* Alerts (warnings) can be tested without a bound signal via
+             * /api/warning/test. Indicator/toggle/button without signal have
+             * no firmware hook yet — stay hidden. */
+            const warningNoSig = w.type === 'warning' && !sig;
+            if (!sig && !warningNoSig) {
                 row.style.display = 'none';
                 document.body.classList.remove('wst-has-test');
                 return;
@@ -11659,8 +11681,7 @@
             row.style.display = '';
             document.body.classList.add('wst-has-test');
 
-            const active = (typeof _testValues !== 'undefined') && (_testValues[sig] !== undefined);
-            const isBool = (typeof TOGGLE_TEST_TYPES !== 'undefined') && TOGGLE_TEST_TYPES.has(w.type);
+            const active = sig ? ((typeof _testValues !== 'undefined') && (_testValues[sig] !== undefined)) : false;
 
             if (isBool) {
                 /* Boolean widgets (indicator / warning / toggle / button) —
@@ -11668,17 +11689,30 @@
                  * injects value 1; the widget's own "active" logic fires. */
                 slider.style.display = 'none';
                 toggle.style.display = '';
-                const on = active && _testValues[sig] > 0;
+                const localOnKey = '_warnTestOn_slot_' + (w.config?.slot ?? 0);
+                const on = warningNoSig
+                    ? (window._warnTestLocal && window._warnTestLocal[localOnKey])
+                    : (active && _testValues[sig] > 0);
                 toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
                 toggle.textContent = on ? 'ACTIVE' : 'TEST ACTIVE';
-                /* Show the currently-injected value while testing so users can
-                 * tell the difference between "not testing" (—) and "testing
-                 * at 0" (widget visually off by design). */
-                valEl.textContent = active ? String(_testValues[sig]) : '\u2014';
-                valEl.classList.toggle('active', !!active);
-                clr.style.display = active ? '' : 'none';
-                toggle.dataset.signal = sig;
-                clr.dataset.signal    = sig;
+                valEl.textContent = warningNoSig
+                    ? (on ? '1' : '\u2014')
+                    : (active ? String(_testValues[sig]) : '\u2014');
+                valEl.classList.toggle('active', !!(warningNoSig ? on : active));
+                clr.style.display = (warningNoSig ? on : active) ? '' : 'none';
+                /* For alerts-without-signal, encode warn:<slot> so the click
+                 * handler knows to route via /api/warning/test. */
+                if (warningNoSig) {
+                    toggle.dataset.signal = '';
+                    toggle.dataset.warnSlot = String(w.config?.slot ?? 0);
+                    clr.dataset.signal    = '';
+                    clr.dataset.warnSlot  = String(w.config?.slot ?? 0);
+                } else {
+                    toggle.dataset.signal = sig;
+                    toggle.dataset.warnSlot = '';
+                    clr.dataset.signal    = sig;
+                    clr.dataset.warnSlot  = '';
+                }
             } else {
                 /* Numeric widgets — standard value slider. */
                 toggle.style.display = 'none';
@@ -11770,19 +11804,36 @@
             const toggleBtn = document.getElementById('wstTestToggle');
             if (toggleBtn) {
                 toggleBtn.addEventListener('click', () => {
-                    const sig = toggleBtn.dataset.signal;
-                    if (!sig || typeof setTestValue !== 'function') return;
+                    const sig  = toggleBtn.dataset.signal;
+                    const wslot = toggleBtn.dataset.warnSlot;
                     const wasOn = toggleBtn.getAttribute('aria-pressed') === 'true';
-                    setTestValue(sig, wasOn ? 0 : 1);
+                    if (wslot) {
+                        /* Alert-without-signal — route via /api/warning/test
+                         * and track local on/off so the toggle visually persists. */
+                        if (!window._warnTestLocal) window._warnTestLocal = {};
+                        const key = '_warnTestOn_slot_' + wslot;
+                        const newOn = !wasOn;
+                        window._warnTestLocal[key] = newOn;
+                        _testApply('warning', wslot, newOn);
+                    } else if (sig && typeof setTestValue === 'function') {
+                        setTestValue(sig, wasOn ? 0 : 1);
+                    }
                     _wstUpdate();
                 });
             }
             const clearBtn = document.getElementById('wstTestClear');
             if (clearBtn) {
                 clearBtn.addEventListener('click', () => {
-                    const sig = clearBtn.dataset.signal;
-                    if (!sig || typeof clearTestValue !== 'function') return;
-                    clearTestValue(sig);
+                    const sig   = clearBtn.dataset.signal;
+                    const wslot = clearBtn.dataset.warnSlot;
+                    if (wslot) {
+                        if (window._warnTestLocal) {
+                            delete window._warnTestLocal['_warnTestOn_slot_' + wslot];
+                        }
+                        _testApply('warning', wslot, false);
+                    } else if (sig && typeof clearTestValue === 'function') {
+                        clearTestValue(sig);
+                    }
                     _wstUpdate();
                 });
             }

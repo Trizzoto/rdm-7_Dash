@@ -1054,6 +1054,26 @@ void widget_warning_create(lv_obj_t *parent) {
 }
 
 
+/* ── Public test hook ─────────────────────────────────────────────────────
+ * Direct on/off driver for the alert widget. Used by /api/warning/test so
+ * Studio's TEST ACTIVE button can preview the active visual even when the
+ * alert has no signal bound. Safe to call from any context that already
+ * holds the LVGL mutex (the HTTP path dispatches via lv_async_call). */
+void widget_warning_apply_test_state(uint8_t slot, bool active) {
+	if (slot >= 8) return;
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_WARNING, slot);
+	warning_data_t *wd = w ? (warning_data_t *)w->type_data : NULL;
+	if (wd) {
+		wd->current_state = active;
+	} else if (slot < 8) {
+		/* Fallback for the legacy alert-strip path where no widget_t is
+		 * registered — poke the shared warning_data slot directly. */
+		warning_data_t *legacy = _lookup_warning_data(slot);
+		if (legacy) legacy->current_state = active;
+	}
+	update_warning_ui_immediate(slot);
+}
+
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
 static void _warning_on_signal(float value, bool is_stale, void *user_data) {

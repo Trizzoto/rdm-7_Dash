@@ -650,6 +650,16 @@ static void _apply_limiter_effect(void) {
 	 * actual RPM level, not a solid-coloured bar that looks 100% full. */
 	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
 	                           LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Panel9 — the square colour swatch on the left edge of the RPM bar —
+	 * follows the same fill colour the bar is painting. In steady state it
+	 * stays at the bar colour; when the limiter trips it flashes
+	 * (effect 1) or goes solid limiter colour (effect 2) so the driver
+	 * has a peripheral-vision cue even if the bar is off-screen. */
+	if (ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
+		lv_obj_set_style_bg_color(ui_Panel9, fill,
+		                           LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 }
 void update_redline_position(void) {
 	if (!rpm_redline_zone)

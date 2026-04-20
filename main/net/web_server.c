@@ -601,6 +601,76 @@ static const httpd_uri_t api_indicator_test_post_uri = {
     .uri = "/api/indicator/test", .method = HTTP_POST,
     .handler = api_indicator_test_post_handler, .user_ctx = NULL};
 
+/* ── /api/warning/test — force alert (warning) widget on/off ─────────────
+ * Studio's TEST ACTIVE button on the alert widget uses this when the alert
+ * has no signal bound — pressing flips the widget visual ON, release flips
+ * OFF. When a signal IS bound, Studio uses /api/signal/inject instead so
+ * the normal CAN path exercises everything.
+ *
+ * POST body: {"slot": 0..7, "active": true|false} */
+#include "widgets/widget_warning.h"
+
+typedef struct { uint8_t slot; bool active; } warn_test_req_t;
+static void _warn_test_apply_cb(void *param) {
+	warn_test_req_t *req = (warn_test_req_t *)param;
+	if (req) {
+		widget_warning_apply_test_state(req->slot, req->active);
+		free(req);
+	}
+}
+
+static esp_err_t api_warning_test_post_handler(httpd_req_t *req) {
+	char body[96];
+	int total = req->content_len;
+	if (total <= 0 || total >= (int)sizeof(body)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+		return ESP_FAIL;
+	}
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[got] = '\0';
+
+	cJSON *root = cJSON_Parse(body);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
+		return ESP_FAIL;
+	}
+	cJSON *slot_js   = cJSON_GetObjectItemCaseSensitive(root, "slot");
+	cJSON *active_js = cJSON_GetObjectItemCaseSensitive(root, "active");
+	int slot   = cJSON_IsNumber(slot_js) ? slot_js->valueint : -1;
+	bool active = cJSON_IsBool(active_js) ? cJSON_IsTrue(active_js) : false;
+	cJSON_Delete(root);
+
+	if (slot < 0 || slot > 7) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "slot must be 0..7");
+		return ESP_FAIL;
+	}
+
+	warn_test_req_t *payload = calloc(1, sizeof(*payload));
+	if (!payload) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+		return ESP_FAIL;
+	}
+	payload->slot = (uint8_t)slot;
+	payload->active = active;
+	lv_async_call(_warn_test_apply_cb, payload);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t api_warning_test_post_uri = {
+    .uri = "/api/warning/test", .method = HTTP_POST,
+    .handler = api_warning_test_post_handler, .user_ctx = NULL};
+
 static const httpd_uri_t api_touch_get_uri = {
     .uri = "/api/touch", .method = HTTP_GET,
     .handler = api_touch_get_handler, .user_ctx = NULL};
@@ -4244,6 +4314,7 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &api_capture_stream_uri);
 	REGISTER_URI(server, &api_touch_post_uri);
 	REGISTER_URI(server, &api_indicator_test_post_uri);
+	REGISTER_URI(server, &api_warning_test_post_uri);
 	REGISTER_URI(server, &api_touch_get_uri);
 	REGISTER_URI(server, &layout_version_uri);
 	REGISTER_URI(server, &layout_current_uri);

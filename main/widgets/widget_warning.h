@@ -102,6 +102,11 @@ uint8_t widget_warning_get_slot(const widget_t *w);
 /** Return true if this warning widget is bound to a signal. */
 bool widget_warning_has_signal(const widget_t *w);
 
+/** Direct test-state driver — sets current_state + refreshes the visual
+ *  for the given slot. Used by /api/warning/test so Studio's TEST ACTIVE
+ *  button can preview the active visual even when no signal is bound. */
+void widget_warning_apply_test_state(uint8_t slot, bool active);
+
 #ifdef __cplusplus
 }
 #endif
