@@ -38,6 +38,12 @@ void remote_touch_set_enabled(bool on);
 /** Query current enable state (for /api/touch GET / UI sync). */
 bool remote_touch_is_enabled(void);
 
+/** Force-release any latched virtual press NOW. Called from the physical
+ *  GT911 read_cb when a fresh finger lands on the panel — a real touch
+ *  always wins over a possibly-stuck remote press. Cheap no-op when the
+ *  virtual indev is already released. */
+void remote_touch_force_release(void);
+
 #ifdef __cplusplus
 }
 #endif

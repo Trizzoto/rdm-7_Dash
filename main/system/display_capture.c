@@ -276,8 +276,14 @@ esp_err_t display_capture_screenshot_jpeg(int quality, bool full_res, bool smoot
 	const size_t jpg_max   = out_px;       /* generous ceiling */
 
 	if (!_ensure_mutex()) return ESP_ERR_NO_MEM;
-	if (xSemaphoreTake(s_work_mux, pdMS_TO_TICKS(2000)) != pdTRUE) {
-		ESP_LOGW(TAG, "Work buffer mutex timeout");
+	/* Short timeout — if another request is mid-encode, fail fast so the
+	 * HTTP client can drop/retry rather than stacking waiters behind a
+	 * 10 s encode stall. The caller (screenshot_handler) will return 503;
+	 * the browser's poll loop retries on the next interval. The previous
+	 * 2000 ms wait let the HTTP task queue grow until the listener task
+	 * starved IDLE on its core. */
+	if (xSemaphoreTake(s_work_mux, pdMS_TO_TICKS(100)) != pdTRUE) {
+		ESP_LOGD(TAG, "Work buffer busy — skipping frame");
 		return ESP_ERR_TIMEOUT;
 	}
 

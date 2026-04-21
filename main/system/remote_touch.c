@@ -20,9 +20,19 @@ static lv_indev_drv_t s_drv;
  * tap, getBoundingClientRect races, network drops), the firmware would
  * otherwise stay s_pressed=true forever — long-press + everything that
  * follows. Auto-release if no touch POST arrives within
- * REMOTE_TOUCH_IDLE_MS while pressed. */
+ * REMOTE_TOUCH_IDLE_MS while pressed.
+ *
+ * Must be BELOW LVGL's default long-press threshold (400 ms, see
+ * LV_INDEV_DEF_LONG_PRESS_TIME). At 1500 ms the stuck press would fire
+ * LV_EVENT_LONG_PRESSED → open a config modal → absorb all further
+ * touches, making the device *feel* dead even after the watchdog
+ * eventually released. Legitimate drags send pointermove events at
+ * ≤25 ms cadence (see _TOUCH_SEND_THROTTLE_MS in index.html), each of
+ * which refreshes s_last_activity_us — so a real hold/drag never
+ * trips this. 350 ms gives 50 ms of headroom inside the 400 ms LVGL
+ * long-press window. */
 #include "esp_timer.h"
-#define REMOTE_TOUCH_IDLE_MS 1500
+#define REMOTE_TOUCH_IDLE_MS 350
 static int64_t  s_last_activity_us  = 0;
 
 /* Deferred-release semantics:
@@ -153,4 +163,19 @@ bool remote_touch_is_enabled(void) {
 		xSemaphoreGive(s_mux);
 	}
 	return v;
+}
+
+void remote_touch_force_release(void) {
+	/* Called from the physical touch read_cb ~30 Hz, so keep this cheap —
+	 * fast-path out when nothing's latched. Un-mutexed read is fine: worst
+	 * case we take the mutex one extra tick after a state change. */
+	if (!s_mux || (!s_pressed && !s_release_requested)) return;
+	if (xSemaphoreTake(s_mux, 0) == pdTRUE) {
+		if (s_pressed || s_release_requested) {
+			s_pressed           = false;
+			s_release_requested = false;
+			ESP_LOGI(TAG, "Virtual press cleared by physical touch");
+		}
+		xSemaphoreGive(s_mux);
+	}
 }

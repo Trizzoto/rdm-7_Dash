@@ -395,7 +395,19 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   bool touchpad_pressed = esp_lcd_touch_get_coordinates(
       drv->user_data, touchpad_x, touchpad_y, NULL, &touchpad_cnt, 1);
 
-  if (touchpad_pressed && touchpad_cnt > 0) {
+  /* Rising edge on the physical panel — clear any latched virtual press
+   * from CONTROL mode. A real finger always wins over a possibly-stuck
+   * remote press (e.g. browser dropped a pointerup). Without this, a
+   * stuck virtual press can hold a widget captured and make the device
+   * feel dead until the 350 ms watchdog fires. */
+  static bool s_prev_phys_pressed = false;
+  bool now_pressed = (touchpad_pressed && touchpad_cnt > 0);
+  if (now_pressed && !s_prev_phys_pressed) {
+    remote_touch_force_release();
+  }
+  s_prev_phys_pressed = now_pressed;
+
+  if (now_pressed) {
     data->point.x = touchpad_x[0];
     data->point.y = touchpad_y[0];
     data->state = LV_INDEV_STATE_PR;

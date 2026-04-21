@@ -205,6 +205,31 @@ static int _query_int(httpd_req_t *req, const char *key, int fallback) {
 	return v ? v : fallback;
 }
 
+/* ── Screenshot dedup cache ─────────────────────────────────────────────
+ * CONTROL mode polls /api/screenshot once per stream-refresh tick. When
+ * the dashboard is idle (no widget updates, no sim, no user input) the
+ * LVGL flush tap isn't bumping s_shadow_seq, so re-encoding an
+ * identical frame every poll is pure wasted CPU — each full-res encode
+ * is ~140 ms best-case, multiplied across every connected browser.
+ *
+ * This cache remembers (seq, full, quality, smooth, raw) for the last
+ * encoded frame. A poll with the same tuple and unchanged seq returns
+ * the cached bytes directly — zero encode, zero shadow memcpy. The
+ * mjpeg handler already does this per-connection; mirroring it on the
+ * single-shot endpoint removes the dominant cause of the watchdog
+ * trips in the recent log (repeated 10 s encodes under contention).
+ *
+ * Mutex protects the buffer lifetime. We hold it only across a short
+ * memcpy into a fresh per-request allocation, then release — never
+ * during the encode itself. */
+static SemaphoreHandle_t s_ss_cache_mux = NULL;
+static uint8_t  *s_ss_cache_buf   = NULL;
+static size_t    s_ss_cache_size  = 0;
+static uint32_t  s_ss_cache_seq   = 0;
+static int       s_ss_cache_key_q = -1;
+static bool      s_ss_cache_key_full   = false;
+static bool      s_ss_cache_key_smooth = false;
+
 static esp_err_t screenshot_handler(httpd_req_t *req) {
 	/* Default to JPEG; raw=1 forces the original RGB565 output.
 	 *   ?q=N        JPEG quality 1-100 (default 85)
@@ -216,11 +241,37 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
 	bool smooth   = (_query_int(req, "smooth", 0) == 1);
 	int  quality  = _query_int(req, "q", 85);
 
+	/* Dedup cache check — only for JPEG requests (raw is uncommon and
+	 * big enough that caching the full RGB565 blob isn't worthwhile). */
 	uint8_t *buf = NULL;
 	size_t   size = 0;
-	esp_err_t ret = want_raw
-	    ? display_capture_screenshot(&buf, &size)
-	    : display_capture_screenshot_jpeg(quality, full_res, smooth, &buf, &size);
+	esp_err_t ret = ESP_OK;
+	bool from_cache = false;
+	if (!want_raw) {
+		if (!s_ss_cache_mux) s_ss_cache_mux = xSemaphoreCreateMutex();
+		if (s_ss_cache_mux && xSemaphoreTake(s_ss_cache_mux, pdMS_TO_TICKS(50)) == pdTRUE) {
+			uint32_t cur_seq = display_capture_shadow_seq();
+			if (s_ss_cache_buf
+			    && s_ss_cache_seq        == cur_seq
+			    && s_ss_cache_key_q      == quality
+			    && s_ss_cache_key_full   == full_res
+			    && s_ss_cache_key_smooth == smooth) {
+				buf = heap_caps_malloc(s_ss_cache_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+				if (buf) {
+					memcpy(buf, s_ss_cache_buf, s_ss_cache_size);
+					size = s_ss_cache_size;
+					from_cache = true;
+				}
+			}
+			xSemaphoreGive(s_ss_cache_mux);
+		}
+	}
+
+	if (!from_cache) {
+		ret = want_raw
+		    ? display_capture_screenshot(&buf, &size)
+		    : display_capture_screenshot_jpeg(quality, full_res, smooth, &buf, &size);
+	}
 
 	/* If JPEG encoding isn't compiled in yet (pre-component-fetch state),
 	 * gracefully fall through to raw so the endpoint still works. */
@@ -231,10 +282,42 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
 	}
 
 	if (ret != ESP_OK) {
+		/* ESP_ERR_TIMEOUT = another encode already in flight. Tell the
+		 * client to retry rather than escalating to 500 (which would
+		 * fire error toasts in Studio and trigger its 500 ms back-off).
+		 * Code 503 + short Retry-After lets the poll loop try again on
+		 * the next natural tick. */
+		if (ret == ESP_ERR_TIMEOUT) {
+			httpd_resp_set_status(req, "503 Service Unavailable");
+			httpd_resp_set_hdr(req, "Retry-After", "1");
+			httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+			httpd_resp_send(req, "busy", 4);
+			return ESP_OK;
+		}
 		ESP_LOGE(TAG, "Capture failed: %s", esp_err_to_name(ret));
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 		                     "Screenshot capture failed");
 		return ESP_FAIL;
+	}
+
+	/* Populate the dedup cache for JPEGs we just encoded (not cache hits,
+	 * not fallbacks to raw). Next poll with the same params + unchanged
+	 * shadow_seq will serve from cache instead of re-encoding. */
+	if (!want_raw && !from_cache && s_ss_cache_mux
+	    && xSemaphoreTake(s_ss_cache_mux, pdMS_TO_TICKS(50)) == pdTRUE) {
+		if (s_ss_cache_buf) heap_caps_free(s_ss_cache_buf);
+		s_ss_cache_buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+		if (s_ss_cache_buf) {
+			memcpy(s_ss_cache_buf, buf, size);
+			s_ss_cache_size       = size;
+			s_ss_cache_seq        = display_capture_shadow_seq();
+			s_ss_cache_key_q      = quality;
+			s_ss_cache_key_full   = full_res;
+			s_ss_cache_key_smooth = smooth;
+		} else {
+			s_ss_cache_size = 0;  /* mark invalid on alloc fail */
+		}
+		xSemaphoreGive(s_ss_cache_mux);
 	}
 
 	httpd_resp_set_type(req, want_raw ? "application/octet-stream" : "image/jpeg");
@@ -243,8 +326,9 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
 
 	esp_err_t send_ret = httpd_resp_send(req, (const char *)buf, size);
 	display_capture_free_buffer(buf);
-	ESP_LOGI(TAG, "Screenshot sent: %zu bytes (%s)", size,
-	         want_raw ? "raw" : "jpeg");
+	ESP_LOGI(TAG, "Screenshot sent: %zu bytes (%s%s)", size,
+	         want_raw ? "raw" : "jpeg",
+	         from_cache ? ", cached" : "");
 	return send_ret;
 }
 
@@ -4371,6 +4455,15 @@ esp_err_t web_server_start(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
 	config.stack_size = 5120;
+	/* Pin httpd to core 0. LVGL runs on core 1; if httpd also lands on
+	 * core 1 and then jpeg_enc_process() runs for 10+ seconds (happens
+	 * under load: CONTROL mode + stream + widget rebuild + layout save
+	 * in parallel saturates PSRAM bandwidth), it preempts the LVGL task
+	 * and starves IDLE1 → task-watchdog trip → eventual reboot. With
+	 * httpd on core 0 the heavy encode work stays out of LVGL's way,
+	 * and IDLE0 is less loaded than IDLE1. Observed in serial log:
+	 * back-to-back WDT hits during /api/screenshot encode stalls. */
+	config.core_id    = 0;
 	/* 100 slots: we're at 86 actual REGISTER_URI calls after the gear +
 	 * warning test endpoints landed. ESP-IDF silently drops any handler
 	 * registered past max_uri_handlers — the 80 we used to have left the
