@@ -70,7 +70,6 @@ static void _populate_scan_list(void);
 static void _show_password_modal(const char *ssid);
 static void _close_password_modal(void);
 static void _update_visibility(void);
-static void _style_switch(lv_obj_t *sw);
 static void _style_section_card(lv_obj_t *card);
 static void _style_section_title(lv_obj_t *label);
 static lv_obj_t *_create_info_row(lv_obj_t *parent, const char *label_text,
@@ -501,26 +500,6 @@ static void _destroy_screen(void)
 /* =========================================================================
  * Style helpers
  * ========================================================================= */
-
-static void _style_switch(lv_obj_t *sw)
-{
-    /* Track OFF */
-    lv_obj_set_style_bg_color(sw, THEME_COLOR_INPUT_BG,
-                              LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(sw, THEME_COLOR_BORDER,
-                                  LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(sw, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
-
-    /* Track ON */
-    lv_obj_set_style_bg_color(sw, THEME_COLOR_ACCENT_BLUE,
-                              LV_PART_MAIN | LV_STATE_CHECKED);
-    lv_obj_set_style_border_color(sw, THEME_COLOR_ACCENT_BLUE,
-                                  LV_PART_MAIN | LV_STATE_CHECKED);
-
-    /* Knob */
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0xE8E8E8), LV_PART_KNOB);
-    lv_obj_set_style_pad_all(sw, -2, LV_PART_KNOB);
-}
 
 static void _style_section_card(lv_obj_t *card)
 {
