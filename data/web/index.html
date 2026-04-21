@@ -3077,6 +3077,58 @@
         </div>
     </div>
 
+    <!-- Gear Setup modal — configures the CALCULATED_GEAR internal signal.
+         Opened via the hamburger "Gear Setup..." item, or automatically the
+         first time a widget picks CALCULATED_GEAR as its data source. -->
+    <div id="gearModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeGearSetup()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:460px; max-width:92vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-weight:600; font-size:14px;">Gear Setup — Calculated Gear</span>
+                <button class="close-btn" onclick="closeGearSetup()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.4;">
+                Back-computes the engaged gear from live RPM &amp; vehicle speed. Enter your
+                gearbox ratios (in gear order), final drive, and wheel circumference.
+                The signal <b>CALCULATED_GEAR</b> publishes 0 for Neutral / stationary,
+                1 for 1st, etc.
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">Wheel Circumference (m)
+                        <input id="gearWheelM" type="number" step="0.001" min="0.3" max="4" value="1.95"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Final Drive Ratio
+                        <input id="gearFinalDrive" type="number" step="0.001" min="1" max="10" value="4.11"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">RPM Signal
+                        <select id="gearRpmSig" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;"></select>
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Speed Signal (km/h)
+                        <select id="gearSpeedSig" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;"></select>
+                    </label>
+                </div>
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted); margin-bottom:4px;">
+                        <span>Gearbox Ratios <span style="font-size:10px; opacity:0.7;">(N = 0.000; 1st–Nth in order)</span></span>
+                        <span style="display:flex; gap:4px;">
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 8px;" onclick="_gearAddRatio()">+ Gear</button>
+                            <button class="btn btn-secondary" style="font-size:10px; padding:2px 8px;" onclick="_gearRemoveRatio()">− Gear</button>
+                        </span>
+                    </div>
+                    <div id="gearRatioList" style="display:flex; flex-direction:column; gap:4px;"></div>
+                </div>
+                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+                    <input id="gearEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled — publish CALCULATED_GEAR
+                </label>
+                <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveGearSetup()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <div id="dimmerModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDimmerSettings()">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:380px; max-width:90vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -6850,6 +6902,17 @@
             renderEditor();
             updateInspector();
             updateStatus(sigName ? `Bound signal "${sigName}"` : 'Signal unbound');
+
+            /* If the user picked CALCULATED_GEAR, open the Gear Setup modal
+             * so they can configure ratios + wheel circ immediately. Only
+             * prompt once per page load to avoid nagging if they rebind
+             * multiple widgets to the same signal. */
+            if (sigName === 'CALCULATED_GEAR' && !window._gearSetupPrompted) {
+                window._gearSetupPrompted = true;
+                setTimeout(() => {
+                    if (typeof openGearSetup === 'function') openGearSetup();
+                }, 250);
+            }
         }
 
         /* ── Signal Simulator toggle ── */
@@ -8856,6 +8919,15 @@
         let _liveControlOn   = false;
         let _liveLoopToken   = 0;    /* cancel stale loops across re-toggles */
         let _lastTouchSendMs = 0;
+        /* Last device-space pointer position — used as a fallback for
+         * pointerup when the image's getBoundingClientRect returns 0×0
+         * (can happen on the very first click after enabling CONTROL
+         * before the img has received its first frame). Without this
+         * fallback the UP is silently dropped, firmware stays pressed,
+         * and the next click gets interpreted as a continuation of the
+         * held press — long-press fires on whatever the user first
+         * tapped. */
+        let _lastTouchPos    = null;
         const _TOUCH_SEND_THROTTLE_MS = 25;   /* ~40 Hz — plenty for drag */
         /* CONTROL mode uses the same user-chosen refresh cadence as the
          * background preview (_BG_REFRESH_INTERVAL_MS). Read per-iteration
@@ -8871,11 +8943,21 @@
             } catch (e) { /* best-effort; drop silently on transient failures */ }
         }
 
-        /* Convert a pointer event on the <img> to device pixel coords (0..799, 0..479). */
+        /* Convert a pointer event on the <img> to device pixel coords (0..799, 0..479).
+         * Falls back to the parent .screen-frame / canvas rect if the img itself
+         * isn't sized yet (happens on the first click before the first MJPEG
+         * frame has loaded — rect is 0×0 which would silently drop the touch
+         * and leave the firmware stuck pressed). */
         function _eventToDeviceXY(e) {
             const img = document.getElementById('liveStreamImg');
             if (!img) return null;
-            const rect = img.getBoundingClientRect();
+            let rect = img.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) {
+                /* Fall back to the canvas in the same layout slot — it keeps
+                 * its 800×480 layout size even while the img is empty. */
+                const canvas = document.getElementById('screenshotCanvas');
+                if (canvas) rect = canvas.getBoundingClientRect();
+            }
             if (rect.width === 0 || rect.height === 0) return null;
             const cx = e.clientX - rect.left;
             const cy = e.clientY - rect.top;
@@ -8892,6 +8974,7 @@
             if (!p) return;
             e.preventDefault();
             e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+            _lastTouchPos = p;
             _postTouch({ x: p.x, y: p.y, state: 'down' });
         }
 
@@ -8902,14 +8985,29 @@
             const p = _eventToDeviceXY(e);
             if (!p) return;
             _lastTouchSendMs = now;
+            _lastTouchPos = p;
             _postTouch({ x: p.x, y: p.y, state: 'move' });
         }
 
         function _liveOnPointerUp(e) {
-            const p = _eventToDeviceXY(e);
-            if (!p) return;
-            e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId);
-            _postTouch({ x: p.x, y: p.y, state: 'up' });
+            /* Always send the release. If the img's rect went to 0 in the
+             * middle of the interaction (image swap / DOM churn), fall back
+             * to the last known position so the firmware never strands a
+             * stuck press — that was the root cause of "first click does
+             * nothing, second click opens a long-press config modal". */
+            const p = _eventToDeviceXY(e) || _lastTouchPos;
+            if (e.target && e.target.releasePointerCapture) {
+                try { e.target.releasePointerCapture(e.pointerId); } catch (_) {}
+            }
+            if (p) {
+                _postTouch({ x: p.x, y: p.y, state: 'up' });
+            } else if (_liveControlOn) {
+                /* Absolute last resort: we have no coordinates at all, but
+                 * the firmware is still pressed from a prior event. Send a
+                 * bare release at (0,0) just to flip s_pressed back off. */
+                _postTouch({ x: 0, y: 0, state: 'up' });
+            }
+            _lastTouchPos = null;
         }
 
         /* Bind/unbind pointer handlers on the live-stream <img>. We only want
@@ -10689,8 +10787,130 @@
         const INTERNAL_SIGNALS = [
             'INDICATOR_LEFT', 'INDICATOR_RIGHT', 'FUEL_SENDER_V',
             'CHIP_TEMP', 'FPS', 'CPU_PERCENT', 'FREE_HEAP_KB',
-            'FREE_PSRAM_KB', 'UPTIME_S', 'WIFI_RSSI'
+            'FREE_PSRAM_KB', 'UPTIME_S', 'WIFI_RSSI',
+            'CALCULATED_GEAR'   /* computed from RPM + SPEED, see gear setup modal */
         ];
+
+        /* ── Gear Setup modal ─────────────────────────────────────────────
+         * Configures the CALCULATED_GEAR synthetic signal: wheel
+         * circumference, final drive, per-gear ratios, and which RPM/Speed
+         * signals to read. Writes via POST /api/gear/config — firmware
+         * picks up the change on the next 500 ms internal-signal tick. */
+        function closeGearSetup() {
+            const m = document.getElementById('gearModal');
+            if (m) m.style.display = 'none';
+        }
+        function _gearPopulateSigSelects() {
+            const sigs = new Set();
+            (currentLayout.signals || []).forEach(s => { if (s.name) sigs.add(s.name); });
+            /* Also include common ECU-generated names even if the current
+             * layout hasn't loaded signals yet. */
+            ['RPM','VEHICLE_SPEED','WHEEL_SPEED','SPEED'].forEach(n => sigs.add(n));
+            ['gearRpmSig','gearSpeedSig'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                const wanted = sel.value;
+                sel.innerHTML = '';
+                Array.from(sigs).sort().forEach(n => {
+                    const o = document.createElement('option');
+                    o.value = n; o.textContent = n;
+                    sel.appendChild(o);
+                });
+                if (wanted) sel.value = wanted;
+            });
+        }
+        function _gearRenderRatios(ratios) {
+            const list = document.getElementById('gearRatioList');
+            if (!list) return;
+            list.innerHTML = '';
+            ratios.forEach((r, i) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:grid; grid-template-columns:50px 1fr; gap:8px; align-items:center;';
+                const label = (i === 0) ? 'N' : String(i);
+                row.innerHTML = `<span style="font-size:12px; font-weight:600; color:var(--text-muted); text-align:right;">${label}</span>
+                    <input type="number" step="0.001" min="0" value="${r.toFixed(3)}" data-gear-idx="${i}" ${i === 0 ? 'disabled title="Neutral is always 0.000"' : ''}
+                           style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:monospace;">`;
+                list.appendChild(row);
+            });
+        }
+        function _gearReadRatios() {
+            const list = document.getElementById('gearRatioList');
+            if (!list) return [0];
+            return Array.from(list.querySelectorAll('input[data-gear-idx]'))
+                .sort((a, b) => parseInt(a.dataset.gearIdx) - parseInt(b.dataset.gearIdx))
+                .map((inp, i) => i === 0 ? 0 : (parseFloat(inp.value) || 0));
+        }
+        function _gearAddRatio() {
+            const r = _gearReadRatios();
+            if (r.length >= 9) return;  /* GEAR_CAL_MAX_GEARS */
+            /* Sensible default: continue the downward trend */
+            const last = r[r.length - 1] || 1.0;
+            const prev = r[r.length - 2] || last * 1.3;
+            const next = last * (last / prev || 0.78);
+            r.push(Math.max(0.1, Math.round(next * 1000) / 1000));
+            _gearRenderRatios(r);
+        }
+        function _gearRemoveRatio() {
+            const r = _gearReadRatios();
+            if (r.length <= 2) return;  /* keep at least N + 1st */
+            r.pop();
+            _gearRenderRatios(r);
+        }
+        async function openGearSetup() {
+            if (typeof closeMobileMenu === 'function') closeMobileMenu();
+            const modal = document.getElementById('gearModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            _gearPopulateSigSelects();
+            /* Defaults — overwritten by firmware response if available */
+            let cfg = {
+                wheel_circumference_m: 1.95,
+                final_drive: 4.11,
+                rpm_signal: 'RPM',
+                speed_signal: 'VEHICLE_SPEED',
+                ratios: [0, 3.321, 1.902, 1.308, 1.000, 0.759],
+                enabled: false
+            };
+            try {
+                const r = await fetch('/api/gear/config');
+                if (r.ok) {
+                    const j = await r.json();
+                    cfg = Object.assign(cfg, j);
+                }
+            } catch (e) { /* offline — use defaults */ }
+            document.getElementById('gearWheelM').value     = (cfg.wheel_circumference_m || 1.95).toFixed(3);
+            document.getElementById('gearFinalDrive').value = (cfg.final_drive || 4.11).toFixed(3);
+            document.getElementById('gearEnabled').checked  = !!cfg.enabled;
+            if (document.getElementById('gearRpmSig').querySelector(`option[value="${cfg.rpm_signal}"]`)) {
+                document.getElementById('gearRpmSig').value = cfg.rpm_signal;
+            }
+            if (document.getElementById('gearSpeedSig').querySelector(`option[value="${cfg.speed_signal}"]`)) {
+                document.getElementById('gearSpeedSig').value = cfg.speed_signal;
+            }
+            _gearRenderRatios(cfg.ratios && cfg.ratios.length ? cfg.ratios : [0, 3.321, 1.902, 1.308, 1.000, 0.759]);
+        }
+        async function saveGearSetup() {
+            const payload = {
+                wheel_circumference_m: parseFloat(document.getElementById('gearWheelM').value) || 1.95,
+                final_drive:           parseFloat(document.getElementById('gearFinalDrive').value) || 4.11,
+                rpm_signal:            document.getElementById('gearRpmSig').value || 'RPM',
+                speed_signal:          document.getElementById('gearSpeedSig').value || 'VEHICLE_SPEED',
+                ratios:                _gearReadRatios(),
+                enabled:               document.getElementById('gearEnabled').checked
+            };
+            try {
+                const r = await fetch('/api/gear/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                if (typeof showToast === 'function') showToast('Gear setup saved', 'success');
+                closeGearSetup();
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Save failed: ' + e.message, 'error');
+            }
+        }
 
         async function openDimmerSettings() {
             const modal = document.getElementById('dimmerModal');
@@ -11310,6 +11530,7 @@
                     { type: 'button', label: 'Signal Dashboard\u2026', icon: 'activity', onclick: 'openSignalDashboard()' },
                     { type: 'button', label: 'Data Logger\u2026',      icon: 'database', onclick: 'openDataLogger()' },
                     { type: 'button', label: 'Fuel Calibration\u2026', icon: 'gauge',    onclick: 'openFuelCalibration()' },
+                    { type: 'button', label: 'Gear Setup\u2026',       icon: 'gauge',    onclick: 'openGearSetup()' },
                     { type: 'button', label: 'Import DBC\u2026',       icon: 'upload',   onclick: 'openDbcImportModal()' },
                     { type: 'button', label: 'Device Info\u2026',      icon: 'monitor',  onclick: 'openDeviceInfo()' },
                     { type: 'button', label: 'Marketplace',            icon: 'shop',     onclick: 'openMarketplace()' }

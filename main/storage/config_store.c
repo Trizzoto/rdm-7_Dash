@@ -481,6 +481,68 @@ esp_err_t config_store_load_ecu(char *make, size_t m_len,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  GEAR CALCULATION (ratios + wheel circumference + final drive)
+ *  Stored as a single blob. Used by signal_internal to compute
+ *  CALCULATED_GEAR from RPM / VEHICLE_SPEED each LVGL tick.
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_GEAR_CAL "gear_cal"
+
+esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_GEAR_CAL, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(handle, "cfg", cfg, sizeof(*cfg));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "gear cal saved: wheel=%.3fm fd=%.3f n=%u en=%d",
+                 cfg->wheel_circumference_m, cfg->final_drive,
+                 (unsigned)cfg->ratio_count, (int)cfg->enabled);
+    }
+    return err;
+}
+
+esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+    /* Sensible defaults — generic manual 5-speed, 1.95 m tyre, 4.11 diff.
+     * enabled=false so nothing publishes until the user confirms setup. */
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->wheel_circumference_m = 1.95f;
+    cfg->final_drive           = 4.11f;
+    cfg->ratio_count           = 6;   /* N + 5 forward */
+    cfg->ratios[0] = 0.0f;
+    cfg->ratios[1] = 3.321f;
+    cfg->ratios[2] = 1.902f;
+    cfg->ratios[3] = 1.308f;
+    cfg->ratios[4] = 1.000f;
+    cfg->ratios[5] = 0.759f;
+    strncpy(cfg->rpm_signal,   "RPM",           sizeof(cfg->rpm_signal)   - 1);
+    strncpy(cfg->speed_signal, "VEHICLE_SPEED", sizeof(cfg->speed_signal) - 1);
+    cfg->enabled = false;
+
+    nvs_handle_t handle;
+    if (nvs_open(NS_GEAR_CAL, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    size_t len = sizeof(*cfg);
+    gear_cal_config_t loaded;
+    if (nvs_get_blob(handle, "cfg", &loaded, &len) == ESP_OK &&
+        len == sizeof(*cfg)) {
+        /* Sanity-clamp in case NVS was corrupted or a build bumped fields. */
+        if (loaded.ratio_count > GEAR_CAL_MAX_GEARS) loaded.ratio_count = GEAR_CAL_MAX_GEARS;
+        if (loaded.wheel_circumference_m < 0.1f ||
+            loaded.wheel_circumference_m > 5.0f) loaded.wheel_circumference_m = 1.95f;
+        if (loaded.final_drive < 1.0f || loaded.final_drive > 10.0f) loaded.final_drive = 4.11f;
+        if (loaded.rpm_signal[0]   == '\0') strncpy(loaded.rpm_signal,   "RPM",           sizeof(loaded.rpm_signal)   - 1);
+        if (loaded.speed_signal[0] == '\0') strncpy(loaded.speed_signal, "VEHICLE_SPEED", sizeof(loaded.speed_signal) - 1);
+        *cfg = loaded;
+    }
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FIRST-RUN FLAG (#17)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_FIRST_RUN "first_run"

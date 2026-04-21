@@ -39,6 +39,15 @@ float signal_internal_get_fuel_voltage(void);
 /** Increment the FPS frame counter. Call from the display flush callback. */
 void signal_internal_count_frame(void);
 
+/* ── Calculated-gear configuration ───────────────────────────────────────
+ * Live-editable from the web UI. set() persists to NVS + updates the
+ * in-RAM cache so the timer sees the new config on the next tick.
+ * gear_cal_config_t is defined in storage/config_store.h — pulled in by
+ * anyone who uses these APIs. */
+typedef struct gear_cal_config gear_cal_config_t_fwd;  /* placeholder — real typedef in config_store.h */
+void signal_internal_set_gear_cal(const void *cfg);
+void signal_internal_get_gear_cal(void *out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -115,6 +115,31 @@ esp_err_t config_store_save_ecu(const char *make, const char *version);
 esp_err_t config_store_load_ecu(char *make, size_t m_len,
                                 char *version, size_t v_len);
 
+/* ── Calculated gear — compute current gear from RPM / SPEED ─────────────
+ * With a known wheel circumference, final drive, and per-gear ratios, the
+ * firmware can back-compute the currently engaged gear and inject it as
+ * the CALCULATED_GEAR signal. Users configure via the Studio "Gear Setup"
+ * modal (shown when they pick CALCULATED_GEAR as a data source).
+ *
+ * ratios[0] is reserved for Neutral / stationary (nominally 0.0 — matched
+ * when speed is below the stopped threshold). ratios[1..ratio_count-1]
+ * are 1st through Nth gear, in gear-order. Final drive multiplies
+ * through (so ratios here are GEARBOX ratios, not overall ratios). */
+#define GEAR_CAL_MAX_GEARS 9  /* N + up to 8 forward gears */
+
+typedef struct {
+    float   wheel_circumference_m;  /* metres — e.g. 1.95 for 255/40R18 */
+    float   final_drive;            /* differential ratio, e.g. 4.11 */
+    uint8_t ratio_count;            /* how many entries in ratios[] are valid */
+    float   ratios[GEAR_CAL_MAX_GEARS];  /* [0]=N (0.0), [1]=1st, [2]=2nd, ... */
+    char    rpm_signal[32];         /* name of RPM signal (default "RPM") */
+    char    speed_signal[32];       /* name of speed signal (default "VEHICLE_SPEED") */
+    bool    enabled;                /* master switch */
+} gear_cal_config_t;
+
+esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg);
+esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

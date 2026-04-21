@@ -9,6 +9,7 @@
 
 #include "signal_internal.h"
 #include "signal.h"
+#include "storage/config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -18,6 +19,7 @@
 #include "driver/temperature_sensor.h"
 #include "lvgl.h"
 #include "io/wire_inputs.h"
+#include <math.h>
 
 static const char *TAG = "sig_internal";
 
@@ -38,6 +40,9 @@ static fuel_cal_config_t s_fuel_cal = {
 };
 
 static float s_last_fuel_voltage = 0.0f;
+
+/* ── Calculated gear config (loaded from NVS on start, refreshed via API) ── */
+static gear_cal_config_t s_gear_cal = {0};
 
 /* Simple FPS counter — incremented by the flush callback, read and
  * reset every timer period (~500 ms) to derive frames per second. */
@@ -126,6 +131,54 @@ static void _internal_timer_cb(lv_timer_t *timer)
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
         signal_inject_test_value("WIFI_RSSI", (float)ap_info.rssi);
     }
+
+    /* ── CALCULATED_GEAR ──────────────────────────────────────────────
+     * Back-compute the currently engaged gear from live RPM + speed by
+     * comparing the observed overall ratio to the user-configured
+     * gearbox + final-drive ratios.
+     *
+     *   wheel_rps    = (speed_kmh * 1000 / 3600) / wheel_circumference_m
+     *   overall      = (rpm / 60) / wheel_rps          // engine revs per wheel rev
+     *   gearbox      = overall / final_drive
+     *   best_gear    = argmin_i |gearbox - ratios[i]|
+     *
+     * Emits 0 for N / stationary (speed below 5 km/h OR rpm below 500).
+     * When disabled (user hasn't configured), no signal is emitted — the
+     * widget that tries to read CALCULATED_GEAR simply sees no value. */
+    if (s_gear_cal.enabled && s_gear_cal.ratio_count > 1 &&
+        s_gear_cal.wheel_circumference_m > 0.01f &&
+        s_gear_cal.final_drive > 0.01f) {
+        int16_t rpm_idx   = signal_find_by_name(s_gear_cal.rpm_signal);
+        int16_t speed_idx = signal_find_by_name(s_gear_cal.speed_signal);
+        signal_t *rpm_sig   = (rpm_idx   >= 0) ? signal_get_by_index((uint16_t)rpm_idx)   : NULL;
+        signal_t *speed_sig = (speed_idx >= 0) ? signal_get_by_index((uint16_t)speed_idx) : NULL;
+        if (rpm_sig && speed_sig) {
+            float rpm   = rpm_sig->current_value;
+            float speed = speed_sig->current_value;
+            {
+                float gear = 0.0f;
+                if (speed < 5.0f || rpm < 500.0f) {
+                    gear = 0.0f;  /* stationary / idle → Neutral */
+                } else {
+                    float wheel_rps = (speed * 1000.0f / 3600.0f)
+                                      / s_gear_cal.wheel_circumference_m;
+                    if (wheel_rps > 0.01f) {
+                        float overall  = (rpm / 60.0f) / wheel_rps;
+                        float gearbox  = overall / s_gear_cal.final_drive;
+                        /* Find closest configured ratio, skipping index 0 (N). */
+                        int best_i = 0;
+                        float best_err = 1e9f;
+                        for (int i = 1; i < s_gear_cal.ratio_count; i++) {
+                            float err = fabsf(gearbox - s_gear_cal.ratios[i]);
+                            if (err < best_err) { best_err = err; best_i = i; }
+                        }
+                        gear = (float)best_i;
+                    }
+                }
+                signal_inject_test_value("CALCULATED_GEAR", gear);
+            }
+        }
+    }
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
@@ -150,6 +203,11 @@ void signal_internal_start(void)
             s_temp_sensor = NULL;
         }
     }
+
+    /* Load gear cal from NVS so CALCULATED_GEAR is available from tick 0
+     * once the user has configured it. First boot: enabled=false, timer
+     * skips the compute branch — no CPU overhead. */
+    config_store_load_gear_cal(&s_gear_cal);
 
     s_internal_timer = lv_timer_create(_internal_timer_cb, 500, NULL);
     ESP_LOGI(TAG, "internal signal timer started (500 ms)");
@@ -198,4 +256,21 @@ void signal_internal_get_fuel_cal(fuel_cal_config_t *out)
 float signal_internal_get_fuel_voltage(void)
 {
     return s_last_fuel_voltage;
+}
+
+void signal_internal_set_gear_cal(const void *cfg)
+{
+    if (!cfg) return;
+    const gear_cal_config_t *in = (const gear_cal_config_t *)cfg;
+    s_gear_cal = *in;
+    config_store_save_gear_cal(in);
+    ESP_LOGI(TAG, "gear cal updated: wheel=%.3fm fd=%.3f n=%u en=%d",
+             s_gear_cal.wheel_circumference_m, s_gear_cal.final_drive,
+             (unsigned)s_gear_cal.ratio_count, (int)s_gear_cal.enabled);
+}
+
+void signal_internal_get_gear_cal(void *out)
+{
+    if (!out) return;
+    *(gear_cal_config_t *)out = s_gear_cal;
 }

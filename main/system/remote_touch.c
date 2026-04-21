@@ -15,6 +15,15 @@ static bool     s_release_requested = false;  /* deferred release — see below 
 static int16_t  s_x                 = 0;
 static int16_t  s_y                 = 0;
 static lv_indev_drv_t s_drv;
+/* Last-activity timestamp (esp_timer us). Used as a watchdog: if the
+ * browser side loses a pointerup for any reason (tab backgrounded mid-
+ * tap, getBoundingClientRect races, network drops), the firmware would
+ * otherwise stay s_pressed=true forever — long-press + everything that
+ * follows. Auto-release if no touch POST arrives within
+ * REMOTE_TOUCH_IDLE_MS while pressed. */
+#include "esp_timer.h"
+#define REMOTE_TOUCH_IDLE_MS 1500
+static int64_t  s_last_activity_us  = 0;
 
 /* Deferred-release semantics:
  *
@@ -46,6 +55,19 @@ static inline int16_t _clamp(int16_t v, int16_t lo, int16_t hi) {
 static void _remote_touch_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 	(void)drv;
 	if (xSemaphoreTake(s_mux, 0) == pdTRUE) {
+		/* Watchdog — stuck-press recovery. If the browser missed sending
+		 * the pointerup (first-frame layout race, tab switch, network
+		 * drop), force a release so the next click isn't interpreted as
+		 * a continuation of the phantom held press. */
+		if (s_enabled && s_pressed && s_last_activity_us != 0) {
+			int64_t idle_us = esp_timer_get_time() - s_last_activity_us;
+			if (idle_us > (int64_t)REMOTE_TOUCH_IDLE_MS * 1000) {
+				s_pressed           = false;
+				s_release_requested = false;
+				ESP_LOGW(TAG, "stuck press watchdog fired — auto-released after %lld ms idle",
+				         idle_us / 1000);
+			}
+		}
 		if (s_enabled && s_pressed) {
 			data->state  = LV_INDEV_STATE_PR;
 			data->point.x = s_x;
@@ -94,6 +116,7 @@ void remote_touch_set(int16_t x, int16_t y, bool pressed) {
 	if (xSemaphoreTake(s_mux, pdMS_TO_TICKS(50)) == pdTRUE) {
 		s_x = x;
 		s_y = y;
+		s_last_activity_us = esp_timer_get_time();
 		if (pressed) {
 			/* New press (or move while held) — latch immediately and clear
 			 * any deferred release so rapid down→move→up sequences don't
