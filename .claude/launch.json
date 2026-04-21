@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["tools/mobile-dev-server.js"],
       "port": 8180
+    },
+    {
+      "name": "sandbox",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "../rdm7-sandbox", "run", "dev"],
+      "port": 5173
     }
   ]
 }
