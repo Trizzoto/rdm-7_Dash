@@ -4371,7 +4371,14 @@ esp_err_t web_server_start(void) {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
 	config.stack_size = 5120;
-	config.max_uri_handlers = 80;
+	/* 100 slots: we're at 86 actual REGISTER_URI calls after the gear +
+	 * warning test endpoints landed. ESP-IDF silently drops any handler
+	 * registered past max_uri_handlers — the 80 we used to have left the
+	 * last ~6 POST/OPTIONS handlers unregistered, so those endpoints
+	 * returned 405 "Method not allowed" instead of dispatching
+	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes so
+	 * 20 slots of headroom costs ~640 bytes of static RAM. */
+	config.max_uri_handlers = 100;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
