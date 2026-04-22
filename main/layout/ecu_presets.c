@@ -277,6 +277,42 @@ const ecu_preset_t ECU_PRESETS[] = {
         },
     },
 
+    /* ══════════════════════════════════════════════════════════════════
+     * RDM-7 Internal - marker preset for the built-in CALCULATED_GEAR
+     * flow (gear back-computed from RPM + VEHICLE_SPEED + user ratios;
+     * see signal_internal.c). Name matches the "RDM-7" / "Internal"
+     * pseudo-ECU already exposed through preset_picker.c's
+     * preconfig_items[] so both paths share one identity.
+     *
+     * No CAN broadcast is implied, so all standard slots are unsupported.
+     * Applying this preset is handled specially in
+     * ecu_preset_apply_to_layout() — the signals[] array is left
+     * untouched so the user keeps whatever RPM/VEHICLE_SPEED bindings
+     * they already have from a prior ECU or manual setup.
+     * ══════════════════════════════════════════════════════════════════ */
+    {
+        .make = "RDM-7",
+        .version = "Internal",
+        .display = "RDM-7 Internal (calculated gear)",
+        .rows = {
+            [ECU_SIG_RPM]             = SIG_UNSUPPORTED,
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
+            [ECU_SIG_THROTTLE]        = SIG_UNSUPPORTED,
+            [ECU_SIG_COOLANT_TEMP]    = SIG_UNSUPPORTED,
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
+            [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
+            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
+            [ECU_SIG_VEHICLE_SPEED]   = SIG_UNSUPPORTED,
+            [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,
+            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
+        },
+    },
+
     /* Sentinel */
     { .make = NULL, .version = NULL, .display = NULL, .rows = {{0}} },
 };
@@ -334,12 +370,20 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
         return ESP_FAIL;
     }
 
-    /* Replace signals array. */
-    cJSON_DeleteItemFromObject(root, "signals");
-    cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
-    for (int i = 0; i < ECU_SIG__COUNT; i++) {
-        cJSON *s = _build_signal_json(ECU_SIGNAL_NAMES[i], &preset->rows[i]);
-        if (s) cJSON_AddItemToArray(sigs, s);
+    /* RDM-7 Internal is a marker preset — signals[] is NOT rewritten so
+     * existing RPM / VEHICLE_SPEED bindings (needed by CALCULATED_GEAR)
+     * survive the apply. Only the ecu/ecu_version identity is updated. */
+    bool is_marker_preset = (strcmp(preset->make, "RDM-7") == 0 &&
+                             strcmp(preset->version, "Internal") == 0);
+
+    if (!is_marker_preset) {
+        /* Replace signals array. */
+        cJSON_DeleteItemFromObject(root, "signals");
+        cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
+        for (int i = 0; i < ECU_SIG__COUNT; i++) {
+            cJSON *s = _build_signal_json(ECU_SIGNAL_NAMES[i], &preset->rows[i]);
+            if (s) cJSON_AddItemToArray(sigs, s);
+        }
     }
 
     /* Update ecu make/version fields. */

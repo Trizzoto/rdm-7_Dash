@@ -354,6 +354,7 @@ const preconfig_item_t preconfig_items[] = {
 { "RDM-7", "GPIO",     "INDICATOR RIGHT", "0", 1, 0, 8,  1.0,  0, 0, false },
 
 /* ── RDM-7 Internal ──────────────────────────────────────────────────── */
+{ "RDM-7", "Internal", "CALCULATED GEAR", "0", 1, 0, 16, 1.0,  0, 0, false },
 { "RDM-7", "Internal", "CHIP TEMP",       "0", 1, 0, 16, 1.0,  0, 1, false },
 { "RDM-7", "Internal", "CPU PERCENT",     "0", 1, 0, 16, 1.0,  0, 0, false },
 { "RDM-7", "Internal", "FPS",             "0", 1, 0, 16, 1.0,  0, 0, false },
