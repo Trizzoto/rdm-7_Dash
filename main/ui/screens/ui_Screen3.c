@@ -532,25 +532,29 @@ void ui_Screen3_screen_init(void) {
 	 * falls back to direct widget_X_create() if the file is unavailable). */
 	dashboard_init(ui_Screen3);
 
-	/* Menu button (glassmorphism) */
+	/* Menu button — floating top-right pill, blue accent with settings
+	 * icon. Replaces the former centre-dash glassmorphism style; the
+	 * top-right corner keeps it out of the driver's sight-line while
+	 * the icon + label read clearly against any layout behind it. */
 	ui_Menu_Button = lv_btn_create(ui_Screen3);
-	lv_obj_set_size(ui_Menu_Button, 90, 40);
-	lv_obj_align(ui_Menu_Button, LV_ALIGN_CENTER, 0, 105);
+	lv_obj_set_size(ui_Menu_Button, 100, 36);
+	lv_obj_align(ui_Menu_Button, LV_ALIGN_TOP_RIGHT, -12, 12);
 	lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
-	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_TEXT_PRIMARY,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(ui_Menu_Button, 60,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_color(ui_Menu_Button, THEME_COLOR_TEXT_PRIMARY,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_border_width(ui_Menu_Button, 2,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_radius(ui_Menu_Button, 12,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE_PRESSED,
+							  LV_STATE_PRESSED);
+	lv_obj_set_style_bg_opa(ui_Menu_Button, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_width(ui_Menu_Button, 0, 0);
+	lv_obj_set_style_radius(ui_Menu_Button, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_shadow_width(ui_Menu_Button, 12, 0);
+	lv_obj_set_style_shadow_color(ui_Menu_Button, lv_color_black(), 0);
+	lv_obj_set_style_shadow_opa(ui_Menu_Button, LV_OPA_50, 0);
+	lv_obj_set_style_shadow_spread(ui_Menu_Button, 0, 0);
+	lv_obj_set_style_shadow_ofs_y(ui_Menu_Button, 2, 0);
 	lv_obj_t *ml = lv_label_create(ui_Menu_Button);
-	lv_label_set_text(ml, "MENU");
-	lv_obj_set_style_text_color(ml, THEME_COLOR_TEXT_PRIMARY,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_label_set_text(ml, LV_SYMBOL_SETTINGS "  Menu");
+	lv_obj_set_style_text_color(ml, THEME_COLOR_TEXT_ON_ACCENT, 0);
+	lv_obj_set_style_text_font(ml, THEME_FONT_SMALL, 0);
 	lv_obj_center(ml);
 	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
