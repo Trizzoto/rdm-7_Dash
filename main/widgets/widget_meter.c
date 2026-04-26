@@ -25,6 +25,30 @@
 
 static const char *TAG = "widget_meter";
 
+/* Inverse of _meter_apply_curve. Given an angular position 0..100% along
+ * the sweep, returns the data value the user expects to see at that point
+ * (used to relabel tick marks so they align with the warped needle). */
+static int32_t _meter_value_for_angle_pct(meter_data_t *md, int32_t pct) {
+	if (md->max <= md->min) return md->min;
+	if (pct <= 0)   return md->min;
+	if (pct >= 100) return md->max;
+	if (!md->anchor_enabled) {
+		return md->min + (int32_t)(((int64_t)(md->max - md->min) * pct) / 100);
+	}
+	int32_t ap = md->anchor_position;
+	if (ap < 0)   ap = 0;
+	if (ap > 100) ap = 100;
+	if (pct <= ap) {
+		if (ap == 0) return md->min;
+		return md->min + (int32_t)(((int64_t)(md->anchor_value - md->min)
+		                  * pct) / ap);
+	}
+	int32_t hp = 100 - ap;
+	if (hp == 0) return md->max;
+	return md->anchor_value + (int32_t)(((int64_t)(md->max - md->anchor_value)
+	                          * (pct - ap)) / hp);
+}
+
 /* Apply the user-configured anchor curve. Returns the "virtual" value to
  * pass to lv_meter_set_indicator_value so the needle lands at the desired
  * non-linear position. Two linear segments split at (anchor_value,
@@ -148,11 +172,30 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 
 	lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
 	if (!dsc) return;
-	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
-	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
 
 	meter_data_t *md = (meter_data_t *)lv_event_get_user_data(e);
 	if (!md) return;
+
+	/* TICK label override — when anchor is on, relabel major ticks so the
+	 * numbers shown match the warped needle. LVGL fires DRAW_PART_BEGIN for
+	 * each tick after filling dsc->text with the linear value; only major
+	 * ticks have a non-NULL label_dsc. We rewrite the buffer in place
+	 * (LVGL gives us a 16-byte stack buffer). LVGL then uses the new text
+	 * for both size measurement and the actual draw. */
+	if (code == LV_EVENT_DRAW_PART_BEGIN &&
+	    dsc->type == LV_METER_DRAW_PART_TICK &&
+	    dsc->label_dsc != NULL && dsc->text != NULL &&
+	    md->anchor_enabled) {
+		uint16_t total = (md->minor_tick_count > 1) ? (uint16_t)(md->minor_tick_count - 1) : 1;
+		int32_t pct = (int32_t)(((int64_t)dsc->id * 100) / (int64_t)total);
+		int32_t v = _meter_value_for_angle_pct(md, pct);
+		lv_snprintf(dsc->text, 16, "%d", (int)v);
+		return;
+	}
+
+	/* Below this point: needle-only logic (tip styles + rear extension). */
+	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
+	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
 	uint8_t style = md->needle_tip_style;
 	lv_draw_line_dsc_t *line_dsc = dsc->line_dsc;
 
