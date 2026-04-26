@@ -100,6 +100,20 @@ typedef struct {
 	int32_t    anchor_value;
 	uint8_t    anchor_position;     /* 0..100 along sweep angle, default 50 */
 	bool       anchor_enabled;      /* false = linear pass-through */
+	/* Redline zone: visual cues drawn between [redline_threshold..max]. Each
+	 * effect maps to one LVGL meter indicator added in _meter_create:
+	 *   - redline_show_arc      → lv_meter_add_arc (colored arc segment)
+	 *   - redline_recolor_ticks → lv_meter_add_scale_lines (tick recolor)
+	 * Both are static segments — no per-frame work after creation. */
+	bool       redline_enabled;
+	int32_t    redline_threshold;
+	lv_color_t redline_color;
+	bool       redline_show_arc;
+	bool       redline_recolor_ticks;
+	uint8_t    redline_arc_width;   /* default: 6 */
+	int8_t     redline_arc_r_mod;   /* default: 0, range: -50..50 */
+	lv_meter_indicator_t *redline_arc_indic;   /* runtime LVGL ptr */
+	lv_meter_indicator_t *redline_tick_indic;  /* runtime LVGL ptr */
 	/* Optional rear extension of a line needle: draws a second short line
 	 * pointing 180° away from the needle (counterweight tail). 0 = disabled. */
 	uint8_t    needle_rear_length;  /* default: 0, range 0..100 px */

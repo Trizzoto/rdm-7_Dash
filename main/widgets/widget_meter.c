@@ -383,6 +383,40 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
 	}
 
+	/* Redline indicators. Drawn BEFORE the needle so the needle stays on
+	 * top. Both arc and tick-recolor are static segments — set start_value
+	 * once at create, no per-frame work. Threshold is clamped into the
+	 * scale range so an out-of-range threshold still produces sensible
+	 * output (no segment if threshold >= max). */
+	md->redline_arc_indic  = NULL;
+	md->redline_tick_indic = NULL;
+	if (md->redline_enabled) {
+		int32_t rt = md->redline_threshold;
+		if (rt < md->min) rt = md->min;
+		if (rt < md->max) {
+			if (md->redline_show_arc) {
+				uint16_t aw = md->redline_arc_width > 0 ? md->redline_arc_width : 6;
+				md->redline_arc_indic = lv_meter_add_arc(
+				    m, scale, aw, md->redline_color, md->redline_arc_r_mod);
+				if (md->redline_arc_indic) {
+					lv_meter_set_indicator_start_value(m, md->redline_arc_indic, rt);
+					lv_meter_set_indicator_end_value  (m, md->redline_arc_indic, md->max);
+				}
+			}
+			if (md->redline_recolor_ticks) {
+				/* local=true → start/end values are this indicator's own
+				 * range, so the same color is used across the whole segment
+				 * (no gradient). width_mod=0 keeps tick widths intact. */
+				md->redline_tick_indic = lv_meter_add_scale_lines(
+				    m, scale, md->redline_color, md->redline_color, false, 0);
+				if (md->redline_tick_indic) {
+					lv_meter_set_indicator_start_value(m, md->redline_tick_indic, rt);
+					lv_meter_set_indicator_end_value  (m, md->redline_tick_indic, md->max);
+				}
+			}
+		}
+	}
+
 	/* Needle */
 	lv_meter_indicator_t *needle;
 	lv_meter_scale_t *needle_target_scale = scale;
@@ -580,6 +614,20 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "anchor_value", md->anchor_value);
 	if (md->anchor_enabled || md->anchor_position != 50)
 		cJSON_AddNumberToObject(cfg, "anchor_position", md->anchor_position);
+	if (md->redline_enabled)
+		cJSON_AddBoolToObject(cfg, "redline_enabled", true);
+	if (md->redline_enabled) {
+		cJSON_AddNumberToObject(cfg, "redline_threshold", md->redline_threshold);
+		cJSON_AddNumberToObject(cfg, "redline_color",     (int)md->redline_color.full);
+		if (!md->redline_show_arc)
+			cJSON_AddBoolToObject(cfg, "redline_show_arc", false);
+		if (!md->redline_recolor_ticks)
+			cJSON_AddBoolToObject(cfg, "redline_recolor_ticks", false);
+		if (md->redline_arc_width != 6)
+			cJSON_AddNumberToObject(cfg, "redline_arc_width", md->redline_arc_width);
+		if (md->redline_arc_r_mod != 0)
+			cJSON_AddNumberToObject(cfg, "redline_arc_r_mod", md->redline_arc_r_mod);
+	}
 	if (md->needle_tip_style != 0)
 		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
 	if (md->needle_tip_base_w != 0)
@@ -719,6 +767,20 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		if (v > 100) v = 100;
 		md->anchor_position = (uint8_t)v;
 	}
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
+	if (cJSON_IsBool(ap)) md->redline_enabled = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_threshold");
+	if (cJSON_IsNumber(ap)) md->redline_threshold = (int32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_color");
+	if (cJSON_IsNumber(ap)) md->redline_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_show_arc");
+	if (cJSON_IsBool(ap)) md->redline_show_arc = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_recolor_ticks");
+	if (cJSON_IsBool(ap)) md->redline_recolor_ticks = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_width");
+	if (cJSON_IsNumber(ap)) md->redline_arc_width = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_r_mod");
+	if (cJSON_IsNumber(ap)) md->redline_arc_r_mod = (int8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
 	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
@@ -1011,6 +1073,15 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->anchor_value    = 50;     /* midpoint of default 0..100 range */
 	md->anchor_position = 50;
 	md->anchor_enabled  = false;  /* off by default — pure linear */
+	md->redline_enabled       = false;
+	md->redline_threshold     = 80;       /* sensible default for 0..100 */
+	md->redline_color         = lv_color_hex(0xFF0000);
+	md->redline_show_arc      = true;
+	md->redline_recolor_ticks = true;
+	md->redline_arc_width     = 6;
+	md->redline_arc_r_mod     = 0;
+	md->redline_arc_indic     = NULL;
+	md->redline_tick_indic    = NULL;
 	md->needle_tip_style   = 0;
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;

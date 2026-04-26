@@ -4715,6 +4715,16 @@
                     { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data" },
                     { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", enabledBy: "anchor_enabled" },
                     { name: "anchor_position", label: "Anchor Position (%)", type: "slider", min: 0, max: 100, def: 50, cat: "data", enabledBy: "anchor_enabled" },
+                    /* Redline zone: visual cues drawn between threshold and
+                     * max. Show Arc + Recolor Ticks default ON so enabling
+                     * the master toggle gives an immediate visible result. */
+                    { name: "redline_enabled", label: "Redline", type: "checkbox", def: false, cat: "data" },
+                    { name: "redline_threshold", label: "Redline Threshold", type: "number", def: 80, cat: "data", enabledBy: "redline_enabled" },
+                    { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "data", enabledBy: "redline_enabled" },
+                    { name: "redline_show_arc", label: "Show Arc", type: "checkbox", def: true, cat: "data", enabledBy: "redline_enabled" },
+                    { name: "redline_arc_width", label: "Arc Width", type: "stepper", min: 1, max: 30, def: 6, cat: "data", enabledBy: "redline_enabled" },
+                    { name: "redline_arc_r_mod", label: "Arc Inset", type: "stepper", min: -50, max: 50, def: 0, cat: "data", enabledBy: "redline_enabled" },
+                    { name: "redline_recolor_ticks", label: "Recolor Ticks", type: "checkbox", def: true, cat: "data", enabledBy: "redline_enabled" },
                     { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", nightOverridable: true },
                     { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
