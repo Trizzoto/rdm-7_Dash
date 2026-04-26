@@ -4712,11 +4712,12 @@
                      * the old count-based fields. */
                     { name: "minor_tick_step", label: "Minor Tick Spacing", type: "number", def: 10, cat: "data" },
                     { name: "major_tick_step", label: "Major Tick Spacing", type: "number", def: 50, cat: "data" },
-                    /* Non-linear scale (gamma): 1.0 = linear, <1 expands the
-                     * low end (more needle motion at low values, e.g. boost),
-                     * >1 compresses the low end. Stored as decimal here;
-                     * firmware reads scale_curve_milli written by sync. */
+                    /* Non-linear scale: gamma exponent OR piecewise breakpoints.
+                     * Scale Breaks override gamma when set. Format
+                     * "value:percent, ..." — endpoints (min,0%) and (max,100%)
+                     * are implicit. e.g. "45:50, 90:80" = three-segment curve. */
                     { name: "scale_curve", label: "Scale Curve (1.0 = linear)", type: "number", def: 1.0, cat: "data" },
+                    { name: "scale_breaks", label: "Scale Breaks (e.g. 45:50, 90:80)", type: "text", def: "", cat: "data" },
                     { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", nightOverridable: true },
                     { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },

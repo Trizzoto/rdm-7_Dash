@@ -92,14 +92,25 @@ typedef struct {
 	lv_color_t tick_label_color;    /* default: white (0xFFFFFF) */
 	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
-	/* Non-linear scale curve. Default 1.0 = linear. The needle position is
-	 * computed as ((value-min)/(max-min))^scale_curve * (max-min) + min, so
-	 * values >1 compress the low end (more needle motion at high values),
-	 * values <1 expand the low end (more needle motion at low values, useful
-	 * for boost / low-end resolution). Tick labels stay linear — only the
-	 * needle is warped. Stored as fixed-point milli-gamma (1000 = 1.0) so we
-	 * keep the field integer-friendly in cJSON. */
+	/* Non-linear scale curve. Two ways to define one:
+	 *  (a) scale_curve_milli — single gamma exponent (1000 = linear), used
+	 *      when scale_break_count == 0.
+	 *  (b) scale_breaks — explicit piecewise-linear breakpoints. Each entry
+	 *      maps a real DATA value to a position along the angular sweep
+	 *      (0..100%). Endpoints (min, 0%) and (max, 100%) are implicit, so
+	 *      "0-45 first half, 45-120 second half" = a single break at
+	 *      value=45, pos_pct=50. When set, takes precedence over gamma.
+	 * Tick labels stay linear — only the needle is warped. */
 	int16_t    scale_curve_milli;   /* default: 1000 (=1.0). Range 100..5000 */
+	#define METER_MAX_SCALE_BREAKS 8
+	struct {
+		int32_t value;
+		uint8_t pos_pct;            /* 0..100 along sweep angle */
+	}          scale_breaks[METER_MAX_SCALE_BREAKS];
+	uint8_t    scale_break_count;   /* default: 0 (gamma path) */
+	char       scale_breaks_str[96]; /* canonical "v:p,v:p,..." string —
+	                                  * source of truth, parsed into the
+	                                  * array on load + on every JSON edit */
 	/* Optional rear extension of a line needle: draws a second short line
 	 * pointing 180° away from the needle (counterweight tail). 0 = disabled. */
 	uint8_t    needle_rear_length;  /* default: 0, range 0..100 px */
