@@ -4441,6 +4441,140 @@
         }
 
 
+        /* ── Meter "simplified config" helpers ────────────────────────────────
+         * The firmware stores meters with start_angle / end_angle (LVGL coords:
+         * 0°=right, 90°=down, 180°=left, 270°=up; clockwise sweep) and with
+         * tick layout as minor_tick_count + major_tick_every (count of "every
+         * Nth minor tick is major"). Both are awkward to dial in by hand.
+         *
+         * The inspector instead exposes:
+         *   - start_position  one of 8 cardinals — where the arc begins
+         *   - sweep_degrees   how far the arc spans (clockwise)
+         *   - minor_tick_step in DATA units (e.g. "every 500 RPM")
+         *   - major_tick_step in DATA units
+         * The legacy fields are still written on every change so the firmware
+         * keeps reading what it expects. _meterDeriveNewFromLegacy() reverses
+         * the mapping when an old layout (no new fields) is loaded.
+         * auto_ticks is held in w.config but not exposed in the inspector — it
+         * stays true on creation so the initial step is auto-derived, then is
+         * flipped off the first time the user edits a step value. */
+        const _METER_POSITION_TO_START_ANGLE = {
+            'top': 270, 'top-right': 315, 'right': 0, 'bottom-right': 45,
+            'bottom': 90, 'bottom-left': 135, 'left': 180, 'top-left': 225,
+        };
+        const _METER_POSITION_OPTIONS = [
+            { v: 'bottom-left',  l: 'Bottom-Left' },
+            { v: 'bottom',       l: 'Bottom' },
+            { v: 'bottom-right', l: 'Bottom-Right' },
+            { v: 'left',         l: 'Left' },
+            { v: 'right',        l: 'Right' },
+            { v: 'top-left',     l: 'Top-Left' },
+            { v: 'top',          l: 'Top' },
+            { v: 'top-right',    l: 'Top-Right' },
+        ];
+        const _METER_SWEEP_OPTIONS = [
+            { v: 90,  l: '90°' },
+            { v: 120, l: '120°' },
+            { v: 180, l: '180°' },
+            { v: 210, l: '210°' },
+            { v: 240, l: '240°' },
+            { v: 270, l: '270°' },
+            { v: 300, l: '300°' },
+            { v: 330, l: '330°' },
+            { v: 360, l: '360° (Full)' },
+        ];
+        const _METER_NICE_STEPS = [
+            0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50,
+            100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000, 20000, 50000,
+        ];
+        function _meterNiceStep(range, targetCount) {
+            if (!isFinite(range) || range <= 0) return 1;
+            const ideal = range / Math.max(1, targetCount);
+            for (const s of _METER_NICE_STEPS) if (s >= ideal) return s;
+            return _METER_NICE_STEPS[_METER_NICE_STEPS.length - 1];
+        }
+        function _meterSyncDerived(c) {
+            if (!c) return;
+            if (c.start_position == null) c.start_position = 'bottom-left';
+            if (c.sweep_degrees == null)  c.sweep_degrees  = 270;
+            if (c.auto_ticks == null)     c.auto_ticks     = true;
+
+            const min = (typeof c.min === 'number') ? c.min : 0;
+            const max = (typeof c.max === 'number') ? c.max : 100;
+            const range = Math.max(0, max - min);
+
+            if (c.auto_ticks) {
+                c.minor_tick_step = _meterNiceStep(range, 10);
+                c.major_tick_step = c.minor_tick_step * 5;
+            } else {
+                if (!(typeof c.minor_tick_step === 'number') || c.minor_tick_step <= 0)
+                    c.minor_tick_step = _meterNiceStep(range, 10);
+                if (!(typeof c.major_tick_step === 'number') || c.major_tick_step <= 0)
+                    c.major_tick_step = c.minor_tick_step * 5;
+            }
+
+            const minorStep = Math.max(1e-6, c.minor_tick_step);
+            const majorStep = Math.max(minorStep, c.major_tick_step);
+            c.minor_tick_count  = Math.min(100, Math.max(2,
+                                  Math.round(range / minorStep) + 1));
+            c.major_tick_every  = Math.min(50, Math.max(1,
+                                  Math.round(majorStep / minorStep)));
+
+            const start = _METER_POSITION_TO_START_ANGLE[c.start_position] ?? 135;
+            const sweep = Math.max(1, Math.min(360, c.sweep_degrees | 0));
+            c.start_angle = start;
+            c.end_angle   = (start + sweep) % 360;
+
+            /* Non-linear scale: UX field `scale_curve` (decimal),
+             * firmware reads `scale_curve_milli` (int). */
+            if (typeof c.scale_curve === 'number' && isFinite(c.scale_curve)) {
+                let g = c.scale_curve;
+                if (g < 0.1) g = 0.1; else if (g > 5.0) g = 5.0;
+                c.scale_curve_milli = Math.round(g * 1000);
+            } else if (c.scale_curve_milli == null) {
+                c.scale_curve_milli = 1000;
+                c.scale_curve = 1.0;
+            }
+        }
+        function _meterDeriveNewFromLegacy(c) {
+            if (!c) return;
+            if (c.start_position == null && typeof c.start_angle === 'number') {
+                const a = ((c.start_angle % 360) + 360) % 360;
+                let bestPos = 'bottom-left';
+                let bestDiff = 360;
+                for (const [pos, refA] of Object.entries(_METER_POSITION_TO_START_ANGLE)) {
+                    let d = Math.abs(refA - a);
+                    d = Math.min(d, 360 - d);
+                    if (d < bestDiff) { bestDiff = d; bestPos = pos; }
+                }
+                c.start_position = bestPos;
+            }
+            if (c.sweep_degrees == null &&
+                typeof c.start_angle === 'number' &&
+                typeof c.end_angle === 'number') {
+                const s = ((c.start_angle % 360) + 360) % 360;
+                const e = ((c.end_angle   % 360) + 360) % 360;
+                const sweep = (e - s + 360) % 360;
+                c.sweep_degrees = sweep === 0 ? 360 : sweep;
+            }
+            if (c.auto_ticks == null) {
+                c.auto_ticks = (c.minor_tick_count == null);
+            }
+            if (c.minor_tick_step == null && typeof c.minor_tick_count === 'number') {
+                const min = (typeof c.min === 'number') ? c.min : 0;
+                const max = (typeof c.max === 'number') ? c.max : 100;
+                c.minor_tick_step = (max - min) / Math.max(1, c.minor_tick_count - 1);
+            }
+            if (c.major_tick_step == null && typeof c.minor_tick_step === 'number'
+                && typeof c.major_tick_every === 'number') {
+                c.major_tick_step = c.minor_tick_step * c.major_tick_every;
+            }
+            if (c.scale_curve == null) {
+                c.scale_curve = (typeof c.scale_curve_milli === 'number')
+                    ? c.scale_curve_milli / 1000 : 1.0;
+            }
+        }
+
         const WIDGET_DEFS = {
             "rpm_bar": {
                 displayName: "RPM Bar", defW: 800, defH: 55, defY: -213, singleton: true,
@@ -4548,7 +4682,12 @@
                     { name: "border_color_style", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true, nightKey: "border_color" },
                     { name: "radius", label: "Radius", type: "stepper", min: 0, max: 200, def: 100, cat: "appearance" },
                     { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
+                    { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true, enabledBy: "show_label" },
+                    { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_y_offset", label: "Label Y Offset", type: "slider", min: -100, max: 100, def: 0, cat: "appearance", enabledBy: "show_label" },
+                    { name: "label_text_align", label: "Text Align", type: "select", options: [
+                        { v: 0, l: "Left" }, { v: 1, l: "Center" }, { v: 2, l: "Right" }
+                    ], def: 1, cat: "appearance", enabledBy: "show_label" }
                 ]
             },
             "text": {
@@ -4566,8 +4705,18 @@
                 fields: [
                     { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
                     { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
-                    { name: "start_angle", label: "Start angle", type: "number", def: 135, cat: "data" },
-                    { name: "end_angle", label: "End angle", type: "number", def: 45, cat: "data" },
+                    { name: "start_position", label: "Start Position", type: "select", def: "bottom-left", cat: "data", options: _METER_POSITION_OPTIONS },
+                    { name: "sweep_degrees", label: "Sweep", type: "select", def: 270, cat: "data", options: _METER_SWEEP_OPTIONS },
+                    /* auto_ticks lives in w.config but is NOT in the inspector
+                     * — see _meterSyncDerived. Min/Major Tick Spacing replace
+                     * the old count-based fields. */
+                    { name: "minor_tick_step", label: "Minor Tick Spacing", type: "number", def: 10, cat: "data" },
+                    { name: "major_tick_step", label: "Major Tick Spacing", type: "number", def: 50, cat: "data" },
+                    /* Non-linear scale (gamma): 1.0 = linear, <1 expands the
+                     * low end (more needle motion at low values, e.g. boost),
+                     * >1 compresses the low end. Stored as decimal here;
+                     * firmware reads scale_curve_milli written by sync. */
+                    { name: "scale_curve", label: "Scale Curve (1.0 = linear)", type: "number", def: 1.0, cat: "data" },
                     { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", nightOverridable: true },
                     { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
@@ -4576,11 +4725,9 @@
                     { name: "border_opa", label: "Border Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "scale_padding", label: "Scale Padding", type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
                     { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance" },
-                    { name: "minor_tick_count", label: "Tick Count", type: "stepper", min: 2, max: 100, def: 21, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "minor_tick_width", label: "Tick Width", type: "stepper", min: 1, max: 20, def: 2, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "minor_tick_length", label: "Tick Length", type: "stepper", min: 1, max: 50, def: 10, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
-                    { name: "major_tick_every", label: "Major Tick Every", type: "stepper", min: 1, max: 50, def: 5, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "major_tick_width", label: "Major Tick Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "major_tick_length", label: "Major Tick Length", type: "stepper", min: 1, max: 50, def: 15, cat: "appearance", enabledBy: "show_ticks" },
                     { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
@@ -4595,6 +4742,7 @@
                     { name: "needle_width", label: "Needle Width", type: "stepper", min: 1, max: 20, def: 4, cat: "appearance" },
                     { name: "needle_color", label: "Needle Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                     { name: "needle_r_mod", label: "Needle Length Trim", type: "stepper", min: -100, max: 100, def: -10, cat: "appearance" },
+                    { name: "needle_rear_length", label: "Needle Rear Length", type: "stepper", min: 0, max: 100, def: 0, cat: "appearance" },
                     { name: "needle_tip_style", label: "Needle Tip Style", type: "select", def: 0, cat: "appearance",
                       options: [ {v:0, l:"Flat"}, {v:1, l:"Rounded"}, {v:2, l:"Lance"}, {v:3, l:"Dagger"}, {v:4, l:"Spade"}, {v:5, l:"Diamond"} ] },
                     /* Tip-tuning knobs. Stored value 0 = "use the built-in
@@ -6141,6 +6289,14 @@
         let previewTimer = null;
         function buildFirmwarePayload() {
             const payload = JSON.parse(JSON.stringify(currentLayout));
+            /* Drop widgets the user has toggled invisible in the layers panel
+             * — this is what "hide" should mean end-to-end. Hidden widgets
+             * stay in currentLayout so the user can flip them back on within
+             * the same editing session, but they don't survive a reload
+             * (firmware doesn't honor a "hidden" flag). */
+            if (Array.isArray(payload.widgets)) {
+                payload.widgets = payload.widgets.filter(w => !w.hidden);
+            }
             /* Tag layout with target screen dimensions */
             payload.screen_w = CANVAS_W;
             payload.screen_h = CANVAS_H;
@@ -6436,6 +6592,19 @@
                     <button type="button" class="btn-secondary" title="Reset to style default (AUTO)" style="width:26px; height:26px; padding:0; display:flex; align-items:center; justify-content:center; font-size:14px; ${resetDim}" ${disabledAttr}
                         onclick="updateWidgetConfigField('${f.name}',0,true)">&#8634;</button>
                 </div>`;
+            } else if (f.type === 'slider') {
+                /* Pure range slider with live numeric readout. Use this when
+                 * a continuous-feel control is more useful than the +/- pair
+                 * the 'stepper' type provides — e.g. fine-positioning a
+                 * label vertically. */
+                const sMin = f.min != null ? f.min : 0;
+                const sMax = f.max != null ? f.max : 100;
+                const sStep = f.step || 1;
+                html += `<div style="display:flex; gap:8px; align-items:center;">
+                    <input type="range" min="${sMin}" max="${sMax}" step="${sStep}" value="${Math.max(sMin, Math.min(val, sMax))}" style="flex:1;"
+                        oninput="this.nextElementSibling.textContent=this.value; updateWidgetConfigField('${f.name}', parseFloat(this.value), true)" ${disabledAttr}>
+                    <span style="min-width:36px; text-align:right; font-size:11px; font-family:'JetBrains Mono',monospace; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:2px 6px;">${val}</span>
+                </div>`;
             } else if (f.type === 'textarea') {
                 const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 html += `<textarea rows="3" style="resize:vertical; width:100%; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:4px 6px; font-family:inherit;" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>${escaped}</textarea>`;
@@ -6449,6 +6618,11 @@
         /* Track accordion open/closed state and scroll position across inspector rebuilds */
         let _inspectorAccordionState = {}; /* key: accordion name → boolean open */
         let _inspectorScrollTop = 0;
+        /* Index of a rule just created by addRule(). The rules render loop
+         * checks this and emits `open` on that row's <details> so the user
+         * can immediately fill in the signal/op/threshold without having
+         * to click the accordion. Cleared after the first render. */
+        let _newRuleJustAdded = -1;
 
         function _saveInspectorState() {
             _inspectorScrollTop = inspectorContent.parentElement ? inspectorContent.parentElement.scrollTop : 0;
@@ -6748,14 +6922,14 @@
             const NO_RULES_TYPES = new Set(['meter', 'image', 'indicator']);
             const rules = w.config.rules || [];
             if (!NO_RULES_TYPES.has(w.type)) {
-            html += `<details class="inspector-accordion"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
+            html += `<details class="inspector-accordion" data-rules-group="1"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
             html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
             rules.forEach((rule, ri) => {
                 const sigNames = (currentLayout.signals || []).map(s => s.name);
                 const opOptions = ['>','<','>=','<=','==','!=','range'];
                 const overrides = rule.overrides || {};
                 const overrideCount = Object.keys(overrides).length;
-                html += `<details class="inspector-accordion" style="border:1px solid #555; border-radius:6px; margin-bottom:6px;"><summary style="padding:6px 8px;">
+                html += `<details class="inspector-accordion" data-rule-idx="${ri}" style="border:1px solid #555; border-radius:6px; margin-bottom:6px;"><summary style="padding:6px 8px;">
                     <span style="font-size:11px; font-weight:600;">Rule ${ri+1}</span>
                     ${overrideCount ? `<span class="badge" style="background:#e67e22;">${overrideCount}</span>` : ''}
                     <button class="btn btn-secondary" style="font-size:10px; padding:1px 6px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%); float:right;" onclick="event.stopPropagation(); removeRule(${ri})" ${disabledAttr}>Remove</button>
@@ -6868,11 +7042,35 @@
                 html += `</div></details>`;
             });
             html += `<button class="btn btn-secondary" style="font-size:11px; width:100%;" onclick="addRule()" ${disabledAttr}>+ Add Rule</button>`;
+            if (rules.length > 0) {
+                /* Explicit Save & Apply — forces the dashboard to reload on
+                 * the device (apply=1 path). Auto-save fires with apply=0,
+                 * which persists the rules to LittleFS but does not
+                 * re-subscribe signal callbacks, so newly added rules
+                 * otherwise stay dormant until the next real reload. */
+                html += `<button class="btn btn-primary" style="font-size:11px; width:100%; margin-top:6px;" onclick="saveRulesAndApply()" ${disabledAttr}>Save &amp; Apply Rules</button>`;
+                html += `<div style="font-size:10px; color:#999; margin-top:3px; text-align:center;">Saves + reloads the dash so rule subscriptions re-bind.</div>`;
+            }
             html += `</div></details>`;
             } /* end NO_RULES_TYPES gate */
 
             inspectorContent.innerHTML = html;
             _restoreInspectorState();
+
+            /* If the user just added a rule, auto-open the outer Rules group
+             * AND the newly-added rule row. Happens after _restoreInspectorState
+             * so the state map can't slam the outer group shut. */
+            if (_newRuleJustAdded >= 0) {
+                const outer = inspectorContent.querySelector('details.inspector-accordion[data-rules-group="1"]');
+                if (outer) outer.open = true;
+                const inner = inspectorContent.querySelector(`details.inspector-accordion[data-rule-idx="${_newRuleJustAdded}"]`);
+                if (inner) {
+                    inner.open = true;
+                    /* Bring it into view so the user sees the Signal picker. */
+                    try { inner.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+                }
+                _newRuleJustAdded = -1;
+            }
 
             /* Start/stop fuel voltage polling based on selection */
             if (w.signal === 'FUEL_SENDER_V' && document.getElementById('fuelCalVoltage')) {
@@ -7028,10 +7226,26 @@
         function clearTestValue(signalName) {
             delete _testValues[signalName];
             delete _testLastSend[signalName];
+            /* Release the firmware-side test lock so live CAN frames can
+             * drive the signal again. Best-effort — ignore network errors
+             * because the device may be offline during mock/dev work. */
+            if (signalName) {
+                fetch('/api/signal/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ signal: signalName })
+                }).catch(() => {});
+            }
         }
         function clearAllTestValues() {
             for (const k of Object.keys(_testValues)) delete _testValues[k];
             for (const k of Object.keys(_testLastSend)) delete _testLastSend[k];
+            /* Bulk release of every test lock on the device. */
+            fetch('/api/signal/clear', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ all: true })
+            }).catch(() => {});
         }
         function _doInject(signalName, value) {
             fetch('/api/signal/inject', {
@@ -7053,8 +7267,26 @@
             const w = _ensureRules(); if (!w) return;
             pushHistory();
             w.config.rules.push({ signal_name: '', op: '>', threshold: 0, overrides: {} });
+            /* Flag the new row so updateInspector() can auto-open it + the
+             * outer Rules accordion after render. Consumed once then reset. */
+            _newRuleJustAdded = w.config.rules.length - 1;
             updateInspector();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* Explicit "Save & Apply" for rules — cancels any debounced auto-save
+         * (which would have hit apply=0) and sends the payload with apply=1
+         * so the firmware tears down + rebuilds the dashboard, which is what
+         * re-runs widget_rules_subscribe() on every widget. Without this,
+         * newly added rules sit in the saved JSON but never subscribe to
+         * their signal, so they appear to not fire. */
+        async function saveRulesAndApply() {
+            if (typeof _autoSaveTimer !== 'undefined' && _autoSaveTimer) {
+                clearTimeout(_autoSaveTimer);
+                _autoSaveTimer = null;
+            }
+            updateStatus('Saving & applying rules...');
+            await saveActiveLayout();
         }
         function removeRule(ri) {
             const w = _ensureRules(); if (!w) return;
@@ -7517,6 +7749,22 @@
 
             w.config[field] = finalVal;
 
+            /* Meter: any change to range, sweep position, or tick step needs
+             * to re-derive the legacy LVGL angles + tick count that the
+             * firmware actually consumes. Editing a tick step also flips
+             * auto_ticks off so the value sticks across subsequent syncs. */
+            const METER_TRIGGERS = new Set([
+                'min', 'max', 'start_position', 'sweep_degrees',
+                'minor_tick_step', 'major_tick_step', 'scale_curve',
+            ]);
+            if (w.type === 'meter' && METER_TRIGGERS.has(field)) {
+                if (field === 'minor_tick_step' || field === 'major_tick_step') {
+                    w.config.auto_ticks = false;
+                }
+                _meterSyncDerived(w.config);
+                if (field === 'min' || field === 'max') updateInspector();
+            }
+
             /* If this field is a toggle that controls sub-fields, re-render inspector */
             if (fieldDef && fieldDef.type === 'checkbox') {
                 const hasChildren = def.fields.some(f => f.enabledBy === field || f.enabledBy === '!' + field);
@@ -7529,6 +7777,30 @@
              * immediately when the user changes the dropdown. */
             if (w.type === 'indicator' && field === 'input_source') {
                 updateInspector();
+            }
+
+            /* Flipping the Momentary checkbox on a boolean test widget
+             * (alert / indicator / toggle / button) clears any active test
+             * state — the prior state no longer corresponds to how the
+             * widget will now react to the signal, so holding it "active"
+             * would be misleading. _wstUpdate() at the bottom also relabels
+             * the test button (TEST ACTIVE ↔ HOLD TO TEST). */
+            if (field === 'is_momentary' &&
+                (w.type === 'warning' || w.type === 'indicator' ||
+                 w.type === 'toggle'  || w.type === 'button')) {
+                const slot = (w.config && w.config.slot != null) ? w.config.slot : 0;
+                const sig  = w.signal || '';
+                if (w.type === 'warning' && !sig) {
+                    if (window._warnTestLocal) {
+                        delete window._warnTestLocal['_warnTestOn_slot_' + slot];
+                    }
+                    if (typeof _testApply === 'function') _testApply('warning', slot, false);
+                } else if (w.type === 'indicator' && !sig) {
+                    if (typeof _testApply === 'function') _testApply('indicator', slot, false);
+                } else if (sig && typeof clearTestValue === 'function') {
+                    clearTestValue(sig);
+                }
+                if (typeof _wstUpdate === 'function') _wstUpdate();
             }
 
             pushHistory();
@@ -7909,6 +8181,10 @@
             def.fields.forEach(f => {
                 config[f.name] = f.def;
             });
+            /* Meter: derive the legacy LVGL angles + tick count from the
+             * inspector-friendly fields so the firmware payload has what it
+             * expects from the moment the widget is created. */
+            if (type === 'meter') _meterSyncDerived(config);
             const widgetId = nextWidgetId(type);
             const newWidget = {
                 type: type,
@@ -8680,6 +8956,17 @@
                     if ('endian' in s) {
                         s.is_little_endian = s.endian === 1;
                         delete s.endian;
+                    }
+                });
+                /* Meter widgets: layouts saved by the firmware (or older
+                 * editors) only carry start_angle/end_angle and the
+                 * count-based tick fields. Derive the inspector-friendly
+                 * fields, then re-sync to keep both representations in
+                 * agreement on every save round-trip. */
+                (currentLayout.widgets || []).forEach(w => {
+                    if (w.type === 'meter' && w.config) {
+                        _meterDeriveNewFromLegacy(w.config);
+                        _meterSyncDerived(w.config);
                     }
                 });
                 /* Bridge firmware→web */
@@ -11933,8 +12220,15 @@
                 const on = warningNoSig
                     ? (window._warnTestLocal && window._warnTestLocal[localOnKey])
                     : (active && _testValues[sig] > 0);
+                const isMomentary = !!(w.config && w.config.is_momentary);
                 toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-                toggle.textContent = on ? 'ACTIVE' : 'TEST ACTIVE';
+                toggle.dataset.momentary = isMomentary ? '1' : '';
+                toggle.textContent = isMomentary
+                    ? (on ? 'PRESSED' : 'HOLD TO TEST')
+                    : (on ? 'ACTIVE'  : 'TEST ACTIVE');
+                toggle.title = isMomentary
+                    ? 'Hold to drive the signal high; release to drop it'
+                    : 'Tap to toggle the signal between 1 and 0';
                 valEl.textContent = warningNoSig
                     ? (on ? '1' : '\u2014')
                     : (active ? String(_testValues[sig]) : '\u2014');
@@ -12043,23 +12337,68 @@
              * The × button is still available for fully disengaging. */
             const toggleBtn = document.getElementById('wstTestToggle');
             if (toggleBtn) {
-                toggleBtn.addEventListener('click', () => {
-                    const sig  = toggleBtn.dataset.signal;
+                /* Drive the test value into the firmware. `state` is true for
+                 * "active" (signal=1 / warning ON) and false for the inverse. */
+                const _drive = (state) => {
+                    const sig   = toggleBtn.dataset.signal;
                     const wslot = toggleBtn.dataset.warnSlot;
-                    const wasOn = toggleBtn.getAttribute('aria-pressed') === 'true';
                     if (wslot) {
-                        /* Alert-without-signal — route via /api/warning/test
-                         * and track local on/off so the toggle visually persists. */
                         if (!window._warnTestLocal) window._warnTestLocal = {};
-                        const key = '_warnTestOn_slot_' + wslot;
-                        const newOn = !wasOn;
-                        window._warnTestLocal[key] = newOn;
-                        _testApply('warning', wslot, newOn);
-                    } else if (sig && typeof setTestValue === 'function') {
-                        setTestValue(sig, wasOn ? 0 : 1);
+                        window._warnTestLocal['_warnTestOn_slot_' + wslot] = state;
+                        _testApply('warning', wslot, state);
+                    } else if (sig) {
+                        if (state && typeof setTestValue === 'function') {
+                            setTestValue(sig, 1);
+                        } else if (!state) {
+                            /* For momentary release we drive 0 (so the widget
+                             * visibly drops); for toggle-off we also send 0
+                             * rather than clearing the test, so the firmware
+                             * holds the inactive state instead of falling back
+                             * to whatever the live CAN value is. */
+                            if (typeof setTestValue === 'function') setTestValue(sig, 0);
+                        }
                     }
                     _wstUpdate();
+                };
+                /* Click handles the toggle case (is_momentary === false) and
+                 * is the keyboard/screen-reader fallback when momentary. */
+                toggleBtn.addEventListener('click', (e) => {
+                    if (toggleBtn.dataset.momentary === '1') {
+                        /* In momentary mode the press/release pair is handled
+                         * via pointerdown/pointerup below. We still want the
+                         * keyboard activation path (Enter/Space synthesises a
+                         * click without a pointer event) to do something
+                         * useful — pulse on then off. */
+                        if (e.detail === 0) {
+                            _drive(true);
+                            setTimeout(() => _drive(false), 120);
+                        }
+                        return;
+                    }
+                    const wasOn = toggleBtn.getAttribute('aria-pressed') === 'true';
+                    _drive(!wasOn);
                 });
+                /* Momentary press/release. Use pointerdown/up so a touch on
+                 * mobile and a mouse click on desktop both work. The release
+                 * also fires on pointercancel / pointerleave so the test
+                 * value can't get stuck at 1 if the user drags off the btn. */
+                const _onDown = (e) => {
+                    if (toggleBtn.dataset.momentary !== '1') return;
+                    e.preventDefault();
+                    if (toggleBtn.setPointerCapture && e.pointerId != null) {
+                        try { toggleBtn.setPointerCapture(e.pointerId); } catch (_) {}
+                    }
+                    _drive(true);
+                };
+                const _onUp = (e) => {
+                    if (toggleBtn.dataset.momentary !== '1') return;
+                    if (toggleBtn.getAttribute('aria-pressed') !== 'true') return;
+                    _drive(false);
+                };
+                toggleBtn.addEventListener('pointerdown', _onDown);
+                toggleBtn.addEventListener('pointerup', _onUp);
+                toggleBtn.addEventListener('pointercancel', _onUp);
+                toggleBtn.addEventListener('pointerleave', _onUp);
             }
             const clearBtn = document.getElementById('wstTestClear');
             if (clearBtn) {

@@ -453,11 +453,15 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	    lv_obj_is_valid(pd->peak_label) && pd->signal_index >= 0) {
 		signal_t *sig = signal_get_by_index(pd->signal_index);
 		char pk_buf[40];
-		if (!sig || (sig->peak_value == -FLT_MAX && sig->min_value == FLT_MAX)) {
+		/* Panel widgets show SESSION peaks (since boot), not the all-time
+		 * persisted ones. The Peaks screen still displays the persisted
+		 * values — this is so a driver sees today's high RPM, not a peak
+		 * captured weeks ago that has no relevance to the current run. */
+		if (!sig || (sig->session_peak == -FLT_MAX && sig->session_min == FLT_MAX)) {
 			pk_buf[0] = '\0';  /* no data yet */
 		} else {
-			float pk = sig->peak_value;
-			float mn = sig->min_value;
+			float pk = sig->session_peak;
+			float mn = sig->session_min;
 			int dec = pd->decimals;
 			switch (pd->show_peak) {
 				case 1: /* MAX */

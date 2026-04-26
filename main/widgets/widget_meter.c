@@ -18,12 +18,28 @@
 #include "ui/ui.h"
 #include "widget_types.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "widget_meter";
+
+/* Apply the user-configured gamma curve to a clamped value. Returns the
+ * "virtual" value to pass to lv_meter_set_indicator_value so the needle
+ * lands at the warped position. scale_curve_milli == 1000 → linear pass-
+ * through; >1000 compresses the low end; <1000 expands the low end. */
+static inline int32_t _meter_apply_curve(meter_data_t *md, int32_t v) {
+	if (md->scale_curve_milli == 0 || md->scale_curve_milli == 1000) return v;
+	if (md->max <= md->min) return v;
+	float gamma = (float)md->scale_curve_milli / 1000.0f;
+	if (gamma <= 0.0f) return v;
+	float t = (float)(v - md->min) / (float)(md->max - md->min);
+	if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+	float warped = powf(t, gamma);
+	return md->min + (int32_t)(warped * (float)(md->max - md->min) + 0.5f);
+}
 
 #define METER_DEFAULT_W 140
 #define METER_DEFAULT_H 140
@@ -41,6 +57,9 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		if (v < md->min) v = md->min;
 		if (v > md->max) v = md->max;
 	}
+	/* Apply non-linear scale curve (gamma) — affects only the needle
+	 * angle, not the tick labels. See _meter_apply_curve docstring. */
+	v = _meter_apply_curve(md, v);
 	/* Only drive whichever meter is currently visible. Updating the hidden
 	 * sibling costs an LVGL indicator recompute + invalidation-mark that
 	 * nobody ever sees — with meters bound to fast-moving sim signals
@@ -123,8 +142,6 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	meter_data_t *md = (meter_data_t *)lv_event_get_user_data(e);
 	if (!md) return;
 	uint8_t style = md->needle_tip_style;
-	if (style == 0) return;
-
 	lv_draw_line_dsc_t *line_dsc = dsc->line_dsc;
 
 	if (code == LV_EVENT_DRAW_PART_BEGIN) {
@@ -138,7 +155,38 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 		return;
 	}
 
-	/* DRAW_PART_END: only polygon styles have custom geometry. */
+	/* === DRAW_PART_END === */
+
+	/* Rear counterweight extension. Draws a short line in the opposite
+	 * direction from the pivot, so a needle that points at "8 o'clock"
+	 * also has a small "2 o'clock" tail. Length in pixels. */
+	if (md->needle_rear_length > 0) {
+		int32_t rdx = dsc->p2->x - dsc->p1->x;
+		int32_t rdy = dsc->p2->y - dsc->p1->y;
+		uint32_t rlen_sq = (uint32_t)(rdx * rdx + rdy * rdy);
+		if (rlen_sq > 0) {
+			lv_sqrt_res_t rsres;
+			lv_sqrt(rlen_sq, &rsres, 0x800);
+			int32_t rlen = rsres.i;
+			if (rlen > 0) {
+				int32_t back = md->needle_rear_length;
+				lv_point_t rear_pt;
+				rear_pt.x = dsc->p1->x - (rdx * back) / rlen;
+				rear_pt.y = dsc->p1->y - (rdy * back) / rlen;
+				lv_draw_line_dsc_t rear_dsc;
+				lv_draw_line_dsc_init(&rear_dsc);
+				rear_dsc.color       = line_dsc->color;
+				rear_dsc.width       = line_dsc->width > 0 ? line_dsc->width
+				                                          : md->needle_width;
+				rear_dsc.opa         = LV_OPA_COVER;
+				rear_dsc.round_start = line_dsc->round_start;
+				rear_dsc.round_end   = line_dsc->round_end;
+				lv_draw_line(dsc->draw_ctx, &rear_dsc, dsc->p1, &rear_pt);
+			}
+		}
+	}
+
+	/* Only polygon styles have custom geometry beyond this point. */
 	if (style < 2 || style > 5) return;
 
 	const lv_point_t *p1 = dsc->p1;   /* pivot */
@@ -512,6 +560,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_color", (int)md->needle_color.full);
 	if (md->needle_r_mod != -10)
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
+	if (md->needle_rear_length != 0)
+		cJSON_AddNumberToObject(cfg, "needle_rear_length", md->needle_rear_length);
+	if (md->scale_curve_milli != 0 && md->scale_curve_milli != 1000)
+		cJSON_AddNumberToObject(cfg, "scale_curve_milli", md->scale_curve_milli);
 	if (md->needle_tip_style != 0)
 		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
 	if (md->needle_tip_base_w != 0)
@@ -638,6 +690,15 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_r_mod");
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_rear_length");
+	if (cJSON_IsNumber(ap)) md->needle_rear_length = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "scale_curve_milli");
+	if (cJSON_IsNumber(ap)) {
+		int v = ap->valueint;
+		if (v < 100)  v = 100;
+		if (v > 5000) v = 5000;
+		md->scale_curve_milli = (int16_t)v;
+	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
 	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
@@ -852,6 +913,7 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 			if (fv > (float)md->max) fv = (float)md->max;
 			v = (int32_t)fv;
 		}
+		v = _meter_apply_curve(md, v);
 
 		if (active) {
 			if (md->night_needle)
@@ -925,6 +987,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_width = 4;
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
+	md->needle_rear_length = 0;
+	md->scale_curve_milli  = 1000;  /* linear */
 	md->needle_tip_style   = 0;
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;

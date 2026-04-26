@@ -22,7 +22,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define REFRESH_PERIOD_MS  500
+/* 100 ms refresh — fast enough to feel "live" like layout widgets,
+ * still cheap (label set_text only repaints when text changes). */
+#define REFRESH_PERIOD_MS  100
 #define MAX_TRACKED        128   /* matches MAX_SIGNALS */
 
 /* One LVGL row per signal. We cache the labels so the refresh callback
@@ -59,13 +61,25 @@ static void _format_value(float v, char *out, size_t outsz)
 
 /* ── Row builder ─────────────────────────────────────────────────────────── */
 
+/* Per-row reset button click — sig_idx is encoded in user_data as
+ * (void *)(intptr_t)(idx + 1) so 0 vs NULL is distinguishable. */
+static void _row_reset_btn_cb(lv_event_t *e)
+{
+	intptr_t enc = (intptr_t)lv_event_get_user_data(e);
+	if (enc <= 0) return;
+	int16_t idx = (int16_t)(enc - 1);
+	signal_reset_peak(idx);
+	/* No need to call _refresh — the 100ms timer will pick it up. The
+	 * label sentinel check ("-" for FLT_MAX) renders the empty state. */
+}
+
 /* Build one row in the scroll container for the given signal. */
 static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 {
 	if (s_row_count >= MAX_TRACKED) return;
 
 	lv_obj_t *row = lv_obj_create(parent);
-	lv_obj_set_size(row, lv_pct(100), 28);
+	lv_obj_set_size(row, lv_pct(100), 32);
 	lv_obj_set_style_bg_color(row, THEME_COLOR_SECTION_BG, 0);
 	lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_color(row, THEME_COLOR_BORDER, 0);
@@ -76,39 +90,57 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 	lv_obj_set_style_pad_hor(row, 8, 0);
 	lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-	/* Signal name on the left, takes ~40% of the width */
+	/* Layout: 35% name | 20% cur | 18% min | 18% max | 9% reset btn */
+
 	lv_obj_t *name = lv_label_create(row);
 	lv_label_set_text(name, sig->name);
 	lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(name, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_width(name, lv_pct(40));
+	lv_obj_set_width(name, lv_pct(35));
 	lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
 	lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
 
-	/* Three value columns, right-aligned, each ~20% wide. Order: cur, min, max */
 	lv_obj_t *cur = lv_label_create(row);
 	lv_label_set_text(cur, "-");
 	lv_obj_set_style_text_font(cur, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(cur, THEME_COLOR_TEXT_PRIMARY, 0);
 	lv_obj_set_style_text_align(cur, LV_TEXT_ALIGN_RIGHT, 0);
 	lv_obj_set_width(cur, lv_pct(20));
-	lv_obj_align(cur, LV_ALIGN_LEFT_MID, lv_pct(40), 0);
+	lv_obj_align(cur, LV_ALIGN_LEFT_MID, lv_pct(35), 0);
 
 	lv_obj_t *mn = lv_label_create(row);
 	lv_label_set_text(mn, "-");
 	lv_obj_set_style_text_font(mn, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(mn, THEME_COLOR_STATUS_CONNECTED, 0);
 	lv_obj_set_style_text_align(mn, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width(mn, lv_pct(20));
-	lv_obj_align(mn, LV_ALIGN_LEFT_MID, lv_pct(60), 0);
+	lv_obj_set_width(mn, lv_pct(18));
+	lv_obj_align(mn, LV_ALIGN_LEFT_MID, lv_pct(55), 0);
 
 	lv_obj_t *mx = lv_label_create(row);
 	lv_label_set_text(mx, "-");
 	lv_obj_set_style_text_font(mx, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(mx, THEME_COLOR_ACCENT_AMBER, 0);
 	lv_obj_set_style_text_align(mx, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_width(mx, lv_pct(20));
-	lv_obj_align(mx, LV_ALIGN_LEFT_MID, lv_pct(80), 0);
+	lv_obj_set_width(mx, lv_pct(18));
+	lv_obj_align(mx, LV_ALIGN_LEFT_MID, lv_pct(73), 0);
+
+	/* Per-row reset button — small ↺ in the rightmost slot. Click clears
+	 * just this signal's peak/min via signal_reset_peak(). */
+	lv_obj_t *rst = lv_btn_create(row);
+	lv_obj_set_size(rst, 56, 22);
+	lv_obj_align(rst, LV_ALIGN_RIGHT_MID, 0, 0);
+	lv_obj_set_style_bg_color(rst, THEME_COLOR_BG, 0);
+	lv_obj_set_style_border_color(rst, THEME_COLOR_BORDER, 0);
+	lv_obj_set_style_border_width(rst, 1, 0);
+	lv_obj_set_style_radius(rst, THEME_RADIUS_SMALL, 0);
+	lv_obj_set_style_shadow_width(rst, 0, 0);
+	lv_obj_add_event_cb(rst, _row_reset_btn_cb, LV_EVENT_CLICKED,
+	                    (void *)(intptr_t)(sig_idx + 1));
+	lv_obj_t *rst_lbl = lv_label_create(rst);
+	lv_label_set_text(rst_lbl, LV_SYMBOL_REFRESH);
+	lv_obj_set_style_text_font(rst_lbl, THEME_FONT_TINY, 0);
+	lv_obj_set_style_text_color(rst_lbl, THEME_COLOR_TEXT_MUTED, 0);
+	lv_obj_center(rst_lbl);
 
 	s_rows[s_row_count].signal_index = sig_idx;
 	s_rows[s_row_count].cur_lbl      = cur;
@@ -268,11 +300,11 @@ static void _create(void)
 	lv_obj_set_style_pad_hor(col_hdr, 8, 0);
 	lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-	struct { const char *txt; lv_coord_t pct_offset; lv_color_t color; } cols[] = {
-		{ "Signal",  0,    THEME_COLOR_TEXT_MUTED },
-		{ "Current", 40,   THEME_COLOR_TEXT_MUTED },
-		{ "Min",     60,   THEME_COLOR_STATUS_CONNECTED },
-		{ "Max",     80,   THEME_COLOR_ACCENT_AMBER },
+	struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w; lv_color_t color; } cols[] = {
+		{ "Signal",  0,  35, THEME_COLOR_TEXT_MUTED },
+		{ "Current", 35, 20, THEME_COLOR_TEXT_MUTED },
+		{ "Min",     55, 18, THEME_COLOR_STATUS_CONNECTED },
+		{ "Max",     73, 18, THEME_COLOR_ACCENT_AMBER },
 	};
 	for (size_t i = 0; i < sizeof(cols) / sizeof(cols[0]); i++) {
 		lv_obj_t *l = lv_label_create(col_hdr);
@@ -280,9 +312,8 @@ static void _create(void)
 		lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
 		lv_obj_set_style_text_color(l, cols[i].color, 0);
 		lv_obj_set_style_text_letter_space(l, 1, 0);
-		lv_obj_set_width(l, lv_pct(20));
+		lv_obj_set_width(l, lv_pct(cols[i].pct_w));
 		if (i == 0) {
-			lv_obj_set_width(l, lv_pct(40));
 			lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
 		} else {
 			lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);

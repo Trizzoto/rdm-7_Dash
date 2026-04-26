@@ -2845,8 +2845,15 @@ typedef struct {
 
 static void _deferred_inject(void *arg) {
 	signal_inject_batch_t *batch = (signal_inject_batch_t *)arg;
-	for (uint8_t i = 0; i < batch->count; i++)
+	for (uint8_t i = 0; i < batch->count; i++) {
 		signal_inject_test_value(batch->entries[i].name, batch->entries[i].value);
+		/* Lock the signal so live CAN traffic won't overwrite this test
+		 * value — the user is driving a test from the web editor and
+		 * wants the injected value pinned until they click × (which
+		 * hits /api/signal/clear). Safe to call on every re-inject:
+		 * signal_set_test_lock short-circuits when state is unchanged. */
+		signal_set_test_lock(batch->entries[i].name, true);
+	}
 	free(batch);
 }
 
@@ -2903,6 +2910,68 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 		lv_async_call(_deferred_inject, batch);
 	else
 		free(batch);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+}
+
+/* POST /api/signal/clear — release a test lock so live CAN frames can
+ * drive the signal again. Pairs with /api/signal/inject (which locks).
+ * Body: {"signal": "RPM"}  ← single
+ *   or: {"all": true}       ← clear every locked signal at once */
+
+typedef struct {
+	uint8_t  mode;               /* 0 = single, 1 = all */
+	char     name[32];
+} signal_clear_req_t;
+
+static void _deferred_clear(void *arg) {
+	signal_clear_req_t *r = (signal_clear_req_t *)arg;
+	if (r->mode == 1) signal_clear_all_test_locks();
+	else              signal_set_test_lock(r->name, false);
+	free(r);
+}
+
+static esp_err_t _signal_clear_handler(httpd_req_t *req) {
+	char buf[128];
+	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (ret <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[ret] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	signal_clear_req_t *r = calloc(1, sizeof(signal_clear_req_t));
+	if (!r) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+
+	cJSON *all = cJSON_GetObjectItemCaseSensitive(root, "all");
+	cJSON *sig = cJSON_GetObjectItemCaseSensitive(root, "signal");
+	if (cJSON_IsTrue(all)) {
+		r->mode = 1;
+	} else if (cJSON_IsString(sig) && sig->valuestring) {
+		r->mode = 0;
+		strncpy(r->name, sig->valuestring, sizeof(r->name) - 1);
+	} else {
+		cJSON_Delete(root);
+		free(r);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Expected {signal:<name>} or {all:true}");
+		return ESP_FAIL;
+	}
+	cJSON_Delete(root);
+
+	lv_async_call(_deferred_clear, r);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -4604,6 +4673,13 @@ esp_err_t web_server_start(void) {
 		.handler = _signal_inject_handler
 	};
 	REGISTER_URI(server, &signal_inject_uri);
+
+	static const httpd_uri_t signal_clear_uri = {
+		.uri = "/api/signal/clear",
+		.method = HTTP_POST,
+		.handler = _signal_clear_handler
+	};
+	REGISTER_URI(server, &signal_clear_uri);
 
 	static const httpd_uri_t fuel_status_uri = {
 		.uri = "/api/fuel/status",

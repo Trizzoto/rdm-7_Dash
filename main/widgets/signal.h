@@ -59,10 +59,18 @@ typedef struct {
 
     /* Runtime state */
     float    current_value;
-    float    peak_value;        /* Highest value seen */
-    float    min_value;         /* Lowest value seen */
+    float    peak_value;        /* Highest value seen (persisted across reboot) */
+    float    min_value;         /* Lowest value seen (persisted across reboot) */
+    float    session_peak;      /* Highest seen this boot only — never persisted */
+    float    session_min;       /* Lowest seen this boot only — never persisted */
     bool     tracking_active;   /* Peak/min tracking enabled */
     bool     is_stale;
+    bool     test_locked;       /* true = manual test value holds this signal.
+                                   signal_dispatch_frame() drops matching CAN
+                                   frames so the injected value sticks while
+                                   the car is live on the bus. Cleared via
+                                   signal_set_test_lock(name, false) or by
+                                   layout reload (registry reset). */
     uint64_t last_update_ms;
 
     signal_subscriber_t subscribers[MAX_SIGNAL_SUBSCRIBERS];
@@ -151,6 +159,20 @@ void signal_check_timeouts(uint64_t current_time_ms);
  */
 void signal_inject_test_value(const char *name, float value);
 
+/**
+ * Set or clear the "test lock" on a signal by name. While locked,
+ * signal_dispatch_frame() drops any matching CAN frame so an injected
+ * test value won't be overwritten by live bus traffic. The signal also
+ * stays "fresh" (no 2s timeout) for the duration of the lock.
+ *
+ * Called from the web /api/signal/inject (lock=true) and /api/signal/clear
+ * (lock=false) handlers.
+ */
+void signal_set_test_lock(const char *name, bool locked);
+
+/** Clear test lock on every signal. Layout reload also clears locks. */
+void signal_clear_all_test_locks(void);
+
 /* ── Peak/min tracking ────────────────────────────────────────────────── */
 
 /** Reset peak and min values for all signals. */
@@ -164,6 +186,15 @@ float signal_get_peak(int16_t signal_index);
 
 /** Get the min value recorded for a signal. Returns FLT_MAX if none. */
 float signal_get_min(int16_t signal_index);
+
+/** Session peak/min — same as above but only since the last boot (never
+ * loaded from NVS). Used by panel widgets so a "Peak Hold" reading shows
+ * what's happened during this drive, not the all-time history that the
+ * Peaks screen displays. */
+float signal_get_session_peak(int16_t signal_index);
+float signal_get_session_min(int16_t signal_index);
+void  signal_reset_session_peak(int16_t signal_index);
+void  signal_reset_all_session_peaks(void);
 
 /* ── Persistence ──────────────────────────────────────────────────────────
  * Peak/min values persist across reboot in NVS until the user hits "Reset All".

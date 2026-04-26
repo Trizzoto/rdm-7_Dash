@@ -53,9 +53,9 @@ typedef struct {
 	 *   1 = MAX  ("MAX 7184")
 	 *   2 = MIN  ("MIN 0")
 	 *   3 = both ("MIN 0 / MAX 7184")
-	 * Tracking is always-on at the signal layer (signal_t.peak_value/min_value);
-	 * this field only controls visibility. Reset is signal-wide (signal_reset_peak)
-	 * via the long-press menu. */
+	 * Reads SESSION peaks from the signal layer (signal_t.session_peak/min)
+	 * — these reset on every boot. The Peaks screen shows the all-time
+	 * persisted peaks instead. Reset is signal-wide via signal_reset_peak. */
 	uint8_t    show_peak;
 	char       signal_name[32];
 	int16_t    signal_index;

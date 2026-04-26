@@ -82,6 +82,12 @@ void create_bar_low_color_wheel_popup(uint8_t value_id);
 void create_bar_high_color_wheel_popup(uint8_t value_id);
 void create_bar_in_range_color_wheel_popup(uint8_t value_id);
 
+/** Reapply the bar's internal LVGL range based on bar_min / bar_max scaled
+ *  by 10^decimals. Call from config_modal whenever any of those fields
+ *  change so the live widget reflects the new resolution immediately.
+ *  No-op on image-mode bars (they recompute fill percentage every frame). */
+void widget_bar_sync_range(bar_data_t *bd);
+
 /** Config callbacks for bar range/threshold inputs (used by config_modal). */
 void bar_range_input_event_cb(lv_event_t *e);
 void bar_low_value_event_cb(lv_event_t *e);

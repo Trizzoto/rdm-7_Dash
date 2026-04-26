@@ -42,6 +42,27 @@ static inline bool _bar_is_image_mode(const bar_data_t *bd) {
 	return bd && bd->bar_image[0] != '\0' && bd->bar_image_full[0] != '\0';
 }
 
+/* Decimals drive the bar's *internal* resolution. A user bar_min/bar_max of
+ * 0..1 with decimals=2 yields an internal LVGL range of 0..100, so a live
+ * value of 0.85 fills 85% of the bar instead of snapping to the 0 or 1 end.
+ * Clamped to [0..4] matching the dropdown range in config_modal.c. */
+static inline int32_t _bar_resolution_scale(const bar_data_t *bd) {
+	if (!bd || bd->decimals == 0) return 1;
+	uint8_t d = bd->decimals > 4 ? 4 : bd->decimals;
+	int32_t s = 1;
+	while (d--) s *= 10;
+	return s;
+}
+
+void widget_bar_sync_range(bar_data_t *bd) {
+	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+	int32_t scale = _bar_resolution_scale(bd);
+	int32_t lo = bd->bar_min * scale;
+	int32_t hi = bd->bar_max * scale;
+	if (hi <= lo) { lo = 0; hi = 100 * scale; }
+	lv_bar_set_range(bd->bar_obj, lo, hi);
+}
+
 /* ── Helpers: look up bar_data_t by slot or value_id via registry ──────── */
 static bar_data_t *_lookup_bar_data(uint8_t slot) {
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_BAR, slot);
@@ -675,9 +696,10 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 
 void widget_bar_create(lv_obj_t *parent) {
 	bar_data_t *bd1 = _lookup_bar_data(0);
-	int32_t b1_min = bd1 ? bd1->bar_min : 0;
-	int32_t b1_max = bd1 ? bd1->bar_max : 100;
-	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100; }
+	int32_t s1 = _bar_resolution_scale(bd1);
+	int32_t b1_min = (bd1 ? bd1->bar_min : 0)   * s1;
+	int32_t b1_max = (bd1 ? bd1->bar_max : 100) * s1;
+	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100 * s1; }
 	ui_Bar_1 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_1, b1_min, b1_max);
 	lv_bar_set_value(ui_Bar_1, b1_min, LV_ANIM_OFF);
@@ -727,9 +749,10 @@ void widget_bar_create(lv_obj_t *parent) {
 		lv_obj_add_flag(ui_Bar_1_Value, LV_OBJ_FLAG_HIDDEN);
 
 	bar_data_t *bd2 = _lookup_bar_data(1);
-	int32_t b2_min = bd2 ? bd2->bar_min : 0;
-	int32_t b2_max = bd2 ? bd2->bar_max : 100;
-	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100; }
+	int32_t s2 = _bar_resolution_scale(bd2);
+	int32_t b2_min = (bd2 ? bd2->bar_min : 0)   * s2;
+	int32_t b2_max = (bd2 ? bd2->bar_max : 100) * s2;
+	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100 * s2; }
 	ui_Bar_2 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_2, b2_min, b2_max);
 	lv_bar_set_value(ui_Bar_2, b2_min, LV_ANIM_OFF);
@@ -791,7 +814,11 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	if (!bd) return;
 
 	double final_value = is_stale ? 0.0 : (double)value;
-	int32_t bar_value = is_stale ? 0 : (int32_t)value;
+	/* Scale by 10^decimals so the standard-mode LVGL bar has fractional
+	 * resolution within bar_min..bar_max. Image-mode recomputes fill %
+	 * directly from the unscaled float value below, so it ignores this. */
+	int32_t scale = _bar_resolution_scale(bd);
+	int32_t bar_value = is_stale ? 0 : (int32_t)(value * (float)scale);
 
 	/* ── Image-based bar mode ── */
 	if (_bar_is_image_mode(bd) && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
@@ -865,9 +892,13 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	uint8_t slot = bd ? bd->slot : 0;
 
-	int32_t b_min = bd ? bd->bar_min : 0;
-	int32_t b_max = bd ? bd->bar_max : 100;
-	if (b_max <= b_min) { b_min = 0; b_max = 100; }
+	/* Internal LVGL range is bar_min/bar_max scaled by 10^decimals so a
+	 * value of e.g. 0.85 on a 0..1 bar (decimals=2) fills 85/100 of the
+	 * bar, not snaps to 0 or 1. _bar_on_signal applies the same scale. */
+	int32_t scale = _bar_resolution_scale(bd);
+	int32_t b_min = (bd ? bd->bar_min : 0)   * scale;
+	int32_t b_max = (bd ? bd->bar_max : 100) * scale;
+	if (b_max <= b_min) { b_min = 0; b_max = 100 * scale; }
 
 	lv_obj_t *bar = NULL; /* only set in standard (non-image) mode */
 

@@ -785,23 +785,11 @@ static void ver_click_cb(lv_event_t *e)
     strncpy(st->sel_ver, ctx->name, sizeof(st->sel_ver) - 1);
     populate_sig_col(st);
 }
-static void sig_click_cb(lv_event_t *e)
+/* Core apply logic — shared by channel-click (embedded picker, auto-apply)
+ * and the legacy Apply button (standalone overlay). */
+static void _apply_selection(picker_st_t *st)
 {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    col_sig_ctx_t *ctx = (col_sig_ctx_t *)lv_event_get_user_data(e);
-    picker_st_t *st = ctx->st;
-    set_row_hi(st->hi_sig, false);
-    st->hi_sig = lv_event_get_target(e);
-    set_row_hi(st->hi_sig, true);
-    st->sel_sig = ctx->idx;
-    update_picker_preview(st, ctx->idx);
-}
-static void apply_click_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
     if (!st || st->sel_sig < 0) return;
-
     const preconfig_item_t *it = &preconfig_items[st->sel_sig];
 
     if (st->apply_cb) {
@@ -819,13 +807,37 @@ static void apply_click_cb(lv_event_t *e)
         config_bridge_set_label(vid, it->label);
     }
 
-    if (st->overlay && lv_obj_is_valid(st->overlay)) {
-        lv_obj_del(st->overlay);
-    } else if (st->preview_lbl) {
+    if (st->preview_lbl) {
         char buf[96];
         snprintf(buf, sizeof(buf), LV_SYMBOL_OK "  Applied: %s", it->label);
         lv_label_set_text(st->preview_lbl, buf);
         lv_obj_set_style_text_color(st->preview_lbl, THEME_COLOR_GREEN, 0);
+    }
+}
+
+static void sig_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    col_sig_ctx_t *ctx = (col_sig_ctx_t *)lv_event_get_user_data(e);
+    picker_st_t *st = ctx->st;
+    set_row_hi(st->hi_sig, false);
+    st->hi_sig = lv_event_get_target(e);
+    set_row_hi(st->hi_sig, true);
+    st->sel_sig = ctx->idx;
+    update_picker_preview(st, ctx->idx);
+    /* Auto-apply on channel selection — no separate Apply step needed.
+     * The modal's SAVE button is the sole commit-to-disk action; pending
+     * edits (including this preset binding) go out together on SAVE. */
+    _apply_selection(st);
+}
+
+static void apply_click_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
+    _apply_selection(st);
+    if (st && st->overlay && lv_obj_is_valid(st->overlay)) {
+        lv_obj_del(st->overlay);
     }
 }
 
@@ -1318,28 +1330,12 @@ void build_preset_picker_embedded(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     lv_obj_set_style_text_color(prev_lbl, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(prev_lbl, THEME_FONT_SMALL, 0);
     lv_label_set_long_mode(prev_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(prev_lbl, w - 180);
+    /* Apply button was removed (channel click auto-applies) — preview
+     * label takes the full footer width and stays horizontally centered. */
+    lv_obj_set_width(prev_lbl, w - 20);
     lv_obj_align(prev_lbl, LV_ALIGN_LEFT_MID, 0, 0);
     st->preview_lbl = prev_lbl;
-
-    lv_obj_t *apply_btn = lv_btn_create(footer);
-    lv_obj_set_size(apply_btn, 150, 32);
-    lv_obj_align(apply_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_ACCENT, 0);
-    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_ACCENT_DIM, LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(apply_btn, THEME_COLOR_SECTION_BG, LV_STATE_DISABLED);
-    lv_obj_set_style_radius(apply_btn, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_border_width(apply_btn, 1, 0);
-    lv_obj_set_style_border_color(apply_btn, THEME_COLOR_BORDER, LV_STATE_DISABLED);
-    lv_obj_add_state(apply_btn, LV_STATE_DISABLED);
-    lv_obj_t *albl = lv_label_create(apply_btn);
-    lv_label_set_text(albl, LV_SYMBOL_OK "  APPLY");
-    lv_obj_set_style_text_font(albl, THEME_FONT_BODY, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_set_style_text_color(albl, THEME_COLOR_TEXT_MUTED, LV_STATE_DISABLED);
-    lv_obj_center(albl);
-    lv_obj_add_event_cb(apply_btn, apply_click_cb, LV_EVENT_CLICKED, st);
-    st->apply_btn = apply_btn;
+    st->apply_btn   = NULL;
 
     /* ── Populate brands ─────────────────────────────────────────── */
     _populate_brands(brand_list, st);

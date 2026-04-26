@@ -303,7 +303,14 @@ static void decimals_changed_cb(lv_event_t *e)
 
     switch (ctx->widget->type) {
     case WIDGET_PANEL: ((panel_data_t *)ctx->widget->type_data)->decimals = val; break;
-    case WIDGET_BAR:   ((bar_data_t *)ctx->widget->type_data)->decimals   = val; break;
+    case WIDGET_BAR: {
+        bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+        bd->decimals = val;
+        /* Decimals drive the bar's internal LVGL resolution — reapply the
+         * range so the live widget immediately picks up the new scale. */
+        widget_bar_sync_range(bd);
+        break;
+    }
     default: break;
     }
 }
@@ -673,8 +680,7 @@ static void bar_min_cb(lv_event_t *e)
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
     bd->bar_min = (txt && txt[0]) ? (int32_t)atoi(txt) : 0;
-    if (bd->bar_obj)
-        lv_bar_set_range(bd->bar_obj, bd->bar_min, bd->bar_max);
+    widget_bar_sync_range(bd);  /* applies 10^decimals resolution scaling */
 }
 
 static void bar_max_cb(lv_event_t *e)
@@ -685,8 +691,7 @@ static void bar_max_cb(lv_event_t *e)
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
     bd->bar_max = (txt && txt[0]) ? (int32_t)atoi(txt) : 100;
-    if (bd->bar_obj)
-        lv_bar_set_range(bd->bar_obj, bd->bar_min, bd->bar_max);
+    widget_bar_sync_range(bd);
 }
 
 static void bar_low_thresh_cb(lv_event_t *e)

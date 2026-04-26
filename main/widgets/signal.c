@@ -106,6 +106,8 @@ int16_t signal_register(const char *name, uint32_t can_id,
     /* Peak/min tracking */
     sig->peak_value      = -FLT_MAX;
     sig->min_value       = FLT_MAX;
+    sig->session_peak    = -FLT_MAX;
+    sig->session_min     = FLT_MAX;
     sig->tracking_active = true;
 
     int16_t idx = (int16_t)s_signal_count;
@@ -212,6 +214,13 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 
         if (sig->can_id != can_id) continue;
 
+        /* Test-lock gate: the web editor / Properties panel has injected a
+         * manual test value and asked the firmware to hold it. Drop this
+         * frame so the test value stays pinned while real bus traffic
+         * arrives. Cleared via signal_set_test_lock(name, false) or on
+         * layout reload. */
+        if (sig->test_locked) continue;
+
         /* Guard: ensure the frame carries enough bytes for this signal.
          * can_extract_bits uses the same formula internally, so this
          * prevents reading uninitialised bytes. */
@@ -230,6 +239,8 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
         if (sig->tracking_active) {
             if (decoded > sig->peak_value) { sig->peak_value = decoded; s_peaks_dirty = true; }
             if (decoded < sig->min_value)  { sig->min_value  = decoded; s_peaks_dirty = true; }
+            if (decoded > sig->session_peak) sig->session_peak = decoded;
+            if (decoded < sig->session_min)  sig->session_min  = decoded;
         }
 
         sig->last_update_ms = now_ms;
@@ -269,15 +280,18 @@ void signal_inject_test_value(const char *name, float value)
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
 
-    /* Update peak/min tracking — but skip when the simulator is driving,
-     * because the triangle-wave sweep would otherwise poison the real
-     * recorded peaks/mins (a 0-100 sweep on a temperature signal would
-     * pin peak=100/min=0 even after the sim stops). Replay is still
-     * allowed through this branch: it plays back real logged data that
-     * the user probably DOES want reflected in the peak/min stats. */
-    if (sig->tracking_active && !signal_sim_is_active()) {
+    /* Update peak/min tracking — skip when the simulator is driving OR
+     * the signal is currently test-locked by the user. The sim's
+     * triangle-wave sweep would pin peaks at the extremes of its range;
+     * manually-injected test values are fake by definition and shouldn't
+     * corrupt the recorded peaks either. Replay is still allowed through
+     * this branch: it plays back real logged data that the user probably
+     * DOES want reflected in the peak/min stats. */
+    if (sig->tracking_active && !signal_sim_is_active() && !sig->test_locked) {
         if (value > sig->peak_value) { sig->peak_value = value; s_peaks_dirty = true; }
         if (value < sig->min_value)  { sig->min_value  = value; s_peaks_dirty = true; }
+        if (value > sig->session_peak) sig->session_peak = value;
+        if (value < sig->session_min)  sig->session_min  = value;
     }
 
     /* Match signal_dispatch_frame: only repaint widgets when the value
@@ -301,11 +315,51 @@ void signal_check_timeouts(uint64_t current_time_ms)
         /* Skip: already stale (already notified) or never received. */
         if (sig->is_stale || sig->last_update_ms == 0) continue;
 
+        /* Test-locked signals are under manual user control — hold fresh
+         * so the injected value keeps rendering without the stale badge. */
+        if (sig->test_locked) continue;
+
         if (current_time_ms - sig->last_update_ms > SIGNAL_TIMEOUT_MS) {
             sig->is_stale = true;
             notify_subscribers(sig);
         }
     }
+}
+
+/* ── Test lock ──────────────────────────────────────────────────────────── */
+
+void signal_set_test_lock(const char *name, bool locked)
+{
+    if (!s_signals || !name) return;
+    int16_t idx = signal_find_by_name(name);
+    if (idx < 0) {
+        ESP_LOGD(TAG, "signal_set_test_lock: '%s' not found", name);
+        return;
+    }
+    signal_t *sig = &s_signals[idx];
+    if (sig->test_locked == locked) return;
+    sig->test_locked = locked;
+    if (!locked) {
+        /* Reset last_update_ms so the next real CAN frame (or 2s timeout)
+         * decides fresh-vs-stale; don't hold the pre-lock timestamp. */
+        sig->last_update_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    }
+    ESP_LOGI(TAG, "signal '%s' test lock %s", name, locked ? "ON" : "OFF");
+}
+
+void signal_clear_all_test_locks(void)
+{
+    if (!s_signals) return;
+    uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    uint16_t cleared = 0;
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        if (s_signals[i].test_locked) {
+            s_signals[i].test_locked = false;
+            s_signals[i].last_update_ms = now_ms;
+            cleared++;
+        }
+    }
+    if (cleared) ESP_LOGI(TAG, "cleared %u test locks", cleared);
 }
 
 /* ── Peak/min value tracking ───────────────────────────────────────────── */
@@ -314,8 +368,10 @@ void signal_reset_peaks(void)
 {
     if (!s_signals) return;
     for (uint16_t i = 0; i < s_signal_count; i++) {
-        s_signals[i].peak_value = -FLT_MAX;
-        s_signals[i].min_value  = FLT_MAX;
+        s_signals[i].peak_value   = -FLT_MAX;
+        s_signals[i].min_value    = FLT_MAX;
+        s_signals[i].session_peak = -FLT_MAX;
+        s_signals[i].session_min  = FLT_MAX;
     }
     /* Flush to NVS immediately so a power-cycle right after "Reset All"
      * doesn't re-hydrate the old peaks from stale storage. */
@@ -327,9 +383,15 @@ void signal_reset_peak(int16_t signal_index)
 {
     if (!s_signals || signal_index < 0 ||
         (uint16_t)signal_index >= s_signal_count) return;
-    s_signals[signal_index].peak_value = -FLT_MAX;
-    s_signals[signal_index].min_value  = FLT_MAX;
+    s_signals[signal_index].peak_value   = -FLT_MAX;
+    s_signals[signal_index].min_value    = FLT_MAX;
+    s_signals[signal_index].session_peak = -FLT_MAX;
+    s_signals[signal_index].session_min  = FLT_MAX;
     s_peaks_dirty = true;
+    /* Persist immediately — same reasoning as signal_reset_peaks(): if the
+     * user resets a row and power-cycles, they'd be confused to see the old
+     * value re-hydrate from NVS. */
+    signal_peaks_save_now();
 }
 
 float signal_get_peak(int16_t signal_index)
@@ -344,6 +406,37 @@ float signal_get_min(int16_t signal_index)
     if (!s_signals || signal_index < 0 ||
         (uint16_t)signal_index >= s_signal_count) return FLT_MAX;
     return s_signals[signal_index].min_value;
+}
+
+float signal_get_session_peak(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return -FLT_MAX;
+    return s_signals[signal_index].session_peak;
+}
+
+float signal_get_session_min(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return FLT_MAX;
+    return s_signals[signal_index].session_min;
+}
+
+void signal_reset_session_peak(int16_t signal_index)
+{
+    if (!s_signals || signal_index < 0 ||
+        (uint16_t)signal_index >= s_signal_count) return;
+    s_signals[signal_index].session_peak = -FLT_MAX;
+    s_signals[signal_index].session_min  = FLT_MAX;
+}
+
+void signal_reset_all_session_peaks(void)
+{
+    if (!s_signals) return;
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        s_signals[i].session_peak = -FLT_MAX;
+        s_signals[i].session_min  = FLT_MAX;
+    }
 }
 
 /* ── Persistence ────────────────────────────────────────────────────────── */

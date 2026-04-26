@@ -982,11 +982,13 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 	lv_obj_set_width(warning_labels[i], LV_SIZE_CONTENT);
 	lv_obj_set_height(warning_labels[i], LV_SIZE_CONTENT);
 	lv_obj_set_x(warning_labels[i], pos_x);
-	/* Position label just below the circle/image */
+	/* Position label just below the circle/image, plus the user's
+	 * label_y_offset tuning knob (default 0 preserves the original). */
 	{
 		int16_t obj_h = lv_obj_get_height(warning_circles[i]);
 		if (obj_h <= 0) obj_h = 15;
-		lv_obj_set_y(warning_labels[i], pos_y + obj_h / 2 + 4);
+		int8_t y_off = wd_style ? wd_style->label_y_offset : 0;
+		lv_obj_set_y(warning_labels[i], pos_y + obj_h / 2 + 4 + y_off);
 	}
 	lv_obj_set_align(warning_labels[i], LV_ALIGN_CENTER);
 	lv_obj_add_flag(warning_labels[i], LV_OBJ_FLAG_HIDDEN);
@@ -1007,10 +1009,25 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(warning_labels[i], 255,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(warning_labels[i], LV_TEXT_ALIGN_CENTER,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(warning_labels[i], THEME_FONT_TINY,
-							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Text alignment: 0=Left, 1=Center (default), 2=Right. */
+	{
+		lv_text_align_t ta = LV_TEXT_ALIGN_CENTER;
+		if (wd_style) {
+			if (wd_style->label_text_align == 0) ta = LV_TEXT_ALIGN_LEFT;
+			else if (wd_style->label_text_align == 2) ta = LV_TEXT_ALIGN_RIGHT;
+		}
+		lv_obj_set_style_text_align(warning_labels[i], ta,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Font: user-set "Family:size" overrides the THEME_FONT_TINY default. */
+	{
+		const lv_font_t *lfont = NULL;
+		if (wd_style && wd_style->label_font[0] != '\0')
+			lfont = widget_resolve_font(wd_style->label_font);
+		if (!lfont) lfont = THEME_FONT_TINY;
+		lv_obj_set_style_text_font(warning_labels[i], lfont,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 
 	lv_obj_t *touch_area = lv_obj_create(parent);
 	/* Touch area covers the visual widget. For the legacy alert-strip
@@ -1117,11 +1134,12 @@ static void _warning_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
-	/* Reposition label below the resized circle */
+	/* Reposition label below the resized circle (keeping user's y offset). */
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	if (wd && wd->slot < 8 && warning_labels[wd->slot] &&
 	    lv_obj_is_valid(warning_labels[wd->slot])) {
-		lv_obj_set_y(warning_labels[wd->slot], w->y + nh / 2 + 4);
+		lv_obj_set_y(warning_labels[wd->slot],
+		             w->y + nh / 2 + 4 + wd->label_y_offset);
 	}
 }
 static void _warning_open_settings(widget_t *w) {
@@ -1153,6 +1171,12 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddBoolToObject(cfg, "show_label", false);
 		if (wd->label_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "label_color", (int)wd->label_color.full);
+		if (wd->label_font[0] != '\0')
+			cJSON_AddStringToObject(cfg, "label_font", wd->label_font);
+		if (wd->label_y_offset != 0)
+			cJSON_AddNumberToObject(cfg, "label_y_offset", wd->label_y_offset);
+		if (wd->label_text_align != 1)
+			cJSON_AddNumberToObject(cfg, "label_text_align", wd->label_text_align);
 		if (wd->image_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "image_name", wd->image_name);
 		if (wd->active_opa != 255)
@@ -1212,6 +1236,16 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) wd->show_label = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
 	if (cJSON_IsNumber(item)) wd->label_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
+	if (cJSON_IsString(item) && item->valuestring)
+		safe_strncpy(wd->label_font, item->valuestring, sizeof(wd->label_font));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_y_offset");
+	if (cJSON_IsNumber(item)) wd->label_y_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_text_align");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		wd->label_text_align = (v < 0 || v > 2) ? 1 : (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(wd->image_name, item->valuestring, sizeof(wd->image_name));
@@ -1432,6 +1466,9 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->radius = 100;
 	wd->show_label = true;
 	wd->label_color = THEME_COLOR_TEXT_PRIMARY;
+	wd->label_font[0] = '\0';           /* empty = THEME_FONT_TINY */
+	wd->label_y_offset = 0;
+	wd->label_text_align = 1;           /* Center */
 	wd->image_name[0] = '\0';
 	wd->active_opa = 255;
 	wd->inactive_opa = 180;
