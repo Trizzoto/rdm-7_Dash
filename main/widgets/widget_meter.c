@@ -18,7 +18,6 @@
 #include "ui/ui.h"
 #include "widget_types.h"
 
-#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,92 +25,32 @@
 
 static const char *TAG = "widget_meter";
 
-/* Parse "v:p, v:p, ..." into md->scale_breaks. Whitespace forgiving;
- * silently caps at METER_MAX_SCALE_BREAKS. Sorts by value ascending so
- * interpolation can walk linearly. Empty / malformed string => count 0. */
-static void _meter_parse_breaks(meter_data_t *md) {
-	md->scale_break_count = 0;
-	const char *p = md->scale_breaks_str;
-	if (!p) return;
-	while (*p && md->scale_break_count < METER_MAX_SCALE_BREAKS) {
-		while (*p == ' ' || *p == ',' || *p == '\t') p++;
-		if (!*p) break;
-		char *endp;
-		long v = strtol(p, &endp, 10);
-		if (endp == p || *endp != ':') break;
-		p = endp + 1;
-		long pct = strtol(p, &endp, 10);
-		if (endp == p) break;
-		if (pct < 0)   pct = 0;
-		if (pct > 100) pct = 100;
-		md->scale_breaks[md->scale_break_count].value   = (int32_t)v;
-		md->scale_breaks[md->scale_break_count].pos_pct = (uint8_t)pct;
-		md->scale_break_count++;
-		p = endp;
-	}
-	/* Insertion sort by value ascending — array is tiny so O(n^2) is fine. */
-	for (uint8_t i = 1; i < md->scale_break_count; i++) {
-		for (uint8_t j = i;
-		     j > 0 && md->scale_breaks[j].value < md->scale_breaks[j-1].value;
-		     j--) {
-			int32_t tv = md->scale_breaks[j].value;
-			uint8_t tp = md->scale_breaks[j].pos_pct;
-			md->scale_breaks[j].value   = md->scale_breaks[j-1].value;
-			md->scale_breaks[j].pos_pct = md->scale_breaks[j-1].pos_pct;
-			md->scale_breaks[j-1].value = tv;
-			md->scale_breaks[j-1].pos_pct = tp;
-		}
-	}
-}
-
-/* Apply the user-configured curve to a clamped value. Returns the "virtual"
- * value to pass to lv_meter_set_indicator_value so the needle lands at the
- * warped position. Two modes:
- *   - Piecewise: when scale_break_count > 0. Linear interpolation between
- *     adjacent breakpoints, with implicit (min,0%) and (max,100%) endpoints.
- *   - Gamma: fallback when no breakpoints set; t' = t^gamma. */
+/* Apply the user-configured anchor curve. Returns the "virtual" value to
+ * pass to lv_meter_set_indicator_value so the needle lands at the desired
+ * non-linear position. Two linear segments split at (anchor_value,
+ * anchor_position%): values in [min..anchor] map to [0..anchor_pos%] of the
+ * sweep, values in [anchor..max] map to [anchor_pos%..100%]. Disabled
+ * (anchor_enabled=false) = linear pass-through. */
 static int32_t _meter_apply_curve(meter_data_t *md, int32_t v) {
-	if (md->max <= md->min) return v;
-
-	if (md->scale_break_count > 0) {
-		/* Walk implicit start (min,0) -> breakpoints -> implicit end (max,100).
-		 * Find segment [a..b] containing v, then interpolate linearly. */
-		int32_t a_v = md->min;
-		int32_t a_p = 0;
-		for (uint8_t i = 0; i < md->scale_break_count; i++) {
-			int32_t b_v = md->scale_breaks[i].value;
-			int32_t b_p = md->scale_breaks[i].pos_pct;
-			/* Skip degenerate / out-of-order segments. */
-			if (b_v <= a_v) continue;
-			if (v <= b_v) {
-				int32_t pct = a_p + (int32_t)(((int64_t)(v - a_v) *
-				              (b_p - a_p)) / (b_v - a_v));
-				if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
-				return md->min + (int32_t)(((int64_t)pct *
-				                 (md->max - md->min)) / 100);
-			}
-			a_v = b_v;
-			a_p = b_p;
-		}
-		/* Past the last breakpoint — interpolate to (max, 100%). */
-		int32_t b_v = md->max;
-		int32_t b_p = 100;
-		if (b_v <= a_v) return v;
-		int32_t pct = a_p + (int32_t)(((int64_t)(v - a_v) *
-		              (b_p - a_p)) / (b_v - a_v));
-		if (pct < 0) pct = 0; else if (pct > 100) pct = 100;
-		return md->min + (int32_t)(((int64_t)pct *
-		                 (md->max - md->min)) / 100);
+	if (!md->anchor_enabled || md->max <= md->min) return v;
+	int32_t a  = md->anchor_value;
+	int32_t ap = md->anchor_position;
+	if (ap < 0)   ap = 0;
+	if (ap > 100) ap = 100;
+	int32_t pct;
+	if (v <= a) {
+		pct = (a > md->min)
+		    ? (int32_t)(((int64_t)(v - md->min) * ap) / (a - md->min))
+		    : 0;
+	} else {
+		int32_t hp = 100 - ap;
+		pct = (md->max > a)
+		    ? ap + (int32_t)(((int64_t)(v - a) * hp) / (md->max - a))
+		    : 100;
 	}
-
-	/* Gamma fallback. */
-	if (md->scale_curve_milli == 0 || md->scale_curve_milli == 1000) return v;
-	float gamma = (float)md->scale_curve_milli / 1000.0f;
-	if (gamma <= 0.0f) return v;
-	float t = (float)(v - md->min) / (float)(md->max - md->min);
-	if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
-	float warped = powf(t, gamma);
-	return md->min + (int32_t)(warped * (float)(md->max - md->min) + 0.5f);
+	if (pct < 0)   pct = 0;
+	if (pct > 100) pct = 100;
+	return md->min + (int32_t)(((int64_t)pct * (md->max - md->min)) / 100);
 }
 
 #define METER_DEFAULT_W 140
@@ -635,10 +574,12 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
 	if (md->needle_rear_length != 0)
 		cJSON_AddNumberToObject(cfg, "needle_rear_length", md->needle_rear_length);
-	if (md->scale_curve_milli != 0 && md->scale_curve_milli != 1000)
-		cJSON_AddNumberToObject(cfg, "scale_curve_milli", md->scale_curve_milli);
-	if (md->scale_breaks_str[0] != '\0')
-		cJSON_AddStringToObject(cfg, "scale_breaks", md->scale_breaks_str);
+	if (md->anchor_enabled)
+		cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
+	if (md->anchor_enabled || md->anchor_value != (md->min + md->max) / 2)
+		cJSON_AddNumberToObject(cfg, "anchor_value", md->anchor_value);
+	if (md->anchor_enabled || md->anchor_position != 50)
+		cJSON_AddNumberToObject(cfg, "anchor_position", md->anchor_position);
 	if (md->needle_tip_style != 0)
 		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
 	if (md->needle_tip_base_w != 0)
@@ -767,22 +708,17 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_rear_length");
 	if (cJSON_IsNumber(ap)) md->needle_rear_length = (uint8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "scale_curve_milli");
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
+	if (cJSON_IsBool(ap)) md->anchor_enabled = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
+	if (cJSON_IsNumber(ap)) md->anchor_value = (int32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
 	if (cJSON_IsNumber(ap)) {
 		int v = ap->valueint;
-		if (v < 100)  v = 100;
-		if (v > 5000) v = 5000;
-		md->scale_curve_milli = (int16_t)v;
+		if (v < 0)   v = 0;
+		if (v > 100) v = 100;
+		md->anchor_position = (uint8_t)v;
 	}
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "scale_breaks");
-	if (cJSON_IsString(ap) && ap->valuestring) {
-		strncpy(md->scale_breaks_str, ap->valuestring,
-		        sizeof(md->scale_breaks_str) - 1);
-		md->scale_breaks_str[sizeof(md->scale_breaks_str) - 1] = '\0';
-	} else {
-		md->scale_breaks_str[0] = '\0';
-	}
-	_meter_parse_breaks(md);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
 	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
@@ -1072,9 +1008,9 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
 	md->needle_rear_length = 0;
-	md->scale_curve_milli  = 1000;  /* linear */
-	md->scale_breaks_str[0] = '\0';
-	md->scale_break_count   = 0;
+	md->anchor_value    = 50;     /* midpoint of default 0..100 range */
+	md->anchor_position = 50;
+	md->anchor_enabled  = false;  /* off by default — pure linear */
 	md->needle_tip_style   = 0;
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;

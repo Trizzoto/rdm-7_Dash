@@ -4525,16 +4525,6 @@
             c.start_angle = start;
             c.end_angle   = (start + sweep) % 360;
 
-            /* Non-linear scale: UX field `scale_curve` (decimal),
-             * firmware reads `scale_curve_milli` (int). */
-            if (typeof c.scale_curve === 'number' && isFinite(c.scale_curve)) {
-                let g = c.scale_curve;
-                if (g < 0.1) g = 0.1; else if (g > 5.0) g = 5.0;
-                c.scale_curve_milli = Math.round(g * 1000);
-            } else if (c.scale_curve_milli == null) {
-                c.scale_curve_milli = 1000;
-                c.scale_curve = 1.0;
-            }
         }
         function _meterDeriveNewFromLegacy(c) {
             if (!c) return;
@@ -4568,10 +4558,6 @@
             if (c.major_tick_step == null && typeof c.minor_tick_step === 'number'
                 && typeof c.major_tick_every === 'number') {
                 c.major_tick_step = c.minor_tick_step * c.major_tick_every;
-            }
-            if (c.scale_curve == null) {
-                c.scale_curve = (typeof c.scale_curve_milli === 'number')
-                    ? c.scale_curve_milli / 1000 : 1.0;
             }
         }
 
@@ -4634,6 +4620,15 @@
                     { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data" },
                     { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
                     { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
+                    /* Anchor-based non-linear scale. "Pin THIS data value to
+                     * THIS position on the bar" — splits the range into two
+                     * linear segments. e.g. coolant 0-110, anchor=90,
+                     * position=50 makes 0-90 cover the first half, 90-110
+                     * cover the second half. anchor_enabled=false (default)
+                     * = pure linear. */
+                    { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data" },
+                    { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", enabledBy: "anchor_enabled" },
+                    { name: "anchor_position", label: "Anchor Position (%)", type: "slider", min: 0, max: 100, def: 50, cat: "data", enabledBy: "anchor_enabled" },
                     { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                     { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                     { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
@@ -4712,12 +4707,14 @@
                      * the old count-based fields. */
                     { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "data" },
                     { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "data" },
-                    /* Non-linear scale: gamma exponent OR piecewise breakpoints.
-                     * Scale Breaks override gamma when set. Format
-                     * "value:percent, ..." — endpoints (min,0%) and (max,100%)
-                     * are implicit. e.g. "45:50, 90:80" = three-segment curve. */
-                    { name: "scale_curve", label: "Scale Curve (1.0 = linear)", type: "number", def: 1.0, cat: "data" },
-                    { name: "scale_breaks", label: "Scale Breaks (e.g. 45:50, 90:80)", type: "text", def: "", cat: "data" },
+                    /* Anchor-based non-linear scale. "Pin THIS data value
+                     * to THIS position on the sweep" — splits the range into
+                     * two linear segments. e.g. anchor=90, position=50 makes
+                     * 0-90 cover the first half of the sweep, 90-max the
+                     * second half. anchor_enabled=false (default) = linear. */
+                    { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data" },
+                    { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", enabledBy: "anchor_enabled" },
+                    { name: "anchor_position", label: "Anchor Position (%)", type: "slider", min: 0, max: 100, def: 50, cat: "data", enabledBy: "anchor_enabled" },
                     { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", nightOverridable: true },
                     { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", min: 0, max: 255, def: 255, cat: "appearance" },
                     { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
@@ -7756,7 +7753,7 @@
              * auto_ticks off so the value sticks across subsequent syncs. */
             const METER_TRIGGERS = new Set([
                 'min', 'max', 'start_position', 'sweep_degrees',
-                'minor_tick_step', 'major_tick_step', 'scale_curve',
+                'minor_tick_step', 'major_tick_step',
             ]);
             if (w.type === 'meter' && METER_TRIGGERS.has(field)) {
                 if (field === 'minor_tick_step' || field === 'major_tick_step') {

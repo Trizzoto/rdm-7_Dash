@@ -54,6 +54,33 @@ static inline int32_t _bar_resolution_scale(const bar_data_t *bd) {
 	return s;
 }
 
+/* Apply the user-configured anchor curve. Returns the "virtual" data value
+ * that, when fed to the linear bar fill calculation, lands at the desired
+ * non-linear position. Two linear segments split at (anchor_value,
+ * anchor_position%): values in [min..anchor] map to [0..anchor_pos%] of
+ * the bar, values in [anchor..max] map to [anchor_pos%..100%]. Anchor at
+ * midpoint with position=50 collapses to linear pass-through. */
+static float _bar_apply_anchor(const bar_data_t *bd, float v) {
+	if (!bd || !bd->anchor_enabled) return v;
+	float mn = (float)bd->bar_min;
+	float mx = (float)bd->bar_max;
+	if (mx <= mn) return v;
+	float a  = (float)bd->anchor_value;
+	float ap = (float)bd->anchor_position;   /* 0..100 */
+	if (ap < 0.0f)   ap = 0.0f;
+	if (ap > 100.0f) ap = 100.0f;
+	float pct;
+	if (v <= a) {
+		pct = (a > mn) ? ((v - mn) / (a - mn) * ap) : 0.0f;
+	} else {
+		float hp = 100.0f - ap;
+		pct = (mx > a) ? (ap + (v - a) / (mx - a) * hp) : 100.0f;
+	}
+	if (pct < 0.0f)   pct = 0.0f;
+	if (pct > 100.0f) pct = 100.0f;
+	return mn + (pct / 100.0f) * (mx - mn);
+}
+
 void widget_bar_sync_range(bar_data_t *bd) {
 	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
 	int32_t scale = _bar_resolution_scale(bd);
@@ -814,18 +841,22 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	if (!bd) return;
 
 	double final_value = is_stale ? 0.0 : (double)value;
+	/* Apply anchor curve once for the FILL POSITION calculation. Threshold
+	 * checks below still use the real (unwarped) final_value so warning
+	 * colors trigger at the configured data thresholds. */
+	float fill_value = is_stale ? 0.0f : _bar_apply_anchor(bd, value);
 	/* Scale by 10^decimals so the standard-mode LVGL bar has fractional
 	 * resolution within bar_min..bar_max. Image-mode recomputes fill %
 	 * directly from the unscaled float value below, so it ignores this. */
 	int32_t scale = _bar_resolution_scale(bd);
-	int32_t bar_value = is_stale ? 0 : (int32_t)(value * (float)scale);
+	int32_t bar_value = is_stale ? 0 : (int32_t)(fill_value * (float)scale);
 
 	/* ── Image-based bar mode ── */
 	if (_bar_is_image_mode(bd) && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
 		int32_t range = bd->bar_max - bd->bar_min;
 		int32_t pct = 0;
 		if (range > 0 && !is_stale) {
-			double clamped = final_value;
+			double clamped = (double)fill_value;
 			if (clamped < bd->bar_min) clamped = bd->bar_min;
 			if (clamped > bd->bar_max) clamped = bd->bar_max;
 			if (bd->invert_bar_value)
@@ -1061,6 +1092,12 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "label", bd->label);
 		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
 		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
+		if (bd->anchor_enabled)
+			cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
+		if (bd->anchor_enabled || bd->anchor_value != (bd->bar_min + bd->bar_max) / 2)
+			cJSON_AddNumberToObject(cfg, "anchor_value", bd->anchor_value);
+		if (bd->anchor_enabled || bd->anchor_position != 50)
+			cJSON_AddNumberToObject(cfg, "anchor_position", bd->anchor_position);
 		cJSON_AddNumberToObject(cfg, "bar_low", bd->bar_low);
 		cJSON_AddNumberToObject(cfg, "bar_high", bd->bar_high);
 		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
@@ -1131,6 +1168,17 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
 	if (cJSON_IsNumber(item)) bd->bar_max = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
+	if (cJSON_IsBool(item)) bd->anchor_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
+	if (cJSON_IsNumber(item)) bd->anchor_value = (int32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0)   v = 0;
+		if (v > 100) v = 100;
+		bd->anchor_position = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low");
 	if (cJSON_IsNumber(item)) bd->bar_low = (int32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high");
@@ -1370,6 +1418,9 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->slot = slot & 1;
 	snprintf(bd->label, sizeof(bd->label), "BAR%d", (slot & 1) + 1);
 	bd->bar_max = 100;
+	bd->anchor_value    = 50;   /* midpoint, matches default range 0..100 */
+	bd->anchor_position = 50;
+	bd->anchor_enabled  = false; /* off by default — pure linear */
 	bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
 	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
 	bd->bar_high_color = THEME_COLOR_RED;

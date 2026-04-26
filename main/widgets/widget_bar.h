@@ -46,6 +46,14 @@ typedef struct {
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	/* ── Image-based bar (optional) ── */
+	/* Anchor-based non-linear scale. Maps a single DATA value to a specific
+	 * position along the bar fill, splitting the range into two linear
+	 * segments. Use case: "I want 90°C coolant at 50% of the bar so the
+	 * danger zone (90-110) takes the second half." Default leaves the bar
+	 * linear (anchor at midpoint, position 50%). */
+	int32_t  anchor_value;           /* default: bar_min + (bar_max-bar_min)/2 */
+	uint8_t  anchor_position;        /* 0..100, default: 50 */
+	bool     anchor_enabled;         /* false (default) = linear pass-through */
 	char     bar_image[64];          /* track/background image name (default: "") */
 	char     bar_image_full[64];     /* fill image name (default: "") */
 	lv_img_dsc_t *bar_img_dsc;      /* runtime: loaded track image descriptor */
