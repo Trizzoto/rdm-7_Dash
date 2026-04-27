@@ -17,3 +17,8 @@ managed_components/
 
 # Local build scratch
 _build_tmp.bat
+
+# Claude Code transient state (worktrees, scratch, settings overrides)
+.claude/worktrees/
+.claude/launch.json
+.claude/settings.local.json

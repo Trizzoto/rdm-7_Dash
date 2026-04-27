@@ -95,7 +95,7 @@ Capture pipeline reads the panel framebuffer via `esp_lcd_rgb_panel_get_frame_bu
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/touch` | Read current state. |
-| POST | `/api/touch` | `{"x":N,"y":N,"pressed":bool}` — inject event into virtual indev. |
+| POST | `/api/touch` | `{"x":N,"y":N,"state":"down"\|"up"\|"move"}` — inject event into virtual indev. (`pressed` is derived server-side; do not send it.) |
 | POST | `/api/indicator/test` | `{"slot":N,"active":bool}` — wire-mode indicator test. |
 | POST | `/api/warning/test` | `{"slot":N,"active":bool}` — force alert active even without signal binding. |
 | POST | `/api/screen/switch` | `{"screen":"<name>"}` — switch UI screen. |
@@ -202,7 +202,7 @@ Body shape:
 |---|---|---|
 | GET | `/api/device/info` | `{device_id, firmware_version, serial, ip}`. |
 | GET / POST | `/api/can/config` | Bitrate, enable/disable. |
-| GET | `/api/system/health` | `{heap_free, heap_total, uptime_ms, temp_c, …}`. |
+| GET | `/api/system/health` | `{heap_free, heap_total, uptime_ms, wifi_rssi, …}`. (No temperature sensor read — the on-chip CHIP_TEMP signal in `signal_internal.c` is published separately.) |
 | POST | `/api/system/reboot` | Triggers reboot after a 1 s deferred task. |
 
 ### WiFi
