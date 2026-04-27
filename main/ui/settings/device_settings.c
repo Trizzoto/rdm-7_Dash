@@ -1740,15 +1740,74 @@ static void _show_wizard_async(void *arg) {
     show_first_run_wizard();
 }
 
-static void _run_wizard_btn_cb(lv_event_t *e) {
-    (void)e;
-    /* Return to the dashboard so the wizard overlay has a clean backdrop */
+/* Drop back to the dashboard then show the wizard overlay on the next
+ * LVGL tick. The wizard's show_first_run_wizard() is reentrant — it
+ * builds a fresh overlay on the active screen, so the saved network
+ * and ECU settings remain untouched (the wizard surfaces current values
+ * and lets the user re-confirm or change them). */
+static void _run_wizard_now(void) {
     lv_obj_t *ret = device_settings_return_screen;
     if (ret && lv_obj_is_valid(ret)) {
         lv_scr_load(ret);
     }
     /* Defer to next LVGL tick so the screen load fully commits first */
     lv_async_call(_show_wizard_async, NULL);
+}
+
+static void _run_wizard_confirm_cb(lv_event_t *e) {
+    lv_obj_t *mbox = lv_event_get_current_target(e);
+    const char *btn_txt = lv_msgbox_get_active_btn_text(mbox);
+    if (!btn_txt) return;
+
+    if (strcmp(btn_txt, "Run Wizard") == 0) {
+        ESP_LOGI("WIZARD", "User confirmed re-run setup wizard");
+        lv_msgbox_close(mbox);
+        _run_wizard_now();
+        return;
+    }
+    /* Cancel — just close the dialog */
+    lv_msgbox_close(mbox);
+}
+
+static void _run_wizard_btn_cb(lv_event_t *e) {
+    (void)e;
+    static const char *btns[] = {"Run Wizard", "Cancel", ""};
+    lv_obj_t *mbox = lv_msgbox_create(
+        NULL,
+        "Re-run Setup Wizard",
+        "This will re-launch the setup wizard:\n"
+        "CAN auto-detect, Wi-Fi, and ECU pick.\n\n"
+        "Your saved network and ECU settings\n"
+        "will be preserved. Continue?",
+        btns, true);
+
+    lv_obj_set_style_bg_color(mbox, THEME_COLOR_SURFACE, LV_PART_MAIN);
+    lv_obj_set_style_border_color(mbox, THEME_COLOR_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(mbox, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(mbox, THEME_RADIUS_NORMAL, LV_PART_MAIN);
+    lv_obj_set_style_text_color(mbox, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN);
+    lv_obj_set_style_text_font(mbox, THEME_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(mbox, 8, LV_PART_MAIN);
+    lv_obj_set_style_shadow_ofs_y(mbox, 2, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(mbox, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(mbox, 80, LV_PART_MAIN);
+    lv_obj_set_width(mbox, 380);
+    lv_obj_center(mbox);
+
+    /* Style the buttons — neutral, this is a non-destructive op */
+    lv_obj_t *btn_area = lv_msgbox_get_btns(mbox);
+    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_SECTION_BG,
+                              LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(btn_area, THEME_COLOR_TEXT_PRIMARY,
+                                LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn_area, 1,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn_area, THEME_COLOR_BORDER,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(btn_area, THEME_RADIUS_NORMAL,
+                            LV_PART_ITEMS | LV_STATE_DEFAULT);
+
+    lv_obj_add_event_cb(mbox, _run_wizard_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* ── ECU selection ───────────────────────────────────────────────────── */
