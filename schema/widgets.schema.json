@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "comment": "Source-of-truth for widget metadata across firmware, desktop, web editor, marketplace. Codegen target: WIDGET_DEFS JS literal in main/web/index.html (and synced copies). See schema/README.md.",
+  "widgets": [
+    {
+      "name": "rpm_bar",
+      "display_name": "RPM Bar",
+      "singleton": true,
+      "default_size": { "w": 800, "h": 55 },
+      "default_position": { "y": -213 },
+      "constraints": { "min_w": 300, "min_h": 30, "max_w": "screen_w", "max_h": 80 },
+      "fields": [
+        { "name": "rpm_max",        "label": "RPM Max",       "type": "number", "default": 7000, "category": "data" },
+        { "name": "redline",        "label": "Redline RPM",   "type": "number", "default": 6000, "category": "data" },
+        { "name": "bar_color",      "label": "Bar Color",     "type": "color",  "default": "#00FF00", "category": "appearance", "night_overridable": true },
+        { "name": "limiter_effect", "label": "Limiter Effect","type": "select", "default": 0, "category": "appearance",
+          "options": [
+            { "value": 0, "label": "None" },
+            { "value": 1, "label": "Bar Flash" },
+            { "value": 2, "label": "Bar Solid" }
+          ] },
+        { "name": "limiter_value",  "label": "Limiter RPM",   "type": "number", "default": 7000, "category": "data" },
+        { "name": "limiter_color",  "label": "Limiter Color", "type": "color",  "default": "#FF0000", "category": "appearance", "night_overridable": true },
+        { "name": "flash_speed",    "label": "Flash Speed (ms)", "type": "stepper", "default": 200, "category": "appearance", "min": 50, "max": 1000, "step": 50 }
+      ]
+    },
+    {
+      "name": "panel",
+      "display_name": "Panel",
+      "singleton": false,
+      "default_size": { "w": 155, "h": 92 },
+      "default_position": null,
+      "constraints": { "min_w": 80, "min_h": 40, "max_w": 250, "max_h": 130 },
+      "fields": [
+        { "name": "label",                       "label": "Header Label",     "type": "text",     "default": "",  "category": "data" },
+        { "name": "custom_text",                 "label": "Unit Text",        "type": "text",     "default": "",  "category": "data" },
+        { "name": "decimals",                    "label": "Decimals",         "type": "number",   "default": 0,   "category": "data" },
+        { "name": "show_peak",                   "label": "Peak Hold",        "type": "select",   "default": 0,   "category": "data",
+          "options": [
+            { "value": 0, "label": "Off" },
+            { "value": 1, "label": "Max" },
+            { "value": 2, "label": "Min" },
+            { "value": 3, "label": "Min/Max" }
+          ] },
+        { "name": "warning_high_enabled",        "label": "High Alert",       "type": "checkbox", "default": false, "category": "alerts", "group": "high" },
+        { "name": "warning_high_threshold",      "label": "Threshold",        "type": "stepper",  "default": 0,    "category": "alerts", "group": "high", "min": -99999, "max": 99999, "enabled_by": "warning_high_enabled" },
+        { "name": "warning_high_color",          "label": "Color",            "type": "color",    "default": "#FF0000", "category": "alerts", "group": "high", "enabled_by": "warning_high_enabled" },
+        { "name": "warning_high_apply_label",    "label": "Label",            "type": "checkbox", "default": true,  "category": "alerts", "group": "high", "enabled_by": "warning_high_enabled", "inline": "warning_high_apply" },
+        { "name": "warning_high_apply_value",    "label": "Value",            "type": "checkbox", "default": true,  "category": "alerts", "group": "high", "enabled_by": "warning_high_enabled", "inline": "warning_high_apply" },
+        { "name": "warning_high_apply_panel",    "label": "Panel",            "type": "checkbox", "default": false, "category": "alerts", "group": "high", "enabled_by": "warning_high_enabled", "inline": "warning_high_apply" },
+        { "name": "warning_low_enabled",         "label": "Low Alert",        "type": "checkbox", "default": false, "category": "alerts", "group": "low" },
+        { "name": "warning_low_threshold",       "label": "Threshold",        "type": "stepper",  "default": 0,    "category": "alerts", "group": "low", "min": -99999, "max": 99999, "enabled_by": "warning_low_enabled" },
+        { "name": "warning_low_color",           "label": "Color",            "type": "color",    "default": "#0000FF", "category": "alerts", "group": "low", "enabled_by": "warning_low_enabled" },
+        { "name": "warning_low_apply_label",     "label": "Label",            "type": "checkbox", "default": true,  "category": "alerts", "group": "low", "enabled_by": "warning_low_enabled", "inline": "warning_low_apply" },
+        { "name": "warning_low_apply_value",     "label": "Value",            "type": "checkbox", "default": true,  "category": "alerts", "group": "low", "enabled_by": "warning_low_enabled", "inline": "warning_low_apply" },
+        { "name": "warning_low_apply_panel",     "label": "Panel",            "type": "checkbox", "default": false, "category": "alerts", "group": "low", "enabled_by": "warning_low_enabled", "inline": "warning_low_apply" },
+        { "name": "label_font",                  "label": "Label Font",       "type": "font",     "default": "",   "category": "appearance" },
+        { "name": "value_font",                  "label": "Value Font",       "type": "font",     "default": "",   "category": "appearance" },
+        { "name": "border_radius",               "label": "Border Radius",    "type": "stepper",  "default": 7,    "category": "appearance", "min": 0, "max": 100 },
+        { "name": "border_width",                "label": "Border Width",     "type": "stepper",  "default": 3,    "category": "appearance", "min": 0, "max": 20 },
+        { "name": "border_color",                "label": "Border Color",     "type": "color",    "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
+        { "name": "bg_color",                    "label": "Background",       "type": "color",    "default": "#000000", "category": "appearance", "night_overridable": true },
+        { "name": "bg_opa",                      "label": "BG Opacity",       "type": "stepper",  "default": 255,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "label_color",                 "label": "Label Color",      "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "value_color",                 "label": "Value Color",      "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "label_y_offset",              "label": "Label Y Offset",   "type": "stepper",  "default": -28,  "category": "appearance", "min": -100, "max": 100 },
+        { "name": "value_y_offset",              "label": "Value Y Offset",   "type": "stepper",  "default": 9,    "category": "appearance", "min": -100, "max": 100 },
+        { "name": "custom_text_x_offset",        "label": "Unit Text X",      "type": "stepper",  "default": 41,   "category": "appearance", "min": -100, "max": 100 },
+        { "name": "custom_text_y_offset",        "label": "Unit Text Y",      "type": "stepper",  "default": 32,   "category": "appearance", "min": -100, "max": 100 }
+      ]
+    },
+    {
+      "name": "bar",
+      "display_name": "Bar Graph",
+      "singleton": false,
+      "default_size": { "w": 300, "h": 30 },
+      "default_position": null,
+      "constraints": { "min_w": 120, "min_h": 15, "max_w": 450, "max_h": 50 },
+      "fields": [
+        { "name": "label",            "label": "Label",       "type": "text",     "default": "",   "category": "data" },
+        { "name": "bar_min",          "label": "Min Value",   "type": "number",   "default": 0,    "category": "data" },
+        { "name": "bar_max",          "label": "Max Value",   "type": "number",   "default": 100,  "category": "data" },
+        { "name": "show_bar_value",   "label": "Show Value",  "type": "checkbox", "default": false, "category": "data" },
+        { "name": "decimals",         "label": "Decimals",    "type": "number",   "default": 0,    "category": "data" },
+        { "name": "anchor_enabled",   "label": "Anchor Curve","type": "checkbox", "default": false, "category": "data",
+          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear." },
+        { "name": "anchor_value",     "label": "Anchor Value", "type": "number",  "default": 50,   "category": "data", "enabled_by": "anchor_enabled" },
+        { "name": "anchor_position",  "label": "Anchor Position (%)", "type": "slider", "default": 50, "category": "data", "min": 0, "max": 100, "enabled_by": "anchor_enabled" },
+        { "name": "invert_bar_value", "label": "Invert Fill", "type": "checkbox", "default": false, "category": "appearance" },
+        { "name": "bar_in_range_color", "label": "Bar Color", "type": "color",    "default": "#00FF00", "category": "appearance", "night_overridable": true },
+        { "name": "label_font",       "label": "Label Font",  "type": "font",     "default": "",   "category": "appearance" },
+        { "name": "value_font",       "label": "Value Font",  "type": "font",     "default": "",   "category": "appearance" },
+        { "name": "bar_bg_color",     "label": "Track Color", "type": "color",    "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
+        { "name": "bar_radius",       "label": "Bar Radius",  "type": "stepper",  "default": 5,    "category": "appearance", "min": 0, "max": 50 },
+        { "name": "bar_border_width", "label": "Border Width", "type": "stepper", "default": 2,    "category": "appearance", "min": 0, "max": 20 },
+        { "name": "bar_border_color", "label": "Border Color", "type": "color",   "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
+        { "name": "indicator_radius", "label": "Fill Radius", "type": "stepper",  "default": 5,    "category": "appearance", "min": 0, "max": 50 },
+        { "name": "label_color",      "label": "Label Color", "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "value_color",      "label": "Value Color", "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "bar_image",        "label": "Track Image", "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "bar_image_full",   "label": "Fill Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "bar_alerts_enabled", "label": "Color Alerts", "type": "checkbox", "default": false, "category": "alerts", "group": "bar_alerts" },
+        { "name": "bar_low",          "label": "Low Threshold", "type": "stepper", "default": 0,    "category": "alerts", "group": "bar_alerts", "min": -99999, "max": 99999, "enabled_by": "bar_alerts_enabled" },
+        { "name": "bar_low_color",    "label": "Low Color",   "type": "color",    "default": "#0000FF", "category": "alerts", "group": "bar_alerts", "enabled_by": "bar_alerts_enabled", "night_overridable": true },
+        { "name": "bar_high",         "label": "High Threshold", "type": "stepper","default": 100,  "category": "alerts", "group": "bar_alerts", "min": -99999, "max": 99999, "enabled_by": "bar_alerts_enabled" },
+        { "name": "bar_high_color",   "label": "High Color",  "type": "color",    "default": "#FF0000", "category": "alerts", "group": "bar_alerts", "enabled_by": "bar_alerts_enabled", "night_overridable": true }
+      ]
+    },
+    {
+      "name": "indicator",
+      "display_name": "Turn Indicator",
+      "singleton": false,
+      "default_size": { "w": 50, "h": 50 },
+      "default_position": null,
+      "constraints": { "min_w": 30, "min_h": 30, "max_w": 80, "max_h": 80 },
+      "fields": [
+        { "name": "slot",         "label": "Side",          "type": "select",   "default": 0,    "category": "data",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Right" }
+          ] },
+        { "name": "input_source", "label": "Input Source",  "type": "select",   "default": 0,    "category": "data",
+          "options": [
+            { "value": 0, "label": "Wire" },
+            { "value": 1, "label": "CAN" }
+          ] },
+        { "name": "animation",    "label": "Anim Enabled",  "type": "checkbox", "default": true, "category": "appearance" },
+        { "name": "is_momentary", "label": "Momentary",     "type": "checkbox", "default": false, "category": "appearance" },
+        { "name": "color_on",     "label": "Active Color",  "type": "color",    "default": "#FFBF00", "category": "appearance", "night_overridable": true },
+        { "name": "opa_on",       "label": "Active Opacity","type": "stepper",  "default": 255,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "color_off",    "label": "Inactive Color","type": "color",    "default": "#333333", "category": "appearance", "night_overridable": true },
+        { "name": "opa_off",      "label": "Inactive Opacity","type": "stepper","default": 70,   "category": "appearance", "min": 0, "max": 255 }
+      ]
+    },
+    {
+      "name": "warning",
+      "display_name": "Alert Light",
+      "singleton": false,
+      "default_size": { "w": 25, "h": 25 },
+      "default_position": null,
+      "constraints": { "min_w": 18, "min_h": 18, "max_w": 60, "max_h": 60 },
+      "fields": [
+        { "name": "label",              "label": "Label",            "type": "text",         "default": "",   "category": "data" },
+        { "name": "image_name",         "label": "Image",            "type": "image_picker", "default": "",   "category": "appearance", "night_overridable": true },
+        { "name": "active_color",       "label": "Active Color",     "type": "color",        "default": "#FF0000", "category": "appearance", "night_overridable": true },
+        { "name": "active_opa",         "label": "Active Opacity",   "type": "stepper",      "default": 255,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "is_momentary",       "label": "Momentary",        "type": "checkbox",     "default": true, "category": "appearance" },
+        { "name": "invert_toggle",      "label": "Invert State",     "type": "checkbox",     "default": false,"category": "appearance" },
+        { "name": "inactive_color",     "label": "Inactive Color",   "type": "color",        "default": "#292C29", "category": "appearance", "night_overridable": true },
+        { "name": "inactive_opa",       "label": "Inactive Opacity", "type": "stepper",      "default": 180,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "border_width",       "label": "Border Width",     "type": "stepper",      "default": 0,    "category": "appearance", "min": 0, "max": 20 },
+        { "name": "border_color_style", "label": "Border Color",     "type": "color",        "default": "#000000", "category": "appearance", "night_overridable": true, "night_key": "border_color" },
+        { "name": "radius",             "label": "Radius",           "type": "stepper",      "default": 100,  "category": "appearance", "min": 0, "max": 200 },
+        { "name": "show_label",         "label": "Show Label",       "type": "checkbox",     "default": true, "category": "appearance" },
+        { "name": "label_color",        "label": "Label Color",      "type": "color",        "default": "#FFFFFF", "category": "appearance", "night_overridable": true, "enabled_by": "show_label" },
+        { "name": "label_font",         "label": "Label Font",       "type": "font",         "default": "",   "category": "appearance", "enabled_by": "show_label" },
+        { "name": "label_y_offset",     "label": "Label Y Offset",   "type": "slider",       "default": 0,    "category": "appearance", "min": -100, "max": 100, "enabled_by": "show_label" },
+        { "name": "label_text_align",   "label": "Text Align",       "type": "select",       "default": 1,    "category": "appearance", "enabled_by": "show_label",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ] }
+      ]
+    },
+    {
+      "name": "text",
+      "display_name": "Text / Value",
+      "singleton": false,
+      "default_size": { "w": 100, "h": 30 },
+      "default_position": null,
+      "constraints": { "min_w": 40, "min_h": 20, "max_w": "screen_origin_x", "max_h": 100 },
+      "fields": [
+        { "name": "static_text", "label": "Static Text", "type": "text",    "default": "",  "category": "data" },
+        { "name": "decimals",    "label": "Decimals",    "type": "number",  "default": 0,   "category": "data" },
+        { "name": "rotation",    "label": "Rotation (°)", "type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 359 },
+        { "name": "font",        "label": "Font",        "type": "font",    "default": "",  "category": "appearance" },
+        { "name": "text_color",  "label": "Text Color",  "type": "color",   "default": "#FFFFFF", "category": "appearance", "night_overridable": true }
+      ]
+    },
+    {
+      "name": "meter",
+      "display_name": "Meter",
+      "singleton": false,
+      "default_size": { "w": 300, "h": 300 },
+      "default_position": null,
+      "constraints": { "min_w": 80, "min_h": 80, "max_w": "screen_w", "max_h": "screen_w" },
+      "fields": [
+        { "name": "min",            "label": "Min Value",      "type": "number", "default": 0,   "category": "data" },
+        { "name": "max",            "label": "Max Value",      "type": "number", "default": 100, "category": "data" },
+        { "name": "start_position", "label": "Start Position", "type": "select", "default": "bottom-left", "category": "data", "_raw_options": "_METER_POSITION_OPTIONS" },
+        { "name": "sweep_degrees",  "label": "Sweep",          "type": "select", "default": 270, "category": "data", "_raw_options": "_METER_SWEEP_OPTIONS" },
+        { "name": "minor_tick_step","label": "Minor Tick Value Spacing", "type": "number", "default": 10, "category": "data",
+          "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields." },
+        { "name": "major_tick_step","label": "Major Tick Value Spacing", "type": "number", "default": 50, "category": "data" },
+        { "name": "anchor_enabled", "label": "Anchor Curve",   "type": "checkbox", "default": false, "category": "data",
+          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear." },
+        { "name": "anchor_value",   "label": "Anchor Value",   "type": "number", "default": 50, "category": "data", "enabled_by": "anchor_enabled" },
+        { "name": "anchor_position","label": "Anchor Position (%)", "type": "slider", "default": 50, "category": "data", "min": 0, "max": 100, "enabled_by": "anchor_enabled" },
+        { "name": "redline_enabled","label": "Redline",        "type": "checkbox", "default": false, "category": "data",
+          "_doc": "Redline zone: visual cues drawn between threshold and\nmax. Show Arc + Recolor Ticks default ON so enabling\nthe master toggle gives an immediate visible result." },
+        { "name": "redline_threshold", "label": "Redline Threshold", "type": "number", "default": 80, "category": "data", "enabled_by": "redline_enabled" },
+        { "name": "redline_color",     "label": "Redline Color", "type": "color", "default": "#FF0000", "category": "data", "enabled_by": "redline_enabled" },
+        { "name": "redline_show_arc",  "label": "Show Arc",      "type": "checkbox", "default": true, "category": "data", "enabled_by": "redline_enabled" },
+        { "name": "redline_arc_width", "label": "Arc Width",     "type": "stepper", "default": 6, "category": "data", "min": 1, "max": 30, "enabled_by": "redline_enabled" },
+        { "name": "redline_arc_r_mod", "label": "Arc Inset",     "type": "stepper", "default": 0, "category": "data", "min": -50, "max": 50, "enabled_by": "redline_enabled" },
+        { "name": "redline_recolor_ticks", "label": "Recolor Ticks", "type": "checkbox", "default": true, "category": "data", "enabled_by": "redline_enabled" },
+        { "name": "meter_bg_color",    "label": "Background Color", "type": "color", "default": "#3D3D3D", "category": "appearance", "night_overridable": true },
+        { "name": "meter_bg_opa",      "label": "Background Opacity","type": "stepper", "default": 255, "category": "appearance", "min": 0, "max": 255 },
+        { "name": "bg_image_name",     "label": "Background Image", "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "border_color",      "label": "Border Color",  "type": "color", "default": "#000000", "category": "appearance", "night_overridable": true },
+        { "name": "border_width",      "label": "Border Width",  "type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 20 },
+        { "name": "border_opa",        "label": "Border Opacity","type": "stepper", "default": 255, "category": "appearance", "min": 0, "max": 255 },
+        { "name": "scale_padding",     "label": "Scale Padding", "type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 100 },
+        { "name": "show_ticks",        "label": "Show Ticks",    "type": "checkbox", "default": true, "category": "appearance" },
+        { "name": "minor_tick_width",  "label": "Tick Width",    "type": "stepper", "default": 2, "category": "appearance", "min": 1, "max": 20, "enabled_by": "show_ticks" },
+        { "name": "minor_tick_length", "label": "Tick Length",   "type": "stepper", "default": 10, "category": "appearance", "min": 1, "max": 50, "enabled_by": "show_ticks" },
+        { "name": "minor_tick_color",  "label": "Tick Color",    "type": "color", "default": "#9E9E9E", "category": "appearance", "enabled_by": "show_ticks", "night_overridable": true },
+        { "name": "major_tick_width",  "label": "Major Tick Width", "type": "stepper", "default": 4, "category": "appearance", "min": 1, "max": 20, "enabled_by": "show_ticks" },
+        { "name": "major_tick_length", "label": "Major Tick Length","type": "stepper", "default": 15, "category": "appearance", "min": 1, "max": 50, "enabled_by": "show_ticks" },
+        { "name": "major_tick_color",  "label": "Major Tick Color", "type": "color", "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_ticks", "night_overridable": true },
+        { "name": "show_tick_labels",  "label": "Show Tick Labels", "type": "checkbox", "default": true, "category": "appearance" },
+        { "name": "label_gap",         "label": "Label Gap",     "type": "stepper", "default": 10, "category": "appearance", "min": -20, "max": 50, "enabled_by": "show_tick_labels" },
+        { "name": "tick_label_font",   "label": "Tick Label Font","type": "font", "default": "", "category": "appearance", "enabled_by": "show_tick_labels" },
+        { "name": "tick_label_color",  "label": "Tick Label Color","type": "color", "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_tick_labels", "night_overridable": true },
+        { "name": "needle_image_name", "label": "Needle Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "needle_pivot_x",    "label": "Needle Pivot X","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
+        { "name": "needle_pivot_y",    "label": "Needle Pivot Y","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
+        { "name": "needle_angle_offset","label": "Needle Angle Offset","type": "stepper", "default": 0, "category": "appearance", "min": -180, "max": 180, "enabled_by": "needle_image_name" },
+        { "name": "needle_width",      "label": "Needle Width",  "type": "stepper", "default": 4, "category": "appearance", "min": 1, "max": 20 },
+        { "name": "needle_color",      "label": "Needle Color",  "type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "needle_r_mod",      "label": "Needle Length Trim","type": "stepper", "default": -10, "category": "appearance", "min": -100, "max": 100 },
+        { "name": "needle_rear_length","label": "Needle Rear Length","type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 100 },
+        { "name": "needle_tip_style",  "label": "Needle Tip Style","type": "select", "default": 0, "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Flat" },
+            { "value": 1, "label": "Rounded" },
+            { "value": 2, "label": "Lance" },
+            { "value": 3, "label": "Dagger" },
+            { "value": 4, "label": "Spade" },
+            { "value": 5, "label": "Diamond" }
+          ] },
+        { "name": "needle_tip_base_w", "label": "Tip Base Width", "type": "stepper-auto", "default": 0, "category": "appearance", "min": 0, "max": 30,
+          "_doc": "Tip-tuning knobs. Stored value 0 = \"use the built-in\ndefault for the current style\". `autoFn` returns the\nresolved default the firmware would pick - mirrors the\nsame defaults used in widget_meter.c's DRAW_PART hook\nso the inspector can show the effective number even\nwhen the user hasn't entered an explicit override.",
+          "_raw_extra": {
+            "autoFn": "function(cfg) {\n                          var nw = cfg.needle_width || 4;\n                          switch (cfg.needle_tip_style) {\n                              case 2: return (nw >> 1) + 1;  // Lance\n                              case 3: return (nw >> 1) + 2;  // Dagger\n                              case 4: return (nw >> 1) + 2;  // Spade\n                              case 5: return (nw >> 1) + 3;  // Diamond\n                              default: return 0;\n                          }\n                      }"
+          } },
+        { "name": "needle_tip_point_w","label": "Tip Point Width","type": "stepper-auto", "default": 0, "category": "appearance", "min": 0, "max": 20,
+          "_raw_extra": {
+            "autoFn": "function(cfg) {\n                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap\n                      }"
+          } },
+        { "name": "needle_tip_taper", "label": "Tip Taper %",   "type": "stepper-auto", "default": 0, "category": "appearance", "min": 0, "max": 100,
+          "_raw_extra": {
+            "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
+          } },
+        { "name": "needle_ball_size", "label": "Needle Ball Size", "type": "stepper", "default": 10, "category": "appearance", "min": 0, "max": 40 },
+        { "name": "needle_ball_color","label": "Needle Ball Color","type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true }
+      ]
+    },
+    {
+      "name": "image",
+      "display_name": "Image",
+      "singleton": false,
+      "default_size": { "w": 100, "h": 100 },
+      "default_position": null,
+      "constraints": { "min_w": 10, "min_h": 10, "max_w": "screen_w", "max_h": "screen_h" },
+      "fields": [
+        { "name": "image_name",  "label": "Image",                 "type": "image_picker", "default": "",   "category": "data", "night_overridable": true },
+        { "name": "image_scale", "label": "Scale %",               "type": "stepper",      "default": 100,  "category": "appearance", "min": 10, "max": 200 },
+        { "name": "opacity",     "label": "Opacity (0-255)",       "type": "stepper",      "default": 255,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "recolor",     "label": "Color Overlay",         "type": "color",        "default": "#000000", "category": "appearance", "night_overridable": true },
+        { "name": "recolor_opa", "label": "Overlay Strength (0-255)", "type": "stepper",   "default": 0,    "category": "appearance", "min": 0, "max": 255 }
+      ]
+    },
+    {
+      "name": "shape_panel",
+      "display_name": "Shape Panel",
+      "singleton": false,
+      "default_size": { "w": 200, "h": 100 },
+      "default_position": null,
+      "constraints": { "min_w": 10, "min_h": 10, "max_w": "screen_w", "max_h": "screen_h" },
+      "fields": [
+        { "name": "bg_color",       "label": "Background",       "type": "color",   "default": "#1A1A1A", "category": "appearance", "night_overridable": true },
+        { "name": "bg_opa",         "label": "Opacity (0-255)",  "type": "stepper", "default": 255, "category": "appearance", "min": 0, "max": 255 },
+        { "name": "border_color",   "label": "Border Color",     "type": "color",   "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
+        { "name": "border_width",   "label": "Border Width",     "type": "stepper", "default": 0,   "category": "appearance", "min": 0, "max": 20 },
+        { "name": "border_radius",  "label": "Border Radius",    "type": "stepper", "default": 10,  "category": "appearance", "min": 0, "max": 200 },
+        { "name": "shadow_width",   "label": "Shadow Width",     "type": "stepper", "default": 0,   "category": "appearance", "min": 0, "max": 50 },
+        { "name": "shadow_color",   "label": "Shadow Color",     "type": "color",   "default": "#000000", "category": "appearance", "night_overridable": true },
+        { "name": "shadow_opa",     "label": "Shadow Opacity",   "type": "stepper", "default": 128, "category": "appearance", "min": 0, "max": 255 },
+        { "name": "shadow_ofs_x",   "label": "Shadow X",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 },
+        { "name": "shadow_ofs_y",   "label": "Shadow Y",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 }
+      ]
+    },
+    {
+      "name": "arc",
+      "display_name": "Arc Shape",
+      "singleton": false,
+      "default_size": { "w": 200, "h": 200 },
+      "default_position": null,
+      "constraints": { "min_w": 30, "min_h": 30, "max_w": "screen_w", "max_h": "screen_w" },
+      "fields": [
+        { "name": "start_angle",    "label": "Start Angle", "type": "number",   "default": 135, "category": "data" },
+        { "name": "end_angle",      "label": "End Angle",   "type": "number",   "default": 45,  "category": "data" },
+        { "name": "signal_min",     "label": "Signal Min",  "type": "number",   "default": 0,   "category": "data" },
+        { "name": "signal_max",     "label": "Signal Max",  "type": "number",   "default": 100, "category": "data" },
+        { "name": "arc_width",      "label": "Arc Width",   "type": "stepper",  "default": 10,  "category": "appearance", "min": 1, "max": 50 },
+        { "name": "arc_color",      "label": "Arc Color",   "type": "color",    "default": "#00FF00", "category": "appearance", "night_overridable": true },
+        { "name": "bg_arc_color",   "label": "Track Color", "type": "color",    "default": "#333333", "category": "appearance", "night_overridable": true },
+        { "name": "bg_arc_width",   "label": "Track Width", "type": "stepper",  "default": 10,  "category": "appearance", "min": 1, "max": 50 },
+        { "name": "rounded_ends",   "label": "Rounded Ends","type": "checkbox", "default": false,"category": "appearance" },
+        { "name": "arc_image",      "label": "Track Image", "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "arc_image_full", "label": "Fill Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true }
+      ]
+    },
+    {
+      "name": "toggle",
+      "display_name": "Toggle Switch",
+      "singleton": false,
+      "default_size": { "w": 80, "h": 40 },
+      "default_position": null,
+      "constraints": { "min_w": 40, "min_h": 20, "max_w": 200, "max_h": 80 },
+      "fields": [
+        { "name": "label",                "label": "Label",         "type": "textarea", "default": "",   "category": "data" },
+        { "name": "show_label",           "label": "Show Label",    "type": "checkbox", "default": true, "category": "data" },
+        { "name": "signal_on_threshold",  "label": "ON Threshold",  "type": "number",   "default": 0.5,  "category": "data" },
+        { "name": "tx_can_id",            "label": "CAN ID",        "type": "can_id",   "default": 0,    "category": "data" },
+        { "name": "tx_bit_start",         "label": "Bit Start",     "type": "select",   "default": 0,    "category": "data", "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))" },
+        { "name": "tx_bit_length",        "label": "Bit Length",    "type": "select",   "default": 1,    "category": "data", "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))" },
+        { "name": "tx_endian",            "label": "Endian",        "type": "select",   "default": 1,    "category": "data",
+          "options": [
+            { "value": 0, "label": "Big Endian" },
+            { "value": 1, "label": "Little Endian" }
+          ] },
+        { "name": "tx_rate_hz",           "label": "TX Rate (Hz)",  "type": "stepper",  "default": 0,    "category": "data", "min": 0, "max": 50 },
+        { "name": "image_name",           "label": "Image",         "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "active_color",         "label": "Active Color",  "type": "color",    "default": "#00FF00", "category": "appearance", "night_overridable": true },
+        { "name": "inactive_color",       "label": "Inactive Color","type": "color",    "default": "#555555", "category": "appearance", "night_overridable": true },
+        { "name": "active_opa",           "label": "Active Opacity","type": "stepper",  "default": 255,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "inactive_opa",         "label": "Inactive Opacity","type": "stepper","default": 100,  "category": "appearance", "min": 0, "max": 255 },
+        { "name": "label_color",          "label": "Label Color",   "type": "color",    "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_label", "night_overridable": true },
+        { "name": "font",                 "label": "Font",          "type": "font",     "default": "",   "category": "appearance", "enabled_by": "show_label" },
+        { "name": "label_align",          "label": "Text Align",    "type": "select",   "default": 1,    "category": "appearance", "enabled_by": "show_label",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ] },
+        { "name": "label_x",              "label": "Label X Offset","type": "stepper",  "default": 0,    "category": "appearance", "min": -400, "max": 400, "enabled_by": "show_label" },
+        { "name": "label_y",              "label": "Label Y Offset","type": "stepper",  "default": 0,    "category": "appearance", "min": -240, "max": 240, "enabled_by": "show_label" }
+      ]
+    },
+    {
+      "name": "button",
+      "display_name": "Button",
+      "singleton": false,
+      "default_size": { "w": 100, "h": 40 },
+      "default_position": null,
+      "constraints": { "min_w": 40, "min_h": 20, "max_w": 300, "max_h": 100 },
+      "fields": [
+        { "name": "label",            "label": "Label",         "type": "textarea", "default": "BTN", "category": "data" },
+        { "name": "show_label",       "label": "Show Label",    "type": "checkbox", "default": true,  "category": "data" },
+        { "name": "latch",            "label": "Latch (Toggle)","type": "checkbox", "default": false, "category": "data" },
+        { "name": "tx_can_id",        "label": "CAN ID",        "type": "can_id",   "default": 0,     "category": "data" },
+        { "name": "tx_bit_start",     "label": "Bit Start",     "type": "select",   "default": 0,     "category": "data", "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))" },
+        { "name": "tx_bit_length",    "label": "Bit Length",    "type": "select",   "default": 1,     "category": "data", "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))" },
+        { "name": "tx_endian",        "label": "Endian",        "type": "select",   "default": 1,     "category": "data",
+          "options": [
+            { "value": 0, "label": "Big Endian" },
+            { "value": 1, "label": "Little Endian" }
+          ] },
+        { "name": "tx_rate_hz",       "label": "TX Rate (Hz)",  "type": "stepper",  "default": 0,     "category": "data", "min": 0, "max": 50 },
+        { "name": "tx_send_release",  "label": "Send on Release","type": "checkbox", "default": false,"category": "data", "enabled_by": "!latch" },
+        { "name": "image_name",       "label": "Image",         "type": "image_picker", "default": "","category": "appearance", "night_overridable": true },
+        { "name": "bg_color",         "label": "Background",    "type": "color",    "default": "#333333", "category": "appearance", "night_overridable": true },
+        { "name": "text_color",       "label": "Text Color",    "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "pressed_color",    "label": "Pressed Color", "type": "color",    "default": "#555555", "category": "appearance", "night_overridable": true },
+        { "name": "border_radius",    "label": "Border Radius", "type": "stepper",  "default": 5,    "category": "appearance", "min": 0, "max": 100 },
+        { "name": "font",             "label": "Font",          "type": "font",     "default": "",   "category": "appearance", "enabled_by": "show_label" },
+        { "name": "label_align",      "label": "Text Align",    "type": "select",   "default": 1,    "category": "appearance", "enabled_by": "show_label",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ] },
+        { "name": "label_x",          "label": "Label X Offset","type": "stepper",  "default": 0,    "category": "appearance", "min": -400, "max": 400, "enabled_by": "show_label" },
+        { "name": "label_y",          "label": "Label Y Offset","type": "stepper",  "default": 0,    "category": "appearance", "min": -240, "max": 240, "enabled_by": "show_label" }
+      ]
+    },
+    {
+      "name": "shift_light",
+      "display_name": "Shift Light",
+      "singleton": false,
+      "default_size": { "w": 400, "h": 30 },
+      "default_position": null,
+      "constraints": { "min_w": 100, "min_h": 15, "max_w": "screen_w", "max_h": 60 },
+      "fields": [
+        { "name": "signal_name",     "label": "Signal",         "type": "text",    "default": "",   "category": "data" },
+        { "name": "led_count",       "label": "LED Count",      "type": "number",  "default": 8,    "category": "data", "min": 4, "max": 16, "step": 1 },
+        { "name": "range_min",       "label": "Range Min",      "type": "number",  "default": 4000, "category": "data" },
+        { "name": "range_max",       "label": "Range Max",      "type": "number",  "default": 7000, "category": "data" },
+        { "name": "flash_threshold", "label": "Flash RPM",      "type": "number",  "default": 7200, "category": "data" },
+        { "name": "flash_speed",     "label": "Flash Speed (ms)","type": "stepper","default": 200,  "category": "data", "min": 50, "max": 1000, "step": 10 },
+        { "name": "color_low",       "label": "Low Color",      "type": "color",   "default": "#00FF00", "category": "appearance", "night_overridable": true },
+        { "name": "color_mid",       "label": "Mid Color",      "type": "color",   "default": "#FFFF00", "category": "appearance", "night_overridable": true },
+        { "name": "color_high",      "label": "High Color",     "type": "color",   "default": "#FF0000", "category": "appearance", "night_overridable": true },
+        { "name": "color_off",       "label": "Off Color",      "type": "color",   "default": "#212121", "category": "appearance", "night_overridable": true },
+        { "name": "led_spacing",     "label": "LED Spacing",    "type": "stepper", "default": 2,    "category": "appearance", "min": 0, "max": 200, "step": 1 },
+        { "name": "border_radius",   "label": "Corner Radius",  "type": "stepper", "default": 2,    "category": "appearance", "min": 0, "max": 255, "step": 1 },
+        { "name": "led_width",       "label": "LED Width (0=auto)", "type": "stepper","default": 0, "category": "appearance", "min": 0, "max": 100, "step": 1 },
+        { "name": "led_height",      "label": "LED Height (0=auto)","type": "stepper","default": 0, "category": "appearance", "min": 0, "max": 100, "step": 1 },
+        { "name": "fill_mode",       "label": "Fill Direction", "type": "select",  "default": 0,    "category": "data",
+          "options": [
+            { "value": 0, "label": "Left to Right" },
+            { "value": 1, "label": "Outside In" }
+          ] },
+        { "name": "threshold_mid",   "label": "Mid Threshold",  "type": "number",  "default": 0.5,  "category": "thresholds", "min": 0, "max": 1, "step": 0.05 },
+        { "name": "threshold_high",  "label": "High Threshold", "type": "number",  "default": 0.8,  "category": "thresholds", "min": 0, "max": 1, "step": 0.05 }
+      ]
+    }
+  ]
+}

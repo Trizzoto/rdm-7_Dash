@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rdm7.dev/schema/widgets.schema.meta.json",
+  "title": "RDM-7 Widget Schema (meta-validator)",
+  "description": "Validates schema/widgets.schema.json. Catches missing required keys, wrong types, unknown field-type values, malformed colour strings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "widgets"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "comment": { "type": "string" },
+    "widgets": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/widget" }
+    }
+  },
+  "$defs": {
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "display_name", "default_size", "constraints", "fields"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Widget type identifier (snake_case)."
+        },
+        "display_name": { "type": "string", "minLength": 1 },
+        "singleton": { "type": "boolean" },
+        "default_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["w", "h"],
+          "properties": {
+            "w": { "type": "integer", "minimum": 1 },
+            "h": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "default_position": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "x": { "type": "integer" },
+                "y": { "type": "integer" }
+              }
+            }
+          ]
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min_w", "min_h", "max_w", "max_h"],
+          "properties": {
+            "min_w": { "$ref": "#/$defs/size_value" },
+            "min_h": { "$ref": "#/$defs/size_value" },
+            "max_w": { "$ref": "#/$defs/size_value" },
+            "max_h": { "$ref": "#/$defs/size_value" }
+          }
+        },
+        "_doc": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" }
+        }
+      }
+    },
+    "size_value": {
+      "description": "Either an integer pixel value, or one of the screen-size tokens that expand at codegen time.",
+      "oneOf": [
+        { "type": "integer" },
+        {
+          "type": "string",
+          "enum": ["screen_w", "screen_h", "screen_origin_x", "screen_origin_y"]
+        }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "label", "type", "default"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "textarea",
+            "number",
+            "stepper",
+            "stepper-auto",
+            "slider",
+            "color",
+            "checkbox",
+            "select",
+            "font",
+            "image_picker",
+            "can_id"
+          ]
+        },
+        "default": {
+          "description": "Field default. Colour fields use '#RRGGBB' string; everything else uses the natural JSON type."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["data", "appearance", "alerts", "thresholds"]
+        },
+        "group": { "type": "string" },
+        "enabled_by": {
+          "type": "string",
+          "description": "Name of another field; this field is disabled unless that field is true. Prefix with '!' for negation (e.g. '!latch')."
+        },
+        "inline": { "type": "string" },
+        "night_overridable": { "type": "boolean" },
+        "night_key": {
+          "type": "string",
+          "description": "Optional remap of the night-override storage key (e.g. warning's border_color_style is stored under 'border_color')."
+        },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "step": { "type": "number" },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "label"],
+            "properties": {
+              "value": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "number" },
+                  { "type": "boolean" }
+                ]
+              },
+              "label": { "type": "string" }
+            }
+          }
+        },
+        "_doc": { "type": "string" },
+        "_raw_options": {
+          "type": "string",
+          "description": "Raw JS expression to use as the options literal (e.g. an external constant name like '_METER_POSITION_OPTIONS' or 'Array.from(...)'). Mutually exclusive with 'options'."
+        },
+        "_raw_extra": {
+          "type": "object",
+          "description": "Extra JS-only fields (e.g. autoFn callback). Each value is a raw JS expression string emitted verbatim.",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "description": "Color field defaults must be '#RRGGBB' strings.",
+          "if": { "properties": { "type": { "const": "color" } } },
+          "then": {
+            "properties": {
+              "default": {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              }
+            }
+          }
+        },
+        {
+          "description": "Select fields must have either 'options' or '_raw_options', not both, not neither.",
+          "if": { "properties": { "type": { "const": "select" } } },
+          "then": {
+            "oneOf": [
+              { "required": ["options"], "not": { "required": ["_raw_options"] } },
+              { "required": ["_raw_options"], "not": { "required": ["options"] } }
+            ]
+          }
+        },
+        {
+          "description": "Stepper / slider must have min and max.",
+          "if": {
+            "properties": {
+              "type": { "enum": ["stepper", "slider", "stepper-auto"] }
+            }
+          },
+          "then": { "required": ["min", "max"] }
+        }
+      ]
+    }
+  }
+}

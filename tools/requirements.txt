@@ -1,0 +1,4 @@
+# Optional deps for the widget-schema tools (validate + codegen).
+# - codegen_widget_defs.py uses pure stdlib (no install required).
+# - validate_widget_schema.py needs jsonschema for meta-schema validation.
+jsonschema>=4.0
