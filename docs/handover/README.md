@@ -60,7 +60,7 @@ These share the layout JSON schema, the widget definition table (`WIDGET_DEFS`),
 
 **Three sentences that capture most of the design:**
 
-1. **Everything LVGL is single-threaded** — all `lv_*` calls happen on the LVGL task on core 1, behind a recursive mutex (`example_lvgl_lock`). Cross-task UI changes use `lv_async_call()`.
+1. **Everything LVGL is single-threaded** — all `lv_*` calls happen on the LVGL task on core 1, behind a recursive mutex (`rdm_lvgl_lock`). Cross-task UI changes use `lv_async_call()`.
 2. **CAN bytes never reach widgets directly** — they flow through `signal_t` records in the signal registry; widgets subscribe to signal indices, not CAN IDs. This is the boundary that makes layouts portable across vehicles.
 3. **The layout JSON is the source of truth** — widget positions, colors, signal definitions, and rules all live in `/lfs/layouts/<name>.json`. NVS only stores *which* layout is active. Editing is a save-and-reload cycle, not in-place mutation.
 

@@ -255,7 +255,7 @@ uint16_t *display_capture_shadow_fb(void) { return (uint16_t *)s_panel_fb; }
 bool display_capture_shadow_ready(void) { return s_panel_fb_ready; }
 uint32_t display_capture_shadow_seq(void) { return s_shadow_seq; }
 
-static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
+static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                                   lv_color_t *color_map) {
   esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
   int offsetx1 = area->x1;
@@ -291,7 +291,7 @@ static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
   lv_disp_flush_ready(drv);
 }
 
-bool example_lvgl_lock(int timeout_ms) {
+bool rdm_lvgl_lock(int timeout_ms) {
   // Convert timeout in milliseconds to FreeRTOS ticks
   // If timeout_ms is set to -1, the program will block until the condition is
   // met
@@ -300,12 +300,12 @@ bool example_lvgl_lock(int timeout_ms) {
   return xSemaphoreTakeRecursive(lvgl_mux, timeout_ticks) == pdTRUE;
 }
 
-void example_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
+void rdm_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
 
 TaskHandle_t lvglTaskHandle = NULL;
 
 // Change the LVGL task function to be accessible
-void example_lvgl_port_task(void *pvParameter) {
+void rdm_lvgl_port_task(void *pvParameter) {
   ESP_LOGI(TAG, "Starting LVGL task");
   const uint32_t refresh_period_ms =
       2; // Minimal sleep — maximize CPU for LVGL rendering
@@ -321,7 +321,7 @@ void example_lvgl_port_task(void *pvParameter) {
 
     // Lock the mutex with shorter timeout for better responsiveness during
     // OTA
-    if (example_lvgl_lock(100)) {
+    if (rdm_lvgl_lock(100)) {
       // Reset failure counter on successful lock
       consecutive_failures = 0;
 
@@ -330,7 +330,7 @@ void example_lvgl_port_task(void *pvParameter) {
       // Drain any queued CAN frames while we hold the LVGL mutex so all
       // widget/UI work stays single-threaded.
       can_process_queued_frames();
-      example_lvgl_unlock();
+      rdm_lvgl_unlock();
 
       // Calculate remaining time in the refresh period
       uint32_t elapsed = (esp_timer_get_time() / 1000) - start_time;
@@ -375,7 +375,7 @@ void gpio_init(void) {
 }
 
 // extern lv_obj_t *scr;
-static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
+static void rdm_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   // Always set to released state first
   data->state = LV_INDEV_STATE_REL;
 
@@ -872,13 +872,13 @@ void app_main(void) {
 
   ESP_LOGI(TAG, "Register display driver to LVGL");
   /* Capture reads directly from the panel's own framebuffer — see the
-   * comment above example_lvgl_flush_cb. No separate shadow allocation
+   * comment above rdm_lvgl_flush_cb. No separate shadow allocation
    * needed; the panel FB pointer is cached lazily on the first flush. */
 
   lv_disp_drv_init(&disp_drv);
   disp_drv.hor_res = EXAMPLE_LCD_H_RES;
   disp_drv.ver_res = EXAMPLE_LCD_V_RES;
-  disp_drv.flush_cb = example_lvgl_flush_cb;
+  disp_drv.flush_cb = rdm_lvgl_flush_cb;
   disp_drv.draw_buf = &disp_buf;
   disp_drv.user_data = panel_handle;
   disp_drv.monitor_cb = rdm7_lvgl_monitor_cb;
@@ -929,7 +929,7 @@ void app_main(void) {
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.disp = disp;
-    indev_drv.read_cb = example_lvgl_touch_cb;
+    indev_drv.read_cb = rdm_lvgl_touch_cb;
     indev_drv.user_data = tp;
 
     lv_indev_drv_register(&indev_drv);
@@ -969,7 +969,7 @@ void app_main(void) {
   lv_scr_load(black_screen);
 
   ESP_LOGI(TAG, "Create LVGL task");
-  xTaskCreatePinnedToCore(example_lvgl_port_task, "LVGL",
+  xTaskCreatePinnedToCore(rdm_lvgl_port_task, "LVGL",
                           EXAMPLE_LVGL_TASK_STACK_SIZE, NULL,
                           EXAMPLE_LVGL_TASK_PRIORITY, &lvglTaskHandle, 1);
 
@@ -994,10 +994,10 @@ void app_main(void) {
   ESP_LOGI(TAG, "Loading splash screen for smooth boot experience");
 
   // Lock the mutex due to the LVGL APIs are not thread-safe
-  if (example_lvgl_lock(-1)) {
+  if (rdm_lvgl_lock(-1)) {
     ui_init(); // This shows the splash screen which will auto-transition to
                // main screen
-    example_lvgl_unlock();
+    rdm_lvgl_unlock();
   }
 
   /* Start indicator wire task: reads GPIO 43/44 and drives indicators when

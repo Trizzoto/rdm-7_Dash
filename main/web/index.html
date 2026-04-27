@@ -3302,6 +3302,36 @@
         let ORIGIN_X = 400; // Center X = CANVAS_W / 2
         let ORIGIN_Y = 240; // Center Y = CANVAS_H / 2
 
+        /* Layout JSON max size — must match LAYOUT_MAX_FILE_BYTES in
+         * main/layout/layout_manager.h. The server returns
+         * { ok:false, error:"layout_too_large", max, actual } with HTTP 413
+         * when exceeded. We pre-validate client-side so the user gets an
+         * immediate inline message instead of finding out auto-save was
+         * silently rejecting their edits. */
+        const RDM_LAYOUT_MAX_BYTES = 32768;
+
+        /* Returns { ok:bool, bytes:N }. Caller decides whether to show
+         * a toast / block the save or just warn. */
+        function _checkLayoutSize(payload) {
+            try {
+                const bytes = new Blob([JSON.stringify(payload)]).size;
+                return { ok: bytes <= RDM_LAYOUT_MAX_BYTES, bytes };
+            } catch (e) {
+                return { ok: true, bytes: 0 };  /* fail-open on stringify error */
+            }
+        }
+
+        /* Best-effort parse of the server's structured layout-too-large body.
+         * Returns null if the response was something else. */
+        async function _parseLayoutSizeError(response) {
+            if (response.status !== 413) return null;
+            try {
+                const j = await response.json();
+                if (j && j.error === 'layout_too_large') return j;
+            } catch (e) {}
+            return null;
+        }
+
         let currentLayout = { name: "default", widgets: [], signals: [] };
         let selectedIndex = -1;
         let selectedIndices = new Set();
@@ -9048,6 +9078,20 @@
                 }
             }
 
+            /* Pre-validate against the firmware's 32 KB cap. Auto-save fires
+             * every ~1 s of editing; without this check, an over-cap layout
+             * would fail silently and the user would think their work was
+             * saved. Show a clear inline message instead. */
+            const sizeCheck = _checkLayoutSize(payload);
+            if (!sizeCheck.ok) {
+                const kb = (sizeCheck.bytes / 1024).toFixed(1);
+                const maxKb = (RDM_LAYOUT_MAX_BYTES / 1024).toFixed(0);
+                const msg = `Layout too large: ${kb} KB / ${maxKb} KB. Remove widgets or simplify rules.`;
+                updateStatus(msg, true);
+                if (!silent) showToast(msg, 'error');
+                return;
+            }
+
             try {
                 updateStatus(silent ? 'Auto-saving...' : 'Saving layout...');
                 const url = silent ? '/api/layout/save?apply=0' : '/api/layout/save';
@@ -9056,7 +9100,20 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                if (!response.ok) throw new Error();
+                if (!response.ok) {
+                    /* Surface the firmware's structured 413 error if that's
+                     * what came back. Otherwise fall through to generic. */
+                    const sizeErr = await _parseLayoutSizeError(response);
+                    if (sizeErr) {
+                        const kb = (sizeErr.actual / 1024).toFixed(1);
+                        const maxKb = (sizeErr.max / 1024).toFixed(0);
+                        const msg = `Layout rejected by device: ${kb} KB / ${maxKb} KB.`;
+                        updateStatus(msg, true);
+                        showToast(msg, 'error');
+                        return;
+                    }
+                    throw new Error();
+                }
                 updateStatus(isSplash ? 'Splash saved' : 'Saved to device');
                 showToast(isSplash ? 'Splash saved' : 'Saved to device', 'success');
                 _editingActive = false;

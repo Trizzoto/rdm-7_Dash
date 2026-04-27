@@ -59,8 +59,28 @@ static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
 /* LVGL lock helpers (defined in main.c) */
-extern bool example_lvgl_lock(int timeout_ms);
-extern void example_lvgl_unlock(void);
+extern bool rdm_lvgl_lock(int timeout_ms);
+extern void rdm_lvgl_unlock(void);
+
+/* Send a structured 413 Payload-Too-Large JSON error.
+ *
+ * Layout JSON > LAYOUT_MAX_FILE_BYTES is a real failure mode in the editor,
+ * historically masked by an opaque 400. This helper returns a body the
+ * editor can parse and surface inline:
+ *     { "ok":false, "error":"layout_too_large", "max":32768, "actual":N }
+ */
+static esp_err_t _send_layout_too_large(httpd_req_t *req, size_t actual) {
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_status(req, "413 Payload Too Large");
+	char body[128];
+	snprintf(body, sizeof(body),
+			 "{\"ok\":false,\"error\":\"layout_too_large\","
+			 "\"max\":%u,\"actual\":%u}",
+			 (unsigned)LAYOUT_MAX_FILE_BYTES, (unsigned)actual);
+	httpd_resp_sendstr(req, body);
+	return ESP_FAIL;
+}
 
 /* ── Path-safety check for user-supplied names (no traversal) ──────────── */
 
@@ -893,7 +913,7 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 	}
 
 	// Must hold LVGL mutex — widgets live on the LVGL task's core
-	if (!example_lvgl_lock(1000)) {
+	if (!rdm_lvgl_lock(1000)) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"LVGL busy");
 		return ESP_FAIL;
@@ -910,7 +930,7 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 	}
 
 	cJSON *root = layout_manager_build_json(layout_name, widgets, count);
-	example_lvgl_unlock();
+	rdm_lvgl_unlock();
 
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
@@ -1023,9 +1043,14 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	}
 
 	int total_len = req->content_len;
-	if (total_len <= 0 || total_len > LAYOUT_MAX_FILE_BYTES) {
+	if (total_len <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid layout size");
 		return ESP_FAIL;
+	}
+	if (total_len > LAYOUT_MAX_FILE_BYTES) {
+		ESP_LOGW(TAG, "POST /api/layout/save: payload %d B exceeds %d B cap",
+				 total_len, LAYOUT_MAX_FILE_BYTES);
+		return _send_layout_too_large(req, (size_t)total_len);
 	}
 
 	char *buf = malloc(total_len + 1);
@@ -1149,9 +1174,14 @@ static const httpd_uri_t layout_save_uri = {.uri = "/api/layout/save",
 /* POST /api/layout/preview — apply layout JSON live without saving to file. */
 static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	int total_len = req->content_len;
-	if (total_len <= 0 || total_len > LAYOUT_MAX_FILE_BYTES) {
+	if (total_len <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid layout size");
 		return ESP_FAIL;
+	}
+	if (total_len > LAYOUT_MAX_FILE_BYTES) {
+		ESP_LOGW(TAG, "POST /api/layout/preview: payload %d B exceeds %d B cap",
+				 total_len, LAYOUT_MAX_FILE_BYTES);
+		return _send_layout_too_large(req, (size_t)total_len);
 	}
 
 	char *buf = malloc(total_len + 1);
@@ -3503,7 +3533,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!example_lvgl_lock(100)) {
+	if (!rdm_lvgl_lock(100)) {
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
 		return ESP_FAIL;
@@ -3526,7 +3556,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	if ((j = cJSON_GetObjectItem(root, "enabled")))
 		dimmer_config.enabled = cJSON_IsTrue(j);
 
-	example_lvgl_unlock();
+	rdm_lvgl_unlock();
 	cJSON_Delete(root);
 
 	save_dimmer_config_to_nvs();

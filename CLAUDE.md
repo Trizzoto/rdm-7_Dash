@@ -20,7 +20,7 @@ This repo is the firmware component of the **RDM project**, which spans four rep
 
 ## Threading (Critical)
 
-- **LVGL is single-threaded.** All `lv_*` calls require LVGL mutex (`example_lvgl_lock`). LVGL task: core 1, 14 ms tick.
+- **LVGL is single-threaded.** All `lv_*` calls require LVGL mutex (`rdm_lvgl_lock`). LVGL task: core 1, 14 ms tick.
 - CAN RX task: core 0, enqueues to `s_can_queue`; LVGL task drains via `can_process_queued_frames()`.
 - Signal callbacks run on LVGL task — safe for direct LVGL calls.
 - Use `lv_async_call()` from other contexts (web server, etc.).

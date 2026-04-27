@@ -47,8 +47,8 @@
 static const char *TAG = "serial_cmd";
 
 /* LVGL mutex (defined in main.c) */
-extern bool example_lvgl_lock(int timeout_ms);
-extern void example_lvgl_unlock(void);
+extern bool rdm_lvgl_lock(int timeout_ms);
+extern void rdm_lvgl_unlock(void);
 
 /* Deferred preview apply — runs on LVGL task. arg is a cJSON* root that
  * this callback takes ownership of and frees. Mirrors the behavior of the
@@ -263,7 +263,7 @@ static void _handle_layout_current(int id, cJSON *params)
         return;
     }
 
-    if (!example_lvgl_lock(1000)) {
+    if (!rdm_lvgl_lock(1000)) {
         _send_error(id, "LVGL busy");
         return;
     }
@@ -278,7 +278,7 @@ static void _handle_layout_current(int id, cJSON *params)
         count = dashboard_get_widget_count();
     }
     cJSON *root = layout_manager_build_json(name, widgets, count);
-    example_lvgl_unlock();
+    rdm_lvgl_unlock();
 
     if (!root) {
         _send_error(id, "Failed to build layout JSON");
@@ -675,7 +675,7 @@ static void _handle_font_delete(int id, cJSON *params)
 static void _handle_signal_values(int id, cJSON *params)
 {
     (void)params;
-    if (!example_lvgl_lock(500)) {
+    if (!rdm_lvgl_lock(500)) {
         _send_error(id, "LVGL busy");
         return;
     }
@@ -693,7 +693,7 @@ static void _handle_signal_values(int id, cJSON *params)
         cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
         cJSON_AddItemToArray(arr, obj);
     }
-    example_lvgl_unlock();
+    rdm_lvgl_unlock();
     _send_response(id, r, NULL);
 }
 
@@ -1079,7 +1079,7 @@ static void _deferred_serial_dimmer_subscribe(void *arg)
 
 static void _handle_dimmer_set(int id, cJSON *params)
 {
-    if (!example_lvgl_lock(1000)) {
+    if (!rdm_lvgl_lock(1000)) {
         _send_error(id, "LVGL busy");
         return;
     }
@@ -1101,7 +1101,7 @@ static void _handle_dimmer_set(int id, cJSON *params)
     if ((j = cJSON_GetObjectItem(params, "enabled")))
         dimmer_config.enabled = cJSON_IsTrue(j);
 
-    example_lvgl_unlock();
+    rdm_lvgl_unlock();
 
     save_dimmer_config_to_nvs();
     lv_async_call(_deferred_serial_dimmer_subscribe, NULL);

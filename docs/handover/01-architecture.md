@@ -100,8 +100,8 @@ ESP32-S3 has two cores. The firmware uses both.
 All `lv_*` calls require the lock. Helpers in [main/main.c](../../main/main.c) ~line 294:
 
 ```c
-bool example_lvgl_lock(int timeout_ms);
-void example_lvgl_unlock(void);
+bool rdm_lvgl_lock(int timeout_ms);
+void rdm_lvgl_unlock(void);
 ```
 
 The mutex is **recursive** (`xSemaphoreCreateRecursiveMutex`), so re-entrant code paths are safe. Pass `-1` for `portMAX_DELAY`. CAN callbacks that need to update LVGL acquire it with `-1`; HTTP handlers use shorter timeouts (100–500 ms) and bail with `lv_async_call()` if they can't get it.

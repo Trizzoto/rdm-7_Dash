@@ -22,8 +22,8 @@
 
 static const char *TAG = "display_capture";
 
-extern bool example_lvgl_lock(int timeout_ms);
-extern void example_lvgl_unlock(void);
+extern bool rdm_lvgl_lock(int timeout_ms);
+extern void rdm_lvgl_unlock(void);
 
 /* ── Working buffers ──────────────────────────────────────────────────────
  * Capture needs two scratch buffers per request:
@@ -160,7 +160,7 @@ esp_err_t display_capture_init(void) {
 
 static esp_err_t _capture_via_snapshot(uint8_t **output_buffer,
                                         size_t   *output_size) {
-	if (!example_lvgl_lock(1000)) {
+	if (!rdm_lvgl_lock(1000)) {
 		ESP_LOGE(TAG, "Failed to lock LVGL mutex (snapshot fallback)");
 		return ESP_ERR_TIMEOUT;
 	}
@@ -168,7 +168,7 @@ static esp_err_t _capture_via_snapshot(uint8_t **output_buffer,
 	size_t bytes = (size_t)CAPTURE_WIDTH * CAPTURE_HEIGHT * CAPTURE_BYTES_PER_PIXEL;
 	uint8_t *out = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 	if (!out) out = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-	if (!out) { example_lvgl_unlock(); return ESP_ERR_NO_MEM; }
+	if (!out) { rdm_lvgl_unlock(); return ESP_ERR_NO_MEM; }
 
 	lv_obj_t *screen = lv_scr_act();
 	if (screen) {
@@ -187,7 +187,7 @@ static esp_err_t _capture_via_snapshot(uint8_t **output_buffer,
 					*output_buffer = out;
 					*output_size   = snap_bytes;
 					heap_caps_free(sbuf);
-					example_lvgl_unlock();
+					rdm_lvgl_unlock();
 					return ESP_OK;
 				}
 				heap_caps_free(sbuf);
@@ -203,7 +203,7 @@ static esp_err_t _capture_via_snapshot(uint8_t **output_buffer,
 			    (((y * 255 / CAPTURE_HEIGHT) >> 2) << 5) | (128 >> 3);
 	*output_buffer = out;
 	*output_size   = bytes;
-	example_lvgl_unlock();
+	rdm_lvgl_unlock();
 	ESP_LOGW(TAG, "Snapshot failed — returned test pattern");
 	return ESP_OK;
 }

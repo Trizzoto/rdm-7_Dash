@@ -277,6 +277,6 @@ Historical pre-built binaries. Not part of the build pipeline.
 | New ECU preset | [main/layout/ecu_presets.c](../../main/layout/ecu_presets.c) |
 | Coordinate / screen-size questions | [main/system/screen_config.h](../../main/system/screen_config.h) |
 | Night mode plumbing | [main/system/night_mode.c/h](../../main/system/night_mode.c) + [main/widgets/widget_night_helpers.h](../../main/widgets/widget_night_helpers.h) |
-| LVGL mutex helpers | [main/main.c](../../main/main.c) ~line 294 (`example_lvgl_lock` / `_unlock`) |
+| LVGL mutex helpers | [main/main.c](../../main/main.c) ~line 294 (`rdm_lvgl_lock` / `rdm_lvgl_unlock`) |
 
 That's the entire firmware. Everything else is build artefacts, vendored components, or repository hygiene.

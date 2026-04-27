@@ -24,7 +24,7 @@
 
 // Add external declarations
 extern TaskHandle_t lvglTaskHandle;
-extern void example_lvgl_port_task(void *pvParameter);
+extern void rdm_lvgl_port_task(void *pvParameter);
 #include "can/can_manager.h"
 
 // GitHub Releases API for OTA updates

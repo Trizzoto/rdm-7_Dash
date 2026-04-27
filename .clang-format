@@ -1,4 +1,10 @@
-# We'll use defaults from the LLVM style, but with some modifications so that it's close to the CDT K&R style.
+# Project: RDM-7 Dash
+# Defaults from LLVM, modified to match house tab-indented K&R style.
+#
+# WARNING: Existing source files are mixed — some use tabs, some 4-space.
+# DO NOT run clang-format on the whole tree without coordination; it will
+# obliterate git blame. Apply only to new files or files you're heavily
+# editing in the same commit. See .editorconfig for editor-side enforcement.
 BasedOnStyle: LLVM
 UseTab: Always
 IndentWidth: 4

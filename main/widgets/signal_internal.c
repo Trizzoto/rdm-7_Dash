@@ -144,7 +144,14 @@ static void _internal_timer_cb(lv_timer_t *timer)
      *
      * Emits 0 for N / stationary (speed below 5 km/h OR rpm below 500).
      * When disabled (user hasn't configured), no signal is emitted — the
-     * widget that tries to read CALCULATED_GEAR simply sees no value. */
+     * widget that tries to read CALCULATED_GEAR simply sees no value.
+     *
+     * If the user-configured rpm/speed signal names don't resolve (most
+     * common cause: the signal was renamed in the layout but the gear
+     * config wasn't updated), log a warning ONCE rather than computing
+     * silently every tick. The warned-state flag resets when the config
+     * is updated via the API or the next time the lookup succeeds. */
+    static bool s_gear_warned_missing = false;
     if (s_gear_cal.enabled && s_gear_cal.ratio_count > 1 &&
         s_gear_cal.wheel_circumference_m > 0.01f &&
         s_gear_cal.final_drive > 0.01f) {
@@ -152,7 +159,16 @@ static void _internal_timer_cb(lv_timer_t *timer)
         int16_t speed_idx = signal_find_by_name(s_gear_cal.speed_signal);
         signal_t *rpm_sig   = (rpm_idx   >= 0) ? signal_get_by_index((uint16_t)rpm_idx)   : NULL;
         signal_t *speed_sig = (speed_idx >= 0) ? signal_get_by_index((uint16_t)speed_idx) : NULL;
-        if (rpm_sig && speed_sig) {
+        if (!rpm_sig || !speed_sig) {
+            if (!s_gear_warned_missing) {
+                ESP_LOGW(TAG, "CALCULATED_GEAR enabled but signals not resolvable "
+                              "(rpm='%s'%s, speed='%s'%s) — gear will not update",
+                         s_gear_cal.rpm_signal,   rpm_sig   ? "" : " [MISSING]",
+                         s_gear_cal.speed_signal, speed_sig ? "" : " [MISSING]");
+                s_gear_warned_missing = true;
+            }
+        } else {
+            s_gear_warned_missing = false;
             float rpm   = rpm_sig->current_value;
             float speed = speed_sig->current_value;
             {

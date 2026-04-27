@@ -61,7 +61,7 @@ void can_change_bitrate(uint8_t bitrate_index);
  *        dispatch them to the widget layer via signal_dispatch_frame().
  *
  * This function is *LVGL-thread only*: it must be called from a context that
- * already holds the LVGL mutex (see example_lvgl_lock/example_lvgl_unlock in
+ * already holds the LVGL mutex (see rdm_lvgl_lock/rdm_lvgl_unlock in
  * main.c).  It is intended to be invoked from the LVGL task loop so that the
  * CAN receive task never touches LVGL directly.
  *

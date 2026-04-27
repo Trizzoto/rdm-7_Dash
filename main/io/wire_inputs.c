@@ -45,9 +45,9 @@ void wire_inputs_task(void *pvParam)
         bool left_on  = (gpio_get_level(WIRE_INPUT_LEFT_GPIO)  == 1);
         bool right_on = (gpio_get_level(WIRE_INPUT_RIGHT_GPIO) == 1);
 
-        if (example_lvgl_lock(20)) {
+        if (rdm_lvgl_lock(20)) {
             indicator_apply_analog_state(left_on, right_on);
-            example_lvgl_unlock();
+            rdm_lvgl_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(50)); /* 20 Hz poll rate */
     }

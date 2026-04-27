@@ -1,0 +1,39 @@
+root = true
+
+# Default for everything
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Firmware C/C++ — matches .clang-format (tabs, width 4).
+# Existing files vary (some use 4-space). Do not mass-reformat the tree:
+# it would obliterate git blame. Conform new/edited files to this.
+[*.{c,h,cpp,hpp,inc}]
+indent_style = tab
+indent_size = 4
+
+# Build / config
+[*.{cmake,txt}]
+indent_style = space
+indent_size = 4
+[CMakeLists.txt]
+indent_style = space
+indent_size = 4
+
+# Web / scripts
+[*.{html,css,js,ts,json,py,sh,yml,yaml,toml}]
+indent_style = space
+indent_size = 2
+
+# Python files specifically — PEP 8 says 4-space
+[*.py]
+indent_style = space
+indent_size = 4
+
+# Markdown — preserve trailing spaces (line breaks)
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false

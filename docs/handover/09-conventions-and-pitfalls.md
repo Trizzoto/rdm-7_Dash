@@ -48,9 +48,9 @@ Set per-module log level in `app_main` or via serial command at runtime. Do **no
 | Where you are | Rule |
 |---|---|
 | LVGL task (timers, signal callbacks, event handlers) | `lvgl_mux` already held — call `lv_*` freely. |
-| HTTP handler, web upload | Lock with `example_lvgl_lock(timeout_ms)` before `lv_*`, or use `lv_async_call`. |
+| HTTP handler, web upload | Lock with `rdm_lvgl_lock(timeout_ms)` before `lv_*`, or use `lv_async_call`. |
 | CAN RX task | Never call `lv_*` directly. Enqueue, let LVGL drain. |
-| Any other task | `example_lvgl_lock` or `lv_async_call`. |
+| Any other task | `rdm_lvgl_lock` or `lv_async_call`. |
 
 `lv_async_call(cb, user_data)` is the safe escape hatch from any context. Callbacks run on the LVGL task with the mutex held.
 
@@ -149,7 +149,7 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 - **Fix**: subscribers run on LVGL task already; you didn't break that — but make sure you don't call signals' subscriber list directly from another task.
 
 **Symptom**: HTTP handler hangs.
-- **Cause**: `example_lvgl_lock(-1)` with LVGL task blocked elsewhere.
+- **Cause**: `rdm_lvgl_lock(-1)` with LVGL task blocked elsewhere.
 - **Fix**: pass a finite timeout (100–500 ms) and bail with `lv_async_call` if it fails.
 
 **Symptom**: TWDT firing during boot widget instantiation.
