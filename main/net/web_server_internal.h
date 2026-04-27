@@ -53,6 +53,10 @@ void web_server_touch_register(httpd_handle_t server);
 void web_server_capture_register(httpd_handle_t server);
 void web_server_signals_register(httpd_handle_t server);
 void web_server_assets_register(httpd_handle_t server);
+void web_server_wifi_register(httpd_handle_t server);
+void web_server_ota_register(httpd_handle_t server);
+void web_server_system_register(httpd_handle_t server);
+void web_server_logger_register(httpd_handle_t server);
 
 #ifdef __cplusplus
 }
