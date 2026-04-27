@@ -44,6 +44,7 @@
 #include <string.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include "web_server_internal.h"
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define.
  */
@@ -58,10 +59,6 @@ extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
-/* LVGL lock helpers (defined in main.c) */
-extern bool rdm_lvgl_lock(int timeout_ms);
-extern void rdm_lvgl_unlock(void);
-
 /* Send a structured 413 Payload-Too-Large JSON error.
  *
  * Layout JSON > LAYOUT_MAX_FILE_BYTES is a real failure mode in the editor,
@@ -69,7 +66,7 @@ extern void rdm_lvgl_unlock(void);
  * editor can parse and surface inline:
  *     { "ok":false, "error":"layout_too_large", "max":32768, "actual":N }
  */
-static esp_err_t _send_layout_too_large(httpd_req_t *req, size_t actual) {
+esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_status(req, "413 Payload Too Large");
@@ -84,7 +81,7 @@ static esp_err_t _send_layout_too_large(httpd_req_t *req, size_t actual) {
 
 /* ── Path-safety check for user-supplied names (no traversal) ──────────── */
 
-static bool _name_is_safe(const char *name) {
+bool web_server_name_is_safe(const char *name) {
 	if (!name || !name[0]) return false;
 	for (const char *p = name; *p; p++) {
 		if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
@@ -92,8 +89,8 @@ static bool _name_is_safe(const char *name) {
 	return true;
 }
 
-/* Like _name_is_safe but allows a single dot for file extension (e.g. ".csv") */
-static bool _filename_is_safe(const char *name) {
+/* Like web_server_name_is_safe but allows a single dot for file extension (e.g. ".csv") */
+bool web_server_filename_is_safe(const char *name) {
 	if (!name || !name[0]) return false;
 	for (const char *p = name; *p; p++) {
 		if (*p == '/' || *p == '\\' || *p < 0x20) return false;
@@ -1050,7 +1047,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	if (total_len > LAYOUT_MAX_FILE_BYTES) {
 		ESP_LOGW(TAG, "POST /api/layout/save: payload %d B exceeds %d B cap",
 				 total_len, LAYOUT_MAX_FILE_BYTES);
-		return _send_layout_too_large(req, (size_t)total_len);
+		return web_server_send_layout_too_large(req, (size_t)total_len);
 	}
 
 	char *buf = malloc(total_len + 1);
@@ -1107,7 +1104,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	layout_name[sizeof(layout_name) - 1] = '\0';
 
 	/* Reject path traversal in layout names */
-	if (!_name_is_safe(layout_name)) {
+	if (!web_server_name_is_safe(layout_name)) {
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Invalid layout name");
@@ -1181,7 +1178,7 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	if (total_len > LAYOUT_MAX_FILE_BYTES) {
 		ESP_LOGW(TAG, "POST /api/layout/preview: payload %d B exceeds %d B cap",
 				 total_len, LAYOUT_MAX_FILE_BYTES);
-		return _send_layout_too_large(req, (size_t)total_len);
+		return web_server_send_layout_too_large(req, (size_t)total_len);
 	}
 
 	char *buf = malloc(total_len + 1);
@@ -1759,7 +1756,7 @@ static esp_err_t layout_set_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	/* Reject path traversal in layout names */
-	if (!_name_is_safe(layout_name)) {
+	if (!web_server_name_is_safe(layout_name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Invalid layout name");
 		return ESP_FAIL;
@@ -1818,7 +1815,7 @@ static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	/* Reject path traversal in layout names */
-	if (!_name_is_safe(layout_name)) {
+	if (!web_server_name_is_safe(layout_name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Invalid layout name");
 		return ESP_FAIL;
@@ -1893,7 +1890,7 @@ static esp_err_t layout_rename_handler(httpd_req_t *req) {
 	new_name[sizeof(new_name) - 1] = '\0';
 	cJSON_Delete(root);
 
-	if (!_name_is_safe(old_name) || !_name_is_safe(new_name)) {
+	if (!web_server_name_is_safe(old_name) || !web_server_name_is_safe(new_name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2080,7 +2077,7 @@ static esp_err_t splash_set_handler(httpd_req_t *req) {
 	name[sizeof(name) - 1] = '\0';
 	cJSON_Delete(root);
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2133,7 +2130,7 @@ static esp_err_t splash_delete_handler(httpd_req_t *req) {
 	name[sizeof(name) - 1] = '\0';
 	cJSON_Delete(root);
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2242,7 +2239,7 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2403,7 +2400,7 @@ static esp_err_t image_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2445,7 +2442,7 @@ static esp_err_t image_data_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2521,7 +2518,7 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2639,7 +2636,7 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -2673,7 +2670,7 @@ static esp_err_t font_data_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	if (!_name_is_safe(name)) {
+	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
 	}
@@ -3796,7 +3793,7 @@ static esp_err_t _log_download_handler(httpd_req_t *req) {
 	}
 
 	/* Prevent path traversal */
-	if (!_filename_is_safe(name)) {
+	if (!web_server_filename_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_OK;
 	}
@@ -3843,7 +3840,7 @@ static esp_err_t _log_delete_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 
-	if (!_filename_is_safe(name)) {
+	if (!web_server_filename_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_OK;
 	}
@@ -4539,35 +4536,20 @@ static esp_err_t cors_preflight_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* URI registration tally (reset per web_server_start). On overflow, ESP-IDF
- * silently drops the registration and the route returns 405 from the wildcard
- * OPTIONS handler — historically this masked itself for half a dozen
- * endpoints when we were at the 80-handler cap. The macro counts attempts
- * vs. successes; web_server_start logs an error tally at the end so a dev
- * adding a new endpoint sees the failure in `idf.py monitor` immediately
- * instead of debugging a 405. */
-static int s_uri_register_attempts = 0;
-static int s_uri_register_failures = 0;
-
-#define REGISTER_URI(svr, uri_ptr) do { \
-	s_uri_register_attempts++; \
-	esp_err_t _r = httpd_register_uri_handler((svr), (uri_ptr)); \
-	if (_r != ESP_OK) { \
-		s_uri_register_failures++; \
-		ESP_LOGE(TAG, "REGISTER_URI failed for %s (%s): %s", \
-				 (uri_ptr)->uri, \
-				 (uri_ptr)->method == HTTP_GET ? "GET" : \
-				 (uri_ptr)->method == HTTP_POST ? "POST" : \
-				 (uri_ptr)->method == HTTP_OPTIONS ? "OPTIONS" : "?", \
-				 esp_err_to_name(_r)); \
-	} \
-} while(0)
+/* URI registration tally — REGISTER_URI macro is in web_server_internal.h.
+ * These globals are declared extern there so domain register() functions
+ * that include the header can increment the same counters. */
+int web_server_uri_register_attempts = 0;
+int web_server_uri_register_failures = 0;
 
 esp_err_t web_server_start(void) {
 	if (server != NULL) {
 		ESP_LOGW(TAG, "Web server already running");
 		return ESP_OK;
 	}
+
+	web_server_uri_register_attempts = 0;
+	web_server_uri_register_failures = 0;
 
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.server_port = WEB_SERVER_PORT;
@@ -4756,16 +4738,16 @@ esp_err_t web_server_start(void) {
 	 * because max_uri_handlers is too low), shout loudly so the developer
 	 * who just added an endpoint notices in `idf.py monitor` instead of
 	 * chasing a phantom 405 in DevTools later. */
-	if (s_uri_register_failures > 0) {
+	if (web_server_uri_register_failures > 0) {
 		ESP_LOGE(TAG,
 				 "URI registration: %d/%d FAILED — bump max_uri_handlers "
 				 "(currently %d) in web_server_start. Failed endpoints will "
 				 "return 405 via the OPTIONS wildcard.",
-				 s_uri_register_failures, s_uri_register_attempts,
+				 web_server_uri_register_failures, web_server_uri_register_attempts,
 				 (int)config.max_uri_handlers);
 	} else {
 		ESP_LOGI(TAG, "URI registration: %d handlers registered (cap %d)",
-				 s_uri_register_attempts, (int)config.max_uri_handlers);
+				 web_server_uri_register_attempts, (int)config.max_uri_handlers);
 	}
 
 	ESP_LOGI(TAG, "Web server started successfully");
