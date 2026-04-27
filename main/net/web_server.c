@@ -20,7 +20,6 @@
 #include "storage/sd_manager.h"
 #include "system/device_id.h"
 #include "system/rdm_settings.h"
-#include "system/remote_touch.h"
 #include "system/screen_config.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
@@ -173,18 +172,6 @@ static void _deferred_splash_reload(void *arg) {
 												   RELOAD_DEBOUNCE_MS, NULL);
 		lv_timer_set_repeat_count(s_splash_debounce_timer, 1);
 	}
-}
-
-/* ── Screen switch (runs on LVGL task) ───────────────────────────────── */
-
-static void _deferred_screen_switch_splash(void *arg) {
-	(void)arg;
-	splash_screen_enter_edit_mode();
-}
-
-static void _deferred_screen_switch_dashboard(void *arg) {
-	(void)arg;
-	splash_screen_exit_edit_mode();
 }
 
 // HTTP handler for the main page (serves embedded web/index.html)
@@ -453,160 +440,6 @@ static esp_err_t mjpeg_stream_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* ── /api/touch — remote touch injection ─────────────────────────────────
- * POST body (JSON):
- *   { "x": 120, "y": 240, "state": "down" | "move" | "up" }     inject an event
- *   { "enabled": true | false }                                  toggle on/off
- * Fields can combine — a single POST can both toggle and inject.
- *
- * GET /api/touch returns { "enabled": <bool> } for the web UI to sync.
- *
- * Coordinates are in device pixels (0..799, 0..479). The web UI is
- * responsible for scaling from CSS-pixel events on the Live Preview image
- * to device coords before sending. */
-static esp_err_t api_touch_post_handler(httpd_req_t *req) {
-	/* Read the body (max 256 bytes is plenty for this tiny JSON payload) */
-	char body[257];
-	int total = req->content_len;
-	if (total <= 0 || total >= (int)sizeof(body)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
-		return ESP_FAIL;
-	}
-	int got = 0;
-	while (got < total) {
-		int r = httpd_req_recv(req, body + got, total - got);
-		if (r <= 0) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
-			return ESP_FAIL;
-		}
-		got += r;
-	}
-	body[got] = '\0';
-
-	cJSON *root = cJSON_Parse(body);
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
-		return ESP_FAIL;
-	}
-
-	/* Optional: flip the master enable */
-	cJSON *en = cJSON_GetObjectItemCaseSensitive(root, "enabled");
-	if (cJSON_IsBool(en)) {
-		remote_touch_set_enabled(cJSON_IsTrue(en));
-	}
-
-	/* Optional: inject a pointer event */
-	cJSON *x_js = cJSON_GetObjectItemCaseSensitive(root, "x");
-	cJSON *y_js = cJSON_GetObjectItemCaseSensitive(root, "y");
-	cJSON *s_js = cJSON_GetObjectItemCaseSensitive(root, "state");
-	if (cJSON_IsNumber(x_js) && cJSON_IsNumber(y_js) && cJSON_IsString(s_js)) {
-		const char *s = s_js->valuestring;
-		bool pressed = (strcmp(s, "down") == 0) || (strcmp(s, "move") == 0);
-		/* Log at INFO level on transitions, DEBUG on moves — so the serial
-		 * monitor shows touch events arriving without drowning in drag spam. */
-		if (strcmp(s, "down") == 0 || strcmp(s, "up") == 0) {
-			ESP_LOGI(TAG, "touch %s @ (%d, %d) enabled=%d",
-			         s, x_js->valueint, y_js->valueint,
-			         remote_touch_is_enabled());
-		} else {
-			ESP_LOGD(TAG, "touch move @ (%d, %d)",
-			         x_js->valueint, y_js->valueint);
-		}
-		remote_touch_set((int16_t)x_js->valueint, (int16_t)y_js->valueint, pressed);
-	}
-
-	cJSON_Delete(root);
-
-	/* Reply with the current enable state so the UI can sync */
-	char out[48];
-	snprintf(out, sizeof(out), "{\"enabled\":%s}",
-	         remote_touch_is_enabled() ? "true" : "false");
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
-}
-
-static esp_err_t api_touch_get_handler(httpd_req_t *req) {
-	char out[48];
-	snprintf(out, sizeof(out), "{\"enabled\":%s}",
-	         remote_touch_is_enabled() ? "true" : "false");
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
-}
-
-/* ── /api/indicator/test — force wire-mode indicator state ────────────────
- * Indicator widgets in Wire input-source mode don't subscribe to CAN
- * signals — they're driven directly by GPIO pin state through
- * `indicator_apply_analog_state()`. To let Studio's TEST ACTIVE button
- * preview the active visual, this endpoint calls that function with
- * caller-supplied state. For CAN-mode indicators the normal
- * /api/signal/inject path works; this is wire-only.
- *
- * POST body: {"slot": 0|1, "active": true|false}
- *   - slot 0 = LEFT indicator, slot 1 = RIGHT
- *   - Both slots' state are sent each call; we preserve the OTHER slot's
- *     current state so toggling left doesn't accidentally clear right. */
-extern void indicator_apply_analog_state(bool left_on, bool right_on);
-
-static bool s_ind_test_left  = false;
-static bool s_ind_test_right = false;
-
-static void _ind_test_apply_cb(void *param) {
-	(void)param;
-	indicator_apply_analog_state(s_ind_test_left, s_ind_test_right);
-}
-
-static esp_err_t api_indicator_test_post_handler(httpd_req_t *req) {
-	char body[128];
-	int total = req->content_len;
-	if (total <= 0 || total >= (int)sizeof(body)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
-		return ESP_FAIL;
-	}
-	int got = 0;
-	while (got < total) {
-		int r = httpd_req_recv(req, body + got, total - got);
-		if (r <= 0) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
-			return ESP_FAIL;
-		}
-		got += r;
-	}
-	body[got] = '\0';
-
-	cJSON *root = cJSON_Parse(body);
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
-		return ESP_FAIL;
-	}
-
-	cJSON *slot_js   = cJSON_GetObjectItemCaseSensitive(root, "slot");
-	cJSON *active_js = cJSON_GetObjectItemCaseSensitive(root, "active");
-	int  slot   = cJSON_IsNumber(slot_js)   ? slot_js->valueint      : -1;
-	bool active = cJSON_IsBool(active_js)   ? cJSON_IsTrue(active_js) : false;
-
-	if (slot == 0) s_ind_test_left  = active;
-	else if (slot == 1) s_ind_test_right = active;
-	else {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "slot must be 0 or 1");
-		return ESP_FAIL;
-	}
-	cJSON_Delete(root);
-
-	ESP_LOGI(TAG, "indicator test slot=%d active=%d (L=%d R=%d)",
-	         slot, active, s_ind_test_left, s_ind_test_right);
-
-	/* indicator_apply_analog_state touches LVGL — dispatch via lv_async_call
-	 * so it runs on the LVGL task, not the httpd worker. */
-	lv_async_call(_ind_test_apply_cb, NULL);
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-}
-
 // URI handlers
 static const httpd_uri_t index_uri = {
 	.uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
@@ -625,88 +458,6 @@ static const httpd_uri_t api_screenshot_uri = {
 static const httpd_uri_t api_capture_stream_uri = {
     .uri = "/api/capture/stream", .method = HTTP_GET,
     .handler = mjpeg_stream_handler, .user_ctx = NULL};
-
-static const httpd_uri_t api_touch_post_uri = {
-    .uri = "/api/touch", .method = HTTP_POST,
-    .handler = api_touch_post_handler, .user_ctx = NULL};
-
-static const httpd_uri_t api_indicator_test_post_uri = {
-    .uri = "/api/indicator/test", .method = HTTP_POST,
-    .handler = api_indicator_test_post_handler, .user_ctx = NULL};
-
-/* ── /api/warning/test — force alert (warning) widget on/off ─────────────
- * Studio's TEST ACTIVE button on the alert widget uses this when the alert
- * has no signal bound — pressing flips the widget visual ON, release flips
- * OFF. When a signal IS bound, Studio uses /api/signal/inject instead so
- * the normal CAN path exercises everything.
- *
- * POST body: {"slot": 0..7, "active": true|false} */
-#include "widgets/widget_warning.h"
-
-typedef struct { uint8_t slot; bool active; } warn_test_req_t;
-static void _warn_test_apply_cb(void *param) {
-	warn_test_req_t *req = (warn_test_req_t *)param;
-	if (req) {
-		widget_warning_apply_test_state(req->slot, req->active);
-		free(req);
-	}
-}
-
-static esp_err_t api_warning_test_post_handler(httpd_req_t *req) {
-	char body[96];
-	int total = req->content_len;
-	if (total <= 0 || total >= (int)sizeof(body)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
-		return ESP_FAIL;
-	}
-	int got = 0;
-	while (got < total) {
-		int r = httpd_req_recv(req, body + got, total - got);
-		if (r <= 0) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
-			return ESP_FAIL;
-		}
-		got += r;
-	}
-	body[got] = '\0';
-
-	cJSON *root = cJSON_Parse(body);
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
-		return ESP_FAIL;
-	}
-	cJSON *slot_js   = cJSON_GetObjectItemCaseSensitive(root, "slot");
-	cJSON *active_js = cJSON_GetObjectItemCaseSensitive(root, "active");
-	int slot   = cJSON_IsNumber(slot_js) ? slot_js->valueint : -1;
-	bool active = cJSON_IsBool(active_js) ? cJSON_IsTrue(active_js) : false;
-	cJSON_Delete(root);
-
-	if (slot < 0 || slot > 7) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "slot must be 0..7");
-		return ESP_FAIL;
-	}
-
-	warn_test_req_t *payload = calloc(1, sizeof(*payload));
-	if (!payload) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
-		return ESP_FAIL;
-	}
-	payload->slot = (uint8_t)slot;
-	payload->active = active;
-	lv_async_call(_warn_test_apply_cb, payload);
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t api_warning_test_post_uri = {
-    .uri = "/api/warning/test", .method = HTTP_POST,
-    .handler = api_warning_test_post_handler, .user_ctx = NULL};
-
-static const httpd_uri_t api_touch_get_uri = {
-    .uri = "/api/touch", .method = HTTP_GET,
-    .handler = api_touch_get_handler, .user_ctx = NULL};
 
 // Lightweight version check — web editor polls this to avoid fetching the
 // full layout JSON on every sync cycle.
@@ -3275,46 +3026,6 @@ static const httpd_uri_t sd_delete_uri = {
 	.handler = sd_delete_handler, .user_ctx = NULL
 };
 
-/* ── Screen switch endpoint ──────────────────────────────────────────── */
-
-static esp_err_t screen_switch_handler(httpd_req_t *req) {
-	char query_buf[64];
-	esp_err_t qerr =
-		httpd_req_get_url_query_str(req, query_buf, sizeof(query_buf));
-	if (qerr != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
-		return ESP_FAIL;
-	}
-
-	const char *screen_val = strstr(query_buf, "screen=");
-	if (!screen_val) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing screen=");
-		return ESP_FAIL;
-	}
-	screen_val += 7;
-
-	if (strncmp(screen_val, "splash", 6) == 0) {
-		if (!splash_screen_is_edit_mode())
-			lv_async_call(_deferred_screen_switch_splash, NULL);
-	} else if (strncmp(screen_val, "dashboard", 9) == 0) {
-		if (splash_screen_is_edit_mode())
-			lv_async_call(_deferred_screen_switch_dashboard, NULL);
-	} else {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Invalid screen (use splash or dashboard)");
-		return ESP_FAIL;
-	}
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t screen_switch_uri = {
-	.uri = "/api/screen/switch", .method = HTTP_POST,
-	.handler = screen_switch_handler, .user_ctx = NULL
-};
-
 /* ── Dimmer config API ──────────────────────────────────────────────── */
 
 static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
@@ -4437,11 +4148,8 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &screenshot_uri);
 	REGISTER_URI(server, &api_screenshot_uri);
 	REGISTER_URI(server, &api_capture_stream_uri);
-	REGISTER_URI(server, &api_touch_post_uri);
-	REGISTER_URI(server, &api_indicator_test_post_uri);
-	REGISTER_URI(server, &api_warning_test_post_uri);
+	web_server_touch_register(server);
 	web_server_gear_register(server);
-	REGISTER_URI(server, &api_touch_get_uri);
 	REGISTER_URI(server, &layout_version_uri);
 	REGISTER_URI(server, &layout_current_uri);
 	REGISTER_URI(server, &layout_raw_uri);
@@ -4475,7 +4183,6 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &sd_files_uri);
 	REGISTER_URI(server, &sd_copy_uri);
 	REGISTER_URI(server, &sd_delete_uri);
-	REGISTER_URI(server, &screen_switch_uri);
 	REGISTER_URI(server, &device_info_uri);
 	REGISTER_URI(server, &brightness_get_uri);
 	REGISTER_URI(server, &brightness_post_uri);

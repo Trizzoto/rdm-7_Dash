@@ -15,6 +15,7 @@ idf_component_register(
         "net/web_server.c"
         "net/web_server_captive.c"
         "net/web_server_gear.c"
+        "net/web_server_touch.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
