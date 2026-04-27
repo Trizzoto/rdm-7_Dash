@@ -48,6 +48,7 @@ bool web_server_filename_is_safe(const char *name);
 
 // Domain register() entry points — called from web_server_start().
 void web_server_captive_register(httpd_handle_t server);
+void web_server_gear_register(httpd_handle_t server);
 
 #ifdef __cplusplus
 }

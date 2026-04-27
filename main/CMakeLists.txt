@@ -14,6 +14,7 @@ idf_component_register(
         "net/ota_update_dialog.c"
         "net/web_server.c"
         "net/web_server_captive.c"
+        "net/web_server_gear.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
