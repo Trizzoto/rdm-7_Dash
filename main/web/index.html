@@ -619,7 +619,8 @@
              * Sync and Save are full-label primary actions and stay visible. */
             .mobile-burger { margin-right: auto; }
             header > div:last-child { flex: 0 0 auto; }
-            header #syncBtn, header #applyBtn { padding: 0 10px; font-size: 11px; }
+            header #syncBtn  { display: inline-flex !important; padding: 0 10px; font-size: 11px; }
+            header #applyBtn { padding: 0 10px; font-size: 11px; }
 
             .align-bar { display: none !important; }
             footer { display: none !important; }
@@ -11908,7 +11909,9 @@
             undo:     '<path d="M3 7v6h6"/><path d="M3.51 13a9 9 0 1 0 2.13-9.36L3 7"/>',
             redo:     '<path d="M21 7v6h-6"/><path d="M20.49 13a9 9 0 1 1-2.13-9.36L21 7"/>',
             shop:     '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>',
-            pointer:  '<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/>'
+            pointer:     '<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/>',
+            brightness:  '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+            sync:        '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'
         };
         function _iconSvg(name) {
             const path = _menuIcons[name];
@@ -11951,8 +11954,9 @@
                 { heading: 'Tools', items: [
                     { type: 'button', label: 'Signal Dashboard\u2026', icon: 'activity', onclick: 'openSignalDashboard()' },
                     { type: 'button', label: 'Data Logger\u2026',      icon: 'database', onclick: 'openDataLogger()' },
-                    { type: 'button', label: 'Fuel Calibration\u2026', icon: 'gauge',    onclick: 'openFuelCalibration()' },
-                    { type: 'button', label: 'Gear Setup\u2026',       icon: 'gauge',    onclick: 'openGearSetup()' },
+                    { type: 'button', label: 'Fuel Calibration\u2026', icon: 'gauge',      onclick: 'openFuelCalibration()' },
+                    { type: 'button', label: 'Dimmer Settings\u2026', icon: 'brightness', onclick: 'openDimmerSettings()' },
+                    { type: 'button', label: 'Gear Setup\u2026',       icon: 'gauge',      onclick: 'openGearSetup()' },
                     { type: 'button', label: 'Import DBC\u2026',       icon: 'upload',   onclick: 'openDbcImportModal()' },
                     { type: 'button', label: 'Device Info\u2026',      icon: 'monitor',  onclick: 'openDeviceInfo()' },
                     { type: 'button', label: 'Marketplace',            icon: 'shop',     onclick: 'openMarketplace()' }
@@ -11970,7 +11974,8 @@
                     { type: 'select', id: 'streamRateSel' },
                     { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
                         onclick: 'toggleLiveControl()' },
-                    { type: 'button', label: 'Reset View', icon: 'reset', onclick: 'resetView()' },
+                    { type: 'button', label: 'Sync Preview', icon: 'sync',  onclick: 'captureScreenshot()' },
+                    { type: 'button', label: 'Reset View',   icon: 'reset', onclick: 'resetView()' },
                     { type: 'button', label: 'Help',       icon: 'help',  onclick: "document.getElementById('helpModal').style.display='flex'" }
                 ]},
                 { heading: 'Danger zone', items: [
