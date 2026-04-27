@@ -104,6 +104,8 @@ static bar_data_t *_lookup_bar_data_by_value_id(uint8_t value_id) {
 uint64_t last_bar_can_received[2] = {0, 0};
 
 /* Global LVGL object definitions (declared extern in widget_bar.h) */
+lv_obj_t *ui_Bar_1_Label = NULL;
+lv_obj_t *ui_Bar_2_Label = NULL;
 lv_obj_t *ui_Bar_1_Value = NULL;
 lv_obj_t *ui_Bar_2_Value = NULL;
 

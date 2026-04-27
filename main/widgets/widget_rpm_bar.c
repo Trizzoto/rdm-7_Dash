@@ -1167,13 +1167,12 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 		if (v > 1000) v = 1000;
 		rd->flash_speed_ms = (uint16_t)v;
 	}
-	/* Migrate old "circles"-mode enum values (1, 3, 4, 5, 6, 7) to the new
-	 * 3-value enum: 0=None, 1=Bar Flash, 2=Bar Solid. Old "Bar+Circles Flash"
-	 * (3) and "Bar Flash" (2) collapse to 1; old "Bar Solid"/"Bar+Circles Solid"
-	 * (5, 6) collapse to 2; old circles-only modes (1, 4, 7) are now None. */
-	if (rd->limiter_effect == 2 || rd->limiter_effect == 3) rd->limiter_effect = 1;
-	else if (rd->limiter_effect == 5 || rd->limiter_effect == 6) rd->limiter_effect = 2;
-	else if (rd->limiter_effect > 2) rd->limiter_effect = 0;
+	/* Clamp to the current 3-value enum. Older firmware versions had a
+	 * 7-value enum that included "circles" modes (now removed); the legacy
+	 * migration ladder lived here until 2026-04-27 and was deleted because
+	 * any field-deployed device has long since re-saved its layouts in the
+	 * new shape. Any out-of-range value now silently degrades to None. */
+	if (rd->limiter_effect > 2) rd->limiter_effect = 0;
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(item) && item->valuestring)

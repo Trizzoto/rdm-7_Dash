@@ -109,6 +109,8 @@ uint64_t *widget_bar_get_last_can_time(uint8_t bar_idx);
 
 /* Bar value labels are defined here; ui.h already declares ui_Bar_1_Value etc.
    but the actual definitions live in widget_bar.c */
+extern lv_obj_t *ui_Bar_1_Label;
+extern lv_obj_t *ui_Bar_2_Label;
 extern lv_obj_t *ui_Bar_1_Value;
 extern lv_obj_t *ui_Bar_2_Value;
 
