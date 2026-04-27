@@ -23,6 +23,7 @@ idf_component_register(
         "net/web_server_ota.c"
         "net/web_server_system.c"
         "net/web_server_logger.c"
+        "net/web_server_layout.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
