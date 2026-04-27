@@ -2,9 +2,10 @@
 # No ESP-IDF, no FreeRTOS, no LVGL — just stock GCC/Clang.
 #
 # Usage:
-#   make                       # build & run every test, fail on first failure
-#   make test_can_decode       # build & run a single test
-#   make test_widget_rules     # build & run a single test
+#   make                          # build & run every test, fail on first failure
+#   make test_can_decode          # build & run a single test
+#   make test_widget_rules        # build & run a single test
+#   make test_layout_migration    # build & run a single test
 #   make clean
 
 CC      ?= gcc
@@ -12,7 +13,7 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -Wno-unused-function -O0 -g
 LDFLAGS ?= -lm
 
 # One test binary per file in the TESTS list. Add new tests here.
-TESTS = test_can_decode test_widget_rules
+TESTS = test_can_decode test_widget_rules test_layout_migration
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))
@@ -42,6 +43,14 @@ $(BIN_DIR)/%: %.c unity.c | $(BIN_DIR)
 $(BIN_DIR)/test_widget_rules: test_widget_rules.c unity.c cjson/cJSON.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -Imocks -Icjson -I. \
 	    test_widget_rules.c unity.c cjson/cJSON.c \
+	    -o $@ $(LDFLAGS)
+
+# Schema-migration test reimplements the small migration helpers verbatim
+# from layout_manager.c / widget_rpm_bar.c (see header comment) and pulls
+# vendored cJSON. No firmware source compiled.
+$(BIN_DIR)/test_layout_migration: test_layout_migration.c unity.c cjson/cJSON.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -Icjson \
+	    test_layout_migration.c unity.c cjson/cJSON.c \
 	    -o $@ $(LDFLAGS)
 
 clean:

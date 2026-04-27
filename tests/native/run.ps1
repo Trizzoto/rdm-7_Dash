@@ -1,10 +1,11 @@
 # Build and run every native-host test. Windows-friendly alternative to `make`.
 #
 # Usage:
-#   .\run.ps1                    # build & run every test
-#   .\run.ps1 test_can_decode    # build & run one test
-#   .\run.ps1 test_widget_rules  # build & run one test
-#   .\run.ps1 -Clean             # delete build artifacts
+#   .\run.ps1                          # build & run every test
+#   .\run.ps1 test_can_decode          # build & run one test
+#   .\run.ps1 test_widget_rules        # build & run one test
+#   .\run.ps1 test_layout_migration    # build & run one test
+#   .\run.ps1 -Clean                   # delete build artifacts
 
 param(
 	[string]$Test = "",
@@ -36,14 +37,16 @@ $ldflags = @("-lm")
 # (test_<name>.c + unity.c, no extra include paths).
 function Get-ExtraSources($name) {
 	switch ($name) {
-		"test_widget_rules" { return @("cjson/cJSON.c") }
-		default              { return @() }
+		"test_widget_rules"      { return @("cjson/cJSON.c") }
+		"test_layout_migration"  { return @("cjson/cJSON.c") }
+		default                  { return @() }
 	}
 }
 function Get-ExtraIncludes($name) {
 	switch ($name) {
-		"test_widget_rules" { return @("-Imocks", "-Icjson", "-I.") }
-		default              { return @() }
+		"test_widget_rules"      { return @("-Imocks", "-Icjson", "-I.") }
+		"test_layout_migration"  { return @("-Icjson") }
+		default                  { return @() }
 	}
 }
 
@@ -59,8 +62,8 @@ foreach ($t in $tests) {
 	$extraInc = Get-ExtraIncludes $t
 
 	Write-Host "▶ Building $t" -ForegroundColor Cyan
-	$args = @() + $cflags + $extraInc + @($src, "unity.c") + $extraSrc + @("-o", $out) + $ldflags
-	& gcc @args
+	$gccArgs = @() + $cflags + $extraInc + @($src, "unity.c") + $extraSrc + @("-o", $out) + $ldflags
+	& gcc @gccArgs
 	if ($LASTEXITCODE -ne 0) {
 		Write-Host "  Build failed for $t" -ForegroundColor Red
 		exit 3
