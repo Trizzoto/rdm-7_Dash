@@ -46,6 +46,9 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual);
 bool web_server_name_is_safe(const char *name);
 bool web_server_filename_is_safe(const char *name);
 
+// Domain register() entry points — called from web_server_start().
+void web_server_captive_register(httpd_handle_t server);
+
 #ifdef __cplusplus
 }
 #endif
