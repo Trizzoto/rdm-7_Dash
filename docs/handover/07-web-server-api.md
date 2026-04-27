@@ -280,11 +280,7 @@ The task stack is allocated in **PSRAM** (`xTaskCreateWithCaps(MALLOC_CAP_SPIRAM
 
 ## mDNS state
 
-[main/net/mdns_service.c](../../main/net/mdns_service.c) defines `RDM7_MDNS_DISABLED 1` at line 28. The hostname registration code is intact but never executes.
-
-Reason: the managed `espressif/mdns` component hardcodes `CONFIG_MDNS_MEMORY_ALLOC_INTERNAL=y` and can't allocate from internal RAM after WiFi init, despite ~3.8 MB total heap free. Switching the config to `MDNS_MEMORY_ALLOC_SPIRAM` would work, but the project chose to drop mDNS entirely — QR code + IP fallback cover the user experience.
-
-`device_settings.c` still mentions `rdm7.local` in some status labels — harmless cosmetic leftover, removable in a future cleanup pass.
+**Removed** (2026-04-27). mDNS used to live in `main/net/mdns_service.c` but was deleted along with the `espressif/mdns` dependency. The managed component hardcoded `CONFIG_MDNS_MEMORY_ALLOC_INTERNAL=y` and couldn't allocate from internal RAM after WiFi init. Users reach the editor via IP (shown in Device Settings) or the QR code button. See [ADR 0001](../adr/0001-wifi-onboarding-reliability.md).
 
 ## WebSockets
 

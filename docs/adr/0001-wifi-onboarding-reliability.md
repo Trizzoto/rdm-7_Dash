@@ -77,7 +77,7 @@ Mild headroom for parallel webview connections (Chrome opens 6+ for one page) wi
 |---|---|
 | `CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM` bumped from 16 → 24 | Crashed `esp_wifi_init` with `ESP_ERR_NO_MEM` on cold boot. |
 | `WIFI_AUTH_OPEN` for the AP | Debug-only convenience. Restored to conditional WPA2_PSK; users want a password. |
-| Switching mDNS to `CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y` | The correct fix in principle, but the project chose to drop mDNS entirely (see ADR 0002 if/when written) — QR code + IP fallback cover the user experience. |
+| Switching mDNS to `CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y` | The correct fix in principle, but the project chose to drop mDNS entirely (files and dependency removed 2026-04-27). QR code + IP fallback cover the user experience. |
 | `CONFIG_HTTPD_MAX_REQ_HDR_LEN = 2048` | Too aggressive, see above. |
 | Auto-start STA with empty creds in hopes of "just trying" | ESP-IDF logs error spam and starves the AP. |
 

@@ -71,7 +71,7 @@ const MOCK = {
   'GET  /api/ecu/current':      () => ({ ecu: 'MS3-Pro', version: '1.5.x' }),
   'POST /api/ecu/set':          () => ({ ok: true }),
   'GET  /api/device/info':      () => ({
-    model: 'RDM-7 Dash', version: '1.4.0-dev', ip: '192.168.4.1', hostname: 'rdm7.local',
+    model: 'RDM-7 Dash', version: '1.4.0-dev', ip: '192.168.4.1', hostname: '',
     mac: 'AA:BB:CC:DD:EE:FF', uptime_s: 1234, free_heap: 145000, free_psram: 6200000, chip: 'ESP32-S3'
   }),
   'GET  /api/storage/info':     () => ({ total: 8800000, used: 420000, free: 8380000 }),

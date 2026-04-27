@@ -68,7 +68,7 @@ Components used (REQUIRES list in `main/CMakeLists.txt`):
 driver, esp_adc, esp_lcd, esp_lcd_touch, esp_lcd_touch_gt911, esp_timer,
 lvgl, nvs_flash, fatfs, esp_wifi, esp_http_client, json, esp_https_ota,
 app_update, mbedtls, esp-tls, esp_http_server,
-joltwallet__littlefs, espressif__mdns
+joltwallet__littlefs
 ```
 
 Embedded blobs:
@@ -89,7 +89,6 @@ dependencies:
   lvgl/lvgl: 8.3.11                    # pinned exactly
   espressif/esp_lcd_touch_gt911: 1.1.0
   joltwallet/littlefs: ">=1.0.0"
-  espressif/mdns: ^1.2.0
   espressif/esp_new_jpeg: ^0.6.0       # screenshot encoder
   idf: ">=5.0.0"
 ```

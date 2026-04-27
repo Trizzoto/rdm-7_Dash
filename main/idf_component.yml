@@ -4,7 +4,9 @@ dependencies:
   lvgl/lvgl: "8.3.11"
   espressif/esp_lcd_touch_gt911: "1.1.0"
   joltwallet/littlefs: ">=1.0.0"
-  espressif/mdns: "^1.2.0"
+  # mDNS (espressif/mdns) was removed 2026-04-27. The managed component
+  # pinned MDNS_MEMORY_ALLOC_INTERNAL which couldn't allocate from
+  # internal RAM after WiFi init. See docs/adr/0001-wifi-onboarding-reliability.md.
   # Software JPEG encoder — used by system/display_capture_jpeg.c to
   # compress full-screen RGB565 captures to ~30 KB JPEGs before sending
   # them over WiFi (screenshots, live preview, MJPEG streaming). The

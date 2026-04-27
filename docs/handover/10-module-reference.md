@@ -86,7 +86,6 @@ WiFi, web server, OTA, captive portal, serial. See [07-web-server-api.md](07-web
 | `web_server.c/h` | HTTP server. ~86 endpoints, embedded `index.html`, captive portal. |
 | `wifi_manager.c/h` | STA/AP/multi-SSID, channel pinning, HT20 force, boot config. |
 | `dns_hijack.c/h` | UDP:53 captive-portal helper (PSRAM stack). |
-| `mdns_service.c/h` | mDNS — **disabled** (`RDM7_MDNS_DISABLED 1`). Skeleton only. |
 | `ota_handler.c/h` | OTA download + flash + status. |
 | `ota_update_dialog.c/h` | LVGL modal for OTA progress. |
 | `serial_protocol.c/h` | Framing layer over UART. |
@@ -256,7 +255,6 @@ Pulled by the IDF Component Manager from the registry. Don't edit — let the lo
 - `lvgl/lvgl`
 - `espressif/esp_lcd_touch_gt911`
 - `joltwallet/littlefs`
-- `espressif/mdns`
 - `espressif/esp_new_jpeg`
 
 ## `bin/`

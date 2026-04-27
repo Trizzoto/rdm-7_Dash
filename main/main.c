@@ -28,7 +28,6 @@
 #include "lvgl.h"
 #include "lvgl_helpers.h"
 #include "net/dns_hijack.h"
-#include "net/mdns_service.h"
 #include "net/uart_protocol.h"
 #include "net/wifi_manager.h"
 #include "nvs.h"
@@ -1044,11 +1043,10 @@ void app_main(void) {
   wifi_manager_init();
   wifi_ui_init();
 
-  /* Initialise mDNS after the netif stack is up — the daemon attaches to
-     any netif that comes online, so hostname "rdm7" resolves on both STA
-     and SoftAP once those interfaces start. Refresh is called by
-     wifi_manager.c event handlers when IP or AP state changes. */
-  rdm7_mdns_init();
+  /* mDNS was removed 2026-04-27 (see ADR 0001 wifi-onboarding-reliability).
+     The managed component pinned MDNS_MEMORY_ALLOC_INTERNAL, which couldn't
+     allocate from the fragmented internal RAM pool after WiFi init.
+     Users reach the dash via IP (shown in Device Settings) or QR code. */
 
   /* Check if WiFi should start on boot */
   wifi_boot_config_t boot_cfg;

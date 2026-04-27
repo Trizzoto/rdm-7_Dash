@@ -274,9 +274,8 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 ### mDNS not resolving
 
 **Symptom**: `rdm7.local` doesn't resolve on the user's network.
-- **Cause #1**: many consumer routers drop multicast / use AP isolation.
-- **Cause #2**: in this firmware, mDNS is permanently disabled — see [main/net/mdns_service.c](../../main/net/mdns_service.c).
-- **Fix**: don't depend on `rdm7.local`. Show the IP in Device Settings. Offer the QR code button. The labels in `device_settings.c` still mention `rdm7.local` — harmless cosmetic leftover, removable in a future cleanup.
+- **Cause**: mDNS was removed from this firmware on 2026-04-27. The managed `espressif/mdns` component couldn't allocate from internal RAM after WiFi init. See [ADR 0001](../adr/0001-wifi-onboarding-reliability.md).
+- **Fix**: don't depend on `rdm7.local`. Show the IP in Device Settings; offer the QR code button.
 
 ### "Where did the 768 KB of PSRAM go?"
 
@@ -312,7 +311,7 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 ### Hamburger / wizard rdm7.local references
 
 **Symptom**: user sees `rdm7.local` in network status labels, expects it to work, doesn't.
-- **Cause**: leftover labels from before mDNS was disabled.
+- **Cause**: leftover labels from before mDNS was removed.
 - **Fix**: cosmetic only — remove from `device_settings.c:156, 166, 181` in a future pass. (Logged as cleanup work.)
 
 ## Things to verify before merging a non-trivial change

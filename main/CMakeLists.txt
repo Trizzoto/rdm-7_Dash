@@ -17,7 +17,6 @@ idf_component_register(
         "net/uart_protocol.c"
         "net/serial_protocol.c"
         "net/serial_commands.c"
-        "net/mdns_service.c"
         "net/dns_hijack.c"
         "system/device_id.c"
         "system/rdm_settings.c"
@@ -130,7 +129,6 @@ idf_component_register(
         "esp-tls"
         "esp_http_server"
         "joltwallet__littlefs"
-        "espressif__mdns"
     EMBED_TXTFILES "web/index.html"
     EMBED_FILES "embed/RDM.rdmimg"
 )

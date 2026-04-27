@@ -213,7 +213,7 @@ Already covered in [07-web-server-api.md](07-web-server-api.md) §captive-portal
 6. **`CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024`** — Android headers exceed default 512 B.
 7. **`CONFIG_LWIP_MAX_SOCKETS=12`** — headroom for parallel webview connections.
 
-Things tried and reverted: STATIC_TX_BUFFER bump (caused `esp_wifi_init` NO_MEM), open auth (debug only), `MDNS_MEMORY_ALLOC_SPIRAM` (chose to drop mDNS instead).
+Things tried and reverted: STATIC_TX_BUFFER bump (caused `esp_wifi_init` NO_MEM), open auth (debug only), `MDNS_MEMORY_ALLOC_SPIRAM` (chose to drop mDNS entirely — files + dependency removed 2026-04-27, see [ADR 0001](../adr/0001-wifi-onboarding-reliability.md)).
 
 ## OTA
 

@@ -141,7 +141,7 @@ Network section has a "Show QR" button. Backend:
 3. `lv_qrcode_create(parent, 280, black, white)` — uses `CONFIG_LV_USE_QRCODE`, no rebuild needed.
 4. Modal close path NULLs the overlay pointer and validates with `lv_obj_is_valid` — guards against stale-pointer scenarios.
 
-The QR replaces the (now disabled) mDNS `rdm7.local` UX. See [01-architecture.md](01-architecture.md) §things-that-will-surprise-you.
+The QR replaces the mDNS `rdm7.local` UX (removed 2026-04-27, see [ADR 0001](../adr/0001-wifi-onboarding-reliability.md)).
 
 ## First-run wizard
 

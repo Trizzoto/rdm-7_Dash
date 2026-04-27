@@ -27,7 +27,7 @@ This document covers the system-level design: how the boot sequence assembles th
 ├─────────────────────────────────────────────────────┤
 │  ESP-IDF v5.x: TWAI, esp_lcd, esp_wifi,            │
 │  esp_http_server, NVS, LittleFS, FATFS (SD),       │
-│  esp_https_ota, mDNS                               │
+│  esp_https_ota                                     │
 ├─────────────────────────────────────────────────────┤
 │  FreeRTOS (500 Hz tick, dual-core, recursive       │
 │  mutexes, queues)                                  │
@@ -63,7 +63,7 @@ The `app_main` function in [main/main.c](../../main/main.c) initialises subsyste
 | 17 | SD manager + data logger | Init only; log starts on user request. |
 | 18 | UART protocol | `uart_protocol_init()` spawns `uart_rx_task`. |
 | 19 | WiFi manager | `esp_netif_create_default_*`, register event handlers. |
-| 20 | mDNS | Attaches to netif but **never registers** — see [main/net/mdns_service.c](../../main/net/mdns_service.c) line 28. |
+| 20 | (removed) | mDNS used to register here. Removed 2026-04-27 — see [docs/adr/0001-wifi-onboarding-reliability.md](../adr/0001-wifi-onboarding-reliability.md). |
 | 21 | WiFi boot check | If `wifi_on_boot` is set, defer WiFi start by 4 s. |
 
 After splash, control transitions to the dashboard via `splash_screen` → `first_run_wizard` (if `first_run_done == false`) → `ui_Screen3_screen_init()` → `dashboard_init()`. See [06-ui-and-screens.md](06-ui-and-screens.md).

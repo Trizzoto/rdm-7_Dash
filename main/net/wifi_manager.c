@@ -8,7 +8,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "storage/config_store.h"
-#include "mdns_service.h"
 #include "lvgl.h"
 #include <stdatomic.h>
 #include <string.h>
@@ -407,9 +406,8 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             break;
 
         case WIFI_EVENT_AP_START:
-            /* SoftAP is up — advertise rdm7.local on it too so clients on the hotspot
-               can reach us by name at 192.168.4.1 / rdm7.local. */
-            rdm7_mdns_refresh();
+            /* SoftAP is up. Clients reach the editor at 192.168.4.1 (or via
+               the QR code from Device Settings); mDNS was removed in 2026-04. */
             break;
 
         case WIFI_EVENT_AP_STACONNECTED: {
@@ -435,8 +433,6 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             snprintf(s_sta_ip, sizeof(s_sta_ip), IPSTR, IP2STR(&ev->ip_info.ip));
             ESP_LOGI(TAG, "Got IP: %s", s_sta_ip);
             _set_state(WIFI_MGR_STATE_CONNECTED);
-            /* Advertise rdm7.local on the newly-joined network. */
-            rdm7_mdns_refresh();
         } else if (event_id == IP_EVENT_STA_LOST_IP) {
             ESP_LOGW(TAG, "Lost IP address");
             memset(s_sta_ip, 0, sizeof(s_sta_ip));

@@ -83,7 +83,7 @@ RDM-7_Dash/
 │   ├── layout/            layout_manager (LittleFS JSON), default_layout, ECU presets
 │   ├── can/               TWAI driver, decode, bus-bitrate auto-detect
 │   ├── storage/           SD card, data logger, signal replay, config_store (NVS)
-│   ├── net/               web_server, wifi_manager, OTA, DNS hijack, mDNS (disabled)
+│   ├── net/               web_server, wifi_manager, OTA, DNS hijack
 │   ├── system/            screen_config, night_mode, remote_touch, device_id
 │   ├── ui/                screens, settings, config modal, dashboard, fonts, images
 │   ├── io/                wire input GPIOs (turn signals)
@@ -134,7 +134,7 @@ See [09-conventions-and-pitfalls.md](09-conventions-and-pitfalls.md) for the ful
 
 A handful of non-obvious gotchas, each documented further inside:
 
-- **mDNS is permanently disabled** in [main/net/mdns_service.c](../../main/net/mdns_service.c). The managed component can't allocate from internal RAM after WiFi init. QR code + IP fallback replace it.
+- **mDNS was removed** 2026-04-27 (ADR 0001). The managed component couldn't allocate from internal RAM after WiFi init. QR code + IP fallback replace it.
 - **`pdMS_TO_TICKS(1) == 0`** at `CONFIG_FREERTOS_HZ=500`. Use `vTaskDelay(1)` literal for real yields.
 - **Three copies of `index.html` must stay in sync** (firmware-embedded, `data/web/`, desktop). There is no automated sync.
 - **`remote_touch_init()` must be called from `dashboard_init()`**, not `app_main`. Registering a 2nd pointer indev before widgets exist makes `lv_obj_get_screen()` infinite-loop on first widget create.

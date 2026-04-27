@@ -471,7 +471,7 @@ The dashboard always runs a built-in hotspot (`RDM7-XXXX`, password `rdm7dash`) 
 
 ### 10.3 The QR Code
 
-`rdm7.local` mDNS resolution is flaky on some consumer routers, so the QR code is the reliable "scan and open" fallback:
+The dash doesn't broadcast a `.local` hostname (mDNS was removed for memory-allocation reasons). The QR code is how you reach the editor reliably without remembering the IP:
 
 1. Device Settings → Network → **Show QR**
 2. A 280 × 280 QR appears overlaid on screen
