@@ -52,6 +52,7 @@ void web_server_gear_register(httpd_handle_t server);
 void web_server_touch_register(httpd_handle_t server);
 void web_server_capture_register(httpd_handle_t server);
 void web_server_signals_register(httpd_handle_t server);
+void web_server_assets_register(httpd_handle_t server);
 
 #ifdef __cplusplus
 }

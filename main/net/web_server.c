@@ -1,4 +1,4 @@
-#include "web_server.h"
+﻿#include "web_server.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
@@ -25,14 +25,11 @@
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/preset_picker.h"
 #include "ui/ui.h"
-#include "widgets/font_manager.h"
 #include "widgets/signal.h"
 #include "ui/settings/device_settings.h"
-#include "storage/boot_assets.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
 #include "storage/signal_replay.h"
-#include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <dirent.h>
@@ -76,7 +73,7 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
 	return ESP_FAIL;
 }
 
-/* ── Path-safety check for user-supplied names (no traversal) ──────────── */
+/* â”€â”€ Path-safety check for user-supplied names (no traversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 bool web_server_name_is_safe(const char *name) {
 	if (!name || !name[0]) return false;
@@ -97,7 +94,7 @@ bool web_server_filename_is_safe(const char *name) {
 	return true;
 }
 
-/* ── Debounced screen reload (runs on LVGL task via lv_async_call) ───────── */
+/* â”€â”€ Debounced screen reload (runs on LVGL task via lv_async_call) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static char *s_pending_preview_json = NULL;
 static lv_timer_t *s_reload_debounce_timer  = NULL;
@@ -153,7 +150,7 @@ static void _deferred_preview_apply(void *arg) {
 	cJSON_Delete(root);
 }
 
-/* ── Splash screen reload (debounced, runs on LVGL task) ─────────────── */
+/* â”€â”€ Splash screen reload (debounced, runs on LVGL task) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static void _do_splash_reload(lv_timer_t *t) {
 	(void)t;
@@ -189,7 +186,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
 static const httpd_uri_t index_uri = {
 	.uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
 
-// Lightweight version check — web editor polls this to avoid fetching the
+// Lightweight version check â€” web editor polls this to avoid fetching the
 // full layout JSON on every sync cycle.
 static esp_err_t layout_version_handler(httpd_req_t *req) {
 	char buf[32];
@@ -222,7 +219,7 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	// Must hold LVGL mutex — widgets live on the LVGL task's core
+	// Must hold LVGL mutex â€” widgets live on the LVGL task's core
 	if (!rdm_lvgl_lock(1000)) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"LVGL busy");
@@ -271,7 +268,7 @@ static const httpd_uri_t layout_current_uri = {.uri = "/api/layout/current",
 												   layout_current_handler,
 											   .user_ctx = NULL};
 
-/* GET /api/layout/raw?name=<layout_name> — return raw layout JSON from file
+/* GET /api/layout/raw?name=<layout_name> â€” return raw layout JSON from file
  * (for editing in web UI without switching active layout). */
 static esp_err_t layout_raw_handler(httpd_req_t *req) {
 	char query_buf[128];
@@ -481,7 +478,7 @@ static const httpd_uri_t layout_save_uri = {.uri = "/api/layout/save",
 											.user_ctx = NULL};
 
 
-/* POST /api/layout/preview — apply layout JSON live without saving to file. */
+/* POST /api/layout/preview â€” apply layout JSON live without saving to file. */
 static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	int total_len = req->content_len;
 	if (total_len <= 0) {
@@ -584,7 +581,7 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	return res;
 }
 
-/* Round a float to remove single-precision artifacts (e.g. 0.100000005 → 0.1) */
+/* Round a float to remove single-precision artifacts (e.g. 0.100000005 â†’ 0.1) */
 static double _round_float(float v) {
 	if (v == 0.0f) return 0.0;
 	char buf[24];
@@ -637,9 +634,9 @@ static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
 											 .handler = presets_list_handler,
 											 .user_ctx = NULL};
 
-/* ══════════════════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
  *  ECU selection endpoints
- * ══════════════════════════════════════════════════════════════════════ */
+ * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 /* GET /api/ecu/list - returns the array of ECU presets from ecu_presets.c */
 static esp_err_t ecu_list_handler(httpd_req_t *req) {
@@ -732,7 +729,7 @@ static const httpd_uri_t ecu_list_uri    = { .uri = "/api/ecu/list",    .method 
 static const httpd_uri_t ecu_current_uri = { .uri = "/api/ecu/current", .method = HTTP_GET,  .handler = ecu_current_handler, .user_ctx = NULL };
 static const httpd_uri_t ecu_set_uri     = { .uri = "/api/ecu/set",     .method = HTTP_POST, .handler = ecu_set_handler,     .user_ctx = NULL };
 
-/* ── Custom signal presets (stored as JSON in /lfs/presets/) ──────────── */
+/* â”€â”€ Custom signal presets (stored as JSON in /lfs/presets/) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 #define LFS_PRESET_DIR "/lfs/presets"
 #define CUSTOM_PRESET_MAX_BYTES 16384
@@ -766,7 +763,7 @@ static void _sanitize_preset_filename(const char *ecu, const char *version,
 	strncat(out, ".json", out_len - pos - 1);
 }
 
-/* GET /api/presets/custom — list all custom presets as flat signal array */
+/* GET /api/presets/custom â€” list all custom presets as flat signal array */
 static esp_err_t custom_presets_list_handler(httpd_req_t *req) {
 	_ensure_preset_dir();
 
@@ -897,7 +894,7 @@ static const httpd_uri_t custom_presets_list_uri = {
 	.handler = custom_presets_list_handler,
 	.user_ctx = NULL};
 
-/* POST /api/presets/custom/save — save a custom preset JSON file */
+/* POST /api/presets/custom/save â€” save a custom preset JSON file */
 static esp_err_t custom_preset_save_handler(httpd_req_t *req) {
 	int total_len = req->content_len;
 	if (total_len <= 0 || total_len > CUSTOM_PRESET_MAX_BYTES) {
@@ -986,7 +983,7 @@ static const httpd_uri_t custom_preset_save_uri = {
 	.handler = custom_preset_save_handler,
 	.user_ctx = NULL};
 
-/* POST /api/presets/custom/delete?ecu=<name>&version=<ver> — delete a custom preset */
+/* POST /api/presets/custom/delete?ecu=<name>&version=<ver> â€” delete a custom preset */
 static esp_err_t custom_preset_delete_handler(httpd_req_t *req) {
 	char query[128] = {0};
 	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
@@ -1166,7 +1163,7 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
 											  .handler = layout_delete_handler,
 											  .user_ctx = NULL};
 
-/* POST /api/layout/rename — rename a layout file and update NVS if active
+/* POST /api/layout/rename â€” rename a layout file and update NVS if active
  * Body: { "old_name": "Foo", "new_name": "Bar" } */
 static esp_err_t layout_rename_handler(httpd_req_t *req) {
 	char buf[192];
@@ -1284,7 +1281,7 @@ static esp_err_t layout_rename_handler(httpd_req_t *req) {
 			free(out);
 		}
 	} else {
-		/* Can't parse JSON — just rename the file */
+		/* Can't parse JSON â€” just rename the file */
 		rename(old_path, new_path);
 	}
 
@@ -1311,12 +1308,12 @@ static const httpd_uri_t layout_rename_uri = {.uri = "/api/layout/rename",
 											  .handler = layout_rename_handler,
 											  .user_ctx = NULL};
 
-/* ═══════════════════════════════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
  *  Splash API endpoints
- * ═══════════════════════════════════════════════════════════════════════════
+ * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
  */
 
-/* GET /api/splash/list — list splash layouts + active splash name */
+/* GET /api/splash/list â€” list splash layouts + active splash name */
 static esp_err_t splash_list_handler(httpd_req_t *req) {
 	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 	int count = layout_manager_list_splash(names, LAYOUT_MAX_COUNT);
@@ -1359,7 +1356,7 @@ static const httpd_uri_t splash_list_uri = {
 	.handler = splash_list_handler, .user_ctx = NULL
 };
 
-/* POST /api/splash/set — set active splash by name */
+/* POST /api/splash/set â€” set active splash by name */
 static esp_err_t splash_set_handler(httpd_req_t *req) {
 	char buf[128];
 	if (req->content_len >= (int)sizeof(buf)) {
@@ -1412,7 +1409,7 @@ static const httpd_uri_t splash_set_uri = {
 	.handler = splash_set_handler, .user_ctx = NULL
 };
 
-/* POST /api/splash/delete — delete a splash layout file */
+/* POST /api/splash/delete â€” delete a splash layout file */
 static esp_err_t splash_delete_handler(httpd_req_t *req) {
 	char buf[128];
 	if (req->content_len >= (int)sizeof(buf)) {
@@ -1477,7 +1474,7 @@ static const httpd_uri_t splash_delete_uri = {
 	.handler = splash_delete_handler, .user_ctx = NULL
 };
 
-/* POST /api/splash/fade — set splash fade enabled/disabled */
+/* POST /api/splash/fade â€” set splash fade enabled/disabled */
 static esp_err_t splash_fade_handler(httpd_req_t *req) {
 	char buf[64];
 	if (req->content_len >= (int)sizeof(buf)) {
@@ -1520,955 +1517,9 @@ static const httpd_uri_t splash_fade_uri = {
 	.handler = splash_fade_handler, .user_ctx = NULL
 };
 
-/* ═══════════════════════════════════════════════════════════════════════════
- *  Image API endpoints
- * ═══════════════════════════════════════════════════════════════════════════
- */
+/* image/font/storage/SD endpoints moved to web_server_assets.c */
 
-#define LFS_IMAGE_DIR "/lfs/images"
-/* Max RDMIMG size: SCREEN_W * SCREEN_H * 3 bytes/pixel + 12-byte header, rounded up */
-#define IMAGE_MAX_SIZE (1200 * 1024)
-
-static void _ensure_image_dir(void) {
-	struct stat st;
-	if (stat(LFS_IMAGE_DIR, &st) != 0)
-		mkdir(LFS_IMAGE_DIR, 0755);
-}
-
-/* POST /api/image/upload?name=<name>
- * Body: raw RDMIMG binary data */
-static esp_err_t image_upload_handler(httpd_req_t *req) {
-	_ensure_image_dir();
-
-	/* Extract name from query string */
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	size_t content_len = req->content_len;
-	if (content_len < 12 || content_len > IMAGE_MAX_SIZE) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
-		return ESP_FAIL;
-	}
-
-	/* Allocate receive buffer in PSRAM */
-	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
-	if (!buf) {
-		buf = malloc(content_len);
-		if (!buf) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-			return ESP_FAIL;
-		}
-	}
-
-	/* Receive data in chunks */
-	size_t received = 0;
-	while (received < content_len) {
-		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
-		if (ret <= 0) {
-			free(buf);
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
-			return ESP_FAIL;
-		}
-		received += ret;
-	}
-
-	/* Validate RDMI magic */
-	if (memcmp(buf, "RDMI", 4) != 0) {
-		free(buf);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid RDMIMG format");
-		return ESP_FAIL;
-	}
-
-	/* Check free space before writing */
-	size_t total_bytes = 0, used_bytes = 0;
-	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
-		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
-		if (content_len > free_bytes) {
-			free(buf);
-			char err_msg[128];
-			snprintf(err_msg, sizeof(err_msg),
-					 "Not enough storage: need %u KB, only %u KB free",
-					 (unsigned)(content_len / 1024), (unsigned)(free_bytes / 1024));
-			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
-			return ESP_FAIL;
-		}
-	}
-
-	/* Write to LittleFS */
-	char path[80];
-	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-	FILE *f = fopen(path, "wb");
-	if (!f) {
-		free(buf);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
-		return ESP_FAIL;
-	}
-	size_t nw = fwrite(buf, 1, received, f);
-	fclose(f);
-	free(buf);
-
-	if (nw != received) {
-		remove(path);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
-		return ESP_FAIL;
-	}
-
-	ESP_LOGI(TAG, "Uploaded image '%s' (%u bytes)", name, (unsigned)received);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t image_upload_uri = {.uri = "/api/image/upload",
-											  .method = HTTP_POST,
-											  .handler = image_upload_handler,
-											  .user_ctx = NULL};
-
-/* GET /api/image/list — returns JSON array of {name, width, height, size} */
-static esp_err_t image_list_handler(httpd_req_t *req) {
-	_ensure_image_dir();
-
-	cJSON *arr = cJSON_CreateArray();
-	DIR *d = opendir(LFS_IMAGE_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 7 || strcmp(de->d_name + flen - 7, ".rdmimg") != 0)
-				continue;
-
-			char path[80];
-			snprintf(path, sizeof(path), "%s/%s", LFS_IMAGE_DIR, de->d_name);
-
-			/* Read header to get dimensions */
-			FILE *f = fopen(path, "rb");
-			if (!f) continue;
-			uint8_t hdr[12];
-			size_t nr = fread(hdr, 1, 12, f);
-			fseek(f, 0, SEEK_END);
-			long file_size = ftell(f);
-			fclose(f);
-
-			if (nr < 12 || memcmp(hdr, "RDMI", 4) != 0)
-				continue;
-
-			uint16_t w = hdr[4] | (hdr[5] << 8);
-			uint16_t h = hdr[6] | (hdr[7] << 8);
-
-			/* Strip .rdmimg extension for name */
-			char img_name[32];
-			size_t copy = flen - 7;
-			if (copy >= sizeof(img_name)) copy = sizeof(img_name) - 1;
-			memcpy(img_name, de->d_name, copy);
-			img_name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", img_name);
-			cJSON_AddNumberToObject(obj, "width", w);
-			cJSON_AddNumberToObject(obj, "height", h);
-			cJSON_AddNumberToObject(obj, "size", file_size);
-			cJSON_AddItemToArray(arr, obj);
-		}
-		closedir(d);
-	}
-
-	char *json_str = cJSON_PrintUnformatted(arr);
-	cJSON_Delete(arr);
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
-}
-
-static const httpd_uri_t image_list_uri = {.uri = "/api/image/list",
-											.method = HTTP_GET,
-											.handler = image_list_handler,
-											.user_ctx = NULL};
-
-/* POST /api/image/delete?name=<name> */
-static esp_err_t image_delete_handler(httpd_req_t *req) {
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	if (boot_assets_is_protected_image(name)) {
-		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
-		                    "Built-in image cannot be deleted");
-		return ESP_FAIL;
-	}
-
-	char path[80];
-	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-	if (remove(path) != 0) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Image not found");
-		return ESP_FAIL;
-	}
-
-	ESP_LOGI(TAG, "Deleted image '%s'", name);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t image_delete_uri = {.uri = "/api/image/delete",
-											  .method = HTTP_POST,
-											  .handler = image_delete_handler,
-											  .user_ctx = NULL};
-
-/* GET /api/image/data?name=<name> — return raw RDMIMG binary */
-static esp_err_t image_data_handler(httpd_req_t *req) {
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	char path[80];
-	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Image not found");
-		return ESP_FAIL;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long file_size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (file_size <= 0 || file_size > IMAGE_MAX_SIZE) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
-		return ESP_FAIL;
-	}
-
-	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-	if (!buf) buf = malloc(file_size);
-	if (!buf) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
-
-	size_t nread = fread(buf, 1, file_size, f);
-	fclose(f);
-
-	httpd_resp_set_type(req, "application/octet-stream");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
-	free(buf);
-	return res;
-}
-
-static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
-											.method = HTTP_GET,
-											.handler = image_data_handler,
-											.user_ctx = NULL};
-
-/* ═══════════════════════════════════════════════════════════════════════════
- *  Font management endpoints
- * ═══════════════════════════════════════════════════════════════════════════
- */
-
-#define LFS_FONT_DIR  "/lfs/fonts"
-#define FONT_MAX_FILE_SIZE (512 * 1024)
-
-static void _ensure_font_dir(void) {
-	struct stat st;
-	if (stat(LFS_FONT_DIR, &st) != 0)
-		mkdir(LFS_FONT_DIR, 0755);
-}
-
-/* POST /api/font/upload?name=<family_name>
- * Body: raw TTF binary data */
-static esp_err_t font_upload_handler(httpd_req_t *req) {
-	_ensure_font_dir();
-
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	size_t content_len = req->content_len;
-	if (content_len < 12 || content_len > FONT_MAX_FILE_SIZE) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
-		return ESP_FAIL;
-	}
-
-	/* Check free space */
-	size_t total_bytes = 0, used_bytes = 0;
-	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
-		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
-		if (content_len > free_bytes) {
-			char err_msg[128];
-			snprintf(err_msg, sizeof(err_msg),
-					 "Not enough storage: need %u KB, only %u KB free",
-					 (unsigned)(content_len / 1024), (unsigned)(free_bytes / 1024));
-			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
-			return ESP_FAIL;
-		}
-	}
-
-	/* Receive into PSRAM */
-	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
-	if (!buf) {
-		buf = malloc(content_len);
-		if (!buf) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-			return ESP_FAIL;
-		}
-	}
-
-	size_t received = 0;
-	while (received < content_len) {
-		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
-		if (ret <= 0) {
-			free(buf);
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
-			return ESP_FAIL;
-		}
-		received += ret;
-	}
-
-	/* Write to LittleFS */
-	char path[80];
-	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
-	FILE *f = fopen(path, "wb");
-	if (!f) {
-		free(buf);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
-		return ESP_FAIL;
-	}
-	size_t nw = fwrite(buf, 1, received, f);
-	fclose(f);
-
-	if (nw != received) {
-		free(buf);
-		remove(path);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
-		return ESP_FAIL;
-	}
-
-	/* Register in font manager */
-	font_manager_add_family(name, buf, received);
-	free(buf);
-
-	ESP_LOGI(TAG, "Uploaded font '%s' (%u bytes)", name, (unsigned)received);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t font_upload_uri = {.uri = "/api/font/upload",
-											.method = HTTP_POST,
-											.handler = font_upload_handler,
-											.user_ctx = NULL};
-
-/* GET /api/font/list — returns JSON array of font family names */
-static esp_err_t font_list_handler(httpd_req_t *req) {
-	cJSON *arr = cJSON_CreateArray();
-	uint8_t count = font_manager_family_count();
-	for (uint8_t i = 0; i < count; i++) {
-		const char *fname = font_manager_family_name(i);
-		if (fname)
-			cJSON_AddItemToArray(arr, cJSON_CreateString(fname));
-	}
-
-	char *json_str = cJSON_PrintUnformatted(arr);
-	cJSON_Delete(arr);
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "[]", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
-}
-
-static const httpd_uri_t font_list_uri = {.uri = "/api/font/list",
-										  .method = HTTP_GET,
-										  .handler = font_list_handler,
-										  .user_ctx = NULL};
-
-/* POST /api/font/delete?name=<family_name> */
-static esp_err_t font_delete_handler(httpd_req_t *req) {
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	if (!font_manager_remove_family(name)) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
-		return ESP_FAIL;
-	}
-
-	ESP_LOGI(TAG, "Deleted font '%s'", name);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t font_delete_uri = {.uri = "/api/font/delete",
-											.method = HTTP_POST,
-											.handler = font_delete_handler,
-											.user_ctx = NULL};
-
-/* GET /api/font/data?name=<family_name> — return raw TTF binary */
-static esp_err_t font_data_handler(httpd_req_t *req) {
-	char query[64] = {0};
-	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-		return ESP_FAIL;
-	}
-	char name[32] = {0};
-	if (httpd_query_key_value(query, "name", name, sizeof(name)) != ESP_OK || name[0] == '\0') {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
-		return ESP_FAIL;
-	}
-
-	if (!web_server_name_is_safe(name)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-		return ESP_FAIL;
-	}
-
-	char path[80];
-	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
-		return ESP_FAIL;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long file_size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (file_size <= 0 || file_size > FONT_MAX_FILE_SIZE) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
-		return ESP_FAIL;
-	}
-
-	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-	if (!buf) buf = malloc(file_size);
-	if (!buf) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
-
-	size_t nread = fread(buf, 1, file_size, f);
-	fclose(f);
-
-	httpd_resp_set_type(req, "application/octet-stream");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
-	free(buf);
-	return res;
-}
-
-static const httpd_uri_t font_data_uri = {.uri = "/api/font/data",
-										  .method = HTTP_GET,
-										  .handler = font_data_handler,
-										  .user_ctx = NULL};
-
-
-/* GET /api/storage/info — returns total/used/free bytes for LittleFS + SD */
-static esp_err_t storage_info_handler(httpd_req_t *req) {
-	size_t total_bytes = 0, used_bytes = 0;
-	esp_err_t err = esp_littlefs_info("littlefs", &total_bytes, &used_bytes);
-	if (err != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot read storage info");
-		return ESP_FAIL;
-	}
-	size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
-
-	cJSON *root = cJSON_CreateObject();
-	cJSON_AddNumberToObject(root, "total", total_bytes);
-	cJSON_AddNumberToObject(root, "used", used_bytes);
-	cJSON_AddNumberToObject(root, "free", free_bytes);
-
-	cJSON *sd_obj = cJSON_AddObjectToObject(root, "sd");
-	if (sd_manager_is_mounted()) {
-		size_t sd_total = 0, sd_used = 0, sd_free = 0;
-		if (sd_manager_get_info(&sd_total, &sd_used, &sd_free) == ESP_OK) {
-			cJSON_AddBoolToObject(sd_obj, "mounted", true);
-			cJSON_AddNumberToObject(sd_obj, "total", sd_total);
-			cJSON_AddNumberToObject(sd_obj, "used", sd_used);
-			cJSON_AddNumberToObject(sd_obj, "free", sd_free);
-		} else {
-			cJSON_AddBoolToObject(sd_obj, "mounted", false);
-		}
-	} else {
-		cJSON_AddBoolToObject(sd_obj, "mounted", false);
-	}
-
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
-}
-static const httpd_uri_t storage_info_uri = {
-	.uri = "/api/storage/info", .method = HTTP_GET,
-	.handler = storage_info_handler, .user_ctx = NULL
-};
-
-/* ═══════════════════════════════════════════════════════════════════════════
- *  SD Card API endpoints
- * ═══════════════════════════════════════════════════════════════════════════
- */
-
-/* GET /api/sd/status — SD mount status + space info */
-static esp_err_t sd_status_handler(httpd_req_t *req) {
-	cJSON *root = cJSON_CreateObject();
-	if (sd_manager_is_mounted()) {
-		cJSON_AddBoolToObject(root, "mounted", true);
-		size_t total = 0, used = 0, sd_free = 0;
-		if (sd_manager_get_info(&total, &used, &sd_free) == ESP_OK) {
-			cJSON_AddNumberToObject(root, "total", total);
-			cJSON_AddNumberToObject(root, "used", used);
-			cJSON_AddNumberToObject(root, "free", sd_free);
-		}
-	} else {
-		cJSON_AddBoolToObject(root, "mounted", false);
-	}
-
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
-}
-
-static const httpd_uri_t sd_status_uri = {
-	.uri = "/api/sd/status", .method = HTTP_GET,
-	.handler = sd_status_handler, .user_ctx = NULL
-};
-
-/* GET /api/sd/files — list all SD files by category */
-static esp_err_t sd_files_handler(httpd_req_t *req) {
-	if (!sd_manager_is_mounted()) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
-		return ESP_FAIL;
-	}
-
-	cJSON *root = cJSON_CreateObject();
-
-	/* Layouts (*.json) */
-	cJSON *layouts = cJSON_AddArrayToObject(root, "layouts");
-	DIR *d = opendir(SD_LAYOUT_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 5 || strcmp(de->d_name + flen - 5, ".json") != 0)
-				continue;
-			char path[96];
-			snprintf(path, sizeof(path), "%s/%s", SD_LAYOUT_DIR, de->d_name);
-			struct stat st;
-			if (stat(path, &st) != 0) continue;
-
-			char name[64];
-			size_t copy = flen - 5;
-			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
-			memcpy(name, de->d_name, copy);
-			name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", name);
-			cJSON_AddNumberToObject(obj, "size", st.st_size);
-			cJSON_AddItemToArray(layouts, obj);
-		}
-		closedir(d);
-	}
-
-	/* Images (*.rdmimg) */
-	cJSON *images = cJSON_AddArrayToObject(root, "images");
-	d = opendir(SD_IMAGE_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 7 || strcmp(de->d_name + flen - 7, ".rdmimg") != 0)
-				continue;
-			char path[96];
-			snprintf(path, sizeof(path), "%s/%s", SD_IMAGE_DIR, de->d_name);
-
-			FILE *f = fopen(path, "rb");
-			if (!f) continue;
-			uint8_t hdr[12];
-			size_t nr = fread(hdr, 1, 12, f);
-			fseek(f, 0, SEEK_END);
-			long file_size = ftell(f);
-			fclose(f);
-			if (nr < 12 || memcmp(hdr, "RDMI", 4) != 0) continue;
-
-			uint16_t w = hdr[4] | (hdr[5] << 8);
-			uint16_t h = hdr[6] | (hdr[7] << 8);
-
-			char name[32];
-			size_t copy = flen - 7;
-			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
-			memcpy(name, de->d_name, copy);
-			name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", name);
-			cJSON_AddNumberToObject(obj, "width", w);
-			cJSON_AddNumberToObject(obj, "height", h);
-			cJSON_AddNumberToObject(obj, "size", file_size);
-			cJSON_AddItemToArray(images, obj);
-		}
-		closedir(d);
-	}
-
-	/* Fonts (*.ttf) */
-	cJSON *fonts = cJSON_AddArrayToObject(root, "fonts");
-	d = opendir(SD_FONT_DIR);
-	if (d) {
-		struct dirent *de;
-		while ((de = readdir(d)) != NULL) {
-			size_t flen = strlen(de->d_name);
-			if (flen <= 4 || strcmp(de->d_name + flen - 4, ".ttf") != 0)
-				continue;
-			char path[96];
-			snprintf(path, sizeof(path), "%s/%s", SD_FONT_DIR, de->d_name);
-			struct stat st;
-			if (stat(path, &st) != 0) continue;
-
-			char name[32];
-			size_t copy = flen - 4;
-			if (copy >= sizeof(name)) copy = sizeof(name) - 1;
-			memcpy(name, de->d_name, copy);
-			name[copy] = '\0';
-
-			cJSON *obj = cJSON_CreateObject();
-			cJSON_AddStringToObject(obj, "name", name);
-			cJSON_AddNumberToObject(obj, "size", st.st_size);
-			cJSON_AddItemToArray(fonts, obj);
-		}
-		closedir(d);
-	}
-
-	char *json_str = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, json_str ? json_str : "{}", HTTPD_RESP_USE_STRLEN);
-	free(json_str);
-	return res;
-}
-
-static const httpd_uri_t sd_files_uri = {
-	.uri = "/api/sd/files", .method = HTTP_GET,
-	.handler = sd_files_handler, .user_ctx = NULL
-};
-
-/* Chunked file copy helper — heap-allocated 4KB buffer */
-static esp_err_t _copy_file(const char *src, const char *dst) {
-	FILE *fin = fopen(src, "rb");
-	if (!fin) return ESP_ERR_NOT_FOUND;
-
-	fseek(fin, 0, SEEK_END);
-	long file_size = ftell(fin);
-	fseek(fin, 0, SEEK_SET);
-
-	if (file_size <= 0) {
-		fclose(fin);
-		return ESP_FAIL;
-	}
-
-	FILE *fout = fopen(dst, "wb");
-	if (!fout) {
-		fclose(fin);
-		return ESP_FAIL;
-	}
-
-	char *buf = malloc(4096);
-	if (!buf) {
-		fclose(fin);
-		fclose(fout);
-		return ESP_FAIL;
-	}
-
-	size_t total_written = 0;
-	while (total_written < (size_t)file_size) {
-		size_t to_read = 4096;
-		if (to_read > (size_t)file_size - total_written)
-			to_read = (size_t)file_size - total_written;
-		size_t nr = fread(buf, 1, to_read, fin);
-		if (nr == 0) break;
-		size_t nw = fwrite(buf, 1, nr, fout);
-		if (nw != nr) {
-			free(buf);
-			fclose(fin);
-			fclose(fout);
-			remove(dst);
-			return ESP_FAIL;
-		}
-		total_written += nw;
-	}
-
-	free(buf);
-	fclose(fin);
-	fclose(fout);
-	return (total_written == (size_t)file_size) ? ESP_OK : ESP_FAIL;
-}
-
-/* POST /api/sd/copy — copy file between internal <-> SD */
-static esp_err_t sd_copy_handler(httpd_req_t *req) {
-	char buf[192];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
-
-	cJSON *root = cJSON_Parse(buf);
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-		return ESP_FAIL;
-	}
-
-	cJSON *type_item = cJSON_GetObjectItemCaseSensitive(root, "type");
-	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
-	cJSON *dir_item  = cJSON_GetObjectItemCaseSensitive(root, "direction");
-
-	if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item) ||
-		!cJSON_IsString(dir_item)) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Missing type/name/direction");
-		return ESP_FAIL;
-	}
-
-	const char *type = type_item->valuestring;
-	const char *name = name_item->valuestring;
-	const char *direction = dir_item->valuestring;
-
-	if (!sd_manager_is_mounted()) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
-		return ESP_FAIL;
-	}
-
-	/* Validate name (no path traversal) */
-	for (const char *p = name; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p == '.') {
-			cJSON_Delete(root);
-			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-			return ESP_FAIL;
-		}
-	}
-
-	/* Build source and destination paths */
-	char src[96], dst[96];
-	const char *lfs_dir = NULL, *sd_dir = NULL, *ext = NULL;
-
-	if (strcmp(type, "layout") == 0) {
-		lfs_dir = "/lfs/layouts"; sd_dir = SD_LAYOUT_DIR; ext = ".json";
-	} else if (strcmp(type, "image") == 0) {
-		lfs_dir = LFS_IMAGE_DIR; sd_dir = SD_IMAGE_DIR; ext = ".rdmimg";
-	} else if (strcmp(type, "font") == 0) {
-		lfs_dir = LFS_FONT_DIR; sd_dir = SD_FONT_DIR; ext = ".ttf";
-	} else {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid type");
-		return ESP_FAIL;
-	}
-
-	bool to_sd = (strcmp(direction, "to_sd") == 0);
-	cJSON_Delete(root);
-
-	if (to_sd) {
-		snprintf(src, sizeof(src), "%s/%s%s", lfs_dir, name, ext);
-		snprintf(dst, sizeof(dst), "%s/%s%s", sd_dir, name, ext);
-	} else if (strcmp(direction, "from_sd") == 0) {
-		snprintf(src, sizeof(src), "%s/%s%s", sd_dir, name, ext);
-		snprintf(dst, sizeof(dst), "%s/%s%s", lfs_dir, name, ext);
-
-		/* Check internal free space */
-		struct stat st;
-		if (stat(src, &st) != 0) {
-			httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Source not found");
-			return ESP_FAIL;
-		}
-		size_t lfs_total = 0, lfs_used = 0;
-		if (esp_littlefs_info("littlefs", &lfs_total, &lfs_used) == ESP_OK) {
-			size_t lfs_free = (lfs_total > lfs_used) ? (lfs_total - lfs_used) : 0;
-			if ((size_t)st.st_size > lfs_free) {
-				char err_msg[128];
-				snprintf(err_msg, sizeof(err_msg),
-						 "Not enough internal storage: need %u KB, %u KB free",
-						 (unsigned)(st.st_size / 1024), (unsigned)(lfs_free / 1024));
-				httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, err_msg);
-				return ESP_FAIL;
-			}
-		}
-	} else {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"direction must be 'to_sd' or 'from_sd'");
-		return ESP_FAIL;
-	}
-
-	esp_err_t err = _copy_file(src, dst);
-	if (err == ESP_ERR_NOT_FOUND) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Source file not found");
-		return ESP_FAIL;
-	}
-	if (err != ESP_OK) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Copy failed");
-		return ESP_FAIL;
-	}
-
-	ESP_LOGI(TAG, "Copied %s '%s' %s", type, name, to_sd ? "to SD" : "from SD");
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t sd_copy_uri = {
-	.uri = "/api/sd/copy", .method = HTTP_POST,
-	.handler = sd_copy_handler, .user_ctx = NULL
-};
-
-/* POST /api/sd/delete — delete file from SD card */
-static esp_err_t sd_delete_handler(httpd_req_t *req) {
-	char buf[128];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
-
-	cJSON *root = cJSON_Parse(buf);
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-		return ESP_FAIL;
-	}
-
-	cJSON *type_item = cJSON_GetObjectItemCaseSensitive(root, "type");
-	cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
-
-	if (!cJSON_IsString(type_item) || !cJSON_IsString(name_item)) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing type/name");
-		return ESP_FAIL;
-	}
-
-	const char *type = type_item->valuestring;
-	const char *name = name_item->valuestring;
-
-	if (!sd_manager_is_mounted()) {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SD card not mounted");
-		return ESP_FAIL;
-	}
-
-	for (const char *p = name; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p == '.') {
-			cJSON_Delete(root);
-			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
-			return ESP_FAIL;
-		}
-	}
-
-	char path[96];
-	if (strcmp(type, "layout") == 0)
-		snprintf(path, sizeof(path), "%s/%s.json", SD_LAYOUT_DIR, name);
-	else if (strcmp(type, "image") == 0)
-		snprintf(path, sizeof(path), "%s/%s.rdmimg", SD_IMAGE_DIR, name);
-	else if (strcmp(type, "font") == 0)
-		snprintf(path, sizeof(path), "%s/%s.ttf", SD_FONT_DIR, name);
-	else {
-		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid type");
-		return ESP_FAIL;
-	}
-	cJSON_Delete(root);
-
-	if (remove(path) != 0) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found on SD");
-		return ESP_FAIL;
-	}
-
-	ESP_LOGI(TAG, "Deleted %s '%s' from SD", type, name);
-	httpd_resp_set_type(req, "application/json");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
-}
-
-static const httpd_uri_t sd_delete_uri = {
-	.uri = "/api/sd/delete", .method = HTTP_POST,
-	.handler = sd_delete_handler, .user_ctx = NULL
-};
-
-/* ── Dimmer config API ──────────────────────────────────────────────── */
+/* â”€â”€ Dimmer config API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _dimmer_config_get_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "application/json");
@@ -2558,7 +1609,7 @@ static const httpd_uri_t dimmer_config_post_uri = {
 	.handler = _dimmer_config_post_handler, .user_ctx = NULL
 };
 
-/* ── Data Logger API ──────────────────────────────────────────────────── */
+/* â”€â”€ Data Logger API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Deferred-start carries the rate via a heap-allocated payload; the LVGL
  * task picks it up, calls data_logger_start_with_rate, and frees the payload. */
@@ -2607,7 +1658,7 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 	/* Optional JSON body: {"rate_hz": N, "persist": true|false}.
 	 * rate_hz: 0 = Max, otherwise sample rate in Hz (1..1000).
 	 * persist: default true; saves the rate to NVS so future sessions reuse it.
-	 * Body is optional — without it, we use the currently-configured rate. */
+	 * Body is optional â€” without it, we use the currently-configured rate. */
 	log_start_args_t *args = NULL;
 	if (req->content_len > 0 && req->content_len < 128) {
 		char buf[128];
@@ -2639,8 +1690,8 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* GET /api/log/config — return current rate and metadata.
- * POST /api/log/config with {"rate_hz": N} — update rate (works mid-log). */
+/* GET /api/log/config â€” return current rate and metadata.
+ * POST /api/log/config with {"rate_hz": N} â€” update rate (works mid-log). */
 static esp_err_t _log_config_get_handler(httpd_req_t *req) {
 	uint16_t rate = data_logger_get_rate_hz();
 	char buf[96];
@@ -2679,7 +1730,7 @@ static esp_err_t _log_config_post_handler(httpd_req_t *req) {
 	if (v > 1000) v = 1000;
 	cJSON_Delete(root);
 
-	/* data_logger_set_rate_hz touches the LVGL timer — defer to LVGL task. */
+	/* data_logger_set_rate_hz touches the LVGL timer â€” defer to LVGL task. */
 	uint16_t *hz_arg = (uint16_t *)malloc(sizeof(uint16_t));
 	if (!hz_arg) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
@@ -2876,7 +1927,7 @@ static const httpd_uri_t log_config_post_uri = {
 	.handler = _log_config_post_handler, .user_ctx = NULL
 };
 
-/* ── Signal Replay API ────────────────────────────────────────────────────
+/* â”€â”€ Signal Replay API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  *   POST /api/replay/start   { "file":"log_42.csv", "speed":1.0, "loop":false }
  *   POST /api/replay/stop    {}
  *   GET  /api/replay/status  { active, file, row, total_rows, speed }
@@ -3004,7 +2055,7 @@ static const httpd_uri_t replay_status_uri = {
 	.handler = _replay_status_handler, .user_ctx = NULL
 };
 
-/* ── Device Info API ───────────────────────────────────────────────────── */
+/* â”€â”€ Device Info API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _device_info_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -3016,7 +2067,7 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	get_device_serial(serial);
 	cJSON_AddStringToObject(root, "serial", serial);
 
-	/* Firmware version intentionally omitted from this endpoint — UI hides it. */
+	/* Firmware version intentionally omitted from this endpoint â€” UI hides it. */
 	cJSON_AddNumberToObject(root, "schema", LAYOUT_SCHEMA_VERSION);
 
 	const screen_profile_t *scr = screen_get_profile();
@@ -3038,7 +2089,7 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(hw, "flash_mb",
 		(double)flash_size / (1024 * 1024));
 
-	/* Live system stats — what the on-device Diagnostics screen shows. */
+	/* Live system stats â€” what the on-device Diagnostics screen shows. */
 	cJSON *sys = cJSON_AddObjectToObject(root, "system");
 	cJSON_AddNumberToObject(sys, "uptime_s",
 		(double)(esp_timer_get_time() / 1000000ULL));
@@ -3129,7 +2180,7 @@ static const httpd_uri_t device_info_uri = {
 	.handler = _device_info_handler, .user_ctx = NULL
 };
 
-/* ── Brightness API ───────────────────────────────────────────────────── */
+/* â”€â”€ Brightness API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _brightness_get_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -3186,7 +2237,7 @@ static const httpd_uri_t brightness_post_uri = {
 	.handler = _brightness_post_handler, .user_ctx = NULL
 };
 
-/* ── CAN Config API ───────────────────────────────────────────────────── */
+/* â”€â”€ CAN Config API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _can_config_get_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -3249,7 +2300,7 @@ static const httpd_uri_t can_config_post_uri = {
 	.handler = _can_config_post_handler, .user_ctx = NULL
 };
 
-/* ── System Health API ────────────────────────────────────────────────── */
+/* â”€â”€ System Health API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _system_health_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -3285,7 +2336,7 @@ static const httpd_uri_t system_health_uri = {
 	.handler = _system_health_handler, .user_ctx = NULL
 };
 
-/* ── System Reboot API ────────────────────────────────────────────────── */
+/* â”€â”€ System Reboot API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static void _deferred_reboot(void *arg) {
 	(void)arg;
@@ -3308,18 +2359,18 @@ static const httpd_uri_t system_reboot_uri = {
 	.handler = _system_reboot_handler, .user_ctx = NULL
 };
 
-/* ── OTA update API ───────────────────────────────────────────────────────
+/* â”€â”€ OTA update API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Three endpoints so the web UI can do a background "is there an update?"
  * check on page load and surface a banner, plus trigger the actual install
  * when the user accepts:
  *
- *   GET  /api/ota/status  — cached state: current + latest version, progress,
+ *   GET  /api/ota/status  â€” cached state: current + latest version, progress,
  *                           release notes, file size. Safe to poll.
- *   POST /api/ota/check   — kicks off check_for_update() on a background
+ *   POST /api/ota/check   â€” kicks off check_for_update() on a background
  *                           task (the call itself blocks ~5-45s on GitHub's
  *                           API, so it can't run inside the HTTPD handler).
  *                           Returns 202 immediately.
- *   POST /api/ota/start   — begins the actual download + flash via
+ *   POST /api/ota/start   â€” begins the actual download + flash via
  *                           start_ota_update_task() (already non-blocking).
  *
  * The check task spawns with a small stack because check_for_update manages
@@ -3403,7 +2454,7 @@ static esp_err_t _ota_start_handler(httpd_req_t *req) {
 	ota_status_t st = get_ota_status();
 	if (st != OTA_UPDATE_AVAILABLE) {
 		httpd_resp_set_status(req, "409 Conflict");
-		httpd_resp_sendstr(req, "{\"error\":\"no update available — run /api/ota/check first\"}");
+		httpd_resp_sendstr(req, "{\"error\":\"no update available â€” run /api/ota/check first\"}");
 		return ESP_OK;
 	}
 
@@ -3426,7 +2477,7 @@ static const httpd_uri_t ota_start_uri = {
 	.handler = _ota_start_handler, .user_ctx = NULL
 };
 
-/* ── WiFi Config API ──────────────────────────────────────────────────── */
+/* â”€â”€ WiFi Config API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 static esp_err_t _wifi_config_get_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -3506,11 +2557,11 @@ static const httpd_uri_t wifi_config_post_uri = {
 	.handler = _wifi_config_post_handler, .user_ctx = NULL
 };
 
-/* ═════════════════════════════════════════════════════════════════════════════
- *  CORS Preflight Handler — responds to OPTIONS requests from cross-origin
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ *  CORS Preflight Handler â€” responds to OPTIONS requests from cross-origin
  *  desktop apps (Tauri) so that POST requests with Content-Type: application/json
  *  pass the browser's preflight check.
- * ═════════════════════════════════════════════════════════════════════════════ */
+ * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 static esp_err_t cors_preflight_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -3521,7 +2572,7 @@ static esp_err_t cors_preflight_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* URI registration tally — REGISTER_URI macro is in web_server_internal.h.
+/* URI registration tally â€” REGISTER_URI macro is in web_server_internal.h.
  * These globals are declared extern there so domain register() functions
  * that include the header can increment the same counters. */
 int web_server_uri_register_attempts = 0;
@@ -3543,7 +2594,7 @@ esp_err_t web_server_start(void) {
 	 * core 1 and then jpeg_enc_process() runs for 10+ seconds (happens
 	 * under load: CONTROL mode + stream + widget rebuild + layout save
 	 * in parallel saturates PSRAM bandwidth), it preempts the LVGL task
-	 * and starves IDLE1 → task-watchdog trip → eventual reboot. With
+	 * and starves IDLE1 â†’ task-watchdog trip â†’ eventual reboot. With
 	 * httpd on core 0 the heavy encode work stays out of LVGL's way,
 	 * and IDLE0 is less loaded than IDLE1. Observed in serial log:
 	 * back-to-back WDT hits during /api/screenshot encode stalls. */
@@ -3551,7 +2602,7 @@ esp_err_t web_server_start(void) {
 	/* 128 slots: ~86 actual REGISTER_URI calls today, leaving ~40 slots of
 	 * headroom for the next round of endpoint adds before we have to think
 	 * about this again. ESP-IDF silently drops handlers registered past
-	 * max_uri_handlers — when we ran with 80, the last ~6 POST/OPTIONS
+	 * max_uri_handlers â€” when we ran with 80, the last ~6 POST/OPTIONS
 	 * handlers fell through to the wildcard CORS preflight and returned 405
 	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes of static
 	 * RAM, so 128 costs ~1 KB. The REGISTER_URI macro tallies failures and
@@ -3581,7 +2632,7 @@ esp_err_t web_server_start(void) {
 	};
 	REGISTER_URI(server, &cors_options_uri);
 
-	/* Captive portal probe URIs — register before any wildcard handler
+	/* Captive portal probe URIs â€” register before any wildcard handler
 	 * so the specific paths aren't shadowed. */
 	web_server_captive_register(server);
 
@@ -3610,19 +2661,7 @@ esp_err_t web_server_start(void) {
 	REGISTER_URI(server, &splash_set_uri);
 	REGISTER_URI(server, &splash_delete_uri);
 	REGISTER_URI(server, &splash_fade_uri);
-	REGISTER_URI(server, &image_upload_uri);
-	REGISTER_URI(server, &image_list_uri);
-	REGISTER_URI(server, &image_delete_uri);
-	REGISTER_URI(server, &image_data_uri);
-	REGISTER_URI(server, &font_upload_uri);
-	REGISTER_URI(server, &font_list_uri);
-	REGISTER_URI(server, &font_delete_uri);
-	REGISTER_URI(server, &font_data_uri);
-	REGISTER_URI(server, &storage_info_uri);
-	REGISTER_URI(server, &sd_status_uri);
-	REGISTER_URI(server, &sd_files_uri);
-	REGISTER_URI(server, &sd_copy_uri);
-	REGISTER_URI(server, &sd_delete_uri);
+	web_server_assets_register(server);
 	REGISTER_URI(server, &device_info_uri);
 	REGISTER_URI(server, &brightness_get_uri);
 	REGISTER_URI(server, &brightness_post_uri);
@@ -3656,7 +2695,7 @@ esp_err_t web_server_start(void) {
 	 * chasing a phantom 405 in DevTools later. */
 	if (web_server_uri_register_failures > 0) {
 		ESP_LOGE(TAG,
-				 "URI registration: %d/%d FAILED — bump max_uri_handlers "
+				 "URI registration: %d/%d FAILED â€” bump max_uri_handlers "
 				 "(currently %d) in web_server_start. Failed endpoints will "
 				 "return 405 via the OPTIONS wildcard.",
 				 web_server_uri_register_failures, web_server_uri_register_attempts,
