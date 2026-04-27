@@ -97,7 +97,7 @@ extern "C" {
 #endif
 ```
 
-Forward declarations preferred over including more headers. type_data structs are an exception — they live in widget headers because [config_bridge.c](../../main/ui/config_bridge.c) needs the real types.
+Forward declarations preferred over including more headers. type_data structs are an exception — they live in widget headers so `config_modal.c` can `#include` and read the real types directly.
 
 ## Workflow conventions
 
@@ -191,11 +191,11 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 - **Cause #2**: `from_json` doesn't read the field (typo'd JSON key).
 - **Fix**: add a printf to verify both directions; the first one to be silent is the one to fix.
 
-### Config bridge breaks after refactor
+### Config modal crash after type_data refactor
 
-**Symptom**: editing a panel slider crashes or writes the wrong field.
-- **Cause**: type_data struct field was renamed/removed; config_bridge still references the old layout.
-- **Fix**: type_data structs live in widget headers, and config_bridge.c includes them directly. When you rename a field, fix every accessor in [main/ui/config_bridge.c](../../main/ui/config_bridge.c).
+**Symptom**: editing a panel slider crashes or writes the wrong field after a struct rename.
+- **Cause**: `config_modal.c` includes widget headers directly and reads `type_data` fields by name. A renamed field compiles fine in the widget but fails silently (or crashes) in `config_modal.c`.
+- **Fix**: search `config_modal.c` for every use of the old field name and update them.
 
 ### LVGL crash after layout reload
 

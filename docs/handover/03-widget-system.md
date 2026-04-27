@@ -8,7 +8,7 @@ A widget is:
 
 - A **type** (one of 13 enums in `widget_type_t`).
 - A **slot** (instance index — most types are slot-limited).
-- A **`type_data`** pointer to per-instance config + state (defined in the widget's header so [config_bridge](../../main/ui/config_bridge.c) can `#include` and use the real struct).
+- A **`type_data`** pointer to per-instance config + state (defined in the widget's header so `config_modal.c` can `#include` and read the real struct directly).
 - A **`root` `lv_obj_t *`** — the LVGL container, plus whatever children the widget builds underneath.
 - A **vtable** of function pointers (`create`, `from_json`, `to_json`, `destroy`, `apply_overrides`, `apply_night_mode`, `resize`, `open_settings`).
 
@@ -113,7 +113,7 @@ Each function pointer:
 
 ## type_data
 
-Each widget defines its `type_data` struct in **its header**, not its `.c`, because [config_bridge.c](../../main/ui/config_bridge.c) needs to read the real types to map `value_id` (1–13) to type-specific fields. Example (panel):
+Each widget defines its `type_data` struct in **its header**, not its `.c`, so that `config_modal.c` can `#include` the header and read the real types directly. Example (panel):
 
 ```c
 typedef struct {
@@ -302,7 +302,7 @@ You're adding the 14th widget. Steps:
 
 10. **Bump `LAYOUT_SCHEMA_VERSION`** in [main/layout/layout_manager.h](../../main/layout/layout_manager.h) (currently 13). Schema-breaking changes warrant a bump; add a note in the migration section if you also need to upgrade old layouts on load.
 
-11. **(Optional) config_bridge mapping**: if your widget should be tappable on-device for in-place editing, add a `value_id` and wire it through [config_bridge.c](../../main/ui/config_bridge.c) and [config_modal.c](../../main/ui/menu/config_modal.c).
+11. **(Optional) on-device editing**: if your widget should be tappable on-device for in-place editing, add a section to [config_modal.c](../../main/ui/menu/config_modal.c). `config_modal_open_for_widget(screen, w)` receives the live `widget_t *` directly — no indirection layer needed.
 
 12. **Test** the full save/load round-trip:
     - Create an instance via web editor → save layout.

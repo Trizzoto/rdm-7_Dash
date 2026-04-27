@@ -142,7 +142,7 @@ rdm7-wasm-preview/
 | `ui/screens/*` | ESP32-specific screens |
 | `ui/menu/*` | Touch menu |
 | `ui/settings/*` | Device settings UI |
-| `ui/config_bridge.c` | Touch config modal |
+| `ui/menu/config_modal.c` | Touch config modal |
 | `ui/callbacks/*` | Touch callbacks |
 
 ---

@@ -81,20 +81,11 @@ Quirks the implementation handles:
 - **Stuck-press watchdog**: if pressed for >350 ms with no further updates, force release. Prevents a network-dropped pointerup from leaving a phantom press blocking UI. 350 ms < LVGL's 400 ms long-press, so we don't trigger spurious long-presses.
 - **Real touch wins**: when a physical finger lands, `force_release` cancels any virtual press in flight.
 
-## Config modal — value_id mapping
+## Config modal — on-device editing
 
-The on-device editor maps a widget tap to a slot in the [config_bridge.c](../../main/ui/config_bridge.c) accessor table:
+Long-pressing any widget passes its live `widget_t *` directly to `config_modal_open_for_widget(screen, w)` in [config_modal.c](../../main/ui/menu/config_modal.c). There is no indirection layer — the modal includes the widget's header to access `type_data` fields directly.
 
-| value_id | Widget |
-|---|---|
-| 1–8 | Panel slots 0–7 |
-| 9 | RPM bar (singleton) |
-| 10–11 | (unused) |
-| 12–13 | Bar slots 0–1 |
-
-The bridge lookup `config_bridge_get_widget(value_id)` returns the live `widget_t *`. Field accessors (`config_bridge_get_can_id`, `config_bridge_set_warning_high_threshold`, …) read/write through `type_data` and into the signal registry where appropriate.
-
-This is a **legacy mapping** — only panels, RPM bar, and bars are tap-editable on-device. Other widget types are edited only through the web editor. If you add on-device editing for a new widget type, extend value_id and add accessors.
+Not all widget types have on-device editing sections; panels, RPM bar, and bars are the primary ones. Other types are edited only via the web editor. To add on-device editing for a new widget type, add a section in `config_modal.c` — no separate accessor table to maintain.
 
 ### Config modal flow
 
@@ -109,7 +100,7 @@ GT911 long-press (>400 ms) on widget
                                 (only if widget_has_alert_support)
 
 On Save:
-    ├─ config_bridge writes back through type_data
+    ├─ config_modal writes back through type_data directly
     ├─ dashboard_persist_layout()        write JSON
     └─ reconfigure_can_filter()           refresh TWAI ID filter
 ```
@@ -207,7 +198,7 @@ Web editor converts via `devToWeb(x)` and `webToDev(x)`. Don't bake screen-space
 |---|---|
 | Add a new screen overlay | `main/ui/screens/` — pattern is `<name>_show(parent)` and a static `_close_btn_cb` to destroy. |
 | Add a settings toggle | Append a button in `device_settings.c`, wire to a `config_store_save_*` call. |
-| Add a config-modal field | Extend `config_bridge` and `config_modal` for the relevant value_id. |
+| Add a config-modal field | Extend `config_modal.c` for the relevant widget type. |
 | Add a long-press action on a widget | Wire it into `_widget_long_press_cb` in `dashboard.c`. |
 | Make night mode override a property | Use the macros in `widget_night_helpers.h`; add `apply_night_mode` to the widget vtable. |
 | Add a soft button to ui_Screen3 | Edit `ui_Screen3.c`, anchor relative to `SCREEN_W/H`. |

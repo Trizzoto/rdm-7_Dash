@@ -10,7 +10,7 @@ Where every byte of state lives: LittleFS, NVS, SD card, image format, font cach
 | Splash layouts | LittleFS `/lfs/layouts/_splash_*.json` | layout_manager + splash_screen |
 | Images | LittleFS `/lfs/images/*.rdmimg` | [rdm_image.c](../../main/ui/images/rdm_image.c) |
 | Fonts (TTF) | LittleFS `/lfs/fonts/*.ttf` | [font_manager.c](../../main/widgets/font_manager.c) |
-| Settings (small) | NVS | [config_store.c](../../main/storage/config_store.c) + [rdm_settings.c](../../main/system/rdm_settings.c) |
+| Settings (small) | NVS | [config_store.c](../../main/storage/config_store.c) |
 | WiFi credentials (multi-SSID) | NVS namespace `wifi_cfg` | [wifi_manager.c](../../main/net/wifi_manager.c) |
 | Peak / min values | NVS | [signal.c](../../main/widgets/signal.c) `signal_peaks_*` |
 | ECU + gear config | NVS | [ecu_presets.c](../../main/layout/ecu_presets.c), `signal_internal.c` |
@@ -173,12 +173,9 @@ When in doubt, write the new form.
 
 ## NVS settings
 
-ESP-IDF NVS provides a key-value store on the `nvs` partition. Two access wrappers:
+ESP-IDF NVS provides a key-value store on the `nvs` partition. One access wrapper:
 
-- [main/system/rdm_settings.c](../../main/system/rdm_settings.c) — early/system-level (device ID, factory state).
-- [main/storage/config_store.c](../../main/storage/config_store.c) — application settings.
-
-Both follow the same pattern: `config_store_save_<thing>()` / `config_store_load_<thing>()`.
+- [main/storage/config_store.c](../../main/storage/config_store.c) — all application and system settings (`config_store_save_<thing>()` / `config_store_load_<thing>()`). Device ID is managed by `device_id.c` which uses NVS directly.
 
 ### Namespace map
 

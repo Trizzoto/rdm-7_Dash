@@ -194,7 +194,7 @@ load_menu_screen_for_widget(w)
     ▼
 config_modal_open_for_widget(screen, w)
     │ tabs: Signal (CAN ID, bits, scale, offset, endian), Alerts (thresholds)
-    │ reads/writes via config_bridge_*() functions
+    │ reads/writes type_data directly
     ▼ on Save:
 dashboard_persist_layout()
     │ widget_t[].to_json() → cJSON → write /lfs/layouts/<active>.json
