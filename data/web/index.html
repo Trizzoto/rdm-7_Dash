@@ -981,6 +981,7 @@
         .widget-box[data-type="meter"]    { border-color: hsl(88, 50%, 50%); }
         .widget-box[data-type="image"]    { border-color: hsl(280, 60%, 55%); }
         .widget-box[data-type="shape_panel"] { border-color: hsl(220, 30%, 50%); }
+        .widget-box[data-type="line"]     { border-color: hsl(200, 70%, 55%); }
         .widget-box[data-type="arc"]      { border-color: hsl(320, 60%, 50%); }
         .widget-box[data-type="toggle"]   { border-color: hsl(160, 70%, 45%); }
         .widget-box[data-type="button"]   { border-color: hsl(45, 80%, 50%); }
@@ -4860,6 +4861,26 @@
                     "shape_panel": {
                         displayName: "Shape Panel", defW: 200, defH: 100,
                         fields: [
+                            { name: "shape_type", label: "Shape", type: "select", def: "rectangle", cat: "appearance",
+                              options: [
+                                { v: "rectangle",     l: "Rectangle"    },
+                                { v: "circle",        l: "Circle"        },
+                                { v: "trapezoid",     l: "Trapezoid"     },
+                                { v: "triangle",      l: "Triangle"      },
+                                { v: "diamond",       l: "Diamond"       },
+                                { v: "arrow_right",   l: "Arrow ▶"  },
+                                { v: "arrow_left",    l: "Arrow ◀"  },
+                                { v: "chevron_right", l: "Chevron ❯" },
+                                { v: "chevron_left",  l: "Chevron ❮" }
+                              ]
+                            },
+                            { name: "taper", label: "Taper % (trapezoid)", type: "stepper", def: 20, cat: "appearance", min: 0, max: 50 },
+                            { name: "taper_side", label: "Narrow Side", type: "select", def: "top", cat: "appearance",
+                              options: [
+                                { v: "top",    l: "Top (wider at bottom)" },
+                                { v: "bottom", l: "Bottom (wider at top)" }
+                              ]
+                            },
                             { name: "bg_color", label: "Background", type: "color", def: 0x1A1A1A, cat: "appearance", nightOverridable: true },
                             { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -4870,6 +4891,24 @@
                             { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 128, cat: "appearance", min: 0, max: 255 },
                             { name: "shadow_ofs_x", label: "Shadow X", type: "stepper", def: 0, cat: "appearance", min: -100, max: 100 },
                             { name: "shadow_ofs_y", label: "Shadow Y", type: "stepper", def: 0, cat: "appearance", min: -100, max: 100 }
+                        ]
+                    },
+                    "line": {
+                        displayName: "Line", defW: 200, defH: 4,
+                        fields: [
+                            { name: "line_color",  label: "Color",             type: "color",    def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                            { name: "line_width",  label: "Thickness",         type: "stepper",  def: 4,        cat: "appearance", min: 1, max: 30 },
+                            { name: "line_opa",    label: "Opacity (0-255)",   type: "stepper",  def: 255,      cat: "appearance", min: 0, max: 255 },
+                            { name: "rounded",     label: "Rounded Ends",      type: "checkbox", def: false,    cat: "appearance" },
+                            { name: "orientation", label: "Orientation",       type: "select",   def: "horizontal", cat: "appearance",
+                              options: [
+                                { v: "horizontal",   l: "Horizontal"  },
+                                { v: "vertical",     l: "Vertical"    },
+                                { v: "diagonal_fwd", l: "Diagonal /"  },
+                                { v: "diagonal_bwd", l: "Diagonal \\" }
+                              ]
+                            },
+                            { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 }
                         ]
                     },
                     "arc": {
@@ -5142,6 +5181,7 @@
             meter:     '<svg viewBox="0 0 20 16"><path d="M4,13 A7,7 0 0,1 16,13" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="12" x2="7" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>',
             image:       '<svg viewBox="0 0 20 16"><rect x="2" y="2" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="7" cy="6" r="2" fill="currentColor" opacity="0.5"/><polyline points="4,13 8,9 11,11 14,7 16,10" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"/></svg>',
             shape_panel: '<svg viewBox="0 0 20 16"><rect x="2" y="3" width="16" height="10" rx="2" fill="currentColor" opacity="0.3" stroke="currentColor" stroke-width="1.2"/></svg>',
+            line:        '<svg viewBox="0 0 20 16"><line x1="2" y1="8" x2="18" y2="8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>',
             arc:         '<svg viewBox="0 0 20 16"><path d="M4,14 A8,8 0 0,1 16,14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M6,12 A5.5,5.5 0 0,1 14,12" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/></svg>',
             toggle:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="13" cy="8" r="2.5" fill="currentColor" opacity="0.6"/></svg>',
             button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>',
@@ -5416,6 +5456,7 @@
                 box.setAttribute('data-type', w.type);
 
                 let customHtml = '';
+                let shapePreview = '';
                 if (w.config) {
                     const colorField = w.type === 'rpm_bar' ? 'bar_color'
                                      : w.type === 'warning' ? 'active_color' : null;
@@ -5428,11 +5469,56 @@
                         const hex = Number(swVal).toString(16).padStart(6, '0');
                         customHtml += `<div class="widget-detail" style="position:absolute;bottom:2px;right:2px;width:10px;height:10px;background:#${hex};border:1px solid hsla(0, 0%, 100%, 0.3);border-radius:2px;"></div>`;
                     }
+
+                    /* shape_panel: fill the box with actual bg colour + shape clip */
+                    if (w.type === 'shape_panel') {
+                        const bgHex = Number(w.config.bg_color != null ? w.config.bg_color : 0x1A1A1A).toString(16).padStart(6,'0');
+                        const r = parseInt(bgHex.substring(0,2),16), g = parseInt(bgHex.substring(2,4),16), b = parseInt(bgHex.substring(4,6),16);
+                        const a = ((w.config.bg_opa != null ? w.config.bg_opa : 255) / 255).toFixed(2);
+                        const shapeType = w.config.shape_type || 'rectangle';
+                        const bdrW = w.config.border_width || 0;
+                        const bdrHex = bdrW > 0 ? Number(w.config.border_color != null ? w.config.border_color : 0x2E2F2E).toString(16).padStart(6,'0') : null;
+                        const radius = Math.min(w.config.border_radius != null ? w.config.border_radius : 10, Math.min(w.w, w.h) / 2);
+                        let st = `background:rgba(${r},${g},${b},${a});`;
+                        if (bdrW > 0) st += `border:${bdrW}px solid #${bdrHex};box-sizing:border-box;`;
+                        if      (shapeType === 'circle')        st += 'border-radius:50%;';
+                        else if (shapeType === 'trapezoid') {
+                            const tp = Math.min(50, Math.max(0, w.config.taper != null ? w.config.taper : 20));
+                            const narrow = w.config.taper_side === 'bottom';
+                            st += narrow
+                                ? `clip-path:polygon(0% 0%,100% 0%,${100-tp}% 100%,${tp}% 100%);`
+                                : `clip-path:polygon(${tp}% 0%,${100-tp}% 0%,100% 100%,0% 100%);`;
+                        }
+                        else if (shapeType === 'triangle')      st += 'clip-path:polygon(50% 0%,100% 100%,0% 100%);';
+                        else if (shapeType === 'diamond')       st += 'clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);';
+                        else if (shapeType === 'arrow_right')   st += 'clip-path:polygon(0% 20%,60% 20%,60% 0%,100% 50%,60% 100%,60% 80%,0% 80%);';
+                        else if (shapeType === 'arrow_left')    st += 'clip-path:polygon(100% 20%,40% 20%,40% 0%,0% 50%,40% 100%,40% 80%,100% 80%);';
+                        else if (shapeType === 'chevron_right') st += 'clip-path:polygon(0% 0%,80% 50%,0% 100%,20% 100%,100% 50%,20% 0%);';
+                        else if (shapeType === 'chevron_left')  st += 'clip-path:polygon(100% 0%,20% 50%,100% 100%,80% 100%,0% 50%,80% 0%);';
+                        else                                    st += `border-radius:${radius}px;`;
+                        shapePreview = `<div style="position:absolute;inset:3px;pointer-events:none;${st}"></div>`;
+                    }
+
+                    /* line: draw an SVG line spanning the bounding box */
+                    if (w.type === 'line') {
+                        const lHex = Number(w.config.line_color != null ? w.config.line_color : 0xFFFFFF).toString(16).padStart(6,'0');
+                        const lOpa = ((w.config.line_opa != null ? w.config.line_opa : 255) / 255).toFixed(2);
+                        const orientation = w.config.orientation || 'horizontal';
+                        const cap = w.config.rounded ? 'round' : 'butt';
+                        const dashGap = w.config.dash_gap || 0;
+                        const dashAttr = dashGap > 0 ? `stroke-dasharray="${dashGap * 2} ${dashGap}"` : '';
+                        let x1, y1, x2, y2;
+                        if      (orientation === 'vertical')     { x1=50; y1=2;  x2=50;  y2=98; }
+                        else if (orientation === 'diagonal_fwd') { x1=2;  y1=98; x2=98;  y2=2;  }
+                        else if (orientation === 'diagonal_bwd') { x1=2;  y1=2;  x2=98;  y2=98; }
+                        else                                     { x1=2;  y1=50; x2=98;  y2=50; }
+                        shapePreview = `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#${lHex}" stroke-opacity="${lOpa}" stroke-width="8" stroke-linecap="${cap}" ${dashAttr}/></svg>`;
+                    }
                 }
 
                 const sigTag = w.signal ? ` <span style="color:hsl(120, 100%, 50%);font-size:9px;">\u2192 ${w.signal}</span>` : '';
                 const typeIcon = PALETTE_ICONS[w.type] ? `<div class="type-icon">${PALETTE_ICONS[w.type]}</div>` : '';
-                box.innerHTML = `<div class="id-label">${w.id}${sigTag}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
+                box.innerHTML = `${shapePreview}<div class="id-label">${w.id}${sigTag}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
                     const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
                     handles.forEach(h => {
                         const hDiv = document.createElement('div');
@@ -5528,7 +5614,7 @@
                     panel: 'hsl(152,55%,45%)', rpm_bar: 'hsl(14,90%,55%)', bar: 'hsl(38,100%,55%)',
                     indicator: 'hsl(54,90%,55%)', warning: 'hsl(0,80%,55%)', text: 'hsl(190,80%,45%)',
                     meter: 'hsl(88,50%,50%)', image: 'hsl(280,60%,55%)',
-                    shape_panel: 'hsl(220,30%,50%)', arc: 'hsl(320,60%,50%)',
+                    shape_panel: 'hsl(220,30%,50%)', line: 'hsl(200,70%,55%)', arc: 'hsl(320,60%,50%)',
                     toggle: 'hsl(160,70%,45%)', button: 'hsl(45,80%,50%)',
                     shift_light: 'hsl(5,90%,60%)'
                 };
