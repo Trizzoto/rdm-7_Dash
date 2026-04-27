@@ -1,6 +1,6 @@
 # ADR 0003 — Desktop `index.html` Sync Plan
 
-**Status**: Proposed (planning, not yet executed)
+**Status**: Implemented (2026-04-27)
 **Context**: `../rdm7-desktop/src/index.html` is ~518 lines smaller than `main/web/index.html` and is missing recent firmware UI work (CONTROL/LIVE mode, mobile widget toolbar, auto-save, layout-too-large pre-validation, ECU selector live-API, alert-test-without-signal, panel9 limiter tint, calculated gear modal, …). Conversely, the desktop file has Tauri-specific code that does not belong in firmware: USB-serial connection, WASM offline preview, native file dialogs, ZIP backup/restore via Rust, auto-updater, device-manager modal.
 
 This ADR documents the merge plan: replace the desktop file with the firmware copy, re-inject the Tauri delta, and (critically) add a `fetch` interceptor in `transport.js` so the firmware's raw `fetch('/api/...')` calls route through the RDM SDK when running under Tauri.

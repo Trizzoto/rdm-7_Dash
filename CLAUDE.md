@@ -62,7 +62,7 @@ CAN RX (core 0) → s_can_queue → can_process_queued_frames() (LVGL task)
 | Layouts + signals | LittleFS `/lfs/layouts/` | `layout_manager_save/load()` |
 | Images | LittleFS `/lfs/images/*.rdmimg` | Custom binary: 12-byte header + RGB565+alpha |
 | Fonts (TTF) | LittleFS `/lfs/fonts/` | `font_manager_get(family, size)` |
-| Settings | NVS | `rdm_settings_*()`, `config_store_*()` |
+| Settings | NVS | `config_store_*()` |
 | SD card | FAT `/sdcard/` | layouts/images/fonts subdirs |
 | Data logs | SD `/sdcard/logs/*.csv` | `data_logger_*()` (rate-selectable, NVS-persisted) |
 
@@ -79,11 +79,9 @@ All CAN signal config is in layout JSON — not NVS.
 
 ## Config & Reload Flows
 
-**Touchscreen:** widget tap → `config_modal_open(value_id)` → `config_bridge` reads/writes `type_data` → `dashboard_persist_layout()`
+**Touchscreen:** widget tap → `config_modal_open_for_widget(screen, w)` → modal reads/writes `w->type_data` directly → `dashboard_persist_layout()`
 
 **Web save → hot reload:** `POST /api/layout/save` → LittleFS → `lv_async_call()` → `dashboard_init()` → full re-create. Web UI polls `/api/layout/current` every 3s.
-
-**Config bridge** (`ui/config_bridge.c/h`): maps value_id (1-13) to widget `type_data` + signal registry. Uses real `type_data` structs via `#include`.
 
 ## Color Conversion
 
@@ -129,4 +127,4 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 - **Position wrong:** missing `lv_obj_set_align(obj, LV_ALIGN_CENTER)`
 - **Colors wrong:** check `convertWidgetColors()` direction (565↔888)
 - **Field not saved:** check `to_json` defaults-only logic + `from_json` reads it
-- **Config bridge breaks:** uses real `type_data` structs — field changes need config_bridge update
+- **Config modal field missing:** if a new field isn't exposed in `config_modal.c`, on-device editing won't show it — add a section there even if the web editor already handles it

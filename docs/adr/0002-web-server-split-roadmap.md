@@ -1,7 +1,7 @@
 # ADR 0002 — `web_server.c` Split Roadmap
 
-**Status**: Proposed (planning, not yet executed)
-**Context**: `main/net/web_server.c` is ~4750 lines and houses all 86 HTTP endpoints, their helpers, the captive-portal probe handlers, the OPTIONS wildcard, and the registration block. Every endpoint addition shows up as a diff in the same file; merge conflicts are common; reasoning about a single domain (e.g., layout management) requires holding the whole file in your head. This ADR documents the proposed split, the cut lines we've identified, and the order to execute it in.
+**Status**: Implemented (2026-04-27)
+**Context**: `main/net/web_server.c` was ~4750 lines and housed all 86 HTTP endpoints, their helpers, the captive-portal probe handlers, the OPTIONS wildcard, and the registration block. Every endpoint addition shows up as a diff in the same file; merge conflicts are common; reasoning about a single domain (e.g., layout management) requires holding the whole file in your head. This ADR documents the proposed split, the cut lines we've identified, and the order to execute it in.
 
 ## Why we haven't done it yet
 

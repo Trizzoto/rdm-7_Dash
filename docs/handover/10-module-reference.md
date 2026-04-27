@@ -83,7 +83,19 @@ WiFi, web server, OTA, captive portal, serial. See [07-web-server-api.md](07-web
 
 | File | Purpose |
 |---|---|
-| `web_server.c/h` | HTTP server. ~86 endpoints, embedded `index.html`, captive portal. |
+| `web_server.c/h` | HTTP server core: start/stop, `REGISTER_URI` macro, CORS preflight, OPTIONS wildcard, `_send_layout_too_large`. ~210 lines. |
+| `web_server_internal.h` | Shared helper declarations used across domain files (JSON helpers, auth, etc.). |
+| `web_server_assets.c` | Images, fonts, storage, SD card endpoints. |
+| `web_server_captive.c` | Captive-portal probe handlers (iOS/Android/Windows/Firefox). |
+| `web_server_capture.c` | Screenshot + MJPEG stream endpoints. |
+| `web_server_gear.c` | Gear-config endpoints. |
+| `web_server_layout.c` | Layout load/save/list/set/raw + preset + ECU + splash endpoints. |
+| `web_server_logger.c` | Data-logger + signal-replay endpoints. |
+| `web_server_ota.c` | OTA firmware-update endpoints. |
+| `web_server_signals.c` | Signal dashboard + sim + warning-test endpoints. |
+| `web_server_system.c` | Device-info + settings + diagnostics + night-mode endpoints. |
+| `web_server_touch.c` | Touch injection + CONTROL mode endpoints. |
+| `web_server_wifi.c` | WiFi-scan + connect + forget + hotspot endpoints. |
 | `wifi_manager.c/h` | STA/AP/multi-SSID, channel pinning, HT20 force, boot config. |
 | `dns_hijack.c/h` | UDP:53 captive-portal helper (PSRAM stack). |
 | `ota_handler.c/h` | OTA download + flash + status. |
@@ -103,7 +115,6 @@ Cross-cutting platform glue.
 | `night_mode.c/h` | Singleton + subscriber list, `lv_async_call` dispatch. |
 | `remote_touch.c/h` | Virtual LVGL pointer indev for HTTP-driven CONTROL mode. |
 | `device_id.c/h` | Per-device UUID generation/storage in NVS. |
-| `rdm_settings.c/h` | Early/system NVS wrapper (separate from `config_store`). |
 | `display_capture.c/h` | Screenshot pipeline (panel FB → YUYV → JPEG). |
 
 ## `main/ui/`
@@ -119,7 +130,6 @@ Screens, dashboard, settings, modal, theming, fonts, images.
 | `ui_events.h` | Shared LVGL event constants. |
 | `utils.c/h` | Generic utilities (string formatting, math). |
 | `signals.c/h` | UI-side signal helpers (subscription bookkeeping). |
-| `config_bridge.c/h` | Maps `value_id` 1–13 → widget type_data + signal accessors. |
 | `theme.h` | Color palette + style tokens. |
 | `lvgl_helpers.h` | Small LVGL convenience inlines. |
 | `panel_config.h` | Legacy panel-specific consts (kept for compat). |

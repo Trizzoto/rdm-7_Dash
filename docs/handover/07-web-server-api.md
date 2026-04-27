@@ -4,7 +4,7 @@ The firmware embeds a full layout editor and exposes ~86 HTTP endpoints. This do
 
 ## Web server configuration
 
-[main/net/web_server.c](../../main/net/web_server.c) (~4700 lines). Started from `app_main` after WiFi/netif is up.
+`main/net/web_server.c` (~210 lines — core only: start/stop, `REGISTER_URI` macro, CORS, OPTIONS wildcard). Endpoints are split across domain files: `web_server_{assets,captive,capture,gear,layout,logger,ota,signals,system,touch,wifi}.c`. Started from `app_main` after WiFi/netif is up.
 
 | Setting | Value | Reason |
 |---|---|---|
