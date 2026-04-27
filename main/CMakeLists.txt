@@ -46,7 +46,6 @@ idf_component_register(
         "ui/components/ui_comp.c"
         "ui/components/ui_comp_hook.c"
         "ui/components/ui_comp_slider2.c"
-        "ui/config_bridge.c"
         "ui/callbacks/ui_callbacks.c"
 "ui/menu/config_modal.c"
         "ui/menu/menu_screen.c"

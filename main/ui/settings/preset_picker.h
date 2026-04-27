@@ -24,31 +24,12 @@ typedef struct {
 extern const preconfig_item_t preconfig_items[];
 extern const int preconfig_items_count;
 
-/* Legacy floating-panel preconfig (used by RPM/Gear/Speed screens) */
-void show_preconfig_menu(lv_obj_t * parent);
-void destroy_preconfig_menu(void);
-
 /**
- * Open a full-screen preset picker overlay on lv_layer_top().
- * When the user selects a preset it updates the widget type_data via
- * config_bridge and the global g_*_input / g_*_dropdown widget arrays in-place.
- * @param parent_screen  The current active screen (used for context only).
- * @param value_id       1-13  — which config slot to populate.
- */
-void open_preset_picker(lv_obj_t *parent_screen, uint8_t value_id);
-
-/**
- * Callback invoked when a preset is applied via the callback picker variant.
+ * Callback invoked when a preset is applied.
  * @param item  The selected preconfig item (valid until callback returns).
- * @param ctx   Opaque user data passed to open_preset_picker_with_cb().
+ * @param ctx   Opaque user data passed to build_preset_picker_embedded().
  */
 typedef void (*preset_apply_cb_t)(const preconfig_item_t *item, void *ctx);
-
-/**
- * Open the same full-screen preset picker, but invoke a callback instead
- * of using config_bridge.  The callback receives the selected preset item.
- */
-void open_preset_picker_with_cb(preset_apply_cb_t cb, void *ctx);
 
 /**
  * Build an embedded preset picker inside an existing LVGL container.

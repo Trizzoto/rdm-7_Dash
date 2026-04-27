@@ -82,11 +82,6 @@ void warning_low_threshold_event_cb(lv_event_t *e);
 void warning_high_color_event_cb(lv_event_t *e);
 void warning_low_color_event_cb(lv_event_t *e);
 
-/* Color-wheel popup creators -----------------------------------------------*/
-void create_bar_low_color_wheel_popup(uint8_t value_id);
-void create_bar_high_color_wheel_popup(uint8_t value_id);
-void create_bar_in_range_color_wheel_popup(uint8_t value_id);
-
 /**
  * Phase 2 — Factory function.
  * Allocates and returns a widget_t wired with the warning vtable.

@@ -65,7 +65,6 @@ void check_rpm_color_update(lv_timer_t *timer);
  */
 void rpm_gauge_roller_event_cb(lv_event_t *e);
 void rpm_redline_roller_event_cb(lv_event_t *e);
-void rpm_ecu_dropdown_event_cb(lv_event_t *e);
 void rpm_color_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);

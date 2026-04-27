@@ -11,10 +11,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define MAX_VALUES 13 /* Maximum number of values that can be configured */
-#define RPM_VALUE_ID 9
-#define BAR1_VALUE_ID 12
-#define BAR2_VALUE_ID 13
 #define MAX_RPM_LINES 200 /* Maximum number of RPM tick marks per row */
 #ifndef EXAMPLE_MAX_CHAR_SIZE
 #define EXAMPLE_MAX_CHAR_SIZE 64
@@ -72,9 +68,6 @@ void ui_Screen3_preview_layout(cJSON *root);
 // Color wheel popup functions
 void create_rpm_color_wheel_popup(void);
 void create_limiter_color_wheel_popup(void);
-void create_bar_low_color_wheel_popup(uint8_t value_id);
-void create_bar_high_color_wheel_popup(uint8_t value_id);
-void create_bar_in_range_color_wheel_popup(uint8_t value_id);
 
 // Bar update struct shared between ui_Screen3.c and main.c
 #ifndef BAR_UPDATE_T_DEFINED

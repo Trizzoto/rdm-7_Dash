@@ -20,7 +20,6 @@
 #include "ui/settings/preset_picker.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "ui/config_bridge.h"
 #include "widget_bar.h"
 #include "widget_panel.h"
 #include "widget_registry.h"
@@ -141,47 +140,6 @@ void rpm_redline_roller_event_cb(lv_event_t *e) {
 		3000 + (selected * 200); // 200 RPM steps from 3000 to 12000
 
 	update_redline_position();
-}
-
-void rpm_ecu_dropdown_event_cb(lv_event_t *e) {
-	lv_obj_t *dropdown = lv_event_get_target(e);
-	uint16_t selected = lv_dropdown_get_selected(dropdown);
-	// Indices: 0 = Custom, 1 = MaxxECU, 2 = Haltech
-
-	if (selected == 0) {
-		// ========== CUSTOM ==========
-		printf("ECU Presets: Custom (no changes)\n");
-		return;
-	}
-
-	/* Preset CAN parameters: can_id, endian, bit_start, bit_length, scale, offset, decimals */
-	uint32_t can_id = 0;
-	uint8_t endian = 1, bit_start = 0, bit_length = 16, decimals = 0;
-	float scale = 1.0f, offset = 0.0f;
-	const char *name = "Custom";
-
-	if (selected == 1) {
-		name = "MaxxECU"; can_id = 0x208; endian = 1;
-		scale = 1.0f; offset = 0.0f; decimals = 0;
-	} else if (selected == 2) {
-		name = "Haltech"; can_id = 0x168; endian = 0;
-		scale = 1.0f; offset = 0.0f; decimals = 0;
-	} else if (selected == 3) {
-		name = "Ford BA/BF/FG"; can_id = 0x3E8; endian = 1;
-		scale = 0.25f; offset = 0.0f; decimals = 2;
-	}
-
-	printf("ECU Presets: %s\n", name);
-
-	/* Write to signal registry via config_bridge */
-	config_bridge_set_can_id(RPM_VALUE_ID, can_id);
-	config_bridge_set_endian(RPM_VALUE_ID, endian);
-	config_bridge_set_bit_start(RPM_VALUE_ID, bit_start);
-	config_bridge_set_bit_length(RPM_VALUE_ID, bit_length);
-	config_bridge_set_scale(RPM_VALUE_ID, scale);
-	config_bridge_set_offset(RPM_VALUE_ID, offset);
-	config_bridge_set_decimals(RPM_VALUE_ID, decimals);
-
 }
 
 void rpm_color_dropdown_event_cb(lv_event_t *e) {

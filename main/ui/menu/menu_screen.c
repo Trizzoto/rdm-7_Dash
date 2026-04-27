@@ -12,7 +12,6 @@
 
 /* Externs not already covered by the headers above */
 extern void reconfigure_can_filter(void);
-extern void destroy_preconfig_menu(void);
 
 /* Global previewer references */
 lv_obj_t *menu_rpm_value_label = NULL;
@@ -27,7 +26,6 @@ lv_obj_t *menu_bar_labels[2] = {NULL};
 static void delete_old_screen_cb(lv_timer_t *t) {
 	lv_obj_t *s = (lv_obj_t *)t->user_data;
 	if (s) {
-		destroy_preconfig_menu();
 		lv_obj_del(s);
 	}
 }
@@ -145,7 +143,6 @@ void cancel_menu_event_cb(lv_event_t *e) {
 
 void load_menu_screen_for_widget(widget_t *w) {
 	if (!w) return;
-	destroy_preconfig_menu();
 
 	ui_MenuScreen = lv_obj_create(NULL);
 	lv_obj_set_style_bg_color(ui_MenuScreen, THEME_COLOR_BG, 0);
