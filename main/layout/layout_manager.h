@@ -42,7 +42,7 @@ extern "C" {
  *      Layout root may also contain a `night_mode` block with `signal_name`
  *      + `active_when` for CAN-signal-driven night mode triggering.
  *      Older schemas load fine — missing night blocks just mean no overrides. */
-#define LAYOUT_SCHEMA_VERSION 13
+#define LAYOUT_SCHEMA_VERSION 14
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"

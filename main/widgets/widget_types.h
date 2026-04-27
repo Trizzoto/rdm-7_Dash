@@ -50,6 +50,7 @@ typedef enum {
     WIDGET_TOGGLE      = 10,
     WIDGET_BUTTON      = 11,
     WIDGET_SHIFT_LIGHT = 12,
+    WIDGET_LINE        = 13,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 

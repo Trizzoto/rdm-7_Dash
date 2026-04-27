@@ -65,6 +65,7 @@ idf_component_register(
         "widgets/widget_toggle.c"
         "widgets/widget_button.c"
         "widgets/widget_shift_light.c"
+        "widgets/widget_line.c"
         "widgets/widget_rules.c"
         "widgets/font_manager.c"
         "widgets/signal_internal.c"

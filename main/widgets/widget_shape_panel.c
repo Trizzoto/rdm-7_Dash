@@ -1,8 +1,10 @@
 /*
- * widget_shape_panel.c -- Decorative rectangle / rounded-rect widget.
+ * widget_shape_panel.c -- Decorative shape widget.
  *
- * Purely visual: no data binding, no signal subscription.
- * Used as backgrounds, dividers, or grouping elements.
+ * Supports rectangle, circle, trapezoid, triangle, diamond, arrows, and
+ * chevrons. Rectangle and circle use native LVGL styles; all other shapes
+ * are drawn via a custom polygon draw event so the bounding box remains
+ * the interactive / layout unit while the fill is clipped to the polygon.
  */
 #include "widget_shape_panel.h"
 #include "widget_rules.h"
@@ -20,6 +22,8 @@ static const char *TAG = "widget_shape_panel";
 
 /* ── Default values ─────────────────────────────────────────────────────── */
 
+#define DEF_SHAPE_TYPE    SHAPE_TYPE_RECTANGLE
+#define DEF_TAPER         20
 #define DEF_BG_COLOR      0x1A1A1A
 #define DEF_BG_OPA        255
 #define DEF_BORDER_COLOR  0x2E2F2E
@@ -47,7 +51,165 @@ static inline lv_color_t _u32_to_color(uint32_t v) {
     return c;
 }
 
-/* Forward declarations — used by _shape_panel_create / _shape_panel_destroy. */
+static shape_panel_type_t _shape_from_str(const char *s) {
+    if (!s) return SHAPE_TYPE_RECTANGLE;
+    if (strcmp(s, "circle")        == 0) return SHAPE_TYPE_CIRCLE;
+    if (strcmp(s, "trapezoid")     == 0) return SHAPE_TYPE_TRAPEZOID;
+    if (strcmp(s, "triangle")      == 0) return SHAPE_TYPE_TRIANGLE;
+    if (strcmp(s, "diamond")       == 0) return SHAPE_TYPE_DIAMOND;
+    if (strcmp(s, "arrow_right")   == 0) return SHAPE_TYPE_ARROW_RIGHT;
+    if (strcmp(s, "arrow_left")    == 0) return SHAPE_TYPE_ARROW_LEFT;
+    if (strcmp(s, "chevron_right") == 0) return SHAPE_TYPE_CHEVRON_RIGHT;
+    if (strcmp(s, "chevron_left")  == 0) return SHAPE_TYPE_CHEVRON_LEFT;
+    return SHAPE_TYPE_RECTANGLE;
+}
+
+static const char *_shape_to_str(shape_panel_type_t t) {
+    switch (t) {
+    case SHAPE_TYPE_CIRCLE:        return "circle";
+    case SHAPE_TYPE_TRAPEZOID:     return "trapezoid";
+    case SHAPE_TYPE_TRIANGLE:      return "triangle";
+    case SHAPE_TYPE_DIAMOND:       return "diamond";
+    case SHAPE_TYPE_ARROW_RIGHT:   return "arrow_right";
+    case SHAPE_TYPE_ARROW_LEFT:    return "arrow_left";
+    case SHAPE_TYPE_CHEVRON_RIGHT: return "chevron_right";
+    case SHAPE_TYPE_CHEVRON_LEFT:  return "chevron_left";
+    default:                       return "rectangle";
+    }
+}
+
+static inline bool _is_polygon_shape(shape_panel_type_t t) {
+    return t >= SHAPE_TYPE_TRAPEZOID;
+}
+
+/* ── Polygon draw callback ──────────────────────────────────────────────── */
+
+static void _polygon_draw_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
+
+    widget_t           *w   = (widget_t *)lv_event_get_user_data(e);
+    shape_panel_data_t *sd  = (shape_panel_data_t *)w->type_data;
+    lv_obj_t           *obj = lv_event_get_target(e);
+    lv_draw_ctx_t      *draw_ctx = lv_event_get_draw_ctx(e);
+
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+    int32_t x1 = coords.x1, y1 = coords.y1;
+    int32_t x2 = coords.x2, y2 = coords.y2;
+    int32_t pw = x2 - x1;
+    int32_t ph = y2 - y1;
+
+    lv_draw_rect_dsc_t dsc;
+    lv_draw_rect_dsc_init(&dsc);
+    dsc.bg_color    = sd->bg_color;
+    dsc.bg_opa      = sd->bg_opa;
+    dsc.border_width = 0;
+    dsc.radius      = 0;
+
+    lv_point_t pts[8];
+    uint16_t   pt_cnt;
+
+    switch (sd->shape_type) {
+    case SHAPE_TYPE_TRAPEZOID: {
+        int32_t inset = pw * sd->taper / 100;
+        if (sd->taper_bottom) {
+            pts[0] = (lv_point_t){x1,          y1};
+            pts[1] = (lv_point_t){x2,          y1};
+            pts[2] = (lv_point_t){x2 - inset,  y2};
+            pts[3] = (lv_point_t){x1 + inset,  y2};
+        } else {
+            pts[0] = (lv_point_t){x1 + inset,  y1};
+            pts[1] = (lv_point_t){x2 - inset,  y1};
+            pts[2] = (lv_point_t){x2,           y2};
+            pts[3] = (lv_point_t){x1,           y2};
+        }
+        pt_cnt = 4;
+        break;
+    }
+    case SHAPE_TYPE_TRIANGLE:
+        pts[0] = (lv_point_t){x1 + pw / 2, y1};
+        pts[1] = (lv_point_t){x2,           y2};
+        pts[2] = (lv_point_t){x1,           y2};
+        pt_cnt = 3;
+        break;
+    case SHAPE_TYPE_DIAMOND:
+        pts[0] = (lv_point_t){x1 + pw / 2, y1};
+        pts[1] = (lv_point_t){x2,           y1 + ph / 2};
+        pts[2] = (lv_point_t){x1 + pw / 2, y2};
+        pts[3] = (lv_point_t){x1,           y1 + ph / 2};
+        pt_cnt = 4;
+        break;
+    case SHAPE_TYPE_ARROW_RIGHT: {
+        int32_t notch = ph * 20 / 100;
+        int32_t stem  = x1 + pw * 60 / 100;
+        pts[0] = (lv_point_t){x1,   y1 + notch};
+        pts[1] = (lv_point_t){stem, y1 + notch};
+        pts[2] = (lv_point_t){stem, y1};
+        pts[3] = (lv_point_t){x2,   y1 + ph / 2};
+        pts[4] = (lv_point_t){stem, y2};
+        pts[5] = (lv_point_t){stem, y2 - notch};
+        pts[6] = (lv_point_t){x1,   y2 - notch};
+        pt_cnt = 7;
+        break;
+    }
+    case SHAPE_TYPE_ARROW_LEFT: {
+        int32_t notch = ph * 20 / 100;
+        int32_t stem  = x1 + pw * 40 / 100;
+        pts[0] = (lv_point_t){x2,   y1 + notch};
+        pts[1] = (lv_point_t){stem, y1 + notch};
+        pts[2] = (lv_point_t){stem, y1};
+        pts[3] = (lv_point_t){x1,   y1 + ph / 2};
+        pts[4] = (lv_point_t){stem, y2};
+        pts[5] = (lv_point_t){stem, y2 - notch};
+        pts[6] = (lv_point_t){x2,   y2 - notch};
+        pt_cnt = 7;
+        break;
+    }
+    case SHAPE_TYPE_CHEVRON_RIGHT: {
+        int32_t indent = x1 + pw * 20 / 100;
+        int32_t peak   = x1 + pw * 80 / 100;
+        pts[0] = (lv_point_t){x1,    y1};
+        pts[1] = (lv_point_t){peak,  y1};
+        pts[2] = (lv_point_t){x2,    y1 + ph / 2};
+        pts[3] = (lv_point_t){peak,  y2};
+        pts[4] = (lv_point_t){x1,    y2};
+        pts[5] = (lv_point_t){indent, y1 + ph / 2};
+        pt_cnt = 6;
+        break;
+    }
+    case SHAPE_TYPE_CHEVRON_LEFT: {
+        int32_t indent = x1 + pw * 80 / 100;
+        int32_t peak   = x1 + pw * 20 / 100;
+        pts[0] = (lv_point_t){x2,    y1};
+        pts[1] = (lv_point_t){peak,  y1};
+        pts[2] = (lv_point_t){x1,    y1 + ph / 2};
+        pts[3] = (lv_point_t){peak,  y2};
+        pts[4] = (lv_point_t){x2,    y2};
+        pts[5] = (lv_point_t){indent, y1 + ph / 2};
+        pt_cnt = 6;
+        break;
+    }
+    default:
+        return;
+    }
+
+    lv_draw_polygon(draw_ctx, &dsc, pts, pt_cnt);
+}
+
+/* ── Apply LVGL styles for rect/circle shapes ───────────────────────────── */
+
+static void _apply_rect_styles(lv_obj_t *obj, const shape_panel_data_t *sd) {
+    lv_obj_set_style_bg_color(obj,     sd->bg_color,     LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(obj,       sd->bg_opa,       LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, sd->border_color, LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, sd->border_width, LV_PART_MAIN);
+    if (sd->shape_type == SHAPE_TYPE_CIRCLE)
+        lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    else
+        lv_obj_set_style_radius(obj, sd->border_radius, LV_PART_MAIN);
+}
+
+/* Forward declarations */
 static void _shape_panel_apply_night_mode(widget_t *w, bool active);
 static void _shape_panel_night_cb(bool active, void *user_data);
 
@@ -64,25 +226,24 @@ static void _shape_panel_create(widget_t *w, lv_obj_t *parent) {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_pad_all(obj, 0, LV_PART_MAIN);
 
-    /* Background */
-    lv_obj_set_style_bg_color(obj, sd->bg_color, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(obj, sd->bg_opa, LV_PART_MAIN);
+    if (_is_polygon_shape(sd->shape_type)) {
+        /* Transparent base — polygon fill drawn in callback */
+        lv_obj_set_style_bg_opa(obj,     LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(obj, 0,           LV_PART_MAIN);
+        lv_obj_add_event_cb(obj, _polygon_draw_cb, LV_EVENT_DRAW_MAIN_END, w);
+    } else {
+        _apply_rect_styles(obj, sd);
+    }
 
-    /* Border */
-    lv_obj_set_style_border_color(obj, sd->border_color, LV_PART_MAIN);
-    lv_obj_set_style_border_width(obj, sd->border_width, LV_PART_MAIN);
-    lv_obj_set_style_radius(obj, sd->border_radius, LV_PART_MAIN);
-
-    /* Shadow */
+    /* Shadow always applied on the bounding box */
     lv_obj_set_style_shadow_width(obj, sd->shadow_width, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(obj, sd->shadow_color, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(obj, sd->shadow_opa, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(obj,   sd->shadow_opa,   LV_PART_MAIN);
     lv_obj_set_style_shadow_ofs_x(obj, sd->shadow_ofs_x, LV_PART_MAIN);
     lv_obj_set_style_shadow_ofs_y(obj, sd->shadow_ofs_y, LV_PART_MAIN);
 
     w->root = obj;
 
-    /* Subscribe to night-mode changes if any night override is set. */
     if (sd->night.has_bg_color || sd->night.has_border_color ||
         sd->night.has_shadow_color) {
         night_mode_subscribe(_shape_panel_night_cb, w);
@@ -103,7 +264,7 @@ static void _shape_panel_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 
 static void _shape_panel_open_settings(widget_t *w) { (void)w; }
 
-/* ── vtable: to_json (defaults-only serialization) ──────────────────────── */
+/* ── vtable: to_json ────────────────────────────────────────────────────── */
 
 static void _shape_panel_to_json(widget_t *w, cJSON *out) {
     shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
@@ -114,6 +275,13 @@ static void _shape_panel_to_json(widget_t *w, cJSON *out) {
     if (!cfg) return;
 
     uint32_t col;
+
+    if (sd->shape_type != DEF_SHAPE_TYPE)
+        cJSON_AddStringToObject(cfg, "shape_type", _shape_to_str(sd->shape_type));
+    if (sd->taper != DEF_TAPER)
+        cJSON_AddNumberToObject(cfg, "taper", sd->taper);
+    if (sd->taper_bottom)
+        cJSON_AddStringToObject(cfg, "taper_side", "bottom");
 
     col = _color_to_u32(sd->bg_color);
     if (col != DEF_BG_COLOR)
@@ -141,7 +309,6 @@ static void _shape_panel_to_json(widget_t *w, cJSON *out) {
     if (sd->shadow_ofs_y != DEF_SHADOW_OFS_Y)
         cJSON_AddNumberToObject(cfg, "shadow_ofs_y", sd->shadow_ofs_y);
 
-    /* Night-mode overrides — emit only fields that have an override set */
     {
         cJSON *n = cJSON_CreateObject();
         NIGHT_SERIALIZE_COLOR(n, sd->night, bg_color);
@@ -163,6 +330,15 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
     if (!cfg) return;
 
     cJSON *item;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "shape_type");
+    if (cJSON_IsString(item)) sd->shape_type = _shape_from_str(item->valuestring);
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "taper");
+    if (cJSON_IsNumber(item)) sd->taper = (uint8_t)LV_CLAMP(0, item->valueint, 50);
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "taper_side");
+    if (cJSON_IsString(item)) sd->taper_bottom = (strcmp(item->valuestring, "bottom") == 0);
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_color");
     if (cJSON_IsNumber(item)) sd->bg_color = _u32_to_color((uint32_t)item->valueint);
@@ -194,7 +370,6 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_ofs_y");
     if (cJSON_IsNumber(item)) sd->shadow_ofs_y = (int8_t)item->valueint;
 
-    /* Night-mode overrides */
     cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
     if (cJSON_IsObject(night)) {
         NIGHT_PARSE_COLOR(night, sd->night, bg_color);
@@ -234,36 +409,35 @@ static void _shape_panel_apply_overrides(widget_t *w, const rule_override_t *ov,
 
     for (uint8_t i = 0; i < count; i++) {
         const rule_override_t *o = &ov[i];
-        if (strcmp(o->field_name, "bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-            bg.full = (uint16_t)o->value.color;
-        } else if (strcmp(o->field_name, "bg_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
-            bg_opa = (uint8_t)o->value.num;
-        } else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-            bdr.full = (uint16_t)o->value.color;
-        } else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
-            bdr_w = (uint8_t)o->value.num;
-        } else if (strcmp(o->field_name, "border_radius") == 0 && o->value_type == RULE_VAL_NUMBER) {
-            radius = (uint8_t)o->value.num;
-        } else if (strcmp(o->field_name, "shadow_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-            shd.full = (uint16_t)o->value.color;
-        } else if (strcmp(o->field_name, "shadow_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
-            shd_w = (uint8_t)o->value.num;
-        } else if (strcmp(o->field_name, "shadow_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
-            shd_opa = (uint8_t)o->value.num;
-        }
+        if      (strcmp(o->field_name, "bg_color")     == 0 && o->value_type == RULE_VAL_COLOR)  bg.full   = (uint16_t)o->value.color;
+        else if (strcmp(o->field_name, "bg_opa")       == 0 && o->value_type == RULE_VAL_NUMBER) bg_opa    = (uint8_t)o->value.num;
+        else if (strcmp(o->field_name, "border_color") == 0 && o->value_type == RULE_VAL_COLOR)  bdr.full  = (uint16_t)o->value.color;
+        else if (strcmp(o->field_name, "border_width") == 0 && o->value_type == RULE_VAL_NUMBER) bdr_w     = (uint8_t)o->value.num;
+        else if (strcmp(o->field_name, "border_radius")== 0 && o->value_type == RULE_VAL_NUMBER) radius    = (uint8_t)o->value.num;
+        else if (strcmp(o->field_name, "shadow_color") == 0 && o->value_type == RULE_VAL_COLOR)  shd.full  = (uint16_t)o->value.color;
+        else if (strcmp(o->field_name, "shadow_width") == 0 && o->value_type == RULE_VAL_NUMBER) shd_w     = (uint8_t)o->value.num;
+        else if (strcmp(o->field_name, "shadow_opa")   == 0 && o->value_type == RULE_VAL_NUMBER) shd_opa   = (uint8_t)o->value.num;
     }
 
-    lv_obj_set_style_bg_color(w->root, bg, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(w->root, bg_opa, LV_PART_MAIN);
-    lv_obj_set_style_border_color(w->root, bdr, LV_PART_MAIN);
-    lv_obj_set_style_border_width(w->root, bdr_w, LV_PART_MAIN);
-    lv_obj_set_style_radius(w->root, radius, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(w->root, shd, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(w->root, shd_w, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(w->root, shd_opa, LV_PART_MAIN);
+    if (_is_polygon_shape(sd->shape_type)) {
+        /* Polygon fill is driven by sd; update in-place + invalidate */
+        sd->bg_color = bg;
+        sd->bg_opa   = bg_opa;
+        lv_obj_invalidate(w->root);
+    } else {
+        lv_obj_set_style_bg_color(w->root,    bg,     LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(w->root,      bg_opa, LV_PART_MAIN);
+        lv_obj_set_style_border_color(w->root, bdr,   LV_PART_MAIN);
+        lv_obj_set_style_border_width(w->root, bdr_w, LV_PART_MAIN);
+        lv_obj_set_style_radius(w->root,      radius, LV_PART_MAIN);
+    }
+    lv_obj_set_style_shadow_color(w->root, shd,    LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(w->root, shd_w,  LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(w->root,   shd_opa, LV_PART_MAIN);
 }
 
-/* Re-apply colors based on current night-mode state. */
+/* ── Night mode ─────────────────────────────────────────────────────────── */
+
 static void _shape_panel_apply_night_mode(widget_t *w, bool active) {
     if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
     shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
@@ -273,12 +447,16 @@ static void _shape_panel_apply_night_mode(widget_t *w, bool active) {
     lv_color_t bdr = NIGHT_PICK_COLOR(active, sd->night, border_color, sd->border_color);
     lv_color_t shd = NIGHT_PICK_COLOR(active, sd->night, shadow_color, sd->shadow_color);
 
-    lv_obj_set_style_bg_color(w->root, bg, LV_PART_MAIN);
-    lv_obj_set_style_border_color(w->root, bdr, LV_PART_MAIN);
+    if (_is_polygon_shape(sd->shape_type)) {
+        sd->bg_color = bg;
+        lv_obj_invalidate(w->root);
+    } else {
+        lv_obj_set_style_bg_color(w->root,     bg,  LV_PART_MAIN);
+        lv_obj_set_style_border_color(w->root, bdr, LV_PART_MAIN);
+    }
     lv_obj_set_style_shadow_color(w->root, shd, LV_PART_MAIN);
 }
 
-/* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
 static void _shape_panel_night_cb(bool active, void *user_data) {
     _shape_panel_apply_night_mode((widget_t *)user_data, active);
 }
@@ -296,7 +474,9 @@ widget_t *widget_shape_panel_create_instance(uint8_t slot) {
     if (!sd) sd = calloc(1, sizeof(shape_panel_data_t));
     if (!sd) { free(w); return NULL; }
 
-    /* Set defaults */
+    sd->shape_type    = DEF_SHAPE_TYPE;
+    sd->taper         = DEF_TAPER;
+    sd->taper_bottom  = false;
     sd->bg_color      = lv_color_hex(DEF_BG_COLOR);
     sd->bg_opa        = DEF_BG_OPA;
     sd->border_color  = lv_color_hex(DEF_BORDER_COLOR);
@@ -317,13 +497,13 @@ widget_t *widget_shape_panel_create_instance(uint8_t slot) {
     w->type_data = sd;
     snprintf(w->id, sizeof(w->id), "shape_panel_%u", slot);
 
-    w->create        = _shape_panel_create;
-    w->resize        = _shape_panel_resize;
-    w->open_settings = _shape_panel_open_settings;
-    w->to_json       = _shape_panel_to_json;
-    w->from_json     = _shape_panel_from_json;
-    w->destroy       = _shape_panel_destroy;
-    w->apply_overrides = _shape_panel_apply_overrides;
+    w->create           = _shape_panel_create;
+    w->resize           = _shape_panel_resize;
+    w->open_settings    = _shape_panel_open_settings;
+    w->to_json          = _shape_panel_to_json;
+    w->from_json        = _shape_panel_from_json;
+    w->destroy          = _shape_panel_destroy;
+    w->apply_overrides  = _shape_panel_apply_overrides;
     w->apply_night_mode = _shape_panel_apply_night_mode;
 
     ESP_LOGI(TAG, "Created shape_panel instance slot=%u", slot);
