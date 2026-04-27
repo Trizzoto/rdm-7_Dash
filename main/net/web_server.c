@@ -4539,10 +4539,28 @@ static esp_err_t cors_preflight_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
-/* Helper macro to log on URI registration failure */
+/* URI registration tally (reset per web_server_start). On overflow, ESP-IDF
+ * silently drops the registration and the route returns 405 from the wildcard
+ * OPTIONS handler — historically this masked itself for half a dozen
+ * endpoints when we were at the 80-handler cap. The macro counts attempts
+ * vs. successes; web_server_start logs an error tally at the end so a dev
+ * adding a new endpoint sees the failure in `idf.py monitor` immediately
+ * instead of debugging a 405. */
+static int s_uri_register_attempts = 0;
+static int s_uri_register_failures = 0;
+
 #define REGISTER_URI(svr, uri_ptr) do { \
-	if (httpd_register_uri_handler(svr, uri_ptr) != ESP_OK) \
-		ESP_LOGW(TAG, "Failed to register URI: %s", (uri_ptr)->uri); \
+	s_uri_register_attempts++; \
+	esp_err_t _r = httpd_register_uri_handler((svr), (uri_ptr)); \
+	if (_r != ESP_OK) { \
+		s_uri_register_failures++; \
+		ESP_LOGE(TAG, "REGISTER_URI failed for %s (%s): %s", \
+				 (uri_ptr)->uri, \
+				 (uri_ptr)->method == HTTP_GET ? "GET" : \
+				 (uri_ptr)->method == HTTP_POST ? "POST" : \
+				 (uri_ptr)->method == HTTP_OPTIONS ? "OPTIONS" : "?", \
+				 esp_err_to_name(_r)); \
+	} \
 } while(0)
 
 esp_err_t web_server_start(void) {
@@ -4563,14 +4581,16 @@ esp_err_t web_server_start(void) {
 	 * and IDLE0 is less loaded than IDLE1. Observed in serial log:
 	 * back-to-back WDT hits during /api/screenshot encode stalls. */
 	config.core_id    = 0;
-	/* 100 slots: we're at 86 actual REGISTER_URI calls after the gear +
-	 * warning test endpoints landed. ESP-IDF silently drops any handler
-	 * registered past max_uri_handlers — the 80 we used to have left the
-	 * last ~6 POST/OPTIONS handlers unregistered, so those endpoints
-	 * returned 405 "Method not allowed" instead of dispatching
-	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes so
-	 * 20 slots of headroom costs ~640 bytes of static RAM. */
-	config.max_uri_handlers = 100;
+	/* 128 slots: ~86 actual REGISTER_URI calls today, leaving ~40 slots of
+	 * headroom for the next round of endpoint adds before we have to think
+	 * about this again. ESP-IDF silently drops handlers registered past
+	 * max_uri_handlers — when we ran with 80, the last ~6 POST/OPTIONS
+	 * handlers fell through to the wildcard CORS preflight and returned 405
+	 * (e.g. `/api/signal/simulate` POST). Each slot is ~32 bytes of static
+	 * RAM, so 128 costs ~1 KB. The REGISTER_URI macro tallies failures and
+	 * logs at the end of web_server_start; a non-zero tally in the boot log
+	 * means we hit the cap and need to bump it again. */
+	config.max_uri_handlers = 128;
 	config.max_resp_headers = 8;
 	config.lru_purge_enable = true;
 	config.recv_wait_timeout = 30; /* 30s for image uploads */
@@ -4731,6 +4751,22 @@ esp_err_t web_server_start(void) {
 		.handler = _fuel_set_full_handler
 	};
 	REGISTER_URI(server, &fuel_set_full_uri);
+
+	/* Final registration tally. If any registration failed (almost always
+	 * because max_uri_handlers is too low), shout loudly so the developer
+	 * who just added an endpoint notices in `idf.py monitor` instead of
+	 * chasing a phantom 405 in DevTools later. */
+	if (s_uri_register_failures > 0) {
+		ESP_LOGE(TAG,
+				 "URI registration: %d/%d FAILED — bump max_uri_handlers "
+				 "(currently %d) in web_server_start. Failed endpoints will "
+				 "return 405 via the OPTIONS wildcard.",
+				 s_uri_register_failures, s_uri_register_attempts,
+				 (int)config.max_uri_handlers);
+	} else {
+		ESP_LOGI(TAG, "URI registration: %d handlers registered (cap %d)",
+				 s_uri_register_attempts, (int)config.max_uri_handlers);
+	}
 
 	ESP_LOGI(TAG, "Web server started successfully");
 	return ESP_OK;
