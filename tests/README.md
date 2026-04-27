@@ -13,8 +13,9 @@ ESP32 firmware is hard to test on the device — there's no shell, no test runne
 
 What can be tested on the host today:
 - **CAN decode** ([test_can_decode.c](native/test_can_decode.c)) — `can_extract_bits` and `can_pack_bits` are pure math, zero deps.
+- **Widget rules JSON round-trip** ([test_widget_rules.c](native/test_widget_rules.c)) — `widget_rules_from_json` / `widget_rules_to_json` exercised against real source via opaque LVGL / esp_log / esp_heap_caps stubs in `native/mocks/`. cJSON vendored under `native/cjson/`.
 - **Layout migration** (planned) — pure JSON manipulation via cJSON.
-- **Widget JSON round-trip** (planned) — needs LVGL stubs in `mocks/lvgl.h`.
+- **Other widget JSON round-trips** (planned) — most widget_*.c modules pull LVGL/FreeRTOS too entangled for the current mock surface.
 
 What can't (yet):
 - Anything that calls `lv_*` functions for real (would need a full LVGL native build).
@@ -26,14 +27,20 @@ What can't (yet):
 ```
 tests/
 ├── README.md          (you are here)
-├── native/
-│   ├── Makefile       (build rule per test, plain GCC, no CMake)
-│   ├── unity.h        (vendored Unity test framework, single header)
-│   ├── unity.c        (single source)
-│   ├── test_can_decode.c   (signal/CAN bit extraction tests)
-│   └── …              (more as agents add them)
-└── mocks/
-    └── (per-test stubs of LVGL / ESP-IDF when needed)
+└── native/
+    ├── Makefile       (build rule per test, plain GCC, no CMake)
+    ├── run.ps1        (Windows alternative to make)
+    ├── unity.h        (vendored Unity test framework, single header)
+    ├── unity.c        (single source)
+    ├── test_can_decode.c     (signal/CAN bit extraction tests)
+    ├── test_widget_rules.c   (rules JSON round-trip against real widget_rules.c)
+    ├── mocks/         (per-test stubs of LVGL / ESP-IDF when needed)
+    │   ├── lvgl.h
+    │   ├── esp_log.h
+    │   └── esp_heap_caps.h
+    └── cjson/         (vendored cJSON v1.7.18 — only when a test needs it)
+        ├── cJSON.h
+        └── cJSON.c
 ```
 
 ## Build & run
