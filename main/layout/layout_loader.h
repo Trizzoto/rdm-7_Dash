@@ -18,7 +18,7 @@ extern "C" {
 /**
  * @brief Load the currently active layout onto @p parent.
  *
- * This assumes rdm_settings_init()/layout_manager_init() has already been
+ * This assumes layout_manager_init() has already been
  * called during system startup to mount LittleFS and create default.json if
  * needed.
  */

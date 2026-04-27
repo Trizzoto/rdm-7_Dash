@@ -1,6 +1,5 @@
 #include "layout_loader.h"
 #include "layout_manager.h"
-#include "system/rdm_settings.h"
 #include "esp_log.h"
 
 static const char *TAG = "layout_loader";
@@ -26,7 +25,7 @@ esp_err_t layout_loader_load_active(lv_obj_t *parent)
 		return ESP_ERR_INVALID_ARG;
 
 	char name[LAYOUT_MAX_NAME];
-	esp_err_t err = rdm_settings_get_active_layout(name, sizeof(name));
+	esp_err_t err = layout_manager_get_active(name, sizeof(name));
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "get_active_layout failed: %s", esp_err_to_name(err));
 		return err;

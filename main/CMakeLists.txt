@@ -30,7 +30,6 @@ idf_component_register(
         "net/serial_commands.c"
         "net/dns_hijack.c"
         "system/device_id.c"
-        "system/rdm_settings.c"
         "system/screen_config.c"
         "system/display_capture.c"
         "system/night_mode.c"

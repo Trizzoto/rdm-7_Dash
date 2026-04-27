@@ -11,7 +11,6 @@
 #include "layout/layout_manager.h"
 #include "layout/ecu_presets.h"
 #include "lvgl.h"
-#include "system/rdm_settings.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -132,8 +131,8 @@ static esp_err_t layout_current_handler(httpd_req_t *req) {
 	if (is_splash) {
 		snprintf(layout_name, sizeof(layout_name), "_splash_%s",
 		         splash_screen_get_active_name());
-	} else if (rdm_settings_get_active_layout(layout_name,
-	                                          sizeof(layout_name)) != ESP_OK) {
+	} else if (layout_manager_get_active(layout_name,
+	                                     sizeof(layout_name)) != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to read active layout name");
 		return ESP_FAIL;
@@ -375,7 +374,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			lv_async_call(_deferred_splash_reload, NULL);
 		} else {
 			// Update active layout name in NVS
-			if (rdm_settings_set_active_layout(layout_name) != ESP_OK) {
+			if (layout_manager_set_active(layout_name) != ESP_OK) {
 				httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 									"Failed to set active layout");
 				return ESP_FAIL;

@@ -26,7 +26,6 @@
 #include "storage/signal_replay.h"
 #include "storage/sd_manager.h"
 #include "system/device_id.h"
-#include "system/rdm_settings.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/screens/ui_Screen3.h"
@@ -258,7 +257,7 @@ static void _handle_layout_current(int id, cJSON *params)
     if (is_splash) {
         snprintf(name, sizeof(name), "_splash_%s",
                  splash_screen_get_active_name());
-    } else if (rdm_settings_get_active_layout(name, sizeof(name)) != ESP_OK) {
+    } else if (layout_manager_get_active(name, sizeof(name)) != ESP_OK) {
         _send_error(id, "Failed to read active layout");
         return;
     }
