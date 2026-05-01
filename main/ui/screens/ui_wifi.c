@@ -731,6 +731,16 @@ static void _populate_scan_list(void)
         lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks found");
         lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_MUTED, 0);
+
+        /* ESP32-S3 radio is 2.4 GHz only. Phone hotspots (especially
+         * newer Androids) often default to 5 GHz or "auto-band" — those
+         * networks are physically invisible to the dash. Surface this
+         * so the user doesn't blame the scan. */
+        lv_obj_t *hint = lv_list_add_text(wifi_list,
+            "Tip: ESP32 only sees 2.4 GHz networks.\n"
+            "On Android Hotspot, set AP Band to 2.4 GHz.");
+        lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
         return;
     }
 

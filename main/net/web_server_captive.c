@@ -1,42 +1,41 @@
 /* web_server_captive.c — captive portal probe handlers
  *
- * When a phone joins the dash hotspot its OS probes well-known URLs to detect
- * internet connectivity.  Without a response iOS backgrounds the connection
- * (preferring cellular) and Android shows "No internet", making the dash
- * unreachable even though the AP is up.
+ * Each phone OS probes a well-known URL on join to detect "real" internet.
+ * If we don't respond captive-portal-style, modern Android (10+) and iOS
+ * silently demote the WiFi to "limited" and the editor becomes unreachable.
+ * So the probe handlers always 302 the OS straight into the editor at the
+ * dash root. The captive-portal sign-in sheet renders the editor directly
+ * — no intermediate welcome page.
  *
- * By responding with a 302 redirect we trigger the OS "Sign in to network"
- * captive-portal sheet, which loads the dash web editor in a mini-browser.
- * iOS, Android 5+, and Windows all recognise this pattern.
+ * The redirect target uses a hardcoded RDM-branded hostname rather than the
+ * Host header from the probe, so the captive-portal mini-browser shows
+ * "rdm-7-dash" in the address bar instead of "connectivitycheck.gstatic.com"
+ * or "captive.apple.com". DNS hijack (dns_hijack.c) resolves any hostname
+ * to 192.168.4.1 so the made-up name still loads the dash.
  *
  * Each platform's probe URL is a separate httpd_uri_t entry — do NOT merge
- * them into a wildcard handler.  See ADR 0001 for the reasoning. */
+ * them into a wildcard handler. */
 #include "web_server_internal.h"
+#include <string.h>
 
 static const char *TAG = "web_server_captive";
 
+/* RDM-branded hostname shown in the captive-portal address bar. */
+#define RDM_REDIRECT_HOST "rdm-7-dash"
+
 static esp_err_t captive_portal_redirect_handler(httpd_req_t *req) {
 	ESP_LOGI(TAG, "Captive portal probe: %s", req->uri);
-	/* Build Location from the Host header so we redirect to whichever IP
-	 * the client used (192.168.4.1 on AP, STA IP on LAN). Falls back to
-	 * the AP IP if Host is unavailable. */
-	char host[48] = "192.168.4.1";
-	size_t h_len = httpd_req_get_hdr_value_len(req, "Host");
-	if (h_len > 0 && h_len < sizeof(host)) {
-		httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
-	}
-	char loc[96];
-	snprintf(loc, sizeof(loc), "http://%s/", host);
 	httpd_resp_set_status(req, "302 Found");
-	httpd_resp_set_hdr(req, "Location", loc);
+	httpd_resp_set_hdr(req, "Location", "http://" RDM_REDIRECT_HOST "/");
 	httpd_resp_set_type(req, "text/html; charset=UTF-8");
-	/* Non-empty body is required for iOS to treat this as a real
-	 * captive portal (bare 302 is ignored on some versions). */
+	/* Non-empty body required for iOS to recognise this as a captive portal
+	 * (some versions ignore bare 302). The OS follows the 302 before
+	 * rendering, so this body is rarely shown. */
 	const char *body =
 		"<!doctype html><html><head>"
-		"<meta http-equiv=\"refresh\" content=\"0;url=http://192.168.4.1/\">"
+		"<meta http-equiv=\"refresh\" content=\"0;url=http://" RDM_REDIRECT_HOST "/\">"
 		"<title>RDM-7 Dash</title></head>"
-		"<body>Redirecting to dash editor&hellip;</body></html>";
+		"<body>Opening dash editor&hellip;</body></html>";
 	return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
 }
 

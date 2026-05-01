@@ -647,14 +647,19 @@ void wifi_manager_scan(void)
 
     ESP_LOGI(TAG, "Starting scan (non-blocking)");
 
+    /* Active scan, 120 ms min / 1500 ms max per channel. Old 100/500 timing
+     * regularly missed phone hotspots whose beacon interval landed outside the
+     * window — Android tethering APs in particular advertise less aggressively
+     * than home routers. ESP32-S3 is 2.4 GHz only; if a network never appears
+     * regardless, check the phone's hotspot band setting (must be 2.4 GHz). */
     wifi_scan_config_t scan_cfg = {
         .ssid        = NULL,
         .bssid       = NULL,
         .channel     = 0,
         .show_hidden = false,
         .scan_type   = WIFI_SCAN_TYPE_ACTIVE,
-        .scan_time.active.min = 100,
-        .scan_time.active.max = 500
+        .scan_time.active.min = 120,
+        .scan_time.active.max = 1500
     };
 
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, false);

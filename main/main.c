@@ -245,8 +245,8 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
  *
  * s_shadow_seq is still bumped per flush so the MJPEG loop can detect
  * "nothing changed" and reuse its cached JPEG (near-zero CPU when idle). */
-static void *s_panel_fb = NULL;        /* &RGB565 pixels in PSRAM */
-static bool  s_panel_fb_ready = false; /* flips true after first flush */
+static void *s_panel_fb = NULL;       /* &RGB565 pixels in PSRAM */
+static bool s_panel_fb_ready = false; /* flips true after first flush */
 static volatile uint32_t s_shadow_seq = 0;
 
 /* Public getters (legacy names kept so display_capture.c doesn't churn). */
@@ -255,7 +255,7 @@ bool display_capture_shadow_ready(void) { return s_panel_fb_ready; }
 uint32_t display_capture_shadow_seq(void) { return s_shadow_seq; }
 
 static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
-                                  lv_color_t *color_map) {
+                              lv_color_t *color_map) {
   esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
   int offsetx1 = area->x1;
   int offsetx2 = area->x2;
@@ -954,7 +954,8 @@ void app_main(void) {
    * succeeds without side-effects. Functionally identical for users — the
    * feature is disabled until explicitly enabled anyway. */
   /* remote_touch_init(disp);  -- deferred, see comment above */
-  (void)disp;  /* disp is passed to remote_touch_init lazily, stored by web handler */
+  (void)disp; /* disp is passed to remote_touch_init lazily, stored by web
+                 handler */
 
   lvgl_mux = xSemaphoreCreateRecursiveMutex();
   assert(lvgl_mux);

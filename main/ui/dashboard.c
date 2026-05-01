@@ -17,6 +17,7 @@
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
+#include "can/can_manager.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -231,6 +232,15 @@ loaded:
 	 * registering here, widgets are already built and LVGL is stable.
 	 * Idempotent — subsequent calls are a no-op. */
 	remote_touch_init(lv_disp_get_default());
+
+	/* Rebuild the TWAI hardware acceptance filter from the just-loaded signal
+	 * registry. Without this, runtime ECU changes (first-run wizard, Device
+	 * Settings ECU picker, web layout save) wouldn't take effect on the bus
+	 * until a power reboot — the filter would still hold the previous layout's
+	 * CAN IDs and silently drop the new ECU's frames. Safe at boot too: the
+	 * very first call transitions from boot-time ACCEPT_ALL to a layout-driven
+	 * narrow filter. ~150 ms TWAI restart, called once per layout reload. */
+	reconfigure_can_filter();
 }
 
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
@@ -260,6 +270,11 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 		/* Re-bind layout-level night-mode CAN trigger for the new layout. */
 		_setup_night_trigger();
 	}
+
+	/* New signal set means new CAN IDs to accept — rebuild the TWAI hardware
+	 * filter so the bus actually delivers them. See dashboard_init for the
+	 * full rationale. */
+	reconfigure_can_filter();
 }
 
 esp_err_t dashboard_persist_layout(void) {
