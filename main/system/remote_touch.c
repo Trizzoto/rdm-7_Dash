@@ -1,6 +1,7 @@
 #include "remote_touch.h"
 #include "screen_config.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -31,9 +32,19 @@ static lv_indev_drv_t s_drv;
  * which refreshes s_last_activity_us — so a real hold/drag never
  * trips this. 350 ms gives 50 ms of headroom inside the 400 ms LVGL
  * long-press window. */
-#include "esp_timer.h"
 #define REMOTE_TOUCH_IDLE_MS 350
 static int64_t  s_last_activity_us  = 0;
+
+/* esp_timer-based watchdog. The inline watchdog in _remote_touch_read_cb
+ * only fires when LVGL polls the indev — under heavy CONTROL load (1 Hz
+ * screenshot poll + screenshot encode running on the HTTP task hammering
+ * PSRAM bandwidth), the LVGL task can be slow enough that a phantom press
+ * persists for hundreds of ms. esp_timer runs on a dedicated high-priority
+ * task that is NOT starved by LVGL/HTTP work, so the watchdog ticks
+ * reliably regardless of dashboard load. The inline watchdog stays as a
+ * faster recovery when LVGL is responsive. */
+static esp_timer_handle_t s_watchdog_timer = NULL;
+#define REMOTE_TOUCH_WATCHDOG_PERIOD_US (50 * 1000)  /* 50 ms */
 
 /* Deferred-release semantics:
  *
@@ -57,6 +68,26 @@ static inline int16_t _clamp(int16_t v, int16_t lo, int16_t hi) {
 	if (v < lo) return lo;
 	if (v > hi) return hi;
 	return v;
+}
+
+/* Watchdog tick — runs on the esp_timer task, not LVGL. Mirrors the
+ * inline check in _remote_touch_read_cb but ticks reliably under load. */
+static void _watchdog_tick_cb(void *arg) {
+	(void)arg;
+	if (!s_mux) return;
+	if (xSemaphoreTake(s_mux, 0) != pdTRUE) return;  /* busy — try next tick */
+	if (s_enabled && s_pressed && s_last_activity_us != 0) {
+		int64_t idle_us = esp_timer_get_time() - s_last_activity_us;
+		if (idle_us > (int64_t)REMOTE_TOUCH_IDLE_MS * 1000) {
+			s_pressed           = false;
+			s_release_requested = false;
+			ESP_LOGW(TAG,
+				"watchdog (timer) auto-released after %lld ms idle - "
+				"physical touch was likely starved by HTTP load",
+				idle_us / 1000);
+		}
+	}
+	xSemaphoreGive(s_mux);
 }
 
 /* LVGL indev read callback — runs on the LVGL task. Return the latched
@@ -115,6 +146,22 @@ void remote_touch_init(lv_disp_t *disp) {
 	s_drv.disp    = disp;
 	s_drv.read_cb = _remote_touch_read_cb;
 	lv_indev_drv_register(&s_drv);
+
+	/* Start the off-LVGL stuck-press watchdog. Failure here is non-fatal —
+	 * we still have the inline watchdog inside read_cb. */
+	const esp_timer_create_args_t wdog_args = {
+		.callback        = _watchdog_tick_cb,
+		.arg             = NULL,
+		.dispatch_method = ESP_TIMER_TASK,
+		.name            = "rt_wdog",
+	};
+	if (esp_timer_create(&wdog_args, &s_watchdog_timer) == ESP_OK) {
+		esp_timer_start_periodic(s_watchdog_timer,
+		                         REMOTE_TOUCH_WATCHDOG_PERIOD_US);
+	} else {
+		ESP_LOGW(TAG, "watchdog timer create failed - inline-only fallback");
+		s_watchdog_timer = NULL;
+	}
 
 	ESP_LOGI(TAG, "Virtual input device registered (coexists with GT911)");
 }
