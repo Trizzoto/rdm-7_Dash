@@ -6,11 +6,13 @@
  * process via signal_dispatch_frame().
  */
 #include "can_manager.h"
+#include "can_id_tracker.h"
 #include "signal.h"
 #include "signal_sim.h"
 
 #include "driver/twai.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -356,6 +358,10 @@ void can_process_queued_frames(void) {
 		/* When simulator is active, drain queue but skip dispatch */
 		if (!signal_sim_is_active()) {
 			signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+			/* Per-ID tracker for live diagnostics screen — captures every
+			 * frame regardless of whether any signal matched. */
+			can_id_tracker_record(msg.identifier, msg.extd,
+			                      msg.data, msg.data_length_code);
 		}
 		processed++;
 	}
@@ -390,6 +396,10 @@ twai_timing_config_t can_get_timing_for_bitrate(uint8_t index) {
 	return _bitrate_to_timing(index);
 }
 
+bool can_is_suspended(void) {
+	return s_suspended;
+}
+
 void can_suspend(void) {
 	if (s_suspended) return;
 	ESP_LOGI(TAG, "Suspending CAN for bus test");
@@ -412,24 +422,112 @@ void can_resume(void) {
 	config_store_load_bitrate(&saved_bitrate);
 	g_t_config = _bitrate_to_timing(saved_bitrate);
 
-	esp_err_t err = twai_driver_install(&g_config, &g_t_config, &f_config);
+	/* Defensive teardown before the FIRST install attempt. Both calls
+	 * are harmless if nothing's installed/running — the driver returns
+	 * ESP_ERR_INVALID_STATE which we ignore. This catches the case where
+	 * a prior failed install left partial state behind. */
+	twai_stop();
+	twai_driver_uninstall();
+	vTaskDelay(pdMS_TO_TICKS(100));
+
+	/* Retry the driver install up to 3 times. The previous twai_driver_uninstall
+	 * (in scan task or can_suspend) needs the TWAI peripheral fully released
+	 * before reinstall — a tight loop right after uninstall sometimes returns
+	 * ESP_ERR_INVALID_STATE on the first attempt. Without this retry, a single
+	 * transient failure leaves CAN dead until reboot ("CAN status unavailable"). */
+	esp_err_t err = ESP_FAIL;
+	for (int attempt = 0; attempt < 3; attempt++) {
+		err = twai_driver_install(&g_config, &g_t_config, &f_config);
+		if (err == ESP_OK) break;
+		ESP_LOGW(TAG, "Resume: install attempt %d/3 failed: %s (0x%04x)",
+				 attempt + 1, esp_err_to_name(err), err);
+		twai_driver_uninstall();
+		vTaskDelay(pdMS_TO_TICKS(200 * (attempt + 1)));
+	}
 	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "Resume: twai_driver_install failed: %s",
+		ESP_LOGE(TAG, "Resume: twai_driver_install failed after retries: %s",
 				 esp_err_to_name(err));
-		s_suspended = false;
+		/* Leave s_suspended=true so a future call can retry. This was
+		 * previously cleared on failure, which silently locked CAN out. */
 		return;
 	}
 
 	if (twai_start() != ESP_OK) {
-		ESP_LOGE(TAG, "Resume: twai_start failed");
-		s_suspended = false;
-		return;
+		ESP_LOGE(TAG, "Resume: twai_start failed - uninstalling for clean retry");
+		twai_driver_uninstall();
+		return;  /* keep s_suspended=true so caller can retry */
 	}
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	can_task_should_stop = false;
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
-							NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0);
+	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
+								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0)
+		!= pdPASS) {
+		ESP_LOGE(TAG, "Resume: failed to create CAN RX task");
+		canTaskHandle = NULL;
+		twai_stop();
+		twai_driver_uninstall();
+		return;  /* keep s_suspended=true so caller can retry */
+	}
 	s_suspended = false;
 	ESP_LOGI(TAG, "CAN resumed");
+}
+
+bool can_recover(void) {
+	/* Rate-limit so a hard-stuck state doesn't spin can_resume on every
+	 * 1 s diagnostics tick. esp_timer_get_time() is monotonic since boot. */
+	static int64_t s_last_attempt_us = 0;
+	int64_t now = esp_timer_get_time();
+	if (now - s_last_attempt_us < 5LL * 1000 * 1000) return false;
+	s_last_attempt_us = now;
+
+	if (s_suspended) {
+		ESP_LOGW(TAG, "Recovery: was left suspended - retrying resume");
+		can_resume();
+		return true;
+	}
+
+	twai_status_info_t info;
+	if (twai_get_status_info(&info) == ESP_OK) {
+		/* Driver is alive - nothing to recover. */
+		return false;
+	}
+
+	/* Driver is gone but we never got a suspend marker. Could be a corrupt
+	 * state from a botched previous teardown. Run the full re-init: stop
+	 * any leftover task handle, reinstall, restart, recreate RX task. */
+	ESP_LOGW(TAG, "Recovery: TWAI driver missing - reinstalling from scratch");
+	_stop_can_task();
+	vTaskDelay(pdMS_TO_TICKS(50));
+	/* Defensive uninstall - ESP_ERR_INVALID_STATE on a not-installed driver
+	 * is fine, we just want to guarantee a clean slate. */
+	twai_driver_uninstall();
+	vTaskDelay(pdMS_TO_TICKS(50));
+
+	build_twai_filter_from_signals(&f_config);
+	uint8_t saved_bitrate = 2;
+	config_store_load_bitrate(&saved_bitrate);
+	g_t_config = _bitrate_to_timing(saved_bitrate);
+
+	if (twai_driver_install(&g_config, &g_t_config, &f_config) != ESP_OK) {
+		ESP_LOGE(TAG, "Recovery: twai_driver_install failed");
+		return true;
+	}
+	if (twai_start() != ESP_OK) {
+		ESP_LOGE(TAG, "Recovery: twai_start failed");
+		twai_driver_uninstall();
+		return true;
+	}
+	can_task_should_stop = false;
+	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
+								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0)
+		!= pdPASS) {
+		ESP_LOGE(TAG, "Recovery: failed to create CAN RX task");
+		canTaskHandle = NULL;
+		twai_stop();
+		twai_driver_uninstall();
+		return true;
+	}
+	ESP_LOGI(TAG, "Recovery: CAN reinstalled and RX task started");
+	return true;
 }

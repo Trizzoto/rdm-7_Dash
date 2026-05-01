@@ -14,6 +14,7 @@
 
 #include "driver/twai.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -27,6 +28,12 @@ static volatile bool     s_running   = false;
 static volatile bool     s_cancel    = false;
 static can_scan_ui_cb_t  s_ui_cb     = NULL;
 static TaskHandle_t      s_task_handle = NULL;
+/* Wall-clock start of the current scan task. Used by can_bus_test_start to
+ * detect a hung scan and force-reset. With no CAN connected the worst-case
+ * runtime is ~12 s (4 bitrates × 3 install retries × backoff + listen
+ * windows + can_resume retries). 30 s gives plenty of headroom. */
+static int64_t           s_task_start_us = 0;
+#define SCAN_TASK_HUNG_TIMEOUT_US (30LL * 1000 * 1000)
 
 /* Duration to listen at each bitrate (ms) */
 #define LISTEN_DURATION_MS  2000
@@ -59,34 +66,66 @@ static void _track_unique_id(can_scan_bitrate_result_t *r, uint32_t id) {
 
 /**
  * Install TWAI in listen-only mode with accept-all filter at the given
- * timing config.  Returns ESP_OK on success.
+ * timing config. Retries up to 3 times on install/start failure -- with no
+ * CAN wires connected the peripheral can take a few attempts to settle
+ * between rapid uninstall/install cycles. Returns ESP_OK on success.
+ *
+ * Logs ESP_ERR codes both as a name and as a raw hex value so that
+ * unfamiliar error codes can still be looked up if the symbol isn't in
+ * the resolver table on a particular ESP-IDF build.
  */
 static esp_err_t _install_listen_only(const twai_timing_config_t *t_config) {
     twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO,
                                                           CAN_RX_GPIO,
                                                           TWAI_MODE_LISTEN_ONLY);
-    g.rx_queue_len = 32;
+    /* 8-deep RX queue is plenty for a 2-second listen; smaller allocation
+     * also rules out a heap-fragmentation NO_MEM as a cause of install
+     * failure on a long-running unit. */
+    g.rx_queue_len = 8;
     twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
-    esp_err_t err = twai_driver_install(&g, t_config, &f);
-    if (err != ESP_OK) return err;
+    /* Defensive teardown before the FIRST attempt. If a prior failed
+     * cycle left the driver partially installed, this gets us back to a
+     * known clean state. Both calls are harmless if nothing is there
+     * (driver returns ESP_ERR_INVALID_STATE which we ignore). */
+    twai_stop();
+    twai_driver_uninstall();
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    err = twai_start();
-    if (err != ESP_OK) {
-        twai_driver_uninstall();
-        return err;
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        err = twai_driver_install(&g, t_config, &f);
+        if (err == ESP_OK) {
+            err = twai_start();
+            if (err == ESP_OK) {
+                /* Allow the TWAI controller to synchronize with the bus.
+                 * With no bus connected, sync never completes but the
+                 * controller is still in a valid state for receiving. */
+                vTaskDelay(pdMS_TO_TICKS(50));
+                return ESP_OK;
+            }
+            ESP_LOGW(TAG, "twai_start failed attempt %d/3: %s (0x%04x)",
+                     attempt + 1, esp_err_to_name(err), err);
+            twai_driver_uninstall();
+        } else {
+            ESP_LOGW(TAG, "twai_driver_install failed attempt %d/3: %s (0x%04x)",
+                     attempt + 1, esp_err_to_name(err), err);
+            twai_driver_uninstall();
+        }
+        /* Long backoff: 200/400/600 ms. The peripheral can need more
+         * than the original 80 ms to release between rapid cycles. */
+        vTaskDelay(pdMS_TO_TICKS(200 * (attempt + 1)));
     }
-    /* Allow the TWAI controller to synchronize with the bus */
-    vTaskDelay(pdMS_TO_TICKS(50));
-    return ESP_OK;
+    return err;
 }
 
-/** Uninstall TWAI (stop + uninstall, ignoring errors). */
+/** Uninstall TWAI (stop + uninstall, ignoring errors). 50ms each side
+ *  matches can_suspend; 20ms was insufficient for some no-bus scenarios. */
 static void _uninstall(void) {
     twai_stop();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(50));
     twai_driver_uninstall();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(50));
 }
 
 /**
@@ -148,7 +187,20 @@ static void _scan_task(void *arg) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to install TWAI for bitrate %d: %s",
                      i, esp_err_to_name(err));
+            /* Already cleaned up inside _install_listen_only. Mark this
+             * bitrate as failed-to-install so the UI can show something
+             * other than a frozen "Testing..." label. We use bus_errors
+             * as the failure marker (set traffic_detected=false; UI
+             * already treats no-traffic as "No traffic"). */
             s_report.results[i].traffic_detected = false;
+            s_report.results[i].frames_received = 0;
+            s_report.results[i].bus_errors      = 0xFFFFFFFFu;  /* sentinel */
+            /* Bump the per-bitrate UI so user sees this slot move on */
+            _push_ui_update();
+            /* Brief settle delay before the next iteration -- gives the
+             * peripheral time to release whatever state caused the install
+             * to fail. Without this, multiple bitrates can fail in a row. */
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
@@ -190,7 +242,39 @@ static void _scan_task(void *arg) {
 /* ── Public API ────────────────────────────────────────────────────────── */
 
 bool can_bus_test_start(void) {
-    if (s_running) return false;
+    /* Self-heal from a stuck "running" state. Three paths can leave
+     * s_running stuck true:
+     *   1. Scan task crashed / was force-deleted (task handle invalid)
+     *   2. Scan task self-deleted but the flag wasn't cleared (race)
+     *   3. Scan task is still cleaning up (legitimately running)
+     *
+     * For case 3 we honour it (return false). For cases 1 and 2 we force
+     * a reset. Wall-clock hung-task timeout catches the worst-case where
+     * eTaskGetState lies about a freed handle. */
+    if (s_running) {
+        bool handle_gone = (s_task_handle == NULL);
+        bool task_deleted = handle_gone ||
+            (eTaskGetState(s_task_handle) == eDeleted);
+        int64_t age_us = esp_timer_get_time() - s_task_start_us;
+        bool hung = (age_us > SCAN_TASK_HUNG_TIMEOUT_US);
+
+        if (handle_gone || task_deleted) {
+            ESP_LOGW(TAG, "stale s_running (handle_gone=%d deleted=%d) - resetting",
+                     handle_gone, task_deleted);
+            s_running     = false;
+            s_task_handle = NULL;
+        } else if (hung) {
+            ESP_LOGW(TAG, "scan task hung for %lld ms - force-deleting",
+                     age_us / 1000);
+            vTaskDelete(s_task_handle);
+            s_running     = false;
+            s_task_handle = NULL;
+        } else {
+            ESP_LOGI(TAG, "scan still running (age=%lld ms) - rejecting start",
+                     age_us / 1000);
+            return false;  /* genuinely running */
+        }
+    }
 
     /* Reset report */
     memset(&s_report, 0, sizeof(s_report));
@@ -198,14 +282,17 @@ bool can_bus_test_start(void) {
     s_report.recommended_bitrate = -1;
     s_cancel = false;
     s_running = true;
+    s_task_start_us = esp_timer_get_time();
 
     BaseType_t ret = xTaskCreatePinnedToCore(
         _scan_task, "can_scan", 4096, NULL, 5, &s_task_handle, 0);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create scan task");
+        ESP_LOGE(TAG, "xTaskCreatePinnedToCore failed (heap=%lu) - aborting start",
+                 (unsigned long)xPortGetFreeHeapSize());
         s_running = false;
         return false;
     }
+    ESP_LOGI(TAG, "scan task started (handle=%p)", s_task_handle);
     return true;
 }
 

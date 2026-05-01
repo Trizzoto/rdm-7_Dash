@@ -120,3 +120,17 @@ void can_resume(void);
  * @param index  0=125k  1=250k  2=500k  3=1M
  */
 twai_timing_config_t can_get_timing_for_bitrate(uint8_t index);
+
+/** True if can_suspend() was called and resume hasn't completed. */
+bool can_is_suspended(void);
+
+/**
+ * Best-effort recovery from a "CAN unavailable" state. Called by the
+ * Device Settings CAN diagnostics card when it sees twai_get_status_info
+ * fail. Re-runs whichever path is appropriate:
+ *   - if suspended: retries can_resume() (e.g. previous resume failed)
+ *   - else if driver is uninstalled: does a fresh install + start + RX task
+ * Self-rate-limited to one attempt per 5 seconds so a stuck failure mode
+ * doesn't burn CPU. Returns true if recovery was attempted this call.
+ */
+bool can_recover(void);

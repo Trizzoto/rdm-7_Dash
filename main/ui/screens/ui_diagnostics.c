@@ -11,6 +11,7 @@
  * any LVGL or signal/wifi/sd API directly without locking.
  */
 #include "ui_diagnostics.h"
+#include "ui_can_list.h"
 #include "../theme.h"
 #include "screen_config.h"
 #include "net/wifi_manager.h"
@@ -302,6 +303,12 @@ static void _refresh_btn_cb(lv_event_t *e)
 	_refresh(NULL);
 }
 
+static void _can_ids_btn_cb(lv_event_t *e)
+{
+	(void)e;
+	can_list_ui_show();
+}
+
 /* ── Build / teardown ────────────────────────────────────────────────────── */
 
 static lv_obj_t *_make_card(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
@@ -373,6 +380,23 @@ static void _create(void)
 	lv_obj_set_style_text_font(refresh_lbl, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(refresh_lbl, THEME_COLOR_TEXT_MUTED, 0);
 	lv_obj_center(refresh_lbl);
+
+	/* "CAN IDs" — opens the live per-ID list screen. Sits to the left of
+	 * the Refresh button (80 wide + 6 gap = 86, so -86 offset). */
+	lv_obj_t *can_ids_btn = lv_btn_create(header);
+	lv_obj_set_size(can_ids_btn, 90, 30);
+	lv_obj_align(can_ids_btn, LV_ALIGN_RIGHT_MID, -86, 0);
+	lv_obj_set_style_bg_color(can_ids_btn, THEME_COLOR_SECTION_BG, 0);
+	lv_obj_set_style_border_color(can_ids_btn, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_border_width(can_ids_btn, 1, 0);
+	lv_obj_set_style_radius(can_ids_btn, THEME_RADIUS_SMALL, 0);
+	lv_obj_set_style_shadow_width(can_ids_btn, 0, 0);
+	lv_obj_add_event_cb(can_ids_btn, _can_ids_btn_cb, LV_EVENT_CLICKED, NULL);
+	lv_obj_t *can_ids_lbl = lv_label_create(can_ids_btn);
+	lv_label_set_text(can_ids_lbl, "CAN IDs");
+	lv_obj_set_style_text_font(can_ids_lbl, THEME_FONT_SMALL, 0);
+	lv_obj_set_style_text_color(can_ids_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_center(can_ids_lbl);
 
 	/* Body — 3-column flex-wrap grid. Cards size to their content height so
 	 * SD/Signals (3 rows) sit shorter than CAN/WiFi/System (5-6 rows), which

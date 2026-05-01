@@ -40,6 +40,16 @@ static lv_obj_t  *s_scan_detail   = NULL;
 static lv_obj_t  *s_btn_apply     = NULL;
 static lv_obj_t  *s_btn_next1     = NULL;
 static lv_obj_t  *s_btn_cancel    = NULL;
+static lv_obj_t  *s_btn_start     = NULL;
+
+/* Auto-retry scan-start: when the user re-runs the wizard from Device
+ * Settings just after closing/skipping a previous instance, the scan task
+ * may still be in its 50–500 ms cleanup window. Polling for ~3 s gives the
+ * old scan time to fully exit before we declare a real failure. */
+static lv_timer_t *s_start_retry_timer = NULL;
+static uint8_t     s_start_retry_count = 0;
+#define START_RETRY_PERIOD_MS  300
+#define START_RETRY_MAX        10   /* 10 × 300 ms = 3 s budget */
 
 /* Step 3: WiFi info (step 2 is the ECU picker - handled by ui_ecu_picker) */
 static lv_obj_t  *s_step3         = NULL;
@@ -90,12 +100,17 @@ static void _close_wizard(bool mark_done) {
         lv_timer_del(s_wifi_return_timer);
         s_wifi_return_timer = NULL;
     }
+    if (s_start_retry_timer) {
+        lv_timer_del(s_start_retry_timer);
+        s_start_retry_timer = NULL;
+    }
+    s_start_retry_count = 0;
     s_wifi_return_pending = false;
     if (s_overlay && lv_obj_is_valid(s_overlay))
         lv_obj_del_async(s_overlay);
     s_overlay = s_card = s_step1 = s_step3 = NULL;
     s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
-    s_btn_apply = s_btn_next1 = s_btn_cancel = NULL;
+    s_btn_apply = s_btn_next1 = s_btn_cancel = s_btn_start = NULL;
     for (int i = 0; i < 4; i++) s_scan_results[i] = NULL;
     /* NB: the dashboard reload (if s_ecu_applied) is NOT triggered here.
      * Finish fires it explicitly after _close_wizard; the WiFi-join path
@@ -138,6 +153,10 @@ static void _scan_ui_update(void) {
     switch (r->state) {
     case CAN_SCAN_STOPPING:
         lv_label_set_text(s_scan_status, "Stopping CAN for scan...");
+        if (s_btn_start)  lv_obj_add_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
+        if (s_btn_apply)  lv_obj_add_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
+        if (s_btn_next1)  lv_obj_add_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+        if (s_btn_cancel) lv_obj_clear_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
         break;
 
     case CAN_SCAN_TESTING_BITRATE: {
@@ -148,16 +167,29 @@ static void _scan_ui_update(void) {
         lv_bar_set_value(s_scan_bar, idx * 25, LV_ANIM_ON);
         for (uint8_t i = 0; i < 4; i++) {
             if (i < idx) {
-                if (r->results[i].traffic_detected)
+                /* bus_errors == 0xFFFFFFFFu is the "install failed"
+                 * sentinel set by can_bus_test.c when the TWAI install
+                 * couldn't recover after retries. Show something useful
+                 * instead of "No traffic" which implies wiring is fine. */
+                bool install_failed =
+                    (r->results[i].bus_errors == 0xFFFFFFFFu);
+                if (r->results[i].traffic_detected) {
                     lv_label_set_text_fmt(s_scan_results[i],
                         "%s  --  %lu frames", BR_NAMES[i],
                         (unsigned long)r->results[i].frames_received);
-                else
+                    lv_obj_set_style_text_color(s_scan_results[i],
+                        THEME_COLOR_STATUS_CONNECTED, 0);
+                } else if (install_failed) {
+                    lv_label_set_text_fmt(s_scan_results[i],
+                        "%s  --  CAN driver busy, retrying", BR_NAMES[i]);
+                    lv_obj_set_style_text_color(s_scan_results[i],
+                        THEME_COLOR_STATUS_ERROR, 0);
+                } else {
                     lv_label_set_text_fmt(s_scan_results[i],
                         "%s  --  No traffic", BR_NAMES[i]);
-                lv_obj_set_style_text_color(s_scan_results[i],
-                    r->results[i].traffic_detected
-                        ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+                    lv_obj_set_style_text_color(s_scan_results[i],
+                        THEME_COLOR_TEXT_MUTED, 0);
+                }
             } else if (i == idx) {
                 lv_label_set_text_fmt(s_scan_results[i],
                     "%s  --  Testing...", BR_NAMES[i]);
@@ -177,14 +209,22 @@ static void _scan_ui_update(void) {
     case CAN_SCAN_CANCELLED:
         lv_bar_set_value(s_scan_bar, 100, LV_ANIM_ON);
 
-        /* Final result labels */
+        /* Final result labels — same install-failed sentinel handling
+         * as the in-progress case above, so the user can tell driver
+         * trouble (orange) apart from a quiet bus (muted). */
         for (uint8_t i = 0; i < 4; i++) {
+            bool install_failed = (r->results[i].bus_errors == 0xFFFFFFFFu);
             if (r->results[i].traffic_detected) {
                 lv_label_set_text_fmt(s_scan_results[i],
                     "%s  --  %lu frames", BR_NAMES[i],
                     (unsigned long)r->results[i].frames_received);
                 lv_obj_set_style_text_color(s_scan_results[i],
                     THEME_COLOR_STATUS_CONNECTED, 0);
+            } else if (install_failed) {
+                lv_label_set_text_fmt(s_scan_results[i],
+                    "%s  --  CAN driver busy", BR_NAMES[i]);
+                lv_obj_set_style_text_color(s_scan_results[i],
+                    THEME_COLOR_STATUS_ERROR, 0);
             } else {
                 lv_label_set_text_fmt(s_scan_results[i],
                     "%s  --  No traffic", BR_NAMES[i]);
@@ -208,17 +248,41 @@ static void _scan_ui_update(void) {
             lv_label_set_text_fmt(lbl, "Apply %s & Continue", BR_NAMES[bi]);
             lv_obj_clear_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_label_set_text(s_scan_status,
-                "No CAN traffic detected");
-            lv_obj_set_style_text_color(s_scan_status,
-                THEME_COLOR_STATUS_ERROR, 0);
-            lv_label_set_text(s_scan_detail,
-                "Check wiring & ignition. You can re-scan from Device Settings.");
+            /* If every bitrate failed to install, that's a peripheral
+             * state issue rather than a wiring problem — say so. */
+            uint8_t install_fails = 0;
+            for (uint8_t i = 0; i < 4; i++) {
+                if (r->results[i].bus_errors == 0xFFFFFFFFu) install_fails++;
+            }
+            if (install_fails == 4) {
+                lv_label_set_text(s_scan_status,
+                    "CAN driver could not initialise");
+                lv_obj_set_style_text_color(s_scan_status,
+                    THEME_COLOR_STATUS_ERROR, 0);
+                lv_label_set_text(s_scan_detail,
+                    "TWAI peripheral is stuck. Reboot the dash and try again.\n"
+                    "If this persists, check the serial log for CAN_TEST errors.");
+            } else {
+                lv_label_set_text(s_scan_status,
+                    "No CAN traffic detected");
+                lv_obj_set_style_text_color(s_scan_status,
+                    THEME_COLOR_STATUS_ERROR, 0);
+                lv_label_set_text(s_scan_detail,
+                    "Check wiring & ignition. You can re-scan from Device Settings.");
+            }
         }
 
-        /* Hide cancel, show next */
+        /* Hide cancel, show Re-scan + (when no traffic) Continue */
         lv_obj_add_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+        if (s_btn_start) {
+            lv_obj_t *slbl = lv_obj_get_child(s_btn_start, 0);
+            if (slbl) lv_label_set_text(slbl, "Re-scan");
+            lv_obj_clear_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (r->recommended_bitrate < 0) {
+            /* No traffic — surface "Continue without CAN" at the Apply slot */
+            lv_obj_clear_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+        }
         lv_label_set_text(s_scan_progress, "");
         break;
 
@@ -232,6 +296,126 @@ static void _scan_ui_update(void) {
 static void _btn_cancel_scan_cb(lv_event_t *e) {
     (void)e;
     can_bus_test_cancel();
+}
+
+/* Reset step 1 visuals back to "scan starting" state. Used by both the
+ * initial auto-start path and the manual Start/Re-scan button. */
+static void _reset_step1_for_scan(void) {
+    if (s_btn_apply)  lv_obj_add_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
+    if (s_btn_next1)  lv_obj_add_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+    if (s_btn_start)  lv_obj_add_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
+    if (s_btn_cancel) lv_obj_clear_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
+    if (s_scan_status) {
+        lv_label_set_text(s_scan_status, "Starting scan...");
+        lv_obj_set_style_text_color(s_scan_status, THEME_COLOR_TEXT_PRIMARY, 0);
+    }
+    if (s_scan_detail)   lv_label_set_text(s_scan_detail, "");
+    if (s_scan_progress) lv_label_set_text(s_scan_progress, "");
+    if (s_scan_bar)      lv_bar_set_value(s_scan_bar, 0, LV_ANIM_OFF);
+    for (int i = 0; i < 4; i++) {
+        if (!s_scan_results[i]) continue;
+        lv_label_set_text_fmt(s_scan_results[i], "%s  --  ...", BR_NAMES[i]);
+        lv_obj_set_style_text_color(s_scan_results[i],
+                                    THEME_COLOR_TEXT_MUTED, 0);
+    }
+}
+
+/* Show the start button in a "could not start" state so the user can
+ * retry instead of being stuck staring at "Starting scan..." forever. */
+static void _show_start_failed_state(void) {
+    if (s_btn_cancel) lv_obj_add_flag(s_btn_cancel, LV_OBJ_FLAG_HIDDEN);
+    if (s_btn_start) {
+        lv_obj_t *slbl = lv_obj_get_child(s_btn_start, 0);
+        if (slbl) lv_label_set_text(slbl, "Start Scan");
+        lv_obj_clear_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_scan_status) {
+        lv_label_set_text(s_scan_status,
+            "Could not start scan - tap Start to retry");
+        lv_obj_set_style_text_color(s_scan_status,
+            THEME_COLOR_STATUS_ERROR, 0);
+    }
+}
+
+/* Retry timer body — see _try_start_scan for usage. */
+static void _start_retry_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_step1 || !lv_obj_is_valid(s_step1)) {
+        /* Wizard torn down mid-retry — clean up and bail. */
+        if (s_start_retry_timer) {
+            lv_timer_del(s_start_retry_timer);
+            s_start_retry_timer = NULL;
+        }
+        s_start_retry_count = 0;
+        return;
+    }
+
+    s_start_retry_count++;
+    if (can_bus_test_start()) {
+        /* Success — kill the timer; _scan_ui_update will take over. */
+        ESP_LOGI(TAG, "scan started after %u retries", s_start_retry_count);
+        lv_timer_del(s_start_retry_timer);
+        s_start_retry_timer = NULL;
+        s_start_retry_count = 0;
+        return;
+    }
+
+    if (s_start_retry_count >= START_RETRY_MAX) {
+        ESP_LOGW(TAG, "scan-start retry budget exhausted (%u attempts)",
+                 s_start_retry_count);
+        lv_timer_del(s_start_retry_timer);
+        s_start_retry_timer = NULL;
+        s_start_retry_count = 0;
+        _show_start_failed_state();
+        return;
+    }
+
+    /* Still waiting — keep status visible so user knows we're trying. */
+    if (s_scan_status) {
+        lv_label_set_text_fmt(s_scan_status,
+            "Waiting for previous scan to finish... (%u/%d)",
+            s_start_retry_count, START_RETRY_MAX);
+    }
+}
+
+/* Try to start the scan immediately; if a previous scan is still cleaning
+ * up, schedule a retry timer that polls until it can start (up to
+ * START_RETRY_MAX × START_RETRY_PERIOD_MS). */
+static void _try_start_scan(void)
+{
+    _reset_step1_for_scan();
+    can_bus_test_set_ui_callback(_scan_ui_update);
+
+    if (can_bus_test_start()) return;
+
+    /* Couldn't start right now — most likely a previous scan is still
+     * cleaning up. Show waiting status and poll. */
+    if (s_scan_status) {
+        lv_label_set_text(s_scan_status,
+            "Waiting for previous scan to finish...");
+        lv_obj_set_style_text_color(s_scan_status,
+            THEME_COLOR_TEXT_PRIMARY, 0);
+    }
+    s_start_retry_count = 0;
+    if (s_start_retry_timer) lv_timer_del(s_start_retry_timer);
+    s_start_retry_timer = lv_timer_create(_start_retry_timer_cb,
+                                          START_RETRY_PERIOD_MS, NULL);
+}
+
+static void _btn_start_scan_cb(lv_event_t *e) {
+    (void)e;
+    /* Don't double-start. If a retry is already in flight, the user just
+     * needs to wait — but give them visible feedback so the click isn't
+     * silently swallowed. */
+    if (s_start_retry_timer) {
+        if (s_scan_status) {
+            lv_label_set_text(s_scan_status,
+                "Already retrying — please wait...");
+        }
+        return;
+    }
+    _try_start_scan();
 }
 
 static void _btn_apply_cb(lv_event_t *e) {
@@ -318,7 +502,7 @@ static void _btn_finish_cb(lv_event_t *e) {
         lv_obj_t *overlay_to_free = s_overlay;
         s_overlay = s_card = s_step1 = s_step3 = NULL;
         s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
-        s_btn_apply = s_btn_next1 = s_btn_cancel = NULL;
+        s_btn_apply = s_btn_next1 = s_btn_cancel = s_btn_start = NULL;
         for (int i = 0; i < 4; i++) s_scan_results[i] = NULL;
         lv_async_call(_deferred_reload_after_wizard, overlay_to_free);
     } else {
@@ -503,24 +687,30 @@ static void _build_step1(void) {
     lv_obj_set_style_text_color(s_scan_detail, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_align(s_scan_detail, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* Apply button (hidden until scan completes with a result) */
+    /* Row 1 (Y=248): primary forward action — Apply (with traffic) OR
+     * Continue without CAN (no traffic). Mutually exclusive, share Y. */
     s_btn_apply = _make_btn(s_step1, "Apply & Continue",
                             THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_ON_ACCENT,
                             false, 248, _btn_apply_cb);
     lv_obj_add_flag(s_btn_apply, LV_OBJ_FLAG_HIDDEN);
 
-    /* Cancel scan button */
+    s_btn_next1 = _make_btn(s_step1, "Continue without CAN",
+                            THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_MUTED,
+                            true, 248, _btn_next1_cb);
+    lv_obj_add_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+
+    /* Row 2 (Y=296): scan control — Cancel (while running) OR
+     * Start/Re-scan (idle/complete/error). Mutually exclusive, share Y. */
     s_btn_cancel = _make_btn(s_step1, "Cancel Scan",
                              THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_MUTED,
                              true, 296, _btn_cancel_scan_cb);
 
-    /* Next (skip CAN) button - hidden until scan finishes */
-    s_btn_next1 = _make_btn(s_step1, "Continue without CAN",
-                            THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_MUTED,
-                            true, 296, _btn_next1_cb);
-    lv_obj_add_flag(s_btn_next1, LV_OBJ_FLAG_HIDDEN);
+    s_btn_start = _make_btn(s_step1, "Start Scan",
+                            THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
+                            true, 296, _btn_start_scan_cb);
+    lv_obj_add_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
 
-    /* Skip (dismiss entire wizard) */
+    /* Row 3 (Y=340): Skip (dismiss entire wizard) */
     _make_btn(s_step1, "Skip for now  (ask again next boot)",
               lv_color_black(), THEME_COLOR_TEXT_MUTED,
               false, 340, _btn_skip_cb);
@@ -555,10 +745,11 @@ void show_first_run_wizard(void) {
     lv_obj_set_style_pad_all(s_card, 20, 0);
     lv_obj_clear_flag(s_card, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* Build step 1 (CAN scan) and auto-start */
+    /* Build step 1 (CAN scan) and auto-start. _try_start_scan handles the
+     * common race where the user re-runs the wizard while a previous scan
+     * task is still in cleanup (sub-second window) — it polls for up to
+     * 3 s before giving up. */
     _build_step1();
-    can_bus_test_set_ui_callback(_scan_ui_update);
-    can_bus_test_start();
-
-    ESP_LOGI(TAG, "First-run wizard shown, CAN scan started");
+    ESP_LOGI(TAG, "First-run wizard shown, kicking scan");
+    _try_start_scan();
 }

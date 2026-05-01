@@ -18,6 +18,7 @@
 #include "screens/ui_Screen3.h"
 #include "screens/first_run_wizard.h"
 #include "screens/ui_ecu_picker.h"
+#include "screens/ui_can_list.h"
 #include "layout/ecu_presets.h"
 #include "system/night_mode.h"
 #include "driver/twai.h"
@@ -226,9 +227,10 @@ static void _qr_btn_cb(lv_event_t *e) {
     char url[64];
     bool have_url = _build_web_url(url, sizeof(url));
 
-    /* Modal root on lv_layer_top so it floats above Device Settings */
+    /* Modal root on lv_layer_top so it floats above Device Settings.
+     * Height accounts for the optional STA-mode warning block (~50 px). */
     s_qr_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_qr_overlay, 400, 440);
+    lv_obj_set_size(s_qr_overlay, 400, 480);
     lv_obj_center(s_qr_overlay);
     lv_obj_set_style_bg_color(s_qr_overlay, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_bg_opa(s_qr_overlay, LV_OPA_COVER, 0);
@@ -263,6 +265,25 @@ static void _qr_btn_cb(lv_event_t *e) {
         lv_label_set_text(url_lbl, url);
         lv_obj_set_style_text_font(url_lbl, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(url_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+
+        /* If the URL is the STA-side IP (i.e. AP is off and the dash is
+         * connected to a router/hotspot), the scanning device must be on
+         * that same network. Most phone-hotspot APs enable client isolation
+         * by default, which silently drops traffic from the phone to the
+         * dash even when both are on the hotspot. Surface this so the user
+         * doesn't blame the QR. AP mode (192.168.4.1) sidesteps the issue. */
+        if (!wifi_manager_is_ap_enabled()) {
+            lv_obj_t *warn = lv_label_create(s_qr_overlay);
+            lv_label_set_text(warn,
+                "If this URL won't load:\n"
+                "phone hotspots usually block direct access.\n"
+                "Switch to Hotspot mode in WiFi settings.");
+            lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(warn, 360);
+            lv_obj_set_style_text_align(warn, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_font(warn, THEME_FONT_SMALL, 0);
+            lv_obj_set_style_text_color(warn, THEME_COLOR_TEXT_MUTED, 0);
+        }
 
         /* Stash pointers + current URL, then poll once a second so the QR
          * re-renders live if the user toggles AP or the STA DHCP lease
@@ -944,7 +965,15 @@ static void refresh_can_diagnostics(void) {
                                         &tx_err, &rx_err, &bus_err, &rx_missed);
     if (err != ESP_OK) {
         lv_obj_set_style_bg_color(s_can_health_dot, THEME_COLOR_TEXT_HINT, 0);
-        lv_label_set_text(s_can_health_label, "CAN status unavailable");
+        /* Try to bring CAN back. can_recover is rate-limited internally to
+         * one attempt per 5 s so this is safe to call from the 500 ms
+         * diagnostics tick. If the driver was just left in a bad state by
+         * a prior failed wizard scan, this gets it talking again without
+         * the user having to reboot. */
+        bool recovering = can_recover();
+        lv_label_set_text(s_can_health_label,
+            recovering ? "Reinitialising CAN..."
+                       : "CAN status unavailable");
         lv_obj_set_style_text_color(s_can_health_label,
                                      THEME_COLOR_TEXT_HINT, 0);
         lv_label_set_text(s_can_summary_label, "");
@@ -1389,6 +1418,23 @@ static void _scan_btn_cb(lv_event_t *e) {
     if (!can_bus_test_start()) {
         lv_label_set_text(s_scan_status_label, "Failed to start scan");
     }
+}
+
+/* "View More" button in the CAN BUS section header. Opens the live CAN ID
+ * list (ui_can_list) so the user can see every ID + binary bytes ticking
+ * through. Bitrate scanning is no longer surfaced here — it's accessible
+ * via the "Re-run Setup Wizard" button below, which is the right place
+ * for a setup-time operation that suspends the bus. */
+static void _can_view_more_btn_cb(lv_event_t *e) {
+    (void)e;
+    /* Drop back to the dashboard so the can_list screen has a clean
+     * backdrop, then show on the next tick (same pattern as the diag
+     * and wizard launchers in this file). */
+    lv_obj_t *ret = device_settings_return_screen;
+    if (ret && lv_obj_is_valid(ret)) {
+        lv_scr_load(ret);
+    }
+    can_list_ui_show();
 }
 
 // Close menu callback
@@ -2404,19 +2450,23 @@ static void _build_section_can_diagnostics(lv_obj_t *content) {
     lv_obj_set_style_text_color(can_diag_title, THEME_COLOR_SECTION_CAN_TITLE, 0);
     lv_obj_set_style_text_letter_space(can_diag_title, 1, 0);
 
-    lv_obj_t *scan_btn = lv_btn_create(title_row);
-    lv_obj_set_size(scan_btn, 110, 24);
-    lv_obj_align(scan_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_ACCENT_BLUE, 0);
-    lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(scan_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(scan_btn, 0, 0);
-    lv_obj_t *scan_btn_lbl = lv_label_create(scan_btn);
-    lv_label_set_text(scan_btn_lbl, "Run Bus Scan");
-    lv_obj_center(scan_btn_lbl);
-    lv_obj_set_style_text_font(scan_btn_lbl, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(scan_btn_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
-    lv_obj_add_event_cb(scan_btn, _scan_btn_cb, LV_EVENT_CLICKED, NULL);
+    /* "View More" — opens the live CAN ID list (raw ID + bytes ticking
+     * through). Bitrate scan moved to the "Re-run Setup Wizard" path
+     * since suspending the bus belongs in the setup flow, not casual
+     * diagnostics. */
+    lv_obj_t *view_more_btn = lv_btn_create(title_row);
+    lv_obj_set_size(view_more_btn, 110, 24);
+    lv_obj_align(view_more_btn, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(view_more_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_bg_color(view_more_btn, THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(view_more_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(view_more_btn, 0, 0);
+    lv_obj_t *view_more_lbl = lv_label_create(view_more_btn);
+    lv_label_set_text(view_more_lbl, "View More");
+    lv_obj_center(view_more_lbl);
+    lv_obj_set_style_text_font(view_more_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(view_more_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(view_more_btn, _can_view_more_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *health_row = lv_obj_create(s);
     lv_obj_set_size(health_row, lv_pct(100), LV_SIZE_CONTENT);
