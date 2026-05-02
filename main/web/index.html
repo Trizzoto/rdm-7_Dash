@@ -459,6 +459,20 @@
          * Desktop (>1199px):
          *   - mobile elements hidden, traditional side-by-side layout */
 
+        /* The dashboard layout-menu burger (#layoutMenuWrap) used to live
+         * next to the layout selector and rendered a ☰ glyph identical to
+         * the mobile-burger. With the slide-in panel now visible at all
+         * widths and covering every item that dropdown offered (Save / New
+         * Layout / Rename / Import.rdm / Export.rdm / Signal Dashboard /
+         * Data Logger / Fuel Cal / Dimmer / Gear Setup / Import DBC /
+         * Device Info / Marketplace / Delete Layout), keeping the dropdown
+         * just produced a duplicate ☰ on every viewport. Hide it.
+         *
+         * #splashMenuWrap shares the .layout-menu-wrap class but lives
+         * behind splash mode and is JS-toggled — left alone so splash
+         * authoring still has its menu. */
+        #layoutMenuWrap { display: none !important; }
+
         /* Hamburger menu — ALWAYS visible across phone/tablet/laptop/desktop.
          * Previously hidden at >=1400px (desktop full-inline header), but the
          * SVG-icon slide-in panel is the canonical "all options" surface so
