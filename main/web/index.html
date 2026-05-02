@@ -3417,15 +3417,20 @@
 
         async function fetchPresets() {
             try {
-                const response = await fetch('/api/presets');
+                /* Cache-buster query param: a few proxies (and some browsers
+                 * with stale caches) were returning pre-import GETs after a
+                 * successful POST, making the new ECU appear to "vanish".
+                 * Server-side Cache-Control: no-store fixes the well-behaved
+                 * cases; this defends against the rest. */
+                const ts = Date.now();
+                const response = await fetch('/api/presets?_=' + ts, { cache: 'no-store' });
                 let builtIn = [];
                 if (response.ok) {
                     builtIn = await response.json();
                 }
-                /* Fetch custom presets */
                 customPresets = [];
                 try {
-                    const cResp = await fetch('/api/presets/custom');
+                    const cResp = await fetch('/api/presets/custom?_=' + ts, { cache: 'no-store' });
                     if (cResp.ok) {
                         const raw = await cResp.json();
                         raw.forEach(p => p._isCustom = true);
@@ -3975,12 +3980,18 @@
                 /* Match BO_ lines: BO_ <CAN-ID> <MessageName>: <DLC> <SendingNode> */
                 const boMatch = line.match(/^BO_\s+(\d+)\s+(\w+)\s*:/);
                 if (boMatch) {
-                    let rawId = parseInt(boMatch[1]);
-                    /* Extended CAN IDs have bit 31 set — mask it and skip if extended */
+                    const rawId = parseInt(boMatch[1]);
+                    /* Skip extended frames entirely — bit 31 set marks them
+                     * in DBC. Previously we masked off bit 31 and kept the
+                     * lower 31 bits, which silently aliased extended IDs
+                     * onto whatever standard ID happened to share their
+                     * lower 11 bits — corrupting the imported preset. The
+                     * firmware filter is standard-only anyway. */
                     if (rawId & 0x80000000) {
-                        rawId &= 0x7FFFFFFF;
+                        currentMsgId = null;
+                        continue;
                     }
-                    /* Skip extended frames (IDs >= 0x800 are not standard 11-bit) */
+                    /* Skip plain extended (>0x7FF) too — same reason. */
                     if (rawId > 0x7FF) {
                         currentMsgId = null;
                         continue;
@@ -4039,10 +4050,14 @@
             const version = document.getElementById('dbcVersion')?.value?.trim();
             if (!ecu || !version || _parsedDbcSignals.length === 0) return;
 
+            const importBtn = document.getElementById('dbcImportBtn');
+            if (importBtn) { importBtn.disabled = true; importBtn.textContent = 'Importing…'; }
+
             try {
                 const resp = await fetch('/api/presets/custom/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    cache: 'no-store',
                     body: JSON.stringify({
                         ecu: ecu,
                         version: version,
@@ -4050,25 +4065,70 @@
                     })
                 });
                 if (!resp.ok) {
-                    updateStatus('Failed to import DBC file', true);
+                    /* Surface the actual server error text — the previous
+                     * generic "Failed to import DBC file" hid the real
+                     * cause (size cap, disk full, write verification). */
+                    let errMsg = 'Failed to import DBC';
+                    try {
+                        const txt = await resp.text();
+                        if (txt) errMsg = 'Import failed (' + resp.status + '): ' + txt.slice(0, 200);
+                    } catch (_) {}
+                    updateStatus(errMsg, true);
                     return;
                 }
-                closeDbcImportModal();
+
+                /* Refetch BEFORE closing the modal so we can verify the new
+                 * ECU actually showed up server-side. If it didn't, that's
+                 * a silent data loss — surface it loudly instead of acting
+                 * like the import worked. */
                 await fetchPresets();
+                const importedFound = customPresets.some(
+                    p => p.ecu === ecu && p.version === version);
+                if (!importedFound) {
+                    updateStatus('Import saved but ECU not visible after refresh — try again', true);
+                    return;
+                }
+
+                closeDbcImportModal();
                 populateEcuContextSelect();
-                _initPresetColumns();
-                /* Auto-select the imported ECU */
+
+                /* Open the preset picker AT the new ECU/version so the user
+                 * actually sees their import. The previous flow ran
+                 * _initPresetColumns + auto-clicks against a closed modal,
+                 * and a later openSignalManager → switchSignalView('presets')
+                 * call would re-init and wipe the auto-selection. */
+                try {
+                    if (typeof openSignalManager === 'function') {
+                        openSignalManager();
+                        switchSignalView('presets');
+                    }
+                } catch (_) { /* fallback: just init in place */ _initPresetColumns(); }
+
                 setTimeout(() => {
-                    const ecuItems = document.getElementById('presetColEcu').querySelectorAll('.preset-col-item');
-                    ecuItems.forEach(el => { if (el.textContent.trim() === ecu) el.click(); });
+                    const ecuItems = document.getElementById('presetColEcu')
+                        .querySelectorAll('.preset-col-item');
+                    let clicked = false;
+                    ecuItems.forEach(el => {
+                        if (el.textContent.trim() === ecu) { el.click(); clicked = true; }
+                    });
+                    if (!clicked) {
+                        console.warn('Imported ECU not found in preset column:', ecu);
+                        return;
+                    }
                     setTimeout(() => {
-                        const verItems = document.getElementById('presetColVersion').querySelectorAll('.preset-col-item');
-                        verItems.forEach(el => { if (el.textContent.trim() === version) el.click(); });
-                    }, 50);
-                }, 50);
+                        const verItems = document.getElementById('presetColVersion')
+                            .querySelectorAll('.preset-col-item');
+                        verItems.forEach(el => {
+                            if (el.textContent.trim() === version) el.click();
+                        });
+                    }, 80);
+                }, 80);
+
                 updateStatus(`Imported ${_parsedDbcSignals.length} signals from DBC as ${ecu} ${version}`);
             } catch (e) {
                 updateStatus('Failed to import DBC: ' + e.message, true);
+            } finally {
+                if (importBtn) { importBtn.disabled = false; importBtn.textContent = 'Import'; }
             }
         }
 

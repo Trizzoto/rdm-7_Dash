@@ -651,7 +651,11 @@ static const httpd_uri_t ecu_set_uri     = { .uri = "/api/ecu/set",     .method 
 /* â”€â”€ Custom signal presets (stored as JSON in /lfs/presets/) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 #define LFS_PRESET_DIR "/lfs/presets"
-#define CUSTOM_PRESET_MAX_BYTES 16384
+/* 64 KB cap — a real DBC import with ~200-400 signals JSON-encodes to
+ * 25-50 KB and was being silently rejected by the previous 16 KB limit
+ * with only a 400 toast (easy to miss). 64 KB still leaves plenty of
+ * LittleFS budget while accommodating the largest ECUs we see in field. */
+#define CUSTOM_PRESET_MAX_BYTES (64 * 1024)
 
 static void _ensure_preset_dir(void) {
 	struct stat st;
@@ -802,6 +806,11 @@ static esp_err_t custom_presets_list_handler(httpd_req_t *req) {
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	/* no-store so a stale cached list never masks a freshly-imported preset.
+	 * Without this header, browsers were occasionally returning the pre-save
+	 * list immediately after a successful POST, causing the "DBC went through
+	 * but doesn't show" symptom. */
+	httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 	esp_err_t res = httpd_resp_send(req, json_str, HTTPD_RESP_USE_STRLEN);
 	free(json_str);
 	return res;
@@ -855,10 +864,12 @@ static esp_err_t custom_preset_save_handler(httpd_req_t *req) {
 	cJSON *ver_item = cJSON_GetObjectItemCaseSensitive(root, "version");
 	cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
 	if (!cJSON_IsString(ecu_item) || !cJSON_IsString(ver_item) ||
-		!cJSON_IsArray(signals)) {
+		!cJSON_IsArray(signals) ||
+		ecu_item->valuestring[0] == '\0' ||
+		ver_item->valuestring[0] == '\0') {
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Missing ecu, version, or signals");
+							"Missing or empty ecu, version, or signals");
 		return ESP_FAIL;
 	}
 
@@ -878,6 +889,7 @@ static esp_err_t custom_preset_save_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	size_t json_len = strlen(json_str);
 	FILE *f = fopen(path, "w");
 	if (!f) {
 		free(json_str);
@@ -886,13 +898,59 @@ static esp_err_t custom_preset_save_handler(httpd_req_t *req) {
 							"Failed to write preset file");
 		return ESP_FAIL;
 	}
-	fputs(json_str, f);
-	fclose(f);
+	/* fwrite returns count of items actually written. fputs returns >=0 on
+	 * success but its byte count is implementation-defined — fwrite is the
+	 * portable way to check we got every byte to disk. On a near-full
+	 * LittleFS the previous code would silently leave a truncated file
+	 * that the list endpoint then skipped, so the "import succeeded" toast
+	 * fired but the new ECU never appeared. */
+	size_t wrote = fwrite(json_str, 1, json_len, f);
+	int close_rc = fclose(f);
 	free(json_str);
+	if (wrote != json_len || close_rc != 0) {
+		ESP_LOGE(TAG, "Short write on preset (%u/%u bytes, fclose=%d) - removing partial file",
+				 (unsigned)wrote, (unsigned)json_len, close_rc);
+		remove(path);
+		/* No HTTPD_507 in ESP-IDF httpd — use 500 with clear text. */
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+							"Disk full or write failed");
+		return ESP_FAIL;
+	}
 
-	ESP_LOGI(TAG, "Saved custom preset: %s", filename);
+	/* Verify the file round-trips through cJSON. Catches FS corruption
+	 * that a successful write doesn't (e.g. crc errors on read-back). */
+	FILE *vf = fopen(path, "r");
+	if (vf) {
+		fseek(vf, 0, SEEK_END);
+		long vsz = ftell(vf);
+		fseek(vf, 0, SEEK_SET);
+		bool ok = (vsz == (long)json_len);
+		if (ok) {
+			char *vbuf = malloc(vsz + 1);
+			if (vbuf) {
+				size_t vr = fread(vbuf, 1, vsz, vf);
+				vbuf[vr] = '\0';
+				cJSON *vp = cJSON_Parse(vbuf);
+				if (!vp) ok = false;
+				else      cJSON_Delete(vp);
+				free(vbuf);
+			}
+		}
+		fclose(vf);
+		if (!ok) {
+			ESP_LOGE(TAG, "Preset readback verify failed - removing %s", path);
+			remove(path);
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+								"Preset write verification failed");
+			return ESP_FAIL;
+		}
+	}
+
+	ESP_LOGI(TAG, "Saved custom preset: %s (%u bytes)", filename,
+			 (unsigned)json_len);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_hdr(req, "Cache-Control", "no-store");
 	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
 }
 
