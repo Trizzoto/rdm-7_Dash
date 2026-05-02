@@ -280,6 +280,24 @@
       "default_position": null,
       "constraints": { "min_w": 10, "min_h": 10, "max_w": "screen_w", "max_h": "screen_h" },
       "fields": [
+        { "name": "shape_type",     "label": "Shape",            "type": "select",  "default": "rectangle", "category": "appearance",
+          "options": [
+            { "value": "rectangle",     "label": "Rectangle"     },
+            { "value": "circle",        "label": "Circle"        },
+            { "value": "trapezoid",     "label": "Trapezoid"     },
+            { "value": "triangle",      "label": "Triangle"      },
+            { "value": "diamond",       "label": "Diamond"       },
+            { "value": "arrow_right",   "label": "Arrow ▶"  },
+            { "value": "arrow_left",    "label": "Arrow ◀"  },
+            { "value": "chevron_right", "label": "Chevron ❯" },
+            { "value": "chevron_left",  "label": "Chevron ❮" }
+          ] },
+        { "name": "taper",          "label": "Taper % (trapezoid)", "type": "stepper", "default": 20,  "category": "appearance", "min": 0, "max": 50 },
+        { "name": "taper_side",     "label": "Narrow Side",      "type": "select",  "default": "top", "category": "appearance",
+          "options": [
+            { "value": "top",    "label": "Top (wider at bottom)" },
+            { "value": "bottom", "label": "Bottom (wider at top)" }
+          ] },
         { "name": "bg_color",       "label": "Background",       "type": "color",   "default": "#1A1A1A", "category": "appearance", "night_overridable": true },
         { "name": "bg_opa",         "label": "Opacity (0-255)",  "type": "stepper", "default": 255, "category": "appearance", "min": 0, "max": 255 },
         { "name": "border_color",   "label": "Border Color",     "type": "color",   "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
@@ -290,6 +308,28 @@
         { "name": "shadow_opa",     "label": "Shadow Opacity",   "type": "stepper", "default": 128, "category": "appearance", "min": 0, "max": 255 },
         { "name": "shadow_ofs_x",   "label": "Shadow X",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 },
         { "name": "shadow_ofs_y",   "label": "Shadow Y",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 }
+      ]
+    },
+    {
+      "name": "line",
+      "display_name": "Line",
+      "singleton": false,
+      "default_size": { "w": 200, "h": 4 },
+      "default_position": null,
+      "constraints": { "min_w": 10, "min_h": 1, "max_w": "screen_w", "max_h": "screen_h" },
+      "fields": [
+        { "name": "line_color",  "label": "Color",             "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
+        { "name": "line_width",  "label": "Thickness",         "type": "stepper",  "default": 4,   "category": "appearance", "min": 1, "max": 30 },
+        { "name": "line_opa",    "label": "Opacity (0-255)",   "type": "stepper",  "default": 255, "category": "appearance", "min": 0, "max": 255 },
+        { "name": "rounded",     "label": "Rounded Ends",      "type": "checkbox", "default": false, "category": "appearance" },
+        { "name": "orientation", "label": "Orientation",       "type": "select",   "default": "horizontal", "category": "appearance",
+          "options": [
+            { "value": "horizontal",   "label": "Horizontal"  },
+            { "value": "vertical",     "label": "Vertical"    },
+            { "value": "diagonal_fwd", "label": "Diagonal /"  },
+            { "value": "diagonal_bwd", "label": "Diagonal \\" }
+          ] },
+        { "name": "dash_gap",    "label": "Dash Gap (0 = solid)", "type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 40 }
       ]
     },
     {

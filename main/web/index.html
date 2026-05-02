@@ -4927,24 +4927,22 @@
                         fields: [
                             { name: "shape_type", label: "Shape", type: "select", def: "rectangle", cat: "appearance",
                               options: [
-                                { v: "rectangle",     l: "Rectangle"    },
-                                { v: "circle",        l: "Circle"        },
-                                { v: "trapezoid",     l: "Trapezoid"     },
-                                { v: "triangle",      l: "Triangle"      },
-                                { v: "diamond",       l: "Diamond"       },
-                                { v: "arrow_right",   l: "Arrow ▶"  },
-                                { v: "arrow_left",    l: "Arrow ◀"  },
-                                { v: "chevron_right", l: "Chevron ❯" },
-                                { v: "chevron_left",  l: "Chevron ❮" }
-                              ]
-                            },
+                                  { v: "rectangle", l: "Rectangle" },
+                                  { v: "circle", l: "Circle" },
+                                  { v: "trapezoid", l: "Trapezoid" },
+                                  { v: "triangle", l: "Triangle" },
+                                  { v: "diamond", l: "Diamond" },
+                                  { v: "arrow_right", l: "Arrow ▶" },
+                                  { v: "arrow_left", l: "Arrow ◀" },
+                                  { v: "chevron_right", l: "Chevron ❯" },
+                                  { v: "chevron_left", l: "Chevron ❮" }
+                              ] },
                             { name: "taper", label: "Taper % (trapezoid)", type: "stepper", def: 20, cat: "appearance", min: 0, max: 50 },
                             { name: "taper_side", label: "Narrow Side", type: "select", def: "top", cat: "appearance",
                               options: [
-                                { v: "top",    l: "Top (wider at bottom)" },
-                                { v: "bottom", l: "Bottom (wider at top)" }
-                              ]
-                            },
+                                  { v: "top", l: "Top (wider at bottom)" },
+                                  { v: "bottom", l: "Bottom (wider at top)" }
+                              ] },
                             { name: "bg_color", label: "Background", type: "color", def: 0x1A1A1A, cat: "appearance", nightOverridable: true },
                             { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -4960,18 +4958,17 @@
                     "line": {
                         displayName: "Line", defW: 200, defH: 4,
                         fields: [
-                            { name: "line_color",  label: "Color",             type: "color",    def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
-                            { name: "line_width",  label: "Thickness",         type: "stepper",  def: 4,        cat: "appearance", min: 1, max: 30 },
-                            { name: "line_opa",    label: "Opacity (0-255)",   type: "stepper",  def: 255,      cat: "appearance", min: 0, max: 255 },
-                            { name: "rounded",     label: "Rounded Ends",      type: "checkbox", def: false,    cat: "appearance" },
-                            { name: "orientation", label: "Orientation",       type: "select",   def: "horizontal", cat: "appearance",
+                            { name: "line_color", label: "Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                            { name: "line_width", label: "Thickness", type: "stepper", def: 4, cat: "appearance", min: 1, max: 30 },
+                            { name: "line_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
+                            { name: "rounded", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "orientation", label: "Orientation", type: "select", def: "horizontal", cat: "appearance",
                               options: [
-                                { v: "horizontal",   l: "Horizontal"  },
-                                { v: "vertical",     l: "Vertical"    },
-                                { v: "diagonal_fwd", l: "Diagonal /"  },
-                                { v: "diagonal_bwd", l: "Diagonal \\" }
-                              ]
-                            },
+                                  { v: "horizontal", l: "Horizontal" },
+                                  { v: "vertical", l: "Vertical" },
+                                  { v: "diagonal_fwd", l: "Diagonal /" },
+                                  { v: "diagonal_bwd", l: "Diagonal \\" }
+                              ] },
                             { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 }
                         ]
                     },
