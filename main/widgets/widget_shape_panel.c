@@ -17,6 +17,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static const char *TAG = "widget_shape_panel";
 
@@ -80,6 +81,71 @@ static const char *_shape_to_str(shape_panel_type_t t) {
 
 static inline bool _is_polygon_shape(shape_panel_type_t t) {
     return t >= SHAPE_TYPE_TRAPEZOID;
+}
+
+/* ── Rounded-polygon helper ────────────────────────────────────────────── */
+
+/* Tessellate a sharp polygon (`in[in_cnt]`) into a rounded one by replacing
+ * each vertex with a series of points along a quadratic Bezier whose control
+ * point is the original vertex. Output is written to `out[]` and the new
+ * point count returned via `*out_cnt`. The corner radius is clamped per-
+ * vertex to half the shorter adjacent edge so adjacent rounds never overlap.
+ *
+ * Output buffer must hold at least `in_cnt * (ARC_STEPS + 1)` points. With
+ * 8 input vertices and 6 arc steps that's up to 56 points — comfortably
+ * within the small stack arrays the caller uses.
+ *
+ * If `radius == 0`, just copies input to output unchanged. */
+#define POLY_ARC_STEPS 6  /* points generated per rounded vertex */
+
+static void _round_polygon(const lv_point_t *in, uint16_t in_cnt,
+                           int32_t radius,
+                           lv_point_t *out, uint16_t *out_cnt) {
+    if (radius <= 0 || in_cnt < 3) {
+        for (uint16_t i = 0; i < in_cnt; i++) out[i] = in[i];
+        *out_cnt = in_cnt;
+        return;
+    }
+
+    uint16_t k = 0;
+    for (uint16_t i = 0; i < in_cnt; i++) {
+        const lv_point_t *prev = &in[(i + in_cnt - 1) % in_cnt];
+        const lv_point_t *cur  = &in[i];
+        const lv_point_t *next = &in[(i + 1) % in_cnt];
+
+        float dpx = (float)(prev->x - cur->x);
+        float dpy = (float)(prev->y - cur->y);
+        float dnx = (float)(next->x - cur->x);
+        float dny = (float)(next->y - cur->y);
+        float d_prev = sqrtf(dpx * dpx + dpy * dpy);
+        float d_next = sqrtf(dnx * dnx + dny * dny);
+        if (d_prev < 1.0f || d_next < 1.0f) {
+            /* Degenerate edge — emit the vertex as-is. */
+            out[k++] = *cur;
+            continue;
+        }
+        float r = (float)radius;
+        if (r > d_prev * 0.5f) r = d_prev * 0.5f;
+        if (r > d_next * 0.5f) r = d_next * 0.5f;
+
+        float sx = cur->x + dpx * (r / d_prev);
+        float sy = cur->y + dpy * (r / d_prev);
+        float ex = cur->x + dnx * (r / d_next);
+        float ey = cur->y + dny * (r / d_next);
+
+        /* Sample N+1 points along quadratic Bezier from (sx,sy) through
+         * the original sharp vertex (control) to (ex,ey). */
+        for (uint8_t s = 0; s <= POLY_ARC_STEPS; s++) {
+            float t  = (float)s / (float)POLY_ARC_STEPS;
+            float u  = 1.0f - t;
+            float px = u * u * sx + 2.0f * u * t * (float)cur->x + t * t * ex;
+            float py = u * u * sy + 2.0f * u * t * (float)cur->y + t * t * ey;
+            out[k].x = (lv_coord_t)(px + 0.5f);
+            out[k].y = (lv_coord_t)(py + 0.5f);
+            k++;
+        }
+    }
+    *out_cnt = k;
 }
 
 /* ── Polygon draw callback ──────────────────────────────────────────────── */
@@ -193,7 +259,18 @@ static void _polygon_draw_cb(lv_event_t *e) {
         return;
     }
 
-    lv_draw_polygon(draw_ctx, &dsc, pts, pt_cnt);
+    /* If the user set a non-zero border_radius, replace each vertex
+     * with a tessellated quadratic-Bezier rounded corner. Output buffer
+     * sized for max 8 input vertices × (POLY_ARC_STEPS+1) points each. */
+    if (sd->border_radius > 0) {
+        lv_point_t rounded[8 * (POLY_ARC_STEPS + 1)];
+        uint16_t   rounded_cnt = 0;
+        _round_polygon(pts, pt_cnt, (int32_t)sd->border_radius,
+                       rounded, &rounded_cnt);
+        lv_draw_polygon(draw_ctx, &dsc, rounded, rounded_cnt);
+    } else {
+        lv_draw_polygon(draw_ctx, &dsc, pts, pt_cnt);
+    }
 }
 
 /* ── Apply LVGL styles for rect/circle shapes ───────────────────────────── */
