@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import codegen_widget_defs  # noqa: E402
+import codegen_widget_inspector  # noqa: E402
 import validate_widget_schema  # noqa: E402
 
 
@@ -51,10 +52,6 @@ def main() -> int:
     rel_targets = [str((repo_root / t).resolve()) for t in targets]
 
     rc = codegen_widget_defs.main(["--check", *rel_targets])
-    if rc == 0:
-        print("check_widget_codegen: OK (schema + codegen output in sync)")
-        return 0
-
     if rc == 1:
         print(
             "check_widget_codegen: DRIFT — schema and committed HTML are out of sync.\n"
@@ -63,8 +60,23 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    if rc != 0:
+        return rc
 
-    return rc
+    # Step 3: drift check for firmware widget_fields.gen.c.
+    rc = codegen_widget_inspector.main(["--check"])
+    if rc == 1:
+        print(
+            "check_widget_codegen: DRIFT — schema and widget_fields.gen.c are out of sync.\n"
+            "  Run: python tools/codegen_widget_inspector.py",
+            file=sys.stderr,
+        )
+        return 1
+    if rc != 0:
+        return rc
+
+    print("check_widget_codegen: OK (schema + codegen outputs in sync)")
+    return 0
 
 
 if __name__ == "__main__":
