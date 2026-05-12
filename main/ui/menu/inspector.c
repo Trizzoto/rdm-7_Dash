@@ -35,7 +35,7 @@
 #include "ui/ui.h"                 /* ui_Screen3 extern */
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
 #include "widgets/signal.h"        /* signal binding picker */
-#include "layout/ecu_presets.h"    /* signal library: ECU preset sources */
+#include "ui/settings/preset_picker.h" /* preconfig_items: rich CAN signal library */
 #include "storage/user_signals.h"  /* signal library: user's saved signals */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
@@ -1078,8 +1078,7 @@ static void _make_text_row_schema(lv_obj_t *parent, const widget_field_t *f,
 #define SIG_MY_MAKE         "My library"
 #define SIG_MAX_MAKES       16
 #define SIG_MAX_VERSIONS    16
-#define SIG_MAX_SIGNALS     (USER_SIGNALS_MAX > ECU_SIG__COUNT ? \
-                             USER_SIGNALS_MAX : ECU_SIG__COUNT)
+#define SIG_MAX_SIGNALS     192
 
 typedef struct {
     char     name[32];
@@ -1106,7 +1105,6 @@ static int         s_sig_entry_count                = 0;
 
 static lv_obj_t   *s_sig_ecu_dd      = NULL;
 static lv_obj_t   *s_sig_version_dd  = NULL;
-static lv_obj_t   *s_sig_preset_dd   = NULL;
 static lv_obj_t   *s_sig_signal_dd   = NULL;
 
 static void _open_signal_wizard(void);   /* manual entry, below */
@@ -1134,8 +1132,8 @@ static bool _sig_is_user_library(void) {
 
 static void _sig_collect_makes(void) {
     s_sig_make_count = 0;
-    for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
-        const char *make = ECU_PRESETS[i].make;
+    for (int i = 0; i < preconfig_items_count; i++) {
+        const char *make = preconfig_items[i].ecu;
         if (!make) continue;
         bool seen = false;
         for (int j = 0; j < s_sig_make_count; j++) {
@@ -1155,20 +1153,23 @@ static void _sig_collect_versions(void) {
     if (_sig_is_user_library()) return;
     if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count) return;
     const char *make = s_sig_makes[s_sig_make_idx];
-    for (int i = 0; i < ECU_PRESETS_COUNT && s_sig_version_count < SIG_MAX_VERSIONS; i++) {
-        const ecu_preset_t *p = &ECU_PRESETS[i];
-        if (p->make && p->version && strcmp(p->make, make) == 0) {
-            s_sig_versions[s_sig_version_count++] = p->version;
+    for (int i = 0;
+         i < preconfig_items_count && s_sig_version_count < SIG_MAX_VERSIONS;
+         i++) {
+        const preconfig_item_t *p = &preconfig_items[i];
+        if (!p->ecu || !p->version) continue;
+        if (strcmp(p->ecu, make) != 0) continue;
+        bool seen = false;
+        for (int j = 0; j < s_sig_version_count; j++) {
+            if (strcmp(s_sig_versions[j], p->version) == 0) { seen = true; break; }
         }
+        if (!seen) s_sig_versions[s_sig_version_count++] = p->version;
     }
 }
 
-static const ecu_preset_t *_sig_current_preset(void) {
-    if (_sig_is_user_library()) return NULL;
-    if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count) return NULL;
-    if (s_sig_version_idx < 0 || s_sig_version_idx >= s_sig_version_count) return NULL;
-    return ecu_preset_find(s_sig_makes[s_sig_make_idx],
-                           s_sig_versions[s_sig_version_idx]);
+static int _sig_entry_cmp(const void *a, const void *b) {
+    return strcmp(((const sig_entry_t *)a)->name,
+                  ((const sig_entry_t *)b)->name);
 }
 
 static void _sig_collect_signals(void) {
@@ -1191,30 +1192,36 @@ static void _sig_collect_signals(void) {
             strncpy(e->unit, u->unit, sizeof(e->unit) - 1);
             e->unit[sizeof(e->unit) - 1] = '\0';
         }
-        return;
+    } else {
+        if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count)       goto sort;
+        if (s_sig_version_idx < 0 || s_sig_version_idx >= s_sig_version_count) goto sort;
+        const char *make = s_sig_makes[s_sig_make_idx];
+        const char *ver  = s_sig_versions[s_sig_version_idx];
+        for (int i = 0;
+             i < preconfig_items_count && s_sig_entry_count < SIG_MAX_SIGNALS;
+             i++) {
+            const preconfig_item_t *p = &preconfig_items[i];
+            if (!p->ecu || !p->version || !p->label || !p->can_id) continue;
+            if (strcmp(p->ecu, make) != 0)     continue;
+            if (strcmp(p->version, ver) != 0)  continue;
+            sig_entry_t *e = &s_sig_entries[s_sig_entry_count++];
+            strncpy(e->name, p->label, sizeof(e->name) - 1);
+            e->name[sizeof(e->name) - 1] = '\0';
+            e->can_id    = (uint32_t)strtoul(p->can_id, NULL, 16);
+            e->start_bit = p->bit_start;
+            e->length    = p->bit_length;
+            e->scale     = p->scale;
+            e->offset    = p->value_offset;
+            e->is_signed = p->is_signed;
+            e->endian    = p->endianess;
+            /* preconfig_items has no unit string; widget's custom_text
+             * (Unit Suffix) stays user-editable. */
+            e->unit[0] = '\0';
+        }
     }
-    const ecu_preset_t *p = _sig_current_preset();
-    if (!p) return;
-    for (int slot = 0;
-         slot < ECU_SIG__COUNT && s_sig_entry_count < SIG_MAX_SIGNALS;
-         slot++) {
-        const ecu_signal_row_t *r = &p->rows[slot];
-        if (r->can_id == 0) continue;
-        const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
-        if (!name) continue;
-        sig_entry_t *e = &s_sig_entries[s_sig_entry_count++];
-        strncpy(e->name, name, sizeof(e->name) - 1);
-        e->name[sizeof(e->name) - 1] = '\0';
-        e->can_id    = r->can_id;
-        e->start_bit = r->bit_start;
-        e->length    = r->bit_length;
-        e->scale     = r->scale;
-        e->offset    = r->offset;
-        e->is_signed = r->is_signed;
-        e->endian    = r->endian;
-        strncpy(e->unit, r->unit ? r->unit : "", sizeof(e->unit) - 1);
-        e->unit[sizeof(e->unit) - 1] = '\0';
-    }
+sort:
+    qsort(s_sig_entries, s_sig_entry_count, sizeof(sig_entry_t),
+          _sig_entry_cmp);
 }
 
 static int _sig_find_entry(const char *name) {
@@ -1235,27 +1242,25 @@ static void _sig_init_for_widget(void) {
     const char *current = _widget_signal_name();
     if (!current || !current[0]) return;
 
-    for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
-        const ecu_preset_t *p = &ECU_PRESETS[i];
-        for (int slot = 0; slot < ECU_SIG__COUNT; slot++) {
-            if (p->rows[slot].can_id == 0) continue;
-            const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
-            if (!name || strcmp(name, current) != 0) continue;
-            for (int m = 0; m < s_sig_make_count; m++) {
-                if (!s_sig_makes[m] || strcmp(s_sig_makes[m], p->make) != 0) continue;
-                s_sig_make_idx = m;
-                _sig_collect_versions();
-                for (int v = 0; v < s_sig_version_count; v++) {
-                    if (s_sig_versions[v] && strcmp(s_sig_versions[v], p->version) == 0) {
-                        s_sig_version_idx = v;
-                        _sig_collect_signals();
-                        int sigi = _sig_find_entry(current);
-                        if (sigi >= 0) s_sig_signal_idx = sigi;
-                        return;
-                    }
+    /* Scan preconfig_items[] for the widget's current signal label. */
+    for (int i = 0; i < preconfig_items_count; i++) {
+        const preconfig_item_t *p = &preconfig_items[i];
+        if (!p->ecu || !p->version || !p->label) continue;
+        if (strcmp(p->label, current) != 0) continue;
+        for (int m = 0; m < s_sig_make_count; m++) {
+            if (!s_sig_makes[m] || strcmp(s_sig_makes[m], p->ecu) != 0) continue;
+            s_sig_make_idx = m;
+            _sig_collect_versions();
+            for (int v = 0; v < s_sig_version_count; v++) {
+                if (s_sig_versions[v] && strcmp(s_sig_versions[v], p->version) == 0) {
+                    s_sig_version_idx = v;
+                    _sig_collect_signals();
+                    int sigi = _sig_find_entry(current);
+                    if (sigi >= 0) s_sig_signal_idx = sigi;
+                    return;
                 }
-                return;
             }
+            return;
         }
     }
 
@@ -1306,20 +1311,6 @@ static void _sig_refresh_signal_dd(void) {
                               s_sig_signal_idx);
 }
 
-static void _sig_refresh_preset_dd(void) {
-    if (!s_sig_preset_dd || !lv_obj_is_valid(s_sig_preset_dd)) return;
-    if (_sig_is_user_library()) {
-        lv_dropdown_set_options(s_sig_preset_dd, "All");
-        lv_obj_add_state(s_sig_preset_dd, LV_STATE_DISABLED);
-    } else {
-        const ecu_preset_t *p = _sig_current_preset();
-        lv_dropdown_set_options(s_sig_preset_dd,
-            (p && p->display) ? p->display : "Default");
-        lv_obj_clear_state(s_sig_preset_dd, LV_STATE_DISABLED);
-    }
-    lv_dropdown_set_selected(s_sig_preset_dd, 0);
-}
-
 static void _sig_refresh_version_dd(void) {
     if (!s_sig_version_dd || !lv_obj_is_valid(s_sig_version_dd)) return;
     if (_sig_is_user_library()) {
@@ -1354,7 +1345,6 @@ static void _sig_ecu_changed_cb(lv_event_t *e) {
     s_sig_make_idx    = lv_dropdown_get_selected(lv_event_get_target(e));
     s_sig_version_idx = 0;
     _sig_refresh_version_dd();
-    _sig_refresh_preset_dd();
     _sig_collect_signals();
     int found = _sig_find_entry(_widget_signal_name());
     s_sig_signal_idx = (found >= 0) ? found : 0;
@@ -1363,7 +1353,6 @@ static void _sig_ecu_changed_cb(lv_event_t *e) {
 
 static void _sig_version_changed_cb(lv_event_t *e) {
     s_sig_version_idx = lv_dropdown_get_selected(lv_event_get_target(e));
-    _sig_refresh_preset_dd();
     _sig_collect_signals();
     int found = _sig_find_entry(_widget_signal_name());
     s_sig_signal_idx = (found >= 0) ? found : 0;
@@ -1419,13 +1408,11 @@ static void _build_signal_source_section(lv_obj_t *parent_card) {
 
     _sig_make_dropdown_row(parent_card, "ECU",     &s_sig_ecu_dd,     _sig_ecu_changed_cb);
     _sig_make_dropdown_row(parent_card, "Version", &s_sig_version_dd, _sig_version_changed_cb);
-    _sig_make_dropdown_row(parent_card, "Preset",  &s_sig_preset_dd,  NULL);
     _sig_make_dropdown_row(parent_card, "Signal",  &s_sig_signal_dd,  _sig_signal_changed_cb);
 
     _sig_set_dropdown_options(s_sig_ecu_dd, s_sig_makes,
                               s_sig_make_count, s_sig_make_idx);
     _sig_refresh_version_dd();
-    _sig_refresh_preset_dd();
     _sig_refresh_signal_dd();
 
     /* "+ Create custom signal" button for cases where the user's signal
@@ -2198,7 +2185,6 @@ void inspector_close(void) {
     s_side_right_btn  = NULL;
     s_sig_ecu_dd      = NULL;
     s_sig_version_dd  = NULL;
-    s_sig_preset_dd   = NULL;
     s_sig_signal_dd   = NULL;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
