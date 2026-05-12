@@ -11,10 +11,15 @@
 #include "serial_commands.h"
 
 #include "driver/uart.h"
+#include "driver/gpio.h"  /* gpio_pullup_dis() — see uart_protocol_init below */
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "uart_proto";
@@ -110,6 +115,54 @@ esp_err_t uart_protocol_send_json(const char *json_str)
     esp_err_t ret = uart_protocol_send_frame(buf, total);
     free(buf);
     return ret;
+}
+
+/* ── ESP-IDF log redirect (plain-text on UART1) ────────────────────────────
+ *
+ * ESP_LOG* calls are redirected to write raw ASCII text into the same UART1
+ * stream that carries JSON-RPC frames. Logs and frames interleave on the
+ * wire — the desktop app's frame parser handles the mix: STX-delimited
+ * bytes go to the frame dispatcher, everything else gets surfaced as log
+ * output in the UI. Same s_tx_mutex protects both writers so frames never
+ * get mid-write text inserted.
+ *
+ * No early-boot buffering is needed: before this hook is installed (at the
+ * end of uart_protocol_init), ESP-IDF's default console keeps writing
+ * plain text to UART0 with pads still muxed to 43/44, so boot logs appear
+ * normally in a serial monitor.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static volatile int s_log_reentry_depth = 0;
+static bool s_log_hook_installed = false;
+
+static int s_log_vprintf(const char *fmt, va_list args)
+{
+    /* Re-entry guard — uart_write_bytes can theoretically log on error,
+       which would loop us back here. Drop the inner log. */
+    if (s_log_reentry_depth > 0) return 0;
+    s_log_reentry_depth++;
+
+    char line[256];
+    int n = vsnprintf(line, sizeof(line), fmt, args);
+    if (n < 0) {
+        s_log_reentry_depth--;
+        return 0;
+    }
+    if (n > (int)(sizeof(line) - 1)) n = (int)(sizeof(line) - 1);
+
+    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    uart_write_bytes(UART_PROTO_PORT_NUM, line, (size_t)n);
+    xSemaphoreGive(s_tx_mutex);
+
+    s_log_reentry_depth--;
+    return n;
+}
+
+static void s_install_log_hook(void)
+{
+    if (s_log_hook_installed) return;
+    s_log_hook_installed = true;
+    esp_log_set_vprintf(s_log_vprintf);
 }
 
 /* ── Frame parser ───────────────────────────────────────────────────────── */
@@ -298,6 +351,17 @@ esp_err_t uart_protocol_init(void)
         return ret;
     }
 
+    /* uart_set_pin() enables the internal pull-up on the RX pin by default;
+     * we explicitly flip both pins to "pull-down only" to match the wire-
+     * inputs path. Result: the lines read LOW when externally disconnected
+     * (e.g. when the USB-UART switch is in its non-UART1 position), and
+     * UART1 still works normally because the external USB-UART bridge has
+     * a strong driver that overrides the weak internal pull-down. */
+    gpio_pullup_dis(UART_PROTO_TX_PIN);
+    gpio_pulldown_en(UART_PROTO_TX_PIN);
+    gpio_pullup_dis(UART_PROTO_RX_PIN);
+    gpio_pulldown_en(UART_PROTO_RX_PIN);
+
     ret = uart_driver_install(UART_PROTO_PORT_NUM,
                               UART_RX_BUF_SIZE, UART_TX_BUF_SIZE,
                               0, NULL, 0);
@@ -321,5 +385,12 @@ esp_err_t uart_protocol_init(void)
 
     ESP_LOGI(TAG, "UART protocol initialised (port %d, %d baud)",
              UART_PROTO_PORT_NUM, UART_PROTO_BAUD_RATE);
+
+    /* UART1 is up — redirect all further ESP_LOG output through this UART
+       as plain text so the desktop app's frame parser can pick them up as
+       non-framed bytes alongside JSON-RPC frames. Logs emitted before this
+       point already went to UART0's default console on the same pads, so
+       no buffering of pre-init logs is needed. */
+    s_install_log_hook();
     return ESP_OK;
 }

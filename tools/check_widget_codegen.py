@@ -5,7 +5,7 @@ check_widget_codegen.py — CI / pre-commit safety net.
 Runs the widget-schema validator AND the codegen in --check mode against the
 firmware HTML files. Exits 0 only when:
   1. schema/widgets.schema.json is well-formed (validator passes), and
-  2. main/web/index.html and data/web/index.html match what codegen would emit
+  2. main/web/index.html matches what codegen would emit
      from the current schema.
 
 Usage:
@@ -33,7 +33,6 @@ import validate_widget_schema  # noqa: E402
 
 DEFAULT_TARGETS = [
     "main/web/index.html",
-    "data/web/index.html",
 ]
 
 

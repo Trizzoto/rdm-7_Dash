@@ -39,6 +39,7 @@
 #include "storage/user_signals.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
+#include "system/crash_log.h"
 #include "ui/screens/ui_wifi.h"
 
 // #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
@@ -540,6 +541,11 @@ void app_main(void) {
   init_pwm();
 
   init_nvs();
+
+  /* Read and persist the previous-boot reset reason so panics are visible
+     across reboots. Logs a one-line summary and increments a lifetime
+     panic counter on crash-class reasons. */
+  crash_log_init();
 
   /* Suppress routine `httpd_sock_err: error in recv : 104` warnings.
    * errno 104 = ECONNRESET — a client (usually the browser) closed an

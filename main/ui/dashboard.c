@@ -15,6 +15,7 @@
 #include "widgets/widget_warning.h"
 
 #include "ui/menu/edit_mode.h"
+#include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "can/can_manager.h"
@@ -67,17 +68,22 @@ static void _fallback_create_all(lv_obj_t *parent) {
 	/* s_widget_count stays 0 — no widget_t handles in this path */
 }
 
+/** Long-press handler — opens the legacy per-widget config modal.
+ *  Only fires when Edit Mode is NOT armed, since edit_mode's drag handlers
+ *  would otherwise misfire on the same ~400 ms hold. In dashboard view
+ *  there's nothing to drag, so long-press is a free gesture. */
+static void _widget_long_press_cb(lv_event_t *e) {
+	if (edit_mode_is_armed()) return;
+	widget_t *w = (widget_t *)lv_event_get_user_data(e);
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	load_menu_screen_for_widget(w);
+}
+
 /** Register touch events on all widgets so the MENU button always appears
- *  on short tap, and (while Edit Mode is armed) select / drag callbacks
- *  fire on each widget.  Without the CLICKABLE flag, toggle/button widgets
- *  would consume events before the screen-wide short-tap handler ever sees
- *  them.
- *
- *  Note: long-press is intentionally NOT wired up. It used to open the
- *  per-widget config modal, but LVGL's long-press timer (~400 ms hold-
- *  without-movement) routinely fired mid-drag, popping the modal when the
- *  user was just trying to position a widget. The dedicated Configure
- *  button in the Edit Mode toolbar replaces that route. */
+ *  on short tap, (while Edit Mode is armed) select / drag callbacks fire,
+ *  and (while Edit Mode is NOT armed) long-press opens the legacy per-widget
+ *  config modal. Without the CLICKABLE flag, toggle/button widgets would
+ *  consume events before the screen-wide short-tap handler ever sees them. */
 static void _register_widget_long_press(void) {
 	for (uint8_t i = 0; i < s_widget_count; i++) {
 		widget_t *w = s_widgets[i];
@@ -114,6 +120,11 @@ static void _register_widget_long_press(void) {
 							LV_EVENT_PRESSING, w);
 		lv_obj_add_event_cb(w->root, edit_mode_widget_released_cb,
 							LV_EVENT_RELEASED, w);
+
+		/* Long-press in dashboard view → legacy per-widget config modal.
+		 * Gated on !edit_mode_is_armed() so it never collides with drag. */
+		lv_obj_add_event_cb(w->root, _widget_long_press_cb,
+							LV_EVENT_LONG_PRESSED, w);
 	}
 }
 
@@ -349,6 +360,18 @@ esp_err_t dashboard_persist_layout(void) {
 		ESP_LOGE(TAG, "dashboard_persist_layout: get_active failed (%s)",
 				 esp_err_to_name(err));
 		return err;
+	}
+
+	/* Protect the factory default — when the user edits "default", route the
+	 * save to "default_modified" so the original always survives as a
+	 * reset/revert target. Updates the active-layout pointer in NVS so
+	 * subsequent saves land in the new file too. */
+	if (strcmp(layout_name, "default") == 0) {
+		strncpy(layout_name, "default_modified", sizeof(layout_name) - 1);
+		layout_name[sizeof(layout_name) - 1] = '\0';
+		layout_manager_set_active(layout_name);
+		ESP_LOGI(TAG, "Default layout edited — saving as '%s' to preserve "
+			 "the factory layout as a revert target", layout_name);
 	}
 
 	err = layout_manager_save(layout_name, s_widgets, s_widget_count);

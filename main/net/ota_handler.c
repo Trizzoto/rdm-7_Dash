@@ -26,6 +26,8 @@
 extern TaskHandle_t lvglTaskHandle;
 extern void rdm_lvgl_port_task(void *pvParameter);
 #include "can/can_manager.h"
+#include "net/dns_hijack.h"
+#include "system/crash_log.h"
 
 // GitHub Releases API for OTA updates
 #define GITHUB_API_URL "https://api.github.com/repos/Trizzoto/potato-jubilee/releases/latest"
@@ -242,9 +244,34 @@ static void compare_and_set_ota_status(void) {
     cJSON_Delete(root);
 }
 
+/* Free internal RAM before HTTPS / OTA. Post-WiFi-init the internal heap is
+   often <10 KB free, which is below what mbedTLS needs for an SSL handshake
+   (AES context + DRBG seed) and what's needed to allocate an 8 KB task stack.
+   Safe — STA is the path used for OTA traffic. */
+static void ota_free_internal_ram(void) {
+    /* Drop SoftAP if STA is connected — saves several KB of WiFi buffers. */
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) == ESP_OK &&
+        (mode == WIFI_MODE_APSTA || mode == WIFI_MODE_AP)) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            ESP_LOGI(TAG, "STA connected — dropping AP to free internal RAM");
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+    }
+
+    /* Stop captive-portal DNS hijack — frees lwIP socket + small internal buffers.
+       It only matters before STA is configured; we're past that now. */
+    dns_hijack_stop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+}
+
 void check_for_update(void) {
     ESP_LOGI(TAG, "Checking for updates from GitHub Releases...");
     ESP_LOGI(TAG, "Current version: %s", FIRMWARE_VERSION);
+
+    ota_free_internal_ram();
 
     /* Reset response buffer */
     if (response_buffer != NULL) {
@@ -481,19 +508,6 @@ const char *ota_get_firmware_url(void) {
     return ota_firmware_url[0] ? ota_firmware_url : NULL;
 }
 
-/* OTA finish must run on an internal-RAM stack task because esp_ota_end()
- * disables cache (which makes PSRAM inaccessible) during image verification. */
-static esp_https_ota_handle_t s_ota_finish_handle;
-static esp_err_t s_ota_finish_result;
-static SemaphoreHandle_t s_ota_finish_sem;
-
-static void _ota_finish_task(void *arg) {
-    (void)arg;
-    s_ota_finish_result = esp_https_ota_finish(s_ota_finish_handle);
-    xSemaphoreGive(s_ota_finish_sem);
-    vTaskDelete(NULL);
-}
-
 esp_err_t start_ota_update(void) {
     /* Build the download URL */
     char url[512];
@@ -603,20 +617,10 @@ esp_err_t start_ota_update(void) {
         }
 
         if (success) {
-            /* esp_https_ota_finish() calls esp_ota_end() which verifies the image.
-             * Image verification disables cache, making PSRAM inaccessible.
-             * Since THIS task's stack is in PSRAM, we must run finish() on a
-             * small internal-RAM task instead. */
-            s_ota_finish_handle = ota_handle;
-            s_ota_finish_result = ESP_FAIL;
-            if (!s_ota_finish_sem) s_ota_finish_sem = xSemaphoreCreateBinary();
-
-            /* 4KB stack from internal RAM for the verification step */
-            xTaskCreatePinnedToCore(_ota_finish_task, "ota_fin", 4096,
-                                    NULL, 5, NULL, 0);
-            xSemaphoreTake(s_ota_finish_sem, portMAX_DELAY);
-
-            err = s_ota_finish_result;
+            /* Image verification — esp_https_ota_finish() calls esp_ota_end()
+               which disables cache. Safe to call inline because THIS task's
+               stack is in internal RAM. */
+            err = esp_https_ota_finish(ota_handle);
             if (err == ESP_OK) {
                 ESP_LOGI(TAG, "OTA successful after %d attempt(s)!", download_retry_count + 1);
                 ota_status = OTA_UPDATE_COMPLETED;
@@ -693,9 +697,10 @@ static void ota_update_task(void *pvParameter) {
         ESP_LOGI(TAG, "OTA update completed successfully");
         ota_status = OTA_UPDATE_COMPLETED;
         ota_progress = 100;
-        
+
         // Wait a bit for UI to show completion, then reboot
         vTaskDelay(pdMS_TO_TICKS(3000));
+        crash_log_mark_clean_shutdown();
         esp_restart();
     } else {
         ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(ret));
@@ -709,11 +714,20 @@ static void ota_update_task(void *pvParameter) {
 void start_ota_update_task(void) {
     ESP_LOGI(TAG, "Creating OTA update task");
 
-    ESP_LOGI(TAG, "Free internal: %lu, free PSRAM: %lu",
+    ESP_LOGI(TAG, "Free internal (before prep): %lu, free PSRAM: %lu",
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    const uint32_t OTA_STACK = 8*1024;
+    ota_free_internal_ram();
+
+    ESP_LOGI(TAG, "Free internal (after prep): %lu, largest block: %lu",
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+    /* 6 KB is enough for esp_https_ota begin/perform/finish — the deep paths
+       are TLS handshake (~4-5 KB peak) and HTTP parsing. Was 8 KB; reduced
+       because internal heap can be tightly fragmented at OTA time. */
+    const uint32_t OTA_STACK = 6 * 1024;
     const uint32_t OTA_PRIORITY = 2;
 
     BaseType_t ret = xTaskCreatePinnedToCore(

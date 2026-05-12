@@ -120,6 +120,7 @@ static lv_obj_t  *s_undo_btn       = NULL;
 static lv_obj_t  *s_redo_btn       = NULL;
 static lv_obj_t  *s_dup_btn        = NULL;
 static lv_obj_t  *s_del_btn        = NULL;
+static lv_obj_t  *s_save_btn       = NULL;
 static int16_t    s_top_toolbar_y  = 10;     /* offset from TOP_MID anchor */
 static lv_point_t s_tt_drag_pt     = {0, 0};
 static int16_t    s_tt_drag_start  = 0;
@@ -1592,6 +1593,45 @@ static void _top_toolbar_pressing_cb(lv_event_t *e) {
     lv_obj_align(s_top_toolbar, LV_ALIGN_TOP_MID, 0, s_top_toolbar_y);
 }
 
+/* Toast that auto-deletes after a short delay. user_data is the label obj. */
+static void _save_toast_timer_cb(lv_timer_t *t) {
+    lv_obj_t *lbl = (lv_obj_t *)t->user_data;
+    if (lbl && lv_obj_is_valid(lbl)) lv_obj_del(lbl);
+}
+
+/* Manual save — flushes pending debounce, persists immediately, shows toast.
+ * dashboard_persist_layout() handles the default → default_modified redirect,
+ * so this callback doesn't need to know about it. */
+static void _save_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+
+    /* Flush pending snapshot + cancel the debounced save timer so the user's
+     * most recent gesture is part of this save (and we don't redundantly
+     * re-save half a second later). */
+    _flush_pending_snapshot();
+    if (s_save_timer) { lv_timer_del(s_save_timer); s_save_timer = NULL; }
+
+    esp_err_t err = dashboard_persist_layout();
+
+    /* Surface result as a brief toast at the bottom of the screen — same
+     * pattern as the splash-update toast in ui_Screen3.c. */
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_t *toast = lv_label_create(scr);
+    lv_label_set_text(toast, err == ESP_OK ? LV_SYMBOL_OK "  Saved"
+                                           : LV_SYMBOL_WARNING "  Save failed");
+    lv_obj_set_style_text_color(toast, err == ESP_OK ? DT_ACCENT : DT_DANGER, 0);
+    lv_obj_set_style_text_font(toast, THEME_FONT_SMALL, 0);
+    lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_obj_move_foreground(toast);
+    lv_timer_t *tt = lv_timer_create(_save_toast_timer_cb, 1800, NULL);
+    if (tt) {
+        lv_timer_set_repeat_count(tt, 1);
+        tt->user_data = toast;
+    } else if (lv_obj_is_valid(toast)) {
+        lv_obj_del(toast);
+    }
+}
+
 static void _build_top_toolbar(lv_obj_t *parent) {
     if (s_top_toolbar && lv_obj_is_valid(s_top_toolbar)) return;
 
@@ -1675,15 +1715,27 @@ static void _build_top_toolbar(lv_obj_t *parent) {
     s_dup_btn = _make_tbtn(s_top_toolbar, 124, 44, LV_SYMBOL_COPY "  Duplicate");
     lv_obj_add_event_cb(s_dup_btn, _dup_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Delete button — danger-tinted, right-most. Reuses the existing
-     * _delete_btn_cb (confirm modal flow). The red colours are baked in
-     * here; _refresh_undo_redo_styling only toggles their opacity. */
+    /* Delete button — danger-tinted, sits next to Save on the right. Reuses
+     * the existing _delete_btn_cb (confirm modal flow). The red colours are
+     * baked in here; _refresh_undo_redo_styling only toggles their opacity. */
     s_del_btn = _make_tbtn(s_top_toolbar, 104, 44, LV_SYMBOL_TRASH "  Delete");
     lv_obj_set_style_bg_color(s_del_btn, DT_DANGER, 0);
     lv_obj_set_style_bg_color(s_del_btn, DT_DANGER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(s_del_btn, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_style_border_color(s_del_btn, DT_DANGER, 0);
     lv_obj_add_event_cb(s_del_btn, _delete_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Save button — accent-tinted, far-right. Flushes pending edits and
+     * persists immediately (bypassing the debounce timer) with a toast.
+     * dashboard_persist_layout() handles the default → default_modified
+     * redirect so the factory default never gets overwritten. */
+    s_save_btn = _make_tbtn(s_top_toolbar, 100, 44, LV_SYMBOL_SAVE "  Save");
+    lv_obj_set_style_bg_color(s_save_btn, DT_ACCENT, 0);
+    lv_obj_set_style_bg_color(s_save_btn, DT_ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(s_save_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(s_save_btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(s_save_btn, DT_ACCENT, 0);
+    lv_obj_add_event_cb(s_save_btn, _save_btn_cb, LV_EVENT_CLICKED, NULL);
 
     _refresh_undo_redo_styling();
     lv_obj_move_foreground(s_top_toolbar);
@@ -1696,6 +1748,7 @@ static void _destroy_top_toolbar(void) {
     s_redo_btn    = NULL;
     s_dup_btn     = NULL;
     s_del_btn     = NULL;
+    s_save_btn    = NULL;
 }
 
 /* ── Pill click handler — toggles armed state ─────────────────────────────── */

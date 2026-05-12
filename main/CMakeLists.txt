@@ -9,6 +9,7 @@ idf_component_register(
         "storage/config_store.c"
         "storage/sd_manager.c"
         "storage/data_logger.c"
+        "storage/can_raw_logger.c"
         "storage/signal_replay.c"
         "storage/user_signals.c"
         "io/wire_inputs.c"
@@ -36,6 +37,7 @@ idf_component_register(
         "system/display_capture.c"
         "system/night_mode.c"
         "system/remote_touch.c"
+        "system/crash_log.c"
         "ui/ui.c"
         "ui/dashboard.c"
         "ui/ui_styles.c"
@@ -147,7 +149,7 @@ idf_component_register(
         "esp_http_server"
         "joltwallet__littlefs"
     EMBED_TXTFILES "web/index.html"
-    EMBED_FILES "embed/RDM.rdmimg"
+    EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico"
 )
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")

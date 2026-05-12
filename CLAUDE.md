@@ -102,10 +102,12 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 
 - `WIDGET_DEFS` in `index.html` — widget metadata + `fields[]` per type
 - `buildFirmwarePayload()` maps `w.signal` → `config.signal_name`, converts colors
-- **THREE copies of `index.html` must stay in sync:**
-  1. `main/web/index.html` — embedded in firmware
-  2. `data/web/index.html` — copy
-  3. `../rdm7-desktop/src/index.html` — Tauri app (separate repo)
+- **`main/web/index.html` is the single source of truth.** Embedded in firmware
+  via EMBED_TXTFILES, also served directly by `tools/mobile-dev-server.js` for
+  browser-based dev without a device.
+- The Tauri desktop copy at `../rdm7-desktop/src/index.html` (separate repo) has
+  its own delta (USB transport, Tauri wrapper, auto-updater) — keep that in sync
+  manually when web-editor changes need to land there too.
 
 ## Fonts
 
