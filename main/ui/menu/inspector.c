@@ -1073,6 +1073,7 @@ static bool      s_in_signal_picker  = false;
 
 static void _show_tab(int idx);              /* defined further down */
 static void _close_signal_picker(void);
+static void _open_signal_wizard(void);       /* manual-entry wizard, below */
 
 static const char *_widget_signal_name(void) {
     if (!s_widget || !s_widget->inspector_get) return "";
@@ -1092,6 +1093,11 @@ static bool _widget_supports_signal_binding(void) {
  * the DATA tab. user_data is a pointer to the signal_t->name string
  * which is stable as long as the registry isn't reset (it isn't while
  * the Inspector is open). */
+static void _new_signal_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _open_signal_wizard();
+}
+
 static void _signal_picker_row_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     const char *name = (const char *)lv_event_get_user_data(e);
@@ -1211,6 +1217,32 @@ static void _open_signal_picker(void) {
         lv_obj_add_event_cb(row, _signal_picker_row_cb, LV_EVENT_CLICKED,
                             (void *)s->name);
     }
+
+    /* "+ Create new signal" row at the bottom of the list. Opens the
+     * manual-entry wizard. ECU Preset / From DBC entry points are added
+     * in later steps. */
+    lv_obj_t *new_row = lv_btn_create(list_card);
+    lv_obj_set_width(new_row, LV_PCT(100));
+    lv_obj_set_height(new_row, 44);
+    lv_obj_clear_flag(new_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(new_row, DT_ACCENT, 0);
+    lv_obj_set_style_bg_opa(new_row, 60, 0);
+    lv_obj_set_style_bg_color(new_row, DT_ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(new_row, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(new_row, DT_ACCENT, 0);
+    lv_obj_set_style_border_opa(new_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(new_row, 1, 0);
+    lv_obj_set_style_shadow_width(new_row, 0, 0);
+    lv_obj_set_style_pad_all(new_row, 6, 0);
+    lv_obj_set_style_radius(new_row, 4, 0);
+
+    lv_obj_t *new_lbl = lv_label_create(new_row);
+    lv_label_set_text(new_lbl, LV_SYMBOL_PLUS "  Create new signal");
+    lv_obj_center(new_lbl);
+    lv_obj_set_style_text_color(new_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(new_lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_add_event_cb(new_row, _new_signal_row_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void _signal_row_clicked_cb(lv_event_t *e) {
@@ -1256,6 +1288,353 @@ static void _build_signal_row(lv_obj_t *parent) {
     lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
     s_sig_row_value_lbl = value;
+}
+
+/* New-signal wizard (Manual Entry path).
+ *
+ * Fullscreen modal popover on lv_layer_top. Form fields tap into the
+ * existing keyboard popovers (TEXT for name / units / hex CAN ID /
+ * float scale+offset; NUMBER for start_bit + length). Save calls
+ * signal_register and binds the currently-selected widget to the new
+ * signal.
+ *
+ * Endian + signedness aren't exposed here yet - they default to Intel
+ * + unsigned (the common case). Refining them is a follow-up; the web
+ * editor can edit them today on the saved layout.
+ *
+ * Persistence: signal_register only adds to the in-memory registry.
+ * The layout save path (debounced by edit_mode) will pick the new
+ * signal up the next time it serialises the layout. Step 6 will also
+ * write the signal to /lfs/dbc/user.dbc for cross-layout reuse. */
+
+typedef enum {
+    WIZ_F_NAME = 0,
+    WIZ_F_CAN_ID,
+    WIZ_F_START_BIT,
+    WIZ_F_LENGTH,
+    WIZ_F_SCALE,
+    WIZ_F_OFFSET,
+    WIZ_F_UNIT,
+    WIZ_F_COUNT,
+} wizard_field_t;
+
+typedef struct {
+    char     name[32];
+    uint32_t can_id;
+    uint8_t  start_bit;
+    uint8_t  length;
+    float    scale;
+    float    offset;
+    char     unit[8];
+} wizard_form_t;
+
+static wizard_form_t s_wiz_form;
+static lv_obj_t     *s_wiz_popup = NULL;
+static lv_obj_t     *s_wiz_field_lbls[WIZ_F_COUNT] = {NULL};
+static lv_obj_t     *s_wiz_status_lbl = NULL;
+
+static const char *_wiz_field_label(int f) {
+    switch (f) {
+        case WIZ_F_NAME:      return "Name";
+        case WIZ_F_CAN_ID:    return "CAN ID";
+        case WIZ_F_START_BIT: return "Start Bit";
+        case WIZ_F_LENGTH:    return "Length";
+        case WIZ_F_SCALE:     return "Scale";
+        case WIZ_F_OFFSET:    return "Offset";
+        case WIZ_F_UNIT:      return "Unit";
+    }
+    return "?";
+}
+
+static void _wiz_format_preview(int f, char *buf, size_t bufsz) {
+    switch (f) {
+        case WIZ_F_NAME:
+            snprintf(buf, bufsz, "%s",
+                     s_wiz_form.name[0] ? s_wiz_form.name : "(empty)");
+            break;
+        case WIZ_F_CAN_ID:
+            snprintf(buf, bufsz, "0x%X", (unsigned)s_wiz_form.can_id);
+            break;
+        case WIZ_F_START_BIT:
+            snprintf(buf, bufsz, "%u", (unsigned)s_wiz_form.start_bit);
+            break;
+        case WIZ_F_LENGTH:
+            snprintf(buf, bufsz, "%u", (unsigned)s_wiz_form.length);
+            break;
+        case WIZ_F_SCALE:
+            snprintf(buf, bufsz, "%g", (double)s_wiz_form.scale);
+            break;
+        case WIZ_F_OFFSET:
+            snprintf(buf, bufsz, "%g", (double)s_wiz_form.offset);
+            break;
+        case WIZ_F_UNIT:
+            snprintf(buf, bufsz, "%s",
+                     s_wiz_form.unit[0] ? s_wiz_form.unit : "(none)");
+            break;
+        default:
+            if (bufsz) buf[0] = '\0';
+    }
+}
+
+static void _wiz_refresh_field(int f) {
+    if (f < 0 || f >= WIZ_F_COUNT) return;
+    if (!s_wiz_field_lbls[f] || !lv_obj_is_valid(s_wiz_field_lbls[f])) return;
+    char buf[32];
+    _wiz_format_preview(f, buf, sizeof(buf));
+    lv_label_set_text(s_wiz_field_lbls[f], buf);
+}
+
+static void _wiz_set_status(const char *msg, bool error) {
+    if (!s_wiz_status_lbl || !lv_obj_is_valid(s_wiz_status_lbl)) return;
+    lv_label_set_text(s_wiz_status_lbl, msg ? msg : "");
+    lv_obj_set_style_text_color(s_wiz_status_lbl,
+        error ? DT_DANGER : DT_TEXT_MUTED, 0);
+}
+
+static void _wiz_close(void) {
+    if (s_wiz_popup && lv_obj_is_valid(s_wiz_popup)) lv_obj_del(s_wiz_popup);
+    s_wiz_popup       = NULL;
+    s_wiz_status_lbl  = NULL;
+    for (int i = 0; i < WIZ_F_COUNT; i++) s_wiz_field_lbls[i] = NULL;
+}
+
+static void _wiz_set_defaults(void) {
+    memset(&s_wiz_form, 0, sizeof(s_wiz_form));
+    s_wiz_form.scale  = 1.0f;
+    s_wiz_form.offset = 0.0f;
+    s_wiz_form.length = 8;
+}
+
+static void _wiz_text_confirm_cb(const char *text, void *user_data) {
+    int f = (int)(intptr_t)user_data;
+    if (!text) return;
+    switch (f) {
+        case WIZ_F_NAME:
+            strncpy(s_wiz_form.name, text, sizeof(s_wiz_form.name) - 1);
+            s_wiz_form.name[sizeof(s_wiz_form.name) - 1] = '\0';
+            break;
+        case WIZ_F_CAN_ID:
+            s_wiz_form.can_id = (uint32_t)strtoul(text, NULL, 0);
+            break;
+        case WIZ_F_SCALE:
+            s_wiz_form.scale = (float)atof(text);
+            break;
+        case WIZ_F_OFFSET:
+            s_wiz_form.offset = (float)atof(text);
+            break;
+        case WIZ_F_UNIT:
+            strncpy(s_wiz_form.unit, text, sizeof(s_wiz_form.unit) - 1);
+            s_wiz_form.unit[sizeof(s_wiz_form.unit) - 1] = '\0';
+            break;
+        default:
+            return;
+    }
+    _wiz_refresh_field(f);
+}
+
+static void _wiz_numeric_confirm_cb(const char *text, void *user_data) {
+    int f = (int)(intptr_t)user_data;
+    if (!text) return;
+    int v = atoi(text);
+    switch (f) {
+        case WIZ_F_START_BIT:
+            if (v < 0)  v = 0;
+            if (v > 63) v = 63;
+            s_wiz_form.start_bit = (uint8_t)v;
+            break;
+        case WIZ_F_LENGTH:
+            if (v < 1)  v = 1;
+            if (v > 32) v = 32;
+            s_wiz_form.length = (uint8_t)v;
+            break;
+        default:
+            return;
+    }
+    _wiz_refresh_field(f);
+}
+
+static void _wiz_field_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int f = (int)(intptr_t)lv_event_get_user_data(e);
+    char buf[32];
+    _wiz_format_preview(f, buf, sizeof(buf));
+
+    if (f == WIZ_F_START_BIT || f == WIZ_F_LENGTH) {
+        show_numeric_input_dialog(_wiz_field_label(f), buf,
+                                  _wiz_numeric_confirm_cb, NULL,
+                                  (void *)(intptr_t)f);
+    } else {
+        _ensure_hidden_textarea();
+        if (!s_hidden_text_ta) return;
+        lv_textarea_set_text(s_hidden_text_ta, buf);
+        show_text_input_dialog_ex(s_hidden_text_ta, _wiz_field_label(f),
+                                  "", false,
+                                  _wiz_text_confirm_cb, NULL,
+                                  (void *)(intptr_t)f);
+    }
+}
+
+static void _wiz_cancel_cb(lv_event_t *e) {
+    (void)e;
+    _wiz_close();
+}
+
+static void _wiz_save_cb(lv_event_t *e) {
+    (void)e;
+    if (s_wiz_form.name[0] == '\0') {
+        _wiz_set_status("Name is required.", true);
+        return;
+    }
+    if (s_wiz_form.length == 0) {
+        _wiz_set_status("Length must be at least 1.", true);
+        return;
+    }
+
+    /* Defaults: Intel endian, unsigned. User can refine via web editor. */
+    int16_t idx = signal_register(s_wiz_form.name, s_wiz_form.can_id,
+                                   s_wiz_form.start_bit, s_wiz_form.length,
+                                   s_wiz_form.scale, s_wiz_form.offset,
+                                   false, 1,
+                                   s_wiz_form.unit);
+    if (idx < 0) {
+        _wiz_set_status("Could not register (duplicate name?)", true);
+        return;
+    }
+
+    /* Auto-bind the currently-selected widget. */
+    if (s_widget && s_widget->inspector_set) {
+        widget_field_value_t v = { .str = s_wiz_form.name };
+        s_widget->inspector_set(s_widget, "signal_name", &v);
+    }
+
+    _wiz_close();
+    _close_signal_picker();   /* back to DATA tab with new binding */
+}
+
+static void _make_wiz_row(lv_obj_t *parent, int field) {
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 38);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
+    lv_obj_set_style_bg_opa(row, 60, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 6, 0);
+    lv_obj_set_style_radius(row, 4, 0);
+    lv_obj_add_event_cb(row, _wiz_field_clicked_cb, LV_EVENT_CLICKED,
+                        (void *)(intptr_t)field);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, _wiz_field_label(field));
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *chev = lv_label_create(row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *value = lv_label_create(row);
+    char buf[32];
+    _wiz_format_preview(field, buf, sizeof(buf));
+    lv_label_set_text(value, buf);
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(value, 320);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
+    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    s_wiz_field_lbls[field] = value;
+}
+
+static void _open_signal_wizard(void) {
+    _wiz_close();
+    _wiz_set_defaults();
+
+    s_wiz_popup = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_wiz_popup, 800, 480);
+    lv_obj_set_pos(s_wiz_popup, 0, 0);
+    lv_obj_set_style_bg_color(s_wiz_popup, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_wiz_popup, 110, 0);
+    lv_obj_set_style_border_width(s_wiz_popup, 0, 0);
+    lv_obj_set_style_radius(s_wiz_popup, 0, 0);
+    lv_obj_set_style_pad_all(s_wiz_popup, 0, 0);
+    lv_obj_clear_flag(s_wiz_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_wiz_popup, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *card = lv_obj_create(s_wiz_popup);
+    lv_obj_set_size(card, 640, 440);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, "Create new signal");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+
+    lv_obj_t *subtitle = lv_label_create(card);
+    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(subtitle, 600);
+    lv_label_set_text(subtitle,
+        "Manual entry. Endian defaults to Intel and signedness to unsigned "
+        "- tweak in the web editor for finer control.");
+    lv_obj_set_style_text_color(subtitle, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(subtitle, THEME_FONT_SMALL, 0);
+
+    /* Scrollable form container so all 7 fields fit. */
+    lv_obj_t *form = lv_obj_create(card);
+    lv_obj_set_width(form, LV_PCT(100));
+    lv_obj_set_flex_grow(form, 1);
+    lv_obj_set_style_bg_opa(form, 0, 0);
+    lv_obj_set_style_border_width(form, 0, 0);
+    lv_obj_set_style_pad_all(form, 0, 0);
+    lv_obj_set_style_pad_row(form, 4, 0);
+    lv_obj_add_flag(form, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(form, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(form, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_flex_flow(form, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(form, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    for (int f = 0; f < WIZ_F_COUNT; f++) _make_wiz_row(form, f);
+
+    s_wiz_status_lbl = lv_label_create(card);
+    lv_label_set_text(s_wiz_status_lbl, "");
+    lv_obj_set_style_text_color(s_wiz_status_lbl, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_wiz_status_lbl, THEME_FONT_SMALL, 0);
+
+    /* Bottom button row. */
+    lv_obj_t *btn_row = lv_obj_create(card);
+    lv_obj_set_size(btn_row, LV_PCT(100), 48);
+    lv_obj_set_style_bg_opa(btn_row, 0, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_style_pad_all(btn_row, 0, 0);
+    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *cancel = _make_button(btn_row, 120, 40, "Cancel");
+    lv_obj_align(cancel, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_add_event_cb(cancel, _wiz_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *save = _make_button(btn_row, 120, 40, "Save");
+    lv_obj_align(save, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(save, DT_ACCENT, 0);
+    lv_obj_set_style_bg_opa(save, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(save, _wiz_save_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* Generic tab builder - iterates the schema and dispatches per field
@@ -1623,6 +2002,7 @@ void inspector_open(widget_t *w) {
 void inspector_close(void) {
     _close_picker();
     _close_wheel();
+    _wiz_close();
     if (s_overlay) {
         if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
         s_overlay = NULL;
