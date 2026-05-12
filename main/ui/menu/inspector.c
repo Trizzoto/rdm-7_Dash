@@ -1303,18 +1303,31 @@ static void _sig_set_dropdown_options(lv_obj_t *dd, const char *const *items,
         lv_dropdown_set_selected(dd, 0);
         return;
     }
-    char buf[512];
+    /* Size the buffer exactly: every item + newline + null. The 512 B
+     * stack buffer I had here truncated MaxxECU's ~73-signal list around
+     * 'G'. PSRAM first, internal fallback for boards without it. lv_dropdown
+     * copies the string internally so the buffer can be freed straight away. */
+    size_t needed = 1;
+    for (int i = 0; i < count; i++) {
+        if (items[i]) needed += strlen(items[i]) + 1;
+    }
+    char *buf = heap_caps_malloc(needed, MALLOC_CAP_SPIRAM);
+    if (!buf) buf = malloc(needed);
+    if (!buf) return;
+
     size_t pos = 0;
     for (int i = 0; i < count; i++) {
         if (!items[i]) continue;
-        if (i > 0 && pos < sizeof(buf) - 1) buf[pos++] = '\n';
+        if (i > 0 && pos < needed - 1) buf[pos++] = '\n';
         size_t len = strlen(items[i]);
-        if (pos + len >= sizeof(buf)) len = sizeof(buf) - 1 - pos;
+        if (pos + len >= needed) len = needed - 1 - pos;
         memcpy(buf + pos, items[i], len);
         pos += len;
     }
     buf[pos] = '\0';
     lv_dropdown_set_options(dd, buf);
+    free(buf);
+
     if (selected >= 0 && selected < count)
         lv_dropdown_set_selected(dd, (uint16_t)selected);
 }
