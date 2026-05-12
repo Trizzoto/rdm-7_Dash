@@ -3,6 +3,7 @@
 
 <head>
     <title>RDM-7 Visual Designer</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -441,7 +442,6 @@
         }
         @media (max-width: 1199px) {
             header #screenModeSelect,
-            header #ecuSelect,
             header #splashSelect,
             header #splashFadeLabel {
                 display: none !important;
@@ -476,7 +476,11 @@
         /* Hamburger menu — ALWAYS visible across phone/tablet/laptop/desktop.
          * Previously hidden at >=1400px (desktop full-inline header), but the
          * SVG-icon slide-in panel is the canonical "all options" surface so
-         * we keep it accessible at every viewport width. */
+         * we keep it accessible at every viewport width.
+         *
+         * margin-right:auto anchors it next to the logo on every viewport —
+         * without it, the header's `justify-content: space-between` pushes
+         * the burger toward the middle of the bar, away from the logo. */
         .mobile-burger {
             display: inline-flex;
             width: 34px; height: 34px;
@@ -488,6 +492,7 @@
             align-items: center; justify-content: center;
             cursor: pointer;
             flex-shrink: 0;
+            margin-right: auto;
         }
         .mobile-burger:hover { background: var(--bg); }
 
@@ -617,7 +622,6 @@
             header > .title img { height: 22px; }
             header .header-divider { display: none; }
             header #screenModeSelect,
-            header #ecuSelect,
             header #layoutSelect,
             header #pillAutoSync,
             header #pillSimulate,
@@ -2832,7 +2836,7 @@
         <div class="top-controls">
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
-                <button class="header-pill" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
+                <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
             </div>
             <!-- Hidden elements for JS compatibility. The firmware-hosted editor
                  only runs on the 7" dash, so screenSizeSelect is hidden; the JS
@@ -2845,12 +2849,6 @@
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;">
                 <option value="dashboard">Dashboard</option>
                 <option value="splash">Splash Screen</option>
-            </select>
-            <div class="header-divider"></div>
-            <select id="ecuSelect" onchange="onEcuChange(this.value)"
-                title="Auto-configure default layout for your ECU"
-                style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; max-width:160px;">
-                <option value="">None</option>
             </select>
             <div class="header-divider"></div>
             <select id="layoutSelect"
@@ -2868,7 +2866,6 @@
                     <div class="layout-menu-item" onclick="openDeviceInfo(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device Info...</div>
                     <div class="layout-menu-item" onclick="openSignalDashboard(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Signal Dashboard...</div>
                     <div class="layout-menu-item" onclick="openDataLogger(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Data Logger...</div>
-                    <div class="layout-menu-item" onclick="openFuelCalibration(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M3 22h12V4a2 2 0 00-2-2H5a2 2 0 00-2 2v18z"/><path d="M15 8h3a2 2 0 012 2v7a2 2 0 01-2 2h-3"/><line x1="7" y1="10" x2="11" y2="10"/></svg>Fuel Calibration...</div>
                     <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Dimmer Settings...</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="openDbcImportModal(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import DBC...</div>
@@ -2893,7 +2890,7 @@
             <button class="btn btn-secondary btn-icon" onclick="undo()" title="Undo (Ctrl+Z)">↶</button>
             <button class="btn btn-secondary btn-icon" onclick="redo()" title="Redo (Ctrl+Y)">↷</button>
             <button class="btn btn-secondary" id="resetBtnHdr" onclick="resetView()">Reset</button>
-            <button class="btn btn-secondary btn-icon" id="helpBtn" onclick="document.getElementById('helpModal').style.display='flex'" title="Help">?</button>
+            <button class="btn btn-secondary btn-icon" id="helpBtn" onclick="document.getElementById('helpModal').style.display='flex'" title="Keyboard Shortcuts">?</button>
             <button class="btn btn-secondary" id="syncBtn" onclick="captureScreenshot()" title="Refresh the device preview thumbnail (runs automatically on Save; use this to force a refresh when the on-device screen changes)">Sync</button>
 
             <div class="header-divider"></div>
@@ -2957,8 +2954,8 @@
                              style="display:none; position:absolute; top:0; left:0; width:800px; height:480px; pointer-events:auto; cursor:crosshair; user-select:none; -webkit-user-drag:none;"
                              draggable="false" alt="Live dashboard stream">
                         <!-- hide-crosshair matches the removed pill's default;
-                             hide-widgets matches the Widgets pill starting deselected. -->
-                        <div id="interactionLayer" class="hide-crosshair hide-widgets">
+                             Widgets pill defaults active, so no hide-widgets here. -->
+                        <div id="interactionLayer" class="hide-crosshair">
                             <div id="guideX" class="smart-guide-x"></div>
                             <div id="guideY" class="smart-guide-y"></div>
                         </div>
@@ -3000,14 +2997,6 @@
                 <span style="font-weight:600; font-size:14px;">Device Info</span>
                 <button class="close-btn" onclick="closeDeviceInfo()" style="font-size:18px;">&times;</button>
             </div>
-            <!-- Sync Screen button: mobile users can't easily see the editor's
-                 canvas while this modal is open, so surface the preview refresh
-                 here too. Identical action to the header's Sync button. -->
-            <button class="btn btn-secondary" onclick="captureScreenshot(); showToast('Screen synced', 'success');"
-                    style="flex:0 0 auto; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:6px; font-size:12px; padding:8px 12px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                Sync Screen
-            </button>
             <div id="deviceInfoBody" style="display:grid; grid-template-columns:auto 1fr; row-gap:6px; column-gap:16px; font-size:12px; overflow-y:auto; flex:1 1 auto; padding-right:4px;">
                 <span style="color:var(--text-muted);">Loading...</span>
             </div>
@@ -3046,7 +3035,7 @@
                 <span style="font-weight:600; font-size:14px;">Data Logger</span>
                 <button class="close-btn" onclick="closeDataLogger()" style="font-size:18px;">&times;</button>
             </div>
-            <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:12px;">
+            <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:6px;">
                 <label style="font-size:11px; color:var(--text-muted); flex:1;">Sample Rate
                     <select id="logRateSelect" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
                         <option value="1">1 Hz</option>
@@ -3060,11 +3049,83 @@
                         <option value="0">Max</option>
                     </select>
                 </label>
-                <button id="logToggleBtn" class="btn" style="padding:7px 16px;" onclick="toggleDataLogger()">Start</button>
+                <button id="logToggleBtn" class="btn" style="padding:7px 16px;" onclick="toggleDataLogger()" title="Sample every signal at the chosen rate (decoded values, regular intervals)">Start Signal Log</button>
+                <!-- Raw CAN: writes every frame (no decoding) to its own
+                     *.csv so users can ship the trace off-device for DBC-
+                     side analysis. Mutually exclusive with signal logging. -->
+                <button id="canrawToggleBtn" class="btn btn-secondary" style="padding:7px 16px;" onclick="toggleCanRaw()" title="Capture every CAN frame for offline decoding in SavvyCAN">Start Raw CAN</button>
+                <!-- Send a captured Raw CAN trace to the shared cloud bucket so
+                     it can be debugged off-device. Tagged with car make/model. -->
+                <button id="canrawShareBtn" class="btn btn-secondary" style="padding:7px 16px;" onclick="openCanShare()" title="Upload a Raw CAN trace tagged with car make/model for shared debugging">Share Raw CAN</button>
+            </div>
+            <!-- Picker hint — explains when to use which logger so users
+                 don't pick the wrong one for their use case. -->
+            <div style="font-size:10px; color:var(--text-muted); margin-bottom:10px; line-height:1.5;">
+                <b>Signal Log</b> &mdash; decoded values at a fixed rate. Good for plotting + replaying through dashboard widgets.<br>
+                <b>Raw CAN</b> &mdash; every frame, exact timing, SavvyCAN-compatible CSV. Good for offline DBC decoding.
             </div>
             <div id="logStatusLine" style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">Idle</div>
-            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Logs on SD card</div>
+            <!-- Replay status — visible only while a replay is running. Lets
+                 the user track progress and stop early. -->
+            <div id="logReplayLine" style="display:none; font-size:11px; color:var(--text-muted); margin-bottom:10px; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <span id="logReplayInfo">Replaying...</span>
+                <button class="btn btn-secondary" style="padding:3px 10px; font-size:10px;" onclick="stopReplay()">Stop</button>
+            </div>
+            <!-- Upload + replay-speed controls. Upload streams a CSV to
+                 internal flash (capped at LFS_MAX_BYTES) so users can drop
+                 in a log from another device and play it back. -->
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                <input id="logUploadFile" type="file" accept=".csv,text/csv" style="flex:1; font-size:11px; color:var(--text-muted);">
+                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:4px;">Speed
+                    <select id="logReplaySpeed" style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:3px 6px; border-radius:4px; font-size:11px;">
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="2">2x</option>
+                        <option value="5">5x</option>
+                        <option value="10">10x</option>
+                    </select>
+                </label>
+                <button class="btn btn-secondary" style="padding:5px 12px; font-size:11px;" onclick="uploadLogFile()">Upload</button>
+            </div>
+            <div id="logStorageLine" style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Logs</div>
             <div id="logList" style="flex:1; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-md); font-size:11px; min-height:120px; max-height:260px;"></div>
+        </div>
+    </div>
+
+    <!-- Share Raw CAN modal — picks a recorded canraw_*.csv and uploads it
+         to the cloud bucket with car make/model + optional notes. The
+         dashboard handles auth (HMAC over make/model/deviceId/timestamp). -->
+    <div id="canShareModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeCanShare()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:460px; max-width:92vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <span style="font-weight:600; font-size:14px;">Share Raw CAN Trace</span>
+                <button class="close-btn" onclick="closeCanShare()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">
+                Upload a Raw CAN recording tagged with your car so it can be debugged off-device.
+                Stays private to the project maintainers.
+            </div>
+            <label style="display:block; font-size:11px; color:var(--text-muted); margin-bottom:10px;">Recording
+                <select id="canShareFile" style="width:100%; margin-top:2px; padding:6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    <option value="">— Loading recordings —</option>
+                </select>
+            </label>
+            <div style="display:flex; gap:10px; margin-bottom:10px;">
+                <label style="flex:1; font-size:11px; color:var(--text-muted);">Car Make
+                    <input id="canShareMake" type="text" placeholder="Toyota" maxlength="40" style="width:100%; margin-top:2px; padding:6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                </label>
+                <label style="flex:1; font-size:11px; color:var(--text-muted);">Model
+                    <input id="canShareModel" type="text" placeholder="Supra MK4" maxlength="40" style="width:100%; margin-top:2px; padding:6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                </label>
+            </div>
+            <label style="display:block; font-size:11px; color:var(--text-muted); margin-bottom:10px;">Notes (optional)
+                <textarea id="canShareNotes" placeholder="ECU type, year, what's happening in the trace, anything that'd help debug." maxlength="500" rows="3" style="width:100%; margin-top:2px; padding:6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; resize:vertical;"></textarea>
+            </label>
+            <div id="canShareStatus" style="font-size:11px; color:var(--text-muted); margin-bottom:10px; min-height:14px;"></div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeCanShare()">Cancel</button>
+                <button id="canShareSubmitBtn" class="btn" onclick="submitCanShare()">Upload</button>
+            </div>
         </div>
     </div>
 
@@ -3103,8 +3164,8 @@
             </div>
             <div style="display:flex; flex-direction:column; gap:10px;">
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                    <label style="font-size:11px; color:var(--text-muted);">Wheel Circumference (m)
-                        <input id="gearWheelM" type="number" step="0.001" min="0.3" max="4" value="1.95"
+                    <label style="font-size:11px; color:var(--text-muted);">Wheel Circumference (mm)
+                        <input id="gearWheelM" type="number" step="1" min="300" max="4000" value="1950"
                                style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
                     </label>
                     <label style="font-size:11px; color:var(--text-muted);">Final Drive Ratio
@@ -3134,6 +3195,52 @@
                     <input id="gearEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled — publish CALCULATED_GEAR
                 </label>
                 <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveGearSetup()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fuel Sender Setup modal — configures the FUEL_SENDER_V analog input.
+         Sets min (empty) and max (full) voltage + full-tank value. Opened via
+         the hamburger "Fuel Sender Setup..." item, or automatically the first
+         time a widget picks FUEL_SENDER_V as its data source. -->
+    <div id="fuelSenderSetupModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeFuelSenderSetup()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:460px; max-width:92vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-weight:600; font-size:14px;">Fuel Sender Setup &mdash; Voltage Range</span>
+                <button class="close-btn" onclick="closeFuelSenderSetup()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:12px; line-height:1.4;">
+                Map the fuel sender's analog voltage to a tank reading. Enter the voltage at empty and full,
+                and the value at full (e.g. <b>100</b> for percent, or tank capacity in litres). Use
+                <b>Use Current</b> with a known tank level to snapshot the live voltage.
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
+                    <span style="font-size:11px; color:var(--text-muted);">Live Voltage</span>
+                    <span id="fuelSetupLiveV" style="font-size:13px; font-family:monospace; color:var(--text);">-- V</span>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:end;">
+                    <label style="font-size:11px; color:var(--text-muted);">Min Voltage (Empty)
+                        <input id="fuelSetupEmptyV" type="number" step="0.001" min="0" max="5" value="0.500"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <button class="btn btn-secondary" style="font-size:11px; padding:6px 10px; white-space:nowrap;" onclick="_fuelSetupUseCurrent('empty')">Use Current</button>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:end;">
+                    <label style="font-size:11px; color:var(--text-muted);">Max Voltage (Full)
+                        <input id="fuelSetupFullV" type="number" step="0.001" min="0" max="5" value="3.000"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <button class="btn btn-secondary" style="font-size:11px; padding:6px 10px; white-space:nowrap;" onclick="_fuelSetupUseCurrent('full')">Use Current</button>
+                </div>
+                <label style="font-size:11px; color:var(--text-muted);">Full Value <span style="font-size:10px; opacity:0.7;">(units at max voltage)</span>
+                    <input id="fuelSetupFullValue" type="number" step="0.1" min="0" value="100"
+                           style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                </label>
+                <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+                    <input id="fuelSetupEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled &mdash; publish calibrated FUEL_SENDER_V
+                </label>
+                <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveFuelSenderSetup()">Save</button>
             </div>
         </div>
     </div>
@@ -4865,7 +4972,7 @@
                             { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", min: 1, max: 50, enabledBy: "show_ticks" },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
-                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -20, max: 50, enabledBy: "show_tick_labels" },
+                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
                             { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
@@ -4916,7 +5023,7 @@
                                       default: return 0;
                                   }
                               } },
-                            { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", def: 10, cat: "appearance", min: 0, max: 40 },
+                            { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", def: 10, cat: "appearance", min: 0, max: 80 },
                             { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
                         ]
                     },
@@ -5173,11 +5280,6 @@
                 dupBtn.innerText = 'Duplicate (Ctrl+D)';
                 dupBtn.onclick = () => { duplicateWidget(); contextMenu.style.display = 'none'; };
 
-                const toFrontBtn = document.createElement('div');
-                toFrontBtn.className = 'cm-item';
-                toFrontBtn.innerText = 'Bring to Front';
-                toFrontBtn.onclick = () => { bumpZOrder('front'); contextMenu.style.display = 'none'; };
-
                 const fwdBtn = document.createElement('div');
                 fwdBtn.className = 'cm-item';
                 fwdBtn.innerText = 'Bring Forward';
@@ -5188,39 +5290,38 @@
                 bckBtn.innerText = 'Send Backward';
                 bckBtn.onclick = () => { bumpZOrder(-1); contextMenu.style.display = 'none'; };
 
-                const toBackBtn = document.createElement('div');
-                toBackBtn.className = 'cm-item';
-                toBackBtn.innerText = 'Send to Back';
-                toBackBtn.onclick = () => { bumpZOrder('back'); contextMenu.style.display = 'none'; };
-
                 const delBtn = document.createElement('div');
                 delBtn.className = 'cm-item';
                 delBtn.style.color = 'hsl(0, 100%, 63%)';
                 delBtn.innerText = 'Delete (Del)';
                 delBtn.onclick = () => { deleteWidget(); contextMenu.style.display = 'none'; };
 
-                const copyAlertsBtn = document.createElement('div');
-                copyAlertsBtn.className = 'cm-item';
-                copyAlertsBtn.innerText = 'Copy Alerts';
-                copyAlertsBtn.onclick = () => { copyWarnings(); contextMenu.style.display = 'none'; };
+                /* Style copy/paste — copies "appearance" fields (colors, borders,
+                 * fonts, opacities) between same-type widgets. Paste is greyed
+                 * out unless the clipboard's source type matches the selection.
+                 * Backed by clipboardProperties (also driven by Ctrl+Shift+C/V). */
+                const selW = currentLayout.widgets[selectedIndex];
+                const copyStyleBtn = document.createElement('div');
+                copyStyleBtn.className = 'cm-item';
+                copyStyleBtn.innerText = 'Copy Style';
+                copyStyleBtn.onclick = () => { copyStyle(); contextMenu.style.display = 'none'; };
 
-                const pasteAlertsBtn = document.createElement('div');
-                pasteAlertsBtn.className = 'cm-item';
-                pasteAlertsBtn.innerText = 'Paste Alerts';
-                if (!_warningClipboard) { pasteAlertsBtn.style.opacity = '0.4'; pasteAlertsBtn.style.pointerEvents = 'none'; }
-                pasteAlertsBtn.onclick = () => { pasteWarnings(); contextMenu.style.display = 'none'; };
+                const pasteStyleBtn = document.createElement('div');
+                pasteStyleBtn.className = 'cm-item';
+                pasteStyleBtn.innerText = 'Paste Style';
+                const styleCompatible = clipboardProperties && clipboardProperties.style && selW && clipboardProperties._type === selW.type;
+                if (!styleCompatible) { pasteStyleBtn.style.opacity = '0.4'; pasteStyleBtn.style.pointerEvents = 'none'; }
+                pasteStyleBtn.onclick = () => { pasteStyle(); contextMenu.style.display = 'none'; };
 
                 contextMenu.appendChild(copyBtn);
                 contextMenu.appendChild(dupBtn);
-                contextMenu.appendChild(toFrontBtn);
                 contextMenu.appendChild(fwdBtn);
                 contextMenu.appendChild(bckBtn);
-                contextMenu.appendChild(toBackBtn);
                 const divider = document.createElement('div');
                 divider.className = 'cm-divider';
                 contextMenu.appendChild(divider);
-                contextMenu.appendChild(copyAlertsBtn);
-                contextMenu.appendChild(pasteAlertsBtn);
+                contextMenu.appendChild(copyStyleBtn);
+                contextMenu.appendChild(pasteStyleBtn);
                 const divider2 = document.createElement('div');
                 divider2.className = 'cm-divider';
                 contextMenu.appendChild(divider2);
@@ -5241,9 +5342,19 @@
             }
 
             if (contextMenu.children.length > 0) {
+                /* Show first so we can measure, then flip if it would overflow
+                 * past the bottom / right edge of the viewport. Keeps the menu
+                 * fully on-screen no matter where the user right-clicks. */
                 contextMenu.style.display = 'block';
                 contextMenu.style.left = `${x}px`;
-                contextMenu.style.top = `${y}px`;
+                contextMenu.style.top  = `${y}px`;
+                const rect = contextMenu.getBoundingClientRect();
+                const vw = window.innerWidth, vh = window.innerHeight;
+                let nx = x, ny = y;
+                if (y + rect.height > vh) ny = Math.max(4, y - rect.height);
+                if (x + rect.width  > vw) nx = Math.max(4, x - rect.width);
+                if (nx !== x) contextMenu.style.left = `${nx}px`;
+                if (ny !== y) contextMenu.style.top  = `${ny}px`;
             } else {
                 contextMenu.style.display = 'none';
             }
@@ -5998,81 +6109,6 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
-        /* ── Warning threshold copy/paste (cross-widget-type) ──────── */
-        let _warningClipboard = null;
-
-        function _extractWarnings(w) {
-            const c = w.config || {};
-            if (w.type === 'panel') {
-                return {
-                    high_enabled: !!c.warning_high_enabled,
-                    high_threshold: c.warning_high_threshold || 0,
-                    high_color: c.warning_high_color || 0xFF0000,
-                    low_enabled: !!c.warning_low_enabled,
-                    low_threshold: c.warning_low_threshold || 0,
-                    low_color: c.warning_low_color || 0x0000FF
-                };
-            }
-            if (w.type === 'bar') {
-                return {
-                    high_enabled: !!c.bar_alerts_enabled,
-                    high_threshold: c.bar_high || 100,
-                    high_color: c.bar_high_color || 0xFF0000,
-                    low_enabled: !!c.bar_alerts_enabled,
-                    low_threshold: c.bar_low || 0,
-                    low_color: c.bar_low_color || 0x0000FF
-                };
-            }
-            return null;
-        }
-
-        function _applyWarnings(w, warnings) {
-            if (!w.config) w.config = {};
-            const c = w.config;
-            if (w.type === 'panel') {
-                c.warning_high_enabled = warnings.high_enabled;
-                c.warning_high_threshold = warnings.high_threshold;
-                c.warning_high_color = warnings.high_color;
-                c.warning_low_enabled = warnings.low_enabled;
-                c.warning_low_threshold = warnings.low_threshold;
-                c.warning_low_color = warnings.low_color;
-            } else if (w.type === 'bar') {
-                c.bar_alerts_enabled = warnings.high_enabled || warnings.low_enabled;
-                c.bar_high = warnings.high_threshold;
-                c.bar_high_color = warnings.high_color;
-                c.bar_low = warnings.low_threshold;
-                c.bar_low_color = warnings.low_color;
-            } else {
-                updateStatus('This widget type does not support alerts', true);
-                return false;
-            }
-            return true;
-        }
-
-        function copyWarnings() {
-            if (selectedIndex < 0) return;
-            const w = currentLayout.widgets[selectedIndex];
-            const data = _extractWarnings(w);
-            if (!data) {
-                updateStatus('This widget type has no alerts to copy', true);
-                return;
-            }
-            _warningClipboard = data;
-            const def = WIDGET_DEFS[w.type];
-            updateStatus(`Copied alerts from ${def ? def.displayName : w.type}`);
-        }
-
-        function pasteWarnings() {
-            if (selectedIndex < 0 || !_warningClipboard) return;
-            pushHistory();
-            const w = currentLayout.widgets[selectedIndex];
-            if (_applyWarnings(w, _warningClipboard)) {
-                const def = WIDGET_DEFS[w.type];
-                updateStatus(`Pasted alerts to ${def ? def.displayName : w.type}`);
-                updateInspector();
-                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
-            }
-        }
 
         function copyToClipboard() {
             if (selectedIndex === -1) return;
@@ -6649,6 +6685,10 @@
             }
         };
 
+        /* Copy EVERY appearance field — including ones still at their default —
+         * plus the per-widget night-override block. Pasting then fully
+         * replicates the source's visual style instead of only patching the
+         * fields that happened to be overridden. */
         function copyStyle() {
             if (selectedIndex === -1) return;
             const w = currentLayout.widgets[selectedIndex];
@@ -6656,10 +6696,17 @@
             if (!def) return;
             const style = {};
             def.fields.filter(f => f.cat === 'appearance').forEach(f => {
-                if (w.config[f.name] !== undefined) style[f.name] = w.config[f.name];
+                const v = (w.config && w.config[f.name] !== undefined) ? w.config[f.name] : f.def;
+                if (v !== undefined) style[f.name] = JSON.parse(JSON.stringify(v));
             });
-            clipboardProperties = { _type: w.type, style };
-            updateStatus('Style Copied');
+            /* Night overrides live in w.config.night — clone the whole block so
+             * paste reproduces day + night identically. Empty / missing = no
+             * night customisations, which we preserve by storing null. */
+            const night = (w.config && w.config.night && typeof w.config.night === 'object')
+                ? JSON.parse(JSON.stringify(w.config.night)) : null;
+            clipboardProperties = { _type: w.type, style, night };
+            const n = Object.keys(style).length;
+            updateStatus(`Style Copied (${n} field${n === 1 ? '' : 's'}${night ? ' + night' : ''})`);
             showToast('Style copied', 'success');
         }
 
@@ -6672,12 +6719,22 @@
                 if (!w) return;
                 const def = WIDGET_DEFS[w.type];
                 if (!def) return;
+                if (!w.config) w.config = {};
                 const appearNames = new Set(def.fields.filter(f => f.cat === 'appearance').map(f => f.name));
                 Object.keys(clipboardProperties.style).forEach(key => {
                     if (appearNames.has(key)) {
-                        w.config[key] = clipboardProperties.style[key];
+                        w.config[key] = JSON.parse(JSON.stringify(clipboardProperties.style[key]));
                     }
                 });
+                /* Mirror the source's night block (or clear it if the source
+                 * had none). Same-type paste means key names line up 1:1. */
+                if (w.type === clipboardProperties._type) {
+                    if (clipboardProperties.night) {
+                        w.config.night = JSON.parse(JSON.stringify(clipboardProperties.night));
+                    } else {
+                        delete w.config.night;
+                    }
+                }
             });
             renderEditor();
             updateInspector();
@@ -7512,6 +7569,16 @@
                 window._gearSetupPrompted = true;
                 setTimeout(() => {
                     if (typeof openGearSetup === 'function') openGearSetup();
+                }, 250);
+            }
+
+            /* Same pattern for FUEL_SENDER_V — open the Fuel Sender Setup modal
+             * so the user can configure min/max voltage + full value. Once per
+             * page load. */
+            if (sigName === 'FUEL_SENDER_V' && !window._fuelSenderSetupPrompted) {
+                window._fuelSenderSetupPrompted = true;
+                setTimeout(() => {
+                    if (typeof openFuelSenderSetup === 'function') openFuelSenderSetup();
                 }, 250);
             }
         }
@@ -9469,6 +9536,11 @@
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 _lastDeviceSnapshot = rawDeviceSnap;
+                /* Baseline for factory-default protection: snapshot the widget
+                 * array as loaded, so a later save can detect widget changes
+                 * (and ignore signal-only changes) before deciding whether to
+                 * keep the "default" name or fork to "default_modified[_N]". */
+                _baselineWidgetsFp = _widgetsFingerprint(currentLayout.widgets);
                 renderEditor();
                 renderSignals();
                 updateInspector();
@@ -9476,6 +9548,92 @@
                 updateStatus(currentScreenMode === 'splash' ? 'Loaded splash screen' : `Loaded ${name}`);
                 if (currentScreenMode !== 'splash') checkDraft();
             } catch (e) { updateStatus(`Error loading layout ${name}`, true); }
+        }
+
+        /* ── Factory-default protection ───────────────────────────────────
+         * The factory "default" dashboard and "_splash_Default" splash get
+         * protected when widget changes are about to be saved. Signal-only
+         * (or other non-widget) edits still go through to the factory file
+         * so users can configure CAN signals once without forking. Widget
+         * edits fork to "default_modified" (or "default_modified_2" etc.
+         * if a previous fork already exists).
+         *
+         * Auto-save: silently picks the next free name (no prompt cascade).
+         * Manual save: prompts the user to overwrite the existing fork OR
+         * save as the next numbered sibling.
+         */
+        let _baselineWidgetsFp = '';
+
+        function _widgetsFingerprint(widgets) {
+            /* Strip signal bindings before hashing so signal renames (which
+             * propagate to w.signal / config.signal_name) don't count as
+             * widget changes — the user said this protection applies to
+             * widget edits only, not signal edits. */
+            const arr = (widgets || []).map(w => {
+                const c = JSON.parse(JSON.stringify(w));
+                delete c.signal;
+                if (c.config) delete c.config.signal_name;
+                return c;
+            });
+            return JSON.stringify(arr);
+        }
+
+        function _nextFreeName(existing, base) {
+            /* base, base_2, base_3, ... Returns the first one not in `existing`. */
+            if (!existing.includes(base)) return base;
+            for (let i = 2; i < 1000; i++) {
+                const n = `${base}_${i}`;
+                if (!existing.includes(n)) return n;
+            }
+            return `${base}_${Date.now()}`;
+        }
+
+        function _resolveProtectedName(intendedName, isSplash, silent) {
+            const dashGuarded = (!isSplash && intendedName === 'default');
+            const splashGuarded = (isSplash && intendedName === '_splash_Default');
+            if (!dashGuarded && !splashGuarded) return intendedName;
+
+            /* Widget-only check — ignore signal edits. */
+            const currentFp = _widgetsFingerprint(currentLayout.widgets);
+            if (currentFp === _baselineWidgetsFp) return intendedName;
+
+            /* Build the candidate name + the list of existing siblings. */
+            const base = dashGuarded ? 'default_modified' : '_splash_Default_modified';
+            let existing = [];
+            if (dashGuarded) {
+                existing = Array.from(layoutSelect.options).map(o => o.value);
+            } else {
+                const splashSel = document.getElementById('splashSelect');
+                existing = splashSel
+                    ? Array.from(splashSel.options).map(o => '_splash_' + o.value)
+                    : [];
+            }
+            const baseExists = existing.includes(base);
+            const nextFree   = _nextFreeName(existing, base);
+
+            if (silent) {
+                /* Auto-save: don't nag — pick the next-free silently. Once
+                 * currentLayout.name flips to that, subsequent auto-saves
+                 * skip this branch entirely (intendedName won't match). */
+                return nextFree;
+            }
+
+            /* Manual save: prompt the user. */
+            const displayName = base.startsWith('_splash_') ? base.slice(8) : base;
+            const displayNext = nextFree.startsWith('_splash_') ? nextFree.slice(8) : nextFree;
+            if (!baseExists) {
+                const msg = isSplash
+                    ? `Save widget changes to a new splash layout "${displayName}"?\n\nFactory "_splash_Default" stays untouched.`
+                    : `Save widget changes to a new layout "${displayName}"?\n\nFactory "default" stays untouched.`;
+                return confirm(msg) ? base : null;
+            }
+            /* base already exists → overwrite vs. next-numbered. */
+            const overwrite = confirm(
+                `"${displayName}" already exists.\n\n` +
+                `OK  = Overwrite "${displayName}"\n` +
+                `Cancel = Save as "${displayNext}" instead`
+            );
+            return overwrite ? base : nextFree;
         }
 
         async function saveActiveLayout(opts) {
@@ -9496,8 +9654,38 @@
                 payload.name = '_splash_' + (splashSel && splashSel.value ? splashSel.value : 'Default');
             }
 
+            /* Factory-default protection — see _resolveProtectedName above.
+             * Rewrites payload.name / currentLayout.name / splashSelect when
+             * widget changes are about to overwrite a factory file. Null
+             * return = user cancelled the manual save prompt. */
+            const intended = payload.name;
+            const resolved = _resolveProtectedName(intended, isSplash, silent);
+            if (resolved === null) {
+                updateStatus('Save cancelled');
+                return;
+            }
+            const wasRedirected = (resolved !== intended);
+            if (wasRedirected) {
+                payload.name = resolved;
+                if (isSplash) {
+                    const bare = resolved.startsWith('_splash_') ? resolved.slice(8) : resolved;
+                    const splashSel = document.getElementById('splashSelect');
+                    if (splashSel) {
+                        let opt = Array.from(splashSel.options).find(o => o.value === bare);
+                        if (!opt) {
+                            opt = document.createElement('option');
+                            opt.value = bare; opt.textContent = bare;
+                            splashSel.appendChild(opt);
+                        }
+                        splashSel.value = bare;
+                    }
+                } else {
+                    currentLayout.name = resolved;
+                }
+            }
+
             /* Confirm which layout will be overwritten (skip for splash and auto-save). */
-            if (!isSplash && !silent) {
+            if (!isSplash && !silent && !wasRedirected) {
                 const deviceActive = layoutSelect.value || '';
                 if (deviceActive && deviceActive !== layoutName) {
                     if (!confirm(`This will save and overwrite "${layoutName}" (not "${deviceActive}"). Continue?`)) return;
@@ -9540,12 +9728,23 @@
                     }
                     throw new Error();
                 }
-                updateStatus(isSplash ? 'Splash saved' : 'Saved to device');
-                showToast(isSplash ? 'Splash saved' : 'Saved to device', 'success');
+                if (wasRedirected) {
+                    const what = isSplash ? 'factory splash' : 'factory default';
+                    const display = resolved.startsWith('_splash_') ? resolved.slice(8) : resolved;
+                    showToast(`Saved as "${display}" — ${what} preserved`, 'success');
+                    updateStatus(`Saved to "${display}" (${what} preserved)`);
+                } else {
+                    updateStatus(isSplash ? 'Splash saved' : 'Saved to device');
+                    showToast(isSplash ? 'Splash saved' : 'Saved to device', 'success');
+                }
                 _editingActive = false;
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 _lastDeviceSnapshot = JSON.stringify(payload);
+                /* After a successful save the on-disk state matches what's
+                 * in the editor — reset the baseline so further widget edits
+                 * are measured against this point, not the original load. */
+                _baselineWidgetsFp = _widgetsFingerprint(currentLayout.widgets);
                 try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
                 if (!isSplash) await fetchLayoutsKeepCurrent();
                 setTimeout(captureScreenshot, 1500);
@@ -11611,16 +11810,20 @@
                 if (wanted) sel.value = wanted;
             });
         }
+        /* Storage format keeps ratios[0] = 0 as the Neutral slot (firmware
+         * skips index 0 when matching gears — see signal_internal.c). The UI
+         * hides that row since it's always 0 and not user-editable; render
+         * skips index 0 and read synthesises the leading 0 back in. */
         function _gearRenderRatios(ratios) {
             const list = document.getElementById('gearRatioList');
             if (!list) return;
             list.innerHTML = '';
             ratios.forEach((r, i) => {
+                if (i === 0) return;  /* hide N row */
                 const row = document.createElement('div');
                 row.style.cssText = 'display:grid; grid-template-columns:50px 1fr; gap:8px; align-items:center;';
-                const label = (i === 0) ? 'N' : String(i);
-                row.innerHTML = `<span style="font-size:12px; font-weight:600; color:var(--text-muted); text-align:right;">${label}</span>
-                    <input type="number" step="0.001" min="0" value="${r.toFixed(3)}" data-gear-idx="${i}" ${i === 0 ? 'disabled title="Neutral is always 0.000"' : ''}
+                row.innerHTML = `<span style="font-size:12px; font-weight:600; color:var(--text-muted); text-align:right;">${i}</span>
+                    <input type="number" step="0.001" min="0" value="${r.toFixed(3)}" data-gear-idx="${i}"
                            style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:monospace;">`;
                 list.appendChild(row);
             });
@@ -11628,9 +11831,10 @@
         function _gearReadRatios() {
             const list = document.getElementById('gearRatioList');
             if (!list) return [0];
-            return Array.from(list.querySelectorAll('input[data-gear-idx]'))
-                .sort((a, b) => parseInt(a.dataset.gearIdx) - parseInt(b.dataset.gearIdx))
-                .map((inp, i) => i === 0 ? 0 : (parseFloat(inp.value) || 0));
+            const inputs = Array.from(list.querySelectorAll('input[data-gear-idx]'))
+                .sort((a, b) => parseInt(a.dataset.gearIdx) - parseInt(b.dataset.gearIdx));
+            /* Prepend the reserved N=0 slot so storage format stays unchanged. */
+            return [0, ...inputs.map(inp => parseFloat(inp.value) || 0)];
         }
         function _gearAddRatio() {
             const r = _gearReadRatios();
@@ -11670,7 +11874,8 @@
                     cfg = Object.assign(cfg, j);
                 }
             } catch (e) { /* offline — use defaults */ }
-            document.getElementById('gearWheelM').value     = (cfg.wheel_circumference_m || 1.95).toFixed(3);
+            /* Display in mm (firmware stores metres). Round to nearest mm. */
+            document.getElementById('gearWheelM').value     = Math.round(((cfg.wheel_circumference_m || 1.95)) * 1000);
             document.getElementById('gearFinalDrive').value = (cfg.final_drive || 4.11).toFixed(3);
             document.getElementById('gearEnabled').checked  = !!cfg.enabled;
             if (document.getElementById('gearRpmSig').querySelector(`option[value="${cfg.rpm_signal}"]`)) {
@@ -11682,8 +11887,10 @@
             _gearRenderRatios(cfg.ratios && cfg.ratios.length ? cfg.ratios : [0, 3.321, 1.902, 1.308, 1.000, 0.759]);
         }
         async function saveGearSetup() {
+            /* UI shows mm; firmware expects metres. */
+            const wheelMm = parseFloat(document.getElementById('gearWheelM').value);
             const payload = {
-                wheel_circumference_m: parseFloat(document.getElementById('gearWheelM').value) || 1.95,
+                wheel_circumference_m: isFinite(wheelMm) && wheelMm > 0 ? wheelMm / 1000 : 1.95,
                 final_drive:           parseFloat(document.getElementById('gearFinalDrive').value) || 4.11,
                 rpm_signal:            document.getElementById('gearRpmSig').value || 'RPM',
                 speed_signal:          document.getElementById('gearSpeedSig').value || 'VEHICLE_SPEED',
@@ -11701,6 +11908,99 @@
                 closeGearSetup();
             } catch (e) {
                 if (typeof showToast === 'function') showToast('Save failed: ' + e.message, 'error');
+            }
+        }
+
+        /* ── Fuel Sender Setup modal ──────────────────────────────────────
+         * Configures the FUEL_SENDER_V calibration: min (empty) voltage, max
+         * (full) voltage, and the displayed value at full. Lives on the
+         * signal in the layout JSON (sig.fuel_cal) — save writes the layout. */
+        let _fuelSetupPollTimer = null;
+        function closeFuelSenderSetup() {
+            const m = document.getElementById('fuelSenderSetupModal');
+            if (m) m.style.display = 'none';
+            if (_fuelSetupPollTimer) { clearInterval(_fuelSetupPollTimer); _fuelSetupPollTimer = null; }
+        }
+        async function _fuelSetupPollLive() {
+            try {
+                const r = await fetch('/api/fuel/status');
+                if (!r.ok) return;
+                const d = await r.json();
+                const el = document.getElementById('fuelSetupLiveV');
+                if (el && typeof d.voltage === 'number') el.textContent = d.voltage.toFixed(3) + ' V';
+            } catch (e) { /* offline */ }
+        }
+        async function _fuelSetupUseCurrent(which) {
+            try {
+                const r = await fetch('/api/fuel/status');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const d = await r.json();
+                if (typeof d.voltage !== 'number') return;
+                const id = (which === 'empty') ? 'fuelSetupEmptyV' : 'fuelSetupFullV';
+                const inp = document.getElementById(id);
+                if (inp) inp.value = d.voltage.toFixed(3);
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Could not read live voltage', 'error');
+            }
+        }
+        async function openFuelSenderSetup() {
+            if (typeof closeMobileMenu === 'function') closeMobileMenu();
+            const modal = document.getElementById('fuelSenderSetupModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            /* Make sure the FUEL_SENDER_V signal entry exists so save can write to it */
+            if (!currentLayout.signals) currentLayout.signals = [];
+            let sig = currentLayout.signals.find(s => s.name === 'FUEL_SENDER_V');
+            if (!sig) {
+                sig = { name: 'FUEL_SENDER_V', source: 'internal', fuel_cal: { empty_v: 0.5, full_v: 3.0, full_value: 100, enabled: true } };
+                currentLayout.signals.push(sig);
+            }
+            const cal = sig.fuel_cal || {};
+            const ev = (cal.empty_v    != null) ? Number(cal.empty_v)    : 0.5;
+            const fv = (cal.full_v     != null) ? Number(cal.full_v)     : 3.0;
+            const fx = (cal.full_value != null) ? Number(cal.full_value) : 100;
+            document.getElementById('fuelSetupEmptyV').value    = ev.toFixed(3);
+            document.getElementById('fuelSetupFullV').value     = fv.toFixed(3);
+            document.getElementById('fuelSetupFullValue').value = fx;
+            document.getElementById('fuelSetupEnabled').checked = (cal.enabled !== false);
+            _fuelSetupPollLive();
+            if (_fuelSetupPollTimer) clearInterval(_fuelSetupPollTimer);
+            _fuelSetupPollTimer = setInterval(_fuelSetupPollLive, 500);
+        }
+        async function saveFuelSenderSetup() {
+            if (!currentLayout.signals) currentLayout.signals = [];
+            let sig = currentLayout.signals.find(s => s.name === 'FUEL_SENDER_V');
+            if (!sig) {
+                sig = { name: 'FUEL_SENDER_V', source: 'internal' };
+                currentLayout.signals.push(sig);
+            }
+            const empty_v    = parseFloat(document.getElementById('fuelSetupEmptyV').value);
+            const full_v     = parseFloat(document.getElementById('fuelSetupFullV').value);
+            const full_value = parseFloat(document.getElementById('fuelSetupFullValue').value);
+            if (!isFinite(empty_v) || !isFinite(full_v) || !isFinite(full_value)) {
+                if (typeof showToast === 'function') showToast('Enter valid numbers', 'error');
+                return;
+            }
+            if (Math.abs(full_v - empty_v) < 0.001) {
+                if (typeof showToast === 'function') showToast('Empty and Full voltages must differ', 'error');
+                return;
+            }
+            pushHistory();
+            sig.fuel_cal = {
+                empty_v:    empty_v,
+                full_v:     full_v,
+                full_value: full_value,
+                enabled:    document.getElementById('fuelSetupEnabled').checked
+            };
+            try {
+                if (typeof saveActiveLayout === 'function') {
+                    await saveActiveLayout({ silent: false });
+                }
+                if (typeof showToast === 'function') showToast('Fuel sender setup saved', 'success');
+                closeFuelSenderSetup();
+                if (typeof updateInspector === 'function') updateInspector();
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Save failed', 'error');
             }
         }
 
@@ -11942,19 +12242,41 @@
 
         async function _refreshLogStatus() {
             try {
-                const [statusR, listR, configR] = await Promise.all([
+                const [statusR, listR, configR, canrawR] = await Promise.all([
                     fetch('/api/log/status'),
                     fetch('/api/log/list'),
                     fetch('/api/log/config'),
+                    fetch('/api/canraw/status').catch(() => null),
                 ]);
-                let running = false;
+                let active = false;
+                let storage = 'lfs', sdMounted = false, lfsMax = 1024*1024;
+                let canrawActive = false, canrawLine = '';
+                if (canrawR && canrawR.ok) {
+                    try {
+                        const c = await canrawR.json();
+                        canrawActive = !!c.active;
+                        if (canrawActive) {
+                            const where = c.storage === 'sd' ? 'SD' : 'flash';
+                            canrawLine = ` • Raw: ${c.frames || 0} frames to ${where}`;
+                        }
+                    } catch (_) { /* old firmware — no canraw endpoint */ }
+                }
                 if (statusR.ok) {
                     const s = await statusR.json();
-                    running = !!s.running;
+                    /* Firmware returns `active`; older builds returned `running` — accept both. */
+                    active = !!(s.active || s.running);
+                    storage = s.storage || (s.sd_mounted ? 'sd' : 'lfs');
+                    sdMounted = !!s.sd_mounted;
+                    if (typeof s.lfs_max_bytes === 'number' && s.lfs_max_bytes > 0)
+                        lfsMax = s.lfs_max_bytes;
                     const line = document.getElementById('logStatusLine');
                     if (line) {
-                        if (running) {
-                            line.textContent = `Recording ${s.file || ''} - ${s.samples || 0} samples @ ${s.rate_hz || 0} Hz`;
+                        if (active) {
+                            const where = storage === 'sd' ? 'SD' : 'flash';
+                            line.textContent = `Recording to ${where}: ${s.file || ''} — ${s.samples || 0} samples @ ${s.rate_hz || 0} Hz${canrawLine}`;
+                            line.style.color = 'hsl(140,60%,55%)';
+                        } else if (canrawActive) {
+                            line.textContent = `Capturing raw CAN${canrawLine.replace(' • Raw: ', ': ')}`;
                             line.style.color = 'hsl(140,60%,55%)';
                         } else {
                             line.textContent = 'Idle';
@@ -11962,7 +12284,22 @@
                         }
                     }
                     const btn = document.getElementById('logToggleBtn');
-                    if (btn) btn.textContent = running ? 'Stop' : 'Start';
+                    if (btn) btn.textContent = active ? 'Stop Signal Log' : 'Start Signal Log';
+                    const rawBtn = document.getElementById('canrawToggleBtn');
+                    if (rawBtn) rawBtn.textContent = canrawActive ? 'Stop Raw CAN' : 'Start Raw CAN';
+
+                    /* Storage-tier legend above the file list — explain WHERE
+                     * the next log will be saved + LFS cap warning so users
+                     * aren't surprised when a long log auto-stops. */
+                    const storageLine = document.getElementById('logStorageLine');
+                    if (storageLine) {
+                        if (sdMounted) {
+                            storageLine.textContent = 'Logs (SD card)';
+                        } else {
+                            const mb = (lfsMax / (1024*1024)).toFixed(1);
+                            storageLine.innerHTML = `Logs (internal flash &mdash; <span style="color:hsl(40,80%,60%);">no SD card detected, each log capped at ${mb} MB</span>)`;
+                        }
+                    }
                 }
                 if (configR.ok) {
                     const cfg = await configR.json();
@@ -11975,14 +12312,27 @@
                     const el = document.getElementById('logList');
                     if (el) {
                         el.innerHTML = arr.length === 0
-                            ? '<div style="padding:20px; text-align:center; color:var(--text-muted);">No log files on SD card</div>'
+                            ? '<div style="padding:20px; text-align:center; color:var(--text-muted);">No log files</div>'
                             : arr.map(f => {
                                 const name = typeof f === 'string' ? f : (f.name || f.file || '');
                                 const size = typeof f === 'object' ? _fmtBytes(f.size) : '';
+                                const tier = (typeof f === 'object' ? f.storage : null) || '';
+                                const tierBadge = tier
+                                    ? `<span style="font-size:9px; color:var(--text-muted); border:1px solid var(--border); border-radius:3px; padding:1px 4px; margin-left:6px;">${tier.toUpperCase()}</span>`
+                                    : '';
+                                /* Raw CAN captures (canraw_*.csv) can't be
+                                 * "played back" through the signal pipeline
+                                 * — they're meant for offline decoding in
+                                 * SavvyCAN / scripts — so hide the Play
+                                 * button on those rows. */
+                                const isRaw = name.toLowerCase().startsWith('canraw_');
+                                const playBtn = isRaw ? '' :
+                                    `<button class="btn btn-secondary" style="padding:2px 10px; font-size:10px; color:hsl(140,60%,55%);" onclick="playLogFile('${name}')">Play</button>`;
                                 return `<div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-bottom:1px solid var(--border);">
-                                    <span>${name} <span style="color:var(--text-muted); margin-left:8px;">${size}</span></span>
-                                    <span>
-                                        <a href="/api/log/download?file=${encodeURIComponent(name)}" download="${name}" class="btn btn-secondary" style="padding:2px 10px; font-size:10px; text-decoration:none;">Download</a>
+                                    <span>${name}${tierBadge} <span style="color:var(--text-muted); margin-left:8px;">${size}</span></span>
+                                    <span style="display:flex; gap:4px;">
+                                        ${playBtn}
+                                        <a href="/api/log/download?name=${encodeURIComponent(name)}" download="${name}" class="btn btn-secondary" style="padding:2px 10px; font-size:10px; text-decoration:none;">Download</a>
                                         <button class="btn btn-secondary" style="padding:2px 10px; font-size:10px; color:hsl(0,70%,60%);" onclick="deleteLogFile('${name}')">Delete</button>
                                     </span>
                                 </div>`;
@@ -11990,11 +12340,13 @@
                     }
                 }
             } catch (e) { /* silent */ }
+            /* Piggyback the replay-status poll on the same 1s tick. */
+            _refreshReplayStatus();
         }
 
         async function toggleDataLogger() {
             const btn = document.getElementById('logToggleBtn');
-            const running = btn && btn.textContent === 'Stop';
+            const running = btn && /Stop/i.test(btn.textContent);
             try {
                 if (running) {
                     await fetch('/api/log/stop', { method: 'POST' });
@@ -12015,14 +12367,112 @@
         async function deleteLogFile(name) {
             if (!confirm(`Delete ${name}?`)) return;
             try {
-                await fetch('/api/log/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file: name })
+                /* Firmware expects ?name= as a query param (not a JSON body). */
+                await fetch('/api/log/delete?name=' + encodeURIComponent(name), {
+                    method: 'POST'
                 });
                 _refreshLogStatus();
             } catch (e) {
                 updateStatus('Failed to delete log file', true);
+            }
+        }
+
+        /* ── Raw CAN capture (every frame, no decoding) ───────────────
+         * Mutually exclusive with signal logging on the firmware side;
+         * the button updates label/colour from /api/canraw/status which
+         * _refreshLogStatus polls on the same 1s tick. */
+        async function toggleCanRaw() {
+            const btn = document.getElementById('canrawToggleBtn');
+            const running = btn && /Stop/i.test(btn.textContent);
+            try {
+                const path = running ? '/api/canraw/stop' : '/api/canraw/start';
+                const r = await fetch(path, { method: 'POST' });
+                if (!r.ok) {
+                    const msg = await r.text().catch(() => '');
+                    throw new Error(msg || ('HTTP ' + r.status));
+                }
+                _refreshLogStatus();
+            } catch (e) {
+                updateStatus('Raw CAN command failed: ' + e.message, true);
+                showToast('Raw CAN failed', 'error');
+            }
+        }
+
+        /* ── Replay (play back a CSV through the signal system) ────────
+         * Backed by /api/replay/start (POST {file,speed,loop}) +
+         * /api/replay/stop + /api/replay/status. The firmware reads the
+         * CSV one row at a time and injects each column into its matching
+         * signal — same data path the live CAN bus uses. */
+        async function playLogFile(name) {
+            const speedSel = document.getElementById('logReplaySpeed');
+            const speed = speedSel ? parseFloat(speedSel.value) || 1 : 1;
+            try {
+                const r = await fetch('/api/replay/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file: name, speed: speed, loop: false })
+                });
+                if (!r.ok) throw new Error(await r.text());
+                showToast(`Replaying ${name} @ ${speed}x`, 'success');
+                _refreshReplayStatus();
+            } catch (e) {
+                updateStatus('Replay start failed: ' + e.message, true);
+                showToast('Replay failed', 'error');
+            }
+        }
+
+        async function stopReplay() {
+            try {
+                await fetch('/api/replay/stop', { method: 'POST' });
+                _refreshReplayStatus();
+            } catch (e) { /* silent */ }
+        }
+
+        async function _refreshReplayStatus() {
+            try {
+                const r = await fetch('/api/replay/status');
+                if (!r.ok) return;
+                const s = await r.json();
+                const line = document.getElementById('logReplayLine');
+                const info = document.getElementById('logReplayInfo');
+                if (!line || !info) return;
+                if (s.active) {
+                    line.style.display = 'flex';
+                    const pct = s.total_rows ? ((s.row / s.total_rows) * 100).toFixed(0) : 0;
+                    info.textContent = `Replaying ${s.file || ''} — row ${s.row}/${s.total_rows} (${pct}%) @ ${s.speed}x`;
+                } else {
+                    line.style.display = 'none';
+                }
+            } catch (e) { /* silent */ }
+        }
+
+        /* Upload a CSV from the user's filesystem so they can replay logs
+         * recorded on another device. Streams via fetch + File object so
+         * the firmware can write it to /lfs/logs/<name> capped at the
+         * standard LFS log limit. */
+        async function uploadLogFile() {
+            const input = document.getElementById('logUploadFile');
+            const file = input && input.files && input.files[0];
+            if (!file) {
+                showToast('Pick a .csv file first', 'error');
+                return;
+            }
+            try {
+                const r = await fetch('/api/log/upload?name=' + encodeURIComponent(file.name), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/csv' },
+                    body: file
+                });
+                if (!r.ok) {
+                    const msg = await r.text().catch(() => '');
+                    throw new Error(msg || ('HTTP ' + r.status));
+                }
+                showToast(`Uploaded ${file.name}`, 'success');
+                input.value = '';
+                _refreshLogStatus();
+            } catch (e) {
+                updateStatus('Upload failed: ' + e.message, true);
+                showToast('Upload failed', 'error');
             }
         }
 
@@ -12051,6 +12501,95 @@
         function closeDataLogger() {
             document.getElementById('dataLoggerModal').style.display = 'none';
             if (_logStatusTimer) { clearInterval(_logStatusTimer); _logStatusTimer = null; }
+        }
+
+        /* ── Share Raw CAN modal ────────────────────────────────────── */
+
+        let _canShareStatusTimer = null;
+
+        async function openCanShare() {
+            document.getElementById('canShareModal').style.display = 'flex';
+            document.getElementById('canShareStatus').textContent = '';
+            const sel = document.getElementById('canShareFile');
+            sel.innerHTML = '<option value="">— Loading recordings —</option>';
+            try {
+                const r = await fetch('/api/log/list');
+                const j = r.ok ? await r.json() : { files: [] };
+                const files = (j.files || []).filter(f =>
+                    (typeof f === 'string' ? f : f.name || '').startsWith('canraw_'));
+                if (files.length === 0) {
+                    sel.innerHTML = '<option value="">No Raw CAN recordings found — start one first</option>';
+                    return;
+                }
+                sel.innerHTML = '';
+                for (const f of files) {
+                    const name = typeof f === 'string' ? f : f.name;
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    sel.appendChild(opt);
+                }
+            } catch (e) {
+                sel.innerHTML = '<option value="">Error loading recordings: ' + e.message + '</option>';
+            }
+        }
+
+        function closeCanShare() {
+            document.getElementById('canShareModal').style.display = 'none';
+            if (_canShareStatusTimer) {
+                clearInterval(_canShareStatusTimer);
+                _canShareStatusTimer = null;
+            }
+        }
+
+        async function submitCanShare() {
+            const file  = document.getElementById('canShareFile').value.trim();
+            const make  = document.getElementById('canShareMake').value.trim();
+            const model = document.getElementById('canShareModel').value.trim();
+            const notes = document.getElementById('canShareNotes').value.trim();
+            const status = document.getElementById('canShareStatus');
+            const submitBtn = document.getElementById('canShareSubmitBtn');
+
+            if (!file)  { status.textContent = 'Pick a recording first.'; return; }
+            if (!make)  { status.textContent = 'Enter the car make.'; return; }
+            if (!model) { status.textContent = 'Enter the car model.'; return; }
+
+            submitBtn.disabled = true;
+            status.textContent = 'Starting upload...';
+            try {
+                const r = await fetch('/api/canraw/cloud_upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file, make, model, notes }),
+                });
+                if (!r.ok) throw new Error(await r.text().catch(() => 'HTTP ' + r.status));
+            } catch (e) {
+                status.textContent = 'Failed to start: ' + e.message;
+                submitBtn.disabled = false;
+                return;
+            }
+
+            /* Poll until success / failure */
+            if (_canShareStatusTimer) clearInterval(_canShareStatusTimer);
+            _canShareStatusTimer = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/canraw/cloud_upload/status');
+                    if (!r.ok) return;
+                    const s = await r.json();
+                    status.textContent = s.message || s.state;
+                    if (s.state === 'success' || s.state === 'failed') {
+                        clearInterval(_canShareStatusTimer);
+                        _canShareStatusTimer = null;
+                        submitBtn.disabled = false;
+                        if (s.state === 'success') {
+                            status.style.color = 'var(--accent, #5ad17a)';
+                            setTimeout(() => closeCanShare(), 1500);
+                        } else {
+                            status.style.color = 'var(--danger, #ff6b6b)';
+                        }
+                    }
+                } catch (_) { /* keep polling */ }
+            }, 800);
         }
 
         /* ── Fuel Calibration modal ─────────────────────────────────── */
@@ -12304,8 +12843,7 @@
                     { type: 'button', label: 'Rename\u2026',  icon: 'edit',   onclick: 'renameCurrentLayout()' }
                 ]},
                 { heading: 'Screen', items: [
-                    { type: 'select', id: 'screenModeSelect' },
-                    { type: 'select', id: 'ecuSelect' }
+                    { type: 'select', id: 'screenModeSelect' }
                 ]},
                 { heading: 'File', items: [
                     { type: 'button', label: 'Import .rdm',   icon: 'upload',   onclick: 'importRdm()' },
@@ -12327,7 +12865,7 @@
                 { heading: 'Tools', items: [
                     { type: 'button', label: 'Signal Dashboard\u2026', icon: 'activity', onclick: 'openSignalDashboard()' },
                     { type: 'button', label: 'Data Logger\u2026',      icon: 'database', onclick: 'openDataLogger()' },
-                    { type: 'button', label: 'Fuel Calibration\u2026', icon: 'gauge',      onclick: 'openFuelCalibration()' },
+                    { type: 'button', label: 'Fuel Sender Setup\u2026', icon: 'gauge',      onclick: 'openFuelSenderSetup()' },
                     { type: 'button', label: 'Dimmer Settings\u2026', icon: 'brightness', onclick: 'openDimmerSettings()' },
                     { type: 'button', label: 'Gear Setup\u2026',       icon: 'gauge',      onclick: 'openGearSetup()' },
                     { type: 'button', label: 'Import DBC\u2026',       icon: 'upload',   onclick: 'openDbcImportModal()' },
@@ -12347,9 +12885,8 @@
                     { type: 'select', id: 'streamRateSel' },
                     { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
                         onclick: 'toggleLiveControl()' },
-                    { type: 'button', label: 'Sync Preview', icon: 'sync',  onclick: 'captureScreenshot()' },
                     { type: 'button', label: 'Reset View',   icon: 'reset', onclick: 'resetView()' },
-                    { type: 'button', label: 'Help',       icon: 'help',  onclick: "document.getElementById('helpModal').style.display='flex'" }
+                    { type: 'button', label: 'Keyboard Shortcuts', icon: 'help',  onclick: "document.getElementById('helpModal').style.display='flex'" }
                 ]},
                 { heading: 'Danger zone', items: [
                     { type: 'button', label: 'Delete Layout', icon: 'trash', onclick: 'deleteCurrentLayout()', danger: true }

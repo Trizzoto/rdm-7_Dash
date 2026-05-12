@@ -131,6 +131,22 @@ JSON: `"Family:size"` (e.g. `"Fugaz:28"`) or legacy `"fugaz_28"`. Call `font_man
 - LVGL v8 API only: `lv_obj_set_style_*()` (not v9 style)
 - Large allocs: `heap_caps_calloc(..., MALLOC_CAP_SPIRAM)`
 
+## CAN Cloud Upload
+
+Recorded Raw CAN traces can be uploaded to a shared R2 bucket for off-device
+debugging via the "Share Raw CAN" button (data logger modal in the web editor).
+
+- Pipeline: web UI → `POST /api/canraw/cloud_upload` → `can_upload_start()` task
+  → HMAC-SHA256 over `"{make}\n{model}\n{deviceId}\n{ts}"` → HTTPS POST to
+  `tools/cloudflare-ota-proxy/worker.js` → R2 bucket `rdm7-can-logs`
+- Shared secret: `RDM7_CAN_UPLOAD_HMAC_SECRET` in `main/include/can_upload_secret.h`
+  AND `wrangler secret put CAN_UPLOAD_HMAC_SECRET` on the worker. Must match.
+- File key in R2: `{make_slug}/{model_slug}/{device_id}_{unix_ts}.csv`
+- Max upload: 10 MB per trace (server-enforced). Per-second timestamp window
+  is ±10 min to limit replay.
+- Dev-phase: secret is in firmware repo for convenience. Rotate before
+  customer rollout and consider deriving per-device keys from `device_id`.
+
 ## Common Pitfalls
 
 - **Widget not updating:** signal missing from JSON, or `signal_subscribe()` not called after `w->root` set

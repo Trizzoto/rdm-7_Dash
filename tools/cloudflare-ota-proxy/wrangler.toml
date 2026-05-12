@@ -6,3 +6,13 @@ compatibility_date = "2024-01-01"
 # routes = [
 #   { pattern = "ota.rdm7.net/*", zone_name = "rdm7.net" }
 # ]
+
+# R2 bucket where /can-upload writes CAN traces submitted by dashboards.
+# Create with: wrangler r2 bucket create rdm7-can-logs
+[[r2_buckets]]
+binding = "CAN_LOGS"
+bucket_name = "rdm7-can-logs"
+
+# HMAC secret used to authenticate /can-upload POSTs. Set with:
+#   wrangler secret put CAN_UPLOAD_HMAC_SECRET
+# The same value lives in main/include/can_upload_secret.h on the firmware side.
