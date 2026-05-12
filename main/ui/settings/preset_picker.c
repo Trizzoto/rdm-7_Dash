@@ -14,11 +14,19 @@
 const preconfig_item_t preconfig_items[] = {
 
 /* ── Ford BA/BF ──────────────────────────────────────────────────────── */
-{ "Ford", "BA/BF", "COOLANT TEMP",    "420", 1, 0,  8,  1.0,    -40,   0, false },
-{ "Ford", "BA/BF", "ENGINE RPM",      "201", 1, 0,  16, 0.25,     0,   0, false },
-{ "Ford", "BA/BF", "ENGINE TORQUE",   "201", 1, 32, 12, 1.0,      0,   0, true  },
-{ "Ford", "BA/BF", "THROTTLE %",      "201", 1, 16, 16, 0.00152,  0,   1, false },
-{ "Ford", "BA/BF", "VEHICLE SPEED",   "415", 1, 0,  16, 0.01,     0,   2, false },
+{ "Ford", "BA/BF", "AMBIENT TEMP",    "353", 0, 32,  8, 0.333333, -30,  1, false },
+{ "Ford", "BA/BF", "BARO PRESSURE",   "44D", 0, 56,  8, 0.5,        0,  1, false },
+{ "Ford", "BA/BF", "BATTERY VOLTAGE", "427", 0, 24,  8, 0.1,        0,  1, false },
+{ "Ford", "BA/BF", "COOLANT TEMP",    "427", 0,  0,  8, 1.0,      -40,  0, false },
+{ "Ford", "BA/BF", "FUEL PULSE",      "427", 0, 56,  8, 0.0000788519, 0, 4, false },
+{ "Ford", "BA/BF", "INSTANT ECONOMY", "553", 0, 24,  8, 0.1,        0,  1, false },
+{ "Ford", "BA/BF", "INSTANT FUEL",    "437", 0,  8,  8, 0.51,       0,  2, false },
+{ "Ford", "BA/BF", "KM RANGE",        "553", 0,  0, 16, 1.0,        0,  0, false },
+{ "Ford", "BA/BF", "OIL TEMP",        "44D", 0, 48,  8, 1.0,      -40,  0, false },
+{ "Ford", "BA/BF", "ODOMETER",        "4C0", 0,  0, 24, 0.1,        0,  1, false },
+{ "Ford", "BA/BF", "ENGINE RPM",      "12D", 0, 39, 16, 0.25,       0,  0, false },
+{ "Ford", "BA/BF", "THROTTLE %",      "207", 0, 48,  8, 0.5,        0,  1, false },
+{ "Ford", "BA/BF", "VEHICLE SPEED",   "207", 0, 32, 16, 0.0078125,  0,  2, false },
 
 /* ── Ford FG ─────────────────────────────────────────────────────────── */
 { "Ford", "FG",    "ACCEL PEDAL %",   "204", 1, 0,  16, 0.01,     0,   1, false },

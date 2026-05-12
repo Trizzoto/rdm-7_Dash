@@ -18,6 +18,7 @@ typedef struct {
 
 typedef struct {
     char       label[32];
+    bool       momentary;           /* hold-to-activate: press=TX 1, release=TX 0 */
     bool       current_state;       /* runtime: ON/OFF */
     /* Signal (optional) */
     char       signal_name[32];

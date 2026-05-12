@@ -53,7 +53,9 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 		ESP_LOGE(TAG, "_text_create: lv_label_create failed");
 		return;
 	}
-	lv_obj_set_size(label, (lv_coord_t)w->w, (lv_coord_t)w->h);
+	lv_obj_set_size(label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+	lv_obj_set_style_min_width(label,  (lv_coord_t)w->w, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_min_height(label, (lv_coord_t)w->h, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_align(label, LV_ALIGN_CENTER);
 	lv_obj_set_pos(label, w->x, w->y);
 	lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
@@ -95,8 +97,10 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 }
 
 static void _text_resize(widget_t *w, uint16_t nw, uint16_t nh) {
-	if (w->root && lv_obj_is_valid(w->root))
-		lv_obj_set_size(w->root, (lv_coord_t)nw, (lv_coord_t)nh);
+	if (w->root && lv_obj_is_valid(w->root)) {
+		lv_obj_set_style_min_width(w->root,  (lv_coord_t)nw, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_min_height(w->root, (lv_coord_t)nh, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 	w->w = nw;
 	w->h = nh;
 }

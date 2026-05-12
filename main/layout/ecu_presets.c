@@ -167,29 +167,32 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Ford BA/BF - factory CAN, sparse broadcast
-     * Source: existing preconfig_items[] entries.
-     * Most core sensors not on CAN (factory PCM doesn't broadcast them).
+     * Ford BA/BF - factory CAN, Motorola BE throughout.
+     * MAP slot = barometric pressure (0x44D b56).
+     * INTAKE_AIR_TEMP slot = ambient temperature (0x353 b32).
+     * FUEL_TRIM slot = instant fuel value L/hr (0x437 b8).
+     * Odometer (0x4C0), km range and instant economy (0x553) have no
+     * standard slot and must be added manually in the Signals table.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Ford",
         .version = "BA/BF",
         .display = "Ford Falcon BA / BF",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x201,  0, 16, 0.25f,    0.0f,   false, 1, "rpm"   },
-            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
-            [ECU_SIG_THROTTLE]        = { 0x201, 16, 16, 0.00152f, 0.0f,   false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x420,  0,  8, 1.0f,     -40.0f, false, 1, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
+            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,       0.0f,   false, 0, "rpm"   },
+            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,        0.0f,   false, 0, "kPa"   },
+            [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,        0.0f,   false, 0, "%"     },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,       -40.0f,  false, 0, "degC"  },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f,  -30.0f,  false, 0, "degC"  },
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
-            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,       -40.0f,  false, 0, "degC"  },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x415,  0, 16, 0.01f,    0.0f,   false, 1, "km/h"  },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f,  0.0f,   false, 0, "km/h"  },
             [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,
-            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,
-            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V"     },
+            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr"  },
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
         },
     },

@@ -58,14 +58,14 @@ static bool      s_ss_cache_key_smooth = false;
 
 static esp_err_t screenshot_handler(httpd_req_t *req) {
 	/* Default to JPEG; raw=1 forces the original RGB565 output.
-	 *   ?q=N        JPEG quality 1-100 (default 85)
+	 *   ?q=N        JPEG quality 1-100 (default 100)
 	 *   ?full=1     native 800x480 (recording); omit for downsampled 400x240
 	 *   ?smooth=1   2x2 box-average downsample (smoother but ~15 ms slower)
 	 *   ?raw=1      raw RGB565 instead of JPEG */
 	bool want_raw = (_query_int(req, "raw",    0) == 1);
 	bool full_res = (_query_int(req, "full",   0) == 1);
 	bool smooth   = (_query_int(req, "smooth", 0) == 1);
-	int  quality  = _query_int(req, "q", 85);
+	int  quality  = _query_int(req, "q", 100);
 
 	/* Dedup cache check — only for JPEG requests (raw is uncommon and
 	 * big enough that caching the full RGB565 blob isn't worthwhile). */
@@ -162,7 +162,7 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
  * Content-Type: multipart/x-mixed-replace; boundary=frame
  *
  * Defaults are tuned for ambient "see what's on the dash from Studio" use:
- *     fps=5, q=70  → ~30 KB/frame, ~70 ms encode.
+ *     fps=5, q=100 → ~30 KB/frame, ~70 ms encode.
  * Override per-URL for recording:
  *     /api/capture/stream?fps=15&q=80
  *
@@ -172,7 +172,7 @@ static esp_err_t screenshot_handler(httpd_req_t *req) {
  * encode + shadow memcpy entirely. */
 #define MJPEG_BOUNDARY "\r\n--frame\r\n"
 static esp_err_t mjpeg_stream_handler(httpd_req_t *req) {
-	int quality    = _query_int(req, "q",     70);
+	int quality    = _query_int(req, "q",     100);
 	int target_fps = _query_int(req, "fps",   5);
 	bool full_res  = (_query_int(req, "full",   0) == 1);
 	bool smooth    = (_query_int(req, "smooth", 0) == 1);

@@ -403,7 +403,13 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	lv_meter_scale_t *scale = lv_meter_add_scale(m);
 	uint32_t angle_range = (360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
 	if (angle_range == 0 && md->start_angle != md->end_angle) angle_range = 360;
-	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range, (int32_t)md->start_angle);
+	/* reverse=true swaps min/max so the needle (and tick labels) sweep the
+	 * opposite direction along the same visual arc. Indicator value APIs
+	 * (lv_meter_set_indicator_value, redline start/end) keep using actual
+	 * signal-domain values — LVGL re-maps them via this swapped scale. */
+	int32_t scale_min = md->reverse ? md->max : md->min;
+	int32_t scale_max = md->reverse ? md->min : md->max;
+	lv_meter_set_scale_range(m, scale, scale_min, scale_max, angle_range, (int32_t)md->start_angle);
 	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 	/* show_ticks=false zeroes the widths so LVGL draws no tick marks. Range
@@ -469,7 +475,7 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		if (ndsc) {
 			if (md->needle_angle_offset != 0) {
 				lv_meter_scale_t *ns = lv_meter_add_scale(m);
-				lv_meter_set_scale_range(m, ns, md->min, md->max, angle_range,
+				lv_meter_set_scale_range(m, ns, scale_min, scale_max, angle_range,
 				                         (int32_t)(md->start_angle + md->needle_angle_offset));
 				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
 				*out_needle_scale = ns;
@@ -623,6 +629,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "max", md->max);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
+	if (md->reverse)
+		cJSON_AddBoolToObject(cfg, "reverse", true);
 	if (md->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
 
@@ -762,6 +770,9 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
 		md->end_angle = (int16_t)ea_item->valueint;
+	cJSON *rev_item = cJSON_GetObjectItemCaseSensitive(cfg, "reverse");
+	if (cJSON_IsBool(rev_item))
+		md->reverse = cJSON_IsTrue(rev_item);
 	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
 		safe_strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name));
@@ -1094,6 +1105,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 
 	md->start_angle = 135;
 	md->end_angle = 45;
+	md->reverse = false;
 	md->meter = NULL;
 	md->scale = NULL;
 	md->needle = NULL;

@@ -188,8 +188,10 @@
       "fields": [
         { "name": "min",            "label": "Min Value",      "type": "number", "default": 0,   "category": "data" },
         { "name": "max",            "label": "Max Value",      "type": "number", "default": 100, "category": "data" },
-        { "name": "start_position", "label": "Start Position", "type": "select", "default": "bottom-left", "category": "data", "_raw_options": "_METER_POSITION_OPTIONS" },
+        { "name": "start_angle_user", "label": "Start Angle (°)", "type": "stepper", "default": 225, "category": "data", "min": 0, "max": 359, "step": 5,
+          "_doc": "User-coord start angle: 0° = 12 o'clock, CW positive.\n_meterSyncDerived translates this into the LVGL\nstart_angle/end_angle pair the firmware reads." },
         { "name": "sweep_degrees",  "label": "Sweep",          "type": "select", "default": 270, "category": "data", "_raw_options": "_METER_SWEEP_OPTIONS" },
+        { "name": "reverse",        "label": "Reverse Direction", "type": "checkbox", "default": false, "category": "data" },
         { "name": "minor_tick_step","label": "Minor Tick Value Spacing", "type": "number", "default": 10, "category": "data",
           "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields." },
         { "name": "major_tick_step","label": "Major Tick Value Spacing", "type": "number", "default": 50, "category": "data" },

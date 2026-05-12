@@ -28,6 +28,7 @@ typedef struct {
 	int32_t max;
 	int16_t start_angle;
 	int16_t end_angle;
+	bool    reverse;          /* swap value direction along arc; default false */
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
 	lv_meter_indicator_t *needle;

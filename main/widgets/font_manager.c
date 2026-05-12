@@ -198,8 +198,16 @@ const lv_font_t *font_manager_get(const char *family, uint16_t size)
 	}
 
 	font_family_t *fam = &s_families[fam_idx];
+	/* lv_tiny_ttf passes the 4th arg through to lv_lru_create() as a *byte*
+	 * budget, with each entry sized as font_size². If cache_size < size²,
+	 * lv_lru's hash_table_size = cache_size/avg_len rounds to 0 and the
+	 * first hash() call divides by zero. Scale the budget with the font
+	 * size and floor at LVGL's own default (4096). */
+	size_t glyph_bytes = (size_t)size * (size_t)size;
+	size_t cache_bytes = glyph_bytes * 32;
+	if (cache_bytes < 4096) cache_bytes = 4096;
 	lv_font_t *font = lv_tiny_ttf_create_data_ex(
-		fam->data, fam->data_size, (lv_coord_t)size, 256);
+		fam->data, fam->data_size, (lv_coord_t)size, cache_bytes);
 	if (!font) {
 		ESP_LOGE(TAG, "lv_tiny_ttf_create_data failed for '%s' size %u",
 		         family, size);

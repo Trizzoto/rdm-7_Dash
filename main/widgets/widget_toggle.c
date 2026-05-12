@@ -33,10 +33,11 @@ static const char *TAG = "widget_toggle";
 #define DEF_ACTIVE_OPA      255
 #define DEF_INACTIVE_OPA    100
 #define DEF_ON_THRESHOLD    0.5f
+#define DEF_MOMENTARY       false
 #define DEF_TX_BIT_START    0
 #define DEF_TX_BIT_LENGTH   1
 #define DEF_TX_ENDIAN       1
-#define DEF_TX_RATE_HZ      0
+#define DEF_TX_RATE_HZ      10
 #define DEF_LABEL_ALIGN     1   /* center */
 #define DEF_SHOW_LABEL      true
 
@@ -55,6 +56,8 @@ static void _toggle_from_json(widget_t *w, cJSON *in);
 static void _toggle_destroy(widget_t *w);
 static void _toggle_apply_night_mode(widget_t *w, bool active);
 static void _toggle_night_cb(bool active, void *user_data);
+static void _toggle_momentary_pressed_cb(lv_event_t *e);
+static void _toggle_momentary_released_cb(lv_event_t *e);
 
 /* ── Helper: apply image styling based on current state ─────────────────── */
 static void _toggle_apply_image_state(toggle_data_t *d) {
@@ -162,6 +165,45 @@ static void _toggle_clicked_cb(lv_event_t *e) {
     ESP_LOGI(TAG, "Toggle %s → %s", w->id, checked ? "ON" : "OFF");
 }
 
+/* ── Momentary press/release callbacks ──────────────────────────────────── */
+
+static void _toggle_momentary_pressed_cb(lv_event_t *e) {
+    widget_t *w = (widget_t *)lv_event_get_user_data(e);
+    if (!w || !w->type_data) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+
+    d->current_state = true;
+    if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
+        lv_obj_add_state(d->sw_obj, LV_STATE_CHECKED);
+
+    if (d->tx_can_id > 0) {
+        uint8_t frame[8] = {0};
+        uint32_t val = (d->tx_bit_length >= 32) ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u);
+        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
+        can_transmit_frame(d->tx_can_id, frame, 8);
+    }
+    _toggle_start_tx_timer(w);
+    _toggle_apply_image_state(d);
+}
+
+static void _toggle_momentary_released_cb(lv_event_t *e) {
+    widget_t *w = (widget_t *)lv_event_get_user_data(e);
+    if (!w || !w->type_data) return;
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+
+    _toggle_stop_tx_timer(d);
+    d->current_state = false;
+    if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
+        lv_obj_clear_state(d->sw_obj, LV_STATE_CHECKED);
+
+    if (d->tx_can_id > 0) {
+        uint8_t frame[8] = {0};
+        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, 0u, d->tx_endian);
+        can_transmit_frame(d->tx_can_id, frame, 8);
+    }
+    _toggle_apply_image_state(d);
+}
+
 /* ── Create ─────────────────────────────────────────────────────────────── */
 static void _toggle_create(widget_t *w, lv_obj_t *parent) {
     toggle_data_t *d = (toggle_data_t *)w->type_data;
@@ -193,7 +235,12 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
 
             /* Make the image clickable to toggle state */
             lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(img, _toggle_clicked_cb, LV_EVENT_CLICKED, w);
+            if (d->momentary) {
+                lv_obj_add_event_cb(img, _toggle_momentary_pressed_cb,  LV_EVENT_PRESSED,  w);
+                lv_obj_add_event_cb(img, _toggle_momentary_released_cb, LV_EVENT_RELEASED, w);
+            } else {
+                lv_obj_add_event_cb(img, _toggle_clicked_cb, LV_EVENT_CLICKED, w);
+            }
         } else {
             /* Image not found: show placeholder label */
             lv_obj_t *lbl = lv_label_create(cont);
@@ -274,7 +321,12 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
         }
 
         /* Event callback for user toggle interaction */
-        lv_obj_add_event_cb(sw, _toggle_clicked_cb, LV_EVENT_VALUE_CHANGED, w);
+        if (d->momentary) {
+            lv_obj_add_event_cb(sw, _toggle_momentary_pressed_cb,  LV_EVENT_PRESSED,  w);
+            lv_obj_add_event_cb(sw, _toggle_momentary_released_cb, LV_EVENT_RELEASED, w);
+        } else {
+            lv_obj_add_event_cb(sw, _toggle_clicked_cb, LV_EVENT_VALUE_CHANGED, w);
+        }
     }
 
     w->root = cont;
@@ -324,6 +376,9 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
 
     if (d->signal_on_threshold != DEF_ON_THRESHOLD)
         cJSON_AddNumberToObject(cfg, "signal_on_threshold", d->signal_on_threshold);
+
+    if (d->momentary != DEF_MOMENTARY)
+        cJSON_AddBoolToObject(cfg, "momentary", d->momentary);
 
     /* CAN TX */
     if (d->tx_can_id != 0)
@@ -411,6 +466,9 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_on_threshold");
     if (cJSON_IsNumber(item)) d->signal_on_threshold = (float)item->valuedouble;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "momentary");
+    if (cJSON_IsBool(item)) d->momentary = cJSON_IsTrue(item);
 
     /* CAN TX */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_can_id");
@@ -596,6 +654,7 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     /* Set defaults */
     d->signal_index        = -1;
     d->signal_on_threshold = DEF_ON_THRESHOLD;
+    d->momentary           = DEF_MOMENTARY;
     d->tx_can_id           = 0;
     d->tx_bit_start        = DEF_TX_BIT_START;
     d->tx_bit_length       = DEF_TX_BIT_LENGTH;

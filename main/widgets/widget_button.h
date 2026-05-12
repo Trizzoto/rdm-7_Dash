@@ -39,11 +39,14 @@ typedef struct {
     bool       show_label;         /* show/hide label text (default: true) */
     /* Image mode (empty = normal button, non-empty = image button) */
     char       image_name[64];
+    char       pressed_image_name[64]; /* image shown while held or latched-on */
     /* LVGL runtime */
     lv_obj_t  *btn_obj;
     lv_obj_t  *label_obj;
-    lv_obj_t  *img_obj;            /* runtime: LVGL image object (image mode) */
-    void      *img_dsc;            /* runtime: lv_img_dsc_t* from rdm_image_load() */
+    lv_obj_t  *img_obj;            /* runtime: normal-state image object */
+    void      *img_dsc;            /* runtime: lv_img_dsc_t* for normal image */
+    lv_obj_t  *pressed_img_obj;    /* runtime: pressed-state image object (hidden when idle) */
+    void      *pressed_img_dsc;    /* runtime: lv_img_dsc_t* for pressed image */
     lv_timer_t *tx_timer;          /* runtime: periodic TX timer (NULL when inactive) */
     /* Night-mode appearance overrides (only applied when night_mode active) */
     button_night_overrides_t night;

@@ -29,7 +29,12 @@ typedef struct {
 	uint8_t       opacity;        /* default: 255 */
 	lv_color_t    recolor;        /* default: 0x000000 (no effect at opa 0) */
 	uint8_t       recolor_opa;    /* default: 0 (disabled), 255 = full overlay */
-	uint16_t      image_scale;    /* LVGL zoom: 256 = 100%, 128 = 50%, 512 = 200% */
+	uint16_t      image_scale;    /* LVGL zoom: 256 = 100%; ignored when auto_size */
+	bool          auto_size;      /* scale image to fill container (fit-contain); on
+	                               * first pick in editor the container is also resized
+	                               * to the image's native pixel dimensions */
+	uint16_t      native_w;       /* runtime: native image width (not serialised) */
+	uint16_t      native_h;       /* runtime: native image height (not serialised) */
 	lv_img_dsc_t *img_dsc;        /* runtime: PSRAM-loaded image descriptor (day) */
 	lv_obj_t     *img_obj;        /* runtime: LVGL image object (day) */
 	/* Night-mode dual-object pattern: when night.has_image_name is set, we

@@ -309,7 +309,7 @@ static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
 /* ── Font endpoints ──────────────────────────────────────────────────────── */
 
 #define LFS_FONT_DIR  "/lfs/fonts"
-#define FONT_MAX_FILE_SIZE (512 * 1024)
+#define FONT_MAX_FILE_SIZE (4 * 1024 * 1024)
 
 static void _ensure_font_dir(void) {
 	struct stat st;

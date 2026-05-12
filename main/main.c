@@ -1015,18 +1015,32 @@ void app_main(void) {
    * Shares GPIO 43/44 with the ESP-IDF console (UART0) — the board's
    * CH422G I/O expander selects which UART drives the USB bridge.
    *
+   * Skipped when wire-input mode is enabled in NVS: GPIO 43/44 are then
+   * reserved as indicator wire inputs and must not be driven by UART1 TX
+   * (UART TX idles HIGH, overriding the pull-down and permanently reading
+   * as active on the indicator circuit).
+   *
    * DEBUG: set RDM7_DEBUG_KEEP_CONSOLE to 1 to skip UART1 takeover so boot
    * logs remain visible on the USB-UART bridge past this point. Desktop app
    * cannot connect while this is enabled. Flip back to 0 for production. */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 1
+#define RDM7_DEBUG_KEEP_CONSOLE 0
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "
                 "so console logs stay on USB. Desktop app will not connect.");
 #else
-  if (uart_protocol_init() != ESP_OK) {
-    ESP_LOGE(TAG, "UART protocol init failed!");
+  {
+    bool wire_input_mode = false;
+    config_store_load_wire_input_mode(&wire_input_mode);
+    if (wire_input_mode) {
+      ESP_LOGI(TAG, "Wire input mode: GPIO 43/44 reserved for indicators, "
+                    "UART1 serial disabled.");
+    } else {
+      if (uart_protocol_init() != ESP_OK) {
+        ESP_LOGE(TAG, "UART protocol init failed!");
+      }
+    }
   }
 #endif
 

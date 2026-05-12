@@ -9,11 +9,11 @@ extern "C" {
  *  protocol). Re-enabling requires free GPIO pins or a CH422G expander line,
  *  both pending a hardware revision. See #24 in launch-freeze docs. */
 #define WIRE_INPUT_LEFT_GPIO                                                   \
-  -1 // 43 — reserved for UART1 TX, do not enable without HW rework
+  43 // 43 — reserved for UART1 TX, do not enable without HW rework
 
 /** GPIO number for the right turn-indicator wire input (high = active).
  *  Shared with UART1 RX (desktop serial protocol). See note above. */
-#define WIRE_INPUT_RIGHT_GPIO -1 // 44 — reserved for UART1 RX
+#define WIRE_INPUT_RIGHT_GPIO 44 // 44 — reserved for UART1 RX
 
 /**
  * @brief Configure GPIO 43 and 44 as digital inputs with pull-down enabled.

@@ -29,6 +29,18 @@ static const char *TAG = "widget_image";
 #define IMAGE_DEFAULT_H 100
 #define LFS_IMAGE_DIR "/lfs/images"
 
+/* Compute fit-contain zoom (LVGL units, 256 = 100%) to fill a cw×ch container
+ * while preserving the aspect ratio of an iw×ih image. */
+static uint16_t _fit_zoom(uint16_t cw, uint16_t ch, uint16_t iw, uint16_t ih) {
+	if (iw == 0 || ih == 0) return 256;
+	uint32_t zx = (uint32_t)cw * 256 / iw;
+	uint32_t zy = (uint32_t)ch * 256 / ih;
+	uint16_t z  = (uint16_t)(zx < zy ? zx : zy);
+	if (z < 1)    z = 1;
+	if (z > 4096) z = 4096; /* LVGL v8 maximum zoom */
+	return z;
+}
+
 lv_img_dsc_t *rdm_image_load(const char *name) {
 	if (!name || name[0] == '\0') return NULL;
 
@@ -140,11 +152,16 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	if (id->image_name[0] != '\0') {
 		id->img_dsc = rdm_image_load(id->image_name);
 		if (id->img_dsc) {
+			id->native_w = id->img_dsc->header.w;
+			id->native_h = id->img_dsc->header.h;
 			id->img_obj = lv_img_create(cont);
 			lv_img_set_src(id->img_obj, id->img_dsc);
 			lv_obj_set_align(id->img_obj, LV_ALIGN_CENTER);
-			if (id->image_scale != 256)
-				lv_img_set_zoom(id->img_obj, id->image_scale);
+			uint16_t zoom = id->auto_size
+				? _fit_zoom(w->w, w->h, id->native_w, id->native_h)
+				: id->image_scale;
+			if (zoom != 256)
+				lv_img_set_zoom(id->img_obj, zoom);
 			lv_obj_set_style_img_opa(id->img_obj, id->opacity,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 			if (id->recolor_opa > 0) {
@@ -175,8 +192,11 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 			id->night_img_obj = lv_img_create(cont);
 			lv_img_set_src(id->night_img_obj, id->night_img_dsc);
 			lv_obj_set_align(id->night_img_obj, LV_ALIGN_CENTER);
-			if (id->image_scale != 256)
-				lv_img_set_zoom(id->night_img_obj, id->image_scale);
+			uint16_t nzoom = id->auto_size
+				? _fit_zoom(w->w, w->h, id->native_w, id->native_h)
+				: id->image_scale;
+			if (nzoom != 256)
+				lv_img_set_zoom(id->night_img_obj, nzoom);
 			lv_obj_set_style_img_opa(id->night_img_obj, id->opacity,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
 			/* Apply night recolor immediately if set, so first reveal looks right. */
@@ -210,6 +230,13 @@ static void _image_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
+	image_data_t *id = (image_data_t *)w->type_data;
+	if (!id || !id->auto_size || id->native_w == 0 || id->native_h == 0) return;
+	uint16_t zoom = _fit_zoom(nw, nh, id->native_w, id->native_h);
+	if (id->img_obj && lv_obj_is_valid(id->img_obj))
+		lv_img_set_zoom(id->img_obj, zoom);
+	if (id->night_img_obj && lv_obj_is_valid(id->night_img_obj))
+		lv_img_set_zoom(id->night_img_obj, zoom);
 }
 
 static void _image_open_settings(widget_t *w) { (void)w; }
@@ -224,7 +251,9 @@ static void _image_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "image_name", id->image_name);
 	if (id->opacity != 255)
 		cJSON_AddNumberToObject(cfg, "opacity", id->opacity);
-	if (id->image_scale != 256)
+	if (id->auto_size)
+		cJSON_AddBoolToObject(cfg, "auto_size", true);
+	else if (id->image_scale != 256)
 		cJSON_AddNumberToObject(cfg, "image_scale", id->image_scale);
 	if (id->recolor_opa != 0)
 		cJSON_AddNumberToObject(cfg, "recolor_opa", id->recolor_opa);
@@ -254,6 +283,8 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opacity");
 	if (cJSON_IsNumber(item)) id->opacity = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "auto_size");
+	if (cJSON_IsBool(item)) id->auto_size = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_scale");
 	if (cJSON_IsNumber(item)) id->image_scale = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "recolor_opa");

@@ -39,6 +39,7 @@ typedef struct {
 	char     value_font[32];
 	/* ── Appearance overrides ── */
 	lv_color_t bar_bg_color;         /* default: THEME_COLOR_PANEL */
+	uint8_t    bar_bg_opa;           /* track opacity 0-255, default: 255 */
 	uint8_t    bar_radius;           /* default: 5 */
 	uint8_t    bar_border_width;     /* default: 2 */
 	lv_color_t bar_border_color;     /* default: THEME_COLOR_PANEL */

@@ -76,6 +76,13 @@ esp_err_t config_store_load_splash_fade(bool *enabled);
 esp_err_t config_store_save_first_run_done(bool done);
 esp_err_t config_store_load_first_run_done(bool *done);
 
+/* ── Wire input mode ────────────────────────────────────────────────────
+   When enabled, GPIO 43/44 are used as indicator wire inputs and
+   uart_protocol_init() is skipped at boot (UART1 desktop serial disabled).
+   Requires reboot to take effect. Default: false (UART1 active). */
+esp_err_t config_store_save_wire_input_mode(bool enabled);
+esp_err_t config_store_load_wire_input_mode(bool *enabled);
+
 /* ── Display rotation & night mode (#23) ────────────────────────────────
    rotation: 0 / 90 / 180 / 270 — applied via lv_disp_set_rotation on boot.
    Night mode: either auto (time-based, 18:00–06:00 local derived from a

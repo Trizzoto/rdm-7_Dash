@@ -8,13 +8,16 @@
 #include "widget_warning.h"
 #include "widget_arc.h"
 #include "widget_shift_light.h"
-#include "lvgl.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <string.h>
 
-#define SIM_MAX_SIGNALS 128
-#define SIM_TIMER_PERIOD_MS 40      /* 25 Hz — uniform rate for every signal  */
-#define SIM_CYCLE_MS 3000
+#define SIM_MAX_SIGNALS     128
+/* Period shorter than the LVGL task interval (14 ms) so the timer fires
+ * once per LVGL tick — giving the maximum possible inject rate. */
+#define SIM_TIMER_PERIOD_MS  5
+#define SIM_CYCLE_MS        3000
+/* Batch size is chosen adaptively in _sim_timer_cb based on signal count. */
 
 static const char *TAG = "signal_sim";
 
@@ -23,11 +26,13 @@ typedef struct {
     float max;
 } sim_bounds_t;
 
-static bool         s_sim_active = false;
-static lv_timer_t  *s_sim_timer  = NULL;
+static bool         s_sim_active   = false;
+static lv_timer_t  *s_sim_timer    = NULL;
 static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
 static float        s_phase[SIM_MAX_SIGNALS];
 static uint16_t     s_cached_count = 0;
+static uint16_t     s_sim_cursor   = 0;   /* round-robin position */
+static uint64_t     s_last_tick_us = 0;   /* wall-clock time of previous tick */
 
 static void _rebuild_signal_state(uint16_t count)
 {
@@ -125,6 +130,14 @@ static void _sim_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
 
+    /* Use actual elapsed wall-clock time for phase advancement so the
+     * animation speed stays correct regardless of how often this callback
+     * fires (the LVGL task rate varies under load). */
+    uint64_t now_us = (uint64_t)esp_timer_get_time();
+    if (s_last_tick_us == 0) s_last_tick_us = now_us;
+    float dt_ms = (float)(now_us - s_last_tick_us) / 1000.0f;
+    s_last_tick_us = now_us;
+
     uint16_t count = signal_get_count();
     if (count == 0) return;
     if (count > SIM_MAX_SIGNALS) count = SIM_MAX_SIGNALS;
@@ -133,21 +146,32 @@ static void _sim_timer_cb(lv_timer_t *timer)
         _rebuild_signal_state(count);
         _init_phases(count);
         s_cached_count = count;
+        s_sim_cursor   = 0;
     }
 
-    const float delta = (float)SIM_TIMER_PERIOD_MS / (float)SIM_CYCLE_MS;
+    /* Cap dt so a heavy render tick doesn't cause an outsized jump. */
+    if (dt_ms > 30.0f) dt_ms = 30.0f;
 
-    for (uint16_t i = 0; i < count; i++) {
+    /* Adaptive batch: keeps per-tick widget invalidations manageable.
+     *   ≤12 signals → divisor 1 → inject every tick  (~71 Hz, smooth)
+     *   13–24       → divisor 2 → inject every 2nd   (~35 Hz)
+     *   25+         → divisor 4 → inject every 4th   (~18 Hz) */
+    uint16_t divisor = (count <= 12) ? 1 : (count <= 24) ? 2 : 4;
+    uint16_t batch   = (count + divisor - 1) / divisor;
+
+    /* Phase advances ONLY inside the inject loop, by divisor ticks' worth of
+     * time.  This guarantees each inject is exactly one step forward — no
+     * accumulated skipping from phases advancing during non-inject ticks. */
+    const float delta = (float)divisor * dt_ms / (float)SIM_CYCLE_MS;
+
+    for (uint16_t j = 0; j < batch; j++) {
+        uint16_t i = (s_sim_cursor + j) % count;
         signal_t *sig = signal_get_by_index(i);
-        if (!sig) continue;
-
-        /* Skip internal signals (can_id 0) — leave real sensor values */
-        if (sig->can_id == 0) continue;
+        if (!sig || sig->can_id == 0) continue;
 
         s_phase[i] += delta;
         if (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;
 
-        /* Triangle wave: ramp up 0-0.5, ramp down 0.5-1.0 */
         float t = s_phase[i] < 0.5f
                     ? s_phase[i] * 2.0f
                     : (1.0f - s_phase[i]) * 2.0f;
@@ -155,6 +179,8 @@ static void _sim_timer_cb(lv_timer_t *timer)
         float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
         signal_inject_test_value(sig->name, value);
     }
+
+    s_sim_cursor = (s_sim_cursor + batch) % count;
 }
 
 void signal_sim_start(void)
@@ -167,6 +193,8 @@ void signal_sim_start(void)
     _rebuild_signal_state(count);
     _init_phases(count);
     s_cached_count = count;
+    s_sim_cursor   = 0;
+    s_last_tick_us = 0;
 
     s_sim_active = true;
     s_sim_timer = lv_timer_create(_sim_timer_cb, SIM_TIMER_PERIOD_MS, NULL);

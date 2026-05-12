@@ -2921,18 +2921,11 @@
         <!-- Hidden sigList kept for renderSignals() compatibility -->
         <div id="sigList" style="display:none;"></div>
 
-        <!-- Left Sidebar: live Signals panel -->
+        <!-- Left Sidebar: Widget palette -->
         <aside class="sidebar sidebar-left" style="position:relative;">
             <button class="sidebar-collapse-toggle" id="leftCollapseBtn" onclick="toggleLeftSidebar()" title="Collapse sidebar">&laquo;</button>
-            <div class="sidebar-header" style="padding-right:36px;">
-                Signals <span id="sigCardsCount" style="color:var(--text-muted); font-weight:400; margin-left:6px;"></span>
-            </div>
-            <div style="padding:6px 10px; border-bottom:1px solid var(--border);">
-                <input id="sigCardsFilter" placeholder="Filter..." style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px; font-size:11px;" oninput="renderLiveSignalCards()">
-            </div>
-            <div id="sigCardsList" style="flex:1; overflow:auto; min-height:0;">
-                <div style="padding:14px; color:var(--text-muted); font-size:11px;">Loading signals...</div>
-            </div>
+            <div class="sidebar-header" style="padding-right:36px;">Widgets</div>
+            <div id="paletteList" style="flex:1; overflow-y:auto; min-height:0;"></div>
         </aside>
 
         <!-- Left Resize Handle -->
@@ -2977,17 +2970,13 @@
         <!-- Right Resize Handle -->
         <div class="sidebar-resize" id="rightResize" data-side="right"></div>
 
-        <!-- Right Sidebar: Widgets + Properties + Layers -->
+        <!-- Right Sidebar: Properties + Layers -->
         <aside class="sidebar sidebar-right">
             <div class="right-sidebar-tabs">
-                <button class="right-sidebar-tab active" onclick="switchRightTab('widgets')">Widgets</button>
-                <button class="right-sidebar-tab" onclick="switchRightTab('properties')">Properties</button>
+                <button class="right-sidebar-tab active" onclick="switchRightTab('properties')">Properties</button>
                 <button class="right-sidebar-tab" onclick="switchRightTab('layers')">Layers</button>
             </div>
-            <div class="right-tab-content active" id="rightTabWidgets" style="overflow:hidden;">
-                <div id="paletteList" style="flex:1; overflow-y:auto; min-height:0;"></div>
-            </div>
-            <div class="right-tab-content" id="rightTabProperties">
+            <div class="right-tab-content active" id="rightTabProperties">
             <div id="inspectorContent" class="inspector-group" style="flex:1; overflow-y:auto; min-height:0;">
                 <div class="inspector-empty">
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -3266,10 +3255,6 @@
 
     <!-- Mobile bottom nav (icons open slide-up sheets for Widgets / Properties / Layers / More) -->
     <nav id="mobileActionBar" role="toolbar" aria-label="Primary actions">
-        <button data-action="widgets" aria-label="Widgets">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            <span>Widgets</span>
-        </button>
         <button data-action="properties" aria-label="Properties" aria-disabled="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="8.01"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
             <span>Properties</span>
@@ -4373,8 +4358,9 @@
                     const mx = w.config.bar_max !== undefined ? w.config.bar_max : 100;
                     w.config.bar_alerts_enabled = (lo !== mn || hi !== mx);
                 }
-                /* Image: convert LVGL zoom (256 = 100%) to web percentage */
-                if (w.type === 'image' && w.config && w.config.image_scale !== undefined) {
+                /* Image: convert LVGL zoom (256 = 100%) to web percentage; skip when
+                 * auto_size is set (zoom is computed at runtime, not stored). */
+                if (w.type === 'image' && w.config && w.config.image_scale !== undefined && !w.config.auto_size) {
                     w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
                 }
             });
@@ -4605,9 +4591,10 @@
         }
         function _meterSyncDerived(c) {
             if (!c) return;
-            if (c.start_position == null) c.start_position = 'bottom-left';
-            if (c.sweep_degrees == null)  c.sweep_degrees  = 270;
-            if (c.auto_ticks == null)     c.auto_ticks     = true;
+            if (c.start_angle_user == null) c.start_angle_user = 225;
+            if (c.sweep_degrees == null)    c.sweep_degrees    = 270;
+            if (c.reverse == null)          c.reverse          = false;
+            if (c.auto_ticks == null)       c.auto_ticks       = true;
 
             const min = (typeof c.min === 'number') ? c.min : 0;
             const max = (typeof c.max === 'number') ? c.max : 100;
@@ -4630,24 +4617,26 @@
             c.major_tick_every  = Math.min(50, Math.max(1,
                                   Math.round(majorStep / minorStep)));
 
-            const start = _METER_POSITION_TO_START_ANGLE[c.start_position] ?? 135;
-            const sweep = Math.max(1, Math.min(360, c.sweep_degrees | 0));
-            c.start_angle = start;
-            c.end_angle   = (start + sweep) % 360;
-
+            /* User: 0° = 12 o'clock, CW positive.
+             * LVGL: 0° = 3 o'clock, CW. → lvgl = (user + 270) % 360. */
+            const userStart = (((c.start_angle_user | 0) % 360) + 360) % 360;
+            const sweep     = Math.max(1, Math.min(360, c.sweep_degrees | 0));
+            const lvglStart = (userStart + 270) % 360;
+            c.start_angle = lvglStart;
+            c.end_angle   = (lvglStart + sweep) % 360;
         }
         function _meterDeriveNewFromLegacy(c) {
             if (!c) return;
-            if (c.start_position == null && typeof c.start_angle === 'number') {
+            /* Legacy v1: start_position cardinal → start_angle_user. */
+            if (c.start_angle_user == null && c.start_position != null) {
+                const lvgl = _METER_POSITION_TO_START_ANGLE[c.start_position] ?? 135;
+                c.start_angle_user = (lvgl + 90) % 360;
+                delete c.start_position;
+            }
+            /* Older legacy: only LVGL start_angle persisted. */
+            if (c.start_angle_user == null && typeof c.start_angle === 'number') {
                 const a = ((c.start_angle % 360) + 360) % 360;
-                let bestPos = 'bottom-left';
-                let bestDiff = 360;
-                for (const [pos, refA] of Object.entries(_METER_POSITION_TO_START_ANGLE)) {
-                    let d = Math.abs(refA - a);
-                    d = Math.min(d, 360 - d);
-                    if (d < bestDiff) { bestDiff = d; bestPos = pos; }
-                }
-                c.start_position = bestPos;
+                c.start_angle_user = (a + 90) % 360;
             }
             if (c.sweep_degrees == null &&
                 typeof c.start_angle === 'number' &&
@@ -4754,6 +4743,7 @@
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                             { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
+                            { name: "bar_bg_opa", label: "Track Opacity", type: "slider", def: 255, min: 0, max: 255, cat: "appearance" },
                             { name: "bar_radius", label: "Bar Radius", type: "stepper", def: 5, cat: "appearance", min: 0, max: 50 },
                             { name: "bar_border_width", label: "Border Width", type: "stepper", def: 2, cat: "appearance", min: 0, max: 20 },
                             { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -4831,8 +4821,12 @@
                         fields: [
                             { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
                             { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
-                            { name: "start_position", label: "Start Position", type: "select", def: "bottom-left", cat: "data", options: _METER_POSITION_OPTIONS },
+                            /* User-coord start angle: 0° = 12 o'clock, CW positive.
+                             * _meterSyncDerived translates this into the LVGL
+                             * start_angle/end_angle pair the firmware reads. */
+                            { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", min: 0, max: 359, step: 5 },
                             { name: "sweep_degrees", label: "Sweep", type: "select", def: 270, cat: "data", options: _METER_SWEEP_OPTIONS },
+                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data" },
                             /* auto_ticks lives in w.config but is NOT in the inspector
                              * - see _meterSyncDerived. Min/Major Tick Spacing replace
                              * the old count-based fields. */
@@ -4930,7 +4924,8 @@
                         displayName: "Image", defW: 100, defH: 100,
                         fields: [
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", nightOverridable: true },
-                            { name: "image_scale", label: "Scale %", type: "stepper", def: 100, cat: "appearance", min: 10, max: 200 },
+                            { name: "auto_size", label: "Auto Size", type: "checkbox", def: true, cat: "appearance" },
+                            { name: "image_scale", label: "Scale %", type: "stepper", def: 100, cat: "appearance", min: 10, max: 200, enabledBy: "!auto_size" },
                             { name: "opacity", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "recolor", label: "Color Overlay", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                             { name: "recolor_opa", label: "Overlay Strength (0-255)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 255 }
@@ -4961,7 +4956,6 @@
                             { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
                             { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 20 },
-                            { name: "border_radius", label: "Border Radius", type: "stepper", def: 10, cat: "appearance", min: 0, max: 200 },
                             { name: "shadow_width", label: "Shadow Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 50 },
                             { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                             { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 128, cat: "appearance", min: 0, max: 255 },
@@ -5016,7 +5010,8 @@
                                   { v: 0, l: "Big Endian" },
                                   { v: 1, l: "Little Endian" }
                               ] },
-                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 0, cat: "data", min: 0, max: 50 },
+                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 10, cat: "data", min: 0, max: 50 },
+                            { name: "momentary", label: "Momentary (hold=ON, release=OFF)", type: "checkbox", def: false, cat: "data" },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                             { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance", nightOverridable: true },
@@ -5048,9 +5043,10 @@
                                   { v: 0, l: "Big Endian" },
                                   { v: 1, l: "Little Endian" }
                               ] },
-                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 0, cat: "data", min: 0, max: 50 },
-                            { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: false, cat: "data", enabledBy: "!latch" },
+                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 10, cat: "data", min: 0, max: 50 },
+                            { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: true, cat: "data", enabledBy: "!latch" },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                            { name: "pressed_image_name", label: "Pressed Image", type: "image_picker", def: "", cat: "appearance" },
                             { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                             { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                             { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance", nightOverridable: true },
@@ -5653,22 +5649,15 @@
                         const shapeType = w.config.shape_type || 'rectangle';
                         const bdrW = w.config.border_width || 0;
                         const bdrHex = bdrW > 0 ? Number(w.config.border_color != null ? w.config.border_color : 0x2E2F2E).toString(16).padStart(6,'0') : null;
-                        const radius = Math.min(w.config.border_radius != null ? w.config.border_radius : 10, Math.min(w.w, w.h) / 2);
                         if (shapeType === 'rectangle' || shapeType === 'circle') {
                             let st = `background:rgba(${r},${g},${b},${a});`;
                             if (bdrW > 0) st += `border:${bdrW}px solid #${bdrHex};box-sizing:border-box;`;
-                            st += shapeType === 'circle'
-                                ? 'border-radius:50%;'
-                                : `border-radius:${radius}px;`;
+                            st += shapeType === 'circle' ? 'border-radius:50%;' : '';
                             shapePreview = `<div style="position:absolute;inset:3px;pointer-events:none;${st}"></div>`;
                         } else {
-                            /* Polygon shapes: render as inline SVG path with
-                             * rounded corners derived from border_radius. CSS
-                             * clip-path:polygon() can't round corners; the
-                             * SVG path uses quadratic Bezier curves at each
-                             * vertex so border_radius works on every shape. */
+                            /* Polygon shapes: sharp corners (radius feature removed — caused firmware crash). */
                             const pts = _shapePanelPolygonPts(shapeType, w.w - 6, w.h - 6, w.config);
-                            const pathD = _roundedPolygonPath(pts, radius);
+                            const pathD = _roundedPolygonPath(pts, 0);
                             const fill = `rgba(${r},${g},${b},${a})`;
                             const stroke = bdrW > 0
                                 ? ` stroke="#${bdrHex}" stroke-width="${bdrW}" stroke-linejoin="round"`
@@ -5677,21 +5666,7 @@
                         }
                     }
 
-                    /* line: draw an SVG line spanning the bounding box */
-                    if (w.type === 'line') {
-                        const lHex = Number(w.config.line_color != null ? w.config.line_color : 0xFFFFFF).toString(16).padStart(6,'0');
-                        const lOpa = ((w.config.line_opa != null ? w.config.line_opa : 255) / 255).toFixed(2);
-                        const orientation = w.config.orientation || 'horizontal';
-                        const cap = w.config.rounded ? 'round' : 'butt';
-                        const dashGap = w.config.dash_gap || 0;
-                        const dashAttr = dashGap > 0 ? `stroke-dasharray="${dashGap * 2} ${dashGap}"` : '';
-                        let x1, y1, x2, y2;
-                        if      (orientation === 'vertical')     { x1=50; y1=2;  x2=50;  y2=98; }
-                        else if (orientation === 'diagonal_fwd') { x1=2;  y1=98; x2=98;  y2=2;  }
-                        else if (orientation === 'diagonal_bwd') { x1=2;  y1=2;  x2=98;  y2=98; }
-                        else                                     { x1=2;  y1=50; x2=98;  y2=50; }
-                        shapePreview = `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#${lHex}" stroke-opacity="${lOpa}" stroke-width="8" stroke-linecap="${cap}" ${dashAttr}/></svg>`;
-                    }
+                    /* line: rendered by device screenshot, not in canvas */
                 }
 
                 const sigTag = w.signal ? ` <span style="color:hsl(120, 100%, 50%);font-size:9px;">\u2192 ${w.signal}</span>` : '';
@@ -5941,19 +5916,21 @@
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
-        /** Max slot count per widget type that uses slots. */
-        const SLOT_LIMITS = { panel: 16, bar: 2, indicator: 2, warning: 8 };
+        /** Slot limits per widget type.
+         *  Positive = hard cap. 0 = unlimited (finds next free slot). undefined = not slotted. */
+        const SLOT_LIMITS = { panel: 16, bar: 0, indicator: 2, warning: 8 };
 
         /** Find next available slot for a widget type, or -1 if all taken. */
         function nextAvailableSlot(type) {
             const max = SLOT_LIMITS[type];
-            if (!max) return -1;
+            if (max === undefined) return -1;
             const used = new Set(
                 (currentLayout.widgets || [])
                     .filter(w => w.type === type && w.config && w.config.slot !== undefined)
                     .map(w => w.config.slot)
             );
-            for (let i = 0; i < max; i++) {
+            const limit = max > 0 ? max : 256;
+            for (let i = 0; i < limit; i++) {
                 if (!used.has(i)) return i;
             }
             return -1;
@@ -5981,7 +5958,7 @@
         }
 
         function assignSlot(w) {
-            if (!SLOT_LIMITS[w.type]) return true;
+            if (SLOT_LIMITS[w.type] === undefined) return true;
             if (!w.config) w.config = {};
             const slot = nextAvailableSlot(w.type);
             if (slot < 0) return false;
@@ -6454,10 +6431,37 @@
                     newW = sz; newH = sz;
                 }
 
+                /* Image with auto_size: lock resize to native aspect ratio */
+                if (w.type === 'image' && w.config && w.config.auto_size) {
+                    const imgInfo = (_cachedImageList || []).find(img => img.name === w.config.image_name);
+                    if (imgInfo && imgInfo.width && imgInfo.height) {
+                        const aspect = imgInfo.width / imgInfo.height;
+                        const isH = resizeHandle.includes('e') || resizeHandle.includes('w');
+                        const isV = resizeHandle.includes('n') || resizeHandle.includes('s');
+                        if (isH && !isV) {
+                            newH = Math.max(5, Math.round(newW / aspect));
+                        } else if (isV && !isH) {
+                            newW = Math.max(5, Math.round(newH * aspect));
+                        } else {
+                            if (Math.abs(dx) * imgInfo.height >= Math.abs(dy) * imgInfo.width) {
+                                newH = Math.max(5, Math.round(newW / aspect));
+                            } else {
+                                newW = Math.max(5, Math.round(newH * aspect));
+                            }
+                        }
+                    }
+                }
+
                 // Snap
                 newW = Math.round(newW / SNAP_SIZE) * SNAP_SIZE;
                 newH = Math.round(newH / SNAP_SIZE) * SNAP_SIZE;
                 if (w.type === 'meter') { const sq = Math.min(Math.max(newW, newH), 800); newW = sq; newH = sq; }
+                if (w.type === 'image' && w.config && w.config.auto_size) {
+                    const imgInfo = (_cachedImageList || []).find(img => img.name === w.config.image_name);
+                    if (imgInfo && imgInfo.width && imgInfo.height) {
+                        newH = Math.max(5, Math.round(newW / (imgInfo.width / imgInfo.height)));
+                    }
+                }
                 newX = Math.round(newX / SNAP_SIZE) * SNAP_SIZE;
                 newY = Math.round(newY / SNAP_SIZE) * SNAP_SIZE;
 
@@ -6612,7 +6616,7 @@
 
             if (selectedIndex === -1 && selectedIndices.size === 0) return;
 
-            if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (e.key === 'Delete') {
                 deleteWidget();
                 return;
             }
@@ -6720,8 +6724,9 @@
                     w.config.bar_low_color = rgb888to565(0x0000FF);
                     w.config.bar_high_color = rgb888to565(0xFF0000);
                 }
-                /* Image: convert scale percentage (10-200) to LVGL zoom (256 = 100%) */
-                if (w.type === 'image' && w.config.image_scale !== undefined) {
+                /* Image: convert scale percentage (10-200) to LVGL zoom (256 = 100%);
+                 * skip when auto_size is set (firmware computes zoom from container size). */
+                if (w.type === 'image' && w.config.image_scale !== undefined && !w.config.auto_size) {
                     w.config.image_scale = Math.round(w.config.image_scale * 256 / 100);
                 }
                 /* Clean up web-editor-only fields */
@@ -7004,8 +7009,10 @@
             } else if (f.type === 'textarea') {
                 const escaped = String(val || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                 html += `<textarea rows="3" style="resize:vertical; width:100%; font-size:12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:4px 6px; font-family:inherit;" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>${escaped}</textarea>`;
+            } else if (f.type === 'number') {
+                html += `<input type="number" value="${val}" onblur="updateWidgetConfigField('${f.name}', this.value, true)" onkeydown="if(event.key==='Enter') this.blur()" ${disabledAttr}>`;
             } else {
-                html += `<input type="${f.type === 'number' ? 'number' : 'text'}" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, ${f.type === 'number'})" ${disabledAttr}>`;
+                html += `<input type="text" value="${val}" oninput="updateWidgetConfigField('${f.name}', this.value, false)" ${disabledAttr}>`;
             }
             html += `</div>`;
             return html;
@@ -7103,7 +7110,7 @@
              *   - everything else: normal signal assign flow */
             const isIndicatorWired = (w.type === 'indicator' &&
                                        (w.config?.input_source ?? 0) === 0);
-            const hasSignalBinding = !['shape_panel', 'image'].includes(w.type)
+            const hasSignalBinding = !['shape_panel', 'image', 'button', 'toggle'].includes(w.type)
                                       && !isIndicatorWired;
             const isTestable = TOGGLE_TEST_TYPES.has(w.type);
             if (dataFields.length || hasSignalBinding || isTestable) {
@@ -8150,7 +8157,7 @@
              * firmware actually consumes. Editing a tick step also flips
              * auto_ticks off so the value sticks across subsequent syncs. */
             const METER_TRIGGERS = new Set([
-                'min', 'max', 'start_position', 'sweep_degrees',
+                'min', 'max', 'start_angle_user', 'sweep_degrees',
                 'minor_tick_step', 'major_tick_step',
             ]);
             if (w.type === 'meter' && METER_TRIGGERS.has(field)) {
@@ -8197,6 +8204,36 @@
                     clearTestValue(sig);
                 }
                 if (typeof _wstUpdate === 'function') _wstUpdate();
+            }
+
+            /* Image: auto-resize container to native dims when image_name changes
+             * or auto_size is toggled on, so the box immediately reflects reality. */
+            if (w.type === 'image' && (field === 'image_name' || field === 'auto_size') && w.config.auto_size) {
+                const imgName = w.config.image_name;
+                if (imgName) {
+                    const imgInfo = (_cachedImageList || []).find(img => img.name === imgName);
+                    if (imgInfo && imgInfo.width && imgInfo.height) {
+                        w.w = imgInfo.width;
+                        w.h = imgInfo.height;
+                        updateInspector();
+                    }
+                }
+            }
+
+            /* Line: swap W/H when switching orientation so the bounding box
+             * matches the line direction on device (a 200x4 box can't show
+             * a vertical or diagonal line at any useful size). */
+            if (w.type === 'line' && field === 'orientation') {
+                if (finalVal === 'vertical' && w.w > w.h) {
+                    const tmp = w.w; w.w = w.h; w.h = tmp;
+                    updateInspector();
+                } else if (finalVal === 'horizontal' && w.h > w.w) {
+                    const tmp = w.w; w.w = w.h; w.h = tmp;
+                    updateInspector();
+                } else if (finalVal === 'diagonal_fwd' || finalVal === 'diagonal_bwd') {
+                    const sz = Math.max(w.w, w.h);
+                    if (w.w !== sz || w.h !== sz) { w.w = sz; w.h = sz; updateInspector(); }
+                }
             }
 
             pushHistory();
@@ -8295,81 +8332,112 @@
             if (!file) return;
             input.value = '';
 
-            const img = new Image();
-            img.onload = () => {
-                const origW = img.width, origH = img.height;
-                const aspect = origW / origH;
-                /* If widget already has an image assigned to this field, default to same name (replace) */
-                let existingName = '';
-                if (selectedIndex >= 0 && currentLayout.widgets[selectedIndex]) {
-                    existingName = currentLayout.widgets[selectedIndex].config[fieldName] || '';
-                }
-                const suggestedName = existingName || file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+            const imgEl = new Image();
+            imgEl.onload = () => {
+                const origW = imgEl.width, origH = imgEl.height;
+                const SCREEN_W = 800, SCREEN_H = 480;
 
-                /* Build modal */
+                let existingName = '';
+                if (selectedIndex >= 0 && currentLayout.widgets[selectedIndex])
+                    existingName = currentLayout.widgets[selectedIndex].config[fieldName] || '';
+                const suggestedName = existingName ||
+                    file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+
+                /* Default: scale to fit within device screen, no upscaling */
+                const fitPct = Math.min(100, Math.floor(Math.min(SCREEN_W / origW, SCREEN_H / origH) * 100));
+
                 const overlay = document.createElement('div');
-                overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(3px);display:flex;flex-direction:column;font-family:inherit;';
                 overlay.innerHTML = `
-                    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:320px;color:var(--text);">
-                        <h3 style="margin:0 0 12px 0;font-size:15px;">Upload Image</h3>
-                        <div style="margin-bottom:8px;font-size:13px;color:var(--text-muted);">Original: ${origW} x ${origH}</div>
-                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                            <label style="width:50px;font-size:13px;">Name:</label>
-                            <input id="imgDlgName" type="text" value="${suggestedName}" style="flex:1;" maxlength="27">
+                    <div id="iio-stage" style="flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:24px 24px 12px;">
+                        <div id="iio-frame" style="position:relative;border:1px solid rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 0 0 1px rgba(255,255,255,0.06),0 16px 56px rgba(0,0,0,0.8);">
+                            <img id="iio-preview" src="${imgEl.src}" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:block;">
+                            <div style="position:absolute;bottom:4px;right:6px;font-size:10px;color:rgba(255,255,255,0.3);pointer-events:none;font-family:monospace;">800×480</div>
                         </div>
-                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                            <label style="width:50px;font-size:13px;">Width:</label>
-                            <input id="imgDlgW" type="number" value="${origW}" min="1" max="800" style="width:80px;">
-                            <label style="width:50px;font-size:13px;">Height:</label>
-                            <input id="imgDlgH" type="number" value="${origH}" min="1" max="480" style="width:80px;">
+                    </div>
+                    <div style="background:rgba(12,12,20,0.97);border-top:1px solid rgba(255,255,255,0.08);padding:12px 20px 16px;display:flex;flex-direction:column;gap:10px;">
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                            <span style="color:#888;font-size:12px;width:38px;flex-shrink:0;">Name</span>
+                            <input id="iio-name" type="text" value="${suggestedName}" maxlength="27"
+                                style="width:180px;padding:5px 8px;background:#1a1a2e;border:1px solid #444;border-radius:4px;color:#fff;font-size:13px;">
+                            <span style="margin-left:auto;color:#555;font-size:11px;white-space:nowrap;">${origW} × ${origH} original</span>
                         </div>
-                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-                            <label style="font-size:13px;"><input id="imgDlgLock" type="checkbox" checked> Lock aspect ratio</label>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <span style="color:#888;font-size:12px;width:38px;flex-shrink:0;">Scale</span>
+                            <input id="iio-slider" type="range" min="5" max="100" value="${fitPct}" style="flex:1;cursor:pointer;accent-color:#2979ff;">
+                            <span id="iio-pct" style="color:#bbb;font-size:12px;width:30px;text-align:right;flex-shrink:0;font-family:monospace;"></span>
+                            <span style="color:#444;font-size:12px;">·</span>
+                            <span id="iio-dims" style="color:#bbb;font-size:12px;width:90px;flex-shrink:0;font-family:monospace;"></span>
+                            <span style="color:#444;font-size:12px;">·</span>
+                            <span id="iio-kb" style="font-size:12px;width:58px;flex-shrink:0;text-align:right;font-family:monospace;font-weight:600;"></span>
                         </div>
-                        <div id="imgDlgSize" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
-                        <div style="display:flex;gap:8px;justify-content:flex-end;">
-                            <button id="imgDlgCancel" style="padding:6px 14px;cursor:pointer;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">Cancel</button>
-                            <button id="imgDlgUpload" style="padding:6px 14px;cursor:pointer;background:var(--accent);border:none;border-radius:4px;color:#fff;">Upload</button>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:2px;">
+                            <button id="iio-cancel" style="padding:7px 18px;cursor:pointer;background:transparent;border:1px solid #555;border-radius:4px;color:#ccc;font-size:13px;">Cancel</button>
+                            <button id="iio-upload" style="padding:7px 22px;cursor:pointer;background:#2979ff;border:none;border-radius:4px;color:#fff;font-size:13px;font-weight:600;">Upload</button>
                         </div>
                     </div>`;
                 document.body.appendChild(overlay);
 
-                const wInput = document.getElementById('imgDlgW');
-                const hInput = document.getElementById('imgDlgH');
-                const lockCb = document.getElementById('imgDlgLock');
-                const sizeInfo = document.getElementById('imgDlgSize');
+                const stage   = document.getElementById('iio-stage');
+                const frame   = document.getElementById('iio-frame');
+                const preview = document.getElementById('iio-preview');
+                const slider  = document.getElementById('iio-slider');
+                const pctEl   = document.getElementById('iio-pct');
+                const dimsEl  = document.getElementById('iio-dims');
+                const kbEl    = document.getElementById('iio-kb');
 
-                function updateSizeInfo() {
-                    const w = parseInt(wInput.value) || 1;
-                    const h = parseInt(hInput.value) || 1;
-                    const bytes = 12 + w * h * 3;
-                    sizeInfo.textContent = `Output: ${w} x ${h} = ${(bytes / 1024).toFixed(1)} KB`;
-                    if (bytes > 200 * 1024) sizeInfo.style.color = '#f44';
-                    else sizeInfo.style.color = 'var(--text-muted)';
+                function layoutFrame() {
+                    const stageW = stage.clientWidth - 48;
+                    const stageH = stage.clientHeight - 24;
+                    const fScale = Math.min(1, stageW / SCREEN_W, stageH / SCREEN_H);
+                    frame.style.width  = Math.round(SCREEN_W * fScale) + 'px';
+                    frame.style.height = Math.round(SCREEN_H * fScale) + 'px';
+
+                    const pct  = parseInt(slider.value);
+                    const outW = Math.max(1, Math.round(origW * pct / 100));
+                    const outH = Math.max(1, Math.round(origH * pct / 100));
+                    preview.style.width  = Math.round(outW * fScale) + 'px';
+                    preview.style.height = Math.round(outH * fScale) + 'px';
+
+                    const bytes = 12 + outW * outH * 3;
+                    const kb = bytes / 1024;
+                    pctEl.textContent  = pct + '%';
+                    dimsEl.textContent = outW + ' × ' + outH;
+                    kbEl.textContent   = kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+                    kbEl.style.color   = bytes > 1100 * 1024 ? '#f66' : bytes > 400 * 1024 ? '#fa8' : '#6d6';
                 }
-                updateSizeInfo();
 
-                wInput.addEventListener('input', () => {
-                    if (lockCb.checked) { hInput.value = Math.round((parseInt(wInput.value) || 1) / aspect); }
-                    updateSizeInfo();
-                });
-                hInput.addEventListener('input', () => {
-                    if (lockCb.checked) { wInput.value = Math.round((parseInt(hInput.value) || 1) * aspect); }
-                    updateSizeInfo();
-                });
+                requestAnimationFrame(layoutFrame);
+                slider.addEventListener('input', layoutFrame);
+                window.addEventListener('resize', layoutFrame);
 
-                document.getElementById('imgDlgCancel').onclick = () => { URL.revokeObjectURL(img.src); overlay.remove(); };
-                document.getElementById('imgDlgUpload').onclick = async () => {
-                    const targetW = Math.max(1, Math.min(800, parseInt(wInput.value) || origW));
-                    const targetH = Math.max(1, Math.min(480, parseInt(hInput.value) || origH));
-                    const name = (document.getElementById('imgDlgName').value || suggestedName).replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+                const closeOverlay = () => {
                     overlay.remove();
-                    await doImageUpload(img, name, targetW, targetH, fieldName);
-                    URL.revokeObjectURL(img.src);
+                    window.removeEventListener('resize', layoutFrame);
+                    document.removeEventListener('keydown', onKey);
+                };
+                const onKey = e => { if (e.key === 'Escape') { URL.revokeObjectURL(imgEl.src); closeOverlay(); } };
+                document.addEventListener('keydown', onKey);
+
+                document.getElementById('iio-cancel').onclick = () => { URL.revokeObjectURL(imgEl.src); closeOverlay(); };
+                /* Click on the stage background (outside the frame) also cancels */
+                stage.addEventListener('click', e => {
+                    if (!frame.contains(e.target)) { URL.revokeObjectURL(imgEl.src); closeOverlay(); }
+                });
+
+                document.getElementById('iio-upload').onclick = async () => {
+                    const pct    = parseInt(slider.value);
+                    const targetW = Math.max(1, Math.round(origW * pct / 100));
+                    const targetH = Math.max(1, Math.round(origH * pct / 100));
+                    const name = (document.getElementById('iio-name').value || suggestedName)
+                        .replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 27);
+                    closeOverlay();
+                    await doImageUpload(imgEl, name, targetW, targetH, fieldName);
+                    URL.revokeObjectURL(imgEl.src);
                 };
             };
-            img.onerror = () => { URL.revokeObjectURL(img.src); alert('Failed to load image'); };
-            img.src = URL.createObjectURL(file);
+            imgEl.onerror = () => { URL.revokeObjectURL(imgEl.src); alert('Failed to load image'); };
+            imgEl.src = URL.createObjectURL(file);
         }
 
         async function doImageUpload(img, name, targetW, targetH, fieldName) {
@@ -9495,7 +9563,7 @@
                  * browser upscales to the canvas. Full-res stays reserved for the
                  * LIVE preview's own polling loop (which users opt into and isn't
                  * running simultaneously with edit invalidations). */
-                const response = await fetch('/api/screenshot?smooth=1&q=75&t=' + Date.now(),
+                const response = await fetch('/api/screenshot?smooth=1&q=100&t=' + Date.now(),
                                               { cache: 'no-store' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const blob = await response.blob();
@@ -9748,16 +9816,11 @@
             while (_liveControlOn && token === _liveLoopToken && img) {
                 const t0 = performance.now();
                 try {
-                    /* Half-res 400x240, q=75, smooth=2x2 box-average. Encode is
-                     * ~35 ms best-case vs ~140 ms for full-res — 4x less CPU.
-                     * Full-res + q=85 looked good in ideal conditions but
-                     * stretched to 10–15 s encodes under real load (CONTROL
-                     * poll + widget updates + sim + layout save in parallel),
-                     * tripping the 15 s task-watchdog and forcing reboots.
-                     * Half-res still looks crisp after CSS upscale; sharpness
-                     * isn't the bottleneck — responsiveness is. For
-                     * screen-recording at full-res, use /api/capture/stream. */
-                    const r = await fetch('/api/screenshot?q=75&smooth=1&t=' + Date.now(), { cache: 'no-store' });
+                    /* Half-res 400x240, q=100, smooth=2x2 box-average. Full-res
+                     * stretched to 10–15 s encodes under real load — half-res
+                     * keeps responsiveness while q=100 gives max JPEG fidelity.
+                     * For screen-recording at full-res, use /api/capture/stream. */
+                    const r = await fetch('/api/screenshot?q=100&smooth=1&t=' + Date.now(), { cache: 'no-store' });
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     const blob = await r.blob();
                     /* Bail if the user toggled off during the fetch */
@@ -12141,14 +12204,6 @@
             } catch (e) { /* silent */ }
         }
 
-        /* Initial paint + polling - renderSignals() (called on every layout
-         * change) also calls renderLiveSignalCards to rebuild the list. */
-        document.addEventListener('DOMContentLoaded', () => {
-            renderLiveSignalCards();
-            if (_sigCardsTimer) clearInterval(_sigCardsTimer);
-            _pollLiveSignalValues();
-            _sigCardsTimer = setInterval(_pollLiveSignalValues, 500);
-        });
 
         /* ── Studio-style mobile UX: bottom nav + slide-up sheet ────── */
 
@@ -12177,7 +12232,6 @@
         /* Bottom-nav icon dispatcher */
         function mobileAction(action) {
             switch (action) {
-                case 'widgets':    openSidebarTab('widgets'); break;
                 case 'properties': openSidebarTab('properties'); break;
                 case 'layers':     openSidebarTab('layers'); break;
                 case 'sim':        if (typeof toggleSimulation === 'function') toggleSimulation(); break;

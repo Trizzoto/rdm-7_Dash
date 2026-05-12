@@ -70,6 +70,9 @@ static lv_obj_t *s_sim_btn_label = NULL;
 static lv_obj_t *s_rotation_btn_label = NULL;
 static lv_obj_t *s_night_btn_label = NULL;
 
+/* Developer options */
+static lv_obj_t *s_wire_input_btn_label = NULL;
+
 static void _rotation_btn_cb(lv_event_t *e) {
     (void)e;
     uint8_t rot = 0;
@@ -1958,6 +1961,67 @@ static void _factory_reset_btn_cb(lv_event_t *e) {
     lv_obj_add_event_cb(mbox, _factory_reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
+/* ── Wire Input Mode ───────────────────────────────────────────────────── */
+
+static void _wire_input_reboot_confirm_cb(lv_event_t *e) {
+    lv_obj_t *mbox = lv_event_get_current_target(e);
+    const char *btn_txt = lv_msgbox_get_active_btn_text(mbox);
+    if (!btn_txt) return;
+    if (strcmp(btn_txt, "Reboot") == 0)
+        esp_restart();
+    lv_msgbox_close(mbox);
+}
+
+static void _wire_input_mode_btn_cb(lv_event_t *e) {
+    (void)e;
+    bool enabled = false;
+    config_store_load_wire_input_mode(&enabled);
+    enabled = !enabled;
+    config_store_save_wire_input_mode(enabled);
+
+    if (s_wire_input_btn_label && lv_obj_is_valid(s_wire_input_btn_label)) {
+        lv_label_set_text(s_wire_input_btn_label,
+            enabled ? "Wire Inputs: ON" : "Wire Inputs: OFF");
+        lv_obj_set_style_text_color(s_wire_input_btn_label,
+            enabled ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+
+    static const char *btns[] = {"Reboot", "Later", ""};
+    lv_obj_t *mbox = lv_msgbox_create(
+        NULL,
+        "Reboot Required",
+        enabled
+            ? "Wire input mode ON.\nGPIO 43/44 will be used for turn\nsignals after reboot (UART1 disabled)."
+            : "Wire input mode OFF.\nUART1 serial will be re-enabled\nafter reboot.",
+        btns, true);
+
+    lv_obj_set_style_bg_color(mbox, THEME_COLOR_SURFACE, LV_PART_MAIN);
+    lv_obj_set_style_border_color(mbox, THEME_COLOR_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(mbox, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(mbox, THEME_RADIUS_NORMAL, LV_PART_MAIN);
+    lv_obj_set_style_text_color(mbox, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN);
+    lv_obj_set_style_text_font(mbox, THEME_FONT_SMALL, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(mbox, 8, LV_PART_MAIN);
+    lv_obj_set_style_shadow_ofs_y(mbox, 2, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(mbox, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(mbox, 80, LV_PART_MAIN);
+    lv_obj_set_width(mbox, 380);
+    lv_obj_center(mbox);
+
+    lv_obj_t *btn_area = lv_msgbox_get_btns(mbox);
+    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_SECTION_BG,
+                              LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(btn_area, THEME_COLOR_TEXT_PRIMARY,
+                                LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn_area, 1,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(btn_area, THEME_COLOR_BORDER,
+                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(btn_area, THEME_RADIUS_NORMAL,
+                            LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(mbox, _wire_input_reboot_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
 void init_display_brightness(void) {
     // Always boot at 100% brightness
     set_display_brightness(100);
@@ -2283,26 +2347,8 @@ static void _build_section_display(lv_obj_t *row) {
     (void) _rotation_btn_cb;
     (void) s_rotation_btn_label;
 
-    lv_obj_t *night_btn = lv_btn_create(s);
-    lv_obj_set_size(night_btn, 250, 30);
-    lv_obj_align(night_btn, LV_ALIGN_TOP_LEFT, 0, 120);
-    lv_obj_set_style_bg_color(night_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(night_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(night_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(night_btn, 1, 0);
-    lv_obj_set_style_border_color(night_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(night_btn, 0, 0);
-    s_night_btn_label = lv_label_create(night_btn);
-    {
-        night_mode_config_t nm_cfg;
-        config_store_load_night_mode(&nm_cfg);
-        lv_label_set_text(s_night_btn_label,
-                          nm_cfg.manual_active ? "Night Mode: ON" : "Night Mode: OFF");
-    }
-    lv_obj_center(s_night_btn_label);
-    lv_obj_set_style_text_font(s_night_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_night_btn_label, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(night_btn, _night_btn_cb, LV_EVENT_CLICKED, NULL);
+    (void) _night_btn_cb;
+    (void) s_night_btn_label;
 }
 
 static void _build_section_data_logging(lv_obj_t *row) {
@@ -2419,6 +2465,38 @@ static void _build_section_testing(lv_obj_t *row) {
     lv_obj_align(test_note, LV_ALIGN_TOP_LEFT, 0, 58);
     lv_obj_set_style_text_font(test_note, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
+}
+
+static void _build_section_developer(lv_obj_t *row) {
+    lv_obj_t *s = _make_flex_section(row);
+    _make_section_title(s, "DEVELOPER");
+
+    lv_obj_t *wire_btn = lv_btn_create(s);
+    lv_obj_set_size(wire_btn, 150, 30);
+    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(wire_btn, 1, 0);
+    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
+    s_wire_input_btn_label = lv_label_create(wire_btn);
+    {
+        bool on = false;
+        config_store_load_wire_input_mode(&on);
+        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
+        lv_obj_set_style_text_color(s_wire_input_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    lv_obj_center(s_wire_input_btn_label);
+    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *wire_note = lv_label_create(s);
+    lv_label_set_text(wire_note, "GPIO 43/44 as turn signal inputs");
+    lv_obj_align(wire_note, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(wire_note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(wire_note, THEME_COLOR_TEXT_MUTED, 0);
 }
 
 static void _build_section_can_diagnostics(lv_obj_t *content) {
@@ -2619,6 +2697,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     _build_section_data_logging(log_row);
     _build_section_peak_hold(log_row);
     _build_section_testing(log_row);
+
+    /* Row 4 (h=95): DEVELOPER OPTIONS */
+    lv_obj_t *dev_row = _build_row(content, 95);
+    _build_section_developer(dev_row);
 
     _build_section_can_diagnostics(content);
     _build_action_buttons(content);

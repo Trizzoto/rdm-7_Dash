@@ -31,8 +31,8 @@ static const char *TAG = "widget_button";
 #define DEF_TX_BIT_START   0
 #define DEF_TX_BIT_LENGTH  1
 #define DEF_TX_ENDIAN      1
-#define DEF_TX_RATE_HZ     0
-#define DEF_TX_SEND_REL    false
+#define DEF_TX_RATE_HZ     10
+#define DEF_TX_SEND_REL    true
 #define DEF_LATCH          false
 #define DEF_BG_COLOR       0x333333
 #define DEF_TEXT_COLOR    0xFFFFFF
@@ -50,6 +50,7 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
 /* ── Forward declarations ─────────────────────────────────────────────────── */
 static void _btn_start_tx_timer(widget_t *w);
 static void _btn_stop_tx_timer(button_data_t *d);
+static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state);
 static void _button_apply_night_mode(widget_t *w, bool active);
 static void _button_night_cb(bool active, void *user_data);
 
@@ -67,17 +68,30 @@ static void _btn_send(button_data_t *d, bool on) {
     }
 }
 
-static void _btn_update_visual(button_data_t *d) {
+/* Toggle pressed/normal visual state for image-mode and btn-mode buttons.
+ * For two-image mode: swaps visibility between img_obj and pressed_img_obj.
+ * For single-image mode: applies a dim overlay on press as fallback feedback.
+ * For btn_obj mode: not called — LVGL handles LV_STATE_PRESSED natively. */
+static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state) {
     if (d->img_obj && lv_obj_is_valid(d->img_obj)) {
-        lv_obj_set_style_img_recolor(d->img_obj,
-            d->latch_state ? d->pressed_color : d->bg_color,
-            LV_PART_MAIN | LV_STATE_DEFAULT);
-        return;
+        if (d->pressed_img_obj && lv_obj_is_valid(d->pressed_img_obj)) {
+            if (pressed_state) {
+                lv_obj_add_flag(d->img_obj, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(d->pressed_img_obj, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_clear_flag(d->img_obj, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(d->pressed_img_obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            /* Single image: semitransparent pressed_color overlay as feedback */
+            lv_obj_set_style_img_recolor(d->img_obj,
+                pressed_state ? d->pressed_color : lv_color_black(),
+                LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_img_recolor_opa(d->img_obj,
+                pressed_state ? 100 : 0,
+                LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
     }
-    if (!d->btn_obj || !lv_obj_is_valid(d->btn_obj)) return;
-    lv_obj_set_style_bg_color(d->btn_obj,
-        d->latch_state ? d->pressed_color : d->bg_color,
-        LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 static void _btn_pressed_cb(lv_event_t *e) {
@@ -88,14 +102,14 @@ static void _btn_pressed_cb(lv_event_t *e) {
     if (d->latch) {
         d->latch_state = !d->latch_state;
         _btn_send(d, d->latch_state);
-        _btn_update_visual(d);
-        /* Start/stop periodic TX based on latch state */
+        _btn_set_pressed_visual(d, d->latch_state);
         if (d->latch_state)
             _btn_start_tx_timer(w);
         else
             _btn_stop_tx_timer(d);
     } else {
         _btn_send(d, true);
+        _btn_set_pressed_visual(d, true);
         _btn_start_tx_timer(w);
     }
 }
@@ -107,6 +121,7 @@ static void _btn_released_cb(lv_event_t *e) {
 
     if (!d->latch) {
         _btn_stop_tx_timer(d);
+        _btn_set_pressed_visual(d, false);
         if (d->tx_send_release)
             _btn_send(d, false);
     }
@@ -141,7 +156,7 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
     button_data_t *d = (button_data_t *)w->type_data;
     if (!d) return;
 
-    /* Image mode: create a container with an image instead of lv_btn */
+    /* Image mode: transparent container holds images + catches events */
     if (d->image_name[0] != '\0') {
         lv_obj_t *cont = lv_obj_create(parent);
         lv_obj_set_size(cont, w->w, w->h);
@@ -153,26 +168,36 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
         lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_radius(cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
+        /* Normal-state image */
         lv_img_dsc_t *dsc = rdm_image_load(d->image_name);
         d->img_dsc = dsc;
         if (dsc) {
             lv_obj_t *img = lv_img_create(cont);
             lv_img_set_src(img, dsc);
             lv_obj_set_align(img, LV_ALIGN_CENTER);
+            lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
             d->img_obj = img;
-
-            /* Recolor with bg_color by default, pressed_color on press/latch */
-            lv_obj_set_style_img_recolor(img, d->bg_color,
-                                         LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_obj_set_style_img_recolor_opa(img, LV_OPA_COVER,
-                                             LV_PART_MAIN | LV_STATE_DEFAULT);
-
-            lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(img, _btn_pressed_cb,  LV_EVENT_PRESSED,  w);
-            lv_obj_add_event_cb(img, _btn_released_cb, LV_EVENT_RELEASED, w);
         }
 
-        /* Label (optional, on top of image) */
+        /* Pressed-state image (hidden until button is pressed/latched) */
+        if (d->pressed_image_name[0] != '\0') {
+            lv_img_dsc_t *pdsc = rdm_image_load(d->pressed_image_name);
+            d->pressed_img_dsc = pdsc;
+            if (pdsc) {
+                lv_obj_t *pimg = lv_img_create(cont);
+                lv_img_set_src(pimg, pdsc);
+                lv_obj_set_align(pimg, LV_ALIGN_CENTER);
+                lv_obj_clear_flag(pimg, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_flag(pimg, LV_OBJ_FLAG_HIDDEN);
+                d->pressed_img_obj = pimg;
+            }
+        }
+
+        /* Container is the single event target — images are visual only */
+        lv_obj_add_event_cb(cont, _btn_pressed_cb,  LV_EVENT_PRESSED,  w);
+        lv_obj_add_event_cb(cont, _btn_released_cb, LV_EVENT_RELEASED, w);
+
+        /* Label (optional, floats on top of images) */
         if (d->show_label && d->label[0] != '\0') {
             lv_obj_t *lbl = lv_label_create(cont);
             lv_obj_set_align(lbl, LV_ALIGN_CENTER);
@@ -186,6 +211,7 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
                 const lv_font_t *f = widget_resolve_font(d->font);
                 if (f) lv_obj_set_style_text_font(lbl, f, LV_PART_MAIN | LV_STATE_DEFAULT);
             }
+            lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
             d->label_obj = lbl;
         } else {
             d->label_obj = NULL;
@@ -193,6 +219,10 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
 
         d->btn_obj = NULL;
         w->root = cont;
+
+        /* Apply latch state immediately in case we're reloading a latched button */
+        if (d->latch && d->latch_state)
+            _btn_set_pressed_visual(d, true);
 
         /* Subscribe to night-mode changes if any night override is set */
         if (d->night.has_bg_color || d->night.has_text_color ||
@@ -325,6 +355,8 @@ static void _button_to_json(widget_t *w, cJSON *out) {
         cJSON_AddBoolToObject(cfg, "show_label", d->show_label);
     if (d->image_name[0] != '\0')
         cJSON_AddStringToObject(cfg, "image_name", d->image_name);
+    if (d->pressed_image_name[0] != '\0')
+        cJSON_AddStringToObject(cfg, "pressed_image_name", d->pressed_image_name);
 
     /* Night-mode overrides — emit only fields that have an override set */
     {
@@ -415,6 +447,11 @@ static void _button_from_json(widget_t *w, cJSON *in) {
         safe_strncpy(d->image_name, item->valuestring, sizeof(d->image_name));
     }
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "pressed_image_name");
+    if (cJSON_IsString(item) && item->valuestring) {
+        safe_strncpy(d->pressed_image_name, item->valuestring, sizeof(d->pressed_image_name));
+    }
+
     /* Night-mode overrides */
     cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
     if (cJSON_IsObject(night)) {
@@ -433,6 +470,7 @@ static void _button_destroy(widget_t *w) {
         button_data_t *d = (button_data_t *)w->type_data;
         _btn_stop_tx_timer(d);
         rdm_image_free((lv_img_dsc_t *)d->img_dsc);
+        rdm_image_free((lv_img_dsc_t *)d->pressed_img_dsc);
     }
     night_mode_unsubscribe(_button_night_cb, w);
     widget_rules_free(w);

@@ -572,6 +572,34 @@ esp_err_t config_store_load_first_run_done(bool *done)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  WIRE INPUT MODE (GPIO 43/44 repurposed from UART1)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_WIRE_INPUT "wire_input"
+
+esp_err_t config_store_save_wire_input_mode(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WIRE_INPUT, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "enabled", enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_wire_input_mode(bool *enabled)
+{
+    if (!enabled) return ESP_ERR_INVALID_ARG;
+    *enabled = false; /* default: UART1 active, wire inputs off */
+    nvs_handle_t handle;
+    if (nvs_open(NS_WIRE_INPUT, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8 = 0;
+    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  DISPLAY ROTATION + NIGHT MODE (#23)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_DISPLAY "display_cfg"

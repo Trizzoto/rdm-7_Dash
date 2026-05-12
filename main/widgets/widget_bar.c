@@ -37,9 +37,11 @@ static const int16_t s_bar_default_x[2] = {
 	 (int16_t)(SCREEN_ORIGIN_X * 3 / 5)
 };
 
-/* Helper: returns true when both image names are set (image-based bar mode) */
-static inline bool _bar_is_image_mode(const bar_data_t *bd) {
-	return bd && bd->bar_image[0] != '\0' && bd->bar_image_full[0] != '\0';
+static inline bool _bar_has_track_image(const bar_data_t *bd) {
+	return bd && bd->bar_image[0] != '\0';
+}
+static inline bool _bar_has_fill_image(const bar_data_t *bd) {
+	return bd && bd->bar_image_full[0] != '\0';
 }
 
 /* Decimals drive the bar's *internal* resolution. A user bar_min/bar_max of
@@ -369,8 +371,8 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	int32_t scale = _bar_resolution_scale(bd);
 	int32_t bar_value = is_stale ? 0 : (int32_t)(fill_value * (float)scale);
 
-	/* ── Image-based bar mode ── */
-	if (_bar_is_image_mode(bd) && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
+	/* ── Fill-image bar mode (clip container controls fill width) ── */
+	if (bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
 		int32_t range = bd->bar_max - bd->bar_min;
 		int32_t pct = 0;
 		if (range > 0 && !is_stale) {
@@ -449,65 +451,81 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	int32_t b_max = (bd ? bd->bar_max : 100) * scale;
 	if (b_max <= b_min) { b_min = 0; b_max = 100 * scale; }
 
-	lv_obj_t *bar = NULL; /* only set in standard (non-image) mode */
+	bool has_track = _bar_has_track_image(bd);
+	bool has_fill  = _bar_has_fill_image(bd);
 
-	if (_bar_is_image_mode(bd)) {
-		/* ── Image-based bar mode ──────────────────────────────────── */
+	/* ── Step 1: track background ───────────────────────────────────── */
+	if (has_track) {
 		bd->bar_img_dsc = rdm_image_load(bd->bar_image);
-		bd->bar_img_full_dsc = rdm_image_load(bd->bar_image_full);
 		safe_strncpy(bd->current_bar_image, bd->bar_image, sizeof(bd->current_bar_image));
-		safe_strncpy(bd->current_bar_image_full, bd->bar_image_full, sizeof(bd->current_bar_image_full));
-
-		if (bd->bar_img_dsc && bd->bar_img_full_dsc) {
-			/* Background (track) image */
+		if (bd->bar_img_dsc) {
 			lv_obj_t *bg = lv_img_create(parent);
 			lv_img_set_src(bg, bd->bar_img_dsc);
 			lv_obj_set_size(bg, w->w, w->h);
 			lv_obj_set_align(bg, LV_ALIGN_CENTER);
 			lv_obj_set_pos(bg, w->x, w->y);
-			lv_img_set_zoom(bg, (uint16_t)(256 * w->w / bd->bar_img_dsc->header.w));
+			if (bd->bar_img_dsc->header.w > 0)
+				lv_img_set_zoom(bg, (uint16_t)(256 * w->w / bd->bar_img_dsc->header.w));
+			lv_obj_set_style_img_opa(bg, bd->bar_bg_opa, 0);
 			bd->img_bg_obj = bg;
+			w->root = bg;
+		} else {
+			ESP_LOGW(TAG, "Failed to load track image '%s', using color track", bd->bar_image);
+			has_track = false;
+		}
+	}
+	if (!has_track && has_fill) {
+		/* Fill image but no track image — plain styled lv_obj as background */
+		lv_obj_t *track_bg = lv_obj_create(parent);
+		lv_obj_set_size(track_bg, w->w, w->h);
+		lv_obj_set_align(track_bg, LV_ALIGN_CENTER);
+		lv_obj_set_pos(track_bg, w->x, w->y);
+		lv_obj_set_style_bg_color(track_bg, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(track_bg, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(track_bg, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(track_bg, bd->bar_border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_radius(track_bg, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_pad_all(track_bg, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_clear_flag(track_bg, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+		bd->img_bg_obj = track_bg;
+		w->root = track_bg;
+	}
 
-			/* Clipping container — same position, overflow hidden */
+	/* ── Step 2: fill indicator ─────────────────────────────────────── */
+	if (has_fill) {
+		bd->bar_img_full_dsc = rdm_image_load(bd->bar_image_full);
+		safe_strncpy(bd->current_bar_image_full, bd->bar_image_full, sizeof(bd->current_bar_image_full));
+		if (bd->bar_img_full_dsc) {
 			lv_obj_t *clip = lv_obj_create(parent);
-			lv_obj_set_size(clip, 0, w->h); /* starts at 0 width */
-			lv_obj_set_align(clip, LV_ALIGN_CENTER);
-			/* Position clip left-aligned with the bar area */
-			lv_obj_set_pos(clip, w->x - (w->w / 2), w->y);
+			lv_obj_set_size(clip, 0, w->h);
 			lv_obj_set_style_bg_opa(clip, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_border_width(clip, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_pad_all(clip, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_radius(clip, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_clear_flag(clip, LV_OBJ_FLAG_SCROLLABLE);
 			lv_obj_set_style_clip_corner(clip, true, LV_PART_MAIN | LV_STATE_DEFAULT);
-			/* Use LEFT alignment so width grows rightward from left edge */
 			lv_obj_set_align(clip, LV_ALIGN_TOP_LEFT);
-			/* Convert center-based coords to top-left coords */
 			lv_coord_t abs_left = SCREEN_ORIGIN_X + w->x - (w->w / 2);
-			lv_coord_t abs_top = SCREEN_ORIGIN_Y + w->y - (w->h / 2);
+			lv_coord_t abs_top  = SCREEN_ORIGIN_Y + w->y - (w->h / 2);
 			lv_obj_set_pos(clip, abs_left, abs_top);
 			bd->img_clip_obj = clip;
 
-			/* Fill image inside clip container — left-aligned */
-			lv_obj_t *fill = lv_img_create(clip);
-			lv_img_set_src(fill, bd->bar_img_full_dsc);
-			lv_obj_set_align(fill, LV_ALIGN_TOP_LEFT);
-			lv_obj_set_pos(fill, 0, 0);
-			lv_img_set_zoom(fill, (uint16_t)(256 * w->w / bd->bar_img_full_dsc->header.w));
-			bd->img_full_obj = fill;
-
-			w->root = bg;
+			lv_obj_t *fill_img = lv_img_create(clip);
+			lv_img_set_src(fill_img, bd->bar_img_full_dsc);
+			lv_obj_set_align(fill_img, LV_ALIGN_TOP_LEFT);
+			lv_obj_set_pos(fill_img, 0, 0);
+			if (bd->bar_img_full_dsc->header.w > 0)
+				lv_img_set_zoom(fill_img, (uint16_t)(256 * w->w / bd->bar_img_full_dsc->header.w));
+			bd->img_full_obj = fill_img;
 		} else {
-			/* Failed to load one or both images — fall back to standard bar */
-			ESP_LOGW(TAG, "Failed to load bar images, falling back to standard bar");
-			if (bd->bar_img_dsc) { rdm_image_free(bd->bar_img_dsc); bd->bar_img_dsc = NULL; }
-			if (bd->bar_img_full_dsc) { rdm_image_free(bd->bar_img_full_dsc); bd->bar_img_full_dsc = NULL; }
-			goto standard_bar;
+			ESP_LOGW(TAG, "Failed to load fill image '%s', using color fill", bd->bar_image_full);
+			has_fill = false;
 		}
-	} else {
-standard_bar:
-		/* ── Standard LVGL bar mode ────────────────────────────────── */
-		bar = lv_bar_create(parent);
+	}
+
+	if (!has_fill) {
+		/* Standard lv_bar for fill indicator */
+		lv_obj_t *bar = lv_bar_create(parent);
 		lv_bar_set_range(bar, b_min, b_max);
 		lv_bar_set_value(bar, b_min, LV_ANIM_OFF);
 		lv_obj_set_width(bar, w->w);
@@ -515,20 +533,25 @@ standard_bar:
 		lv_obj_set_align(bar, LV_ALIGN_CENTER);
 		lv_obj_set_pos(bar, w->x, w->y);
 		lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(bar, bd->bar_bg_color,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_color(bar, bd->bar_border_color,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (has_track) {
+			/* Track image is the visual background — make lv_bar body transparent */
+			lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+		} else {
+			lv_obj_set_style_bg_color(bar, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_opa(bar, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_color(bar, bd->bar_border_color,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
 		lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_color(bar, THEME_COLOR_GREEN_BRIGHT,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-
 		bd->bar_obj = bar;
-		w->root = bar;
+		if (!w->root) w->root = bar;
 	}
 
 	/* Create the label above the bar */
@@ -567,11 +590,11 @@ standard_bar:
 
 	/* Assign to slot globals so existing code (RPM limiter, callbacks) works */
 	if (slot == 0) {
-		ui_Bar_1 = bar; /* NULL in image mode — that's fine */
+		ui_Bar_1 = bd ? bd->bar_obj : NULL;
 		ui_Bar_1_Label = lbl;
 		ui_Bar_1_Value = val;
 	} else {
-		ui_Bar_2 = bar;
+		ui_Bar_2 = bd ? bd->bar_obj : NULL;
 		ui_Bar_2_Label = lbl;
 		ui_Bar_2_Value = val;
 	}
@@ -633,6 +656,8 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		/* Appearance overrides — only serialize non-default values */
 		if (bd->bar_bg_color.full != THEME_COLOR_PANEL.full)
 			cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)bd->bar_bg_color.full);
+		if (bd->bar_bg_opa != 255)
+			cJSON_AddNumberToObject(cfg, "bar_bg_opa", bd->bar_bg_opa);
 		if (bd->bar_radius != 5)
 			cJSON_AddNumberToObject(cfg, "bar_radius", bd->bar_radius);
 		if (bd->bar_border_width != 2)
@@ -729,6 +754,8 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	/* Appearance overrides */
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_color");
 	if (cJSON_IsNumber(item)) bd->bar_bg_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_opa");
+	if (cJSON_IsNumber(item)) bd->bar_bg_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_radius");
 	if (cJSON_IsNumber(item)) bd->bar_radius = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_border_width");
@@ -780,9 +807,12 @@ static void _bar_destroy(widget_t *w) {
 		lv_obj_del(bd->label_obj);
 	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
 		lv_obj_del(bd->value_obj);
-	/* In image mode, clip container is a sibling of root — delete it separately */
+	/* Clip container is always a sibling of root — delete explicitly */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
+	/* In track-image + color-fill mode, bar_obj is a sibling of root */
+	if (bd && bd->bar_obj && lv_obj_is_valid(bd->bar_obj) && (lv_obj_t *)bd->bar_obj != w->root)
+		lv_obj_del(bd->bar_obj);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -849,6 +879,12 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(bd->bar_obj, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+	/* Fill-image mode: plain track lv_obj stored in img_bg_obj */
+	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
+		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->img_bg_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bd->img_bg_obj, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 	if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
 		lv_obj_set_style_text_color(bd->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
 		const lv_font_t *lf = widget_resolve_font(lbl_font_name);
@@ -878,6 +914,10 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
+		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->img_bg_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
 		lv_obj_set_style_text_color(bd->label_obj, lbl_col, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -944,6 +984,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->bar_high_color = THEME_COLOR_RED;
 	bd->signal_index = -1;
 	bd->bar_bg_color = THEME_COLOR_PANEL;
+	bd->bar_bg_opa = 255;
 	bd->bar_radius = 5;
 	bd->bar_border_width = 2;
 	bd->bar_border_color = THEME_COLOR_PANEL;
