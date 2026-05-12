@@ -949,7 +949,6 @@ static void _panel_night_cb(bool active, void *user_data) {
  * commit to wire). Alert fields (warning_*) are deferred until the RULES
  * tab lands. */
 
-#include "widgets/widget_fields.h"
 #include <string.h>
 
 static bool _panel_inspector_get(const widget_t *w, const char *name,

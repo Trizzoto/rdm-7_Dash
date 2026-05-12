@@ -30,13 +30,14 @@
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/edit_mode.h"     /* edit_mode_commit_external_edit */
 #include "ui/menu/menu_screen.h"   /* load_menu_screen_for_widget */
-#include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays + ui_Label/ui_Value */
+#include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays */
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
-#include "widgets/widget_panel.h"  /* panel_data_t - STYLE tab pilot */
+#include "widgets/widget_fields.h" /* schema-driven STYLE tab */
 #include "esp_log.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 static const char *TAG = "inspector";
 
@@ -78,7 +79,7 @@ static lv_obj_t *s_side_right_btn  = NULL;
  * Live-previews on VALUE_CHANGED, commits on OK, reverts on Cancel. */
 static lv_obj_t *s_wheel_popup     = NULL;
 static lv_obj_t *s_wheel           = NULL;
-static int       s_wheel_field     = -1;
+static char      s_wheel_field[32] = "";
 static lv_color_t s_wheel_initial;
 
 /* Helpers */
@@ -203,65 +204,89 @@ static void _ensure_presets(void) {
     s_presets_ready = true;
 }
 
-enum panel_field {
-    F_PANEL_BORDER = 0,
-    F_PANEL_BG,
-    F_PANEL_LABEL,
-    F_PANEL_VALUE,
-    F_PANEL_FIELD_COUNT
-};
-enum panel_dim {
-    D_PANEL_BORDER_W = 0,
-    D_PANEL_BORDER_R,
-    D_PANEL_DIM_COUNT
-};
+/* Per-row registry. Schema name -> preview swatch / value label. Refreshed
+ * when the picker / wheel writes a new value so the row stays in sync with
+ * the live widget. Capped well above the largest widget's appearance-field
+ * count - resize if Meter's STYLE tab ever balloons. */
+#define INSPECTOR_FIELD_NAME_LEN 32
+#define INSPECTOR_MAX_ROWS       24
 
-static const char *const s_panel_field_names[F_PANEL_FIELD_COUNT] = {
-    "Border", "Background", "Label", "Value"
-};
+typedef struct {
+    char       name[INSPECTOR_FIELD_NAME_LEN];
+    lv_obj_t  *swatch;       /* COLOR rows */
+    lv_obj_t  *value_lbl;    /* STEPPER / SLIDER value readout */
+} inspector_row_t;
 
-/* One small preview swatch per colour row. */
-static lv_obj_t *s_panel_swatch_preview[F_PANEL_FIELD_COUNT] = {NULL};
-static lv_obj_t *s_panel_dim_value_lbls[D_PANEL_DIM_COUNT]    = {NULL};
+static inspector_row_t s_rows[INSPECTOR_MAX_ROWS];
+static int             s_row_count = 0;
 
 /* Picker popover state. Opened on tap of a colour row, dismissed on tap
  * outside the inner card or on swatch select. */
-static lv_obj_t *s_picker                            = NULL;
-static int       s_picker_field                      = -1;
-static lv_obj_t *s_picker_swatches[PRESET_COUNT]     = {NULL};
+static lv_obj_t *s_picker                          = NULL;
+static char      s_picker_field[INSPECTOR_FIELD_NAME_LEN] = "";
+static char      s_picker_label[INSPECTOR_FIELD_NAME_LEN] = "";
+static lv_obj_t *s_picker_swatches[PRESET_COUNT]   = {NULL};
 
 static bool _color_eq(lv_color_t a, lv_color_t b) {
     return a.full == b.full;
 }
 
-static lv_color_t _panel_get_color(panel_data_t *pd, int field) {
-    switch (field) {
-        case F_PANEL_BORDER: return pd->border_color;
-        case F_PANEL_BG:     return pd->bg_color;
-        case F_PANEL_LABEL:  return pd->label_color;
-        case F_PANEL_VALUE:  return pd->value_color;
+/* Schema-driven field helpers.
+ *
+ * All field reads / writes go through the widget's inspector_get /
+ * inspector_set vtable hooks. Per-widget code (e.g. widget_panel.c)
+ * implements those by mapping schema names to type_data members and
+ * calling the matching lv_obj_set_style_* on the live LVGL object.
+ *
+ * The inspector is otherwise widget-agnostic - adding new fields means
+ * editing schema/widgets.schema.json + running tools/codegen_widget_inspector.py
+ * + adding switch cases in the widget's inspector_set hook. */
+
+static inspector_row_t *_find_row(const char *name) {
+    if (!name) return NULL;
+    for (int i = 0; i < s_row_count; i++) {
+        if (strcmp(s_rows[i].name, name) == 0) return &s_rows[i];
     }
-    return lv_color_black();
+    return NULL;
 }
 
-/* Refresh the row's preview swatch AND, if the picker is up on the same
- * field, the active highlight in the picker grid. */
-static void _refresh_swatch_active(int field) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
-    lv_color_t current = _panel_get_color(pd, field);
+static inspector_row_t *_register_row(const char *name) {
+    if (!name || s_row_count >= INSPECTOR_MAX_ROWS) return NULL;
+    inspector_row_t *r = &s_rows[s_row_count++];
+    memset(r, 0, sizeof(*r));
+    strncpy(r->name, name, INSPECTOR_FIELD_NAME_LEN - 1);
+    return r;
+}
 
-    lv_obj_t *prev = s_panel_swatch_preview[field];
-    if (prev && lv_obj_is_valid(prev)) {
-        lv_obj_set_style_bg_color(prev, current, 0);
+static lv_color_t _get_field_color(const char *name) {
+    if (!s_widget || !s_widget->inspector_get) return lv_color_black();
+    widget_field_value_t v = {0};
+    if (!s_widget->inspector_get(s_widget, name, &v)) return lv_color_black();
+    return lv_color_hex(v.color);
+}
+
+static int _get_field_int(const char *name, int fallback) {
+    if (!s_widget || !s_widget->inspector_get) return fallback;
+    widget_field_value_t v = {0};
+    if (!s_widget->inspector_get(s_widget, name, &v)) return fallback;
+    return v.i;
+}
+
+static void _apply_field_color(const char *name, lv_color_t c) {
+    if (!s_widget || !s_widget->inspector_set) return;
+    widget_field_value_t v = { .color = lv_color_to32(c) & 0xFFFFFF };
+    s_widget->inspector_set(s_widget, name, &v);
+
+    /* Update the row's preview swatch + picker grid (if open on this field). */
+    inspector_row_t *r = _find_row(name);
+    if (r && r->swatch && lv_obj_is_valid(r->swatch)) {
+        lv_obj_set_style_bg_color(r->swatch, c, 0);
     }
-
-    if (s_picker_field == field) {
+    if (strcmp(s_picker_field, name) == 0) {
         for (int i = 0; i < PRESET_COUNT; i++) {
             lv_obj_t *sw = s_picker_swatches[i];
             if (!sw || !lv_obj_is_valid(sw)) continue;
-            bool active = _color_eq(s_presets[i], current);
+            bool active = _color_eq(s_presets[i], c);
             lv_obj_set_style_border_color(sw,
                 active ? DT_ACCENT : lv_color_white(), 0);
             lv_obj_set_style_border_width(sw, active ? 3 : 1, 0);
@@ -270,42 +295,16 @@ static void _refresh_swatch_active(int field) {
     }
 }
 
-/* Apply a colour to the live LVGL objects (so the change is visible
- * immediately) AND to the widget's type_data (so it persists on save). */
-static void _panel_apply_color(int field, lv_color_t c) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
+static void _apply_field_int(const char *name, int v) {
+    if (!s_widget || !s_widget->inspector_set) return;
+    widget_field_value_t val = { .i = v };
+    s_widget->inspector_set(s_widget, name, &val);
 
-    lv_obj_t *lbl_obj = NULL, *val_obj = NULL;
-    if (s_widget->slot < 13) {
-        lbl_obj = ui_Label[s_widget->slot];
-        val_obj = ui_Value[s_widget->slot];
+    /* Update the row's value readout. */
+    inspector_row_t *r = _find_row(name);
+    if (r && r->value_lbl && lv_obj_is_valid(r->value_lbl)) {
+        lv_label_set_text_fmt(r->value_lbl, "%d", v);
     }
-
-    switch (field) {
-        case F_PANEL_BORDER:
-            pd->border_color = c;
-            if (s_widget->root && lv_obj_is_valid(s_widget->root))
-                lv_obj_set_style_border_color(s_widget->root, c, 0);
-            break;
-        case F_PANEL_BG:
-            pd->bg_color = c;
-            if (s_widget->root && lv_obj_is_valid(s_widget->root))
-                lv_obj_set_style_bg_color(s_widget->root, c, 0);
-            break;
-        case F_PANEL_LABEL:
-            pd->label_color = c;
-            if (lbl_obj && lv_obj_is_valid(lbl_obj))
-                lv_obj_set_style_text_color(lbl_obj, c, 0);
-            break;
-        case F_PANEL_VALUE:
-            pd->value_color = c;
-            if (val_obj && lv_obj_is_valid(val_obj))
-                lv_obj_set_style_text_color(val_obj, c, 0);
-            break;
-    }
-    _refresh_swatch_active(field);
 }
 
 /* Picker popover */
@@ -317,7 +316,8 @@ static void _close_picker(void) {
         lv_obj_del(s_picker);
     }
     s_picker = NULL;
-    s_picker_field = -1;
+    s_picker_field[0] = '\0';
+    s_picker_label[0] = '\0';
     for (int i = 0; i < PRESET_COUNT; i++) s_picker_swatches[i] = NULL;
 }
 
@@ -325,8 +325,11 @@ static void _picker_swatch_clicked_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     if (idx < 0 || idx >= PRESET_COUNT) return;
-    if (s_picker_field < 0) return;
-    _panel_apply_color(s_picker_field, s_presets[idx]);
+    if (s_picker_field[0] == '\0') return;
+    char field_copy[INSPECTOR_FIELD_NAME_LEN];
+    strncpy(field_copy, s_picker_field, sizeof(field_copy) - 1);
+    field_copy[sizeof(field_copy) - 1] = '\0';
+    _apply_field_color(field_copy, s_presets[idx]);
     _close_picker();
 }
 
@@ -337,12 +340,14 @@ static void _picker_backdrop_cb(lv_event_t *e) {
     _close_picker();
 }
 
-static void _open_picker(int field) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
+static void _open_picker(const char *field_name, const char *display_label) {
+    if (!s_widget || !field_name) return;
     _close_picker();
-    s_picker_field = field;
+    strncpy(s_picker_field, field_name, sizeof(s_picker_field) - 1);
+    s_picker_field[sizeof(s_picker_field) - 1] = '\0';
+    strncpy(s_picker_label, display_label ? display_label : field_name,
+            sizeof(s_picker_label) - 1);
+    s_picker_label[sizeof(s_picker_label) - 1] = '\0';
 
     /* lv_layer_top sits above the inspector dock and the dashboard.
      * Backdrop is semi-dim so the picker reads as modal. */
@@ -370,8 +375,7 @@ static void _open_picker(int field) {
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *title = lv_label_create(card);
-    int safe_field = (field >= 0 && field < F_PANEL_FIELD_COUNT) ? field : 0;
-    lv_label_set_text_fmt(title, "%s colour", s_panel_field_names[safe_field]);
+    lv_label_set_text_fmt(title, "%s colour", s_picker_label);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, THEME_FONT_SMALL, 0);
@@ -379,7 +383,7 @@ static void _open_picker(int field) {
     /* 4x3 swatch grid (12 presets), 40 px swatches + 8 px gaps. Centred
      * in the card so the layout breathes the same whether 10, 12, or
      * 16 presets ever live here. */
-    lv_color_t current = _panel_get_color(pd, field);
+    lv_color_t current = _get_field_color(field_name);
     const int cell     = 48;
     const int cols     = 4;
     const int grid_w   = cols * 40 + (cols - 1) * 8;
@@ -427,14 +431,14 @@ static void _close_wheel(void) {
     }
     s_wheel_popup = NULL;
     s_wheel       = NULL;
-    s_wheel_field = -1;
+    s_wheel_field[0] = '\0';
 }
 
 static void _wheel_value_changed_cb(lv_event_t *e) {
     (void)e;
-    if (s_wheel_field < 0 || !s_wheel || !lv_obj_is_valid(s_wheel)) return;
+    if (s_wheel_field[0] == '\0' || !s_wheel || !lv_obj_is_valid(s_wheel)) return;
     lv_color_t c = lv_colorwheel_get_rgb(s_wheel);
-    _panel_apply_color(s_wheel_field, c);
+    _apply_field_color(s_wheel_field, c);
 }
 
 static void _wheel_ok_cb(lv_event_t *e) {
@@ -444,16 +448,18 @@ static void _wheel_ok_cb(lv_event_t *e) {
 
 static void _wheel_cancel_cb(lv_event_t *e) {
     (void)e;
-    if (s_wheel_field >= 0) {
-        _panel_apply_color(s_wheel_field, s_wheel_initial);
+    if (s_wheel_field[0] != '\0') {
+        _apply_field_color(s_wheel_field, s_wheel_initial);
     }
     _close_wheel();
 }
 
-static void _open_wheel(int field, lv_color_t initial) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+static void _open_wheel(const char *field_name, const char *display_label,
+                        lv_color_t initial) {
+    if (!s_widget || !field_name) return;
     _close_wheel();
-    s_wheel_field   = field;
+    strncpy(s_wheel_field, field_name, sizeof(s_wheel_field) - 1);
+    s_wheel_field[sizeof(s_wheel_field) - 1] = '\0';
     s_wheel_initial = initial;
 
     s_wheel_popup = lv_obj_create(lv_layer_top());
@@ -478,9 +484,9 @@ static void _open_wheel(int field, lv_color_t initial) {
     lv_obj_set_style_pad_all(card, 16, 0);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-    int safe_field = (field >= 0 && field < F_PANEL_FIELD_COUNT) ? field : 0;
     lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text_fmt(title, "%s - custom", s_panel_field_names[safe_field]);
+    lv_label_set_text_fmt(title, "%s - custom",
+                          display_label ? display_label : field_name);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
@@ -505,13 +511,16 @@ static void _open_wheel(int field, lv_color_t initial) {
 
 static void _custom_btn_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    int field = s_picker_field;
-    if (field < 0 || !s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
-    lv_color_t current = _panel_get_color(pd, field);
+    if (s_picker_field[0] == '\0' || !s_widget) return;
+    char field_copy[INSPECTOR_FIELD_NAME_LEN];
+    char label_copy[INSPECTOR_FIELD_NAME_LEN];
+    strncpy(field_copy, s_picker_field, sizeof(field_copy) - 1);
+    field_copy[sizeof(field_copy) - 1] = '\0';
+    strncpy(label_copy, s_picker_label, sizeof(label_copy) - 1);
+    label_copy[sizeof(label_copy) - 1] = '\0';
+    lv_color_t current = _get_field_color(field_copy);
     _close_picker();
-    _open_wheel(field, current);
+    _open_wheel(field_copy, label_copy, current);
 }
 
 /* Dock side switcher - move the dock between right and left edges. */
@@ -566,18 +575,41 @@ static void _side_right_clicked_cb(lv_event_t *e) {
     _apply_dock_side();
 }
 
-/* Compact colour row: label + preview swatch + chevron. */
+/* Schema-driven row builders.
+ *
+ * Each renderer takes a const widget_field_t * (from the codegen'd
+ * WIDGET_FIELDS array) and builds the appropriate row. Live preview is
+ * routed through s_widget->inspector_set so the widget code is the only
+ * place that knows how a schema field maps to type_data and LVGL.  */
+
+typedef struct {
+    char field_name[INSPECTOR_FIELD_NAME_LEN];
+    char field_label[INSPECTOR_FIELD_NAME_LEN];
+} color_row_event_ctx_t;
+
+/* One ctx per colour row, kept alive for the row's lifetime. We store
+ * them in s_color_row_ctxs and clear on tab teardown. */
+#define INSPECTOR_MAX_COLOR_ROWS 16
+static color_row_event_ctx_t s_color_row_ctxs[INSPECTOR_MAX_COLOR_ROWS];
+static int                   s_color_row_ctx_count = 0;
 
 static void _color_row_clicked_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    int field = (int)(intptr_t)lv_event_get_user_data(e);
-    _open_picker(field);
+    color_row_event_ctx_t *ctx = (color_row_event_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    _open_picker(ctx->field_name, ctx->field_label);
 }
 
-static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
+static void _make_color_row_schema(lv_obj_t *parent, const widget_field_t *f) {
+    if (!f || !s_widget) return;
+
+    /* Stash field name + label for the click callback. */
+    if (s_color_row_ctx_count >= INSPECTOR_MAX_COLOR_ROWS) return;
+    color_row_event_ctx_t *ctx = &s_color_row_ctxs[s_color_row_ctx_count++];
+    strncpy(ctx->field_name,  f->name,  sizeof(ctx->field_name)  - 1);
+    ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
+    strncpy(ctx->field_label, f->label, sizeof(ctx->field_label) - 1);
+    ctx->field_label[sizeof(ctx->field_label) - 1] = '\0';
 
     lv_obj_t *row = lv_btn_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
@@ -590,11 +622,10 @@ static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
     lv_obj_set_style_shadow_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 4, 0);
     lv_obj_set_style_radius(row, 6, 0);
-    lv_obj_add_event_cb(row, _color_row_clicked_cb, LV_EVENT_CLICKED,
-                        (void *)(intptr_t)field);
+    lv_obj_add_event_cb(row, _color_row_clicked_cb, LV_EVENT_CLICKED, ctx);
 
     lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, name);
+    lv_label_set_text(lbl, f->label);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
@@ -608,7 +639,7 @@ static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
     lv_obj_t *sw = lv_obj_create(row);
     lv_obj_set_size(sw, 28, 28);
     lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -22, 0);
-    lv_obj_set_style_bg_color(sw, _panel_get_color(pd, field), 0);
+    lv_obj_set_style_bg_color(sw, _get_field_color(f->name), 0);
     lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(sw, lv_color_white(), 0);
     lv_obj_set_style_border_opa(sw, 80, 0);
@@ -616,43 +647,40 @@ static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
     lv_obj_set_style_radius(sw, 4, 0);
     lv_obj_set_style_pad_all(sw, 0, 0);
     lv_obj_clear_flag(sw, LV_OBJ_FLAG_CLICKABLE);
-    s_panel_swatch_preview[field] = sw;
+
+    inspector_row_t *r = _register_row(f->name);
+    if (r) r->swatch = sw;
 }
 
-/* Dimension sliders (border width, border radius) - narrow column variant */
+/* Stepper / slider row. */
 
-static void _panel_apply_dim(int dim, int v) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
-    if (!s_widget->root || !lv_obj_is_valid(s_widget->root)) return;
+typedef struct {
+    char field_name[INSPECTOR_FIELD_NAME_LEN];
+} int_row_event_ctx_t;
 
-    switch (dim) {
-        case D_PANEL_BORDER_W:
-            if (v < 0)  v = 0;
-            if (v > 10) v = 10;
-            pd->border_width = (uint8_t)v;
-            lv_obj_set_style_border_width(s_widget->root, v, 0);
-            break;
-        case D_PANEL_BORDER_R:
-            if (v < 0)  v = 0;
-            if (v > 30) v = 30;
-            pd->border_radius = (uint8_t)v;
-            lv_obj_set_style_radius(s_widget->root, v, 0);
-            break;
-    }
-    if (s_panel_dim_value_lbls[dim] && lv_obj_is_valid(s_panel_dim_value_lbls[dim]))
-        lv_label_set_text_fmt(s_panel_dim_value_lbls[dim], "%d", v);
+#define INSPECTOR_MAX_INT_ROWS 24
+static int_row_event_ctx_t s_int_row_ctxs[INSPECTOR_MAX_INT_ROWS];
+static int                 s_int_row_ctx_count = 0;
+
+static void _int_slider_cb(lv_event_t *e) {
+    int_row_event_ctx_t *ctx = (int_row_event_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx) return;
+    int v = lv_slider_get_value(lv_event_get_target(e));
+    _apply_field_int(ctx->field_name, v);
 }
 
-static void _dim_slider_cb(lv_event_t *e) {
-    int dim = (int)(intptr_t)lv_event_get_user_data(e);
-    int v   = lv_slider_get_value(lv_event_get_target(e));
-    _panel_apply_dim(dim, v);
-}
+static void _make_stepper_row_schema(lv_obj_t *parent, const widget_field_t *f) {
+    if (!f || !s_widget) return;
+    if (s_int_row_ctx_count >= INSPECTOR_MAX_INT_ROWS) return;
 
-static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
-                          int initial, int vmin, int vmax) {
+    int_row_event_ctx_t *ctx = &s_int_row_ctxs[s_int_row_ctx_count++];
+    strncpy(ctx->field_name, f->name, sizeof(ctx->field_name) - 1);
+    ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
+
+    /* Read current value via the widget's get hook; falls back to schema
+     * default if the widget hasn't implemented the field yet. */
+    int current = _get_field_int(f->name, f->default_int);
+
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, 36);
@@ -666,53 +694,73 @@ static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, name);
+    lv_label_set_text(lbl, f->label);
     lv_obj_set_width(lbl, 100);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
 
     lv_obj_t *slider = lv_slider_create(row);
     lv_obj_set_size(slider, 130, 8);
-    lv_slider_set_range(slider, vmin, vmax);
-    lv_slider_set_value(slider, initial, LV_ANIM_OFF);
+    lv_slider_set_range(slider, f->min_int, f->max_int);
+    lv_slider_set_value(slider, current, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider, DT_BG_INSET, LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider, DT_ACCENT, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider, DT_ACCENT, LV_PART_KNOB);
-    lv_obj_add_event_cb(slider, _dim_slider_cb, LV_EVENT_VALUE_CHANGED,
-                        (void *)(intptr_t)dim);
+    lv_obj_add_event_cb(slider, _int_slider_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
     lv_obj_t *value = lv_label_create(row);
-    lv_label_set_text_fmt(value, "%d", initial);
+    lv_label_set_text_fmt(value, "%d", current);
     lv_obj_set_width(value, 30);
     lv_obj_set_style_text_color(value, lv_color_white(), 0);
     lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
-    s_panel_dim_value_lbls[dim] = value;
+
+    inspector_row_t *r = _register_row(f->name);
+    if (r) r->value_lbl = value;
 }
 
-/* Panel STYLE tab builder */
+/* Generic STYLE-tab builder - iterates the schema and dispatches per
+ * field type. Categories filter what shows up where (STYLE shows the
+ * appearance fields). Fields whose widget doesn't implement inspector_get
+ * yet still appear, but their initial value comes from the schema
+ * default rather than the live widget. */
 
-static void _build_style_tab_panel(void) {
-    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+static void _build_style_tab_generic(widget_t *w) {
+    if (!w || !w->inspector_get || !w->inspector_set) return;
+    const widget_fields_def_t *def = widget_fields_for_type(w->type);
+    if (!def) return;
 
     _ensure_presets();
-    for (int f = 0; f < F_PANEL_FIELD_COUNT; f++)
-        s_panel_swatch_preview[f] = NULL;
-    for (int d = 0; d < D_PANEL_DIM_COUNT; d++)
-        s_panel_dim_value_lbls[d] = NULL;
+    s_row_count = 0;
+    s_color_row_ctx_count = 0;
+    s_int_row_ctx_count = 0;
 
-    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
-    if (!pd) return;
+    lv_obj_t *colours = NULL;
+    lv_obj_t *dims    = NULL;
 
-    lv_obj_t *colours = _make_card(s_content, "COLOURS");
-    _make_color_row(colours, "Border",     F_PANEL_BORDER);
-    _make_color_row(colours, "Background", F_PANEL_BG);
-    _make_color_row(colours, "Label",      F_PANEL_LABEL);
-    _make_color_row(colours, "Value",      F_PANEL_VALUE);
+    for (uint16_t i = 0; i < def->field_count; i++) {
+        const widget_field_t *f = &def->fields[i];
+        if (f->category != WF_CAT_APPEARANCE) continue;
 
-    lv_obj_t *dims = _make_card(s_content, "DIMENSIONS");
-    _make_dim_row(dims, "Border width",  D_PANEL_BORDER_W, pd->border_width,  0, 10);
-    _make_dim_row(dims, "Border radius", D_PANEL_BORDER_R, pd->border_radius, 0, 30);
+        switch (f->type) {
+            case WF_TYPE_COLOR: {
+                if (!colours) colours = _make_card(s_content, "COLOURS");
+                _make_color_row_schema(colours, f);
+                break;
+            }
+            case WF_TYPE_STEPPER:
+            case WF_TYPE_STEPPER_AUTO:
+            case WF_TYPE_SLIDER: {
+                if (!dims) dims = _make_card(s_content, "DIMENSIONS");
+                _make_stepper_row_schema(dims, f);
+                break;
+            }
+            default:
+                /* CHECKBOX / SELECT / TEXT / FONT / IMAGE - rendered in
+                 * a later phase. Skip silently for now. */
+                break;
+        }
+    }
 }
 
 /* Placeholder tab */
@@ -774,8 +822,13 @@ static void _show_tab(int idx) {
             _build_placeholder_tab("Data");
             break;
         case TAB_STYLE:
-            if (s_widget && s_widget->type == WIDGET_PANEL)
-                _build_style_tab_panel();
+            /* Schema-driven path - any widget that implements inspector_get
+             * + inspector_set gets a fully-rendered STYLE tab from
+             * schema/widgets.schema.json. Widgets without the hooks fall
+             * through to the legacy editor placeholder. */
+            if (s_widget && s_widget->inspector_get && s_widget->inspector_set &&
+                widget_fields_for_type(s_widget->type))
+                _build_style_tab_generic(s_widget);
             else
                 _build_placeholder_tab("Style");
             break;
