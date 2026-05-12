@@ -90,6 +90,11 @@ float fuel_sender_read_voltage(void);
 void keyboard_ready_event_cb(lv_event_t *e);
 void screen3_touch_event_cb(lv_event_t *e);
 
+/** Re-foreground persistent overlays (NO CAN BUS badge primarily) so that
+ *  fresh widget objects added by a layout reapply don't end up drawing
+ *  over them. Called by the dashboard after every apply path. */
+void ui_Screen3_refresh_overlays(void);
+
 // Indicator config management functions
 void create_indicator_config_menu(uint8_t indicator_idx);
 void update_indicator_ui(void *param);

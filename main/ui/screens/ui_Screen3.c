@@ -458,6 +458,9 @@ static void _bus_silent_tick_cb(lv_timer_t *t) {
     bool currently_visible = !lv_obj_has_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
     if (should_show && !currently_visible) {
         lv_obj_clear_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
+        /* Foreground every time it transitions visible — guards against any
+         * widget added after this point ending up on top of the warning. */
+        lv_obj_move_foreground(s_bus_silent_badge);
     } else if (!should_show && currently_visible) {
         lv_obj_add_flag(s_bus_silent_badge, LV_OBJ_FLAG_HIDDEN);
     }
@@ -489,6 +492,14 @@ static void _ui_screen3_init_bus_silent_overlay(void) {
     s_last_rx_change_ms = lv_tick_get();
     if (s_bus_silent_timer) { lv_timer_del(s_bus_silent_timer); s_bus_silent_timer = NULL; }
     s_bus_silent_timer = lv_timer_create(_bus_silent_tick_cb, 1000, NULL);
+}
+
+void ui_Screen3_refresh_overlays(void) {
+    /* Bring the BUS SILENT badge to the front of its parent so any widgets
+     * added by a layout reapply don't draw over it. The badge starts
+     * hidden — foregrounding while hidden is harmless. */
+    if (s_bus_silent_badge && lv_obj_is_valid(s_bus_silent_badge))
+        lv_obj_move_foreground(s_bus_silent_badge);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

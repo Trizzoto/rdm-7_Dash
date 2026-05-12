@@ -282,6 +282,14 @@ static void _apply_layout_json_internal(lv_obj_t *parent, cJSON *root) {
 		_setup_night_trigger();
 	}
 
+	/* New widget objects sit at the end of the parent's child list, which
+	 * puts them on top of any persistent chrome that was already there
+	 * (editor toolbars, BUS SILENT badge). Foreground the chrome again so
+	 * it draws over the widgets — order matters: editor first, then the
+	 * badge so it ends up topmost. */
+	edit_mode_refresh_zorder();
+	ui_Screen3_refresh_overlays();
+
 	/* New signal set means new CAN IDs to accept — rebuild the TWAI hardware
 	 * filter so the bus actually delivers them. See dashboard_init for the
 	 * full rationale. */

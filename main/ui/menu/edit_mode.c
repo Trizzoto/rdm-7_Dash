@@ -1602,7 +1602,7 @@ static void _build_top_toolbar(lv_obj_t *parent) {
 
     /* Undo / Redo cluster */
     lv_obj_t *ur_grp = lv_obj_create(s_top_toolbar);
-    lv_obj_set_size(ur_grp, 96, 48);
+    lv_obj_set_size(ur_grp, 152, 48);
     lv_obj_set_style_bg_opa(ur_grp, 0, 0);
     lv_obj_set_style_border_width(ur_grp, 0, 0);
     lv_obj_set_style_pad_all(ur_grp, 0, 0);
@@ -1612,11 +1612,12 @@ static void _build_top_toolbar(lv_obj_t *parent) {
     lv_obj_set_flex_align(ur_grp, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    /* Undo / Redo icons: LVGL doesn't ship arc-rotate symbols, so use the
-     * literal LV_SYMBOL_LEFT/RIGHT arrows which read well at 12 px. */
-    s_undo_btn = _make_tbtn(ur_grp, 44, 44, LV_SYMBOL_LEFT);
+    /* Undo / Redo as text labels — LVGL Montserrat doesn't ship arc-rotate
+     * symbols, and plain LV_SYMBOL_LEFT/RIGHT arrows read as navigation, not
+     * history. Text removes the ambiguity. */
+    s_undo_btn = _make_tbtn(ur_grp, 72, 44, "Undo");
     lv_obj_add_event_cb(s_undo_btn, _undo_btn_cb, LV_EVENT_CLICKED, NULL);
-    s_redo_btn = _make_tbtn(ur_grp, 44, 44, LV_SYMBOL_RIGHT);
+    s_redo_btn = _make_tbtn(ur_grp, 72, 44, "Redo");
     lv_obj_add_event_cb(s_redo_btn, _redo_btn_cb, LV_EVENT_CLICKED, NULL);
 
     /* Duplicate button */
@@ -1786,6 +1787,10 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
 }
 
 void edit_mode_show_pill(void) {
+    /* Suppressed while armed — the top toolbar hosts Exit now, and showing
+     * the pill again on every dashboard tap creates a stale duplicate that
+     * users (rightly) read as broken. */
+    if (s_armed) return;
     if (!s_pill || !lv_obj_is_valid(s_pill)) return;
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1910,4 +1915,14 @@ void edit_mode_screen_pressed_cb(lv_event_t *e) {
     (void)e;
     if (!s_armed) return;
     if (s_selected) _clear_selection();
+}
+
+void edit_mode_refresh_zorder(void) {
+    /* Order matters: top toolbar first, then bottom toolbar (so it draws
+     * over the top one if they overlap). BUS SILENT badge is foregrounded
+     * separately by ui_Screen3 — it ends up on top of both. */
+    if (s_top_toolbar && lv_obj_is_valid(s_top_toolbar))
+        lv_obj_move_foreground(s_top_toolbar);
+    if (s_toolbar && lv_obj_is_valid(s_toolbar))
+        lv_obj_move_foreground(s_toolbar);
 }

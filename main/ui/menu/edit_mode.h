@@ -87,6 +87,12 @@ void edit_mode_widget_released_cb(lv_event_t *e);
  *  When the press hits a widget, the widget intercepts and this never fires. */
 void edit_mode_screen_pressed_cb(lv_event_t *e);
 
+/** Re-foreground the editor chrome (top + bottom toolbar) on the active
+ *  screen. Call after a layout reapply (undo/redo/duplicate) so the freshly
+ *  created widget objects don't end up drawing over the toolbars.
+ *  No-op when no chrome is currently up. */
+void edit_mode_refresh_zorder(void);
+
 #ifdef __cplusplus
 }
 #endif
