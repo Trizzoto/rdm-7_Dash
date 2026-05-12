@@ -935,6 +935,155 @@ static void _panel_night_cb(bool active, void *user_data) {
 	_panel_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector hooks (Phase 3.5) ────────────────────────────────────────
+ *
+ * Read / write Panel fields by schema name. Used by the on-device
+ * Inspector to render the STYLE / DATA tabs from schema/widgets.schema.json
+ * without hand-coded UI for each field. Live-preview is built in: the set
+ * hook writes BOTH the type_data field AND the matching LVGL property on
+ * the panel's existing LVGL objects, so the user sees the edit land
+ * immediately.
+ *
+ * Schema names match widgets.schema.json. Fields not handled here fall
+ * through to false, and the Inspector skips them (they'll need a follow-up
+ * commit to wire). Alert fields (warning_*) are deferred until the RULES
+ * tab lands. */
+
+#include "widgets/widget_fields.h"
+#include <string.h>
+
+static bool _panel_inspector_get(const widget_t *w, const char *name,
+								 widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data || !name || !out) return false;
+	const panel_data_t *pd = (const panel_data_t *)w->type_data;
+
+	if (strcmp(name, "label") == 0)                { out->str = pd->label;        return true; }
+	if (strcmp(name, "custom_text") == 0)          { out->str = pd->custom_text;  return true; }
+	if (strcmp(name, "decimals") == 0)             { out->i = pd->decimals;       return true; }
+	if (strcmp(name, "show_peak") == 0)            { out->i = pd->show_peak;      return true; }
+	if (strcmp(name, "label_font") == 0)           { out->str = pd->label_font;   return true; }
+	if (strcmp(name, "value_font") == 0)           { out->str = pd->value_font;   return true; }
+	if (strcmp(name, "border_radius") == 0)        { out->i = pd->border_radius;  return true; }
+	if (strcmp(name, "border_width") == 0)         { out->i = pd->border_width;   return true; }
+	if (strcmp(name, "border_color") == 0)         { out->color = lv_color_to32(pd->border_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "bg_color") == 0)             { out->color = lv_color_to32(pd->bg_color)     & 0xFFFFFF; return true; }
+	if (strcmp(name, "bg_opa") == 0)               { out->i = pd->bg_opa;         return true; }
+	if (strcmp(name, "label_color") == 0)          { out->color = lv_color_to32(pd->label_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "value_color") == 0)          { out->color = lv_color_to32(pd->value_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "label_y_offset") == 0)       { out->i = pd->label_y_offset; return true; }
+	if (strcmp(name, "value_y_offset") == 0)       { out->i = pd->value_y_offset; return true; }
+	if (strcmp(name, "custom_text_x_offset") == 0) { out->i = pd->custom_text_x_offset; return true; }
+	if (strcmp(name, "custom_text_y_offset") == 0) { out->i = pd->custom_text_y_offset; return true; }
+	return false;
+}
+
+static bool _panel_inspector_set(widget_t *w, const char *name,
+								 const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_PANEL || !w->type_data || !name || !in) return false;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+
+	lv_obj_t *lbl = (w->slot < 13) ? ui_Label[w->slot] : NULL;
+	lv_obj_t *val = (w->slot < 13) ? ui_Value[w->slot] : NULL;
+	lv_obj_t *unit = pd->custom_text_label;
+
+	if (strcmp(name, "decimals") == 0) {
+		pd->decimals = (uint8_t)in->i;
+		return true;
+	}
+	if (strcmp(name, "show_peak") == 0) {
+		pd->show_peak = (uint8_t)in->i;
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label)) {
+			if (pd->show_peak == 0)
+				lv_obj_add_flag(pd->peak_label, LV_OBJ_FLAG_HIDDEN);
+			else
+				lv_obj_clear_flag(pd->peak_label, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
+	}
+	if (strcmp(name, "border_radius") == 0) {
+		pd->border_radius = (uint8_t)in->i;
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_set_style_radius(w->root, pd->border_radius, 0);
+		return true;
+	}
+	if (strcmp(name, "border_width") == 0) {
+		pd->border_width = (uint8_t)in->i;
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_set_style_border_width(w->root, pd->border_width, 0);
+		return true;
+	}
+	if (strcmp(name, "border_color") == 0) {
+		pd->border_color = lv_color_hex(in->color);
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_set_style_border_color(w->root, pd->border_color, 0);
+		return true;
+	}
+	if (strcmp(name, "bg_color") == 0) {
+		pd->bg_color = lv_color_hex(in->color);
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_set_style_bg_color(w->root, pd->bg_color, 0);
+		return true;
+	}
+	if (strcmp(name, "bg_opa") == 0) {
+		pd->bg_opa = (uint8_t)in->i;
+		if (w->root && lv_obj_is_valid(w->root))
+			lv_obj_set_style_bg_opa(w->root, pd->bg_opa, 0);
+		return true;
+	}
+	if (strcmp(name, "label_color") == 0) {
+		pd->label_color = lv_color_hex(in->color);
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_color(lbl, pd->label_color, 0);
+		return true;
+	}
+	if (strcmp(name, "value_color") == 0) {
+		pd->value_color = lv_color_hex(in->color);
+		if (val && lv_obj_is_valid(val))
+			lv_obj_set_style_text_color(val, pd->value_color, 0);
+		return true;
+	}
+	if (strcmp(name, "label_y_offset") == 0) {
+		pd->label_y_offset = (int8_t)in->i;
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_y(lbl, pd->label_y_offset);
+		return true;
+	}
+	if (strcmp(name, "value_y_offset") == 0) {
+		pd->value_y_offset = (int8_t)in->i;
+		if (val && lv_obj_is_valid(val))
+			lv_obj_set_y(val, pd->value_y_offset);
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
+			lv_obj_set_y(pd->peak_label, pd->value_y_offset + 22);
+		return true;
+	}
+	if (strcmp(name, "custom_text_x_offset") == 0) {
+		pd->custom_text_x_offset = (int8_t)in->i;
+		if (unit && lv_obj_is_valid(unit))
+			lv_obj_set_x(unit, pd->custom_text_x_offset);
+		return true;
+	}
+	if (strcmp(name, "custom_text_y_offset") == 0) {
+		pd->custom_text_y_offset = (int8_t)in->i;
+		if (unit && lv_obj_is_valid(unit))
+			lv_obj_set_y(unit, pd->custom_text_y_offset);
+		return true;
+	}
+	if (strcmp(name, "label") == 0 && in->str) {
+		strncpy(pd->label, in->str, sizeof(pd->label) - 1);
+		pd->label[sizeof(pd->label) - 1] = '\0';
+		if (lbl && lv_obj_is_valid(lbl)) lv_label_set_text(lbl, pd->label);
+		return true;
+	}
+	if (strcmp(name, "custom_text") == 0 && in->str) {
+		strncpy(pd->custom_text, in->str, sizeof(pd->custom_text) - 1);
+		pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
+		if (unit && lv_obj_is_valid(unit)) lv_label_set_text(unit, pd->custom_text);
+		return true;
+	}
+	/* label_font / value_font and warning_* deferred. */
+	return false;
+}
+
 widget_t *widget_panel_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -989,6 +1138,8 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	w->destroy = _panel_destroy;
 	w->apply_overrides = _panel_apply_overrides;
 	w->apply_night_mode = _panel_apply_night_mode;
+	w->inspector_get = _panel_inspector_get;
+	w->inspector_set = _panel_inspector_set;
 
 	return w;
 }

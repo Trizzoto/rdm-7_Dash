@@ -136,6 +136,31 @@ typedef void (*widget_apply_overrides_fn)(widget_t *w, const rule_override_t *ov
  *  worth night-overriding (or simply doesn't support it). */
 typedef void (*widget_apply_night_mode_fn)(widget_t *w, bool active);
 
+/* ─── Inspector get / set (Phase 3.5+) ──────────────────────────────────── */
+/* Value carrier used by the inspector_get / inspector_set hooks. The
+ * caller knows the field's widget_field_type_t from the schema and reads
+ * the appropriate union member. */
+typedef union {
+    int32_t     i;        /* NUMBER / STEPPER / SLIDER / CAN_ID / SELECT */
+    float       f;        /* NUMBER (when the schema default is fractional) */
+    bool        b;        /* CHECKBOX */
+    uint32_t    color;    /* COLOR, 0xRRGGBB */
+    const char *str;      /* TEXT / TEXTAREA / FONT / IMAGE — for reads, points
+                             into widget type_data (caller must not free) */
+} widget_field_value_t;
+
+/** Read the current value of a schema field. Returns false if the widget
+ *  doesn't recognise the name. NULL on a widget = field is not Inspector-
+ *  editable; callers fall back to the schema default. */
+typedef bool (*widget_inspector_get_fn)(const widget_t *w, const char *name,
+                                         widget_field_value_t *out);
+
+/** Write a schema field. Implementations write to type_data AND apply the
+ *  change to the live LVGL object so the user sees the edit immediately.
+ *  Returns false if the name isn't recognised. */
+typedef bool (*widget_inspector_set_fn)(widget_t *w, const char *name,
+                                         const widget_field_value_t *in);
+
 /* ─── Core widget struct ─────────────────────────────────────────────────── */
 
 struct widget_t {
@@ -156,6 +181,8 @@ struct widget_t {
     widget_destroy_fn          destroy;
     widget_apply_overrides_fn  apply_overrides;  /**< NULL if widget ignores rules. */
     widget_apply_night_mode_fn apply_night_mode; /**< NULL if widget has no night-mode overrides. */
+    widget_inspector_get_fn    inspector_get;    /**< NULL = use schema defaults. */
+    widget_inspector_set_fn    inspector_set;    /**< NULL = field not editable on-device. */
 
     /* Conditional rules (heap-allocated, NULL if no rules) */
     widget_rule_t *rules;
