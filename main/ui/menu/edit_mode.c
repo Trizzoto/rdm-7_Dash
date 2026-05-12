@@ -51,7 +51,6 @@ static void _close_delete_modal(void);
 static void _build_top_toolbar(lv_obj_t *parent);
 static void _destroy_top_toolbar(void);
 static void _refresh_undo_redo_styling(void);
-static void _update_status(void);
 static void _undo_snapshot(void);
 static void _do_undo(void);
 static void _do_redo(void);
@@ -110,14 +109,14 @@ static bool       s_popover_syncing= false;  /* re-entry guard for slider sync *
  * Built lazily when the user taps the Delete button on the toolbar. */
 static lv_obj_t  *s_delete_modal   = NULL;
 
-/* Top toolbar — global editor actions (Exit / Undo / Redo / Duplicate)
- * and selection status. Same dimensions as the bottom toolbar so the two
- * read as a pair. Independently draggable along Y. */
+/* Top toolbar — global editor actions: Exit / Undo / Redo / Duplicate /
+ * Delete. Same dimensions as the bottom toolbar so the two read as a
+ * pair. Independently draggable along Y. */
 static lv_obj_t  *s_top_toolbar    = NULL;
 static lv_obj_t  *s_undo_btn       = NULL;
 static lv_obj_t  *s_redo_btn       = NULL;
 static lv_obj_t  *s_dup_btn        = NULL;
-static lv_obj_t  *s_status_lbl     = NULL;
+static lv_obj_t  *s_del_btn        = NULL;
 static int16_t    s_top_toolbar_y  = 10;     /* offset from TOP_MID anchor */
 static lv_point_t s_tt_drag_pt     = {0, 0};
 static int16_t    s_tt_drag_start  = 0;
@@ -444,9 +443,7 @@ static void _clear_selection(void) {
     s_resize_dir              = -1;
     _destroy_ring();
     _destroy_toolbar();
-    /* Top toolbar's status label flips back to "tap a widget to select"
-     * and the Duplicate button greys out (no target). */
-    _update_status();
+    /* Top-bar Duplicate + Delete grey out when nothing's selected. */
     _refresh_undo_redo_styling();
 }
 
@@ -770,21 +767,23 @@ static void _toolbar_pressing_cb(lv_event_t *e) {
     lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, s_toolbar_y_off);
 }
 
-/* Helper: web-style button — translucent surface, subtle light border, no
- * shadow. Mirrors the `.wst-btn` look from main/web/index.html. */
+/* Helper: web-style button — translucent surface, defined border, white text.
+ * Tuned brighter than the literal .wst-btn values from main/web/index.html
+ * because the dashboard's bg is much busier than the web editor's flat
+ * panel, so the same alpha values read too faint on-device. */
 static lv_obj_t *_make_tbtn(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
                             const char *text) {
     lv_obj_t *b = lv_btn_create(parent);
     lv_obj_set_size(b, w, h);
-    /* Resting: very translucent inset surface — rgba(255,255,255,~0.04). */
+    /* Resting: ~10 % white fill — clearly visible against the panel. */
     lv_obj_set_style_bg_color(b, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(b, 10, 0);
-    /* Pressed: brighter highlight — rgba(255,255,255,~0.12). */
+    lv_obj_set_style_bg_opa(b, 28, 0);
+    /* Pressed: brighter — ~27 % white. */
     lv_obj_set_style_bg_color(b, lv_color_white(), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(b, 30, LV_STATE_PRESSED);
-    /* Thin light border for definition. */
+    lv_obj_set_style_bg_opa(b, 70, LV_STATE_PRESSED);
+    /* 1 px white border at ~20 % — pulls the button out of the panel. */
     lv_obj_set_style_border_color(b, lv_color_white(), 0);
-    lv_obj_set_style_border_opa(b, 20, 0);
+    lv_obj_set_style_border_opa(b, 55, 0);
     lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, DT_RADIUS_SM, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
@@ -793,7 +792,7 @@ static lv_obj_t *_make_tbtn(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text(l, text);
     lv_obj_center(l);
-    lv_obj_set_style_text_color(l, DT_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_color(l, lv_color_white(), 0);
     lv_obj_set_style_text_font(l, THEME_FONT_SMALL, 0);
     return b;
 }
@@ -1166,38 +1165,10 @@ static void _build_toolbar(lv_obj_t *parent) {
     }
     _update_readout();
 
-    /* Actions cluster (right side): Delete | Configure. Wrapped in a flex
-     * container so they stay adjacent even as flex SPACE_BETWEEN sprays
-     * other items across the toolbar. Delete is danger-tinted; Configure
-     * is accent-blue and remains the primary action. */
-    lv_obj_t *actions = lv_obj_create(s_toolbar);
-    lv_obj_set_size(actions, 152, 48);
-    lv_obj_set_style_bg_opa(actions, 0, 0);
-    lv_obj_set_style_border_width(actions, 0, 0);
-    lv_obj_set_style_pad_all(actions, 0, 0);
-    lv_obj_set_style_pad_column(actions, 6, 0);
-    lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    /* Delete: trash icon, subtle red tint resting → solid red on press. */
-    lv_obj_t *del_btn = _make_tbtn(actions, 40, 44, LV_SYMBOL_TRASH);
-    lv_obj_set_style_bg_color(del_btn, DT_DANGER, 0);
-    lv_obj_set_style_bg_opa(del_btn, 30, 0);
-    lv_obj_set_style_bg_color(del_btn, DT_DANGER, LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(del_btn, LV_OPA_COVER, LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(del_btn, DT_DANGER, 0);
-    lv_obj_set_style_border_opa(del_btn, 50, 0);
-    {
-        lv_obj_t *dl = lv_obj_get_child(del_btn, 0);
-        if (dl) lv_obj_set_style_text_color(dl, DT_DANGER, 0);
-    }
-    lv_obj_add_event_cb(del_btn, _delete_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    /* Configure: solid accent — primary action contrast. */
-    lv_obj_t *cfg = lv_btn_create(actions);
-    lv_obj_set_size(cfg, 104, 44);
+    /* Configure: solid accent — primary action, sits at the right edge.
+     * Delete moved to the top toolbar; bottom toolbar is widget-tuning only. */
+    lv_obj_t *cfg = lv_btn_create(s_toolbar);
+    lv_obj_set_size(cfg, 130, 44);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT, 0);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT_HOVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(cfg, LV_OPA_COVER, 0);
@@ -1431,56 +1402,35 @@ static void _do_duplicate(void) {
 
 /* ────────────────────────────────────────────────────────────────────────── */
 
+/* Updates resting opacity + text opacity to reflect which top-bar actions
+ * are currently valid. "Enabled" = base _make_tbtn brightness; "disabled" =
+ * markedly dimmer but still legible so the user knows the button exists.
+ * Delete uses red tints (DT_DANGER set inline in _build_top_toolbar) — only
+ * its OPAs are toggled here, not its colour. */
 static void _refresh_undo_redo_styling(void) {
-    bool can_undo = (s_undo_pos > 0);
-    bool can_redo = (s_undo_pos >= 0 && s_undo_pos < s_undo_count - 1);
-    if (s_undo_btn && lv_obj_is_valid(s_undo_btn)) {
-        lv_obj_set_style_bg_opa(s_undo_btn, can_undo ? 10 : 4, 0);
-        lv_obj_set_style_border_opa(s_undo_btn, can_undo ? 20 : 8, 0);
-        lv_obj_t *l = lv_obj_get_child(s_undo_btn, 0);
-        if (l) lv_obj_set_style_text_opa(l, can_undo ? LV_OPA_COVER : LV_OPA_40, 0);
-    }
-    if (s_redo_btn && lv_obj_is_valid(s_redo_btn)) {
-        lv_obj_set_style_bg_opa(s_redo_btn, can_redo ? 10 : 4, 0);
-        lv_obj_set_style_border_opa(s_redo_btn, can_redo ? 20 : 8, 0);
-        lv_obj_t *l = lv_obj_get_child(s_redo_btn, 0);
-        if (l) lv_obj_set_style_text_opa(l, can_redo ? LV_OPA_COVER : LV_OPA_40, 0);
-    }
-    if (s_dup_btn && lv_obj_is_valid(s_dup_btn)) {
-        bool can_dup = (s_selected != NULL);
-        lv_obj_set_style_bg_opa(s_dup_btn, can_dup ? 10 : 4, 0);
-        lv_obj_set_style_border_opa(s_dup_btn, can_dup ? 20 : 8, 0);
-        lv_obj_t *l = lv_obj_get_child(s_dup_btn, 0);
-        if (l) lv_obj_set_style_text_opa(l, can_dup ? LV_OPA_COVER : LV_OPA_40, 0);
-    }
-}
+    bool can_undo       = (s_undo_pos > 0);
+    bool can_redo       = (s_undo_pos >= 0 && s_undo_pos < s_undo_count - 1);
+    bool has_selection  = (s_selected != NULL);
 
-static void _update_status(void) {
-    if (!s_status_lbl || !lv_obj_is_valid(s_status_lbl)) return;
-    if (s_selected) {
-        const char *type_name = "widget";
-        switch (s_selected->type) {
-            case WIDGET_PANEL:       type_name = "Panel"; break;
-            case WIDGET_RPM_BAR:     type_name = "RPM Bar"; break;
-            case WIDGET_BAR:         type_name = "Bar"; break;
-            case WIDGET_INDICATOR:   type_name = "Indicator"; break;
-            case WIDGET_WARNING:     type_name = "Alert"; break;
-            case WIDGET_TEXT:        type_name = "Text"; break;
-            case WIDGET_METER:       type_name = "Meter"; break;
-            case WIDGET_IMAGE:       type_name = "Image"; break;
-            case WIDGET_SHAPE_PANEL: type_name = "Shape"; break;
-            case WIDGET_ARC:         type_name = "Arc"; break;
-            case WIDGET_TOGGLE:      type_name = "Toggle"; break;
-            case WIDGET_BUTTON:      type_name = "Button"; break;
-            case WIDGET_SHIFT_LIGHT: type_name = "Shift Light"; break;
-            case WIDGET_LINE:        type_name = "Line"; break;
-            default: break;
-        }
-        lv_label_set_text_fmt(s_status_lbl, "%s  slot %u",
-                              type_name, (unsigned)s_selected->slot);
-    } else {
-        lv_label_set_text(s_status_lbl, "tap a widget to select");
-    }
+#define APPLY_STATE(BTN, ON, ON_BG, ON_BORDER, OFF_BG, OFF_BORDER)            \
+    do {                                                                       \
+        if ((BTN) && lv_obj_is_valid(BTN)) {                                   \
+            lv_obj_set_style_bg_opa((BTN), (ON) ? (ON_BG) : (OFF_BG), 0);      \
+            lv_obj_set_style_border_opa((BTN), (ON) ? (ON_BORDER)              \
+                                                    : (OFF_BORDER), 0);        \
+            lv_obj_t *_lbl = lv_obj_get_child((BTN), 0);                       \
+            if (_lbl) lv_obj_set_style_text_opa((_lbl),                        \
+                        (ON) ? LV_OPA_COVER : LV_OPA_40, 0);                   \
+        }                                                                      \
+    } while (0)
+
+    APPLY_STATE(s_undo_btn, can_undo,      28, 55, 10, 20);
+    APPLY_STATE(s_redo_btn, can_redo,      28, 55, 10, 20);
+    APPLY_STATE(s_dup_btn,  has_selection, 28, 55, 10, 20);
+    /* Delete: red tint, slightly stronger so it reads as destructive. */
+    APPLY_STATE(s_del_btn,  has_selection, 38, 70, 12, 30);
+
+#undef APPLY_STATE
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -1624,11 +1574,15 @@ static void _build_top_toolbar(lv_obj_t *parent) {
     s_dup_btn = _make_tbtn(s_top_toolbar, 124, 44, LV_SYMBOL_COPY "  Duplicate");
     lv_obj_add_event_cb(s_dup_btn, _dup_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Status label — selection indicator on the right */
-    s_status_lbl = lv_label_create(s_top_toolbar);
-    lv_obj_set_style_text_color(s_status_lbl, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(s_status_lbl, THEME_FONT_SMALL, 0);
-    _update_status();
+    /* Delete button — danger-tinted, right-most. Reuses the existing
+     * _delete_btn_cb (confirm modal flow). The red colours are baked in
+     * here; _refresh_undo_redo_styling only toggles their opacity. */
+    s_del_btn = _make_tbtn(s_top_toolbar, 104, 44, LV_SYMBOL_TRASH "  Delete");
+    lv_obj_set_style_bg_color(s_del_btn, DT_DANGER, 0);
+    lv_obj_set_style_bg_color(s_del_btn, DT_DANGER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(s_del_btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(s_del_btn, DT_DANGER, 0);
+    lv_obj_add_event_cb(s_del_btn, _delete_btn_cb, LV_EVENT_CLICKED, NULL);
 
     _refresh_undo_redo_styling();
     lv_obj_move_foreground(s_top_toolbar);
@@ -1640,7 +1594,7 @@ static void _destroy_top_toolbar(void) {
     s_undo_btn    = NULL;
     s_redo_btn    = NULL;
     s_dup_btn     = NULL;
-    s_status_lbl  = NULL;
+    s_del_btn     = NULL;
 }
 
 /* ── Pill click handler — toggles armed state ─────────────────────────────── */
@@ -1725,7 +1679,7 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     s_undo_btn                = NULL;
     s_redo_btn                = NULL;
     s_dup_btn                 = NULL;
-    s_status_lbl              = NULL;
+    s_del_btn                 = NULL;
     s_tt_dragging             = false;
     _undo_clear_ring();
     if (s_snap_timer) { lv_timer_del(s_snap_timer); s_snap_timer = NULL; }
@@ -1819,7 +1773,6 @@ void edit_mode_select(widget_t *w) {
         if (parent) _build_toolbar(parent);
     }
     _update_readout();
-    _update_status();
     _refresh_undo_redo_styling();
 }
 
