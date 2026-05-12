@@ -36,6 +36,8 @@
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
 #include "widgets/signal.h"        /* signal binding picker */
 #include "layout/ecu_presets.h"    /* new-signal wizard: ECU preset path */
+#include "storage/config_store.h"  /* read current ECU make+version */
+#include "ui/screens/ui_ecu_picker.h" /* full-screen ECU+Version picker */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
 #include <stdio.h>
@@ -1059,6 +1061,96 @@ static void _make_text_row_schema(lv_obj_t *parent, const widget_field_t *f,
     if (r) r->value_lbl = value;
 }
 
+/* Layout-level ECU + Version rows for the DATA tab.
+ *
+ * The ECU make + version define which signals exist for the layout
+ * (via ecu_preset_apply_to_layout). They're a per-layout setting, not
+ * per-widget, but they live in the DATA tab because that's where the
+ * user sets up data sources.
+ *
+ * Both rows tap into the shared full-screen ecu_picker_open(), which
+ * handles make + version selection and applies the preset to "default".
+ * Applying triggers a dashboard reload (signals registry resets), so
+ * the Inspector closes itself before opening the picker - on return,
+ * the user is back in the live dashboard with the new signals.
+ */
+
+static void _ecu_label(char *buf, size_t n, bool want_version) {
+    char make[32] = {0}, ver[32] = {0};
+    if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
+        make[0] && ver[0]) {
+        if (want_version) {
+            snprintf(buf, n, "%s", ver);
+        } else {
+            const ecu_preset_t *p = ecu_preset_find(make, ver);
+            snprintf(buf, n, "%s",
+                     (p && p->display) ? p->display : make);
+        }
+        return;
+    }
+    snprintf(buf, n, "Not selected");
+}
+
+static void _ecu_row_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    /* Layout reload will destroy the inspected widget, so close first.
+     * The picker (full-screen) shows the make + version dropdowns and
+     * handles the apply + reload chain on confirm. */
+    inspector_close();
+    ecu_picker_open("default", true, NULL, NULL);
+}
+
+static void _build_layout_card(void) {
+    lv_obj_t *card = _make_card(s_content, "LAYOUT");
+
+    static const struct {
+        const char *label;
+        bool        is_version;
+    } ROWS[] = {
+        { "ECU",     false },
+        { "Version", true  },
+    };
+    static const int ROW_COUNT = sizeof(ROWS) / sizeof(ROWS[0]);
+
+    for (int i = 0; i < ROW_COUNT; i++) {
+        lv_obj_t *row = lv_btn_create(card);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 40);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_opa(row, 0, 0);
+        lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 4, 0);
+        lv_obj_set_style_radius(row, 6, 0);
+        lv_obj_add_event_cb(row, _ecu_row_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *lbl = lv_label_create(row);
+        lv_label_set_text(lbl, ROWS[i].label);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+        lv_obj_t *chev = lv_label_create(row);
+        lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+        lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+        lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+        lv_obj_t *value = lv_label_create(row);
+        char buf[40];
+        _ecu_label(buf, sizeof(buf), ROWS[i].is_version);
+        lv_label_set_text(value, buf);
+        lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(value, 320);
+        lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
+        lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    }
+}
+
 /* Signal binding row + inline picker.
  *
  * The signal binding isn't a schema field per se - it's a layout-level
@@ -1949,11 +2041,15 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     s_text_row_ctx_count = 0;
     s_sig_row_value_lbl = NULL;
 
-    /* DATA tab leads with the signal binding row (when the widget supports
-     * it) so the user picks the source first, then tweaks display fields. */
-    if (cat == WF_CAT_DATA && _widget_supports_signal_binding()) {
-        lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
-        _build_signal_row(sig_card);
+    /* DATA tab leads with layout-level config (which ECU we're decoding)
+     * then the per-widget signal binding, then the rest of the data-
+     * category fields. */
+    if (cat == WF_CAT_DATA) {
+        _build_layout_card();
+        if (_widget_supports_signal_binding()) {
+            lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
+            _build_signal_row(sig_card);
+        }
     }
 
     lv_obj_t *colours = NULL;
