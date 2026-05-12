@@ -934,7 +934,7 @@ static const widget_field_t text_fields[] = {
         .night_overridable = false,
     },
     {
-        .name = "rotation", .label = "Rotation (\xb0)",
+        .name = "rotation", .label = "Rotation (\302\260)",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 359, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
@@ -996,7 +996,7 @@ static const widget_field_t meter_fields[] = {
         .night_overridable = false,
     },
     {
-        .name = "start_angle_user", .label = "Start Angle (\xb0)",
+        .name = "start_angle_user", .label = "Start Angle (\302\260)",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_DATA,
         .min_int = 0, .max_int = 359, .step_int = 5,
         .default_int = 225, .default_float = 225.000000f, .default_color = 0x000000,
@@ -1526,10 +1526,10 @@ static const widget_field_option_t shape_panel_shape_type_opts[] = {
     { 0, "Trapezoid" },
     { 0, "Triangle" },
     { 0, "Diamond" },
-    { 0, "Arrow \x25b6" },
-    { 0, "Arrow \x25c0" },
-    { 0, "Chevron \x276f" },
-    { 0, "Chevron \x276e" },
+    { 0, "Arrow \342\226\266" },
+    { 0, "Arrow \342\227\200" },
+    { 0, "Chevron \342\235\257" },
+    { 0, "Chevron \342\235\256" },
 };
 
 static const widget_field_option_t shape_panel_taper_side_opts[] = {

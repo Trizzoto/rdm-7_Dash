@@ -174,42 +174,10 @@ static void _apply_pill_style_live(void) {
     }
 }
 
-static void _apply_pill_style_armed(void) {
-    if (!s_pill || !lv_obj_is_valid(s_pill)) return;
-    lv_obj_set_style_bg_color(s_pill, DT_DANGER, 0);
-    lv_obj_set_style_bg_opa(s_pill, LV_OPA_70, 0);   /* see-through */
-    lv_obj_set_style_border_width(s_pill, 0, 0);
-    if (s_pill_lbl && lv_obj_is_valid(s_pill_lbl)) {
-        lv_label_set_text(s_pill_lbl, LV_SYMBOL_CLOSE "  Exit Edit Mode");
-        lv_obj_set_style_text_color(s_pill_lbl, lv_color_white(), 0);
-    }
-}
-
-static void _build_banner(lv_obj_t *parent) {
-    if (s_banner && lv_obj_is_valid(s_banner)) return;
-
-    s_banner = lv_obj_create(parent);
-    lv_obj_set_size(s_banner, LV_PCT(100), DT_BANNER_H);
-    lv_obj_align(s_banner, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(s_banner, DT_DANGER, 0);
-    lv_obj_set_style_bg_opa(s_banner, LV_OPA_70, 0);   /* see-through */
-    lv_obj_set_style_border_width(s_banner, 0, 0);
-    lv_obj_set_style_radius(s_banner, 0, 0);
-    lv_obj_set_style_pad_all(s_banner, 0, 0);
-
-    lv_obj_t *lbl = lv_label_create(s_banner);
-    /* Plain ASCII only — Montserrat 12 ships without ·, em-dashes, etc.
-     * A missing glyph renders as a hollow square, which looks broken. */
-    lv_label_set_text(lbl,
-        LV_SYMBOL_EDIT "  EDIT MODE  -  tap a widget to select");
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    lv_obj_center(lbl);
-
-    lv_obj_move_foreground(s_banner);
-}
+/* _build_banner and _apply_pill_style_armed used to live here. Both were
+ * orphaned by the design pivot to the top toolbar (Exit/Undo/Redo/...).
+ * _destroy_banner stays because it's still called from cleanup paths;
+ * with no _build_banner it just guards against a NULL s_banner. */
 
 static void _destroy_banner(void) {
     if (s_banner && lv_obj_is_valid(s_banner)) {

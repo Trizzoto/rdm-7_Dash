@@ -67,7 +67,11 @@ WIDGET_NAME_TO_ENUM = {
 
 
 def c_str(s: Optional[str]) -> str:
-    """Quote a Python string as a C string literal, or 'NULL' for None/empty."""
+    """Quote a Python string as a C string literal, or 'NULL' for None/empty.
+
+    Non-ASCII chars are emitted as UTF-8 byte sequences with octal escapes.
+    Octal escapes terminate after 3 digits so they don't accidentally absorb
+    the next hex character in the string (which \\xNN can do)."""
     if s is None or s == "":
         return "NULL"
     out = '"'
@@ -83,7 +87,8 @@ def c_str(s: Optional[str]) -> str:
         elif ch == '\t':
             out += '\\t'
         elif ord(ch) < 32 or ord(ch) > 126:
-            out += f'\\x{ord(ch):02x}'
+            for b in ch.encode('utf-8'):
+                out += f'\\{b:03o}'
         else:
             out += ch
     out += '"'
