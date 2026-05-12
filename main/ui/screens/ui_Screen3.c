@@ -14,6 +14,7 @@
 #include "lvgl.h"
 #include "ui/callbacks/ui_callbacks.h"
 #include "ui/dashboard.h"
+#include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/splash_screen.h"
 #include "ui/theme.h"
@@ -63,6 +64,8 @@ void keyboard_ready_event_cb(lv_event_t *e) {
 static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
 		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+	/* Hide the Edit Mode pill in lockstep — no-op when armed (pinned). */
+	edit_mode_hide_pill();
 	if (menu_button_hide_timer) {
 		lv_timer_del(menu_button_hide_timer);
 		menu_button_hide_timer = NULL;
@@ -75,8 +78,12 @@ void screen3_touch_event_cb(lv_event_t *e) {
 		touch_press_time = lv_tick_get();
 	} else if (code == LV_EVENT_RELEASED) {
 		uint32_t dur = lv_tick_get() - touch_press_time;
-		if (dur < 300 && ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button)) {
-			lv_obj_clear_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+		if (dur < 300) {
+			/* Show Menu button only in live mode — it has no role while armed. */
+			if (!edit_mode_is_armed() && ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
+				lv_obj_clear_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+			/* Always reveal the Edit Mode pill so the user can exit / enter. */
+			edit_mode_show_pill();
 			if (menu_button_hide_timer)
 				lv_timer_del(menu_button_hide_timer);
 			menu_button_hide_timer =
@@ -558,6 +565,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_center(ml);
 	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
+
+	/* Edit Mode pill — grey-translucent sibling to the Menu button. Created
+	 * hidden; first dashboard short-tap reveals both pills together. */
+	edit_mode_create_pill(ui_Screen3);
 
 	/* BUS SILENT overlay — shows when no CAN frames have been received for
 	   >CAN_SILENT_MS milliseconds. Small top-right badge (doesn't block widgets),

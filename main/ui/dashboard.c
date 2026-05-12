@@ -14,6 +14,7 @@
 #include "widgets/widget_rpm_bar.h"
 #include "widgets/widget_warning.h"
 
+#include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
@@ -70,43 +71,47 @@ static void _fallback_create_all(lv_obj_t *parent) {
 /* ── Long-press callback: opens config modal for the tapped widget ──────── */
 
 static void _widget_long_press_cb(lv_event_t *e) {
+	/* Long-press is a no-op in live mode — only inspects while Edit Mode is
+	 * armed. Prevents accidental opens during normal driving (Button widgets
+	 * legitimately held for >500 ms, etc.). */
+	if (!edit_mode_is_armed()) return;
 	widget_t *w = (widget_t *)lv_event_get_user_data(e);
 	if (!w) return;
 	load_menu_screen_for_widget(w);
 }
 
 /** Register touch events on all widgets so the MENU button always appears
- *  on short tap, and long-press opens the config modal for signal-bound
- *  widgets.  Without this, clickable widgets (toggle, button, meter with
- *  click flag, etc.) would consume touch events and block the menu. */
+ *  on short tap, and long-press opens the config modal once Edit Mode is
+ *  armed.  Without the CLICKABLE flag, toggle/button widgets would consume
+ *  events before the screen-wide short-tap handler ever sees them. */
 static void _register_widget_long_press(void) {
 	for (uint8_t i = 0; i < s_widget_count; i++) {
 		widget_t *w = s_widgets[i];
 		if (!w || !w->root) continue;
 
-		/* Images and shape panels are decoration — skip force-CLICKABLE +
-		 * event registration so pointer events fall through to whatever
-		 * real widget they visually cover. Without this, an image overlay
-		 * sitting on top of a panel would swallow the long-press that the
-		 * user intended for the panel's config modal. */
-		if (w->type == WIDGET_IMAGE || w->type == WIDGET_SHAPE_PANEL) {
+		/* Images and shape panels are decoration — they intentionally pass
+		 * touch events through to whatever real widget they cover. They get
+		 * their CLICKABLE flag flipped on only while Edit Mode is armed
+		 * (handled by edit_mode + dashboard listener — see Phase 2). For now,
+		 * they remain unclickable and cannot be inspected. */
+		if (w->type == WIDGET_IMAGE || w->type == WIDGET_SHAPE_PANEL ||
+		    w->type == WIDGET_LINE) {
 			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 			continue;
 		}
 
 		lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 
-		/* Short-tap → show MENU button (same handler as the screen itself) */
+		/* Short-tap → reveal toolbar pills (Menu / Edit Mode) */
 		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
 							LV_EVENT_PRESSED, NULL);
 		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
 							LV_EVENT_RELEASED, NULL);
 
-		/* Long-press → open config modal (only for signal-bound widgets) */
-		if (widget_get_signal_name_buf(w) != NULL) {
-			lv_obj_add_event_cb(w->root, _widget_long_press_cb,
-								LV_EVENT_LONG_PRESSED, w);
-		}
+		/* Long-press → open config modal. Attached to every clickable widget;
+		 * the callback bails when Edit Mode is not armed. */
+		lv_obj_add_event_cb(w->root, _widget_long_press_cb,
+							LV_EVENT_LONG_PRESSED, w);
 	}
 }
 
@@ -153,6 +158,11 @@ static void _setup_night_trigger(void) {
  * ════════════════════════════════════════════════════════════════════════════
  */
 void dashboard_init(lv_obj_t *parent) {
+	/* Exit Edit Mode on every reload — armed state never survives a layout
+	 * swap (the parent screen is about to be deleted, taking the pill and
+	 * banner with it). Idempotent; safe at boot when not armed. */
+	edit_mode_exit();
+
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
 
@@ -246,6 +256,9 @@ loaded:
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	if (!root || !parent)
 		return;
+
+	/* Exit Edit Mode on layout swap — see dashboard_init for rationale. */
+	edit_mode_exit();
 
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));

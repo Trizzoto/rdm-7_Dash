@@ -8,6 +8,7 @@
 #include "widget_image.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include "ui/menu/edit_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
 #include "cJSON.h"
@@ -95,6 +96,9 @@ static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state) {
 }
 
 static void _btn_pressed_cb(lv_event_t *e) {
+    /* Suspend CAN TX while Edit Mode is armed — the user is positioning /
+     * inspecting widgets, not driving the rig. Long-press routes elsewhere. */
+    if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     button_data_t *d = (button_data_t *)w->type_data;
@@ -115,6 +119,7 @@ static void _btn_pressed_cb(lv_event_t *e) {
 }
 
 static void _btn_released_cb(lv_event_t *e) {
+    if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     button_data_t *d = (button_data_t *)w->type_data;

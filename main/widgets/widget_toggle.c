@@ -7,6 +7,7 @@
 #include "widget_image.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include "ui/menu/edit_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
 #include "signal.h"
@@ -128,6 +129,8 @@ static void _toggle_stop_tx_timer(toggle_data_t *d) {
 
 /* ── Toggle clicked event callback ──────────────────────────────────────── */
 static void _toggle_clicked_cb(lv_event_t *e) {
+    /* Suspend state changes + TX while Edit Mode is armed. */
+    if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
@@ -168,6 +171,7 @@ static void _toggle_clicked_cb(lv_event_t *e) {
 /* ── Momentary press/release callbacks ──────────────────────────────────── */
 
 static void _toggle_momentary_pressed_cb(lv_event_t *e) {
+    if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
@@ -187,6 +191,7 @@ static void _toggle_momentary_pressed_cb(lv_event_t *e) {
 }
 
 static void _toggle_momentary_released_cb(lv_event_t *e) {
+    if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
