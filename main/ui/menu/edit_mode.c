@@ -383,6 +383,17 @@ static void _handle_pressing_cb(lv_event_t *e) {
     if (touches_s) { new_h += dy; new_y += dy / 2; }
     if (touches_n) { new_h -= dy; new_y += dy / 2; }
 
+    /* Live grid snap (size AND position, since position shifts when the
+     * opposite edge stays anchored). Matches the widget-drag snap so the
+     * whole editor feels consistent. Step = 1 disables. */
+    int step = (s_step > 0) ? s_step : 5;
+    if (step > 1) {
+        new_w = (new_w / step) * step;
+        new_h = (new_h / step) * step;
+        new_x = (new_x / step) * step;
+        new_y = (new_y / step) * step;
+    }
+
     /* Clamp to widget size constraints (web editor uses identical bounds). */
     if (new_w < 10)  new_w = 10;
     if (new_w > 800) new_w = 800;
@@ -1836,8 +1847,22 @@ void edit_mode_widget_pressing_cb(lv_event_t *e) {
         s_dragging = true;
     }
 
-    w->x = (int16_t)(s_drag_start_widget_x + dx);
-    w->y = (int16_t)(s_drag_start_widget_y + dy);
+    int new_x = s_drag_start_widget_x + dx;
+    int new_y = s_drag_start_widget_y + dy;
+
+    /* Live grid snap during drag — same step the user picked in the toolbar
+     * (1 / 5 / 10 px). The widget visibly clicks into grid positions as
+     * the finger moves, which makes aligning multiple widgets predictable
+     * and stops the small "settle" jump that would otherwise happen only
+     * on release. Step = 1 disables the snap (pixel-precise drag). */
+    int step = (s_step > 0) ? s_step : 5;
+    if (step > 1) {
+        new_x = (new_x / step) * step;
+        new_y = (new_y / step) * step;
+    }
+
+    w->x = (int16_t)new_x;
+    w->y = (int16_t)new_y;
     lv_obj_set_pos(w->root, w->x, w->y);
     _update_ring();
     _update_readout();
