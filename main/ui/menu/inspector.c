@@ -34,9 +34,11 @@
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
+#include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>   /* atoi */
 #include <string.h>
 
 static const char *TAG = "inspector";
@@ -81,6 +83,15 @@ static lv_obj_t *s_wheel_popup     = NULL;
 static lv_obj_t *s_wheel           = NULL;
 static char      s_wheel_field[32] = "";
 static lv_color_t s_wheel_initial;
+
+/* Hidden textarea reused by show_text_input_dialog_ex - the dialog
+ * requires a target lv_textarea_t to write into, but we read the typed
+ * value through the on_confirm callback so the target is just a sink.
+ * Lazy-allocated on first text edit, lives on lv_layer_top so it stays
+ * around across screen changes. */
+static lv_obj_t *s_hidden_text_ta  = NULL;
+/* Schema name of the field currently being edited via the keyboard. */
+static char      s_active_text_field[32] = "";
 
 /* Helpers */
 
@@ -719,13 +730,300 @@ static void _make_stepper_row_schema(lv_obj_t *parent, const widget_field_t *f) 
     if (r) r->value_lbl = value;
 }
 
-/* Generic STYLE-tab builder - iterates the schema and dispatches per
- * field type. Categories filter what shows up where (STYLE shows the
- * appearance fields). Fields whose widget doesn't implement inspector_get
- * yet still appear, but their initial value comes from the schema
- * default rather than the live widget. */
+/* Checkbox row (lv_switch). */
 
-static void _build_style_tab_generic(widget_t *w) {
+typedef struct {
+    char field_name[INSPECTOR_FIELD_NAME_LEN];
+} bool_row_event_ctx_t;
+
+#define INSPECTOR_MAX_BOOL_ROWS 16
+static bool_row_event_ctx_t s_bool_row_ctxs[INSPECTOR_MAX_BOOL_ROWS];
+static int                  s_bool_row_ctx_count = 0;
+
+static void _bool_switch_cb(lv_event_t *e) {
+    bool_row_event_ctx_t *ctx = (bool_row_event_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || !s_widget || !s_widget->inspector_set) return;
+    lv_obj_t *sw = lv_event_get_target(e);
+    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    widget_field_value_t v = { .b = on };
+    s_widget->inspector_set(s_widget, ctx->field_name, &v);
+}
+
+static void _make_checkbox_row_schema(lv_obj_t *parent, const widget_field_t *f) {
+    if (!f || !s_widget) return;
+    if (s_bool_row_ctx_count >= INSPECTOR_MAX_BOOL_ROWS) return;
+
+    bool_row_event_ctx_t *ctx = &s_bool_row_ctxs[s_bool_row_ctx_count++];
+    strncpy(ctx->field_name, f->name, sizeof(ctx->field_name) - 1);
+    ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
+
+    bool current = false;
+    if (s_widget->inspector_get) {
+        widget_field_value_t v = {0};
+        if (s_widget->inspector_get(s_widget, f->name, &v)) current = v.b;
+        else                                                 current = (f->default_int != 0);
+    }
+
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 36);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, f->label);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_set_size(sw, 44, 24);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -2, 0);
+    if (current) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, DT_BG_INSET, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sw, DT_ACCENT, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, _bool_switch_cb, LV_EVENT_VALUE_CHANGED, ctx);
+}
+
+/* Select row (lv_dropdown). */
+
+typedef struct {
+    char     field_name[INSPECTOR_FIELD_NAME_LEN];
+    /* Pointer into the schema's options array - we don't own it. */
+    const widget_field_option_t *options;
+    uint8_t  option_count;
+} select_row_event_ctx_t;
+
+#define INSPECTOR_MAX_SELECT_ROWS 8
+static select_row_event_ctx_t s_select_row_ctxs[INSPECTOR_MAX_SELECT_ROWS];
+static int                    s_select_row_ctx_count = 0;
+
+static void _select_dropdown_cb(lv_event_t *e) {
+    select_row_event_ctx_t *ctx =
+        (select_row_event_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || !s_widget || !s_widget->inspector_set) return;
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t idx = lv_dropdown_get_selected(dd);
+    if (idx >= ctx->option_count) return;
+    widget_field_value_t v = { .i = ctx->options[idx].value };
+    s_widget->inspector_set(s_widget, ctx->field_name, &v);
+}
+
+static void _make_select_row_schema(lv_obj_t *parent, const widget_field_t *f) {
+    if (!f || !s_widget || !f->options || f->option_count == 0) return;
+    if (s_select_row_ctx_count >= INSPECTOR_MAX_SELECT_ROWS) return;
+
+    select_row_event_ctx_t *ctx = &s_select_row_ctxs[s_select_row_ctx_count++];
+    strncpy(ctx->field_name, f->name, sizeof(ctx->field_name) - 1);
+    ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
+    ctx->options      = f->options;
+    ctx->option_count = f->option_count;
+
+    int current = _get_field_int(f->name, f->default_int);
+    int sel_idx = 0;
+    for (uint8_t i = 0; i < f->option_count; i++) {
+        if (f->options[i].value == current) { sel_idx = i; break; }
+    }
+
+    /* Build newline-separated options string for lv_dropdown. */
+    char opts_buf[256];
+    size_t cursor = 0;
+    for (uint8_t i = 0; i < f->option_count && cursor < sizeof(opts_buf) - 2; i++) {
+        const char *lbl = f->options[i].label ? f->options[i].label : "";
+        size_t lbl_len = strlen(lbl);
+        if (i > 0 && cursor < sizeof(opts_buf) - 1) opts_buf[cursor++] = '\n';
+        size_t copy = lbl_len;
+        if (cursor + copy >= sizeof(opts_buf)) copy = sizeof(opts_buf) - 1 - cursor;
+        memcpy(opts_buf + cursor, lbl, copy);
+        cursor += copy;
+    }
+    opts_buf[cursor] = '\0';
+
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, f->label);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *dd = lv_dropdown_create(row);
+    lv_dropdown_set_options(dd, opts_buf);
+    lv_dropdown_set_selected(dd, (uint16_t)sel_idx);
+    lv_obj_set_size(dd, 150, 32);
+    lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(dd, DT_BG_INSET, 0);
+    lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(dd, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(dd, 1, 0);
+    lv_obj_set_style_text_color(dd, lv_color_white(), 0);
+    lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(dd, _select_dropdown_cb, LV_EVENT_VALUE_CHANGED, ctx);
+}
+
+/* Text / number row. Tap opens a keyboard popover; on confirm we write
+ * the new value via inspector_set. */
+
+static void _ensure_hidden_textarea(void) {
+    if (s_hidden_text_ta && lv_obj_is_valid(s_hidden_text_ta)) return;
+    s_hidden_text_ta = lv_textarea_create(lv_layer_top());
+    lv_obj_add_flag(s_hidden_text_ta, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void _numeric_confirm_cb(const char *text, void *user_data);  /* fwd */
+
+static void _text_confirm_cb(const char *text, void *user_data) {
+    (void)user_data;
+    if (s_active_text_field[0] == '\0' || !s_widget || !s_widget->inspector_set) return;
+    widget_field_value_t v = { .str = text };
+    s_widget->inspector_set(s_widget, s_active_text_field, &v);
+
+    /* Update the row's value preview. */
+    inspector_row_t *r = _find_row(s_active_text_field);
+    if (r && r->value_lbl && lv_obj_is_valid(r->value_lbl)) {
+        lv_label_set_text(r->value_lbl, text ? text : "");
+    }
+    s_active_text_field[0] = '\0';
+}
+
+static void _text_cancel_cb(void *user_data) {
+    (void)user_data;
+    s_active_text_field[0] = '\0';
+}
+
+typedef struct {
+    char field_name[INSPECTOR_FIELD_NAME_LEN];
+    char label[INSPECTOR_FIELD_NAME_LEN];
+    bool numeric;
+} text_row_event_ctx_t;
+
+#define INSPECTOR_MAX_TEXT_ROWS 12
+static text_row_event_ctx_t s_text_row_ctxs[INSPECTOR_MAX_TEXT_ROWS];
+static int                  s_text_row_ctx_count = 0;
+
+static void _text_row_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    text_row_event_ctx_t *ctx = (text_row_event_ctx_t *)lv_event_get_user_data(e);
+    if (!ctx || !s_widget) return;
+    strncpy(s_active_text_field, ctx->field_name, sizeof(s_active_text_field) - 1);
+    s_active_text_field[sizeof(s_active_text_field) - 1] = '\0';
+
+    if (ctx->numeric) {
+        char buf[32];
+        int cur = _get_field_int(ctx->field_name, 0);
+        snprintf(buf, sizeof(buf), "%d", cur);
+        show_numeric_input_dialog(ctx->label, buf,
+                                  _numeric_confirm_cb, _text_cancel_cb, NULL);
+        return;
+    }
+
+    _ensure_hidden_textarea();
+    if (!s_hidden_text_ta) return;
+    /* Pre-fill the textarea with the current value so the dialog opens
+     * with the existing text editable rather than blank. */
+    const char *current = "";
+    if (s_widget->inspector_get) {
+        widget_field_value_t v = {0};
+        if (s_widget->inspector_get(s_widget, ctx->field_name, &v) && v.str) current = v.str;
+    }
+    lv_textarea_set_text(s_hidden_text_ta, current);
+    show_text_input_dialog_ex(s_hidden_text_ta, ctx->label, "", false,
+                              _text_confirm_cb, _text_cancel_cb, NULL);
+}
+
+/* Map a numeric ASCII string to int when the numeric dialog confirms. */
+static void _numeric_confirm_cb(const char *text, void *user_data) {
+    (void)user_data;
+    if (s_active_text_field[0] == '\0' || !s_widget || !s_widget->inspector_set) return;
+    int v_int = text ? atoi(text) : 0;
+    widget_field_value_t v = { .i = v_int };
+    s_widget->inspector_set(s_widget, s_active_text_field, &v);
+
+    inspector_row_t *r = _find_row(s_active_text_field);
+    if (r && r->value_lbl && lv_obj_is_valid(r->value_lbl)) {
+        lv_label_set_text_fmt(r->value_lbl, "%d", v_int);
+    }
+    s_active_text_field[0] = '\0';
+}
+
+static void _make_text_row_schema(lv_obj_t *parent, const widget_field_t *f,
+                                  bool numeric) {
+    if (!f || !s_widget) return;
+    if (s_text_row_ctx_count >= INSPECTOR_MAX_TEXT_ROWS) return;
+
+    text_row_event_ctx_t *ctx = &s_text_row_ctxs[s_text_row_ctx_count++];
+    strncpy(ctx->field_name, f->name, sizeof(ctx->field_name) - 1);
+    ctx->field_name[sizeof(ctx->field_name) - 1] = '\0';
+    strncpy(ctx->label, f->label, sizeof(ctx->label) - 1);
+    ctx->label[sizeof(ctx->label) - 1] = '\0';
+    ctx->numeric = numeric;
+
+    /* Current value as a displayed string. */
+    char preview[40] = "";
+    if (numeric) {
+        int v = _get_field_int(f->name, f->default_int);
+        snprintf(preview, sizeof(preview), "%d", v);
+    } else if (s_widget->inspector_get) {
+        widget_field_value_t v = {0};
+        if (s_widget->inspector_get(s_widget, f->name, &v) && v.str) {
+            strncpy(preview, v.str, sizeof(preview) - 1);
+            preview[sizeof(preview) - 1] = '\0';
+        }
+    }
+
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 4, 0);
+    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_add_event_cb(row, _text_row_clicked_cb, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, f->label);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *chev = lv_label_create(row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *value = lv_label_create(row);
+    lv_label_set_text(value, preview);
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(value, 130);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
+    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+
+    inspector_row_t *r = _register_row(f->name);
+    if (r) r->value_lbl = value;
+}
+
+/* Generic tab builder - iterates the schema and dispatches per field
+ * type. Categories filter what shows up where (STYLE = appearance,
+ * DATA = data, RULES = alerts). Fields whose widget doesn't implement
+ * inspector_get yet still appear, but their initial value comes from
+ * the schema default rather than the live widget. */
+
+static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     if (!w || !w->inspector_get || !w->inspector_set) return;
     const widget_fields_def_t *def = widget_fields_for_type(w->type);
     if (!def) return;
@@ -734,13 +1032,24 @@ static void _build_style_tab_generic(widget_t *w) {
     s_row_count = 0;
     s_color_row_ctx_count = 0;
     s_int_row_ctx_count = 0;
+    s_bool_row_ctx_count = 0;
+    s_select_row_ctx_count = 0;
+    s_text_row_ctx_count = 0;
 
     lv_obj_t *colours = NULL;
     lv_obj_t *dims    = NULL;
+    lv_obj_t *generic = NULL;
+
+    /* Pick a default-card title based on category so the DATA tab card
+     * doesn't read "DIMENSIONS" or "COLOURS" when it isn't either. */
+    const char *generic_title =
+        (cat == WF_CAT_DATA)        ? "DATA" :
+        (cat == WF_CAT_ALERTS)      ? "ALERTS" :
+        (cat == WF_CAT_THRESHOLDS)  ? "THRESHOLDS" : "FIELDS";
 
     for (uint16_t i = 0; i < def->field_count; i++) {
         const widget_field_t *f = &def->fields[i];
-        if (f->category != WF_CAT_APPEARANCE) continue;
+        if (f->category != cat) continue;
 
         switch (f->type) {
             case WF_TYPE_COLOR: {
@@ -751,13 +1060,41 @@ static void _build_style_tab_generic(widget_t *w) {
             case WF_TYPE_STEPPER:
             case WF_TYPE_STEPPER_AUTO:
             case WF_TYPE_SLIDER: {
-                if (!dims) dims = _make_card(s_content, "DIMENSIONS");
-                _make_stepper_row_schema(dims, f);
+                /* In STYLE the slider rows are "DIMENSIONS"; elsewhere they
+                 * sit in the same card as the rest of the category. */
+                if (cat == WF_CAT_APPEARANCE) {
+                    if (!dims) dims = _make_card(s_content, "DIMENSIONS");
+                    _make_stepper_row_schema(dims, f);
+                } else {
+                    if (!generic) generic = _make_card(s_content, generic_title);
+                    _make_stepper_row_schema(generic, f);
+                }
+                break;
+            }
+            case WF_TYPE_CHECKBOX: {
+                if (!generic) generic = _make_card(s_content, generic_title);
+                _make_checkbox_row_schema(generic, f);
+                break;
+            }
+            case WF_TYPE_SELECT: {
+                if (!generic) generic = _make_card(s_content, generic_title);
+                _make_select_row_schema(generic, f);
+                break;
+            }
+            case WF_TYPE_TEXT:
+            case WF_TYPE_TEXTAREA:
+            case WF_TYPE_FONT: {
+                if (!generic) generic = _make_card(s_content, generic_title);
+                _make_text_row_schema(generic, f, false);
+                break;
+            }
+            case WF_TYPE_NUMBER: {
+                if (!generic) generic = _make_card(s_content, generic_title);
+                _make_text_row_schema(generic, f, true);
                 break;
             }
             default:
-                /* CHECKBOX / SELECT / TEXT / FONT / IMAGE - rendered in
-                 * a later phase. Skip silently for now. */
+                /* IMAGE_PICKER / CAN_ID rendered in a later phase. */
                 break;
         }
     }
@@ -819,7 +1156,11 @@ static void _show_tab(int idx) {
     lv_obj_clean(s_content);
     switch (idx) {
         case TAB_DATA:
-            _build_placeholder_tab("Data");
+            if (s_widget && s_widget->inspector_get && s_widget->inspector_set &&
+                widget_fields_for_type(s_widget->type))
+                _build_schema_tab(s_widget, WF_CAT_DATA);
+            else
+                _build_placeholder_tab("Data");
             break;
         case TAB_STYLE:
             /* Schema-driven path - any widget that implements inspector_get
@@ -828,7 +1169,7 @@ static void _show_tab(int idx) {
              * through to the legacy editor placeholder. */
             if (s_widget && s_widget->inspector_get && s_widget->inspector_set &&
                 widget_fields_for_type(s_widget->type))
-                _build_style_tab_generic(s_widget);
+                _build_schema_tab(s_widget, WF_CAT_APPEARANCE);
             else
                 _build_placeholder_tab("Style");
             break;
