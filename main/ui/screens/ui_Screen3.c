@@ -192,6 +192,12 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 		return;
 	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
 		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+	/* Hide the Edit Mode pill in lockstep — the pills appear together on
+	 * a dashboard short-tap and should disappear together when the user
+	 * commits to opening the menu. Otherwise the orange/grey pill remains
+	 * floating after returning from the menu. No-op in armed mode (the
+	 * Menu button is hidden anyway then, so we never get here). */
+	edit_mode_hide_pill();
 	if (menu_button_hide_timer) {
 		lv_timer_del(menu_button_hide_timer);
 		menu_button_hide_timer = NULL;
