@@ -95,25 +95,29 @@ static lv_obj_t *_make_button(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     return b;
 }
 
-/* Card container for grouping fields. Opaque so the dashboard underneath
- * doesn't fight with the field content for legibility. Gaps between cards
- * (and below them, since the content area is column-flex with pad_row) leak
- * the dashboard through. */
+/* Card container for grouping fields. Opaque so the field content stays
+ * legible against whatever's behind. SCROLLABLE by default — callers that
+ * give the card a fixed height get internal scrolling for overflow without
+ * the WHOLE tab needing to scroll. Limiting the dirty repaint area to one
+ * card at a time was the main thing the user asked for after seeing the
+ * tab-wide scroll lag. */
 static lv_obj_t *_make_card(lv_obj_t *parent, const char *title) {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
     lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_set_style_pad_row(card, 10, 0);
+    lv_obj_set_style_pad_all(card, 12, 0);
+    lv_obj_set_style_pad_row(card, 8, 0);
+    /* Auto-show the scrollbar only while actively scrolling — cleaner look
+     * for cards that don't overflow. */
+    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     if (title) {
         lv_obj_t *t = lv_label_create(card);
         lv_label_set_text(t, title);
@@ -351,7 +355,7 @@ static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
                           int initial, int vmin, int vmax) {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 36);
+    lv_obj_set_height(row, 32);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(row, 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
@@ -401,19 +405,18 @@ static void _build_style_tab_panel(void) {
     panel_data_t *pd = (panel_data_t *)s_widget->type_data;
     if (!pd) return;
 
-    /* Colours card */
+    /* Colours card — fixed height so internal scrollbar (if needed) bounds
+     * the scroll area instead of the whole tab. */
     lv_obj_t *colours = _make_card(s_content, "COLOURS");
-    lv_obj_set_flex_align(colours, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_height(colours, 240);
     _make_color_row(colours, "Border",     F_PANEL_BORDER);
     _make_color_row(colours, "Background", F_PANEL_BG);
     _make_color_row(colours, "Label",      F_PANEL_LABEL);
     _make_color_row(colours, "Value",      F_PANEL_VALUE);
 
-    /* Dimensions card */
+    /* Dimensions card — fits two short rows. */
     lv_obj_t *dims = _make_card(s_content, "DIMENSIONS");
-    lv_obj_set_flex_align(dims, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_height(dims, 120);
     _make_dim_row(dims, "Border width",  D_PANEL_BORDER_W, pd->border_width,  0, 10);
     _make_dim_row(dims, "Border radius", D_PANEL_BORDER_R, pd->border_radius, 0, 30);
 }
@@ -592,14 +595,16 @@ static void _build_content_area(void) {
     s_content = lv_obj_create(s_overlay);
     lv_obj_set_size(s_content, 800, 480 - 48 - 40);
     lv_obj_set_pos(s_content, 0, 48 + 40);
-    /* Transparent — the overlay's dimmed backdrop shows through, and through
-     * THAT the dashboard widget being edited is visible. Cards are opaque
-     * so the field content reads clearly. */
+    /* Transparent — dashboard widget being edited is fully visible through
+     * the gaps between cards. */
     lv_obj_set_style_bg_opa(s_content, 0, 0);
     lv_obj_set_style_border_width(s_content, 0, 0);
     lv_obj_set_style_radius(s_content, 0, 0);
-    lv_obj_set_style_pad_all(s_content, 16, 0);
-    lv_obj_set_style_pad_row(s_content, 12, 0);
+    lv_obj_set_style_pad_all(s_content, 8, 0);
+    lv_obj_set_style_pad_row(s_content, 10, 0);
+    /* Content area itself is NOT scrollable — scrolling is bounded to
+     * individual cards so the repaint area stays small. */
+    lv_obj_clear_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_content, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -625,15 +630,19 @@ void inspector_open(widget_t *w) {
     lv_obj_set_size(s_overlay, 800, 480);
     lv_obj_set_pos(s_overlay, 0, 0);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    /* Dim the dashboard so the Inspector chrome reads clearly, without
-     * fully hiding the widget being adjusted. */
-    lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_50, 0);
+    /* Backdrop is fully transparent — the previous LV_OPA_50 dim forced
+     * alpha blending on every dirty pixel during scroll, which was the
+     * main source of the lag. The Inspector's header / tab bar / cards
+     * are themselves opaque enough to mark the Inspector mode visually;
+     * the dashboard underneath stays at full brightness through gaps
+     * between cards, which is exactly the "see what's going on
+     * underneath as I make changes" the user asked for. */
+    lv_obj_set_style_bg_opa(s_overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_overlay, 0, 0);
     lv_obj_set_style_radius(s_overlay, 0, 0);
     lv_obj_set_style_pad_all(s_overlay, 0, 0);
-    /* Capture pointer events so taps on the dashboard widgets behind don't
-     * trigger drags or selects while the Inspector is up. */
+    /* Still CLICKABLE so empty-area taps don't bubble down to widgets and
+     * trigger drag / selection mid-edit. */
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
 
     _build_header();
