@@ -1,18 +1,18 @@
 /**
- * inspector.h — Per-widget Inspector modal (Phase 3 shell).
+ * inspector.h — Per-widget Inspector overlay (Phase 3 shell).
  *
- * Full-screen 800×480 modal that opens when the user taps Configure on the
- * bottom toolbar. Header bar, tab bar (DATA / STYLE / LAYOUT / RULES), and
- * a scrollable content area.
+ * Opens when the user taps Configure on the bottom toolbar. Lives as a
+ * translucent overlay on top of ui_Screen3 — the dashboard remains visible
+ * behind a dimmed backdrop, so changes are seen in real time as the user
+ * adjusts settings in the Inspector.
  *
- * Phase 3.1 (this commit):
- *   - Shell + tab bar + tab switching.
- *   - LAYOUT tab functional (x/y/w/h sliders, live preview on apply).
- *   - DATA / STYLE / RULES placeholder with "Open legacy editor" fallback
- *     so widgets that relied on load_menu_screen_for_widget don't regress.
+ * Three tabs: DATA / STYLE / RULES. (Position + size are handled directly
+ * by the bottom toolbar's chip popover, so LAYOUT isn't an Inspector tab.)
  *
- * Later phases fill in the placeholder tabs with schema-driven content
- * (see the master plan in docs / earlier conversation turns).
+ * Phase 3.1 wires up the shell + tab switching. Each tab is a placeholder
+ * with an "Open legacy editor" fallback so widgets that relied on the old
+ * config_modal (Panel/Bar/RPM_Bar) don't regress while later phases fill
+ * in schema-driven content.
  */
 #pragma once
 #include "widgets/widget_types.h"
@@ -21,16 +21,15 @@
 extern "C" {
 #endif
 
-/** Open the Inspector for @p w. No-op if already open or @p w is NULL.
- *  Loads its own LVGL screen — the dashboard becomes inactive but stays in
- *  memory (widget signals keep firing, edit-mode state persists). */
+/** Open the Inspector overlay for @p w. No-op if already open or @p w is
+ *  NULL. The dashboard's ui_Screen3 remains the active screen — the overlay
+ *  is a child of it. */
 void inspector_open(widget_t *w);
 
-/** Close the Inspector. lv_scr_load's ui_Screen3 and deletes the Inspector
- *  screen. No-op if not open. */
+/** Close the Inspector and tear down the overlay. No-op if not open. */
 void inspector_close(void);
 
-/** True iff the Inspector is currently the active screen. */
+/** True iff the Inspector overlay is currently up. */
 bool inspector_is_open(void);
 
 #ifdef __cplusplus
