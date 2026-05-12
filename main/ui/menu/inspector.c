@@ -68,6 +68,19 @@ static lv_obj_t *s_content         = NULL;
 static widget_t *s_widget          = NULL;
 static int       s_active_tab      = TAB_STYLE;
 
+/* Dock side toggle. 0 = right (default, matches web editor), 1 = left.
+ * Resets to right on each inspector_open - per-session, not persisted. */
+static int       s_dock_side       = 0;
+static lv_obj_t *s_side_left_btn   = NULL;
+static lv_obj_t *s_side_right_btn  = NULL;
+
+/* Colour-wheel popover state. Opened from the picker's "Custom..." button.
+ * Live-previews on VALUE_CHANGED, commits on OK, reverts on Cancel. */
+static lv_obj_t *s_wheel_popup     = NULL;
+static lv_obj_t *s_wheel           = NULL;
+static int       s_wheel_field     = -1;
+static lv_color_t s_wheel_initial;
+
 /* Helpers */
 
 static const char *_widget_type_name(widget_type_t t) {
@@ -292,6 +305,8 @@ static void _panel_apply_color(int field, lv_color_t c) {
 
 /* Picker popover */
 
+static void _custom_btn_cb(lv_event_t *e);   /* defined alongside the wheel */
+
 static void _close_picker(void) {
     if (s_picker && lv_obj_is_valid(s_picker)) {
         lv_obj_del(s_picker);
@@ -339,7 +354,7 @@ static void _open_picker(int field) {
     lv_obj_add_event_cb(s_picker, _picker_backdrop_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *card = lv_obj_create(s_picker);
-    lv_obj_set_size(card, 300, 200);
+    lv_obj_set_size(card, 300, 248);
     lv_obj_center(card);
     lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
@@ -359,7 +374,7 @@ static void _open_picker(int field) {
     /* 5x2 swatch grid, 40 px swatches + 8 px gaps */
     lv_color_t current = _panel_get_color(pd, field);
     const int grid_x0 = 8;
-    const int grid_y0 = 36;
+    const int grid_y0 = 28;
     const int cell    = 48;
     for (int i = 0; i < PRESET_COUNT; i++) {
         int col = i % 5;
@@ -381,6 +396,164 @@ static void _open_picker(int field) {
                             (void *)(intptr_t)i);
         s_picker_swatches[i] = sw;
     }
+
+    /* Custom... button - opens the colour wheel for anything not in the
+     * preset palette. */
+    lv_obj_t *custom = _make_button(card, 268, 36, "Custom...");
+    lv_obj_align(custom, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_add_event_cb(custom, _custom_btn_cb, LV_EVENT_CLICKED, NULL);
+}
+
+/* Custom colour wheel - opened from the picker's "Custom..." button.
+ *
+ * Same lv_colorwheel widget the legacy config_modal uses. Live preview
+ * on every drag step so the user sees the colour land in real time on
+ * the widget behind. OK commits, Cancel reverts to the colour the
+ * picker was opened at. */
+
+static void _close_wheel(void) {
+    if (s_wheel_popup && lv_obj_is_valid(s_wheel_popup)) {
+        lv_obj_del(s_wheel_popup);
+    }
+    s_wheel_popup = NULL;
+    s_wheel       = NULL;
+    s_wheel_field = -1;
+}
+
+static void _wheel_value_changed_cb(lv_event_t *e) {
+    (void)e;
+    if (s_wheel_field < 0 || !s_wheel || !lv_obj_is_valid(s_wheel)) return;
+    lv_color_t c = lv_colorwheel_get_rgb(s_wheel);
+    _panel_apply_color(s_wheel_field, c);
+}
+
+static void _wheel_ok_cb(lv_event_t *e) {
+    (void)e;
+    _close_wheel();
+}
+
+static void _wheel_cancel_cb(lv_event_t *e) {
+    (void)e;
+    if (s_wheel_field >= 0) {
+        _panel_apply_color(s_wheel_field, s_wheel_initial);
+    }
+    _close_wheel();
+}
+
+static void _open_wheel(int field, lv_color_t initial) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    _close_wheel();
+    s_wheel_field   = field;
+    s_wheel_initial = initial;
+
+    s_wheel_popup = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_wheel_popup, 800, 480);
+    lv_obj_set_pos(s_wheel_popup, 0, 0);
+    lv_obj_set_style_bg_color(s_wheel_popup, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_wheel_popup, 110, 0);
+    lv_obj_set_style_border_width(s_wheel_popup, 0, 0);
+    lv_obj_set_style_radius(s_wheel_popup, 0, 0);
+    lv_obj_set_style_pad_all(s_wheel_popup, 0, 0);
+    lv_obj_clear_flag(s_wheel_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_wheel_popup, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *card = lv_obj_create(s_wheel_popup);
+    lv_obj_set_size(card, 340, 360);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    int safe_field = (field >= 0 && field < F_PANEL_FIELD_COUNT) ? field : 0;
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text_fmt(title, "%s - custom", s_panel_field_names[safe_field]);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
+
+    s_wheel = lv_colorwheel_create(card, true);
+    lv_obj_set_size(s_wheel, 220, 220);
+    lv_obj_align(s_wheel, LV_ALIGN_TOP_MID, 0, 28);
+    lv_colorwheel_set_rgb(s_wheel, initial);
+    lv_obj_add_event_cb(s_wheel, _wheel_value_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *ok = _make_button(card, 120, 40, "OK");
+    lv_obj_align(ok, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    lv_obj_set_style_bg_color(ok, DT_ACCENT, 0);
+    lv_obj_set_style_bg_opa(ok, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(ok, _wheel_ok_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cancel = _make_button(card, 120, 40, "Cancel");
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    lv_obj_add_event_cb(cancel, _wheel_cancel_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void _custom_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int field = s_picker_field;
+    if (field < 0 || !s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+    lv_color_t current = _panel_get_color(pd, field);
+    _close_picker();
+    _open_wheel(field, current);
+}
+
+/* Dock side switcher - move the dock between right and left edges. */
+
+static void _refresh_side_buttons(void) {
+    if (s_side_left_btn && lv_obj_is_valid(s_side_left_btn)) {
+        bool active = (s_dock_side == 1);
+        lv_obj_set_style_border_color(s_side_left_btn,
+            active ? DT_ACCENT : lv_color_white(), 0);
+        lv_obj_set_style_border_opa(s_side_left_btn,
+            active ? LV_OPA_COVER : 60, 0);
+        lv_obj_set_style_bg_opa(s_side_left_btn, active ? 70 : 28, 0);
+    }
+    if (s_side_right_btn && lv_obj_is_valid(s_side_right_btn)) {
+        bool active = (s_dock_side == 0);
+        lv_obj_set_style_border_color(s_side_right_btn,
+            active ? DT_ACCENT : lv_color_white(), 0);
+        lv_obj_set_style_border_opa(s_side_right_btn,
+            active ? LV_OPA_COVER : 60, 0);
+        lv_obj_set_style_bg_opa(s_side_right_btn, active ? 70 : 28, 0);
+    }
+}
+
+static void _apply_dock_side(void) {
+    if (!s_overlay   || !lv_obj_is_valid(s_overlay))   return;
+    if (!s_left_eater || !lv_obj_is_valid(s_left_eater)) return;
+    if (s_dock_side == 0) {
+        /* Dock on right, click-eater fills the left 480 px. */
+        lv_obj_set_pos(s_overlay, DOCK_X, 0);
+        lv_obj_set_pos(s_left_eater, 0, 0);
+        lv_obj_set_size(s_left_eater, DOCK_X, 480);
+    } else {
+        /* Dock on left, click-eater fills the right 480 px. */
+        lv_obj_set_pos(s_overlay, 0, 0);
+        lv_obj_set_pos(s_left_eater, DOCK_W, 0);
+        lv_obj_set_size(s_left_eater, 800 - DOCK_W, 480);
+    }
+    _refresh_side_buttons();
+}
+
+static void _side_left_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (s_dock_side == 1) return;
+    s_dock_side = 1;
+    _apply_dock_side();
+}
+
+static void _side_right_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (s_dock_side == 0) return;
+    s_dock_side = 0;
+    _apply_dock_side();
 }
 
 /* Compact colour row: label + preview swatch + chevron. */
@@ -629,31 +802,37 @@ static void _build_header(void) {
     lv_obj_set_style_radius(header, 0, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
 
-    lv_obj_t *back = lv_btn_create(header);
-    lv_obj_set_size(back, 48, 48);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_opa(back, 0, 0);
-    lv_obj_set_style_bg_color(back, lv_color_white(), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(back, 40, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(back, 0, 0);
-    lv_obj_set_style_shadow_width(back, 0, 0);
-    lv_obj_set_style_radius(back, 0, 0);
-    lv_obj_t *back_lbl = lv_label_create(back);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
-    lv_obj_center(back_lbl);
-    lv_obj_set_style_text_color(back_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(back_lbl, THEME_FONT_LARGE, 0);
+    /* "Back" text instead of an arrow - clearer label, same affordance. */
+    lv_obj_t *back = _make_button(header, 64, 36, "Back");
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 8, 0);
     lv_obj_add_event_cb(back, _back_btn_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Side switcher - two small arrow buttons on the far right of the
+     * header. The currently-docked side is highlighted; tapping the
+     * other side moves the dock to that edge. Useful when the widget
+     * being edited is on the same side as the dock. */
+    s_side_right_btn = _make_button(header, 32, 32, LV_SYMBOL_RIGHT);
+    lv_obj_align(s_side_right_btn, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_add_event_cb(s_side_right_btn, _side_right_clicked_cb,
+                        LV_EVENT_CLICKED, NULL);
+
+    s_side_left_btn = _make_button(header, 32, 32, LV_SYMBOL_LEFT);
+    lv_obj_align(s_side_left_btn, LV_ALIGN_RIGHT_MID, -44, 0);
+    lv_obj_add_event_cb(s_side_left_btn, _side_left_clicked_cb,
+                        LV_EVENT_CLICKED, NULL);
+
+    /* Title between Back and the side switcher. THEME_FONT_BODY (14 px)
+     * fits even the longest widget-type name ("Shift Light") in the
+     * available width. */
     lv_obj_t *title = lv_label_create(header);
     char buf[48];
-    snprintf(buf, sizeof(buf), "%s slot %u",
+    snprintf(buf, sizeof(buf), "%s %u",
              _widget_type_name(s_widget ? s_widget->type : (widget_type_t)0),
              (unsigned)(s_widget ? s_widget->slot : 0));
     lv_label_set_text(title, buf);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 52, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 80, 0);
 }
 
 static void _build_tab_bar(void) {
@@ -726,6 +905,7 @@ void inspector_open(widget_t *w) {
 
     s_widget     = w;
     s_active_tab = TAB_STYLE;
+    s_dock_side  = 0;   /* always reopen on the right side */
 
     lv_obj_t *parent = ui_Screen3;
     if (!parent || !lv_obj_is_valid(parent)) parent = lv_scr_act();
@@ -761,6 +941,7 @@ void inspector_open(widget_t *w) {
     _build_tab_bar();
     _build_content_area();
     _show_tab(s_active_tab);
+    _apply_dock_side();
 
     lv_obj_move_foreground(s_left_eater);
     lv_obj_move_foreground(s_overlay);
@@ -772,6 +953,7 @@ void inspector_open(widget_t *w) {
 
 void inspector_close(void) {
     _close_picker();
+    _close_wheel();
     if (s_overlay) {
         if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
         s_overlay = NULL;
@@ -783,6 +965,8 @@ void inspector_close(void) {
     s_widget          = NULL;
     s_content         = NULL;
     s_tab_indicator   = NULL;
+    s_side_left_btn   = NULL;
+    s_side_right_btn  = NULL;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
     edit_mode_commit_external_edit();
