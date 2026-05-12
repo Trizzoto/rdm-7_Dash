@@ -8,6 +8,7 @@
  */
 #include "storage/user_signals.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <errno.h>
 #include <stdio.h>
@@ -21,9 +22,11 @@ static const char *TAG = "user_signals";
 #define USER_SIGNALS_PATH USER_SIGNALS_DIR "/user.json"
 #define USER_SIGNALS_MAX_FILE_BYTES (64 * 1024)   /* cap parser memory */
 
-static user_signal_t s_signals[USER_SIGNALS_MAX];
-static uint16_t      s_count  = 0;
-static bool          s_inited = false;
+/* Allocated in PSRAM at init - keeps ~5 KB out of internal RAM where
+ * the httpd / WiFi tasks need every byte during the early boot. */
+static user_signal_t *s_signals = NULL;
+static uint16_t       s_count   = 0;
+static bool           s_inited  = false;
 
 static esp_err_t _ensure_dir(void) {
     struct stat st;
@@ -92,6 +95,18 @@ static esp_err_t _save_to_disk(void) {
 
 esp_err_t user_signals_init(void) {
     if (s_inited) return ESP_OK;
+
+    /* PSRAM first; internal fallback so the module still works on
+     * boards without PSRAM. Only flip s_inited true once we own
+     * memory - the get/append helpers gate on it. */
+    s_signals = heap_caps_calloc(USER_SIGNALS_MAX, sizeof(user_signal_t),
+                                  MALLOC_CAP_SPIRAM);
+    if (!s_signals)
+        s_signals = calloc(USER_SIGNALS_MAX, sizeof(user_signal_t));
+    if (!s_signals) {
+        ESP_LOGE(TAG, "could not allocate user signals cache");
+        return ESP_ERR_NO_MEM;
+    }
     s_inited = true;
     s_count  = 0;
 

@@ -38,6 +38,7 @@
 #include "ui/settings/preset_picker.h" /* preconfig_items: rich CAN signal library */
 #include "storage/user_signals.h"  /* signal library: user's saved signals */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
+#include "esp_heap_caps.h"          /* PSRAM allocation for the big signal buffer */
 #include "esp_log.h"
 #include <stdio.h>
 #include <stdint.h>
@@ -1100,8 +1101,12 @@ static int         s_sig_make_idx                   = 0;
 static int         s_sig_version_idx                = 0;
 static int         s_sig_signal_idx                 = 0;
 
-static sig_entry_t s_sig_entries[SIG_MAX_SIGNALS];
-static int         s_sig_entry_count                = 0;
+/* Lazy-allocated in PSRAM on first inspector_open. ~13 KB so keeping
+ * it out of internal RAM is worthwhile - the httpd worker task lives
+ * there and runs into ESP_ERR_HTTPD_TASK if internal RAM gets tight
+ * at boot. */
+static sig_entry_t *s_sig_entries     = NULL;
+static int          s_sig_entry_count = 0;
 
 static lv_obj_t   *s_sig_ecu_dd      = NULL;
 static lv_obj_t   *s_sig_version_dd  = NULL;
@@ -1173,6 +1178,16 @@ static int _sig_entry_cmp(const void *a, const void *b) {
 }
 
 static void _sig_collect_signals(void) {
+    if (!s_sig_entries) {
+        /* Try PSRAM first; fall back to internal on failure (older
+         * boards without PSRAM, or PSRAM exhausted). */
+        s_sig_entries = heap_caps_calloc(SIG_MAX_SIGNALS,
+                                          sizeof(sig_entry_t),
+                                          MALLOC_CAP_SPIRAM);
+        if (!s_sig_entries)
+            s_sig_entries = calloc(SIG_MAX_SIGNALS, sizeof(sig_entry_t));
+        if (!s_sig_entries) return;
+    }
     s_sig_entry_count = 0;
     if (_sig_is_user_library()) {
         uint16_t count = user_signals_count();
