@@ -1060,51 +1060,57 @@ static void _make_text_row_schema(lv_obj_t *parent, const widget_field_t *f,
     if (r) r->value_lbl = value;
 }
 
-/* Signal binding row + inline picker.
+/* ── Signal source section for the DATA tab ──────────────────────────
  *
- * The signal binding isn't a schema field per se - it's a layout-level
- * relationship between a widget and a signal in the registry. The DATA
- * tab renders it as a special first row that opens a fullscreen-within-
- * dock picker on tap.
+ * Four chained dropdowns rendered inline in the SIGNAL card: ECU,
+ * Version, Preset, CAN signal. The first three pick a SOURCE - a
+ * curated ECU broadcast map from ecu_presets.c, or the user's manual-
+ * entry library at /lfs/dbc/user.json. The fourth lists the signals
+ * from that source and binds the widget when the user picks one.
  *
- * Widget support is detected by trying inspector_get("signal_name"):
- * if it returns true, we render the row; otherwise we skip it. */
+ * No browse / picker page - everything is inline so the user scrubs
+ * through dropdowns and sees the widget's value update on the
+ * dashboard immediately. Mirrors the legacy editor's pattern.
+ *
+ * Widget support detected via inspector_get("signal_name").
+ */
 
-static lv_obj_t *s_sig_row_value_lbl = NULL;   /* signal row's preview label */
-static bool      s_in_signal_picker  = false;
+#define SIG_MY_MAKE         "My library"
+#define SIG_MAX_MAKES       16
+#define SIG_MAX_VERSIONS    16
+#define SIG_MAX_SIGNALS     (USER_SIGNALS_MAX > ECU_SIG__COUNT ? \
+                             USER_SIGNALS_MAX : ECU_SIG__COUNT)
 
-static void _show_tab(int idx);              /* defined further down */
-static void _close_signal_picker(void);
-static void _open_signal_wizard(void);       /* manual-entry wizard, below */
+typedef struct {
+    char     name[32];
+    uint32_t can_id;
+    uint8_t  start_bit;
+    uint8_t  length;
+    float    scale;
+    float    offset;
+    bool     is_signed;
+    uint8_t  endian;
+    char     unit[8];
+} sig_entry_t;
 
-/* ── Signal library state ─────────────────────────────────────────── */
-/* The library replaces s_content while it's open. Sources today:
- *  - one entry per distinct ECU "make" in ECU_PRESETS
- *  - plus a synthetic "My library" entry for user_signals.json
- * Each make has a Version dropdown (the curated presets are make+version
- * tuples) and a Preset dropdown (currently a single entry per version;
- * structured this way so DBC imports can plug in as additional presets
- * without reshaping the UI). */
+static const char *s_sig_makes[SIG_MAX_MAKES]       = {NULL};
+static int         s_sig_make_count                 = 0;
+static const char *s_sig_versions[SIG_MAX_VERSIONS] = {NULL};
+static int         s_sig_version_count              = 0;
+static int         s_sig_make_idx                   = 0;
+static int         s_sig_version_idx                = 0;
+static int         s_sig_signal_idx                 = 0;
 
-#define LIB_MY_MAKE        "My library"
-#define LIB_MAX_MAKES      16
-#define LIB_MAX_VERSIONS   16
+static sig_entry_t s_sig_entries[SIG_MAX_SIGNALS];
+static int         s_sig_entry_count                = 0;
 
-static bool         s_in_library         = false;
-static const char  *s_lib_makes[LIB_MAX_MAKES] = {NULL};
-static int          s_lib_make_count     = 0;
-static const char  *s_lib_versions[LIB_MAX_VERSIONS] = {NULL};
-static int          s_lib_version_count  = 0;
-static int          s_lib_make_idx       = 0;
-static int          s_lib_version_idx    = 0;
+static lv_obj_t   *s_sig_ecu_dd      = NULL;
+static lv_obj_t   *s_sig_version_dd  = NULL;
+static lv_obj_t   *s_sig_preset_dd   = NULL;
+static lv_obj_t   *s_sig_signal_dd   = NULL;
 
-static lv_obj_t    *s_lib_make_dd        = NULL;
-static lv_obj_t    *s_lib_version_dd     = NULL;
-static lv_obj_t    *s_lib_preset_dd      = NULL;
-static lv_obj_t    *s_lib_signal_list    = NULL;
-
-static void _open_signal_library(void);
-static void _close_signal_library(void);
+static void _open_signal_wizard(void);   /* manual entry, below */
+static void _show_tab(int idx);          /* defined further down */
 
 static const char *_widget_signal_name(void) {
     if (!s_widget || !s_widget->inspector_get) return "";
@@ -1120,504 +1126,262 @@ static bool _widget_supports_signal_binding(void) {
     return s_widget->inspector_get(s_widget, "signal_name", &v);
 }
 
-/* Tap on a signal row in the picker applies the binding + returns to
- * the DATA tab. user_data is a pointer to the signal_t->name string
- * which is stable as long as the registry isn't reset (it isn't while
- * the Inspector is open). */
-static void _new_signal_row_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _open_signal_wizard();
+static bool _sig_is_user_library(void) {
+    if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count) return false;
+    const char *m = s_sig_makes[s_sig_make_idx];
+    return m && strcmp(m, SIG_MY_MAKE) == 0;
 }
 
-static void _browse_library_row_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _open_signal_library();
-}
-
-/* Build a single accent-coloured action row at the bottom of the picker
- * (Browse library, Create manually). One styling helper, two callers. */
-static void _make_picker_action_row(lv_obj_t *parent,
-                                    const char *symbol_plus_label,
-                                    lv_event_cb_t cb) {
-    lv_obj_t *row = lv_btn_create(parent);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 44);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(row, DT_ACCENT, 0);
-    lv_obj_set_style_bg_opa(row, 60, 0);
-    lv_obj_set_style_bg_color(row, DT_ACCENT, LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(row, DT_ACCENT, 0);
-    lv_obj_set_style_border_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 6, 0);
-    lv_obj_set_style_radius(row, 4, 0);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, symbol_plus_label);
-    lv_obj_center(lbl);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-
-    lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, NULL);
-}
-
-static void _signal_picker_row_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    const char *name = (const char *)lv_event_get_user_data(e);
-    if (!name || !s_widget || !s_widget->inspector_set) return;
-    widget_field_value_t v = { .str = name };
-    s_widget->inspector_set(s_widget, "signal_name", &v);
-    _close_signal_picker();
-}
-
-static void _signal_picker_back_cb(lv_event_t *e) {
-    (void)e;
-    _close_signal_picker();
-}
-
-static void _close_signal_picker(void) {
-    s_in_signal_picker = false;
-    /* Rebuild the DATA tab; cheaper than tracking saved state. */
-    _show_tab(TAB_DATA);
-}
-
-static void _open_signal_picker(void) {
-    if (!s_content || !lv_obj_is_valid(s_content)) return;
-    if (!s_widget) return;
-    s_in_signal_picker = true;
-    lv_obj_clean(s_content);
-
-    /* Header strip with Back and title. */
-    lv_obj_t *hdr = lv_obj_create(s_content);
-    lv_obj_set_size(hdr, LV_PCT(100), 40);
-    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(hdr, 0, 0);
-    lv_obj_set_style_border_width(hdr, 0, 0);
-    lv_obj_set_style_pad_all(hdr, 0, 0);
-
-    lv_obj_t *back = _make_button(hdr, 60, 32, "Back");
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 4, 0);
-    lv_obj_add_event_cb(back, _signal_picker_back_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *title = lv_label_create(hdr);
-    lv_label_set_text(title, "Choose Signal");
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
-
-    /* Signal list card - fills the rest of the dock. */
-    lv_obj_t *list_card = _make_card(s_content, NULL);
-    lv_obj_set_flex_grow(list_card, 1);
-    lv_obj_set_style_pad_row(list_card, 2, 0);
-    lv_obj_add_flag(list_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(list_card, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list_card, LV_SCROLLBAR_MODE_ACTIVE);
-
-    uint16_t count = signal_get_count();
-    if (count == 0) {
-        lv_obj_t *empty = lv_label_create(list_card);
-        lv_label_set_text(empty,
-            "No signals in this layout.\n"
-            "Create one to bind a widget.");
-        lv_obj_set_style_text_color(empty, DT_TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
-        return;
-    }
-
-    const char *current = _widget_signal_name();
-    for (uint16_t i = 0; i < count; i++) {
-        signal_t *s = signal_get_by_index(i);
-        if (!s) continue;
-
-        lv_obj_t *row = lv_btn_create(list_card);
-        lv_obj_set_width(row, LV_PCT(100));
-        lv_obj_set_height(row, 44);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
-        lv_obj_set_style_bg_opa(row, 60, 0);
-        lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
-        lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_shadow_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 6, 0);
-        lv_obj_set_style_radius(row, 4, 0);
-
-        bool is_current = (strcmp(s->name, current) == 0);
-        if (is_current) {
-            lv_obj_set_style_border_color(row, DT_ACCENT, 0);
-            lv_obj_set_style_border_width(row, 2, 0);
-            lv_obj_set_style_border_opa(row, LV_OPA_COVER, 0);
-        }
-
-        /* Name on the left. */
-        lv_obj_t *name_lbl = lv_label_create(row);
-        lv_label_set_text(name_lbl, s->name);
-        lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(name_lbl, 220);
-        lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
-
-        /* Current value + units on the right. Stale shows "--". */
-        char buf[32];
-        if (s->is_stale) {
-            snprintf(buf, sizeof(buf), "--  %s", s->unit);
-        } else if (s->unit[0]) {
-            snprintf(buf, sizeof(buf), "%.2f %s", s->current_value, s->unit);
-        } else {
-            snprintf(buf, sizeof(buf), "%.2f", s->current_value);
-        }
-        lv_obj_t *val_lbl = lv_label_create(row);
-        lv_label_set_text(val_lbl, buf);
-        lv_obj_align(val_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_text_color(val_lbl, DT_TEXT_MUTED, 0);
-        lv_obj_set_style_text_font(val_lbl, THEME_FONT_SMALL, 0);
-
-        /* user_data points at s->name in the registry. Stable for the
-         * picker's lifetime - the registry isn't reset while the
-         * Inspector is open. */
-        lv_obj_add_event_cb(row, _signal_picker_row_cb, LV_EVENT_CLICKED,
-                            (void *)s->name);
-    }
-
-    /* Two action rows at the bottom: browse the library (pull from
-     * ECU presets / user.json / future DBC imports) or create a new
-     * signal from scratch via the manual wizard. */
-    _make_picker_action_row(list_card,
-        LV_SYMBOL_LIST "  Browse signal library",
-        _browse_library_row_cb);
-    _make_picker_action_row(list_card,
-        LV_SYMBOL_PLUS "  Create signal manually",
-        _new_signal_row_cb);
-}
-
-static void _signal_row_clicked_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _open_signal_picker();
-}
-
-static void _build_signal_row(lv_obj_t *parent) {
-    if (!s_widget) return;
-    const char *current = _widget_signal_name();
-
-    lv_obj_t *row = lv_btn_create(parent);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 40);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(row, 0, 0);
-    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 4, 0);
-    lv_obj_set_style_radius(row, 6, 0);
-    lv_obj_add_event_cb(row, _signal_row_clicked_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, "Signal");
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-
-    lv_obj_t *chev = lv_label_create(row);
-    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
-    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
-    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
-
-    lv_obj_t *value = lv_label_create(row);
-    lv_label_set_text(value, (current && current[0]) ? current : "(none)");
-    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(value, 280);
-    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
-    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
-    s_sig_row_value_lbl = value;
-}
-
-/* ── Signal library page ───────────────────────────────────────────── *
- *
- * Browse the available signal sources (ECU presets + user.json + future
- * DBC imports) and add a chosen signal to the live layout + bind the
- * currently-selected widget to it.
- *
- * UI structure (480 px wide, fills the DATA-tab content area):
- *   Header strip:  < Back   "Signal library"
- *   ECU      [ ECU Master ▾ ]
- *   Version  [ Black / Classic ▾ ]   (hidden when ECU is "My library")
- *   Preset   [ Default ▾ ]            (single entry per version today)
- *   ────────────────────────────────────────
- *   <scrollable signal list - tap a row to add + bind>
- *
- * Tapping a row calls signal_register (or signal_find_by_name if already
- * present), then inspector_set("signal_name", ...) on the widget. The
- * library closes and the user lands back in the DATA tab.
- *
- * Layout never gets rewritten wholesale - each row is independent. The
- * user can pick RPM from one ECU and MAP from another and they coexist
- * in the layout's signals list. */
-
-static bool _lib_make_is_my_library(void) {
-    if (s_lib_make_idx < 0 || s_lib_make_idx >= s_lib_make_count) return false;
-    const char *make = s_lib_makes[s_lib_make_idx];
-    return make && strcmp(make, LIB_MY_MAKE) == 0;
-}
-
-static void _lib_collect_makes(void) {
-    s_lib_make_count = 0;
+static void _sig_collect_makes(void) {
+    s_sig_make_count = 0;
     for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
         const char *make = ECU_PRESETS[i].make;
         if (!make) continue;
         bool seen = false;
-        for (int j = 0; j < s_lib_make_count; j++) {
-            if (strcmp(s_lib_makes[j], make) == 0) { seen = true; break; }
+        for (int j = 0; j < s_sig_make_count; j++) {
+            if (strcmp(s_sig_makes[j], make) == 0) { seen = true; break; }
         }
-        if (!seen && s_lib_make_count < LIB_MAX_MAKES - 1) {
-            s_lib_makes[s_lib_make_count++] = make;
+        if (!seen && s_sig_make_count < SIG_MAX_MAKES - 1) {
+            s_sig_makes[s_sig_make_count++] = make;
         }
     }
-    /* User library lives at the tail of the make dropdown. */
-    if (s_lib_make_count < LIB_MAX_MAKES) {
-        s_lib_makes[s_lib_make_count++] = LIB_MY_MAKE;
+    if (s_sig_make_count < SIG_MAX_MAKES) {
+        s_sig_makes[s_sig_make_count++] = SIG_MY_MAKE;
     }
 }
 
-static void _lib_collect_versions(void) {
-    s_lib_version_count = 0;
-    if (_lib_make_is_my_library()) return;
-    if (s_lib_make_idx < 0 || s_lib_make_idx >= s_lib_make_count) return;
-    const char *make = s_lib_makes[s_lib_make_idx];
-    for (int i = 0; i < ECU_PRESETS_COUNT && s_lib_version_count < LIB_MAX_VERSIONS; i++) {
+static void _sig_collect_versions(void) {
+    s_sig_version_count = 0;
+    if (_sig_is_user_library()) return;
+    if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count) return;
+    const char *make = s_sig_makes[s_sig_make_idx];
+    for (int i = 0; i < ECU_PRESETS_COUNT && s_sig_version_count < SIG_MAX_VERSIONS; i++) {
         const ecu_preset_t *p = &ECU_PRESETS[i];
         if (p->make && p->version && strcmp(p->make, make) == 0) {
-            s_lib_versions[s_lib_version_count++] = p->version;
+            s_sig_versions[s_sig_version_count++] = p->version;
         }
     }
 }
 
-static const ecu_preset_t *_lib_current_preset(void) {
-    if (_lib_make_is_my_library()) return NULL;
-    if (s_lib_make_idx < 0 || s_lib_make_idx >= s_lib_make_count) return NULL;
-    if (s_lib_version_idx < 0 || s_lib_version_idx >= s_lib_version_count) return NULL;
-    return ecu_preset_find(s_lib_makes[s_lib_make_idx],
-                           s_lib_versions[s_lib_version_idx]);
+static const ecu_preset_t *_sig_current_preset(void) {
+    if (_sig_is_user_library()) return NULL;
+    if (s_sig_make_idx < 0 || s_sig_make_idx >= s_sig_make_count) return NULL;
+    if (s_sig_version_idx < 0 || s_sig_version_idx >= s_sig_version_count) return NULL;
+    return ecu_preset_find(s_sig_makes[s_sig_make_idx],
+                           s_sig_versions[s_sig_version_idx]);
 }
 
-static void _lib_join_options(const char *const *items, int count,
-                              char *buf, size_t bufsz) {
-    if (bufsz == 0) return;
-    size_t pos = 0;
-    for (int i = 0; i < count; i++) {
-        if (!items[i]) continue;
-        if (i > 0 && pos < bufsz - 1) buf[pos++] = '\n';
-        size_t len = strlen(items[i]);
-        if (pos + len >= bufsz) len = bufsz - 1 - pos;
-        memcpy(buf + pos, items[i], len);
-        pos += len;
-    }
-    buf[pos] = '\0';
-}
-
-static void _lib_apply_signal(const char *name, uint32_t can_id,
-                              uint8_t start, uint8_t len,
-                              float scale, float offset,
-                              bool is_signed, uint8_t endian,
-                              const char *unit) {
-    if (!name) return;
-
-    /* Register if absent; fall back to find for re-picks. */
-    int16_t idx = signal_register(name, can_id, start, len, scale, offset,
-                                   is_signed, endian, unit ? unit : "");
-    if (idx < 0) idx = signal_find_by_name(name);
-    if (idx < 0) return;
-
-    if (s_widget && s_widget->inspector_set) {
-        widget_field_value_t v = { .str = name };
-        s_widget->inspector_set(s_widget, "signal_name", &v);
-    }
-
-    _close_signal_library();
-    _close_signal_picker();
-}
-
-/* user_data on each row is (is_user << 16) | idx so a single callback
- * handles both source types. */
-#define LIB_PACK(is_user, idx)  ((void *)(intptr_t)(((is_user) ? 1 : 0) << 16 | ((idx) & 0xFFFF)))
-#define LIB_UNPACK_IS_USER(d)   ((((intptr_t)(d)) >> 16) & 0xFF)
-#define LIB_UNPACK_IDX(d)       (((intptr_t)(d)) & 0xFFFF)
-
-static void _lib_signal_row_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    intptr_t data = (intptr_t)lv_event_get_user_data(e);
-    int is_user = LIB_UNPACK_IS_USER(data);
-    int idx     = LIB_UNPACK_IDX(data);
-
-    if (is_user) {
-        const user_signal_t *u = user_signals_get((uint16_t)idx);
-        if (!u) return;
-        _lib_apply_signal(u->name, u->can_id, u->start_bit, u->length,
-                          u->scale, u->offset, u->is_signed, u->endian,
-                          u->unit);
-    } else {
-        const ecu_preset_t *p = _lib_current_preset();
-        if (!p) return;
-        if (idx < 0 || idx >= ECU_SIG__COUNT) return;
-        const ecu_signal_row_t *r = &p->rows[idx];
-        if (r->can_id == 0) return;
-        const char *name = ecu_signal_slot_name((ecu_signal_slot_t)idx);
-        _lib_apply_signal(name, r->can_id, r->bit_start, r->bit_length,
-                          r->scale, r->offset, r->is_signed, r->endian,
-                          r->unit);
-    }
-}
-
-static void _lib_add_signal_row(const char *name, uint32_t can_id,
-                                const char *unit, bool is_user, int idx) {
-    if (!name) return;
-    lv_obj_t *row = lv_btn_create(s_lib_signal_list);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 44);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
-    lv_obj_set_style_bg_opa(row, 60, 0);
-    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 8, 0);
-    lv_obj_set_style_radius(row, 4, 0);
-    lv_obj_add_event_cb(row, _lib_signal_row_cb, LV_EVENT_CLICKED,
-                        LIB_PACK(is_user, idx));
-
-    lv_obj_t *name_lbl = lv_label_create(row);
-    lv_label_set_text(name_lbl, name);
-    lv_obj_set_width(name_lbl, 200);
-    lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
-
-    /* "Already in layout" indicator. Tap still works (re-binds). */
-    bool in_layout = signal_find_by_name(name) >= 0;
-    if (in_layout) {
-        lv_obj_t *check = lv_label_create(row);
-        lv_label_set_text(check, LV_SYMBOL_OK);
-        lv_obj_align(check, LV_ALIGN_LEFT_MID, 200, 0);
-        lv_obj_set_style_text_color(check, DT_ACCENT, 0);
-        lv_obj_set_style_text_font(check, THEME_FONT_SMALL, 0);
-    }
-
-    char meta[40];
-    snprintf(meta, sizeof(meta), "0x%X  %s",
-             (unsigned)can_id, (unit && unit[0]) ? unit : "");
-    lv_obj_t *meta_lbl = lv_label_create(row);
-    lv_label_set_text(meta_lbl, meta);
-    lv_obj_align(meta_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_text_color(meta_lbl, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(meta_lbl, THEME_FONT_SMALL, 0);
-}
-
-static void _lib_rebuild_signal_list(void) {
-    if (!s_lib_signal_list || !lv_obj_is_valid(s_lib_signal_list)) return;
-    lv_obj_clean(s_lib_signal_list);
-
-    if (_lib_make_is_my_library()) {
+static void _sig_collect_signals(void) {
+    s_sig_entry_count = 0;
+    if (_sig_is_user_library()) {
         uint16_t count = user_signals_count();
-        if (count == 0) {
-            lv_obj_t *empty = lv_label_create(s_lib_signal_list);
-            lv_label_set_text(empty,
-                "Empty - signals you create manually land here.");
-            lv_obj_set_style_text_color(empty, DT_TEXT_MUTED, 0);
-            lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
-            return;
-        }
-        for (uint16_t i = 0; i < count; i++) {
+        for (uint16_t i = 0; i < count && s_sig_entry_count < SIG_MAX_SIGNALS; i++) {
             const user_signal_t *u = user_signals_get(i);
             if (!u) continue;
-            _lib_add_signal_row(u->name, u->can_id, u->unit, true, i);
+            sig_entry_t *e = &s_sig_entries[s_sig_entry_count++];
+            strncpy(e->name, u->name, sizeof(e->name) - 1);
+            e->name[sizeof(e->name) - 1] = '\0';
+            e->can_id    = u->can_id;
+            e->start_bit = u->start_bit;
+            e->length    = u->length;
+            e->scale     = u->scale;
+            e->offset    = u->offset;
+            e->is_signed = u->is_signed;
+            e->endian    = u->endian;
+            strncpy(e->unit, u->unit, sizeof(e->unit) - 1);
+            e->unit[sizeof(e->unit) - 1] = '\0';
         }
         return;
     }
-
-    const ecu_preset_t *p = _lib_current_preset();
+    const ecu_preset_t *p = _sig_current_preset();
     if (!p) return;
-    for (int slot = 0; slot < ECU_SIG__COUNT; slot++) {
+    for (int slot = 0;
+         slot < ECU_SIG__COUNT && s_sig_entry_count < SIG_MAX_SIGNALS;
+         slot++) {
         const ecu_signal_row_t *r = &p->rows[slot];
         if (r->can_id == 0) continue;
         const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
         if (!name) continue;
-        _lib_add_signal_row(name, r->can_id, r->unit, false, slot);
+        sig_entry_t *e = &s_sig_entries[s_sig_entry_count++];
+        strncpy(e->name, name, sizeof(e->name) - 1);
+        e->name[sizeof(e->name) - 1] = '\0';
+        e->can_id    = r->can_id;
+        e->start_bit = r->bit_start;
+        e->length    = r->bit_length;
+        e->scale     = r->scale;
+        e->offset    = r->offset;
+        e->is_signed = r->is_signed;
+        e->endian    = r->endian;
+        strncpy(e->unit, r->unit ? r->unit : "", sizeof(e->unit) - 1);
+        e->unit[sizeof(e->unit) - 1] = '\0';
     }
 }
 
-static void _lib_rebuild_preset_dd(void) {
-    if (!s_lib_preset_dd || !lv_obj_is_valid(s_lib_preset_dd)) return;
-
-    if (_lib_make_is_my_library()) {
-        lv_dropdown_set_options(s_lib_preset_dd, "All");
-        lv_dropdown_set_selected(s_lib_preset_dd, 0);
-        lv_obj_add_state(s_lib_preset_dd, LV_STATE_DISABLED);
-        return;
+static int _sig_find_entry(const char *name) {
+    if (!name) return -1;
+    for (int i = 0; i < s_sig_entry_count; i++) {
+        if (strcmp(s_sig_entries[i].name, name) == 0) return i;
     }
-    lv_obj_clear_state(s_lib_preset_dd, LV_STATE_DISABLED);
-    /* One preset per (make,version) today; show its display name. */
-    const ecu_preset_t *p = _lib_current_preset();
-    lv_dropdown_set_options(s_lib_preset_dd,
-        (p && p->display) ? p->display : "Default");
-    lv_dropdown_set_selected(s_lib_preset_dd, 0);
+    return -1;
 }
 
-static void _lib_rebuild_version_dd(void) {
-    if (!s_lib_version_dd || !lv_obj_is_valid(s_lib_version_dd)) return;
+/* On open: try to locate the widget's current signal in one of the
+ * sources, so the dropdowns start in the matching state. */
+static void _sig_init_for_widget(void) {
+    s_sig_make_idx    = 0;
+    s_sig_version_idx = 0;
+    s_sig_signal_idx  = 0;
 
-    if (_lib_make_is_my_library()) {
-        lv_dropdown_set_options(s_lib_version_dd, "-");
-        lv_dropdown_set_selected(s_lib_version_dd, 0);
-        lv_obj_add_state(s_lib_version_dd, LV_STATE_DISABLED);
+    const char *current = _widget_signal_name();
+    if (!current || !current[0]) return;
+
+    for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
+        const ecu_preset_t *p = &ECU_PRESETS[i];
+        for (int slot = 0; slot < ECU_SIG__COUNT; slot++) {
+            if (p->rows[slot].can_id == 0) continue;
+            const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
+            if (!name || strcmp(name, current) != 0) continue;
+            for (int m = 0; m < s_sig_make_count; m++) {
+                if (!s_sig_makes[m] || strcmp(s_sig_makes[m], p->make) != 0) continue;
+                s_sig_make_idx = m;
+                _sig_collect_versions();
+                for (int v = 0; v < s_sig_version_count; v++) {
+                    if (s_sig_versions[v] && strcmp(s_sig_versions[v], p->version) == 0) {
+                        s_sig_version_idx = v;
+                        _sig_collect_signals();
+                        int sigi = _sig_find_entry(current);
+                        if (sigi >= 0) s_sig_signal_idx = sigi;
+                        return;
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    /* Not in any preset - check the user library. */
+    for (uint16_t u = 0; u < user_signals_count(); u++) {
+        const user_signal_t *us = user_signals_get(u);
+        if (!us || strcmp(us->name, current) != 0) continue;
+        for (int m = 0; m < s_sig_make_count; m++) {
+            if (s_sig_makes[m] && strcmp(s_sig_makes[m], SIG_MY_MAKE) == 0) {
+                s_sig_make_idx = m;
+                _sig_collect_signals();
+                int sigi = _sig_find_entry(current);
+                if (sigi >= 0) s_sig_signal_idx = sigi;
+                return;
+            }
+        }
+    }
+}
+
+static void _sig_set_dropdown_options(lv_obj_t *dd, const char *const *items,
+                                       int count, int selected) {
+    if (!dd || !lv_obj_is_valid(dd)) return;
+    if (count == 0) {
+        lv_dropdown_set_options(dd, "-");
+        lv_dropdown_set_selected(dd, 0);
         return;
     }
-    lv_obj_clear_state(s_lib_version_dd, LV_STATE_DISABLED);
-    _lib_collect_versions();
     char buf[512];
-    _lib_join_options(s_lib_versions, s_lib_version_count, buf, sizeof(buf));
-    lv_dropdown_set_options(s_lib_version_dd, buf);
-    s_lib_version_idx = 0;
-    lv_dropdown_set_selected(s_lib_version_dd, 0);
+    size_t pos = 0;
+    for (int i = 0; i < count; i++) {
+        if (!items[i]) continue;
+        if (i > 0 && pos < sizeof(buf) - 1) buf[pos++] = '\n';
+        size_t len = strlen(items[i]);
+        if (pos + len >= sizeof(buf)) len = sizeof(buf) - 1 - pos;
+        memcpy(buf + pos, items[i], len);
+        pos += len;
+    }
+    buf[pos] = '\0';
+    lv_dropdown_set_options(dd, buf);
+    if (selected >= 0 && selected < count)
+        lv_dropdown_set_selected(dd, (uint16_t)selected);
 }
 
-static void _lib_make_changed_cb(lv_event_t *e) {
-    s_lib_make_idx = lv_dropdown_get_selected(lv_event_get_target(e));
-    _lib_rebuild_version_dd();
-    _lib_rebuild_preset_dd();
-    _lib_rebuild_signal_list();
+static void _sig_refresh_signal_dd(void) {
+    const char *names[SIG_MAX_SIGNALS];
+    for (int i = 0; i < s_sig_entry_count; i++) names[i] = s_sig_entries[i].name;
+    _sig_set_dropdown_options(s_sig_signal_dd, names, s_sig_entry_count,
+                              s_sig_signal_idx);
 }
 
-static void _lib_version_changed_cb(lv_event_t *e) {
-    s_lib_version_idx = lv_dropdown_get_selected(lv_event_get_target(e));
-    _lib_rebuild_preset_dd();
-    _lib_rebuild_signal_list();
+static void _sig_refresh_preset_dd(void) {
+    if (!s_sig_preset_dd || !lv_obj_is_valid(s_sig_preset_dd)) return;
+    if (_sig_is_user_library()) {
+        lv_dropdown_set_options(s_sig_preset_dd, "All");
+        lv_obj_add_state(s_sig_preset_dd, LV_STATE_DISABLED);
+    } else {
+        const ecu_preset_t *p = _sig_current_preset();
+        lv_dropdown_set_options(s_sig_preset_dd,
+            (p && p->display) ? p->display : "Default");
+        lv_obj_clear_state(s_sig_preset_dd, LV_STATE_DISABLED);
+    }
+    lv_dropdown_set_selected(s_sig_preset_dd, 0);
 }
 
-static void _lib_back_cb(lv_event_t *e) {
-    (void)e;
-    _close_signal_library();
-    _open_signal_picker();
+static void _sig_refresh_version_dd(void) {
+    if (!s_sig_version_dd || !lv_obj_is_valid(s_sig_version_dd)) return;
+    if (_sig_is_user_library()) {
+        lv_dropdown_set_options(s_sig_version_dd, "-");
+        lv_dropdown_set_selected(s_sig_version_dd, 0);
+        lv_obj_add_state(s_sig_version_dd, LV_STATE_DISABLED);
+        return;
+    }
+    lv_obj_clear_state(s_sig_version_dd, LV_STATE_DISABLED);
+    _sig_collect_versions();
+    _sig_set_dropdown_options(s_sig_version_dd, s_sig_versions,
+                              s_sig_version_count, s_sig_version_idx);
 }
 
-static void _close_signal_library(void) {
-    s_in_library = false;
-    s_lib_make_dd     = NULL;
-    s_lib_version_dd  = NULL;
-    s_lib_preset_dd   = NULL;
-    s_lib_signal_list = NULL;
-    /* Caller decides whether to rebuild the picker or return to DATA. */
+static void _sig_apply_current_binding(void) {
+    if (!s_widget || !s_widget->inspector_set) return;
+    if (s_sig_signal_idx < 0 || s_sig_signal_idx >= s_sig_entry_count) return;
+    const sig_entry_t *e = &s_sig_entries[s_sig_signal_idx];
+
+    /* Register if missing; rebind if it already exists. */
+    int16_t idx = signal_register(e->name, e->can_id, e->start_bit, e->length,
+                                   e->scale, e->offset, e->is_signed, e->endian,
+                                   e->unit);
+    if (idx < 0) idx = signal_find_by_name(e->name);
+    if (idx < 0) return;
+
+    widget_field_value_t v = { .str = e->name };
+    s_widget->inspector_set(s_widget, "signal_name", &v);
 }
 
-static lv_obj_t *_lib_make_selector_row(lv_obj_t *parent, const char *label) {
+static void _sig_ecu_changed_cb(lv_event_t *e) {
+    s_sig_make_idx    = lv_dropdown_get_selected(lv_event_get_target(e));
+    s_sig_version_idx = 0;
+    _sig_refresh_version_dd();
+    _sig_refresh_preset_dd();
+    _sig_collect_signals();
+    int found = _sig_find_entry(_widget_signal_name());
+    s_sig_signal_idx = (found >= 0) ? found : 0;
+    _sig_refresh_signal_dd();
+}
+
+static void _sig_version_changed_cb(lv_event_t *e) {
+    s_sig_version_idx = lv_dropdown_get_selected(lv_event_get_target(e));
+    _sig_refresh_preset_dd();
+    _sig_collect_signals();
+    int found = _sig_find_entry(_widget_signal_name());
+    s_sig_signal_idx = (found >= 0) ? found : 0;
+    _sig_refresh_signal_dd();
+}
+
+static void _sig_signal_changed_cb(lv_event_t *e) {
+    s_sig_signal_idx = lv_dropdown_get_selected(lv_event_get_target(e));
+    _sig_apply_current_binding();
+}
+
+static void _sig_manual_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _open_signal_wizard();
+}
+
+static lv_obj_t *_sig_make_dropdown_row(lv_obj_t *parent, const char *label,
+                                         lv_obj_t **out_dd, lv_event_cb_t cb) {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, 40);
@@ -1631,12 +1395,9 @@ static lv_obj_t *_lib_make_selector_row(lv_obj_t *parent, const char *label) {
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-    return row;
-}
 
-static lv_obj_t *_lib_make_dropdown(lv_obj_t *parent_row) {
-    lv_obj_t *dd = lv_dropdown_create(parent_row);
-    lv_obj_set_size(dd, 280, 32);
+    lv_obj_t *dd = lv_dropdown_create(row);
+    lv_obj_set_size(dd, 290, 32);
     lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(dd, DT_BG_INSET, 0);
     lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
@@ -1644,75 +1405,35 @@ static lv_obj_t *_lib_make_dropdown(lv_obj_t *parent_row) {
     lv_obj_set_style_border_width(dd, 1, 0);
     lv_obj_set_style_text_color(dd, lv_color_white(), 0);
     lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
-    return dd;
+    if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, NULL);
+    if (out_dd) *out_dd = dd;
+    return row;
 }
 
-static void _open_signal_library(void) {
-    if (!s_content || !lv_obj_is_valid(s_content)) return;
+static void _build_signal_source_section(lv_obj_t *parent_card) {
     if (!s_widget) return;
-    s_in_signal_picker = false;
-    s_in_library = true;
-    lv_obj_clean(s_content);
 
-    _lib_collect_makes();
-    if (s_lib_make_idx >= s_lib_make_count) s_lib_make_idx = 0;
+    _sig_collect_makes();
+    _sig_init_for_widget();
+    _sig_collect_signals();
 
-    /* Header strip with Back + title. */
-    lv_obj_t *hdr = lv_obj_create(s_content);
-    lv_obj_set_size(hdr, LV_PCT(100), 40);
-    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(hdr, 0, 0);
-    lv_obj_set_style_border_width(hdr, 0, 0);
-    lv_obj_set_style_pad_all(hdr, 0, 0);
+    _sig_make_dropdown_row(parent_card, "ECU",     &s_sig_ecu_dd,     _sig_ecu_changed_cb);
+    _sig_make_dropdown_row(parent_card, "Version", &s_sig_version_dd, _sig_version_changed_cb);
+    _sig_make_dropdown_row(parent_card, "Preset",  &s_sig_preset_dd,  NULL);
+    _sig_make_dropdown_row(parent_card, "Signal",  &s_sig_signal_dd,  _sig_signal_changed_cb);
 
-    lv_obj_t *back = _make_button(hdr, 60, 32, "Back");
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 4, 0);
-    lv_obj_add_event_cb(back, _lib_back_cb, LV_EVENT_CLICKED, NULL);
+    _sig_set_dropdown_options(s_sig_ecu_dd, s_sig_makes,
+                              s_sig_make_count, s_sig_make_idx);
+    _sig_refresh_version_dd();
+    _sig_refresh_preset_dd();
+    _sig_refresh_signal_dd();
 
-    lv_obj_t *title = lv_label_create(hdr);
-    lv_label_set_text(title, "Signal library");
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
-
-    /* Source-selector card holds the 3 dropdowns. */
-    lv_obj_t *sel_card = _make_card(s_content, "SOURCE");
-
-    /* ECU row */
-    {
-        lv_obj_t *row = _lib_make_selector_row(sel_card, "ECU");
-        s_lib_make_dd = _lib_make_dropdown(row);
-        char buf[512];
-        _lib_join_options(s_lib_makes, s_lib_make_count, buf, sizeof(buf));
-        lv_dropdown_set_options(s_lib_make_dd, buf);
-        lv_dropdown_set_selected(s_lib_make_dd, (uint16_t)s_lib_make_idx);
-        lv_obj_add_event_cb(s_lib_make_dd, _lib_make_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, NULL);
-    }
-    /* Version row */
-    {
-        lv_obj_t *row = _lib_make_selector_row(sel_card, "Version");
-        s_lib_version_dd = _lib_make_dropdown(row);
-        lv_obj_add_event_cb(s_lib_version_dd, _lib_version_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, NULL);
-        _lib_rebuild_version_dd();
-    }
-    /* Preset row */
-    {
-        lv_obj_t *row = _lib_make_selector_row(sel_card, "Preset");
-        s_lib_preset_dd = _lib_make_dropdown(row);
-        _lib_rebuild_preset_dd();
-    }
-
-    /* Signal list card - fills the rest, scrolling internally. */
-    s_lib_signal_list = _make_card(s_content, NULL);
-    lv_obj_set_flex_grow(s_lib_signal_list, 1);
-    lv_obj_set_style_pad_row(s_lib_signal_list, 2, 0);
-    lv_obj_add_flag(s_lib_signal_list, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(s_lib_signal_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_lib_signal_list, LV_SCROLLBAR_MODE_ACTIVE);
-
-    _lib_rebuild_signal_list();
+    /* "+ Create custom signal" button for cases where the user's signal
+     * isn't covered by any preset / library entry. Opens the manual
+     * wizard which appends to user_signals.json. */
+    lv_obj_t *btn = _make_button(parent_card, LV_PCT(100), 38,
+        LV_SYMBOL_PLUS "  Create custom signal");
+    lv_obj_add_event_cb(btn, _sig_manual_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* New-signal wizard (Manual Entry path).
@@ -1963,7 +1684,9 @@ static void _wiz_save_cb(lv_event_t *e) {
     }
 
     _wiz_close();
-    _close_signal_picker();   /* back to DATA tab with new binding */
+    /* Rebuild the DATA tab so the new signal shows up in the dropdowns
+     * with the widget freshly bound. */
+    _show_tab(TAB_DATA);
 }
 
 static void _make_wiz_row(lv_obj_t *parent, int field) {
@@ -2109,14 +1832,14 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     s_bool_row_ctx_count = 0;
     s_select_row_ctx_count = 0;
     s_text_row_ctx_count = 0;
-    s_sig_row_value_lbl = NULL;
 
-    /* DATA tab leads with the per-widget signal binding row, then the
-     * data-category schema fields below it. A layout is just a flat
-     * signals list - we don't surface a "layout's ECU" concept here. */
+    /* DATA tab leads with the SIGNAL card (four-dropdown source +
+     * binding selector), then the data-category schema fields below it.
+     * A layout is just a flat signals list - we don't surface a
+     * "layout's ECU" concept here. */
     if (cat == WF_CAT_DATA && _widget_supports_signal_binding()) {
         lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
-        _build_signal_row(sig_card);
+        _build_signal_source_section(sig_card);
     }
 
     lv_obj_t *colours = NULL;
@@ -2458,7 +2181,6 @@ void inspector_close(void) {
     _close_picker();
     _close_wheel();
     _wiz_close();
-    _close_signal_library();
     if (s_overlay) {
         if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
         s_overlay = NULL;
@@ -2467,15 +2189,17 @@ void inspector_close(void) {
         if (lv_obj_is_valid(s_left_eater)) lv_obj_del(s_left_eater);
         s_left_eater = NULL;
     }
-    s_widget             = NULL;
-    s_content            = NULL;
-    s_header             = NULL;
-    s_tab_bar            = NULL;
-    s_tab_indicator      = NULL;
-    s_side_left_btn      = NULL;
-    s_side_right_btn     = NULL;
-    s_sig_row_value_lbl  = NULL;
-    s_in_signal_picker   = false;
+    s_widget          = NULL;
+    s_content         = NULL;
+    s_header          = NULL;
+    s_tab_bar         = NULL;
+    s_tab_indicator   = NULL;
+    s_side_left_btn   = NULL;
+    s_side_right_btn  = NULL;
+    s_sig_ecu_dd      = NULL;
+    s_sig_version_dd  = NULL;
+    s_sig_preset_dd   = NULL;
+    s_sig_signal_dd   = NULL;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
     edit_mode_commit_external_edit();
