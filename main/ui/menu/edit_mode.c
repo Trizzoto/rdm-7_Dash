@@ -55,6 +55,16 @@ static lv_obj_t  *s_toolbar       = NULL;
 static lv_obj_t  *s_step_btns[3]  = {NULL};
 static lv_obj_t  *s_readout_lbl   = NULL;
 
+/* Toolbar vertical position — user-draggable via the grip strip on top.
+ * `LV_ALIGN_BOTTOM_MID` is the alignment anchor; the offset is measured
+ * upward from the parent's bottom edge. Default -10 leaves a 10 px gap.
+ * Persists for the lifetime of the session; resets on reboot.
+ * Clamp range covers full screen minus toolbar height (see _build_toolbar). */
+static int16_t   s_toolbar_y_off  = -10;
+static lv_point_t s_tb_drag_pt    = {0, 0};
+static int16_t   s_tb_drag_start_y= 0;
+static bool      s_tb_dragging    = false;
+
 /* Nudge / drag-snap step (px). One of 1, 5, 10. Loaded from NVS on first
  * pill creation; written back when the user changes it. */
 static int8_t     s_step          = 5;
@@ -110,8 +120,10 @@ static void _build_banner(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(s_banner, 0, 0);
 
     lv_obj_t *lbl = lv_label_create(s_banner);
+    /* Plain ASCII only — Montserrat 12 ships without ·, em-dashes, etc.
+     * A missing glyph renders as a hollow square, which looks broken. */
     lv_label_set_text(lbl,
-        LV_SYMBOL_EDIT "  EDIT MODE  \xC2\xB7  long-press a widget to inspect");
+        LV_SYMBOL_EDIT "  EDIT MODE  -  tap a widget to select");
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
     lv_obj_center(lbl);
@@ -227,11 +239,12 @@ static void _set_decoration_clickable(bool clickable) {
 static void _update_readout(void) {
     if (!s_readout_lbl || !lv_obj_is_valid(s_readout_lbl)) return;
     if (!s_selected) {
-        lv_label_set_text(s_readout_lbl, "tap a widget to select");
+        lv_label_set_text(s_readout_lbl, "");
         return;
     }
+    /* Plain ASCII only — Montserrat 12 lacks the middle-dot glyph. */
     lv_label_set_text_fmt(s_readout_lbl,
-        "x:%4d  y:%4d  w:%4d  h:%4d  \xC2\xB7  tap again to drag",
+        "x:%4d   y:%4d   w:%4d   h:%4d",
         s_selected->x, s_selected->y, s_selected->w, s_selected->h);
 }
 
@@ -240,8 +253,13 @@ static void _refresh_step_styling(void) {
     for (int i = 0; i < 3; i++) {
         if (!s_step_btns[i] || !lv_obj_is_valid(s_step_btns[i])) continue;
         bool sel = (values[i] == s_step);
+        /* Selected: solid accent, no border. Unselected: faint white surface
+         * with the subtle light border from _make_tbtn left intact. */
         lv_obj_set_style_bg_color(s_step_btns[i],
-                                  sel ? DT_ACCENT : DT_BG_INSET, 0);
+                                  sel ? DT_ACCENT : lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(s_step_btns[i],
+                                sel ? LV_OPA_COVER : 10, 0);
+        lv_obj_set_style_border_opa(s_step_btns[i], sel ? 0 : 20, 0);
         lv_obj_t *lbl = lv_obj_get_child(s_step_btns[i], 0);
         if (lbl) lv_obj_set_style_text_color(lbl,
             sel ? lv_color_white() : DT_TEXT_PRIMARY, 0);
@@ -302,17 +320,75 @@ static void _configure_btn_cb(lv_event_t *e) {
 
 /* ── Toolbar build / destroy ──────────────────────────────────────────────── */
 
-/* Helper: small uniform button with a label centered inside it. */
+/* ── Toolbar drag (grip strip on top edge) ────────────────────────────────
+ *
+ * Pressing on the toolbar background (anywhere not on an inner button)
+ * starts a vertical drag. The drag only follows the Y axis; X is locked
+ * to bottom-mid alignment so the toolbar stays centered horizontally.
+ *
+ * 4 px movement threshold mirrors the widget drag handler. Position is
+ * clamped to keep the toolbar fully on-screen (top edge between 0 and
+ * "screen height − toolbar height − minimum gap"). */
+
+#define TB_DRAG_THRESHOLD 4
+#define TB_MIN_GAP        4    /* won't snap completely flush to screen edge */
+
+static void _toolbar_pressed_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_toolbar) return;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_indev_get_point(indev, &s_tb_drag_pt);
+    s_tb_drag_start_y = s_toolbar_y_off;
+    s_tb_dragging     = false;
+}
+
+static void _toolbar_pressing_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_toolbar || !lv_obj_is_valid(s_toolbar)) return;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t cur;
+    lv_indev_get_point(indev, &cur);
+    int dy = (int)cur.y - (int)s_tb_drag_pt.y;
+    if (!s_tb_dragging) {
+        if (abs(dy) < TB_DRAG_THRESHOLD) return;
+        s_tb_dragging = true;
+    }
+
+    /* Toolbar height is fixed at 56 (see _build_toolbar). LV_ALIGN_BOTTOM_MID
+     * with offset y measures from the parent's bottom edge upward. Range:
+     *   max (lowest): -TB_MIN_GAP        → 4 px above bottom edge
+     *   min (highest): -(480-56-TB_MIN_GAP) = -420 → 4 px below top edge
+     * Clamp keeps the toolbar fully visible regardless of drag distance. */
+    int new_y = s_tb_drag_start_y + dy;
+    if (new_y > -TB_MIN_GAP)      new_y = -TB_MIN_GAP;
+    if (new_y < -(480 - 56 - TB_MIN_GAP))
+                                  new_y = -(480 - 56 - TB_MIN_GAP);
+    s_toolbar_y_off = (int16_t)new_y;
+    lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, s_toolbar_y_off);
+}
+
+/* Helper: web-style button — translucent surface, subtle light border, no
+ * shadow. Mirrors the `.wst-btn` look from main/web/index.html. */
 static lv_obj_t *_make_tbtn(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
                             const char *text) {
     lv_obj_t *b = lv_btn_create(parent);
     lv_obj_set_size(b, w, h);
-    lv_obj_set_style_bg_color(b, DT_BG_INSET, 0);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    /* Resting: very translucent inset surface — rgba(255,255,255,~0.04). */
+    lv_obj_set_style_bg_color(b, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(b, 10, 0);
+    /* Pressed: brighter highlight — rgba(255,255,255,~0.12). */
+    lv_obj_set_style_bg_color(b, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, 30, LV_STATE_PRESSED);
+    /* Thin light border for definition. */
+    lv_obj_set_style_border_color(b, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(b, 20, 0);
+    lv_obj_set_style_border_width(b, 1, 0);
     lv_obj_set_style_radius(b, DT_RADIUS_SM, 0);
-    lv_obj_set_style_border_width(b, 0, 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);
+
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text(l, text);
     lv_obj_center(l);
@@ -326,25 +402,49 @@ static void _build_toolbar(lv_obj_t *parent) {
 
     s_toolbar = lv_obj_create(parent);
     lv_obj_set_size(s_toolbar, 720, 56);
-    lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, s_toolbar_y_off);
     lv_obj_clear_flag(s_toolbar, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Web editor look: dark glassmorphic panel — translucent so the live
+     * widgets below remain partially visible, no hard border, soft floating
+     * shadow. Tracks main/web/index.html `.modal` / `.toolbar` patterns. */
     lv_obj_set_style_bg_color(s_toolbar, DT_BG_PANEL, 0);
-    lv_obj_set_style_bg_opa(s_toolbar, LV_OPA_90, 0);
-    lv_obj_set_style_border_color(s_toolbar, DT_BORDER_DARK, 0);
-    lv_obj_set_style_border_width(s_toolbar, 1, 0);
+    lv_obj_set_style_bg_opa(s_toolbar, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(s_toolbar, 0, 0);
     lv_obj_set_style_radius(s_toolbar, DT_RADIUS_LG, 0);
-    lv_obj_set_style_pad_all(s_toolbar, 8, 0);
-    lv_obj_set_style_pad_column(s_toolbar, 8, 0);
-    lv_obj_set_style_shadow_width(s_toolbar, 10, 0);
+    lv_obj_set_style_pad_all(s_toolbar, 10, 0);
+    lv_obj_set_style_pad_column(s_toolbar, 10, 0);
+    lv_obj_set_style_shadow_width(s_toolbar, 16, 0);
     lv_obj_set_style_shadow_color(s_toolbar, lv_color_black(), 0);
-    lv_obj_set_style_shadow_opa(s_toolbar, LV_OPA_40, 0);
-    lv_obj_set_style_shadow_ofs_y(s_toolbar, 2, 0);
+    lv_obj_set_style_shadow_opa(s_toolbar, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_ofs_y(s_toolbar, 4, 0);
+
+    /* Grip strip — small white pill at top-center hints "you can drag me". */
+    lv_obj_t *grip = lv_obj_create(s_toolbar);
+    lv_obj_set_size(grip, 36, 4);
+    lv_obj_align(grip, LV_ALIGN_TOP_MID, 0, -4);
+    lv_obj_clear_flag(grip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(grip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(grip, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(grip, 60, 0);
+    lv_obj_set_style_radius(grip, 2, 0);
+    lv_obj_set_style_border_width(grip, 0, 0);
+    lv_obj_set_style_shadow_width(grip, 0, 0);
+
+    /* Toolbar bg captures drag events. Inner buttons get hit-tested first
+     * (LVGL dispatches to topmost CLICKABLE child), so dragging only fires
+     * when pressing on empty space — the grip is the obvious target. */
+    lv_obj_add_event_cb(s_toolbar, _toolbar_pressed_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_toolbar, _toolbar_pressing_cb, LV_EVENT_PRESSING, NULL);
 
     lv_obj_set_flex_flow(s_toolbar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_toolbar,
                           LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    /* Grip is positioned absolutely (TOP_MID) — flex layout below treats
+     * remaining children as the row content. Tell flex to ignore it. */
+    lv_obj_add_flag(grip, LV_OBJ_FLAG_IGNORE_LAYOUT);
 
     /* Nudge cluster — 4 buttons, tight 2px gaps */
     lv_obj_t *nudges = lv_obj_create(s_toolbar);
@@ -369,26 +469,25 @@ static void _build_toolbar(lv_obj_t *parent) {
                             (void *)(intptr_t)dirs[i]);
     }
 
-    /* Step toggle — 3-segment, shares an outer border */
+    /* Step toggle — 3-segment chip group. Each chip is a small _make_tbtn
+     * button with rounded corners; _refresh_step_styling colours the active
+     * one accent. Web-style: small gap between segments rather than a hard
+     * shared border. */
     lv_obj_t *steps = lv_obj_create(s_toolbar);
-    lv_obj_set_size(steps, 132, 36);
+    lv_obj_set_size(steps, 138, 38);
     lv_obj_set_style_bg_opa(steps, 0, 0);
-    lv_obj_set_style_border_color(steps, DT_BORDER_LIGHT, 0);
-    lv_obj_set_style_border_width(steps, 1, 0);
-    lv_obj_set_style_radius(steps, DT_RADIUS_SM, 0);
+    lv_obj_set_style_border_width(steps, 0, 0);
     lv_obj_set_style_pad_all(steps, 0, 0);
-    lv_obj_set_style_pad_column(steps, 0, 0);
-    lv_obj_set_style_clip_corner(steps, true, 0);
+    lv_obj_set_style_pad_column(steps, 3, 0);
     lv_obj_clear_flag(steps, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(steps, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(steps, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     static const int8_t step_values[3] = {1, 5, 10};
-    static const char *const step_labels[3] = {"1 px", "5 px", "10 px"};
+    static const char *const step_labels[3] = {"1", "5", "10"};
     for (int i = 0; i < 3; i++) {
-        lv_obj_t *b = _make_tbtn(steps, 44, 34, step_labels[i]);
-        lv_obj_set_style_radius(b, 0, 0);   /* flush corners inside segment */
+        lv_obj_t *b = _make_tbtn(steps, 44, 36, step_labels[i]);
         lv_obj_add_event_cb(b, _step_btn_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)step_values[i]);
         s_step_btns[i] = b;
