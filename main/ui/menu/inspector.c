@@ -1,19 +1,30 @@
 /*
- * inspector.c — see inspector.h.
+ * inspector.c - see inspector.h.
  *
- * Overlay layout (800×480, sits on top of ui_Screen3):
+ * Right-side dock layout (320x480, the dashboard stays visible at full
+ * native size in the left 480 px so live edits land in real time). Mirrors
+ * the web editor's Properties-panel-on-right so users transfer skill from
+ * the browser editor to on-device.
  *
- *   +-----------------------------------------------------------+
- *   |  <-  Panel - slot 0                                       |   48 header (opaque)
- *   +-----------------------------------------------------------+
- *   |    DATA           STYLE           RULES                   |   40 tab bar (opaque)
- *   +-----------------------------------------------------------+
- *   |                                                           |
- *   |   <scrollable tab content>                                |   392 (transparent
- *   |   cards are opaque; gaps show the dashboard through       |        background)
- *   |   a dimmed backdrop so live edits are visible.            |
- *   |                                                           |
- *   +-----------------------------------------------------------+
+ *   left 480 px              right 320 px
+ *  +-----------------+ +-------------------+
+ *  |                 | |  <-  Panel slot 0 |   48 header
+ *  |                 | +-------------------+
+ *  |   dashboard     | | DATA STYLE RULES  |   40 tab bar
+ *  |   (live preview | +-------------------+
+ *  |   - clicks      | |                   |
+ *  |   absorbed by   | |  property list    |
+ *  |   click-eater)  | |  (compact rows)   |
+ *  |                 | |                   |
+ *  +-----------------+ +-------------------+
+ *
+ * Property rows are one-line: label + preview swatch + chevron. Tap a row
+ * to open a modal preset-picker popover floating above everything. Sliders
+ * stay inline; they're cheap enough to render in the dock.
+ *
+ * Cards sit at ~70% opacity so the widget being edited stays partly
+ * visible behind the dock too - the user sees colour / dim changes land
+ * even on the area covered by the dock.
  */
 #include "ui/menu/inspector.h"
 #include "ui/menu/design_tokens.h"
@@ -22,34 +33,42 @@
 #include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays + ui_Label/ui_Value */
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
-#include "widgets/widget_panel.h"  /* panel_data_t — STYLE tab pilot */
+#include "widgets/widget_panel.h"  /* panel_data_t - STYLE tab pilot */
 #include "esp_log.h"
 #include <stdio.h>
 #include <stdint.h>
 
 static const char *TAG = "inspector";
 
-/* ── Tab definitions ──────────────────────────────────────────────────── */
-/* LAYOUT was removed — the bottom toolbar's chip popover owns position +
- * size, the Inspector doesn't duplicate it. */
-
+/* Tab definitions. LAYOUT was removed - the bottom toolbar's chip popover
+ * owns position + size, the Inspector doesn't duplicate it. */
 #define TAB_COUNT 3
 enum { TAB_DATA = 0, TAB_STYLE, TAB_RULES };
 static const char *const s_tab_names[TAB_COUNT] = {
     "DATA", "STYLE", "RULES"
 };
-#define TAB_WIDTH (800 / TAB_COUNT)   /* even split across the bar */
 
-/* ── Module state ─────────────────────────────────────────────────────── */
+/* Right-side dock geometry. Keeps the left 480 px untouched so live edits
+ * show up at native size, matching the web editor's right-Properties
+ * layout. */
+#define DOCK_W    320
+#define DOCK_X    (800 - DOCK_W)        /* 480 */
+#define TAB_WIDTH (DOCK_W / TAB_COUNT)  /* even split across the bar */
 
-static lv_obj_t *s_overlay         = NULL;   /* root, full-screen translucent */
+/* Module state */
+
+static lv_obj_t *s_overlay         = NULL;   /* right-side dock root */
+static lv_obj_t *s_left_eater      = NULL;   /* invisible click-eater over
+                                              * the dashboard area so
+                                              * edit_mode drag / selection
+                                              * can't fire underneath */
 static lv_obj_t *s_tab_buttons[TAB_COUNT] = {NULL};
-static lv_obj_t *s_tab_indicator   = NULL;   /* accent underline */
-static lv_obj_t *s_content         = NULL;   /* scrollable, transparent bg */
+static lv_obj_t *s_tab_indicator   = NULL;
+static lv_obj_t *s_content         = NULL;
 static widget_t *s_widget          = NULL;
-static int       s_active_tab      = TAB_STYLE;   /* most-used tab default */
+static int       s_active_tab      = TAB_STYLE;
 
-/* ── Helpers ──────────────────────────────────────────────────────────── */
+/* Helpers */
 
 static const char *_widget_type_name(widget_type_t t) {
     switch (t) {
@@ -71,8 +90,6 @@ static const char *_widget_type_name(widget_type_t t) {
     }
 }
 
-/* Translucent-white button — mirrors the dashboard toolbars' _make_tbtn so
- * the visual language stays consistent between the toolbars and Inspector. */
 static lv_obj_t *_make_button(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
                               const char *text) {
     lv_obj_t *b = lv_btn_create(parent);
@@ -95,26 +112,21 @@ static lv_obj_t *_make_button(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     return b;
 }
 
-/* Card container for grouping fields. Opaque so the field content stays
- * legible against whatever's behind. SCROLLABLE by default — callers that
- * give the card a fixed height get internal scrolling for overflow without
- * the WHOLE tab needing to scroll. Limiting the dirty repaint area to one
- * card at a time was the main thing the user asked for after seeing the
- * tab-wide scroll lag. */
+/* Card container. Translucent so the dashboard widget being edited stays
+ * partly visible behind the dock. */
 static lv_obj_t *_make_card(lv_obj_t *parent, const char *title) {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_width(card, LV_PCT(100));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_70, 0);
     lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_opa(card, LV_OPA_80, 0);
     lv_obj_set_style_border_width(card, 1, 0);
     lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
-    lv_obj_set_style_pad_all(card, 12, 0);
-    lv_obj_set_style_pad_row(card, 8, 0);
-    /* Auto-show the scrollbar only while actively scrolling — cleaner look
-     * for cards that don't overflow. */
-    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_style_pad_all(card, 10, 0);
+    lv_obj_set_style_pad_row(card, 4, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -123,6 +135,7 @@ static lv_obj_t *_make_card(lv_obj_t *parent, const char *title) {
         lv_label_set_text(t, title);
         lv_obj_set_style_text_color(t, DT_TEXT_MUTED, 0);
         lv_obj_set_style_text_font(t, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_pad_bottom(t, 4, 0);
     }
     return card;
 }
@@ -135,7 +148,7 @@ static void _position_tab_indicator(void) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- *  STYLE tab — per-widget appearance fields
+ *  STYLE tab - per-widget appearance fields
  * ════════════════════════════════════════════════════════════════════════
  *
  * Pilot widget: Panel. Other types fall through to the placeholder.
@@ -143,17 +156,16 @@ static void _position_tab_indicator(void) {
  * Live preview: each change writes BOTH the widget's type_data field
  * (persisted on Inspector close via edit_mode_commit_external_edit) AND
  * the corresponding LVGL style attribute on the widget's existing object
- * (so the user sees it land in real time through the translucent overlay).
+ * (so the user sees it land in real time through the translucent dock).
  *
- * Pattern is intentionally simple — direct struct mutation + direct
- * lv_obj_set_style_* — no per-widget setter functions to chase. Future
- * widget types follow the same template. */
+ * Row format mirrors the web editor's Properties panel:
+ *
+ *     Border               [#]  >
+ *     Background           [#]  >
+ *
+ * Tap a row to open the preset picker. Picker floats over everything.
+ */
 
-/* Curated preset palette. The legacy editor uses ~10 theme presets plus
- * "Custom..."; we mirror the preset set so a colour picked in either editor
- * shows the same active highlight in the other. Custom-colour entry is
- * deferred to Phase 3.5 (or whenever we expose the legacy colour wheel as
- * a public helper). */
 #define PRESET_COUNT 10
 static lv_color_t s_presets[PRESET_COUNT];
 static bool       s_presets_ready = false;
@@ -173,9 +185,6 @@ static void _ensure_presets(void) {
     s_presets_ready = true;
 }
 
-/* Field IDs. Top 8 bits in the swatch button's user_data identify the
- * field; bottom 8 bits hold the preset index. Single global handler
- * dispatches based on the field. */
 enum panel_field {
     F_PANEL_BORDER = 0,
     F_PANEL_BG,
@@ -189,15 +198,19 @@ enum panel_dim {
     D_PANEL_DIM_COUNT
 };
 
-#define USERDATA_PACK(field, idx) \
-    ((void *)(intptr_t)(((field) << 8) | ((idx) & 0xFF)))
-#define USERDATA_FIELD(d) ((((int)(intptr_t)(d)) >> 8) & 0xFF)
-#define USERDATA_IDX(d)   ((((int)(intptr_t)(d))     ) & 0xFF)
+static const char *const s_panel_field_names[F_PANEL_FIELD_COUNT] = {
+    "Border", "Background", "Label", "Value"
+};
 
-/* Track swatches per field so we can update the active-border highlight
- * across the row when the user picks one. */
-static lv_obj_t *s_panel_swatches[F_PANEL_FIELD_COUNT][PRESET_COUNT] = {{NULL}};
-static lv_obj_t *s_panel_dim_value_lbls[D_PANEL_DIM_COUNT] = {NULL};
+/* One small preview swatch per colour row. */
+static lv_obj_t *s_panel_swatch_preview[F_PANEL_FIELD_COUNT] = {NULL};
+static lv_obj_t *s_panel_dim_value_lbls[D_PANEL_DIM_COUNT]    = {NULL};
+
+/* Picker popover state. Opened on tap of a colour row, dismissed on tap
+ * outside the inner card or on swatch select. */
+static lv_obj_t *s_picker                            = NULL;
+static int       s_picker_field                      = -1;
+static lv_obj_t *s_picker_swatches[PRESET_COUNT]     = {NULL};
 
 static bool _color_eq(lv_color_t a, lv_color_t b) {
     return a.full == b.full;
@@ -213,19 +226,29 @@ static lv_color_t _panel_get_color(panel_data_t *pd, int field) {
     return lv_color_black();
 }
 
+/* Refresh the row's preview swatch AND, if the picker is up on the same
+ * field, the active highlight in the picker grid. */
 static void _refresh_swatch_active(int field) {
     if (!s_widget || s_widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)s_widget->type_data;
     if (!pd) return;
     lv_color_t current = _panel_get_color(pd, field);
-    for (int i = 0; i < PRESET_COUNT; i++) {
-        lv_obj_t *sw = s_panel_swatches[field][i];
-        if (!sw || !lv_obj_is_valid(sw)) continue;
-        bool active = _color_eq(s_presets[i], current);
-        lv_obj_set_style_border_color(sw,
-            active ? DT_ACCENT : lv_color_white(), 0);
-        lv_obj_set_style_border_width(sw, active ? 3 : 1, 0);
-        lv_obj_set_style_border_opa(sw, active ? LV_OPA_COVER : 60, 0);
+
+    lv_obj_t *prev = s_panel_swatch_preview[field];
+    if (prev && lv_obj_is_valid(prev)) {
+        lv_obj_set_style_bg_color(prev, current, 0);
+    }
+
+    if (s_picker_field == field) {
+        for (int i = 0; i < PRESET_COUNT; i++) {
+            lv_obj_t *sw = s_picker_swatches[i];
+            if (!sw || !lv_obj_is_valid(sw)) continue;
+            bool active = _color_eq(s_presets[i], current);
+            lv_obj_set_style_border_color(sw,
+                active ? DT_ACCENT : lv_color_white(), 0);
+            lv_obj_set_style_border_width(sw, active ? 3 : 1, 0);
+            lv_obj_set_style_border_opa(sw, active ? LV_OPA_COVER : 60, 0);
+        }
     }
 }
 
@@ -267,42 +290,83 @@ static void _panel_apply_color(int field, lv_color_t c) {
     _refresh_swatch_active(field);
 }
 
-static void _swatch_clicked_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    int data  = (int)(intptr_t)lv_event_get_user_data(e);
-    int field = USERDATA_FIELD(data);
-    int idx   = USERDATA_IDX(data);
-    if (idx < 0 || idx >= PRESET_COUNT) return;
-    _panel_apply_color(field, s_presets[idx]);
+/* Picker popover */
+
+static void _close_picker(void) {
+    if (s_picker && lv_obj_is_valid(s_picker)) {
+        lv_obj_del(s_picker);
+    }
+    s_picker = NULL;
+    s_picker_field = -1;
+    for (int i = 0; i < PRESET_COUNT; i++) s_picker_swatches[i] = NULL;
 }
 
-static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
+static void _picker_swatch_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= PRESET_COUNT) return;
+    if (s_picker_field < 0) return;
+    _panel_apply_color(s_picker_field, s_presets[idx]);
+    _close_picker();
+}
+
+/* Tap on the backdrop (but not the inner card) closes the picker. */
+static void _picker_backdrop_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+    _close_picker();
+}
+
+static void _open_picker(int field) {
     if (!s_widget || s_widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)s_widget->type_data;
     if (!pd) return;
+    _close_picker();
+    s_picker_field = field;
 
-    lv_obj_t *row = lv_obj_create(parent);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 40);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_opa(row, 0, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_style_pad_column(row, 4, 0);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    /* lv_layer_top sits above the inspector dock and the dashboard.
+     * Backdrop is semi-dim so the picker reads as modal. */
+    s_picker = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_picker, 800, 480);
+    lv_obj_set_pos(s_picker, 0, 0);
+    lv_obj_set_style_bg_color(s_picker, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_picker, 110, 0);
+    lv_obj_set_style_border_width(s_picker, 0, 0);
+    lv_obj_set_style_radius(s_picker, 0, 0);
+    lv_obj_set_style_pad_all(s_picker, 0, 0);
+    lv_obj_clear_flag(s_picker, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_picker, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_picker, _picker_backdrop_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, name);
-    lv_obj_set_width(lbl, 90);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+    lv_obj_t *card = lv_obj_create(s_picker);
+    lv_obj_set_size(card, 300, 200);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
+    lv_obj_t *title = lv_label_create(card);
+    int safe_field = (field >= 0 && field < F_PANEL_FIELD_COUNT) ? field : 0;
+    lv_label_set_text_fmt(title, "%s colour", s_panel_field_names[safe_field]);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_SMALL, 0);
+
+    /* 5x2 swatch grid, 40 px swatches + 8 px gaps */
     lv_color_t current = _panel_get_color(pd, field);
+    const int grid_x0 = 8;
+    const int grid_y0 = 36;
+    const int cell    = 48;
     for (int i = 0; i < PRESET_COUNT; i++) {
-        lv_obj_t *sw = lv_btn_create(row);
-        lv_obj_set_size(sw, 32, 32);
+        int col = i % 5;
+        int row = i / 5;
+        lv_obj_t *sw = lv_btn_create(card);
+        lv_obj_set_size(sw, 40, 40);
+        lv_obj_set_pos(sw, grid_x0 + col * cell, grid_y0 + row * cell);
         lv_obj_set_style_bg_color(sw, s_presets[i], 0);
         lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(sw, 4, 0);
@@ -313,13 +377,66 @@ static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
         lv_obj_set_style_border_opa(sw, active ? LV_OPA_COVER : 60, 0);
         lv_obj_set_style_shadow_width(sw, 0, 0);
         lv_obj_set_style_pad_all(sw, 0, 0);
-        lv_obj_add_event_cb(sw, _swatch_clicked_cb, LV_EVENT_CLICKED,
-                            USERDATA_PACK(field, i));
-        s_panel_swatches[field][i] = sw;
+        lv_obj_add_event_cb(sw, _picker_swatch_clicked_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+        s_picker_swatches[i] = sw;
     }
 }
 
-/* ── Dimension sliders (border width, border radius) ───────────────────── */
+/* Compact colour row: label + preview swatch + chevron. */
+
+static void _color_row_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int field = (int)(intptr_t)lv_event_get_user_data(e);
+    _open_picker(field);
+}
+
+static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 4, 0);
+    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_add_event_cb(row, _color_row_clicked_cb, LV_EVENT_CLICKED,
+                        (void *)(intptr_t)field);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, name);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *chev = lv_label_create(row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *sw = lv_obj_create(row);
+    lv_obj_set_size(sw, 28, 28);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -22, 0);
+    lv_obj_set_style_bg_color(sw, _panel_get_color(pd, field), 0);
+    lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(sw, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(sw, 80, 0);
+    lv_obj_set_style_border_width(sw, 1, 0);
+    lv_obj_set_style_radius(sw, 4, 0);
+    lv_obj_set_style_pad_all(sw, 0, 0);
+    lv_obj_clear_flag(sw, LV_OBJ_FLAG_CLICKABLE);
+    s_panel_swatch_preview[field] = sw;
+}
+
+/* Dimension sliders (border width, border radius) - narrow column variant */
 
 static void _panel_apply_dim(int dim, int v) {
     if (!s_widget || s_widget->type != WIDGET_PANEL) return;
@@ -355,24 +472,24 @@ static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
                           int initial, int vmin, int vmax) {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 32);
+    lv_obj_set_height(row, 36);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(row, 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_style_pad_column(row, 12, 0);
+    lv_obj_set_style_pad_column(row, 6, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *lbl = lv_label_create(row);
     lv_label_set_text(lbl, name);
-    lv_obj_set_width(lbl, 140);
+    lv_obj_set_width(lbl, 100);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
 
     lv_obj_t *slider = lv_slider_create(row);
-    lv_obj_set_size(slider, 400, 12);
+    lv_obj_set_size(slider, 130, 8);
     lv_slider_set_range(slider, vmin, vmax);
     lv_slider_set_value(slider, initial, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider, DT_BG_INSET, LV_PART_MAIN);
@@ -383,45 +500,39 @@ static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
 
     lv_obj_t *value = lv_label_create(row);
     lv_label_set_text_fmt(value, "%d", initial);
-    lv_obj_set_width(value, 40);
+    lv_obj_set_width(value, 30);
     lv_obj_set_style_text_color(value, lv_color_white(), 0);
     lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
     s_panel_dim_value_lbls[dim] = value;
 }
 
-/* ── Panel STYLE tab builder ───────────────────────────────────────────── */
+/* Panel STYLE tab builder */
 
 static void _build_style_tab_panel(void) {
     if (!s_widget || s_widget->type != WIDGET_PANEL) return;
 
     _ensure_presets();
     for (int f = 0; f < F_PANEL_FIELD_COUNT; f++)
-        for (int i = 0; i < PRESET_COUNT; i++)
-            s_panel_swatches[f][i] = NULL;
+        s_panel_swatch_preview[f] = NULL;
     for (int d = 0; d < D_PANEL_DIM_COUNT; d++)
         s_panel_dim_value_lbls[d] = NULL;
 
     panel_data_t *pd = (panel_data_t *)s_widget->type_data;
     if (!pd) return;
 
-    /* Colours card — fixed height so internal scrollbar (if needed) bounds
-     * the scroll area instead of the whole tab. */
     lv_obj_t *colours = _make_card(s_content, "COLOURS");
-    lv_obj_set_height(colours, 240);
     _make_color_row(colours, "Border",     F_PANEL_BORDER);
     _make_color_row(colours, "Background", F_PANEL_BG);
     _make_color_row(colours, "Label",      F_PANEL_LABEL);
     _make_color_row(colours, "Value",      F_PANEL_VALUE);
 
-    /* Dimensions card — fits two short rows. */
     lv_obj_t *dims = _make_card(s_content, "DIMENSIONS");
-    lv_obj_set_height(dims, 120);
     _make_dim_row(dims, "Border width",  D_PANEL_BORDER_W, pd->border_width,  0, 10);
     _make_dim_row(dims, "Border radius", D_PANEL_BORDER_R, pd->border_radius, 0, 30);
 }
 
-/* ── Placeholder tab (DATA / STYLE / RULES, all same shape for now) ──── */
+/* Placeholder tab */
 
 static void _legacy_btn_cb(lv_event_t *e) {
     (void)e;
@@ -432,7 +543,7 @@ static void _legacy_btn_cb(lv_event_t *e) {
 
 static void _build_placeholder_tab(const char *tab_name) {
     lv_obj_t *card = _make_card(s_content, NULL);
-    lv_obj_set_style_pad_all(card, 32, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
 
     lv_obj_t *title = lv_label_create(card);
     lv_label_set_text_fmt(title, "%s coming soon", tab_name);
@@ -440,20 +551,21 @@ static void _build_placeholder_tab(const char *tab_name) {
     lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
 
     lv_obj_t *msg = lv_label_create(card);
+    lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(msg, DOCK_W - 80);
     lv_label_set_text(msg,
-        "Position + size live in the bottom toolbar.\n"
-        "For the full per-widget settings list, the legacy editor\n"
-        "is still available below; the web editor remains the most\n"
-        "complete option.");
+        "Position + size live in the bottom toolbar. "
+        "For the full per-widget settings list, use the legacy "
+        "editor or the web editor.");
     lv_obj_set_style_text_color(msg, DT_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
 
-    lv_obj_t *legacy_btn = _make_button(card, 220, 44, "Open legacy editor");
+    lv_obj_t *legacy_btn = _make_button(card, DOCK_W - 60, 40,
+                                        "Open legacy editor");
     lv_obj_add_event_cb(legacy_btn, _legacy_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
-/* ── Tab switching ────────────────────────────────────────────────────── */
+/* Tab switching */
 
 static void _refresh_tab_button_styles(void) {
     for (int i = 0; i < TAB_COUNT; i++) {
@@ -471,6 +583,7 @@ static void _refresh_tab_button_styles(void) {
 static void _show_tab(int idx) {
     if (!s_content || !lv_obj_is_valid(s_content)) return;
     if (idx < 0 || idx >= TAB_COUNT) return;
+    _close_picker();
     s_active_tab = idx;
     lv_obj_clean(s_content);
     switch (idx) {
@@ -478,9 +591,6 @@ static void _show_tab(int idx) {
             _build_placeholder_tab("Data");
             break;
         case TAB_STYLE:
-            /* Per-widget dispatch. New widgets get hand-coded sections per
-             * Phase 3.2.x; widgets without coverage fall through to the
-             * placeholder (legacy editor fallback). */
             if (s_widget && s_widget->type == WIDGET_PANEL)
                 _build_style_tab_panel();
             else
@@ -499,7 +609,7 @@ static void _tab_btn_cb(lv_event_t *e) {
     _show_tab(idx);
 }
 
-/* ── Shell ────────────────────────────────────────────────────────────── */
+/* Shell */
 
 static void _back_btn_cb(lv_event_t *e) {
     (void)e;
@@ -508,12 +618,10 @@ static void _back_btn_cb(lv_event_t *e) {
 
 static void _build_header(void) {
     lv_obj_t *header = lv_obj_create(s_overlay);
-    lv_obj_set_size(header, 800, 48);
+    lv_obj_set_size(header, DOCK_W, 48);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(header, DT_BG_PANEL, 0);
-    /* Mostly opaque so the title + back button are crisp against whatever's
-     * underneath. The dimmed backdrop handles the rest. */
     lv_obj_set_style_bg_opa(header, LV_OPA_90, 0);
     lv_obj_set_style_border_color(header, DT_BORDER_DARK, 0);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
@@ -539,18 +647,18 @@ static void _build_header(void) {
 
     lv_obj_t *title = lv_label_create(header);
     char buf[48];
-    snprintf(buf, sizeof(buf), "%s  -  slot %u",
+    snprintf(buf, sizeof(buf), "%s slot %u",
              _widget_type_name(s_widget ? s_widget->type : (widget_type_t)0),
              (unsigned)(s_widget ? s_widget->slot : 0));
     lv_label_set_text(title, buf);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 60, 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 52, 0);
 }
 
 static void _build_tab_bar(void) {
     lv_obj_t *bar = lv_obj_create(s_overlay);
-    lv_obj_set_size(bar, 800, 40);
+    lv_obj_set_size(bar, DOCK_W, 40);
     lv_obj_set_pos(bar, 0, 48);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(bar, DT_BG_PANEL, 0);
@@ -593,24 +701,24 @@ static void _build_tab_bar(void) {
 
 static void _build_content_area(void) {
     s_content = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_content, 800, 480 - 48 - 40);
+    lv_obj_set_size(s_content, DOCK_W, 480 - 48 - 40);
     lv_obj_set_pos(s_content, 0, 48 + 40);
-    /* Transparent — dashboard widget being edited is fully visible through
-     * the gaps between cards. */
+    /* Transparent - gaps between cards let the dashboard show through. */
     lv_obj_set_style_bg_opa(s_content, 0, 0);
     lv_obj_set_style_border_width(s_content, 0, 0);
     lv_obj_set_style_radius(s_content, 0, 0);
     lv_obj_set_style_pad_all(s_content, 8, 0);
     lv_obj_set_style_pad_row(s_content, 10, 0);
-    /* Content area itself is NOT scrollable — scrolling is bounded to
-     * individual cards so the repaint area stays small. */
+    /* Content area itself is NOT scrollable - the dock is narrow so cards
+     * stack tightly; if a future widget needs more space we'll re-enable
+     * scrolling on individual cards. */
     lv_obj_clear_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_content, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 }
 
-/* ── Public API ───────────────────────────────────────────────────────── */
+/* Public API */
 
 void inspector_open(widget_t *w) {
     if (!w) return;
@@ -619,30 +727,34 @@ void inspector_open(widget_t *w) {
     s_widget     = w;
     s_active_tab = TAB_STYLE;
 
-    /* Build on ui_Screen3, NOT a new screen — the dashboard stays alive
-     * underneath so the user sees their edits land in real time through
-     * the translucent backdrop. */
     lv_obj_t *parent = ui_Screen3;
     if (!parent || !lv_obj_is_valid(parent)) parent = lv_scr_act();
     if (!parent) return;
 
+    /* Click-eater over the dashboard area. Invisible (the dash stays at
+     * full brightness) but absorbs taps so edit_mode's selection / drag
+     * gesture handlers don't fire while the Inspector is up. */
+    s_left_eater = lv_obj_create(parent);
+    lv_obj_set_size(s_left_eater, DOCK_X, 480);
+    lv_obj_set_pos(s_left_eater, 0, 0);
+    lv_obj_set_style_bg_opa(s_left_eater, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_left_eater, 0, 0);
+    lv_obj_set_style_radius(s_left_eater, 0, 0);
+    lv_obj_set_style_pad_all(s_left_eater, 0, 0);
+    lv_obj_clear_flag(s_left_eater, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_left_eater, LV_OBJ_FLAG_CLICKABLE);
+
+    /* Right-side dock - the visible Inspector. */
     s_overlay = lv_obj_create(parent);
-    lv_obj_set_size(s_overlay, 800, 480);
-    lv_obj_set_pos(s_overlay, 0, 0);
+    lv_obj_set_size(s_overlay, DOCK_W, 480);
+    lv_obj_set_pos(s_overlay, DOCK_X, 0);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    /* Backdrop is fully transparent — the previous LV_OPA_50 dim forced
-     * alpha blending on every dirty pixel during scroll, which was the
-     * main source of the lag. The Inspector's header / tab bar / cards
-     * are themselves opaque enough to mark the Inspector mode visually;
-     * the dashboard underneath stays at full brightness through gaps
-     * between cards, which is exactly the "see what's going on
-     * underneath as I make changes" the user asked for. */
+    /* Dock root transparent; the header / tab bar / cards each define
+     * their own opacity so the live preview shows through gaps. */
     lv_obj_set_style_bg_opa(s_overlay, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_overlay, 0, 0);
     lv_obj_set_style_radius(s_overlay, 0, 0);
     lv_obj_set_style_pad_all(s_overlay, 0, 0);
-    /* Still CLICKABLE so empty-area taps don't bubble down to widgets and
-     * trigger drag / selection mid-edit. */
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_CLICKABLE);
 
     _build_header();
@@ -650,9 +762,7 @@ void inspector_open(widget_t *w) {
     _build_content_area();
     _show_tab(s_active_tab);
 
-    /* On top of widgets + edit-mode chrome. The BUS SILENT badge gets
-     * re-foregrounded so a CAN-silent warning is never buried under the
-     * Inspector. */
+    lv_obj_move_foreground(s_left_eater);
     lv_obj_move_foreground(s_overlay);
     ui_Screen3_refresh_overlays();
 
@@ -661,17 +771,20 @@ void inspector_open(widget_t *w) {
 }
 
 void inspector_close(void) {
-    if (!s_overlay) return;
-    if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
-    s_overlay         = NULL;
+    _close_picker();
+    if (s_overlay) {
+        if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
+        s_overlay = NULL;
+    }
+    if (s_left_eater) {
+        if (lv_obj_is_valid(s_left_eater)) lv_obj_del(s_left_eater);
+        s_left_eater = NULL;
+    }
     s_widget          = NULL;
     s_content         = NULL;
     s_tab_indicator   = NULL;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
-    /* If anything was tweaked through the Inspector, capture it as an undo
-     * step + schedule save. Same-state guard means a no-op when nothing
-     * actually changed. */
     edit_mode_commit_external_edit();
 
     ESP_LOGI(TAG, "Closed");
