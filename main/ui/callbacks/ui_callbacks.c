@@ -370,6 +370,35 @@ void show_text_input_dialog(lv_obj_t *target_textarea, const char *title, const 
     show_text_input_dialog_ex(target_textarea, title, placeholder, false, on_confirm, on_cancel, user_data);
 }
 
+/* Numeric input convenience wrapper — see ui_callbacks.h.
+ *
+ * The dialog requires a target textarea (it copies the initial text from
+ * lv_textarea_get_text and writes results back on confirm). We keep a single
+ * hidden helper textarea, recreated lazily if a screen swap invalidated it.
+ * Lives as a child of the active screen so it's cleaned up automatically on
+ * screen change. */
+void show_numeric_input_dialog(const char *title, const char *initial,
+                               void (*on_confirm)(const char *text, void *user_data),
+                               void *user_data) {
+    static lv_obj_t *helper_ta = NULL;
+    if (!helper_ta || !lv_obj_is_valid(helper_ta)) {
+        helper_ta = lv_textarea_create(lv_scr_act());
+        if (!helper_ta) return;
+        lv_obj_add_flag(helper_ta, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_size(helper_ta, 1, 1);
+    }
+    lv_textarea_set_text(helper_ta, initial ? initial : "");
+
+    show_text_input_dialog_ex(helper_ta, title, NULL, false, on_confirm, NULL, user_data);
+
+    /* Flip the dialog's keyboard into number mode so the user gets a numeric
+     * keypad immediately. current_text_dialog is the module-static set up
+     * during the call above. */
+    if (current_text_dialog && current_text_dialog->keyboard) {
+        lv_keyboard_set_mode(current_text_dialog->keyboard, LV_KEYBOARD_MODE_NUMBER);
+    }
+}
+
 // Updated keyboard_event_cb to use the new text input dialog
 void keyboard_event_cb(lv_event_t * e) {
     lv_obj_t * obj = lv_event_get_target(e);

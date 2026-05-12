@@ -46,9 +46,10 @@ extern "C" {
 #define DT_HANDLE_VIS   12                            /* visible handle dot */
 
 /* ── Pill button (top-right toolbar) ──────────────────────────────────────── */
-#define DT_PILL_W       100
-#define DT_PILL_H       36
-#define DT_PILL_GAP     8                             /* gap between pills */
+#define DT_PILL_W        100   /* Menu pill — "Menu" fits easily */
+#define DT_PILL_EDIT_W   140   /* Edit Mode pill — "Exit Edit Mode" needs more room */
+#define DT_PILL_H        36
+#define DT_PILL_GAP      8     /* gap between pills */
 
 /* ── Editor banner (Edit Mode top strip) ──────────────────────────────────── */
 #define DT_BANNER_H     28

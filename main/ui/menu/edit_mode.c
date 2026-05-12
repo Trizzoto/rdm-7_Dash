@@ -14,12 +14,14 @@
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/menu_screen.h"  /* load_menu_screen_for_widget */
+#include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
 #include "ui/dashboard.h"         /* dashboard_persist_layout */
 #include "ui/theme.h"
 #include "ui/ui.h"                /* ui_Menu_Button extern */
 #include "storage/config_store.h" /* edit step px persistence */
 #include "esp_log.h"
-#include <stdlib.h>               /* abs() */
+#include <stdio.h>                /* snprintf */
+#include <stdlib.h>               /* abs, atoi */
 #include <stdint.h>               /* intptr_t */
 
 static const char *TAG = "edit_mode";
@@ -28,6 +30,10 @@ static const char *TAG = "edit_mode";
 static void _destroy_toolbar(void);
 static void _update_readout(void);
 static void _refresh_step_styling(void);
+static void _close_popover(void);
+static void _update_popover(void);
+static void _open_popover(char target);
+static void _chip_clicked_cb(lv_event_t *e);
 
 /* ── Module state ─────────────────────────────────────────────────────────── */
 
@@ -53,7 +59,16 @@ static bool       s_drag_enabled_this_press = false;
 /* Toolbar (shown when a widget is selected; replaces banner) */
 static lv_obj_t  *s_toolbar       = NULL;
 static lv_obj_t  *s_step_btns[3]  = {NULL};
-static lv_obj_t  *s_readout_lbl   = NULL;
+static lv_obj_t  *s_chip_btns[4]  = {NULL};   /* x, y, w, h — clickable */
+
+/* Adjustment popover — opens above the toolbar when a chip is tapped.
+ * Lets the user drag a slider OR tap the value to open the numeric keypad.
+ * Stays compact (280x80) so widgets remain visible behind it. */
+static lv_obj_t  *s_chip_popover   = NULL;
+static lv_obj_t  *s_popover_slider = NULL;
+static lv_obj_t  *s_popover_value  = NULL;
+static char       s_popover_target = 0;   /* 'x' / 'y' / 'w' / 'h', or 0 */
+static bool       s_popover_syncing= false;  /* re-entry guard for slider sync */
 
 /* Toolbar vertical position — user-draggable via the grip strip on top.
  * `LV_ALIGN_BOTTOM_MID` is the alignment anchor; the offset is measured
@@ -97,7 +112,7 @@ static void _apply_pill_style_live(void) {
 static void _apply_pill_style_armed(void) {
     if (!s_pill || !lv_obj_is_valid(s_pill)) return;
     lv_obj_set_style_bg_color(s_pill, DT_DANGER, 0);
-    lv_obj_set_style_bg_opa(s_pill, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(s_pill, LV_OPA_70, 0);   /* see-through */
     lv_obj_set_style_border_width(s_pill, 0, 0);
     if (s_pill_lbl && lv_obj_is_valid(s_pill_lbl)) {
         lv_label_set_text(s_pill_lbl, LV_SYMBOL_CLOSE "  Exit Edit Mode");
@@ -114,7 +129,7 @@ static void _build_banner(lv_obj_t *parent) {
     lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(s_banner, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(s_banner, DT_DANGER, 0);
-    lv_obj_set_style_bg_opa(s_banner, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(s_banner, LV_OPA_70, 0);   /* see-through */
     lv_obj_set_style_border_width(s_banner, 0, 0);
     lv_obj_set_style_radius(s_banner, 0, 0);
     lv_obj_set_style_pad_all(s_banner, 0, 0);
@@ -236,16 +251,29 @@ static void _set_decoration_clickable(bool clickable) {
 
 /* ── Toolbar helpers (forward usage by edit_mode_select / _clear_selection) ─ */
 
+/* Update the 4 live-readout chips (x / y / w / h). Each chip is a small
+ * button containing a single label; we just rewrite the label text. Also
+ * syncs the open popover (if any) so slider position tracks live drags. */
 static void _update_readout(void) {
-    if (!s_readout_lbl || !lv_obj_is_valid(s_readout_lbl)) return;
-    if (!s_selected) {
-        lv_label_set_text(s_readout_lbl, "");
-        return;
+    static const char prefixes[4] = {'X', 'Y', 'W', 'H'};
+    int values[4] = {0, 0, 0, 0};
+    if (s_selected) {
+        values[0] = s_selected->x;
+        values[1] = s_selected->y;
+        values[2] = (int)s_selected->w;
+        values[3] = (int)s_selected->h;
     }
-    /* Plain ASCII only — Montserrat 12 lacks the middle-dot glyph. */
-    lv_label_set_text_fmt(s_readout_lbl,
-        "x:%4d   y:%4d   w:%4d   h:%4d",
-        s_selected->x, s_selected->y, s_selected->w, s_selected->h);
+    for (int i = 0; i < 4; i++) {
+        if (!s_chip_btns[i] || !lv_obj_is_valid(s_chip_btns[i])) continue;
+        lv_obj_t *lbl = lv_obj_get_child(s_chip_btns[i], 0);
+        if (!lbl) continue;
+        if (s_selected) {
+            lv_label_set_text_fmt(lbl, "%c %d", prefixes[i], values[i]);
+        } else {
+            lv_label_set_text_fmt(lbl, "%c -", prefixes[i]);
+        }
+    }
+    _update_popover();
 }
 
 static void _refresh_step_styling(void) {
@@ -397,6 +425,252 @@ static lv_obj_t *_make_tbtn(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
     return b;
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Adjustment popover — tap an x/y/w/h chip to open
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Compact 300×84 panel that floats just above the toolbar. Contents:
+ *
+ *   ┌──────────────────────────────────────────────────────┐
+ *   │  X     120                            [⌨]   [✕]      │
+ *   │  ───────────●──────────────────────────────────────  │
+ *   └──────────────────────────────────────────────────────┘
+ *
+ *   - Label (X / Y / W / H) on the left.
+ *   - Big numeric value (tap → opens the on-device numeric keypad).
+ *   - ⌨ button (same action as tapping the number).
+ *   - ✕ button to close.
+ *   - Slider across the bottom for coarse drag-to-adjust; live previews
+ *     the widget as the slider moves.
+ *
+ * Stays open until ✕ is tapped, the widget is deselected, or Edit Mode
+ * exits. Tapping a different chip switches the popover's target. */
+
+static int _get_widget_field(char target) {
+    if (!s_selected) return 0;
+    switch (target) {
+        case 'x': return s_selected->x;
+        case 'y': return s_selected->y;
+        case 'w': return (int)s_selected->w;
+        case 'h': return (int)s_selected->h;
+    }
+    return 0;
+}
+
+/* Resize / reposition the selected widget. For w/h we prefer the widget's
+ * resize vtable (some widgets rebuild internal LVGL objects on resize); for
+ * widgets without it, fall back to lv_obj_set_size and manual struct update. */
+static void _set_widget_field(char target, int value) {
+    if (!s_selected || !s_selected->root || !lv_obj_is_valid(s_selected->root)) return;
+
+    switch (target) {
+        case 'x':
+            s_selected->x = (int16_t)value;
+            lv_obj_set_pos(s_selected->root, s_selected->x, s_selected->y);
+            break;
+        case 'y':
+            s_selected->y = (int16_t)value;
+            lv_obj_set_pos(s_selected->root, s_selected->x, s_selected->y);
+            break;
+        case 'w':
+            if (value < 10)  value = 10;
+            if (value > 800) value = 800;
+            if (s_selected->resize) {
+                s_selected->resize(s_selected, (uint16_t)value, s_selected->h);
+            } else {
+                s_selected->w = (uint16_t)value;
+                lv_obj_set_size(s_selected->root, value, s_selected->h);
+            }
+            break;
+        case 'h':
+            if (value < 10)  value = 10;
+            if (value > 480) value = 480;
+            if (s_selected->resize) {
+                s_selected->resize(s_selected, s_selected->w, (uint16_t)value);
+            } else {
+                s_selected->h = (uint16_t)value;
+                lv_obj_set_size(s_selected->root, s_selected->w, value);
+            }
+            break;
+        default:
+            return;
+    }
+    _update_ring();
+    _update_readout();
+    _schedule_save();
+}
+
+/* Reasonable slider ranges. Widths/heights cap at screen dimensions; x/y
+ * use a generous over-range so widgets can be parked off-edge if needed
+ * (rare but possible). */
+static void _get_chip_range(char target, int *min, int *max) {
+    switch (target) {
+        case 'x': *min = -400; *max =  400; break;
+        case 'y': *min = -240; *max =  240; break;
+        case 'w': *min =   10; *max =  800; break;
+        case 'h': *min =   10; *max =  480; break;
+        default:  *min =    0; *max =    0; break;
+    }
+}
+
+static void _close_popover(void) {
+    if (s_chip_popover && lv_obj_is_valid(s_chip_popover)) {
+        lv_obj_del(s_chip_popover);
+    }
+    s_chip_popover    = NULL;
+    s_popover_slider  = NULL;
+    s_popover_value   = NULL;
+    s_popover_target  = 0;
+    s_popover_syncing = false;
+}
+
+/* Sync the popover's slider + numeric display to the widget's current value.
+ * Called from _update_readout whenever the widget moves (drag, nudge, slider
+ * itself, keypad confirm). The syncing flag stops the slider value-change
+ * handler from re-triggering on programmatic set_value. */
+static void _update_popover(void) {
+    if (!s_chip_popover || !lv_obj_is_valid(s_chip_popover)) return;
+    if (!s_selected || s_popover_target == 0) return;
+    int v = _get_widget_field(s_popover_target);
+    s_popover_syncing = true;
+    if (s_popover_slider && lv_obj_is_valid(s_popover_slider)) {
+        lv_slider_set_value(s_popover_slider, v, LV_ANIM_OFF);
+    }
+    if (s_popover_value && lv_obj_is_valid(s_popover_value)) {
+        lv_label_set_text_fmt(s_popover_value, "%d", v);
+    }
+    s_popover_syncing = false;
+}
+
+static void _popover_slider_cb(lv_event_t *e) {
+    if (s_popover_syncing) return;
+    if (!s_selected || s_popover_target == 0) return;
+    lv_obj_t *sl = lv_event_get_target(e);
+    int v = lv_slider_get_value(sl);
+    _set_widget_field(s_popover_target, v);
+}
+
+static void _popover_keypad_confirmed(const char *text, void *user_data) {
+    (void)user_data;
+    if (!text || s_popover_target == 0) return;
+    int v = atoi(text);
+    _set_widget_field(s_popover_target, v);
+}
+
+static void _popover_keypad_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_selected || s_popover_target == 0) return;
+    char initial[12];
+    snprintf(initial, sizeof(initial), "%d", _get_widget_field(s_popover_target));
+    const char *title = "Value";
+    switch (s_popover_target) {
+        case 'x': title = "X position"; break;
+        case 'y': title = "Y position"; break;
+        case 'w': title = "Width";      break;
+        case 'h': title = "Height";     break;
+    }
+    show_numeric_input_dialog(title, initial, _popover_keypad_confirmed, NULL);
+}
+
+static void _close_popover_cb(lv_event_t *e) {
+    (void)e;
+    _close_popover();
+}
+
+static void _open_popover(char target) {
+    if (!s_selected || !s_toolbar) return;
+
+    /* Re-open path: rebuild for the new target. Simpler than mutating an
+     * existing popover, and the slider range may change between targets. */
+    if (s_chip_popover && lv_obj_is_valid(s_chip_popover)) {
+        lv_obj_del(s_chip_popover);
+    }
+    s_chip_popover    = NULL;
+    s_popover_slider  = NULL;
+    s_popover_value   = NULL;
+    s_popover_target  = target;
+
+    lv_obj_t *parent = lv_obj_get_parent(s_toolbar);
+    if (!parent) return;
+
+    int v = _get_widget_field(target);
+    int min_v, max_v;
+    _get_chip_range(target, &min_v, &max_v);
+
+    s_chip_popover = lv_obj_create(parent);
+    lv_obj_set_size(s_chip_popover, 300, 84);
+    lv_obj_clear_flag(s_chip_popover, LV_OBJ_FLAG_SCROLLABLE);
+    /* Same glassmorphic style as the toolbar so they read as a pair. */
+    lv_obj_set_style_bg_color(s_chip_popover, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_chip_popover, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_chip_popover, 0, 0);
+    lv_obj_set_style_radius(s_chip_popover, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(s_chip_popover, 10, 0);
+    lv_obj_set_style_shadow_width(s_chip_popover, 16, 0);
+    lv_obj_set_style_shadow_color(s_chip_popover, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(s_chip_popover, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_ofs_y(s_chip_popover, 4, 0);
+
+    /* Anchor just above the toolbar. The toolbar may have been dragged up
+     * by the user, so read its current screen position rather than assuming
+     * the default. Fall back to 8 px from top if it would clip. */
+    lv_obj_update_layout(s_toolbar);
+    lv_area_t tb_area;
+    lv_obj_get_coords(s_toolbar, &tb_area);
+    int popover_top = tb_area.y1 - 84 - 8;
+    if (popover_top < 8) popover_top = 8;
+    lv_obj_set_pos(s_chip_popover, (800 - 300) / 2, popover_top);
+
+    /* Field label (X / Y / W / H) — muted, left side */
+    lv_obj_t *fl = lv_label_create(s_chip_popover);
+    char tag[2] = {(char)(target - 32), '\0'};   /* lowercase → uppercase */
+    lv_label_set_text(fl, tag);
+    lv_obj_align(fl, LV_ALIGN_TOP_LEFT, 0, 6);
+    lv_obj_set_style_text_color(fl, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(fl, THEME_FONT_SMALL, 0);
+
+    /* Big numeric value — tappable to open the keypad */
+    s_popover_value = lv_label_create(s_chip_popover);
+    lv_obj_align(s_popover_value, LV_ALIGN_TOP_LEFT, 22, 0);
+    lv_obj_set_style_text_color(s_popover_value, DT_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s_popover_value, THEME_FONT_LARGE, 0);
+    lv_obj_add_flag(s_popover_value, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_popover_value, _popover_keypad_cb,
+                        LV_EVENT_CLICKED, NULL);
+    lv_label_set_text_fmt(s_popover_value, "%d", v);
+
+    /* Keypad button (right-of-X) */
+    lv_obj_t *kpd = _make_tbtn(s_chip_popover, 36, 28, LV_SYMBOL_KEYBOARD);
+    lv_obj_align(kpd, LV_ALIGN_TOP_RIGHT, -36, 2);
+    lv_obj_add_event_cb(kpd, _popover_keypad_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Close X (far right) */
+    lv_obj_t *cls = _make_tbtn(s_chip_popover, 28, 28, LV_SYMBOL_CLOSE);
+    lv_obj_align(cls, LV_ALIGN_TOP_RIGHT, 0, 2);
+    lv_obj_add_event_cb(cls, _close_popover_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Slider — full width at the bottom */
+    s_popover_slider = lv_slider_create(s_chip_popover);
+    lv_obj_set_size(s_popover_slider, 276, 12);
+    lv_obj_align(s_popover_slider, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_slider_set_range(s_popover_slider, min_v, max_v);
+    lv_slider_set_value(s_popover_slider, v, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_popover_slider, DT_BG_INSET, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_popover_slider, DT_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_popover_slider, DT_ACCENT, LV_PART_KNOB);
+    lv_obj_add_event_cb(s_popover_slider, _popover_slider_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_move_foreground(s_chip_popover);
+}
+
+static void _chip_clicked_cb(lv_event_t *e) {
+    if (!s_selected) return;
+    char target = (char)(intptr_t)lv_event_get_user_data(e);
+    if (target != 'x' && target != 'y' && target != 'w' && target != 'h') return;
+    _open_popover(target);
+}
+
 static void _build_toolbar(lv_obj_t *parent) {
     if (s_toolbar && lv_obj_is_valid(s_toolbar)) return;
 
@@ -409,11 +683,12 @@ static void _build_toolbar(lv_obj_t *parent) {
      * widgets below remain partially visible, no hard border, soft floating
      * shadow. Tracks main/web/index.html `.modal` / `.toolbar` patterns. */
     lv_obj_set_style_bg_color(s_toolbar, DT_BG_PANEL, 0);
-    lv_obj_set_style_bg_opa(s_toolbar, LV_OPA_80, 0);
+    lv_obj_set_style_bg_opa(s_toolbar, LV_OPA_70, 0);   /* see-through */
     lv_obj_set_style_border_width(s_toolbar, 0, 0);
     lv_obj_set_style_radius(s_toolbar, DT_RADIUS_LG, 0);
     lv_obj_set_style_pad_all(s_toolbar, 10, 0);
-    lv_obj_set_style_pad_column(s_toolbar, 10, 0);
+    /* Min gap between flex items; SPACE_BETWEEN distributes extra evenly. */
+    lv_obj_set_style_pad_column(s_toolbar, 6, 0);
     lv_obj_set_style_shadow_width(s_toolbar, 16, 0);
     lv_obj_set_style_shadow_color(s_toolbar, lv_color_black(), 0);
     lv_obj_set_style_shadow_opa(s_toolbar, LV_OPA_60, 0);
@@ -494,11 +769,28 @@ static void _build_toolbar(lv_obj_t *parent) {
     }
     _refresh_step_styling();
 
-    /* Live readout — fills the middle */
-    s_readout_lbl = lv_label_create(s_toolbar);
-    lv_obj_set_style_text_color(s_readout_lbl, DT_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(s_readout_lbl, THEME_FONT_SMALL, 0);
-    lv_obj_set_flex_grow(s_readout_lbl, 1);
+    /* Live x/y/w/h chips — clickable, each opens an adjustment popover.
+     * Wrapped in a flex container so the chips stay together as a unit
+     * while the outer flex layout positions them between the step toggle
+     * and the Configure button. */
+    lv_obj_t *chip_grp = lv_obj_create(s_toolbar);
+    lv_obj_set_size(chip_grp, 252, 36);
+    lv_obj_set_style_bg_opa(chip_grp, 0, 0);
+    lv_obj_set_style_border_width(chip_grp, 0, 0);
+    lv_obj_set_style_pad_all(chip_grp, 0, 0);
+    lv_obj_set_style_pad_column(chip_grp, 4, 0);
+    lv_obj_clear_flag(chip_grp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(chip_grp, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(chip_grp, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    static const char chip_targets[4] = {'x', 'y', 'w', 'h'};
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *c = _make_tbtn(chip_grp, 60, 32, "");
+        lv_obj_add_event_cb(c, _chip_clicked_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)chip_targets[i]);
+        s_chip_btns[i] = c;
+    }
     _update_readout();
 
     /* Configure button — accent-blue, opens the per-widget config modal */
@@ -522,10 +814,11 @@ static void _build_toolbar(lv_obj_t *parent) {
 }
 
 static void _destroy_toolbar(void) {
+    _close_popover();   /* never have a popover without its toolbar */
     if (s_toolbar && lv_obj_is_valid(s_toolbar)) lv_obj_del(s_toolbar);
     s_toolbar      = NULL;
-    s_readout_lbl  = NULL;
     s_step_btns[0] = s_step_btns[1] = s_step_btns[2] = NULL;
+    s_chip_btns[0] = s_chip_btns[1] = s_chip_btns[2] = s_chip_btns[3] = NULL;
 }
 
 /* ── Pill click handler — toggles armed state ─────────────────────────────── */
@@ -597,10 +890,18 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     s_banner                  = NULL;
     s_ring                    = NULL;
     s_toolbar                 = NULL;
-    s_readout_lbl             = NULL;
     s_step_btns[0]            = NULL;
     s_step_btns[1]            = NULL;
     s_step_btns[2]            = NULL;
+    s_chip_btns[0]            = NULL;
+    s_chip_btns[1]            = NULL;
+    s_chip_btns[2]            = NULL;
+    s_chip_btns[3]            = NULL;
+    s_chip_popover            = NULL;
+    s_popover_slider          = NULL;
+    s_popover_value           = NULL;
+    s_popover_target          = 0;
+    s_popover_syncing         = false;
     s_selected                = NULL;
     s_dragging                = false;
     s_drag_enabled_this_press = false;
@@ -615,9 +916,12 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     }
 
     s_pill = lv_btn_create(parent);
-    lv_obj_set_size(s_pill, DT_PILL_W, DT_PILL_H);
+    /* Use the wider edit-pill size so "Exit Edit Mode" doesn't truncate. */
+    lv_obj_set_size(s_pill, DT_PILL_EDIT_W, DT_PILL_H);
+    /* Position the right edge so the Menu pill (DT_PILL_W wide, 12 px from
+     * the screen's right edge) sits flush to our right with DT_PILL_GAP between. */
     lv_obj_align(s_pill, LV_ALIGN_TOP_RIGHT,
-                 -(DT_PILL_W + DT_PILL_GAP + 12), 12);
+                 -(DT_PILL_EDIT_W + DT_PILL_GAP + 12), 12);
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(s_pill, DT_RADIUS_MD, 0);
     lv_obj_set_style_shadow_width(s_pill, 8, 0);
