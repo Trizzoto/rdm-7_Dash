@@ -16,6 +16,7 @@
 #include "ui/menu/menu_screen.h"  /* load_menu_screen_for_widget */
 #include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
 #include "ui/dashboard.h"         /* dashboard_persist_layout */
+#include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays (badge) */
 #include "ui/theme.h"
 #include "ui/ui.h"                /* ui_Menu_Button, ui_Screen3 externs */
 #include "layout/layout_manager.h"  /* build_json for undo snapshots */
@@ -220,9 +221,20 @@ static void _destroy_banner(void) {
 /* Selection chrome = the ring + 8 resize handles. Built/destroyed/updated
  * as a unit so they always stay synchronised to the selected widget. */
 
+/* Parent for the ring + handles: same as the toolbars (ui_Screen3) so we can
+ * z-stack them with explicit foreground calls. Previously on lv_layer_top,
+ * which draws above all screen content — that meant the ring sat on top
+ * of the toolbars, which felt wrong. */
+static lv_obj_t *_selection_parent(void) {
+    if (s_pill && lv_obj_is_valid(s_pill)) return lv_obj_get_parent(s_pill);
+    return lv_scr_act();
+}
+
 static void _build_ring(void) {
     if (s_ring && lv_obj_is_valid(s_ring)) return;
-    s_ring = lv_obj_create(lv_layer_top());
+    lv_obj_t *parent = _selection_parent();
+    if (!parent) return;
+    s_ring = lv_obj_create(parent);
     lv_obj_clear_flag(s_ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(s_ring, LV_OBJ_FLAG_SCROLLABLE);
     /* Transparent body, accent border only — the widget shows through. */
@@ -288,9 +300,11 @@ enum { H_NW=0, H_N, H_NE, H_W, H_E, H_SW, H_S, H_SE };
 #define RESIZE_THRESHOLD_PX 3
 
 static void _build_handles(void) {
+    lv_obj_t *parent = _selection_parent();
+    if (!parent) return;
     for (int i = 0; i < 8; i++) {
         if (s_handles[i] && lv_obj_is_valid(s_handles[i])) continue;
-        lv_obj_t *h = lv_obj_create(lv_layer_top());
+        lv_obj_t *h = lv_obj_create(parent);
         lv_obj_set_size(h, HANDLE_VIS, HANDLE_VIS);
         lv_obj_set_ext_click_area(h, HANDLE_HIT);
         lv_obj_clear_flag(h, LV_OBJ_FLAG_SCROLLABLE);
@@ -1778,10 +1792,10 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     if (!parent) return NULL;
 
     /* If the previous screen was deleted, our cached pointers are stale —
-     * forget them and rebuild from scratch on this parent. The ring lives
-     * on lv_layer_top (which is NOT deleted with the screen) so we explicitly
-     * tear it down here in case a previous session left it dangling. The
-     * toolbar lived on the old screen and is already gone with it. */
+     * forget them and rebuild from scratch on this parent. Ring + handles
+     * now live on ui_Screen3 (not lv_layer_top, so the ring can sit behind
+     * the toolbars), so LVGL cascades the delete when the screen goes —
+     * the is_valid checks here are belt-and-braces. */
     if (s_ring && lv_obj_is_valid(s_ring)) lv_obj_del(s_ring);
     for (int i = 0; i < 8; i++) {
         if (s_handles[i] && lv_obj_is_valid(s_handles[i])) lv_obj_del(s_handles[i]);
@@ -1890,6 +1904,13 @@ void edit_mode_select(widget_t *w) {
     }
     _update_readout();
     _refresh_undo_redo_styling();
+
+    /* Newly-built ring + handles + bottom toolbar were appended to ui_Screen3
+     * children in arbitrary order — restore the canonical stack so the ring
+     * sits behind the toolbars (per user spec) and the BUS SILENT badge
+     * stays on top of everything. */
+    edit_mode_refresh_zorder();
+    ui_Screen3_refresh_overlays();
 }
 
 void edit_mode_refresh_selection(void) {
@@ -2001,9 +2022,16 @@ void edit_mode_screen_pressed_cb(lv_event_t *e) {
 }
 
 void edit_mode_refresh_zorder(void) {
-    /* Order matters: top toolbar first, then bottom toolbar (so it draws
-     * over the top one if they overlap). BUS SILENT badge is foregrounded
-     * separately by ui_Screen3 — it ends up on top of both. */
+    /* Order matters — lv_obj_move_foreground sends to the END of the parent's
+     * child list, so the LAST call ends up on top. Layering (bottom→top):
+     *   widgets  <  ring  <  handles  <  top toolbar  <  bottom toolbar  <  badge
+     * Badge is handled by ui_Screen3_refresh_overlays (different module). */
+    if (s_ring && lv_obj_is_valid(s_ring))
+        lv_obj_move_foreground(s_ring);
+    for (int i = 0; i < 8; i++) {
+        if (s_handles[i] && lv_obj_is_valid(s_handles[i]))
+            lv_obj_move_foreground(s_handles[i]);
+    }
     if (s_top_toolbar && lv_obj_is_valid(s_top_toolbar))
         lv_obj_move_foreground(s_top_toolbar);
     if (s_toolbar && lv_obj_is_valid(s_toolbar))
