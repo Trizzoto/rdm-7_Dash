@@ -1112,8 +1112,8 @@ static lv_obj_t   *s_sig_ecu_dd      = NULL;
 static lv_obj_t   *s_sig_version_dd  = NULL;
 static lv_obj_t   *s_sig_signal_dd   = NULL;
 
-static void _open_signal_wizard(void);   /* manual entry, below */
 static void _show_tab(int idx);          /* defined further down */
+static void _canbus_refresh_all(void);   /* defined alongside CAN BUS section */
 
 static const char *_widget_signal_name(void) {
     if (!s_widget || !s_widget->inspector_get) return "";
@@ -1377,11 +1377,358 @@ static void _sig_version_changed_cb(lv_event_t *e) {
 static void _sig_signal_changed_cb(lv_event_t *e) {
     s_sig_signal_idx = lv_dropdown_get_selected(lv_event_get_target(e));
     _sig_apply_current_binding();
+    /* New binding -> refresh CAN BUS values from the freshly bound signal. */
+    _canbus_refresh_all();
 }
 
-static void _sig_manual_btn_cb(lv_event_t *e) {
+/* ── CAN BUS collapsible section ───────────────────────────────────
+ *
+ * Inline editor for the currently-bound signal's decode parameters.
+ * Collapsed by default; tap the header to expand. Editing a field
+ * writes directly to the signal_t in the registry, so the change
+ * applies to every widget bound to that signal on the next CAN frame.
+ *
+ * Note: this edits the LIVE signal in place. Picking a preset and
+ * tweaking its scale will affect anything else in the layout bound to
+ * the same name. Most of the time that's what the user wants
+ * (refining a preset for their specific install); if they want a
+ * distinct signal, they should pick "My library" and define a fresh
+ * one. Manually-added signals also persist back to user.json on edit
+ * so the tweak survives across layouts.
+ */
+
+typedef enum {
+    CB_F_CAN_ID = 0,
+    CB_F_START,
+    CB_F_LENGTH,
+    CB_F_SCALE,
+    CB_F_OFFSET,
+    CB_F_UNIT,
+    CB_F_ENDIAN,    /* dropdown */
+    CB_F_SIGNED,    /* switch */
+    CB_F_COUNT,
+} canbus_field_t;
+
+static bool      s_canbus_expanded = false;
+static lv_obj_t *s_canbus_chev     = NULL;
+static lv_obj_t *s_canbus_content  = NULL;
+static lv_obj_t *s_canbus_value_lbls[CB_F_COUNT] = {NULL};
+static lv_obj_t *s_canbus_endian_dd = NULL;
+static lv_obj_t *s_canbus_signed_sw = NULL;
+
+static signal_t *_canbus_current_signal(void) {
+    const char *name = _widget_signal_name();
+    if (!name || !name[0]) return NULL;
+    int16_t idx = signal_find_by_name(name);
+    if (idx < 0) return NULL;
+    return signal_get_by_index((uint16_t)idx);
+}
+
+/* If the bound signal also lives in user.json, mirror the edit there
+ * so it persists across reboots / layout swaps. ECU-preset signals
+ * are static in firmware so we don't try to write those back. */
+static void _canbus_sync_user_library(const signal_t *s) {
+    if (!s) return;
+    if (!user_signals_find(s->name)) return;   /* not in user library */
+    user_signal_t u = {0};
+    strncpy(u.name, s->name, sizeof(u.name) - 1);
+    u.can_id    = s->can_id;
+    u.start_bit = s->bit_start;
+    u.length    = s->bit_length;
+    u.scale     = s->scale;
+    u.offset    = s->offset;
+    u.is_signed = s->is_signed;
+    u.endian    = s->endian;
+    strncpy(u.unit, s->unit, sizeof(u.unit) - 1);
+    user_signals_append(&u);   /* replaces by name */
+}
+
+static void _canbus_format(int field, char *buf, size_t bufsz) {
+    signal_t *s = _canbus_current_signal();
+    if (!s) {
+        snprintf(buf, bufsz, "-");
+        return;
+    }
+    switch (field) {
+        case CB_F_CAN_ID: snprintf(buf, bufsz, "0x%X", (unsigned)s->can_id);   break;
+        case CB_F_START:  snprintf(buf, bufsz, "%u",   (unsigned)s->bit_start); break;
+        case CB_F_LENGTH: snprintf(buf, bufsz, "%u",   (unsigned)s->bit_length);break;
+        case CB_F_SCALE:  snprintf(buf, bufsz, "%g",   (double)s->scale);       break;
+        case CB_F_OFFSET: snprintf(buf, bufsz, "%g",   (double)s->offset);      break;
+        case CB_F_UNIT:   snprintf(buf, bufsz, "%s",   s->unit[0] ? s->unit : "(none)"); break;
+        default:          if (bufsz) buf[0] = '\0';
+    }
+}
+
+static void _canbus_refresh_field(int field) {
+    if (field < 0 || field >= CB_F_COUNT) return;
+    if (!s_canbus_value_lbls[field] || !lv_obj_is_valid(s_canbus_value_lbls[field])) return;
+    char buf[32];
+    _canbus_format(field, buf, sizeof(buf));
+    lv_label_set_text(s_canbus_value_lbls[field], buf);
+}
+
+static void _canbus_refresh_all(void) {
+    for (int i = 0; i < CB_F_COUNT; i++) _canbus_refresh_field(i);
+    signal_t *s = _canbus_current_signal();
+    if (s && s_canbus_endian_dd && lv_obj_is_valid(s_canbus_endian_dd)) {
+        lv_dropdown_set_selected(s_canbus_endian_dd, s->endian ? 1 : 0);
+    }
+    if (s && s_canbus_signed_sw && lv_obj_is_valid(s_canbus_signed_sw)) {
+        if (s->is_signed) lv_obj_add_state(s_canbus_signed_sw, LV_STATE_CHECKED);
+        else              lv_obj_clear_state(s_canbus_signed_sw, LV_STATE_CHECKED);
+    }
+}
+
+static void _canbus_text_confirm_cb(const char *text, void *user_data) {
+    int field = (int)(intptr_t)user_data;
+    signal_t *s = _canbus_current_signal();
+    if (!s || !text) return;
+    switch (field) {
+        case CB_F_CAN_ID:
+            s->can_id = (uint32_t)strtoul(text, NULL, 0);
+            break;
+        case CB_F_SCALE:
+            s->scale = (float)atof(text);
+            break;
+        case CB_F_OFFSET:
+            s->offset = (float)atof(text);
+            break;
+        case CB_F_UNIT:
+            strncpy(s->unit, text, sizeof(s->unit) - 1);
+            s->unit[sizeof(s->unit) - 1] = '\0';
+            break;
+        default: return;
+    }
+    _canbus_refresh_field(field);
+    _canbus_sync_user_library(s);
+}
+
+static void _canbus_numeric_confirm_cb(const char *text, void *user_data) {
+    int field = (int)(intptr_t)user_data;
+    signal_t *s = _canbus_current_signal();
+    if (!s || !text) return;
+    int v = atoi(text);
+    switch (field) {
+        case CB_F_START:
+            if (v < 0)  v = 0;
+            if (v > 63) v = 63;
+            s->bit_start = (uint8_t)v;
+            break;
+        case CB_F_LENGTH:
+            if (v < 1)  v = 1;
+            if (v > 32) v = 32;
+            s->bit_length = (uint8_t)v;
+            break;
+        default: return;
+    }
+    _canbus_refresh_field(field);
+    _canbus_sync_user_library(s);
+}
+
+static void _canbus_row_clicked_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _open_signal_wizard();
+    int field = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!_canbus_current_signal()) return;
+    char buf[32];
+    _canbus_format(field, buf, sizeof(buf));
+
+    if (field == CB_F_START || field == CB_F_LENGTH) {
+        show_numeric_input_dialog(
+            (field == CB_F_START) ? "Start Bit" : "Length",
+            buf, _canbus_numeric_confirm_cb, NULL, (void *)(intptr_t)field);
+        return;
+    }
+    const char *title = (field == CB_F_CAN_ID) ? "CAN ID" :
+                        (field == CB_F_SCALE)  ? "Scale"  :
+                        (field == CB_F_OFFSET) ? "Offset" :
+                        (field == CB_F_UNIT)   ? "Unit"   : "?";
+    _ensure_hidden_textarea();
+    if (!s_hidden_text_ta) return;
+    lv_textarea_set_text(s_hidden_text_ta, buf);
+    show_text_input_dialog_ex(s_hidden_text_ta, title, "", false,
+                              _canbus_text_confirm_cb, NULL,
+                              (void *)(intptr_t)field);
+}
+
+static void _canbus_endian_changed_cb(lv_event_t *e) {
+    signal_t *s = _canbus_current_signal();
+    if (!s) return;
+    int sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    s->endian = (sel ? 1 : 0);
+    _canbus_sync_user_library(s);
+}
+
+static void _canbus_signed_changed_cb(lv_event_t *e) {
+    signal_t *s = _canbus_current_signal();
+    if (!s) return;
+    lv_obj_t *sw = lv_event_get_target(e);
+    s->is_signed = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    _canbus_sync_user_library(s);
+}
+
+static void _canbus_header_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    s_canbus_expanded = !s_canbus_expanded;
+    if (s_canbus_content && lv_obj_is_valid(s_canbus_content)) {
+        if (s_canbus_expanded) lv_obj_clear_flag(s_canbus_content, LV_OBJ_FLAG_HIDDEN);
+        else                   lv_obj_add_flag(s_canbus_content, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_canbus_chev && lv_obj_is_valid(s_canbus_chev)) {
+        lv_label_set_text(s_canbus_chev,
+            s_canbus_expanded ? LV_SYMBOL_DOWN : LV_SYMBOL_RIGHT);
+    }
+    if (s_canbus_expanded) _canbus_refresh_all();
+}
+
+/* Compact text-input style row: label + preview + chevron. */
+static void _make_canbus_field_row(lv_obj_t *parent, const char *label, int field) {
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 36);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 4, 0);
+    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_add_event_cb(row, _canbus_row_clicked_cb, LV_EVENT_CLICKED,
+                        (void *)(intptr_t)field);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, label);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *chev = lv_label_create(row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *value = lv_label_create(row);
+    char buf[32];
+    _canbus_format(field, buf, sizeof(buf));
+    lv_label_set_text(value, buf);
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(value, 200);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
+    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    s_canbus_value_lbls[field] = value;
+}
+
+static void _make_canbus_endian_row(lv_obj_t *parent) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, "Endian");
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *dd = lv_dropdown_create(row);
+    lv_dropdown_set_options(dd, "Motorola (BE)\nIntel (LE)");
+    lv_obj_set_size(dd, 180, 32);
+    lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(dd, DT_BG_INSET, 0);
+    lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(dd, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(dd, 1, 0);
+    lv_obj_set_style_text_color(dd, lv_color_white(), 0);
+    lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(dd, _canbus_endian_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+    s_canbus_endian_dd = dd;
+}
+
+static void _make_canbus_signed_row(lv_obj_t *parent) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 36);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, "Signed");
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_set_size(sw, 44, 24);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(sw, DT_BG_INSET, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sw, DT_ACCENT, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, _canbus_signed_changed_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
+    s_canbus_signed_sw = sw;
+}
+
+static void _build_canbus_section(lv_obj_t *parent_card) {
+    /* Header strip - taps toggle the content's hidden flag. */
+    lv_obj_t *header = lv_btn_create(parent_card);
+    lv_obj_set_width(header, LV_PCT(100));
+    lv_obj_set_height(header, 36);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(header, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(header, 20, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_shadow_width(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 4, 0);
+    lv_obj_set_style_radius(header, 6, 0);
+    lv_obj_add_event_cb(header, _canbus_header_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    s_canbus_chev = lv_label_create(header);
+    lv_label_set_text(s_canbus_chev,
+        s_canbus_expanded ? LV_SYMBOL_DOWN : LV_SYMBOL_RIGHT);
+    lv_obj_align(s_canbus_chev, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_color(s_canbus_chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_canbus_chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "CAN BUS");
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 22, 0);
+    lv_obj_set_style_text_color(title, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_SMALL, 0);
+
+    /* Collapsible content - container is hidden when collapsed. */
+    s_canbus_content = lv_obj_create(parent_card);
+    lv_obj_set_width(s_canbus_content, LV_PCT(100));
+    lv_obj_set_height(s_canbus_content, LV_SIZE_CONTENT);
+    lv_obj_clear_flag(s_canbus_content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(s_canbus_content, 0, 0);
+    lv_obj_set_style_border_width(s_canbus_content, 0, 0);
+    lv_obj_set_style_pad_all(s_canbus_content, 0, 0);
+    lv_obj_set_style_pad_row(s_canbus_content, 2, 0);
+    lv_obj_set_flex_flow(s_canbus_content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_canbus_content, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    _make_canbus_field_row(s_canbus_content, "CAN ID",     CB_F_CAN_ID);
+    _make_canbus_field_row(s_canbus_content, "Start Bit",  CB_F_START);
+    _make_canbus_field_row(s_canbus_content, "Length",     CB_F_LENGTH);
+    _make_canbus_field_row(s_canbus_content, "Scale",      CB_F_SCALE);
+    _make_canbus_field_row(s_canbus_content, "Offset",     CB_F_OFFSET);
+    _make_canbus_field_row(s_canbus_content, "Unit",       CB_F_UNIT);
+    _make_canbus_endian_row(s_canbus_content);
+    _make_canbus_signed_row(s_canbus_content);
+
+    if (!s_canbus_expanded) lv_obj_add_flag(s_canbus_content, LV_OBJ_FLAG_HIDDEN);
+    _canbus_refresh_all();
 }
 
 static lv_obj_t *_sig_make_dropdown_row(lv_obj_t *parent, const char *label,
@@ -1430,397 +1777,22 @@ static void _build_signal_source_section(lv_obj_t *parent_card) {
     _sig_refresh_version_dd();
     _sig_refresh_signal_dd();
 
-    /* "+ Create custom signal" button for cases where the user's signal
-     * isn't covered by any preset / library entry. Opens the manual
-     * wizard which appends to user_signals.json. */
-    lv_obj_t *btn = _make_button(parent_card, LV_PCT(100), 38,
-        LV_SYMBOL_PLUS "  Create custom signal");
-    lv_obj_add_event_cb(btn, _sig_manual_btn_cb, LV_EVENT_CLICKED, NULL);
+    _build_canbus_section(parent_card);
 }
 
-/* New-signal wizard (Manual Entry path).
- *
- * Fullscreen modal popover on lv_layer_top. Form fields tap into the
- * existing keyboard popovers (TEXT for name / units / hex CAN ID /
- * float scale+offset; NUMBER for start_bit + length). Save calls
- * signal_register and binds the currently-selected widget to the new
- * signal.
- *
- * Endian + signedness aren't exposed here yet - they default to Intel
- * + unsigned (the common case). Refining them is a follow-up; the web
- * editor can edit them today on the saved layout.
- *
- * Persistence: signal_register only adds to the in-memory registry.
- * The layout save path (debounced by edit_mode) will pick the new
- * signal up the next time it serialises the layout. Step 6 will also
- * write the signal to /lfs/dbc/user.dbc for cross-layout reuse. */
+/* Placeholder tab */
 
-typedef enum {
-    WIZ_F_NAME = 0,
-    WIZ_F_CAN_ID,
-    WIZ_F_START_BIT,
-    WIZ_F_LENGTH,
-    WIZ_F_SCALE,
-    WIZ_F_OFFSET,
-    WIZ_F_UNIT,
-    WIZ_F_COUNT,
-} wizard_field_t;
-
-typedef struct {
-    char     name[32];
-    uint32_t can_id;
-    uint8_t  start_bit;
-    uint8_t  length;
-    float    scale;
-    float    offset;
-    char     unit[8];
-} wizard_form_t;
-
-/* Single-page manual-entry wizard. ECU presets + user.json signals are
- * browsable through the signal library (separate flow) so the wizard
- * stays focused on "I want to define a brand-new signal from scratch". */
-
-static wizard_form_t s_wiz_form;
-static lv_obj_t     *s_wiz_popup    = NULL;
-static lv_obj_t     *s_wiz_card     = NULL;
-static lv_obj_t     *s_wiz_title    = NULL;
-static lv_obj_t     *s_wiz_subtitle = NULL;
-static lv_obj_t     *s_wiz_body     = NULL;
-static lv_obj_t     *s_wiz_btn_row  = NULL;
-static lv_obj_t     *s_wiz_status_lbl = NULL;
-static lv_obj_t     *s_wiz_field_lbls[WIZ_F_COUNT] = {NULL};
-
-
-static const char *_wiz_field_label(int f) {
-    switch (f) {
-        case WIZ_F_NAME:      return "Name";
-        case WIZ_F_CAN_ID:    return "CAN ID";
-        case WIZ_F_START_BIT: return "Start Bit";
-        case WIZ_F_LENGTH:    return "Length";
-        case WIZ_F_SCALE:     return "Scale";
-        case WIZ_F_OFFSET:    return "Offset";
-        case WIZ_F_UNIT:      return "Unit";
-    }
-    return "?";
-}
-
-static void _wiz_format_preview(int f, char *buf, size_t bufsz) {
-    switch (f) {
-        case WIZ_F_NAME:
-            snprintf(buf, bufsz, "%s",
-                     s_wiz_form.name[0] ? s_wiz_form.name : "(empty)");
-            break;
-        case WIZ_F_CAN_ID:
-            snprintf(buf, bufsz, "0x%X", (unsigned)s_wiz_form.can_id);
-            break;
-        case WIZ_F_START_BIT:
-            snprintf(buf, bufsz, "%u", (unsigned)s_wiz_form.start_bit);
-            break;
-        case WIZ_F_LENGTH:
-            snprintf(buf, bufsz, "%u", (unsigned)s_wiz_form.length);
-            break;
-        case WIZ_F_SCALE:
-            snprintf(buf, bufsz, "%g", (double)s_wiz_form.scale);
-            break;
-        case WIZ_F_OFFSET:
-            snprintf(buf, bufsz, "%g", (double)s_wiz_form.offset);
-            break;
-        case WIZ_F_UNIT:
-            snprintf(buf, bufsz, "%s",
-                     s_wiz_form.unit[0] ? s_wiz_form.unit : "(none)");
-            break;
-        default:
-            if (bufsz) buf[0] = '\0';
-    }
-}
-
-static void _wiz_refresh_field(int f) {
-    if (f < 0 || f >= WIZ_F_COUNT) return;
-    if (!s_wiz_field_lbls[f] || !lv_obj_is_valid(s_wiz_field_lbls[f])) return;
-    char buf[32];
-    _wiz_format_preview(f, buf, sizeof(buf));
-    lv_label_set_text(s_wiz_field_lbls[f], buf);
-}
-
-static void _wiz_set_status(const char *msg, bool error) {
-    if (!s_wiz_status_lbl || !lv_obj_is_valid(s_wiz_status_lbl)) return;
-    lv_label_set_text(s_wiz_status_lbl, msg ? msg : "");
-    lv_obj_set_style_text_color(s_wiz_status_lbl,
-        error ? DT_DANGER : DT_TEXT_MUTED, 0);
-}
-
-static void _wiz_close(void) {
-    if (s_wiz_popup && lv_obj_is_valid(s_wiz_popup)) lv_obj_del(s_wiz_popup);
-    s_wiz_popup       = NULL;
-    s_wiz_card        = NULL;
-    s_wiz_title       = NULL;
-    s_wiz_subtitle    = NULL;
-    s_wiz_body        = NULL;
-    s_wiz_btn_row     = NULL;
-    s_wiz_status_lbl  = NULL;
-    for (int i = 0; i < WIZ_F_COUNT; i++) s_wiz_field_lbls[i] = NULL;
-}
-
-static void _wiz_set_defaults(void) {
-    memset(&s_wiz_form, 0, sizeof(s_wiz_form));
-    s_wiz_form.scale  = 1.0f;
-    s_wiz_form.offset = 0.0f;
-    s_wiz_form.length = 8;
-}
-
-static void _wiz_text_confirm_cb(const char *text, void *user_data) {
-    int f = (int)(intptr_t)user_data;
-    if (!text) return;
-    switch (f) {
-        case WIZ_F_NAME:
-            strncpy(s_wiz_form.name, text, sizeof(s_wiz_form.name) - 1);
-            s_wiz_form.name[sizeof(s_wiz_form.name) - 1] = '\0';
-            break;
-        case WIZ_F_CAN_ID:
-            s_wiz_form.can_id = (uint32_t)strtoul(text, NULL, 0);
-            break;
-        case WIZ_F_SCALE:
-            s_wiz_form.scale = (float)atof(text);
-            break;
-        case WIZ_F_OFFSET:
-            s_wiz_form.offset = (float)atof(text);
-            break;
-        case WIZ_F_UNIT:
-            strncpy(s_wiz_form.unit, text, sizeof(s_wiz_form.unit) - 1);
-            s_wiz_form.unit[sizeof(s_wiz_form.unit) - 1] = '\0';
-            break;
-        default:
-            return;
-    }
-    _wiz_refresh_field(f);
-}
-
-static void _wiz_numeric_confirm_cb(const char *text, void *user_data) {
-    int f = (int)(intptr_t)user_data;
-    if (!text) return;
-    int v = atoi(text);
-    switch (f) {
-        case WIZ_F_START_BIT:
-            if (v < 0)  v = 0;
-            if (v > 63) v = 63;
-            s_wiz_form.start_bit = (uint8_t)v;
-            break;
-        case WIZ_F_LENGTH:
-            if (v < 1)  v = 1;
-            if (v > 32) v = 32;
-            s_wiz_form.length = (uint8_t)v;
-            break;
-        default:
-            return;
-    }
-    _wiz_refresh_field(f);
-}
-
-static void _wiz_field_clicked_cb(lv_event_t *e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    int f = (int)(intptr_t)lv_event_get_user_data(e);
-    char buf[32];
-    _wiz_format_preview(f, buf, sizeof(buf));
-
-    if (f == WIZ_F_START_BIT || f == WIZ_F_LENGTH) {
-        show_numeric_input_dialog(_wiz_field_label(f), buf,
-                                  _wiz_numeric_confirm_cb, NULL,
-                                  (void *)(intptr_t)f);
-    } else {
-        _ensure_hidden_textarea();
-        if (!s_hidden_text_ta) return;
-        lv_textarea_set_text(s_hidden_text_ta, buf);
-        show_text_input_dialog_ex(s_hidden_text_ta, _wiz_field_label(f),
-                                  "", false,
-                                  _wiz_text_confirm_cb, NULL,
-                                  (void *)(intptr_t)f);
-    }
-}
-
-static void _wiz_cancel_cb(lv_event_t *e) {
+static void _legacy_btn_cb(lv_event_t *e) {
     (void)e;
-    _wiz_close();
-}
-
-static void _wiz_save_cb(lv_event_t *e) {
-    (void)e;
-    if (s_wiz_form.name[0] == '\0') {
-        _wiz_set_status("Name is required.", true);
-        return;
-    }
-    if (s_wiz_form.length == 0) {
-        _wiz_set_status("Length must be at least 1.", true);
-        return;
-    }
-
-    /* Defaults: Intel endian, unsigned. User can refine via web editor. */
-    int16_t idx = signal_register(s_wiz_form.name, s_wiz_form.can_id,
-                                   s_wiz_form.start_bit, s_wiz_form.length,
-                                   s_wiz_form.scale, s_wiz_form.offset,
-                                   false, 1,
-                                   s_wiz_form.unit);
-    if (idx < 0) {
-        _wiz_set_status("Could not register (duplicate name?)", true);
-        return;
-    }
-
-    /* Append (or replace) in the persistent library at /lfs/dbc/user.json
-     * so this signal is reusable in future layouts. */
-    user_signal_t persistable = {
-        .can_id    = s_wiz_form.can_id,
-        .start_bit = s_wiz_form.start_bit,
-        .length    = s_wiz_form.length,
-        .scale     = s_wiz_form.scale,
-        .offset    = s_wiz_form.offset,
-        .is_signed = false,
-        .endian    = 1,
-    };
-    strncpy(persistable.name, s_wiz_form.name, sizeof(persistable.name) - 1);
-    strncpy(persistable.unit, s_wiz_form.unit, sizeof(persistable.unit) - 1);
-    user_signals_append(&persistable);   /* best-effort */
-
-    /* Auto-bind the currently-selected widget. */
-    if (s_widget && s_widget->inspector_set) {
-        widget_field_value_t v = { .str = s_wiz_form.name };
-        s_widget->inspector_set(s_widget, "signal_name", &v);
-    }
-
-    _wiz_close();
-    /* Rebuild the DATA tab so the new signal shows up in the dropdowns
-     * with the widget freshly bound. */
-    _show_tab(TAB_DATA);
-}
-
-static void _make_wiz_row(lv_obj_t *parent, int field) {
-    lv_obj_t *row = lv_btn_create(parent);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 38);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
-    lv_obj_set_style_bg_opa(row, 60, 0);
-    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_shadow_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 6, 0);
-    lv_obj_set_style_radius(row, 4, 0);
-    lv_obj_add_event_cb(row, _wiz_field_clicked_cb, LV_EVENT_CLICKED,
-                        (void *)(intptr_t)field);
-
-    lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, _wiz_field_label(field));
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
-
-    lv_obj_t *chev = lv_label_create(row);
-    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
-    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
-    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
-
-    lv_obj_t *value = lv_label_create(row);
-    char buf[32];
-    _wiz_format_preview(field, buf, sizeof(buf));
-    lv_label_set_text(value, buf);
-    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(value, 320);
-    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
-    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
-    s_wiz_field_lbls[field] = value;
-}
-
-static void _open_signal_wizard(void) {
-    _wiz_close();
-    _wiz_set_defaults();
-
-    s_wiz_popup = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(s_wiz_popup, 800, 480);
-    lv_obj_set_pos(s_wiz_popup, 0, 0);
-    lv_obj_set_style_bg_color(s_wiz_popup, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_wiz_popup, 110, 0);
-    lv_obj_set_style_border_width(s_wiz_popup, 0, 0);
-    lv_obj_set_style_radius(s_wiz_popup, 0, 0);
-    lv_obj_set_style_pad_all(s_wiz_popup, 0, 0);
-    lv_obj_clear_flag(s_wiz_popup, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_wiz_popup, LV_OBJ_FLAG_CLICKABLE);
-
-    s_wiz_card = lv_obj_create(s_wiz_popup);
-    lv_obj_set_size(s_wiz_card, 640, 440);
-    lv_obj_center(s_wiz_card);
-    lv_obj_set_style_bg_color(s_wiz_card, DT_BG_PANEL, 0);
-    lv_obj_set_style_bg_opa(s_wiz_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_wiz_card, DT_BORDER_DARK, 0);
-    lv_obj_set_style_border_width(s_wiz_card, 1, 0);
-    lv_obj_set_style_radius(s_wiz_card, DT_RADIUS_LG, 0);
-    lv_obj_set_style_pad_all(s_wiz_card, 16, 0);
-    lv_obj_set_style_pad_row(s_wiz_card, 8, 0);
-    lv_obj_clear_flag(s_wiz_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(s_wiz_card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_wiz_card, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
-    s_wiz_title = lv_label_create(s_wiz_card);
-    lv_label_set_text(s_wiz_title, "Create signal manually");
-    lv_obj_set_style_text_color(s_wiz_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_wiz_title, THEME_FONT_LARGE, 0);
-
-    s_wiz_subtitle = lv_label_create(s_wiz_card);
-    lv_label_set_long_mode(s_wiz_subtitle, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_wiz_subtitle, 600);
-    lv_label_set_text(s_wiz_subtitle,
-        "Defines a new CAN signal from scratch. Saved to your signal "
-        "library at /lfs/dbc/user.json so future layouts can pick it.");
-    lv_obj_set_style_text_color(s_wiz_subtitle, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(s_wiz_subtitle, THEME_FONT_SMALL, 0);
-
-    /* Scrollable body container holding the form rows. */
-    s_wiz_body = lv_obj_create(s_wiz_card);
-    lv_obj_set_width(s_wiz_body, LV_PCT(100));
-    lv_obj_set_flex_grow(s_wiz_body, 1);
-    lv_obj_set_style_bg_opa(s_wiz_body, 0, 0);
-    lv_obj_set_style_border_width(s_wiz_body, 0, 0);
-    lv_obj_set_style_pad_all(s_wiz_body, 0, 0);
-    lv_obj_set_style_pad_row(s_wiz_body, 4, 0);
-    lv_obj_add_flag(s_wiz_body, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(s_wiz_body, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_wiz_body, LV_SCROLLBAR_MODE_ACTIVE);
-    lv_obj_set_flex_flow(s_wiz_body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_wiz_body, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
-    for (int f = 0; f < WIZ_F_COUNT; f++) _make_wiz_row(s_wiz_body, f);
-
-    s_wiz_status_lbl = lv_label_create(s_wiz_card);
-    lv_label_set_text(s_wiz_status_lbl, "");
-    lv_obj_set_style_text_color(s_wiz_status_lbl, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(s_wiz_status_lbl, THEME_FONT_SMALL, 0);
-
-    s_wiz_btn_row = lv_obj_create(s_wiz_card);
-    lv_obj_set_size(s_wiz_btn_row, LV_PCT(100), 48);
-    lv_obj_set_style_bg_opa(s_wiz_btn_row, 0, 0);
-    lv_obj_set_style_border_width(s_wiz_btn_row, 0, 0);
-    lv_obj_set_style_pad_all(s_wiz_btn_row, 0, 0);
-    lv_obj_clear_flag(s_wiz_btn_row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *cancel = _make_button(s_wiz_btn_row, 120, 40, "Cancel");
-    lv_obj_align(cancel, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_add_event_cb(cancel, _wiz_cancel_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *save = _make_button(s_wiz_btn_row, 120, 40, "Save");
-    lv_obj_align(save, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(save, DT_ACCENT, 0);
-    lv_obj_set_style_bg_opa(save, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(save, _wiz_save_cb, LV_EVENT_CLICKED, NULL);
+    widget_t *w = s_widget;
+    inspector_close();
+    if (w) load_menu_screen_for_widget(w);
 }
 
 /* Generic tab builder - iterates the schema and dispatches per field
  * type. Categories filter what shows up where (STYLE = appearance,
- * DATA = data, RULES = alerts). Fields whose widget doesn't implement
- * inspector_get yet still appear, but their initial value comes from
- * the schema default rather than the live widget. */
+ * DATA = data, RULES = alerts). DATA tab leads with the SIGNAL card
+ * (4 dropdowns + CAN BUS section); other categories are pure schema. */
 
 static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     if (!w || !w->inspector_get || !w->inspector_set) return;
@@ -1835,10 +1807,6 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     s_select_row_ctx_count = 0;
     s_text_row_ctx_count = 0;
 
-    /* DATA tab leads with the SIGNAL card (four-dropdown source +
-     * binding selector), then the data-category schema fields below it.
-     * A layout is just a flat signals list - we don't surface a
-     * "layout's ECU" concept here. */
     if (cat == WF_CAT_DATA && _widget_supports_signal_binding()) {
         lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
         _build_signal_source_section(sig_card);
@@ -1848,8 +1816,6 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     lv_obj_t *dims    = NULL;
     lv_obj_t *generic = NULL;
 
-    /* Pick a default-card title based on category so the DATA tab card
-     * doesn't read "DIMENSIONS" or "COLOURS" when it isn't either. */
     const char *generic_title =
         (cat == WF_CAT_DATA)        ? "DATA" :
         (cat == WF_CAT_ALERTS)      ? "ALERTS" :
@@ -1868,8 +1834,6 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
             case WF_TYPE_STEPPER:
             case WF_TYPE_STEPPER_AUTO:
             case WF_TYPE_SLIDER: {
-                /* In STYLE the slider rows are "DIMENSIONS"; elsewhere they
-                 * sit in the same card as the rest of the category. */
                 if (cat == WF_CAT_APPEARANCE) {
                     if (!dims) dims = _make_card(s_content, "DIMENSIONS");
                     _make_stepper_row_schema(dims, f);
@@ -1909,13 +1873,6 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
 }
 
 /* Placeholder tab */
-
-static void _legacy_btn_cb(lv_event_t *e) {
-    (void)e;
-    widget_t *w = s_widget;
-    inspector_close();
-    if (w) load_menu_screen_for_widget(w);
-}
 
 static void _build_placeholder_tab(const char *tab_name) {
     lv_obj_t *card = _make_card(s_content, NULL);
@@ -2182,7 +2139,6 @@ void inspector_open(widget_t *w) {
 void inspector_close(void) {
     _close_picker();
     _close_wheel();
-    _wiz_close();
     if (s_overlay) {
         if (lv_obj_is_valid(s_overlay)) lv_obj_del(s_overlay);
         s_overlay = NULL;
@@ -2198,9 +2154,14 @@ void inspector_close(void) {
     s_tab_indicator   = NULL;
     s_side_left_btn   = NULL;
     s_side_right_btn  = NULL;
-    s_sig_ecu_dd      = NULL;
-    s_sig_version_dd  = NULL;
-    s_sig_signal_dd   = NULL;
+    s_sig_ecu_dd       = NULL;
+    s_sig_version_dd   = NULL;
+    s_sig_signal_dd    = NULL;
+    s_canbus_chev      = NULL;
+    s_canbus_content   = NULL;
+    s_canbus_endian_dd = NULL;
+    s_canbus_signed_sw = NULL;
+    for (int i = 0; i < CB_F_COUNT; i++) s_canbus_value_lbls[i] = NULL;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
     edit_mode_commit_external_edit();
