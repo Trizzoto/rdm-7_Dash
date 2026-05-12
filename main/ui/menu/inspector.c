@@ -35,6 +35,7 @@
 #include "ui/ui.h"                 /* ui_Screen3 extern */
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
 #include "widgets/signal.h"        /* signal binding picker */
+#include "layout/ecu_presets.h"    /* new-signal wizard: ECU preset path */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
 #include <stdio.h>
@@ -1328,10 +1329,29 @@ typedef struct {
     char     unit[8];
 } wizard_form_t;
 
+/* Multi-page wizard state. Pages share the popup + outer card; the body
+ * and button row are rebuilt per page. */
+typedef enum {
+    WIZ_PAGE_METHOD = 0,    /* Manual / ECU Preset / DBC chooser */
+    WIZ_PAGE_MANUAL,        /* manual-entry form */
+    WIZ_PAGE_ECU_LIST,      /* list of curated ECU presets */
+    WIZ_PAGE_ECU_SIGNALS,   /* list of signals from the selected ECU */
+} wizard_page_t;
+
 static wizard_form_t s_wiz_form;
-static lv_obj_t     *s_wiz_popup = NULL;
-static lv_obj_t     *s_wiz_field_lbls[WIZ_F_COUNT] = {NULL};
+static lv_obj_t     *s_wiz_popup    = NULL;
+static lv_obj_t     *s_wiz_card     = NULL;
+static lv_obj_t     *s_wiz_title    = NULL;
+static lv_obj_t     *s_wiz_subtitle = NULL;
+static lv_obj_t     *s_wiz_body     = NULL;
+static lv_obj_t     *s_wiz_btn_row  = NULL;
 static lv_obj_t     *s_wiz_status_lbl = NULL;
+static lv_obj_t     *s_wiz_field_lbls[WIZ_F_COUNT] = {NULL};
+
+static wizard_page_t s_wiz_page    = WIZ_PAGE_METHOD;
+static int           s_wiz_ecu_idx = -1;   /* picked ECU on ECU_SIGNALS page */
+
+static void _wiz_show_page(wizard_page_t page);
 
 static const char *_wiz_field_label(int f) {
     switch (f) {
@@ -1394,7 +1414,13 @@ static void _wiz_set_status(const char *msg, bool error) {
 static void _wiz_close(void) {
     if (s_wiz_popup && lv_obj_is_valid(s_wiz_popup)) lv_obj_del(s_wiz_popup);
     s_wiz_popup       = NULL;
+    s_wiz_card        = NULL;
+    s_wiz_title       = NULL;
+    s_wiz_subtitle    = NULL;
+    s_wiz_body        = NULL;
+    s_wiz_btn_row     = NULL;
     s_wiz_status_lbl  = NULL;
+    s_wiz_ecu_idx     = -1;
     for (int i = 0; i < WIZ_F_COUNT; i++) s_wiz_field_lbls[i] = NULL;
 }
 
@@ -1552,6 +1578,285 @@ static void _make_wiz_row(lv_obj_t *parent, int field) {
     s_wiz_field_lbls[field] = value;
 }
 
+/* Build a body row that looks + behaves like a tappable list entry.
+ * Caller is responsible for hooking the click callback. */
+static lv_obj_t *_wiz_list_row(lv_obj_t *parent) {
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 44);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
+    lv_obj_set_style_bg_opa(row, 60, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 8, 0);
+    lv_obj_set_style_radius(row, 4, 0);
+    return row;
+}
+
+/* ── Page: method picker ───────────────────────────────────────────── */
+
+typedef struct {
+    const char    *label;
+    const char    *desc;
+    wizard_page_t  goto_page;
+    bool           enabled;
+} wiz_method_t;
+
+static void _wiz_method_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    wizard_page_t target = (wizard_page_t)(intptr_t)lv_event_get_user_data(e);
+    if (target == WIZ_PAGE_ECU_LIST) s_wiz_ecu_idx = -1;
+    _wiz_show_page(target);
+}
+
+static void _wiz_build_method_page(void) {
+    static const wiz_method_t METHODS[] = {
+        { "Manual Entry",     "Type name + CAN ID + scale by hand.",
+          WIZ_PAGE_MANUAL,    true },
+        { "From ECU Preset",  "Pick one of 8 curated ECU broadcast maps.",
+          WIZ_PAGE_ECU_LIST,  true },
+        { "From DBC File",    "Browse user.dbc uploaded over the web editor.",
+          WIZ_PAGE_METHOD,    false },   /* wired in step 6 */
+    };
+    static const int METHOD_COUNT =
+        sizeof(METHODS) / sizeof(METHODS[0]);
+
+    lv_label_set_text(s_wiz_title, "Create new signal");
+    lv_label_set_text(s_wiz_subtitle,
+        "Choose where the signal definition comes from.");
+
+    for (int i = 0; i < METHOD_COUNT; i++) {
+        const wiz_method_t *m = &METHODS[i];
+
+        lv_obj_t *row = _wiz_list_row(s_wiz_body);
+        lv_obj_set_height(row, 64);
+        if (!m->enabled) {
+            lv_obj_add_state(row, LV_STATE_DISABLED);
+            lv_obj_set_style_bg_opa(row, 20, 0);
+        }
+        lv_obj_add_event_cb(row, _wiz_method_btn_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)m->goto_page);
+
+        lv_obj_t *name_lbl = lv_label_create(row);
+        lv_label_set_text(name_lbl, m->label);
+        lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(name_lbl, THEME_FONT_BODY, 0);
+
+        lv_obj_t *desc_lbl = lv_label_create(row);
+        lv_label_set_text(desc_lbl, m->desc);
+        lv_label_set_long_mode(desc_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(desc_lbl, 540);
+        lv_obj_align(desc_lbl, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_set_style_text_color(desc_lbl, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(desc_lbl, THEME_FONT_SMALL, 0);
+
+        if (!m->enabled) {
+            lv_obj_t *soon = lv_label_create(row);
+            lv_label_set_text(soon, "Coming soon");
+            lv_obj_align(soon, LV_ALIGN_RIGHT_MID, 0, 0);
+            lv_obj_set_style_text_color(soon, DT_TEXT_MUTED, 0);
+            lv_obj_set_style_text_font(soon, THEME_FONT_SMALL, 0);
+        } else {
+            lv_obj_t *chev = lv_label_create(row);
+            lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+            lv_obj_align(chev, LV_ALIGN_RIGHT_MID, 0, 0);
+            lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+            lv_obj_set_style_text_font(chev, THEME_FONT_BODY, 0);
+        }
+    }
+}
+
+/* ── Page: ECU list ────────────────────────────────────────────────── */
+
+static void _wiz_ecu_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= ECU_PRESETS_COUNT) return;
+    s_wiz_ecu_idx = idx;
+    _wiz_show_page(WIZ_PAGE_ECU_SIGNALS);
+}
+
+static void _wiz_build_ecu_list_page(void) {
+    lv_label_set_text(s_wiz_title, "Pick an ECU");
+    lv_label_set_text(s_wiz_subtitle,
+        "Each preset maps the ECU's default broadcast IDs to "
+        "metric units (kPa / degC / km/h / lambda).");
+
+    for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
+        const ecu_preset_t *p = &ECU_PRESETS[i];
+        if (!p->display) continue;
+
+        lv_obj_t *row = _wiz_list_row(s_wiz_body);
+        lv_obj_add_event_cb(row, _wiz_ecu_row_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+
+        lv_obj_t *lbl = lv_label_create(row);
+        lv_label_set_text(lbl, p->display);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+        lv_obj_t *chev = lv_label_create(row);
+        lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+        lv_obj_align(chev, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+    }
+}
+
+/* ── Page: ECU signals (for the selected ECU) ──────────────────────── */
+
+static void _wiz_ecu_signal_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    if (slot < 0 || slot >= ECU_SIG__COUNT) return;
+    if (s_wiz_ecu_idx < 0 || s_wiz_ecu_idx >= ECU_PRESETS_COUNT) return;
+
+    const ecu_preset_t *preset = &ECU_PRESETS[s_wiz_ecu_idx];
+    const ecu_signal_row_t *row = &preset->rows[slot];
+    if (row->can_id == 0) return;  /* unsupported - row should be hidden */
+    const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
+    if (!name) return;
+
+    /* Register if missing; otherwise just look up the existing index. */
+    int16_t idx = signal_register(name, row->can_id, row->bit_start,
+                                   row->bit_length, row->scale, row->offset,
+                                   row->is_signed, row->endian,
+                                   row->unit ? row->unit : "");
+    if (idx < 0) idx = signal_find_by_name(name);
+    if (idx < 0) {
+        _wiz_set_status("Could not register signal.", true);
+        return;
+    }
+
+    /* Bind widget, close wizard + picker. */
+    if (s_widget && s_widget->inspector_set) {
+        widget_field_value_t v = { .str = name };
+        s_widget->inspector_set(s_widget, "signal_name", &v);
+    }
+    _wiz_close();
+    _close_signal_picker();
+}
+
+static void _wiz_build_ecu_signals_page(void) {
+    if (s_wiz_ecu_idx < 0 || s_wiz_ecu_idx >= ECU_PRESETS_COUNT) {
+        _wiz_show_page(WIZ_PAGE_ECU_LIST);
+        return;
+    }
+    const ecu_preset_t *preset = &ECU_PRESETS[s_wiz_ecu_idx];
+
+    lv_label_set_text_fmt(s_wiz_title, "%s", preset->display);
+    lv_label_set_text(s_wiz_subtitle,
+        "Tap a signal to register it and bind this widget.");
+
+    bool any = false;
+    for (int slot = 0; slot < ECU_SIG__COUNT; slot++) {
+        const ecu_signal_row_t *r = &preset->rows[slot];
+        if (r->can_id == 0) continue;   /* unsupported on this ECU */
+        const char *name = ecu_signal_slot_name((ecu_signal_slot_t)slot);
+        if (!name) continue;
+        any = true;
+
+        lv_obj_t *row = _wiz_list_row(s_wiz_body);
+        lv_obj_add_event_cb(row, _wiz_ecu_signal_row_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)slot);
+
+        lv_obj_t *name_lbl = lv_label_create(row);
+        lv_label_set_text(name_lbl, name);
+        lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
+
+        char meta[40];
+        snprintf(meta, sizeof(meta), "0x%X  %s",
+                 (unsigned)r->can_id, r->unit ? r->unit : "");
+        lv_obj_t *meta_lbl = lv_label_create(row);
+        lv_label_set_text(meta_lbl, meta);
+        lv_obj_align(meta_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_color(meta_lbl, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(meta_lbl, THEME_FONT_SMALL, 0);
+    }
+    if (!any) {
+        lv_obj_t *empty = lv_label_create(s_wiz_body);
+        lv_label_set_text(empty,
+            "This ECU has no broadcast signals defined in the preset.");
+        lv_obj_set_style_text_color(empty, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
+    }
+}
+
+/* ── Page: manual form (extracted from the original wizard body) ──── */
+
+static void _wiz_build_manual_page(void) {
+    lv_label_set_text(s_wiz_title, "Manual signal entry");
+    lv_label_set_text(s_wiz_subtitle,
+        "Endian defaults to Intel; signedness to unsigned. "
+        "Refine in the web editor if you need finer control.");
+    for (int f = 0; f < WIZ_F_COUNT; f++) _make_wiz_row(s_wiz_body, f);
+}
+
+/* ── Button row + page dispatcher ──────────────────────────────────── */
+
+static void _wiz_back_to_method_cb(lv_event_t *e) {
+    (void)e;
+    _wiz_show_page(WIZ_PAGE_METHOD);
+}
+
+static void _wiz_back_to_ecu_list_cb(lv_event_t *e) {
+    (void)e;
+    _wiz_show_page(WIZ_PAGE_ECU_LIST);
+}
+
+static void _wiz_build_buttons(void) {
+    /* Cancel is always present, on the left. */
+    lv_obj_t *cancel = _make_button(s_wiz_btn_row, 110, 40, "Cancel");
+    lv_obj_align(cancel, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_add_event_cb(cancel, _wiz_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Per-page back / save buttons. */
+    if (s_wiz_page == WIZ_PAGE_MANUAL) {
+        lv_obj_t *back = _make_button(s_wiz_btn_row, 110, 40, "Back");
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 120, 0);
+        lv_obj_add_event_cb(back, _wiz_back_to_method_cb, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *save = _make_button(s_wiz_btn_row, 120, 40, "Save");
+        lv_obj_align(save, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_bg_color(save, DT_ACCENT, 0);
+        lv_obj_set_style_bg_opa(save, LV_OPA_COVER, 0);
+        lv_obj_add_event_cb(save, _wiz_save_cb, LV_EVENT_CLICKED, NULL);
+    } else if (s_wiz_page == WIZ_PAGE_ECU_LIST) {
+        lv_obj_t *back = _make_button(s_wiz_btn_row, 110, 40, "Back");
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 120, 0);
+        lv_obj_add_event_cb(back, _wiz_back_to_method_cb, LV_EVENT_CLICKED, NULL);
+    } else if (s_wiz_page == WIZ_PAGE_ECU_SIGNALS) {
+        lv_obj_t *back = _make_button(s_wiz_btn_row, 110, 40, "Back");
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 120, 0);
+        lv_obj_add_event_cb(back, _wiz_back_to_ecu_list_cb, LV_EVENT_CLICKED, NULL);
+    }
+}
+
+static void _wiz_show_page(wizard_page_t page) {
+    if (!s_wiz_card || !lv_obj_is_valid(s_wiz_card)) return;
+    s_wiz_page = page;
+
+    if (s_wiz_body && lv_obj_is_valid(s_wiz_body))     lv_obj_clean(s_wiz_body);
+    if (s_wiz_btn_row && lv_obj_is_valid(s_wiz_btn_row)) lv_obj_clean(s_wiz_btn_row);
+    for (int i = 0; i < WIZ_F_COUNT; i++) s_wiz_field_lbls[i] = NULL;
+    _wiz_set_status("", false);
+
+    switch (page) {
+        case WIZ_PAGE_METHOD:      _wiz_build_method_page();      break;
+        case WIZ_PAGE_MANUAL:      _wiz_build_manual_page();      break;
+        case WIZ_PAGE_ECU_LIST:    _wiz_build_ecu_list_page();    break;
+        case WIZ_PAGE_ECU_SIGNALS: _wiz_build_ecu_signals_page(); break;
+    }
+    _wiz_build_buttons();
+}
+
 static void _open_signal_wizard(void) {
     _wiz_close();
     _wiz_set_defaults();
@@ -1567,74 +1872,61 @@ static void _open_signal_wizard(void) {
     lv_obj_clear_flag(s_wiz_popup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_wiz_popup, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *card = lv_obj_create(s_wiz_popup);
-    lv_obj_set_size(card, 640, 440);
-    lv_obj_center(card);
-    lv_obj_set_style_bg_color(card, DT_BG_PANEL, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(card, DT_BORDER_DARK, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, DT_RADIUS_LG, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_set_style_pad_row(card, 8, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START,
+    s_wiz_card = lv_obj_create(s_wiz_popup);
+    lv_obj_set_size(s_wiz_card, 640, 440);
+    lv_obj_center(s_wiz_card);
+    lv_obj_set_style_bg_color(s_wiz_card, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_wiz_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_wiz_card, DT_BORDER_DARK, 0);
+    lv_obj_set_style_border_width(s_wiz_card, 1, 0);
+    lv_obj_set_style_radius(s_wiz_card, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(s_wiz_card, 16, 0);
+    lv_obj_set_style_pad_row(s_wiz_card, 8, 0);
+    lv_obj_clear_flag(s_wiz_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(s_wiz_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_wiz_card, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-    lv_obj_t *title = lv_label_create(card);
-    lv_label_set_text(title, "Create new signal");
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+    s_wiz_title = lv_label_create(s_wiz_card);
+    lv_label_set_text(s_wiz_title, "Create new signal");
+    lv_obj_set_style_text_color(s_wiz_title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(s_wiz_title, THEME_FONT_LARGE, 0);
 
-    lv_obj_t *subtitle = lv_label_create(card);
-    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(subtitle, 600);
-    lv_label_set_text(subtitle,
-        "Manual entry. Endian defaults to Intel and signedness to unsigned "
-        "- tweak in the web editor for finer control.");
-    lv_obj_set_style_text_color(subtitle, DT_TEXT_MUTED, 0);
-    lv_obj_set_style_text_font(subtitle, THEME_FONT_SMALL, 0);
+    s_wiz_subtitle = lv_label_create(s_wiz_card);
+    lv_label_set_long_mode(s_wiz_subtitle, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_wiz_subtitle, 600);
+    lv_label_set_text(s_wiz_subtitle, "");
+    lv_obj_set_style_text_color(s_wiz_subtitle, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_wiz_subtitle, THEME_FONT_SMALL, 0);
 
-    /* Scrollable form container so all 7 fields fit. */
-    lv_obj_t *form = lv_obj_create(card);
-    lv_obj_set_width(form, LV_PCT(100));
-    lv_obj_set_flex_grow(form, 1);
-    lv_obj_set_style_bg_opa(form, 0, 0);
-    lv_obj_set_style_border_width(form, 0, 0);
-    lv_obj_set_style_pad_all(form, 0, 0);
-    lv_obj_set_style_pad_row(form, 4, 0);
-    lv_obj_add_flag(form, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(form, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(form, LV_SCROLLBAR_MODE_ACTIVE);
-    lv_obj_set_flex_flow(form, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(form, LV_FLEX_ALIGN_START,
+    /* Scrollable body container - cleaned + repopulated per page. */
+    s_wiz_body = lv_obj_create(s_wiz_card);
+    lv_obj_set_width(s_wiz_body, LV_PCT(100));
+    lv_obj_set_flex_grow(s_wiz_body, 1);
+    lv_obj_set_style_bg_opa(s_wiz_body, 0, 0);
+    lv_obj_set_style_border_width(s_wiz_body, 0, 0);
+    lv_obj_set_style_pad_all(s_wiz_body, 0, 0);
+    lv_obj_set_style_pad_row(s_wiz_body, 4, 0);
+    lv_obj_add_flag(s_wiz_body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(s_wiz_body, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_wiz_body, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_flex_flow(s_wiz_body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_wiz_body, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-    for (int f = 0; f < WIZ_F_COUNT; f++) _make_wiz_row(form, f);
-
-    s_wiz_status_lbl = lv_label_create(card);
+    s_wiz_status_lbl = lv_label_create(s_wiz_card);
     lv_label_set_text(s_wiz_status_lbl, "");
     lv_obj_set_style_text_color(s_wiz_status_lbl, DT_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(s_wiz_status_lbl, THEME_FONT_SMALL, 0);
 
-    /* Bottom button row. */
-    lv_obj_t *btn_row = lv_obj_create(card);
-    lv_obj_set_size(btn_row, LV_PCT(100), 48);
-    lv_obj_set_style_bg_opa(btn_row, 0, 0);
-    lv_obj_set_style_border_width(btn_row, 0, 0);
-    lv_obj_set_style_pad_all(btn_row, 0, 0);
-    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+    s_wiz_btn_row = lv_obj_create(s_wiz_card);
+    lv_obj_set_size(s_wiz_btn_row, LV_PCT(100), 48);
+    lv_obj_set_style_bg_opa(s_wiz_btn_row, 0, 0);
+    lv_obj_set_style_border_width(s_wiz_btn_row, 0, 0);
+    lv_obj_set_style_pad_all(s_wiz_btn_row, 0, 0);
+    lv_obj_clear_flag(s_wiz_btn_row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *cancel = _make_button(btn_row, 120, 40, "Cancel");
-    lv_obj_align(cancel, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_add_event_cb(cancel, _wiz_cancel_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *save = _make_button(btn_row, 120, 40, "Save");
-    lv_obj_align(save, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_bg_color(save, DT_ACCENT, 0);
-    lv_obj_set_style_bg_opa(save, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(save, _wiz_save_cb, LV_EVENT_CLICKED, NULL);
+    _wiz_show_page(WIZ_PAGE_METHOD);
 }
 
 /* Generic tab builder - iterates the schema and dispatches per field
