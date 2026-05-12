@@ -93,6 +93,13 @@ void edit_mode_screen_pressed_cb(lv_event_t *e);
  *  No-op when no chrome is currently up. */
 void edit_mode_refresh_zorder(void);
 
+/** Called by external editors (the Inspector, etc.) after they've directly
+ *  mutated the currently-selected widget. Refreshes the selection chrome
+ *  to the widget's new bounds, flushes any in-progress undo session, pushes
+ *  a fresh snapshot to capture the external edit as its own undo step, and
+ *  schedules a layout save. No-op when not armed. */
+void edit_mode_commit_external_edit(void);
+
 #ifdef __cplusplus
 }
 #endif

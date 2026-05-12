@@ -13,7 +13,9 @@
  */
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/design_tokens.h"
-#include "ui/menu/menu_screen.h"  /* load_menu_screen_for_widget */
+#include "ui/menu/inspector.h"    /* inspector_open */
+/* menu_screen.h is no longer included from here — the legacy editor fallback
+ * now lives inside inspector.c's placeholder tabs. */
 #include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
 #include "ui/dashboard.h"         /* dashboard_persist_layout */
 #include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays (badge) */
@@ -640,10 +642,11 @@ static void _step_btn_cb(lv_event_t *e) {
 static void _configure_btn_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     if (!s_selected) return;
-    /* Hand off to the existing per-widget config modal. It's the same path
-     * the previous long-press gesture used; just driven from an explicit
-     * button now so we don't fight LVGL's long-press timer mid-drag. */
-    load_menu_screen_for_widget(s_selected);
+    /* Hand off to the Phase 3 Inspector. Each placeholder tab has a fallback
+     * button that calls load_menu_screen_for_widget for the legacy editor,
+     * so users of Panel/Bar/RPM_Bar (the only widgets with on-device legacy
+     * coverage) can still reach the full settings list. */
+    inspector_open(s_selected);
 }
 
 /* ── Delete: confirm modal + dashboard call ─────────────────────────────── */
@@ -2036,4 +2039,20 @@ void edit_mode_refresh_zorder(void) {
         lv_obj_move_foreground(s_top_toolbar);
     if (s_toolbar && lv_obj_is_valid(s_toolbar))
         lv_obj_move_foreground(s_toolbar);
+}
+
+void edit_mode_commit_external_edit(void) {
+    if (!s_armed) return;
+    /* Selection ring may be stale if the widget moved or resized. */
+    if (s_selected) {
+        _update_ring();
+        _update_readout();
+    }
+    /* Capture the external edit as its own undo step, flushing any in-flight
+     * session first so we don't merge a precision external tweak into the
+     * preceding gesture session. */
+    _flush_pending_snapshot();
+    _undo_snapshot();
+    _refresh_undo_redo_styling();
+    _schedule_save();
 }

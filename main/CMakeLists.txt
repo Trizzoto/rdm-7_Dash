@@ -50,6 +50,7 @@ idf_component_register(
         "ui/callbacks/ui_callbacks.c"
 "ui/menu/config_modal.c"
         "ui/menu/edit_mode.c"
+        "ui/menu/inspector.c"
         "ui/menu/menu_screen.c"
         "ui/screens/ui_Screen3.c"
         "widgets/widget_warning.c"
