@@ -40,11 +40,13 @@ void force_close_text_input_dialog(void);
  *   - manages a hidden helper textarea internally so callers don't need to
  *     keep one around just to satisfy the dialog's target_textarea argument.
  *
- * `initial` is the pre-filled value displayed when the dialog opens. The
- * `on_confirm` callback receives whatever the user typed. `on_cancel` is
- * optional (pass NULL if you don't need it). */
+ * `initial` is the pre-filled value displayed when the dialog opens.
+ * `on_confirm` fires when the user taps Save with whatever they typed.
+ * `on_cancel` fires when the user taps Cancel (or dismisses without
+ *   confirming). Either callback may be NULL. */
 void show_numeric_input_dialog(const char *title, const char *initial,
                                void (*on_confirm)(const char *text, void *user_data),
+                               void (*on_cancel)(void *user_data),
                                void *user_data);
 
 #ifdef __cplusplus

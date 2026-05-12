@@ -949,11 +949,33 @@ static void _popover_slider_cb(lv_event_t *e) {
     _set_widget_field(s_popover_target, v);
 }
 
+/* Selection ring + 8 handles live on lv_layer_top, which draws above every
+ * screen including modal dialogs. Without hiding them, the blue ring sits
+ * on top of the numeric keypad — looks broken. Hide on keypad open, show
+ * again on close (confirm OR cancel). */
+static void _set_selection_chrome_hidden(bool hidden) {
+    if (s_ring && lv_obj_is_valid(s_ring)) {
+        if (hidden) lv_obj_add_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_clear_flag(s_ring, LV_OBJ_FLAG_HIDDEN);
+    }
+    for (int i = 0; i < 8; i++) {
+        if (!s_handles[i] || !lv_obj_is_valid(s_handles[i])) continue;
+        if (hidden) lv_obj_add_flag(s_handles[i], LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_clear_flag(s_handles[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void _popover_keypad_confirmed(const char *text, void *user_data) {
     (void)user_data;
+    _set_selection_chrome_hidden(false);
     if (!text || s_popover_target == 0) return;
     int v = atoi(text);
     _set_widget_field(s_popover_target, v);
+}
+
+static void _popover_keypad_cancelled(void *user_data) {
+    (void)user_data;
+    _set_selection_chrome_hidden(false);
 }
 
 /* Fine-step buttons flanking the slider: each press nudges the active
@@ -981,7 +1003,12 @@ static void _popover_keypad_cb(lv_event_t *e) {
         case 'w': title = "Width";      break;
         case 'h': title = "Height";     break;
     }
-    show_numeric_input_dialog(title, initial, _popover_keypad_confirmed, NULL);
+    /* Stash the selection chrome so it doesn't sit on top of the keypad. */
+    _set_selection_chrome_hidden(true);
+    show_numeric_input_dialog(title, initial,
+                              _popover_keypad_confirmed,
+                              _popover_keypad_cancelled,
+                              NULL);
 }
 
 static void _close_popover_cb(lv_event_t *e) {
