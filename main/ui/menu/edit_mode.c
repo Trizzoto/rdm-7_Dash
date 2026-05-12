@@ -956,6 +956,19 @@ static void _popover_keypad_confirmed(const char *text, void *user_data) {
     _set_widget_field(s_popover_target, v);
 }
 
+/* Fine-step buttons flanking the slider: each press nudges the active
+ * field by 1 px (irrespective of the global step toggle — these are the
+ * "escape hatch" for sub-grid precision). Hold-to-repeat at 100 ms via
+ * LV_EVENT_LONG_PRESSED_REPEAT after the 400 ms long-press threshold. */
+static void _popover_step_btn_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_LONG_PRESSED_REPEAT) return;
+    if (!s_selected || s_popover_target == 0) return;
+    int delta = (int)(intptr_t)lv_event_get_user_data(e);   /* -1 or +1 */
+    int current = _get_widget_field(s_popover_target);
+    _set_widget_field(s_popover_target, current + delta);
+}
+
 static void _popover_keypad_cb(lv_event_t *e) {
     (void)e;
     if (!s_selected || s_popover_target == 0) return;
@@ -997,7 +1010,8 @@ static void _open_popover(char target) {
     _get_chip_range(target, &min_v, &max_v);
 
     s_chip_popover = lv_obj_create(parent);
-    lv_obj_set_size(s_chip_popover, 300, 84);
+    /* Slightly taller now to host the ± buttons alongside the slider. */
+    lv_obj_set_size(s_chip_popover, 300, 92);
     lv_obj_clear_flag(s_chip_popover, LV_OBJ_FLAG_SCROLLABLE);
     /* Same glassmorphic style as the toolbar so they read as a pair. */
     lv_obj_set_style_bg_color(s_chip_popover, DT_BG_PANEL, 0);
@@ -1016,7 +1030,7 @@ static void _open_popover(char target) {
     lv_obj_update_layout(s_toolbar);
     lv_area_t tb_area;
     lv_obj_get_coords(s_toolbar, &tb_area);
-    int popover_top = tb_area.y1 - 84 - 8;
+    int popover_top = tb_area.y1 - 92 - 8;
     if (popover_top < 8) popover_top = 8;
     lv_obj_set_pos(s_chip_popover, (800 - 300) / 2, popover_top);
 
@@ -1048,10 +1062,31 @@ static void _open_popover(char target) {
     lv_obj_align(cls, LV_ALIGN_TOP_RIGHT, 0, 2);
     lv_obj_add_event_cb(cls, _close_popover_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Slider — full width at the bottom */
-    s_popover_slider = lv_slider_create(s_chip_popover);
-    lv_obj_set_size(s_popover_slider, 276, 12);
-    lv_obj_align(s_popover_slider, LV_ALIGN_BOTTOM_MID, 0, -4);
+    /* Bottom row — ± buttons flank the slider. Flex container so the three
+     * items stay vertically centered relative to each other (slider 12 tall,
+     * buttons 32 tall). */
+    lv_obj_t *bottom = lv_obj_create(s_chip_popover);
+    lv_obj_set_size(bottom, 280, 36);
+    lv_obj_align(bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(bottom, 0, 0);
+    lv_obj_set_style_border_width(bottom, 0, 0);
+    lv_obj_set_style_pad_all(bottom, 0, 0);
+    lv_obj_set_style_pad_column(bottom, 6, 0);
+    lv_obj_clear_flag(bottom, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(bottom, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(bottom, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    /* Minus — 1 px decrement (irrespective of grid step) */
+    lv_obj_t *minus_btn = _make_tbtn(bottom, 32, 32, LV_SYMBOL_MINUS);
+    lv_obj_add_event_cb(minus_btn, _popover_step_btn_cb,
+                        LV_EVENT_PRESSED, (void *)(intptr_t)-1);
+    lv_obj_add_event_cb(minus_btn, _popover_step_btn_cb,
+                        LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)-1);
+
+    /* Slider — narrower now to leave room for the ± buttons */
+    s_popover_slider = lv_slider_create(bottom);
+    lv_obj_set_size(s_popover_slider, 200, 12);
     lv_slider_set_range(s_popover_slider, min_v, max_v);
     lv_slider_set_value(s_popover_slider, v, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s_popover_slider, DT_BG_INSET, LV_PART_MAIN);
@@ -1059,6 +1094,13 @@ static void _open_popover(char target) {
     lv_obj_set_style_bg_color(s_popover_slider, DT_ACCENT, LV_PART_KNOB);
     lv_obj_add_event_cb(s_popover_slider, _popover_slider_cb,
                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* Plus — 1 px increment */
+    lv_obj_t *plus_btn = _make_tbtn(bottom, 32, 32, LV_SYMBOL_PLUS);
+    lv_obj_add_event_cb(plus_btn, _popover_step_btn_cb,
+                        LV_EVENT_PRESSED, (void *)(intptr_t)+1);
+    lv_obj_add_event_cb(plus_btn, _popover_step_btn_cb,
+                        LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)+1);
 
     lv_obj_move_foreground(s_chip_popover);
 }
