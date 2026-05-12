@@ -34,6 +34,14 @@ static void _close_popover(void);
 static void _update_popover(void);
 static void _open_popover(char target);
 static void _chip_clicked_cb(lv_event_t *e);
+static void _build_handles(void);
+static void _destroy_handles(void);
+static void _update_handles(void);
+static void _handle_pressed_cb(lv_event_t *e);
+static void _handle_pressing_cb(lv_event_t *e);
+static void _handle_released_cb(lv_event_t *e);
+static void _schedule_save(void);
+static void _update_ring(void);
 
 /* ── Module state ─────────────────────────────────────────────────────────── */
 
@@ -45,10 +53,22 @@ static lv_obj_t  *s_banner    = NULL;
 /* Selection + drag (active only while armed) */
 static widget_t  *s_selected            = NULL;
 static lv_obj_t  *s_ring                = NULL;
+static lv_obj_t  *s_handles[8]          = {NULL};   /* NW N NE W E SW S SE */
 static lv_point_t s_drag_start_pt       = {0, 0};
 static int16_t    s_drag_start_widget_x = 0;
 static int16_t    s_drag_start_widget_y = 0;
 static bool       s_dragging            = false;
+
+/* Resize state — separate from widget drag so a resize gesture never gets
+ * confused with a move gesture (the user is pressing a handle, not the
+ * widget body). */
+static lv_point_t s_resize_start_pt     = {0, 0};
+static int16_t    s_resize_start_x      = 0;
+static int16_t    s_resize_start_y      = 0;
+static uint16_t   s_resize_start_w      = 0;
+static uint16_t   s_resize_start_h      = 0;
+static int8_t     s_resize_dir          = -1;       /* index into s_handles */
+static bool       s_resizing            = false;
 
 /* Two-stage selection: the first press on an unselected widget only selects
  * it (drag suppressed). A subsequent press on the already-selected widget
@@ -155,6 +175,9 @@ static void _destroy_banner(void) {
 
 /* ── Selection ring ───────────────────────────────────────────────────────── */
 
+/* Selection chrome = the ring + 8 resize handles. Built/destroyed/updated
+ * as a unit so they always stay synchronised to the selected widget. */
+
 static void _build_ring(void) {
     if (s_ring && lv_obj_is_valid(s_ring)) return;
     s_ring = lv_obj_create(lv_layer_top());
@@ -169,9 +192,12 @@ static void _build_ring(void) {
     lv_obj_set_style_pad_all(s_ring, 0, 0);
     lv_obj_set_style_shadow_width(s_ring, 0, 0);
     lv_obj_set_style_outline_width(s_ring, 0, 0);
+
+    _build_handles();
 }
 
 static void _destroy_ring(void) {
+    _destroy_handles();
     if (s_ring && lv_obj_is_valid(s_ring)) {
         lv_obj_del(s_ring);
     }
@@ -192,12 +218,187 @@ static void _update_ring(void) {
     lv_obj_set_size(s_ring,
                     (lv_coord_t)(lv_area_get_width(&area) + 4),
                     (lv_coord_t)(lv_area_get_height(&area) + 4));
+    _update_handles();
+}
+
+/* ── Resize handles (8: NW N NE W E SW S SE) ──────────────────────────────
+ *
+ * Each handle is a small accent-blue square sitting on lv_layer_top,
+ * centered on a corner / edge midpoint of the selected widget. When the
+ * user presses + drags one, the widget resizes from the opposite anchor:
+ *
+ *   E handle: right edge follows the finger; left edge stays put.
+ *   N handle: top edge follows the finger; bottom stays put.
+ *   NE corner: both right + top follow the finger; left + bottom anchor.
+ *   ...etc.
+ *
+ * The math: under LV_ALIGN_CENTER, widget.x is the center offset from
+ * screen center. To "anchor" one edge while moving the opposite, both
+ * size AND center must shift. Concretely, dragging east by dx pixels
+ * gives new_w = old_w + dx, new_x = old_x + dx/2 (center moves half the
+ * size delta toward the moving edge). Same pattern for all directions. */
+
+/* Order matches s_handles[] index */
+enum { H_NW=0, H_N, H_NE, H_W, H_E, H_SW, H_S, H_SE };
+
+#define HANDLE_VIS  12   /* visible square size */
+#define HANDLE_HIT   8   /* invisible padding on each side -> 28px hit area */
+#define RESIZE_THRESHOLD_PX 3
+
+static void _build_handles(void) {
+    for (int i = 0; i < 8; i++) {
+        if (s_handles[i] && lv_obj_is_valid(s_handles[i])) continue;
+        lv_obj_t *h = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(h, HANDLE_VIS, HANDLE_VIS);
+        lv_obj_set_ext_click_area(h, HANDLE_HIT);
+        lv_obj_clear_flag(h, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(h, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(h, DT_ACCENT, 0);
+        lv_obj_set_style_bg_opa(h, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(h, lv_color_white(), 0);
+        lv_obj_set_style_border_width(h, 1, 0);
+        lv_obj_set_style_border_opa(h, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(h, 2, 0);
+        lv_obj_set_style_pad_all(h, 0, 0);
+        lv_obj_set_style_shadow_width(h, 0, 0);
+        lv_obj_add_event_cb(h, _handle_pressed_cb,  LV_EVENT_PRESSED,
+                            (void *)(intptr_t)i);
+        lv_obj_add_event_cb(h, _handle_pressing_cb, LV_EVENT_PRESSING,
+                            (void *)(intptr_t)i);
+        lv_obj_add_event_cb(h, _handle_released_cb, LV_EVENT_RELEASED,
+                            (void *)(intptr_t)i);
+        s_handles[i] = h;
+    }
+}
+
+static void _destroy_handles(void) {
+    for (int i = 0; i < 8; i++) {
+        if (s_handles[i] && lv_obj_is_valid(s_handles[i])) lv_obj_del(s_handles[i]);
+        s_handles[i] = NULL;
+    }
+}
+
+static void _update_handles(void) {
+    if (!s_selected || !s_selected->root || !lv_obj_is_valid(s_selected->root)) return;
+    lv_area_t a;
+    lv_obj_get_coords(s_selected->root, &a);
+    int cx = (a.x1 + a.x2) / 2;
+    int cy = (a.y1 + a.y2) / 2;
+    /* Anchor points = corner/edge of widget bounds */
+    int px[8] = { a.x1, cx,   a.x2, a.x1, a.x2, a.x1, cx,   a.x2 };
+    int py[8] = { a.y1, a.y1, a.y1, cy,   cy,   a.y2, a.y2, a.y2 };
+    for (int i = 0; i < 8; i++) {
+        if (!s_handles[i] || !lv_obj_is_valid(s_handles[i])) continue;
+        /* Position so the handle is centered on the anchor point. */
+        lv_obj_set_pos(s_handles[i],
+                       (lv_coord_t)(px[i] - HANDLE_VIS / 2),
+                       (lv_coord_t)(py[i] - HANDLE_VIS / 2));
+    }
+}
+
+static void _handle_pressed_cb(lv_event_t *e) {
+    if (!s_armed || !s_selected) return;
+    s_resize_dir = (int8_t)(intptr_t)lv_event_get_user_data(e);
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_indev_get_point(indev, &s_resize_start_pt);
+    s_resize_start_x = s_selected->x;
+    s_resize_start_y = s_selected->y;
+    s_resize_start_w = s_selected->w;
+    s_resize_start_h = s_selected->h;
+    s_resizing       = false;
+}
+
+static void _handle_pressing_cb(lv_event_t *e) {
+    if (!s_armed || !s_selected) return;
+    if (!s_selected->root || !lv_obj_is_valid(s_selected->root)) return;
+
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t cur;
+    lv_indev_get_point(indev, &cur);
+    int dx = (int)cur.x - (int)s_resize_start_pt.x;
+    int dy = (int)cur.y - (int)s_resize_start_pt.y;
+    if (!s_resizing) {
+        if (abs(dx) < RESIZE_THRESHOLD_PX && abs(dy) < RESIZE_THRESHOLD_PX) return;
+        s_resizing = true;
+    }
+
+    int new_w = s_resize_start_w;
+    int new_h = s_resize_start_h;
+    int new_x = s_resize_start_x;
+    int new_y = s_resize_start_y;
+
+    /* Decompose handle index into x/y "active" flags + sign. */
+    int dir = (int)(intptr_t)lv_event_get_user_data(e);
+    bool touches_w = (dir == H_NW || dir == H_W || dir == H_SW);
+    bool touches_e = (dir == H_NE || dir == H_E || dir == H_SE);
+    bool touches_n = (dir == H_NW || dir == H_N || dir == H_NE);
+    bool touches_s = (dir == H_SW || dir == H_S || dir == H_SE);
+
+    if (touches_e) { new_w += dx; new_x += dx / 2; }
+    if (touches_w) { new_w -= dx; new_x += dx / 2; }
+    if (touches_s) { new_h += dy; new_y += dy / 2; }
+    if (touches_n) { new_h -= dy; new_y += dy / 2; }
+
+    /* Clamp to widget size constraints (web editor uses identical bounds). */
+    if (new_w < 10)  new_w = 10;
+    if (new_w > 800) new_w = 800;
+    if (new_h < 10)  new_h = 10;
+    if (new_h > 480) new_h = 480;
+
+    s_selected->x = (int16_t)new_x;
+    s_selected->y = (int16_t)new_y;
+    if (s_selected->resize) {
+        s_selected->resize(s_selected, (uint16_t)new_w, (uint16_t)new_h);
+    } else {
+        s_selected->w = (uint16_t)new_w;
+        s_selected->h = (uint16_t)new_h;
+        lv_obj_set_size(s_selected->root, new_w, new_h);
+    }
+    lv_obj_set_pos(s_selected->root, new_x, new_y);
+    _update_ring();      /* repositions ring + handles in lockstep */
+    _update_readout();
+}
+
+static void _handle_released_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_armed || !s_selected) return;
+    bool was_resizing = s_resizing;
+    s_resizing   = false;
+    s_resize_dir = -1;
+    if (!was_resizing) return;
+
+    /* Snap final size + position to the current step grid (matches what
+     * drag-to-move does on release). */
+    int step = (s_step > 0) ? s_step : 5;
+    int sx = (s_selected->x / step) * step;
+    int sy = (s_selected->y / step) * step;
+    int sw = ((int)s_selected->w / step) * step;
+    int sh = ((int)s_selected->h / step) * step;
+    if (sw < 10) sw = 10;
+    if (sh < 10) sh = 10;
+    s_selected->x = (int16_t)sx;
+    s_selected->y = (int16_t)sy;
+    if (s_selected->resize) {
+        s_selected->resize(s_selected, (uint16_t)sw, (uint16_t)sh);
+    } else {
+        s_selected->w = (uint16_t)sw;
+        s_selected->h = (uint16_t)sh;
+        lv_obj_set_size(s_selected->root, sw, sh);
+    }
+    lv_obj_set_pos(s_selected->root, sx, sy);
+    _update_ring();
+    _update_readout();
+    _schedule_save();
 }
 
 static void _clear_selection(void) {
     s_selected                = NULL;
     s_dragging                = false;
     s_drag_enabled_this_press = false;
+    s_resizing                = false;
+    s_resize_dir              = -1;
     _destroy_ring();
     _destroy_toolbar();
     /* Re-show the no-selection banner so the user has feedback that they're
@@ -360,6 +561,8 @@ static void _configure_btn_cb(lv_event_t *e) {
 
 #define TB_DRAG_THRESHOLD 4
 #define TB_MIN_GAP        4    /* won't snap completely flush to screen edge */
+#define TB_WIDTH         760
+#define TB_HEIGHT         76   /* roomier than the original 56 — easier targets */
 
 static void _toolbar_pressed_cb(lv_event_t *e) {
     (void)e;
@@ -386,13 +589,13 @@ static void _toolbar_pressing_cb(lv_event_t *e) {
 
     /* Toolbar height is fixed at 56 (see _build_toolbar). LV_ALIGN_BOTTOM_MID
      * with offset y measures from the parent's bottom edge upward. Range:
-     *   max (lowest): -TB_MIN_GAP        → 4 px above bottom edge
-     *   min (highest): -(480-56-TB_MIN_GAP) = -420 → 4 px below top edge
+     *   max (lowest): -TB_MIN_GAP                       → just above bottom
+     *   min (highest): -(480 - TB_HEIGHT - TB_MIN_GAP)  → just below top
      * Clamp keeps the toolbar fully visible regardless of drag distance. */
     int new_y = s_tb_drag_start_y + dy;
     if (new_y > -TB_MIN_GAP)      new_y = -TB_MIN_GAP;
-    if (new_y < -(480 - 56 - TB_MIN_GAP))
-                                  new_y = -(480 - 56 - TB_MIN_GAP);
+    if (new_y < -(480 - TB_HEIGHT - TB_MIN_GAP))
+                                  new_y = -(480 - TB_HEIGHT - TB_MIN_GAP);
     s_toolbar_y_off = (int16_t)new_y;
     lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, s_toolbar_y_off);
 }
@@ -675,7 +878,7 @@ static void _build_toolbar(lv_obj_t *parent) {
     if (s_toolbar && lv_obj_is_valid(s_toolbar)) return;
 
     s_toolbar = lv_obj_create(parent);
-    lv_obj_set_size(s_toolbar, 720, 56);
+    lv_obj_set_size(s_toolbar, TB_WIDTH, TB_HEIGHT);
     lv_obj_align(s_toolbar, LV_ALIGN_BOTTOM_MID, 0, s_toolbar_y_off);
     lv_obj_clear_flag(s_toolbar, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -723,7 +926,7 @@ static void _build_toolbar(lv_obj_t *parent) {
 
     /* Nudge cluster — 4 buttons, tight 2px gaps */
     lv_obj_t *nudges = lv_obj_create(s_toolbar);
-    lv_obj_set_size(nudges, 156, 40);
+    lv_obj_set_size(nudges, 156, 48);
     lv_obj_set_style_bg_opa(nudges, 0, 0);
     lv_obj_set_style_border_width(nudges, 0, 0);
     lv_obj_set_style_pad_all(nudges, 0, 0);
@@ -737,7 +940,7 @@ static void _build_toolbar(lv_obj_t *parent) {
     static const char *const icons[4] = {LV_SYMBOL_LEFT, LV_SYMBOL_UP,
                                          LV_SYMBOL_DOWN, LV_SYMBOL_RIGHT};
     for (int i = 0; i < 4; i++) {
-        lv_obj_t *b = _make_tbtn(nudges, 36, 36, icons[i]);
+        lv_obj_t *b = _make_tbtn(nudges, 36, 44, icons[i]);
         lv_obj_add_event_cb(b, _nudge_btn_cb, LV_EVENT_PRESSED,
                             (void *)(intptr_t)dirs[i]);
         lv_obj_add_event_cb(b, _nudge_btn_cb, LV_EVENT_LONG_PRESSED_REPEAT,
@@ -749,7 +952,7 @@ static void _build_toolbar(lv_obj_t *parent) {
      * one accent. Web-style: small gap between segments rather than a hard
      * shared border. */
     lv_obj_t *steps = lv_obj_create(s_toolbar);
-    lv_obj_set_size(steps, 138, 38);
+    lv_obj_set_size(steps, 138, 48);
     lv_obj_set_style_bg_opa(steps, 0, 0);
     lv_obj_set_style_border_width(steps, 0, 0);
     lv_obj_set_style_pad_all(steps, 0, 0);
@@ -762,7 +965,7 @@ static void _build_toolbar(lv_obj_t *parent) {
     static const int8_t step_values[3] = {1, 5, 10};
     static const char *const step_labels[3] = {"1", "5", "10"};
     for (int i = 0; i < 3; i++) {
-        lv_obj_t *b = _make_tbtn(steps, 44, 36, step_labels[i]);
+        lv_obj_t *b = _make_tbtn(steps, 44, 44, step_labels[i]);
         lv_obj_add_event_cb(b, _step_btn_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)step_values[i]);
         s_step_btns[i] = b;
@@ -774,7 +977,7 @@ static void _build_toolbar(lv_obj_t *parent) {
      * while the outer flex layout positions them between the step toggle
      * and the Configure button. */
     lv_obj_t *chip_grp = lv_obj_create(s_toolbar);
-    lv_obj_set_size(chip_grp, 252, 36);
+    lv_obj_set_size(chip_grp, 252, 48);
     lv_obj_set_style_bg_opa(chip_grp, 0, 0);
     lv_obj_set_style_border_width(chip_grp, 0, 0);
     lv_obj_set_style_pad_all(chip_grp, 0, 0);
@@ -786,7 +989,7 @@ static void _build_toolbar(lv_obj_t *parent) {
 
     static const char chip_targets[4] = {'x', 'y', 'w', 'h'};
     for (int i = 0; i < 4; i++) {
-        lv_obj_t *c = _make_tbtn(chip_grp, 60, 32, "");
+        lv_obj_t *c = _make_tbtn(chip_grp, 60, 40, "");
         lv_obj_add_event_cb(c, _chip_clicked_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)chip_targets[i]);
         s_chip_btns[i] = c;
@@ -795,7 +998,7 @@ static void _build_toolbar(lv_obj_t *parent) {
 
     /* Configure button — accent-blue, opens the per-widget config modal */
     lv_obj_t *cfg = lv_btn_create(s_toolbar);
-    lv_obj_set_size(cfg, 130, 36);
+    lv_obj_set_size(cfg, 130, 44);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT, 0);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT_HOVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(cfg, LV_OPA_COVER, 0);
@@ -885,10 +1088,16 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
      * tear it down here in case a previous session left it dangling. The
      * toolbar lived on the old screen and is already gone with it. */
     if (s_ring && lv_obj_is_valid(s_ring)) lv_obj_del(s_ring);
+    for (int i = 0; i < 8; i++) {
+        if (s_handles[i] && lv_obj_is_valid(s_handles[i])) lv_obj_del(s_handles[i]);
+        s_handles[i] = NULL;
+    }
     s_pill                    = NULL;
     s_pill_lbl                = NULL;
     s_banner                  = NULL;
     s_ring                    = NULL;
+    s_resizing                = false;
+    s_resize_dir              = -1;
     s_toolbar                 = NULL;
     s_step_btns[0]            = NULL;
     s_step_btns[1]            = NULL;
