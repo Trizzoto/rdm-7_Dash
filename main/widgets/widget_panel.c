@@ -960,6 +960,7 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "custom_text") == 0)          { out->str = pd->custom_text;  return true; }
 	if (strcmp(name, "decimals") == 0)             { out->i = pd->decimals;       return true; }
 	if (strcmp(name, "show_peak") == 0)            { out->i = pd->show_peak;      return true; }
+	if (strcmp(name, "signal_name") == 0)          { out->str = pd->signal_name;  return true; }
 	if (strcmp(name, "label_font") == 0)           { out->str = pd->label_font;   return true; }
 	if (strcmp(name, "value_font") == 0)           { out->str = pd->value_font;   return true; }
 	if (strcmp(name, "border_radius") == 0)        { out->i = pd->border_radius;  return true; }
@@ -1077,6 +1078,35 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 		strncpy(pd->custom_text, in->str, sizeof(pd->custom_text) - 1);
 		pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
 		if (unit && lv_obj_is_valid(unit)) lv_label_set_text(unit, pd->custom_text);
+		return true;
+	}
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		/* Signal swap: unsubscribe from old, look up new, subscribe to new.
+		 * Auto-fills custom_text from the new signal's intrinsic unit if
+		 * the widget doesn't have one set, so a fresh widget picks up "°C"
+		 * without the user typing it. */
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;   /* unknown name */
+
+		if (pd->signal_index >= 0)
+			signal_unsubscribe(pd->signal_index, _panel_on_signal, w);
+
+		strncpy(pd->signal_name, in->str, sizeof(pd->signal_name) - 1);
+		pd->signal_name[sizeof(pd->signal_name) - 1] = '\0';
+		pd->signal_index = new_idx;
+
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _panel_on_signal, w);
+
+		if (pd->custom_text[0] == '\0' && new_idx >= 0) {
+			signal_t *s = signal_get_by_index((uint16_t)new_idx);
+			if (s && s->unit[0] != '\0') {
+				strncpy(pd->custom_text, s->unit, sizeof(pd->custom_text) - 1);
+				pd->custom_text[sizeof(pd->custom_text) - 1] = '\0';
+				if (unit && lv_obj_is_valid(unit))
+					lv_label_set_text(unit, pd->custom_text);
+			}
+		}
 		return true;
 	}
 	/* label_font / value_font and warning_* deferred. */

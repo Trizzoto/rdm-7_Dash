@@ -34,6 +34,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
 #include "widgets/widget_fields.h" /* schema-driven STYLE tab */
+#include "widgets/signal.h"        /* signal binding picker */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
 #include <stdio.h>
@@ -1057,6 +1058,206 @@ static void _make_text_row_schema(lv_obj_t *parent, const widget_field_t *f,
     if (r) r->value_lbl = value;
 }
 
+/* Signal binding row + inline picker.
+ *
+ * The signal binding isn't a schema field per se - it's a layout-level
+ * relationship between a widget and a signal in the registry. The DATA
+ * tab renders it as a special first row that opens a fullscreen-within-
+ * dock picker on tap.
+ *
+ * Widget support is detected by trying inspector_get("signal_name"):
+ * if it returns true, we render the row; otherwise we skip it. */
+
+static lv_obj_t *s_sig_row_value_lbl = NULL;   /* signal row's preview label */
+static bool      s_in_signal_picker  = false;
+
+static void _show_tab(int idx);              /* defined further down */
+static void _close_signal_picker(void);
+
+static const char *_widget_signal_name(void) {
+    if (!s_widget || !s_widget->inspector_get) return "";
+    widget_field_value_t v = {0};
+    if (!s_widget->inspector_get(s_widget, "signal_name", &v)) return "";
+    return v.str ? v.str : "";
+}
+
+static bool _widget_supports_signal_binding(void) {
+    if (!s_widget || !s_widget->inspector_get || !s_widget->inspector_set)
+        return false;
+    widget_field_value_t v = {0};
+    return s_widget->inspector_get(s_widget, "signal_name", &v);
+}
+
+/* Tap on a signal row in the picker applies the binding + returns to
+ * the DATA tab. user_data is a pointer to the signal_t->name string
+ * which is stable as long as the registry isn't reset (it isn't while
+ * the Inspector is open). */
+static void _signal_picker_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    const char *name = (const char *)lv_event_get_user_data(e);
+    if (!name || !s_widget || !s_widget->inspector_set) return;
+    widget_field_value_t v = { .str = name };
+    s_widget->inspector_set(s_widget, "signal_name", &v);
+    _close_signal_picker();
+}
+
+static void _signal_picker_back_cb(lv_event_t *e) {
+    (void)e;
+    _close_signal_picker();
+}
+
+static void _close_signal_picker(void) {
+    s_in_signal_picker = false;
+    /* Rebuild the DATA tab; cheaper than tracking saved state. */
+    _show_tab(TAB_DATA);
+}
+
+static void _open_signal_picker(void) {
+    if (!s_content || !lv_obj_is_valid(s_content)) return;
+    if (!s_widget) return;
+    s_in_signal_picker = true;
+    lv_obj_clean(s_content);
+
+    /* Header strip with Back and title. */
+    lv_obj_t *hdr = lv_obj_create(s_content);
+    lv_obj_set_size(hdr, LV_PCT(100), 40);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(hdr, 0, 0);
+    lv_obj_set_style_border_width(hdr, 0, 0);
+    lv_obj_set_style_pad_all(hdr, 0, 0);
+
+    lv_obj_t *back = _make_button(hdr, 60, 32, "Back");
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_add_event_cb(back, _signal_picker_back_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *title = lv_label_create(hdr);
+    lv_label_set_text(title, "Choose Signal");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_BODY, 0);
+
+    /* Signal list card - fills the rest of the dock. */
+    lv_obj_t *list_card = _make_card(s_content, NULL);
+    lv_obj_set_flex_grow(list_card, 1);
+    lv_obj_set_style_pad_row(list_card, 2, 0);
+    lv_obj_add_flag(list_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list_card, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(list_card, LV_SCROLLBAR_MODE_ACTIVE);
+
+    uint16_t count = signal_get_count();
+    if (count == 0) {
+        lv_obj_t *empty = lv_label_create(list_card);
+        lv_label_set_text(empty,
+            "No signals in this layout.\n"
+            "Create one to bind a widget.");
+        lv_obj_set_style_text_color(empty, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
+        return;
+    }
+
+    const char *current = _widget_signal_name();
+    for (uint16_t i = 0; i < count; i++) {
+        signal_t *s = signal_get_by_index(i);
+        if (!s) continue;
+
+        lv_obj_t *row = lv_btn_create(list_card);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_height(row, 44);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(row, DT_BG_INSET, 0);
+        lv_obj_set_style_bg_opa(row, 60, 0);
+        lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, 30, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_shadow_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 6, 0);
+        lv_obj_set_style_radius(row, 4, 0);
+
+        bool is_current = (strcmp(s->name, current) == 0);
+        if (is_current) {
+            lv_obj_set_style_border_color(row, DT_ACCENT, 0);
+            lv_obj_set_style_border_width(row, 2, 0);
+            lv_obj_set_style_border_opa(row, LV_OPA_COVER, 0);
+        }
+
+        /* Name on the left. */
+        lv_obj_t *name_lbl = lv_label_create(row);
+        lv_label_set_text(name_lbl, s->name);
+        lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(name_lbl, 220);
+        lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
+
+        /* Current value + units on the right. Stale shows "--". */
+        char buf[32];
+        if (s->is_stale) {
+            snprintf(buf, sizeof(buf), "--  %s", s->unit);
+        } else if (s->unit[0]) {
+            snprintf(buf, sizeof(buf), "%.2f %s", s->current_value, s->unit);
+        } else {
+            snprintf(buf, sizeof(buf), "%.2f", s->current_value);
+        }
+        lv_obj_t *val_lbl = lv_label_create(row);
+        lv_label_set_text(val_lbl, buf);
+        lv_obj_align(val_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_color(val_lbl, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(val_lbl, THEME_FONT_SMALL, 0);
+
+        /* user_data points at s->name in the registry. Stable for the
+         * picker's lifetime - the registry isn't reset while the
+         * Inspector is open. */
+        lv_obj_add_event_cb(row, _signal_picker_row_cb, LV_EVENT_CLICKED,
+                            (void *)s->name);
+    }
+}
+
+static void _signal_row_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _open_signal_picker();
+}
+
+static void _build_signal_row(lv_obj_t *parent) {
+    if (!s_widget) return;
+    const char *current = _widget_signal_name();
+
+    lv_obj_t *row = lv_btn_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, 20, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 4, 0);
+    lv_obj_set_style_radius(row, 6, 0);
+    lv_obj_add_event_cb(row, _signal_row_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, "Signal");
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *chev = lv_label_create(row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_text_color(chev, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(chev, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *value = lv_label_create(row);
+    lv_label_set_text(value, (current && current[0]) ? current : "(none)");
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(value, 280);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, -16, 0);
+    lv_obj_set_style_text_color(value, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    s_sig_row_value_lbl = value;
+}
+
 /* Generic tab builder - iterates the schema and dispatches per field
  * type. Categories filter what shows up where (STYLE = appearance,
  * DATA = data, RULES = alerts). Fields whose widget doesn't implement
@@ -1075,6 +1276,14 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
     s_bool_row_ctx_count = 0;
     s_select_row_ctx_count = 0;
     s_text_row_ctx_count = 0;
+    s_sig_row_value_lbl = NULL;
+
+    /* DATA tab leads with the signal binding row (when the widget supports
+     * it) so the user picks the source first, then tweaks display fields. */
+    if (cat == WF_CAT_DATA && _widget_supports_signal_binding()) {
+        lv_obj_t *sig_card = _make_card(s_content, "SIGNAL");
+        _build_signal_row(sig_card);
+    }
 
     lv_obj_t *colours = NULL;
     lv_obj_t *dims    = NULL;
@@ -1422,13 +1631,15 @@ void inspector_close(void) {
         if (lv_obj_is_valid(s_left_eater)) lv_obj_del(s_left_eater);
         s_left_eater = NULL;
     }
-    s_widget          = NULL;
-    s_content         = NULL;
-    s_header          = NULL;
-    s_tab_bar         = NULL;
-    s_tab_indicator   = NULL;
-    s_side_left_btn   = NULL;
-    s_side_right_btn  = NULL;
+    s_widget             = NULL;
+    s_content            = NULL;
+    s_header             = NULL;
+    s_tab_bar            = NULL;
+    s_tab_indicator      = NULL;
+    s_side_left_btn      = NULL;
+    s_side_right_btn     = NULL;
+    s_sig_row_value_lbl  = NULL;
+    s_in_signal_picker   = false;
     for (int i = 0; i < TAB_COUNT; i++) s_tab_buttons[i] = NULL;
 
     edit_mode_commit_external_edit();
