@@ -34,6 +34,10 @@
 #include "can/can_bus_test.h"
 #include "storage/config_store.h"
 #include "storage/data_logger.h"
+#include "storage/can_raw_logger.h"
+#include "storage/can_upload.h"
+#include <dirent.h>
+#include <sys/stat.h>
 #include "storage/sd_manager.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
@@ -1638,11 +1642,34 @@ static void update_btn_event_cb(lv_event_t *e) {
 
 /* ── Data Logging ─────────────────────────────────────────────────────── */
 
+/* Raw CAN capture widgets — declared here so _update_log_ui can render
+ * their state alongside the existing signal logger UI. Assigned by the
+ * builder in _build_section_data_logging. */
+static lv_obj_t *s_canraw_btn          = NULL;
+static lv_obj_t *s_canraw_btn_label    = NULL;
+static lv_obj_t *s_canraw_status_label = NULL;
+
+/* Share Raw CAN modal — opens a small fullscreen overlay with two
+ * textareas (Make + Model) and an on-screen keyboard. Tracks upload
+ * status via can_upload_get_status() while running. */
+static lv_obj_t  *s_share_overlay      = NULL;
+static lv_obj_t  *s_share_file_label   = NULL;
+static lv_obj_t  *s_share_make_ta      = NULL;
+static lv_obj_t  *s_share_model_ta     = NULL;
+static lv_obj_t  *s_share_status_lbl   = NULL;
+static lv_obj_t  *s_share_upload_btn   = NULL;
+static lv_obj_t  *s_share_keyboard     = NULL;
+static lv_timer_t *s_share_status_timer = NULL;
+static char       s_share_picked_file[64] = {0};
+static void _share_modal_open(void);
+static void _share_modal_close(void);
+static void _share_btn_cb(lv_event_t *e);
+
 static void _update_log_ui(void) {
     if (!s_log_btn_label || !s_log_status_label) return;
 
     if (data_logger_is_active()) {
-        lv_label_set_text(s_log_btn_label, "Stop Logging");
+        lv_label_set_text(s_log_btn_label, "Stop Signal Log");
         lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_BTN_DANGER,
                                   LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -1652,14 +1679,15 @@ static void _update_log_ui(void) {
         uint32_t mins = secs / 60;
         secs %= 60;
         lv_label_set_text_fmt(s_log_status_label,
-                              "Recording: %lu samples (%lum %lus)",
+                              "Recording: %lu samples (%lum %lus, %s)",
                               (unsigned long)samples,
-                              (unsigned long)mins, (unsigned long)secs);
+                              (unsigned long)mins, (unsigned long)secs,
+                              data_logger_get_storage());
         lv_obj_set_style_text_color(s_log_status_label,
                                     THEME_COLOR_STATUS_CONNECTED,
                                     LV_PART_MAIN | LV_STATE_DEFAULT);
     } else {
-        lv_label_set_text(s_log_btn_label, "Start Logging");
+        lv_label_set_text(s_log_btn_label, "Start Signal Log");
         lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_BORDER,
                                   LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -1669,14 +1697,43 @@ static void _update_log_ui(void) {
             basename = basename ? basename + 1 : file;
             lv_label_set_text_fmt(s_log_status_label, "Stopped: %s", basename);
         } else {
-            if (!sd_manager_is_mounted())
-                lv_label_set_text(s_log_status_label, "No SD card");
-            else
-                lv_label_set_text(s_log_status_label, "Stopped");
+            /* LFS fallback is always available now, so "no SD" is no longer
+             * a blocking condition — just a tier hint. */
+            lv_label_set_text(s_log_status_label,
+                sd_manager_is_mounted() ? "Stopped (SD ready)"
+                                        : "Stopped (flash, no SD)");
         }
         lv_obj_set_style_text_color(s_log_status_label,
                                     THEME_COLOR_TEXT_MUTED,
                                     LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+
+    /* Raw CAN capture mirrors the same UI pattern in its own button + label. */
+    if (s_canraw_btn_label && s_canraw_status_label) {
+        if (can_raw_logger_is_active()) {
+            lv_label_set_text(s_canraw_btn_label, "Stop Raw CAN");
+            lv_obj_set_style_bg_color(s_canraw_btn, THEME_COLOR_BTN_DANGER,
+                                      LV_PART_MAIN | LV_STATE_DEFAULT);
+            uint32_t frames  = can_raw_logger_frame_count();
+            uint32_t elapsed = can_raw_logger_elapsed_ms();
+            uint32_t secs = elapsed / 1000, mins = secs / 60; secs %= 60;
+            lv_label_set_text_fmt(s_canraw_status_label,
+                                  "Raw: %lu frames (%lum %lus, %s)",
+                                  (unsigned long)frames,
+                                  (unsigned long)mins, (unsigned long)secs,
+                                  can_raw_logger_get_storage());
+            lv_obj_set_style_text_color(s_canraw_status_label,
+                                        THEME_COLOR_STATUS_CONNECTED,
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            lv_label_set_text(s_canraw_btn_label, "Start Raw CAN");
+            lv_obj_set_style_bg_color(s_canraw_btn, THEME_COLOR_BORDER,
+                                      LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_label_set_text(s_canraw_status_label, "Raw: idle");
+            lv_obj_set_style_text_color(s_canraw_status_label,
+                                        THEME_COLOR_TEXT_MUTED,
+                                        LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
     }
 }
 
@@ -1693,6 +1750,272 @@ static void _log_toggle_btn_cb(lv_event_t *e) {
         data_logger_start();
     }
     _update_log_ui();
+}
+
+static void _canraw_toggle_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (can_raw_logger_is_active()) {
+        can_raw_logger_stop();
+    } else {
+        can_raw_logger_start();
+    }
+    _update_log_ui();
+}
+
+/* ── Share Raw CAN modal ─────────────────────────────────────────────────
+ *
+ * Lets the user upload the most recent canraw_*.csv to the project cloud
+ * bucket from on-device — without needing the web editor. Same backend as
+ * the web editor flow (can_upload_start).
+ *
+ * Layout: a 760×460 overlay on lv_layer_top with:
+ *   - file picked automatically (the newest canraw_*.csv on SD or LFS)
+ *   - two textareas (Make + Model) wired to a shared LVGL keyboard
+ *   - status label that polls can_upload_get_status() every 500 ms
+ *   - Cancel + Upload buttons
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Scan /sdcard/logs and /lfs/logs for canraw_*.csv files, return the newest
+ * basename in out_buf. Returns true if anything was found. */
+static bool _share_find_latest_canraw(char *out_buf, size_t out_len) {
+    const char *dirs[] = { "/sdcard/logs", "/lfs/logs" };
+    char best_name[64] = {0};
+    time_t best_mtime = 0;
+
+    for (int d = 0; d < (int)(sizeof(dirs) / sizeof(dirs[0])); d++) {
+        DIR *dir = opendir(dirs[d]);
+        if (!dir) continue;
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (strncmp(ent->d_name, "canraw_", 7) != 0) continue;
+            size_t nlen = strlen(ent->d_name);
+            if (nlen < 5 || strcmp(ent->d_name + nlen - 4, ".csv") != 0) continue;
+
+            char path[160];
+            snprintf(path, sizeof(path), "%s/%s", dirs[d], ent->d_name);
+            struct stat st;
+            if (stat(path, &st) != 0) continue;
+            if (st.st_mtime > best_mtime) {
+                best_mtime = st.st_mtime;
+                strncpy(best_name, ent->d_name, sizeof(best_name) - 1);
+                best_name[sizeof(best_name) - 1] = '\0';
+            }
+        }
+        closedir(dir);
+    }
+
+    if (best_name[0] == '\0') return false;
+    strncpy(out_buf, best_name, out_len - 1);
+    out_buf[out_len - 1] = '\0';
+    return true;
+}
+
+static void _share_status_timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (!s_share_status_lbl || !lv_obj_is_valid(s_share_status_lbl)) return;
+    can_upload_status_t st;
+    can_upload_get_status(&st);
+    lv_label_set_text(s_share_status_lbl, st.message[0] ? st.message : "Idle");
+    if (st.state == CAN_UPLOAD_SUCCESS) {
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_STATUS_CONNECTED, 0);
+        if (s_share_upload_btn && lv_obj_is_valid(s_share_upload_btn))
+            lv_obj_clear_state(s_share_upload_btn, LV_STATE_DISABLED);
+        if (s_share_status_timer) { lv_timer_del(s_share_status_timer); s_share_status_timer = NULL; }
+    } else if (st.state == CAN_UPLOAD_FAILED) {
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
+        if (s_share_upload_btn && lv_obj_is_valid(s_share_upload_btn))
+            lv_obj_clear_state(s_share_upload_btn, LV_STATE_DISABLED);
+        if (s_share_status_timer) { lv_timer_del(s_share_status_timer); s_share_status_timer = NULL; }
+    } else {
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    }
+}
+
+static void _share_ta_focused_cb(lv_event_t *e) {
+    lv_obj_t *ta = lv_event_get_target(e);
+    if (s_share_keyboard && lv_obj_is_valid(s_share_keyboard))
+        lv_keyboard_set_textarea(s_share_keyboard, ta);
+}
+
+static void _share_upload_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_share_make_ta || !s_share_model_ta || !s_share_status_lbl) return;
+
+    const char *make  = lv_textarea_get_text(s_share_make_ta);
+    const char *model = lv_textarea_get_text(s_share_model_ta);
+
+    if (!make || !make[0]) {
+        lv_label_set_text(s_share_status_lbl, "Enter the car make first");
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
+        return;
+    }
+    if (!model || !model[0]) {
+        lv_label_set_text(s_share_status_lbl, "Enter the car model first");
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
+        return;
+    }
+    if (s_share_picked_file[0] == '\0') {
+        lv_label_set_text(s_share_status_lbl, "No Raw CAN recording found");
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
+        return;
+    }
+
+    lv_obj_add_state(s_share_upload_btn, LV_STATE_DISABLED);
+    esp_err_t err = can_upload_start(s_share_picked_file, make, model, NULL);
+    if (err != ESP_OK) {
+        lv_label_set_text_fmt(s_share_status_lbl, "Start failed (%s)",
+                              err == ESP_ERR_INVALID_STATE ? "another upload running"
+                                                           : "internal error");
+        lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
+        lv_obj_clear_state(s_share_upload_btn, LV_STATE_DISABLED);
+        return;
+    }
+
+    /* Begin polling status every 500 ms — _share_status_timer_cb will
+       update the label and re-enable the button on terminal state. */
+    if (s_share_status_timer) { lv_timer_del(s_share_status_timer); }
+    s_share_status_timer = lv_timer_create(_share_status_timer_cb, 500, NULL);
+}
+
+static void _share_close_btn_cb(lv_event_t *e) {
+    (void)e;
+    _share_modal_close();
+}
+
+static void _share_modal_close(void) {
+    if (s_share_status_timer) { lv_timer_del(s_share_status_timer); s_share_status_timer = NULL; }
+    if (s_share_overlay && lv_obj_is_valid(s_share_overlay)) lv_obj_del(s_share_overlay);
+    s_share_overlay      = NULL;
+    s_share_file_label   = NULL;
+    s_share_make_ta      = NULL;
+    s_share_model_ta     = NULL;
+    s_share_status_lbl   = NULL;
+    s_share_upload_btn   = NULL;
+    s_share_keyboard     = NULL;
+}
+
+static void _share_modal_open(void) {
+    if (s_share_overlay && lv_obj_is_valid(s_share_overlay)) return;
+
+    /* Find the latest canraw file up front so we can either show its name
+       or fail fast with a clear message. */
+    bool have_file = _share_find_latest_canraw(s_share_picked_file,
+                                               sizeof(s_share_picked_file));
+
+    s_share_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_share_overlay, 760, 460);
+    lv_obj_center(s_share_overlay);
+    lv_obj_set_style_bg_color(s_share_overlay, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(s_share_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_share_overlay, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_color(s_share_overlay, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_border_width(s_share_overlay, 1, 0);
+    lv_obj_set_style_pad_all(s_share_overlay, 14, 0);
+    lv_obj_clear_flag(s_share_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(s_share_overlay);
+    lv_label_set_text(title, "Share Raw CAN Trace");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    lv_obj_t *hint = lv_label_create(s_share_overlay);
+    lv_label_set_text(hint,
+        "Uploads the latest Raw CAN recording tagged with your car so it can be debugged off-device.");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, 720);
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_share_file_label = lv_label_create(s_share_overlay);
+    if (have_file) {
+        lv_label_set_text_fmt(s_share_file_label, "Recording: %s", s_share_picked_file);
+        lv_obj_set_style_text_color(s_share_file_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    } else {
+        lv_label_set_text(s_share_file_label,
+            "No Raw CAN recording found — start one first.");
+        lv_obj_set_style_text_color(s_share_file_label, THEME_COLOR_BTN_DANGER, 0);
+    }
+    lv_obj_align(s_share_file_label, LV_ALIGN_TOP_LEFT, 0, 60);
+    lv_obj_set_style_text_font(s_share_file_label, THEME_FONT_SMALL, 0);
+
+    /* Two textareas side by side */
+    lv_obj_t *make_lbl = lv_label_create(s_share_overlay);
+    lv_label_set_text(make_lbl, "Car Make");
+    lv_obj_align(make_lbl, LV_ALIGN_TOP_LEFT, 0, 88);
+    lv_obj_set_style_text_font(make_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(make_lbl, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_share_make_ta = lv_textarea_create(s_share_overlay);
+    lv_obj_set_size(s_share_make_ta, 340, 36);
+    lv_obj_align(s_share_make_ta, LV_ALIGN_TOP_LEFT, 0, 108);
+    lv_textarea_set_one_line(s_share_make_ta, true);
+    lv_textarea_set_max_length(s_share_make_ta, 40);
+    lv_textarea_set_placeholder_text(s_share_make_ta, "Toyota");
+    lv_obj_set_style_text_font(s_share_make_ta, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(s_share_make_ta, _share_ta_focused_cb, LV_EVENT_FOCUSED, NULL);
+
+    lv_obj_t *model_lbl = lv_label_create(s_share_overlay);
+    lv_label_set_text(model_lbl, "Model");
+    lv_obj_align(model_lbl, LV_ALIGN_TOP_LEFT, 360, 88);
+    lv_obj_set_style_text_font(model_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(model_lbl, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_share_model_ta = lv_textarea_create(s_share_overlay);
+    lv_obj_set_size(s_share_model_ta, 360, 36);
+    lv_obj_align(s_share_model_ta, LV_ALIGN_TOP_LEFT, 360, 108);
+    lv_textarea_set_one_line(s_share_model_ta, true);
+    lv_textarea_set_max_length(s_share_model_ta, 40);
+    lv_textarea_set_placeholder_text(s_share_model_ta, "Supra MK4");
+    lv_obj_set_style_text_font(s_share_model_ta, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(s_share_model_ta, _share_ta_focused_cb, LV_EVENT_FOCUSED, NULL);
+
+    s_share_status_lbl = lv_label_create(s_share_overlay);
+    lv_label_set_text(s_share_status_lbl, "");
+    lv_obj_align(s_share_status_lbl, LV_ALIGN_TOP_LEFT, 0, 156);
+    lv_obj_set_style_text_font(s_share_status_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* On-screen keyboard, anchored to the bottom — fills the lower half */
+    s_share_keyboard = lv_keyboard_create(s_share_overlay);
+    lv_obj_set_size(s_share_keyboard, 720, 200);
+    lv_obj_align(s_share_keyboard, LV_ALIGN_BOTTOM_MID, 0, -50);
+    lv_keyboard_set_mode(s_share_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+
+    /* Buttons row at the very bottom */
+    lv_obj_t *cancel_btn = lv_btn_create(s_share_overlay);
+    lv_obj_set_size(cancel_btn, 110, 36);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_border_width(cancel_btn, 1, 0);
+    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(cancel_btn, _share_close_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_share_upload_btn = lv_btn_create(s_share_overlay);
+    lv_obj_set_size(s_share_upload_btn, 130, 36);
+    lv_obj_align(s_share_upload_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(s_share_upload_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(s_share_upload_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_share_upload_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_share_upload_btn, 0, 0);
+    lv_obj_t *upload_lbl = lv_label_create(s_share_upload_btn);
+    lv_label_set_text(upload_lbl, "Upload");
+    lv_obj_center(upload_lbl);
+    lv_obj_set_style_text_font(upload_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(upload_lbl, lv_color_white(), 0);
+    lv_obj_add_event_cb(s_share_upload_btn, _share_upload_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    if (!have_file) {
+        lv_obj_add_state(s_share_upload_btn, LV_STATE_DISABLED);
+    }
 }
 
 /* Wipe peak/min for every signal in the registry. Affects all panels with
@@ -2365,7 +2688,7 @@ static void _build_section_data_logging(lv_obj_t *row) {
     lv_obj_set_style_border_color(s_log_btn, THEME_COLOR_BORDER, 0);
     lv_obj_set_style_shadow_width(s_log_btn, 0, 0);
     s_log_btn_label = lv_label_create(s_log_btn);
-    lv_label_set_text(s_log_btn_label, "Start Logging");
+    lv_label_set_text(s_log_btn_label, "Start Signal Log");
     lv_obj_center(s_log_btn_label);
     lv_obj_set_style_text_font(s_log_btn_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_btn_label, THEME_COLOR_TEXT_MUTED, 0);
@@ -2391,6 +2714,56 @@ static void _build_section_data_logging(lv_obj_t *row) {
     lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 0, 56);
     lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Raw CAN Capture — records every CAN frame (no decoding) to its own
+     * CSV. Useful for users sending unknown-protocol traces off-device for
+     * decoding. Uses the same SD/LFS fallback + 1 MB cap as the signal log. */
+    s_canraw_btn = lv_btn_create(s);
+    lv_obj_set_size(s_canraw_btn, 150, 30);
+    lv_obj_align(s_canraw_btn, LV_ALIGN_TOP_LEFT, 240, 22);
+    lv_obj_set_style_bg_color(s_canraw_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(s_canraw_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_canraw_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_canraw_btn, 1, 0);
+    lv_obj_set_style_border_color(s_canraw_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(s_canraw_btn, 0, 0);
+    s_canraw_btn_label = lv_label_create(s_canraw_btn);
+    lv_label_set_text(s_canraw_btn_label, "Start Raw CAN");
+    lv_obj_center(s_canraw_btn_label);
+    lv_obj_set_style_text_font(s_canraw_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_canraw_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(s_canraw_btn, _canraw_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_canraw_status_label = lv_label_create(s);
+    lv_label_set_text(s_canraw_status_label, "Raw: idle");
+    lv_obj_align(s_canraw_status_label, LV_ALIGN_TOP_LEFT, 280, 56);
+    lv_obj_set_style_text_font(s_canraw_status_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_canraw_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Share Raw CAN — opens a modal that uploads the latest canraw_*.csv
+     * to the project's cloud bucket tagged with the user-entered car
+     * make/model. Uses can_upload_start() under the hood (same path as
+     * the web editor's Share button). */
+    lv_obj_t *share_btn = lv_btn_create(s);
+    lv_obj_set_size(share_btn, 150, 30);
+    lv_obj_align(share_btn, LV_ALIGN_TOP_LEFT, 240, 92);
+    lv_obj_set_style_bg_color(share_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(share_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(share_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(share_btn, 1, 0);
+    lv_obj_set_style_border_color(share_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(share_btn, 0, 0);
+    lv_obj_t *share_lbl = lv_label_create(share_btn);
+    lv_label_set_text(share_lbl, "Share Raw CAN");
+    lv_obj_center(share_lbl);
+    lv_obj_set_style_text_font(share_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(share_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(share_btn, _share_btn_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void _share_btn_cb(lv_event_t *e) {
+    (void)e;
+    _share_modal_open();
 }
 
 static void _build_section_peak_hold(lv_obj_t *row) {
@@ -2460,8 +2833,33 @@ static void _build_section_testing(lv_obj_t *row) {
     lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
     lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Wire Inputs toggle — moved here from the (hidden) Developer section
+     * so users can flip GPIO 43/44 between UART1 mode and indicator-wire
+     * input mode without needing a serial console. Affects pull
+     * configuration on those pins (see wire_inputs_init / uart_protocol). */
+    lv_obj_t *wire_btn = lv_btn_create(s);
+    lv_obj_set_size(wire_btn, 150, 30);
+    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 140, 22);
+    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(wire_btn, 1, 0);
+    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
+    s_wire_input_btn_label = lv_label_create(wire_btn);
+    {
+        bool on = false;
+        config_store_load_wire_input_mode(&on);
+        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
+        lv_obj_set_style_text_color(s_wire_input_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    lv_obj_center(s_wire_input_btn_label);
+    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_t *test_note = lv_label_create(s);
-    lv_label_set_text(test_note, "Sweep all signals - demo only");
+    lv_label_set_text(test_note, "Sim sweeps all signals  •  Wire Inputs: GPIO 43/44 as turn signals");
     lv_obj_align(test_note, LV_ALIGN_TOP_LEFT, 0, 58);
     lv_obj_set_style_text_font(test_note, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
@@ -2692,15 +3090,24 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     _build_section_network(row2);
     _build_section_display(row2);
 
-    /* Row 3 (h=95): DATA LOGGING + PEAK HOLD + TESTING */
-    lv_obj_t *log_row = _build_row(content, 95);
+    /* Rows 3/4/5: DATA LOGGING / PEAK HOLD / TESTING each get a full-width
+     * row of their own — previously crammed into one 3-column 95 px row
+     * which left no horizontal room for additional controls (e.g. the new
+     * Raw CAN Capture button in DATA LOGGING). */
+    lv_obj_t *log_row    = _build_row(content, 95);
     _build_section_data_logging(log_row);
-    _build_section_peak_hold(log_row);
-    _build_section_testing(log_row);
+    lv_obj_t *peak_row   = _build_row(content, 95);
+    _build_section_peak_hold(peak_row);
+    lv_obj_t *test_row   = _build_row(content, 95);
+    _build_section_testing(test_row);
 
-    /* Row 4 (h=95): DEVELOPER OPTIONS */
+    /* Row 4 (h=95): DEVELOPER OPTIONS — hidden in production. To re-enable,
+     * uncomment the two lines below; the _build_section_developer function
+     * is still compiled in. */
+    /*
     lv_obj_t *dev_row = _build_row(content, 95);
     _build_section_developer(dev_row);
+    */
 
     _build_section_can_diagnostics(content);
     _build_action_buttons(content);
