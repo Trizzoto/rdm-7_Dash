@@ -19,9 +19,10 @@
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/edit_mode.h"     /* edit_mode_commit_external_edit */
 #include "ui/menu/menu_screen.h"   /* load_menu_screen_for_widget */
-#include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays */
+#include "ui/screens/ui_Screen3.h" /* ui_Screen3_refresh_overlays + ui_Label/ui_Value */
 #include "ui/theme.h"
 #include "ui/ui.h"                 /* ui_Screen3 extern */
+#include "widgets/widget_panel.h"  /* panel_data_t — STYLE tab pilot */
 #include "esp_log.h"
 #include <stdio.h>
 #include <stdint.h>
@@ -129,6 +130,294 @@ static void _position_tab_indicator(void) {
                    (lv_coord_t)(s_active_tab * TAB_WIDTH), 38);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ *  STYLE tab — per-widget appearance fields
+ * ════════════════════════════════════════════════════════════════════════
+ *
+ * Pilot widget: Panel. Other types fall through to the placeholder.
+ *
+ * Live preview: each change writes BOTH the widget's type_data field
+ * (persisted on Inspector close via edit_mode_commit_external_edit) AND
+ * the corresponding LVGL style attribute on the widget's existing object
+ * (so the user sees it land in real time through the translucent overlay).
+ *
+ * Pattern is intentionally simple — direct struct mutation + direct
+ * lv_obj_set_style_* — no per-widget setter functions to chase. Future
+ * widget types follow the same template. */
+
+/* Curated preset palette. The legacy editor uses ~10 theme presets plus
+ * "Custom..."; we mirror the preset set so a colour picked in either editor
+ * shows the same active highlight in the other. Custom-colour entry is
+ * deferred to Phase 3.5 (or whenever we expose the legacy colour wheel as
+ * a public helper). */
+#define PRESET_COUNT 10
+static lv_color_t s_presets[PRESET_COUNT];
+static bool       s_presets_ready = false;
+
+static void _ensure_presets(void) {
+    if (s_presets_ready) return;
+    s_presets[0] = lv_color_white();
+    s_presets[1] = THEME_COLOR_RED;
+    s_presets[2] = THEME_COLOR_ORANGE;
+    s_presets[3] = THEME_COLOR_YELLOW;
+    s_presets[4] = THEME_COLOR_GREEN;
+    s_presets[5] = THEME_COLOR_CYAN;
+    s_presets[6] = THEME_COLOR_BLUE;
+    s_presets[7] = THEME_COLOR_PURPLE;
+    s_presets[8] = THEME_COLOR_PINK;
+    s_presets[9] = lv_color_black();
+    s_presets_ready = true;
+}
+
+/* Field IDs. Top 8 bits in the swatch button's user_data identify the
+ * field; bottom 8 bits hold the preset index. Single global handler
+ * dispatches based on the field. */
+enum panel_field {
+    F_PANEL_BORDER = 0,
+    F_PANEL_BG,
+    F_PANEL_LABEL,
+    F_PANEL_VALUE,
+    F_PANEL_FIELD_COUNT
+};
+enum panel_dim {
+    D_PANEL_BORDER_W = 0,
+    D_PANEL_BORDER_R,
+    D_PANEL_DIM_COUNT
+};
+
+#define USERDATA_PACK(field, idx) \
+    ((void *)(intptr_t)(((field) << 8) | ((idx) & 0xFF)))
+#define USERDATA_FIELD(d) ((((int)(intptr_t)(d)) >> 8) & 0xFF)
+#define USERDATA_IDX(d)   ((((int)(intptr_t)(d))     ) & 0xFF)
+
+/* Track swatches per field so we can update the active-border highlight
+ * across the row when the user picks one. */
+static lv_obj_t *s_panel_swatches[F_PANEL_FIELD_COUNT][PRESET_COUNT] = {{NULL}};
+static lv_obj_t *s_panel_dim_value_lbls[D_PANEL_DIM_COUNT] = {NULL};
+
+static bool _color_eq(lv_color_t a, lv_color_t b) {
+    return a.full == b.full;
+}
+
+static lv_color_t _panel_get_color(panel_data_t *pd, int field) {
+    switch (field) {
+        case F_PANEL_BORDER: return pd->border_color;
+        case F_PANEL_BG:     return pd->bg_color;
+        case F_PANEL_LABEL:  return pd->label_color;
+        case F_PANEL_VALUE:  return pd->value_color;
+    }
+    return lv_color_black();
+}
+
+static void _refresh_swatch_active(int field) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+    lv_color_t current = _panel_get_color(pd, field);
+    for (int i = 0; i < PRESET_COUNT; i++) {
+        lv_obj_t *sw = s_panel_swatches[field][i];
+        if (!sw || !lv_obj_is_valid(sw)) continue;
+        bool active = _color_eq(s_presets[i], current);
+        lv_obj_set_style_border_color(sw,
+            active ? DT_ACCENT : lv_color_white(), 0);
+        lv_obj_set_style_border_width(sw, active ? 3 : 1, 0);
+        lv_obj_set_style_border_opa(sw, active ? LV_OPA_COVER : 60, 0);
+    }
+}
+
+/* Apply a colour to the live LVGL objects (so the change is visible
+ * immediately) AND to the widget's type_data (so it persists on save). */
+static void _panel_apply_color(int field, lv_color_t c) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+
+    lv_obj_t *lbl_obj = NULL, *val_obj = NULL;
+    if (s_widget->slot < 13) {
+        lbl_obj = ui_Label[s_widget->slot];
+        val_obj = ui_Value[s_widget->slot];
+    }
+
+    switch (field) {
+        case F_PANEL_BORDER:
+            pd->border_color = c;
+            if (s_widget->root && lv_obj_is_valid(s_widget->root))
+                lv_obj_set_style_border_color(s_widget->root, c, 0);
+            break;
+        case F_PANEL_BG:
+            pd->bg_color = c;
+            if (s_widget->root && lv_obj_is_valid(s_widget->root))
+                lv_obj_set_style_bg_color(s_widget->root, c, 0);
+            break;
+        case F_PANEL_LABEL:
+            pd->label_color = c;
+            if (lbl_obj && lv_obj_is_valid(lbl_obj))
+                lv_obj_set_style_text_color(lbl_obj, c, 0);
+            break;
+        case F_PANEL_VALUE:
+            pd->value_color = c;
+            if (val_obj && lv_obj_is_valid(val_obj))
+                lv_obj_set_style_text_color(val_obj, c, 0);
+            break;
+    }
+    _refresh_swatch_active(field);
+}
+
+static void _swatch_clicked_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int data  = (int)(intptr_t)lv_event_get_user_data(e);
+    int field = USERDATA_FIELD(data);
+    int idx   = USERDATA_IDX(data);
+    if (idx < 0 || idx >= PRESET_COUNT) return;
+    _panel_apply_color(field, s_presets[idx]);
+}
+
+static void _make_color_row(lv_obj_t *parent, const char *name, int field) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 40);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 4, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, name);
+    lv_obj_set_width(lbl, 90);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_color_t current = _panel_get_color(pd, field);
+    for (int i = 0; i < PRESET_COUNT; i++) {
+        lv_obj_t *sw = lv_btn_create(row);
+        lv_obj_set_size(sw, 32, 32);
+        lv_obj_set_style_bg_color(sw, s_presets[i], 0);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sw, 4, 0);
+        bool active = _color_eq(s_presets[i], current);
+        lv_obj_set_style_border_color(sw,
+            active ? DT_ACCENT : lv_color_white(), 0);
+        lv_obj_set_style_border_width(sw, active ? 3 : 1, 0);
+        lv_obj_set_style_border_opa(sw, active ? LV_OPA_COVER : 60, 0);
+        lv_obj_set_style_shadow_width(sw, 0, 0);
+        lv_obj_set_style_pad_all(sw, 0, 0);
+        lv_obj_add_event_cb(sw, _swatch_clicked_cb, LV_EVENT_CLICKED,
+                            USERDATA_PACK(field, i));
+        s_panel_swatches[field][i] = sw;
+    }
+}
+
+/* ── Dimension sliders (border width, border radius) ───────────────────── */
+
+static void _panel_apply_dim(int dim, int v) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+    if (!s_widget->root || !lv_obj_is_valid(s_widget->root)) return;
+
+    switch (dim) {
+        case D_PANEL_BORDER_W:
+            if (v < 0)  v = 0;
+            if (v > 10) v = 10;
+            pd->border_width = (uint8_t)v;
+            lv_obj_set_style_border_width(s_widget->root, v, 0);
+            break;
+        case D_PANEL_BORDER_R:
+            if (v < 0)  v = 0;
+            if (v > 30) v = 30;
+            pd->border_radius = (uint8_t)v;
+            lv_obj_set_style_radius(s_widget->root, v, 0);
+            break;
+    }
+    if (s_panel_dim_value_lbls[dim] && lv_obj_is_valid(s_panel_dim_value_lbls[dim]))
+        lv_label_set_text_fmt(s_panel_dim_value_lbls[dim], "%d", v);
+}
+
+static void _dim_slider_cb(lv_event_t *e) {
+    int dim = (int)(intptr_t)lv_event_get_user_data(e);
+    int v   = lv_slider_get_value(lv_event_get_target(e));
+    _panel_apply_dim(dim, v);
+}
+
+static void _make_dim_row(lv_obj_t *parent, const char *name, int dim,
+                          int initial, int vmin, int vmax) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 36);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_column(row, 12, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, name);
+    lv_obj_set_width(lbl, 140);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+
+    lv_obj_t *slider = lv_slider_create(row);
+    lv_obj_set_size(slider, 400, 12);
+    lv_slider_set_range(slider, vmin, vmax);
+    lv_slider_set_value(slider, initial, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider, DT_BG_INSET, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, DT_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, DT_ACCENT, LV_PART_KNOB);
+    lv_obj_add_event_cb(slider, _dim_slider_cb, LV_EVENT_VALUE_CHANGED,
+                        (void *)(intptr_t)dim);
+
+    lv_obj_t *value = lv_label_create(row);
+    lv_label_set_text_fmt(value, "%d", initial);
+    lv_obj_set_width(value, 40);
+    lv_obj_set_style_text_color(value, lv_color_white(), 0);
+    lv_obj_set_style_text_font(value, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+    s_panel_dim_value_lbls[dim] = value;
+}
+
+/* ── Panel STYLE tab builder ───────────────────────────────────────────── */
+
+static void _build_style_tab_panel(void) {
+    if (!s_widget || s_widget->type != WIDGET_PANEL) return;
+
+    _ensure_presets();
+    for (int f = 0; f < F_PANEL_FIELD_COUNT; f++)
+        for (int i = 0; i < PRESET_COUNT; i++)
+            s_panel_swatches[f][i] = NULL;
+    for (int d = 0; d < D_PANEL_DIM_COUNT; d++)
+        s_panel_dim_value_lbls[d] = NULL;
+
+    panel_data_t *pd = (panel_data_t *)s_widget->type_data;
+    if (!pd) return;
+
+    /* Colours card */
+    lv_obj_t *colours = _make_card(s_content, "COLOURS");
+    lv_obj_set_flex_align(colours, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    _make_color_row(colours, "Border",     F_PANEL_BORDER);
+    _make_color_row(colours, "Background", F_PANEL_BG);
+    _make_color_row(colours, "Label",      F_PANEL_LABEL);
+    _make_color_row(colours, "Value",      F_PANEL_VALUE);
+
+    /* Dimensions card */
+    lv_obj_t *dims = _make_card(s_content, "DIMENSIONS");
+    lv_obj_set_flex_align(dims, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    _make_dim_row(dims, "Border width",  D_PANEL_BORDER_W, pd->border_width,  0, 10);
+    _make_dim_row(dims, "Border radius", D_PANEL_BORDER_R, pd->border_radius, 0, 30);
+}
+
 /* ── Placeholder tab (DATA / STYLE / RULES, all same shape for now) ──── */
 
 static void _legacy_btn_cb(lv_event_t *e) {
@@ -182,9 +471,21 @@ static void _show_tab(int idx) {
     s_active_tab = idx;
     lv_obj_clean(s_content);
     switch (idx) {
-        case TAB_DATA:  _build_placeholder_tab("Data");  break;
-        case TAB_STYLE: _build_placeholder_tab("Style"); break;
-        case TAB_RULES: _build_placeholder_tab("Rules"); break;
+        case TAB_DATA:
+            _build_placeholder_tab("Data");
+            break;
+        case TAB_STYLE:
+            /* Per-widget dispatch. New widgets get hand-coded sections per
+             * Phase 3.2.x; widgets without coverage fall through to the
+             * placeholder (legacy editor fallback). */
+            if (s_widget && s_widget->type == WIDGET_PANEL)
+                _build_style_tab_panel();
+            else
+                _build_placeholder_tab("Style");
+            break;
+        case TAB_RULES:
+            _build_placeholder_tab("Rules");
+            break;
     }
     _refresh_tab_button_styles();
 }
