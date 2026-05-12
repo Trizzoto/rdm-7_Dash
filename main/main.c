@@ -36,6 +36,7 @@
 #include "sdkconfig.h"
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
+#include "storage/user_signals.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
 #include "ui/screens/ui_wifi.h"
@@ -1011,6 +1012,7 @@ void app_main(void) {
   // Initialize remaining components while splash is showing
   sd_manager_init();
   data_logger_init();
+  user_signals_init();
   /* Initialize UART serial protocol (core 0, priority 5).
    * Shares GPIO 43/44 with the ESP-IDF console (UART0) — the board's
    * CH422G I/O expander selects which UART drives the USB bridge.

@@ -10,6 +10,7 @@ idf_component_register(
         "storage/sd_manager.c"
         "storage/data_logger.c"
         "storage/signal_replay.c"
+        "storage/user_signals.c"
         "io/wire_inputs.c"
         "net/ota_handler.c"
         "net/ota_update_dialog.c"

@@ -37,6 +37,7 @@
 #include "widgets/signal.h"        /* signal binding picker */
 #include "layout/ecu_presets.h"    /* new-signal wizard: ECU preset path */
 #include "storage/config_store.h"  /* read current ECU make+version */
+#include "storage/user_signals.h"  /* new-signal wizard: From DBC path */
 #include "ui/screens/ui_ecu_picker.h" /* full-screen ECU+Version picker */
 #include "ui/callbacks/ui_callbacks.h" /* keyboard popovers for TEXT/NUMBER rows */
 #include "esp_log.h"
@@ -1428,6 +1429,7 @@ typedef enum {
     WIZ_PAGE_MANUAL,        /* manual-entry form */
     WIZ_PAGE_ECU_LIST,      /* list of curated ECU presets */
     WIZ_PAGE_ECU_SIGNALS,   /* list of signals from the selected ECU */
+    WIZ_PAGE_USER_LIST,     /* list of signals from the user.json library */
 } wizard_page_t;
 
 static wizard_form_t s_wiz_form;
@@ -1619,6 +1621,21 @@ static void _wiz_save_cb(lv_event_t *e) {
         return;
     }
 
+    /* Append (or replace) in the persistent library at /lfs/dbc/user.json
+     * so this signal is reusable in future layouts. */
+    user_signal_t persistable = {
+        .can_id    = s_wiz_form.can_id,
+        .start_bit = s_wiz_form.start_bit,
+        .length    = s_wiz_form.length,
+        .scale     = s_wiz_form.scale,
+        .offset    = s_wiz_form.offset,
+        .is_signed = false,
+        .endian    = 1,
+    };
+    strncpy(persistable.name, s_wiz_form.name, sizeof(persistable.name) - 1);
+    strncpy(persistable.unit, s_wiz_form.unit, sizeof(persistable.unit) - 1);
+    user_signals_append(&persistable);   /* best-effort */
+
     /* Auto-bind the currently-selected widget. */
     if (s_widget && s_widget->inspector_set) {
         widget_field_value_t v = { .str = s_wiz_form.name };
@@ -1710,8 +1727,8 @@ static void _wiz_build_method_page(void) {
           WIZ_PAGE_MANUAL,    true },
         { "From ECU Preset",  "Pick one of 8 curated ECU broadcast maps.",
           WIZ_PAGE_ECU_LIST,  true },
-        { "From DBC File",    "Browse user.dbc uploaded over the web editor.",
-          WIZ_PAGE_METHOD,    false },   /* wired in step 6 */
+        { "From your library", "Pick a signal you've previously created and saved.",
+          WIZ_PAGE_USER_LIST, true },
     };
     static const int METHOD_COUNT =
         sizeof(METHODS) / sizeof(METHODS[0]);
@@ -1881,6 +1898,74 @@ static void _wiz_build_ecu_signals_page(void) {
     }
 }
 
+/* ── Page: user library (signals from /lfs/dbc/user.json) ─────────── */
+
+static void _wiz_user_row_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    const user_signal_t *u = user_signals_get((uint16_t)idx);
+    if (!u) return;
+
+    /* Register if missing in the live registry; rebind if it already
+     * exists (same idempotent pattern as the ECU path). */
+    int16_t sidx = signal_register(u->name, u->can_id, u->start_bit,
+                                    u->length, u->scale, u->offset,
+                                    u->is_signed, u->endian, u->unit);
+    if (sidx < 0) sidx = signal_find_by_name(u->name);
+    if (sidx < 0) {
+        _wiz_set_status("Could not register signal.", true);
+        return;
+    }
+
+    if (s_widget && s_widget->inspector_set) {
+        widget_field_value_t v = { .str = u->name };
+        s_widget->inspector_set(s_widget, "signal_name", &v);
+    }
+    _wiz_close();
+    _close_signal_picker();
+}
+
+static void _wiz_build_user_signals_page(void) {
+    lv_label_set_text(s_wiz_title, "Your signal library");
+    uint16_t count = user_signals_count();
+    if (count == 0) {
+        lv_label_set_text(s_wiz_subtitle,
+            "Empty - signals you create via Manual Entry will land here "
+            "and be reusable across layouts.");
+        lv_obj_t *empty = lv_label_create(s_wiz_body);
+        lv_label_set_text(empty, "No saved signals yet.");
+        lv_obj_set_style_text_color(empty, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(empty, THEME_FONT_SMALL, 0);
+        return;
+    }
+    lv_label_set_text(s_wiz_subtitle,
+        "Tap a signal to register it and bind this widget.");
+
+    for (uint16_t i = 0; i < count; i++) {
+        const user_signal_t *u = user_signals_get(i);
+        if (!u) continue;
+
+        lv_obj_t *row = _wiz_list_row(s_wiz_body);
+        lv_obj_add_event_cb(row, _wiz_user_row_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+
+        lv_obj_t *name_lbl = lv_label_create(row);
+        lv_label_set_text(name_lbl, u->name);
+        lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_text_color(name_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
+
+        char meta[40];
+        snprintf(meta, sizeof(meta), "0x%X  %s",
+                 (unsigned)u->can_id, u->unit[0] ? u->unit : "");
+        lv_obj_t *meta_lbl = lv_label_create(row);
+        lv_label_set_text(meta_lbl, meta);
+        lv_obj_align(meta_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_text_color(meta_lbl, DT_TEXT_MUTED, 0);
+        lv_obj_set_style_text_font(meta_lbl, THEME_FONT_SMALL, 0);
+    }
+}
+
 /* ── Page: manual form (extracted from the original wizard body) ──── */
 
 static void _wiz_build_manual_page(void) {
@@ -1928,6 +2013,10 @@ static void _wiz_build_buttons(void) {
         lv_obj_t *back = _make_button(s_wiz_btn_row, 110, 40, "Back");
         lv_obj_align(back, LV_ALIGN_LEFT_MID, 120, 0);
         lv_obj_add_event_cb(back, _wiz_back_to_ecu_list_cb, LV_EVENT_CLICKED, NULL);
+    } else if (s_wiz_page == WIZ_PAGE_USER_LIST) {
+        lv_obj_t *back = _make_button(s_wiz_btn_row, 110, 40, "Back");
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 120, 0);
+        lv_obj_add_event_cb(back, _wiz_back_to_method_cb, LV_EVENT_CLICKED, NULL);
     }
 }
 
@@ -1941,10 +2030,11 @@ static void _wiz_show_page(wizard_page_t page) {
     _wiz_set_status("", false);
 
     switch (page) {
-        case WIZ_PAGE_METHOD:      _wiz_build_method_page();      break;
-        case WIZ_PAGE_MANUAL:      _wiz_build_manual_page();      break;
-        case WIZ_PAGE_ECU_LIST:    _wiz_build_ecu_list_page();    break;
-        case WIZ_PAGE_ECU_SIGNALS: _wiz_build_ecu_signals_page(); break;
+        case WIZ_PAGE_METHOD:      _wiz_build_method_page();        break;
+        case WIZ_PAGE_MANUAL:      _wiz_build_manual_page();        break;
+        case WIZ_PAGE_ECU_LIST:    _wiz_build_ecu_list_page();      break;
+        case WIZ_PAGE_ECU_SIGNALS: _wiz_build_ecu_signals_page();   break;
+        case WIZ_PAGE_USER_LIST:   _wiz_build_user_signals_page();  break;
     }
     _wiz_build_buttons();
 }
