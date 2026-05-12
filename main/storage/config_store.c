@@ -446,6 +446,38 @@ esp_err_t config_store_load_log_rate_hz(uint16_t *hz)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  EDITOR SETTINGS
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_EDITOR "editor"
+
+esp_err_t config_store_save_edit_step_px(int8_t step)
+{
+    if (step != 1 && step != 5 && step != 10) step = 5;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_EDITOR, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i8(handle, "step_px", step);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_edit_step_px(int8_t *step)
+{
+    if (!step) return ESP_ERR_INVALID_ARG;
+    *step = 5; /* default: 5 px */
+    nvs_handle_t handle;
+    if (nvs_open(NS_EDITOR, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    int8_t v;
+    if (nvs_get_i8(handle, "step_px", &v) == ESP_OK) {
+        if (v == 1 || v == 5 || v == 10) *step = v;
+    }
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  ECU SELECTION (make + version)
  * ═══════════════════════════════════════════════════════════════════════ */
 #define NS_ECU "ecu_cfg"

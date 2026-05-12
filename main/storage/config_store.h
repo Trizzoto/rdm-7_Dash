@@ -114,6 +114,13 @@ esp_err_t config_store_load_night_mode(night_mode_config_t *cfg);
 esp_err_t config_store_save_log_rate_hz(uint16_t hz);
 esp_err_t config_store_load_log_rate_hz(uint16_t *hz);
 
+/* ── On-device editor settings ────────────────────────────────────────────
+ * Edit-mode nudge / drag-snap step (px). Persisted across reboots so the
+ * user's preferred precision survives. Constrained to {1, 5, 10}; invalid
+ * values fall back to 5 on load. */
+esp_err_t config_store_save_edit_step_px(int8_t step);
+esp_err_t config_store_load_edit_step_px(int8_t *step);
+
 /* ── ECU selection (auto-configures default layout signal bindings) ─────
  * Persists the user's selected ECU make + version. Loaded on first-run
  * wizard completion and in Device Settings to auto-populate the active
