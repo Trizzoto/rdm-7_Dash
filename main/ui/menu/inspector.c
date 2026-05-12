@@ -951,10 +951,13 @@ static void _build_content_area(void) {
     lv_obj_set_style_radius(s_content, 0, 0);
     lv_obj_set_style_pad_all(s_content, 8, 0);
     lv_obj_set_style_pad_row(s_content, 10, 0);
-    /* Content area itself is NOT scrollable - the dock is narrow so cards
-     * stack tightly; if a future widget needs more space we'll re-enable
-     * scrolling on individual cards. */
-    lv_obj_clear_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
+    /* Vertical scroll - now that the STYLE tab grows with every schema
+     * field, the content reliably overflows the dock height. Cards stay
+     * non-scrollable so scrolling happens at the content level rather
+     * than per-card (smoother flicks, single scroll surface).  */
+    lv_obj_add_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(s_content, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_content, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_flex_flow(s_content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_content, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
