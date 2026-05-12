@@ -1410,24 +1410,24 @@ static void _sig_signal_changed_cb(lv_event_t *e) {
  * so the tweak survives across layouts.
  */
 
+/* Only the text-input fields need preview labels - the dropdown / switch
+ * rows render their current value directly via the LVGL widget. */
 typedef enum {
     CB_F_CAN_ID = 0,
-    CB_F_START,
-    CB_F_LENGTH,
     CB_F_SCALE,
     CB_F_OFFSET,
     CB_F_UNIT,
-    CB_F_ENDIAN,    /* dropdown */
-    CB_F_SIGNED,    /* switch */
     CB_F_COUNT,
 } canbus_field_t;
 
-static bool      s_canbus_expanded = false;
-static lv_obj_t *s_canbus_chev     = NULL;
-static lv_obj_t *s_canbus_content  = NULL;
+static bool      s_canbus_expanded   = false;
+static lv_obj_t *s_canbus_chev       = NULL;
+static lv_obj_t *s_canbus_content    = NULL;
 static lv_obj_t *s_canbus_value_lbls[CB_F_COUNT] = {NULL};
-static lv_obj_t *s_canbus_endian_dd = NULL;
-static lv_obj_t *s_canbus_signed_sw = NULL;
+static lv_obj_t *s_canbus_start_dd   = NULL;
+static lv_obj_t *s_canbus_length_dd  = NULL;
+static lv_obj_t *s_canbus_endian_dd  = NULL;
+static lv_obj_t *s_canbus_signed_sw  = NULL;
 
 static signal_t *_canbus_current_signal(void) {
     const char *name = _widget_signal_name();
@@ -1464,8 +1464,6 @@ static void _canbus_format(int field, char *buf, size_t bufsz) {
     }
     switch (field) {
         case CB_F_CAN_ID: snprintf(buf, bufsz, "0x%X", (unsigned)s->can_id);   break;
-        case CB_F_START:  snprintf(buf, bufsz, "%u",   (unsigned)s->bit_start); break;
-        case CB_F_LENGTH: snprintf(buf, bufsz, "%u",   (unsigned)s->bit_length);break;
         case CB_F_SCALE:  snprintf(buf, bufsz, "%g",   (double)s->scale);       break;
         case CB_F_OFFSET: snprintf(buf, bufsz, "%g",   (double)s->offset);      break;
         case CB_F_UNIT:   snprintf(buf, bufsz, "%s",   s->unit[0] ? s->unit : "(none)"); break;
@@ -1484,10 +1482,21 @@ static void _canbus_refresh_field(int field) {
 static void _canbus_refresh_all(void) {
     for (int i = 0; i < CB_F_COUNT; i++) _canbus_refresh_field(i);
     signal_t *s = _canbus_current_signal();
-    if (s && s_canbus_endian_dd && lv_obj_is_valid(s_canbus_endian_dd)) {
+    if (!s) return;
+    if (s_canbus_start_dd && lv_obj_is_valid(s_canbus_start_dd)) {
+        int v = s->bit_start; if (v > 63) v = 63;
+        lv_dropdown_set_selected(s_canbus_start_dd, (uint16_t)v);
+    }
+    if (s_canbus_length_dd && lv_obj_is_valid(s_canbus_length_dd)) {
+        int v = s->bit_length; if (v < 1) v = 1; if (v > 32) v = 32;
+        lv_dropdown_set_selected(s_canbus_length_dd, (uint16_t)(v - 1));
+    }
+    if (s_canbus_endian_dd && lv_obj_is_valid(s_canbus_endian_dd)) {
+        /* Dropdown index 0 = Big Endian (Motorola, endian=0),
+         *                1 = Little Endian (Intel, endian=1). */
         lv_dropdown_set_selected(s_canbus_endian_dd, s->endian ? 1 : 0);
     }
-    if (s && s_canbus_signed_sw && lv_obj_is_valid(s_canbus_signed_sw)) {
+    if (s_canbus_signed_sw && lv_obj_is_valid(s_canbus_signed_sw)) {
         if (s->is_signed) lv_obj_add_state(s_canbus_signed_sw, LV_STATE_CHECKED);
         else              lv_obj_clear_state(s_canbus_signed_sw, LV_STATE_CHECKED);
     }
@@ -1517,28 +1526,6 @@ static void _canbus_text_confirm_cb(const char *text, void *user_data) {
     _canbus_sync_user_library(s);
 }
 
-static void _canbus_numeric_confirm_cb(const char *text, void *user_data) {
-    int field = (int)(intptr_t)user_data;
-    signal_t *s = _canbus_current_signal();
-    if (!s || !text) return;
-    int v = atoi(text);
-    switch (field) {
-        case CB_F_START:
-            if (v < 0)  v = 0;
-            if (v > 63) v = 63;
-            s->bit_start = (uint8_t)v;
-            break;
-        case CB_F_LENGTH:
-            if (v < 1)  v = 1;
-            if (v > 32) v = 32;
-            s->bit_length = (uint8_t)v;
-            break;
-        default: return;
-    }
-    _canbus_refresh_field(field);
-    _canbus_sync_user_library(s);
-}
-
 static void _canbus_row_clicked_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     int field = (int)(intptr_t)lv_event_get_user_data(e);
@@ -1546,12 +1533,6 @@ static void _canbus_row_clicked_cb(lv_event_t *e) {
     char buf[32];
     _canbus_format(field, buf, sizeof(buf));
 
-    if (field == CB_F_START || field == CB_F_LENGTH) {
-        show_numeric_input_dialog(
-            (field == CB_F_START) ? "Start Bit" : "Length",
-            buf, _canbus_numeric_confirm_cb, NULL, (void *)(intptr_t)field);
-        return;
-    }
     const char *title = (field == CB_F_CAN_ID) ? "CAN ID" :
                         (field == CB_F_SCALE)  ? "Scale"  :
                         (field == CB_F_OFFSET) ? "Offset" :
@@ -1564,9 +1545,29 @@ static void _canbus_row_clicked_cb(lv_event_t *e) {
                               (void *)(intptr_t)field);
 }
 
+static void _canbus_start_changed_cb(lv_event_t *e) {
+    signal_t *s = _canbus_current_signal();
+    if (!s) return;
+    int sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    if (sel < 0)  sel = 0;
+    if (sel > 63) sel = 63;
+    s->bit_start = (uint8_t)sel;
+    _canbus_sync_user_library(s);
+}
+
+static void _canbus_length_changed_cb(lv_event_t *e) {
+    signal_t *s = _canbus_current_signal();
+    if (!s) return;
+    /* Dropdown is 1..32, index 0 = length 1. */
+    int sel = lv_dropdown_get_selected(lv_event_get_target(e));
+    s->bit_length = (uint8_t)(sel + 1);
+    _canbus_sync_user_library(s);
+}
+
 static void _canbus_endian_changed_cb(lv_event_t *e) {
     signal_t *s = _canbus_current_signal();
     if (!s) return;
+    /* Index 0 = Big Endian (endian=0), 1 = Little Endian (endian=1). */
     int sel = lv_dropdown_get_selected(lv_event_get_target(e));
     s->endian = (sel ? 1 : 0);
     _canbus_sync_user_library(s);
@@ -1635,7 +1636,12 @@ static void _make_canbus_field_row(lv_obj_t *parent, const char *label, int fiel
     s_canbus_value_lbls[field] = value;
 }
 
-static void _make_canbus_endian_row(lv_obj_t *parent) {
+/* Generic dropdown row. Used for Start Bit (0..63), Length (1..32) and
+ * Endian (Big / Little). The caller supplies the newline-separated
+ * options string and the change callback. */
+static lv_obj_t *_make_canbus_dropdown_row(lv_obj_t *parent, const char *label,
+                                            const char *options,
+                                            lv_event_cb_t cb) {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, 40);
@@ -1645,13 +1651,13 @@ static void _make_canbus_endian_row(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(row, 0, 0);
 
     lv_obj_t *lbl = lv_label_create(row);
-    lv_label_set_text(lbl, "Endian");
+    lv_label_set_text(lbl, label);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
 
     lv_obj_t *dd = lv_dropdown_create(row);
-    lv_dropdown_set_options(dd, "Motorola (BE)\nIntel (LE)");
+    lv_dropdown_set_options(dd, options ? options : "-");
     lv_obj_set_size(dd, 180, 32);
     lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(dd, DT_BG_INSET, 0);
@@ -1660,9 +1666,20 @@ static void _make_canbus_endian_row(lv_obj_t *parent) {
     lv_obj_set_style_border_width(dd, 1, 0);
     lv_obj_set_style_text_color(dd, lv_color_white(), 0);
     lv_obj_set_style_text_font(dd, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(dd, _canbus_endian_changed_cb,
-                        LV_EVENT_VALUE_CHANGED, NULL);
-    s_canbus_endian_dd = dd;
+    if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, NULL);
+    return dd;
+}
+
+/* Build "0\n1\n...\nmax" newline-separated options. */
+static void _canbus_int_range_options(int min, int max, char *buf, size_t bufsz) {
+    size_t pos = 0;
+    for (int v = min; v <= max && pos < bufsz - 4; v++) {
+        if (v > min && pos < bufsz - 1) buf[pos++] = '\n';
+        int n = snprintf(buf + pos, bufsz - pos, "%d", v);
+        if (n < 0 || (size_t)n >= bufsz - pos) break;
+        pos += (size_t)n;
+    }
+    buf[pos] = '\0';
 }
 
 static void _make_canbus_signed_row(lv_obj_t *parent) {
@@ -1732,12 +1749,25 @@ static void _build_canbus_section(lv_obj_t *parent_card) {
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     _make_canbus_field_row(s_canbus_content, "CAN ID",     CB_F_CAN_ID);
-    _make_canbus_field_row(s_canbus_content, "Start Bit",  CB_F_START);
-    _make_canbus_field_row(s_canbus_content, "Length",     CB_F_LENGTH);
-    _make_canbus_field_row(s_canbus_content, "Scale",      CB_F_SCALE);
-    _make_canbus_field_row(s_canbus_content, "Offset",     CB_F_OFFSET);
-    _make_canbus_field_row(s_canbus_content, "Unit",       CB_F_UNIT);
-    _make_canbus_endian_row(s_canbus_content);
+
+    /* Start Bit + Length + Endian render as dropdowns (matches the
+     * legacy editor). Endian shows the plain-English labels rather
+     * than Motorola / Intel; the underlying enum value is unchanged. */
+    char start_opts[256], length_opts[128];
+    _canbus_int_range_options(0,  63, start_opts,  sizeof(start_opts));
+    _canbus_int_range_options(1,  32, length_opts, sizeof(length_opts));
+
+    s_canbus_start_dd  = _make_canbus_dropdown_row(s_canbus_content,
+        "Start Bit", start_opts,  _canbus_start_changed_cb);
+    s_canbus_length_dd = _make_canbus_dropdown_row(s_canbus_content,
+        "Length",    length_opts, _canbus_length_changed_cb);
+
+    _make_canbus_field_row(s_canbus_content, "Scale",  CB_F_SCALE);
+    _make_canbus_field_row(s_canbus_content, "Offset", CB_F_OFFSET);
+    _make_canbus_field_row(s_canbus_content, "Unit",   CB_F_UNIT);
+
+    s_canbus_endian_dd = _make_canbus_dropdown_row(s_canbus_content,
+        "Endian", "Big Endian\nLittle Endian", _canbus_endian_changed_cb);
     _make_canbus_signed_row(s_canbus_content);
 
     if (!s_canbus_expanded) lv_obj_add_flag(s_canbus_content, LV_OBJ_FLAG_HIDDEN);
@@ -2172,6 +2202,8 @@ void inspector_close(void) {
     s_sig_signal_dd    = NULL;
     s_canbus_chev      = NULL;
     s_canbus_content   = NULL;
+    s_canbus_start_dd  = NULL;
+    s_canbus_length_dd = NULL;
     s_canbus_endian_dd = NULL;
     s_canbus_signed_sw = NULL;
     for (int i = 0; i < CB_F_COUNT; i++) s_canbus_value_lbls[i] = NULL;
