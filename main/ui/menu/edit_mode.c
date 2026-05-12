@@ -471,13 +471,14 @@ static void _save_timer_cb(lv_timer_t *t) {
     if (s_save_timer) { lv_timer_del(s_save_timer); s_save_timer = NULL; }
 }
 
-/* Undo snapshot is ALSO debounced. A drag (which fires PRESSING dozens of
- * times) or a slider (VALUE_CHANGED every pixel) would otherwise blow
- * through the 10-deep ring in seconds. By debouncing at 800 ms, one
- * gesture = one snapshot. Discrete actions (delete, duplicate, keypad
- * confirm) also flow through here — slightly less ideal but adequate. */
+/* Undo snapshot is debounced like save, but with a much longer window so
+ * a flurry of small edits (e.g. ten 1-px nudges) coalesces into a single
+ * undo step. The timer resets on every edit, so it only fires once the
+ * user pauses for SNAP_DEBOUNCE_MS without touching anything. Explicit
+ * actions (Undo, Redo, Duplicate, Delete) flush a pending timer first so
+ * any in-progress session is captured before the next discrete event. */
 static lv_timer_t *s_snap_timer = NULL;
-#define SNAP_DEBOUNCE_MS 800
+#define SNAP_DEBOUNCE_MS 2500
 
 static void _snap_timer_cb(lv_timer_t *t) {
     (void)t;
@@ -493,6 +494,17 @@ static void _schedule_snapshot(void) {
     }
     s_snap_timer = lv_timer_create(_snap_timer_cb, SNAP_DEBOUNCE_MS, NULL);
     if (s_snap_timer) lv_timer_set_repeat_count(s_snap_timer, 1);
+}
+
+/* Capture the current state immediately and cancel any pending debounce.
+ * Called by explicit actions so the user's most recent gesture doesn't
+ * get lost when they hit Undo / Delete / Duplicate before the timer
+ * fires on its own. */
+static void _flush_pending_snapshot(void) {
+    if (!s_snap_timer) return;
+    lv_timer_del(s_snap_timer);
+    s_snap_timer = NULL;
+    _undo_snapshot();
 }
 
 static void _schedule_save(void) {
@@ -640,8 +652,12 @@ static void _delete_confirm_cb(lv_event_t *e) {
     widget_t *target = s_selected;
     _close_delete_modal();
     if (!target) return;
+    /* Pre-delete state goes on the ring as a discrete undo step; without
+     * the flush, the deletion would coalesce with any in-progress edit. */
+    _flush_pending_snapshot();
     _clear_selection();              /* destroys ring/handles/toolbar/popover */
     dashboard_delete_widget(target); /* frees widget + drops from registry */
+    _undo_snapshot();                /* explicit post-delete state */
     _schedule_save();
 }
 
@@ -1255,6 +1271,16 @@ static void _undo_snapshot(void) {
     char *snap = _serialize_layout();
     if (!snap) return;
 
+    /* Skip if identical to what we already pushed. Stops debounced timer
+     * firings from creating duplicate ring entries when an explicit action
+     * (Duplicate / Delete) already snapshotted moments earlier and nothing
+     * changed in the meantime. */
+    if (s_undo_pos >= 0 && s_undo[s_undo_pos] &&
+        strcmp(snap, s_undo[s_undo_pos]) == 0) {
+        free(snap);
+        return;
+    }
+
     /* Truncate redo branch — any forward history is invalidated by this new edit. */
     for (int i = s_undo_pos + 1; i < s_undo_count; i++) {
         if (s_undo[i]) { free(s_undo[i]); s_undo[i] = NULL; }
@@ -1294,6 +1320,11 @@ static void _apply_snapshot(int idx) {
 }
 
 static void _do_undo(void) {
+    /* Commit any in-progress edit session before stepping back, otherwise
+     * the user's most recent gesture would be silently lost (the snapshot
+     * timer hadn't fired yet). After flush, the current state IS the top
+     * of the ring — undo then takes us one step back from there. */
+    _flush_pending_snapshot();
     if (s_undo_pos <= 0) return;
     s_undo_pos--;
     _apply_snapshot(s_undo_pos);
@@ -1301,6 +1332,7 @@ static void _do_undo(void) {
 }
 
 static void _do_redo(void) {
+    _flush_pending_snapshot();
     if (s_undo_pos >= s_undo_count - 1) return;
     s_undo_pos++;
     _apply_snapshot(s_undo_pos);
@@ -1339,6 +1371,10 @@ static int _find_unused_slot(widget_type_t type) {
 
 static void _do_duplicate(void) {
     if (!s_selected || !s_selected->to_json) return;
+    /* Commit any in-progress session so the pre-duplicate state is the
+     * top of the ring; the explicit snapshot below then captures the
+     * post-duplicate state as a separate undo step. */
+    _flush_pending_snapshot();
     widget_type_t type = s_selected->type;
     uint8_t       src_slot = s_selected->slot;
 
