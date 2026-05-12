@@ -179,22 +179,27 @@ static void _position_tab_indicator(void) {
  * Tap a row to open the preset picker. Picker floats over everything.
  */
 
-#define PRESET_COUNT 10
+#define PRESET_COUNT 12
 static lv_color_t s_presets[PRESET_COUNT];
 static bool       s_presets_ready = false;
 
 static void _ensure_presets(void) {
     if (s_presets_ready) return;
-    s_presets[0] = lv_color_white();
-    s_presets[1] = THEME_COLOR_RED;
-    s_presets[2] = THEME_COLOR_ORANGE;
-    s_presets[3] = THEME_COLOR_YELLOW;
-    s_presets[4] = THEME_COLOR_GREEN;
-    s_presets[5] = THEME_COLOR_CYAN;
-    s_presets[6] = THEME_COLOR_BLUE;
-    s_presets[7] = THEME_COLOR_PURPLE;
-    s_presets[8] = THEME_COLOR_PINK;
-    s_presets[9] = lv_color_black();
+    /* Row 0: light tones */
+    s_presets[0]  = lv_color_white();
+    s_presets[1]  = lv_color_hex(0x848684);  /* light warm grey */
+    s_presets[2]  = THEME_COLOR_RED;
+    s_presets[3]  = THEME_COLOR_ORANGE;
+    /* Row 1: rainbow mid */
+    s_presets[4]  = THEME_COLOR_YELLOW;
+    s_presets[5]  = THEME_COLOR_GREEN;
+    s_presets[6]  = THEME_COLOR_CYAN;
+    s_presets[7]  = THEME_COLOR_BLUE;
+    /* Row 2: rainbow tail + dark tones */
+    s_presets[8]  = THEME_COLOR_PURPLE;
+    s_presets[9]  = THEME_COLOR_PINK;
+    s_presets[10] = lv_color_hex(0x292C29);  /* dark warm grey (THEME_COLOR_SURFACE) */
+    s_presets[11] = lv_color_black();
     s_presets_ready = true;
 }
 
@@ -371,14 +376,19 @@ static void _open_picker(int field) {
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, THEME_FONT_SMALL, 0);
 
-    /* 5x2 swatch grid, 40 px swatches + 8 px gaps */
+    /* 4x3 swatch grid (12 presets), 40 px swatches + 8 px gaps. Centred
+     * in the card so the layout breathes the same whether 10, 12, or
+     * 16 presets ever live here. */
     lv_color_t current = _panel_get_color(pd, field);
-    const int grid_x0 = 8;
-    const int grid_y0 = 28;
-    const int cell    = 48;
+    const int cell     = 48;
+    const int cols     = 4;
+    const int grid_w   = cols * 40 + (cols - 1) * 8;
+    const int inner_w  = 300 - 16 * 2;     /* card width minus pad */
+    const int grid_x0  = (inner_w - grid_w) / 2;
+    const int grid_y0  = 28;
     for (int i = 0; i < PRESET_COUNT; i++) {
-        int col = i % 5;
-        int row = i / 5;
+        int col = i % cols;
+        int row = i / cols;
         lv_obj_t *sw = lv_btn_create(card);
         lv_obj_set_size(sw, 40, 40);
         lv_obj_set_pos(sw, grid_x0 + col * cell, grid_y0 + row * cell);
