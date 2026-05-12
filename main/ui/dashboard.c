@@ -112,6 +112,15 @@ static void _register_widget_long_press(void) {
 		 * the callback bails when Edit Mode is not armed. */
 		lv_obj_add_event_cb(w->root, _widget_long_press_cb,
 							LV_EVENT_LONG_PRESSED, w);
+
+		/* Edit Mode select + drag handlers. All three bail in live mode so
+		 * they're nearly free; only become active when armed. */
+		lv_obj_add_event_cb(w->root, edit_mode_widget_pressed_cb,
+							LV_EVENT_PRESSED, w);
+		lv_obj_add_event_cb(w->root, edit_mode_widget_pressing_cb,
+							LV_EVENT_PRESSING, w);
+		lv_obj_add_event_cb(w->root, edit_mode_widget_released_cb,
+							LV_EVENT_RELEASED, w);
 	}
 }
 

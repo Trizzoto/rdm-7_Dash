@@ -508,6 +508,11 @@ void ui_Screen3_screen_init(void) {
 						NULL);
 	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_RELEASED,
 						NULL);
+	/* Edit Mode: empty-area press deselects whatever widget is currently
+	 * selected. Widgets intercept presses (CLICKABLE), so this only fires on
+	 * the dashboard background. No-op in live mode. */
+	lv_obj_add_event_cb(ui_Screen3, edit_mode_screen_pressed_cb,
+						LV_EVENT_PRESSED, NULL);
 
 	static bool timers_created = false;
 	if (!timers_created) {
@@ -607,6 +612,8 @@ void ui_Screen3_preview_layout(cJSON *root) {
 						NULL);
 	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_RELEASED,
 						NULL);
+	lv_obj_add_event_cb(ui_Screen3, edit_mode_screen_pressed_cb,
+						LV_EVENT_PRESSED, NULL);
 
 	dashboard_apply_layout_json(ui_Screen3, root);
 }

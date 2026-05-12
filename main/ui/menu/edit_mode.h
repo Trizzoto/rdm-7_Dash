@@ -18,6 +18,7 @@
  */
 #pragma once
 #include "lvgl.h"
+#include "widgets/widget_types.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -52,6 +53,39 @@ void edit_mode_show_pill(void);
 /** Hide the pill. Called from the 6-second auto-hide timer alongside the
  *  Menu button. When armed, the pill stays pinned and this is a no-op. */
 void edit_mode_hide_pill(void);
+
+/* ─── Selection + drag (active while armed) ───────────────────────────────── */
+
+/** Currently-selected widget, or NULL if none. Cheap; just returns a pointer
+ *  from the module's static state. */
+widget_t *edit_mode_get_selected(void);
+
+/** Replace selection. Pass NULL to deselect. Re-uses the ring on lv_layer_top.
+ *  No-op if not armed. */
+void edit_mode_select(widget_t *w);
+
+
+/** Refresh the selection ring's position/size against the current widget.
+ *  Call this after the widget's root has moved or resized. */
+void edit_mode_refresh_selection(void);
+
+/* ─── Event callbacks (registered per widget by dashboard.c) ──────────────── */
+/*
+ * Wiring contract:
+ *   - LV_EVENT_PRESSED   → edit_mode_widget_pressed_cb   (user_data = widget_t*)
+ *   - LV_EVENT_PRESSING  → edit_mode_widget_pressing_cb  (user_data = widget_t*)
+ *   - LV_EVENT_RELEASED  → edit_mode_widget_released_cb  (user_data = widget_t*)
+ *
+ * All three bail unless Edit Mode is armed, so registering them is cheap
+ * even when the user is in live mode.
+ */
+void edit_mode_widget_pressed_cb(lv_event_t *e);
+void edit_mode_widget_pressing_cb(lv_event_t *e);
+void edit_mode_widget_released_cb(lv_event_t *e);
+
+/** Registered on ui_Screen3 background — deselects on empty-area press.
+ *  When the press hits a widget, the widget intercepts and this never fires. */
+void edit_mode_screen_pressed_cb(lv_event_t *e);
 
 #ifdef __cplusplus
 }
