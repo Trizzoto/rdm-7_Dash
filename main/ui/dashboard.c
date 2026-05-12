@@ -89,18 +89,23 @@ static void _register_widget_long_press(void) {
 		widget_t *w = s_widgets[i];
 		if (!w || !w->root) continue;
 
-		/* Images and shape panels are decoration — they intentionally pass
-		 * touch events through to whatever real widget they cover. They get
-		 * their CLICKABLE flag flipped on only while Edit Mode is armed
-		 * (handled by edit_mode + dashboard listener — see Phase 2). For now,
-		 * they remain unclickable and cannot be inspected. */
-		if (w->type == WIDGET_IMAGE || w->type == WIDGET_SHAPE_PANEL ||
-		    w->type == WIDGET_LINE) {
+		/* Decorations (image / shape panel / line) start non-clickable so
+		 * touch events fall through to the real widgets they overlay. While
+		 * Edit Mode is armed, edit_mode_enter() flips them clickable so the
+		 * user can select / drag them too; edit_mode_exit() restores. */
+		bool is_decoration = (w->type == WIDGET_IMAGE ||
+		                      w->type == WIDGET_SHAPE_PANEL ||
+		                      w->type == WIDGET_LINE);
+		if (is_decoration) {
 			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
-			continue;
+		} else {
+			lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 		}
 
-		lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+		/* All event callbacks are attached unconditionally — they're no-ops
+		 * when the widget isn't currently clickable (LVGL won't dispatch
+		 * events to non-CLICKABLE objects) or when not armed. This lets the
+		 * armed-state toggle flip CLICKABLE alone, without re-wiring events. */
 
 		/* Short-tap → reveal toolbar pills (Menu / Edit Mode) */
 		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
@@ -108,13 +113,11 @@ static void _register_widget_long_press(void) {
 		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
 							LV_EVENT_RELEASED, NULL);
 
-		/* Long-press → open config modal. Attached to every clickable widget;
-		 * the callback bails when Edit Mode is not armed. */
+		/* Long-press → open config modal. Bails when not armed. */
 		lv_obj_add_event_cb(w->root, _widget_long_press_cb,
 							LV_EVENT_LONG_PRESSED, w);
 
-		/* Edit Mode select + drag handlers. All three bail in live mode so
-		 * they're nearly free; only become active when armed. */
+		/* Edit Mode select + drag handlers. Bail when not armed. */
 		lv_obj_add_event_cb(w->root, edit_mode_widget_pressed_cb,
 							LV_EVENT_PRESSED, w);
 		lv_obj_add_event_cb(w->root, edit_mode_widget_pressing_cb,

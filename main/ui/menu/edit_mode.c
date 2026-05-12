@@ -154,6 +154,24 @@ static void _persist_async(void *unused) {
     dashboard_persist_layout();
 }
 
+/* ── Decoration clickability ──────────────────────────────────────────────── */
+/* Image / shape panel / line widgets are non-clickable in live mode so they
+ * don't swallow taps meant for widgets underneath. While armed, flip them
+ * clickable so they can be selected and dragged. */
+static void _set_decoration_clickable(bool clickable) {
+    widget_t **widgets = dashboard_get_widgets();
+    uint8_t    count   = dashboard_get_widget_count();
+    for (uint8_t i = 0; i < count; i++) {
+        widget_t *w = widgets[i];
+        if (!w || !w->root || !lv_obj_is_valid(w->root)) continue;
+        if (w->type != WIDGET_IMAGE &&
+            w->type != WIDGET_SHAPE_PANEL &&
+            w->type != WIDGET_LINE) continue;
+        if (clickable) lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+        else           lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
 /* ── Pill click handler — toggles armed state ─────────────────────────────── */
 
 static void _pill_clicked_cb(lv_event_t *e) {
@@ -174,6 +192,10 @@ void edit_mode_enter(void) {
     if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
         lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
 
+    /* Promote decorations (image/shape_panel/line) so they can be selected
+     * and dragged just like any other widget. */
+    _set_decoration_clickable(true);
+
     _apply_pill_style_armed();
     if (s_pill && lv_obj_is_valid(s_pill)) {
         lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
@@ -193,6 +215,7 @@ void edit_mode_exit(void) {
     if (!s_armed && !s_banner && !s_ring) return;   /* idempotent fast path */
     s_armed = false;
     _clear_selection();
+    _set_decoration_clickable(false);
     _apply_pill_style_live();
     if (s_pill && lv_obj_is_valid(s_pill))
         lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
