@@ -715,7 +715,7 @@ static void _delete_btn_cb(lv_event_t *e) {
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
     lv_obj_t *msg = lv_label_create(panel);
-    lv_label_set_text(msg, "This cannot be undone.");
+    lv_label_set_text(msg, "You can Undo to bring it back.");
     lv_obj_set_style_text_color(msg, DT_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, 0);
     lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 0, 30);
