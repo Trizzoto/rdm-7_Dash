@@ -51,12 +51,26 @@ static const char *const s_tab_names[TAB_COUNT] = {
     "DATA", "STYLE", "RULES"
 };
 
-/* Right-side dock geometry. Keeps the left 480 px untouched so live edits
- * show up at native size, matching the web editor's right-Properties
- * layout. */
-#define DOCK_W    320
-#define DOCK_X    (800 - DOCK_W)        /* 480 */
-#define TAB_WIDTH (DOCK_W / TAB_COUNT)  /* even split across the bar */
+/* Dock geometry. Width varies per tab - STYLE is narrow so the dashboard
+ * stays maximally visible during colour / dimension tweaks; DATA and
+ * RULES are wider because they pack signal pickers, alert configs and
+ * other dense rows that don't fit cleanly in 320 px. */
+#define DOCK_W_NARROW 320
+#define DOCK_W_WIDE   480
+#define DOCK_H        480
+
+static int s_dock_w = DOCK_W_NARROW;
+
+/* Target dock width per tab. Used by _show_tab to switch widths when
+ * the user taps a different tab. */
+static const int s_tab_dock_w[TAB_COUNT] = {
+    [TAB_DATA]  = DOCK_W_WIDE,
+    [TAB_STYLE] = DOCK_W_NARROW,
+    [TAB_RULES] = DOCK_W_WIDE,
+};
+
+static inline int _dock_x(void)    { return 800 - s_dock_w; }
+static inline int _tab_width(void) { return s_dock_w / TAB_COUNT; }
 
 /* Module state */
 
@@ -65,6 +79,8 @@ static lv_obj_t *s_left_eater      = NULL;   /* invisible click-eater over
                                               * the dashboard area so
                                               * edit_mode drag / selection
                                               * can't fire underneath */
+static lv_obj_t *s_header          = NULL;   /* resized on dock-width change */
+static lv_obj_t *s_tab_bar         = NULL;   /* resized on dock-width change */
 static lv_obj_t *s_tab_buttons[TAB_COUNT] = {NULL};
 static lv_obj_t *s_tab_indicator   = NULL;
 static lv_obj_t *s_content         = NULL;
@@ -169,7 +185,7 @@ static void _position_tab_indicator(void) {
     if (!s_tab_indicator || !lv_obj_is_valid(s_tab_indicator)) return;
     if (s_active_tab < 0 || s_active_tab >= TAB_COUNT) return;
     lv_obj_set_pos(s_tab_indicator,
-                   (lv_coord_t)(s_active_tab * TAB_WIDTH), 38);
+                   (lv_coord_t)(s_active_tab * _tab_width()), 38);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -555,20 +571,44 @@ static void _refresh_side_buttons(void) {
     }
 }
 
-static void _apply_dock_side(void) {
-    if (!s_overlay   || !lv_obj_is_valid(s_overlay))   return;
-    if (!s_left_eater || !lv_obj_is_valid(s_left_eater)) return;
-    if (s_dock_side == 0) {
-        /* Dock on right, click-eater fills the left 480 px. */
-        lv_obj_set_pos(s_overlay, DOCK_X, 0);
-        lv_obj_set_pos(s_left_eater, 0, 0);
-        lv_obj_set_size(s_left_eater, DOCK_X, 480);
-    } else {
-        /* Dock on left, click-eater fills the right 480 px. */
-        lv_obj_set_pos(s_overlay, 0, 0);
-        lv_obj_set_pos(s_left_eater, DOCK_W, 0);
-        lv_obj_set_size(s_left_eater, 800 - DOCK_W, 480);
+/* Resize every dock element to match the current s_dock_w / s_dock_side.
+ * Called on tab change (when width may flip narrow/wide) and on side
+ * change. Snaps - no animation yet. */
+static void _apply_dock_geometry(void) {
+    if (!s_overlay || !lv_obj_is_valid(s_overlay)) return;
+
+    int dock_x = (s_dock_side == 0) ? (800 - s_dock_w) : 0;
+    lv_obj_set_size(s_overlay, s_dock_w, DOCK_H);
+    lv_obj_set_pos(s_overlay, dock_x, 0);
+
+    if (s_left_eater && lv_obj_is_valid(s_left_eater)) {
+        if (s_dock_side == 0) {
+            lv_obj_set_pos(s_left_eater, 0, 0);
+        } else {
+            lv_obj_set_pos(s_left_eater, s_dock_w, 0);
+        }
+        lv_obj_set_size(s_left_eater, 800 - s_dock_w, DOCK_H);
     }
+
+    if (s_header  && lv_obj_is_valid(s_header))  lv_obj_set_width(s_header,  s_dock_w);
+    if (s_tab_bar && lv_obj_is_valid(s_tab_bar)) lv_obj_set_width(s_tab_bar, s_dock_w);
+    if (s_content && lv_obj_is_valid(s_content)) lv_obj_set_width(s_content, s_dock_w);
+
+    int tw = _tab_width();
+    for (int i = 0; i < TAB_COUNT; i++) {
+        if (s_tab_buttons[i] && lv_obj_is_valid(s_tab_buttons[i])) {
+            lv_obj_set_size(s_tab_buttons[i], tw, 40);
+            lv_obj_set_pos(s_tab_buttons[i], i * tw, 0);
+        }
+    }
+    if (s_tab_indicator && lv_obj_is_valid(s_tab_indicator)) {
+        lv_obj_set_width(s_tab_indicator, tw);
+        _position_tab_indicator();
+    }
+}
+
+static void _apply_dock_side(void) {
+    _apply_dock_geometry();
     _refresh_side_buttons();
 }
 
@@ -1120,7 +1160,7 @@ static void _build_placeholder_tab(const char *tab_name) {
 
     lv_obj_t *msg = lv_label_create(card);
     lv_label_set_long_mode(msg, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(msg, DOCK_W - 80);
+    lv_obj_set_width(msg, s_dock_w - 80);
     lv_label_set_text(msg,
         "Position + size live in the bottom toolbar. "
         "For the full per-widget settings list, use the legacy "
@@ -1128,7 +1168,7 @@ static void _build_placeholder_tab(const char *tab_name) {
     lv_obj_set_style_text_color(msg, DT_TEXT_MUTED, 0);
     lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, 0);
 
-    lv_obj_t *legacy_btn = _make_button(card, DOCK_W - 60, 40,
+    lv_obj_t *legacy_btn = _make_button(card, s_dock_w - 60, 40,
                                         "Open legacy editor");
     lv_obj_add_event_cb(legacy_btn, _legacy_btn_cb, LV_EVENT_CLICKED, NULL);
 }
@@ -1153,6 +1193,15 @@ static void _show_tab(int idx) {
     if (idx < 0 || idx >= TAB_COUNT) return;
     _close_picker();
     s_active_tab = idx;
+
+    /* Switch dock width to this tab's preference. Snap (no animation
+     * yet) so the content area is at its final width before we rebuild. */
+    int target_w = s_tab_dock_w[idx];
+    if (target_w != s_dock_w) {
+        s_dock_w = target_w;
+        _apply_dock_geometry();
+    }
+
     lv_obj_clean(s_content);
     switch (idx) {
         case TAB_DATA:
@@ -1195,7 +1244,8 @@ static void _back_btn_cb(lv_event_t *e) {
 
 static void _build_header(void) {
     lv_obj_t *header = lv_obj_create(s_overlay);
-    lv_obj_set_size(header, DOCK_W, 48);
+    s_header = header;
+    lv_obj_set_size(header, s_dock_w, 48);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(header, DT_BG_PANEL, 0);
@@ -1241,7 +1291,8 @@ static void _build_header(void) {
 
 static void _build_tab_bar(void) {
     lv_obj_t *bar = lv_obj_create(s_overlay);
-    lv_obj_set_size(bar, DOCK_W, 40);
+    s_tab_bar = bar;
+    lv_obj_set_size(bar, s_dock_w, 40);
     lv_obj_set_pos(bar, 0, 48);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(bar, DT_BG_PANEL, 0);
@@ -1252,10 +1303,11 @@ static void _build_tab_bar(void) {
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_pad_all(bar, 0, 0);
 
+    int tw = _tab_width();
     for (int i = 0; i < TAB_COUNT; i++) {
         lv_obj_t *b = lv_btn_create(bar);
-        lv_obj_set_size(b, TAB_WIDTH, 40);
-        lv_obj_set_pos(b, i * TAB_WIDTH, 0);
+        lv_obj_set_size(b, tw, 40);
+        lv_obj_set_pos(b, i * tw, 0);
         lv_obj_set_style_bg_opa(b, 0, 0);
         lv_obj_set_style_bg_color(b, lv_color_white(), LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(b, 20, LV_STATE_PRESSED);
@@ -1272,7 +1324,7 @@ static void _build_tab_bar(void) {
     }
 
     s_tab_indicator = lv_obj_create(bar);
-    lv_obj_set_size(s_tab_indicator, TAB_WIDTH, 2);
+    lv_obj_set_size(s_tab_indicator, tw, 2);
     lv_obj_set_style_bg_color(s_tab_indicator, DT_ACCENT, 0);
     lv_obj_set_style_bg_opa(s_tab_indicator, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_tab_indicator, 0, 0);
@@ -1284,7 +1336,7 @@ static void _build_tab_bar(void) {
 
 static void _build_content_area(void) {
     s_content = lv_obj_create(s_overlay);
-    lv_obj_set_size(s_content, DOCK_W, 480 - 48 - 40);
+    lv_obj_set_size(s_content, s_dock_w, DOCK_H - 48 - 40);
     lv_obj_set_pos(s_content, 0, 48 + 40);
     /* Transparent - gaps between cards let the dashboard show through. */
     lv_obj_set_style_bg_opa(s_content, 0, 0);
@@ -1313,6 +1365,7 @@ void inspector_open(widget_t *w) {
     s_widget     = w;
     s_active_tab = TAB_STYLE;
     s_dock_side  = 0;   /* always reopen on the right side */
+    s_dock_w     = s_tab_dock_w[s_active_tab];   /* width for the default tab */
 
     lv_obj_t *parent = ui_Screen3;
     if (!parent || !lv_obj_is_valid(parent)) parent = lv_scr_act();
@@ -1322,7 +1375,7 @@ void inspector_open(widget_t *w) {
      * full brightness) but absorbs taps so edit_mode's selection / drag
      * gesture handlers don't fire while the Inspector is up. */
     s_left_eater = lv_obj_create(parent);
-    lv_obj_set_size(s_left_eater, DOCK_X, 480);
+    lv_obj_set_size(s_left_eater, _dock_x(), DOCK_H);
     lv_obj_set_pos(s_left_eater, 0, 0);
     lv_obj_set_style_bg_opa(s_left_eater, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_left_eater, 0, 0);
@@ -1333,8 +1386,8 @@ void inspector_open(widget_t *w) {
 
     /* Right-side dock - the visible Inspector. */
     s_overlay = lv_obj_create(parent);
-    lv_obj_set_size(s_overlay, DOCK_W, 480);
-    lv_obj_set_pos(s_overlay, DOCK_X, 0);
+    lv_obj_set_size(s_overlay, s_dock_w, DOCK_H);
+    lv_obj_set_pos(s_overlay, _dock_x(), 0);
     lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_SCROLLABLE);
     /* Dock root transparent; the header / tab bar / cards each define
      * their own opacity so the live preview shows through gaps. */
@@ -1371,6 +1424,8 @@ void inspector_close(void) {
     }
     s_widget          = NULL;
     s_content         = NULL;
+    s_header          = NULL;
+    s_tab_bar         = NULL;
     s_tab_indicator   = NULL;
     s_side_left_btn   = NULL;
     s_side_right_btn  = NULL;
