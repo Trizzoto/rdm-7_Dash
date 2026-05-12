@@ -28,6 +28,15 @@ void widget_registry_reset(void);
  */
 bool widget_registry_add(widget_t *w);
 
+/**
+ * Remove a widget pointer from the registry. Does NOT free the widget —
+ * the caller is responsible for invoking w->destroy. Returns true if the
+ * widget was found and removed, false otherwise. Used by the on-device
+ * editor's Delete action to drop a widget at runtime without tearing down
+ * the entire layout.
+ */
+bool widget_registry_remove(widget_t *w);
+
 /** Return the current number of registered widgets. */
 uint8_t widget_registry_count(void);
 

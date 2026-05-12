@@ -42,6 +42,8 @@ static void _handle_pressing_cb(lv_event_t *e);
 static void _handle_released_cb(lv_event_t *e);
 static void _schedule_save(void);
 static void _update_ring(void);
+static void _clear_selection(void);
+static void _close_delete_modal(void);
 
 /* ── Module state ─────────────────────────────────────────────────────────── */
 
@@ -89,6 +91,10 @@ static lv_obj_t  *s_popover_slider = NULL;
 static lv_obj_t  *s_popover_value  = NULL;
 static char       s_popover_target = 0;   /* 'x' / 'y' / 'w' / 'h', or 0 */
 static bool       s_popover_syncing= false;  /* re-entry guard for slider sync */
+
+/* Delete confirm modal — full-screen backdrop with a centered confirm panel.
+ * Built lazily when the user taps the Delete button on the toolbar. */
+static lv_obj_t  *s_delete_modal   = NULL;
 
 /* Toolbar vertical position — user-draggable via the grip strip on top.
  * `LV_ALIGN_BOTTOM_MID` is the alignment anchor; the offset is measured
@@ -547,6 +553,111 @@ static void _configure_btn_cb(lv_event_t *e) {
     load_menu_screen_for_widget(s_selected);
 }
 
+/* ── Delete: confirm modal + dashboard call ─────────────────────────────── */
+
+static void _close_delete_modal(void) {
+    if (s_delete_modal && lv_obj_is_valid(s_delete_modal)) {
+        lv_obj_del(s_delete_modal);
+    }
+    s_delete_modal = NULL;
+}
+
+static void _delete_cancel_cb(lv_event_t *e) {
+    (void)e;
+    _close_delete_modal();
+}
+
+static void _delete_confirm_cb(lv_event_t *e) {
+    (void)e;
+    /* Capture target BEFORE tearing down chrome (which nulls s_selected). */
+    widget_t *target = s_selected;
+    _close_delete_modal();
+    if (!target) return;
+    _clear_selection();              /* destroys ring/handles/toolbar/popover */
+    dashboard_delete_widget(target); /* frees widget + drops from registry */
+    _schedule_save();
+}
+
+static void _delete_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!s_selected) return;
+    if (s_delete_modal && lv_obj_is_valid(s_delete_modal)) return;  /* already open */
+
+    /* Modal on lv_layer_top so it covers everything including the toolbar
+     * and any open popover. Backdrop blocks clicks elsewhere — only the
+     * Cancel / Delete buttons can dismiss it. */
+    s_delete_modal = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(s_delete_modal, 800, 480);
+    lv_obj_set_pos(s_delete_modal, 0, 0);
+    lv_obj_clear_flag(s_delete_modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_delete_modal, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_delete_modal, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(s_delete_modal, 0, 0);
+    lv_obj_set_style_radius(s_delete_modal, 0, 0);
+    lv_obj_set_style_pad_all(s_delete_modal, 0, 0);
+
+    /* Centered confirm panel — web-style glassmorphic dialog. */
+    lv_obj_t *panel = lv_obj_create(s_delete_modal);
+    lv_obj_set_size(panel, 380, 170);
+    lv_obj_center(panel);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(panel, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_radius(panel, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(panel, 18, 0);
+    lv_obj_set_style_shadow_width(panel, 24, 0);
+    lv_obj_set_style_shadow_color(panel, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(panel, LV_OPA_70, 0);
+    lv_obj_set_style_shadow_ofs_y(panel, 6, 0);
+
+    lv_obj_t *title = lv_label_create(panel);
+    lv_label_set_text(title, "Delete widget?");
+    lv_obj_set_style_text_color(title, DT_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t *msg = lv_label_create(panel);
+    lv_label_set_text(msg, "This cannot be undone.");
+    lv_obj_set_style_text_color(msg, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(msg, THEME_FONT_SMALL, 0);
+    lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 0, 30);
+
+    /* Cancel — translucent secondary */
+    lv_obj_t *cancel = lv_btn_create(panel);
+    lv_obj_set_size(cancel, 160, 44);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(cancel, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(cancel, 12, 0);
+    lv_obj_set_style_border_color(cancel, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(cancel, 30, 0);
+    lv_obj_set_style_border_width(cancel, 1, 0);
+    lv_obj_set_style_radius(cancel, DT_RADIUS_SM, 0);
+    lv_obj_set_style_shadow_width(cancel, 0, 0);
+    lv_obj_t *cl = lv_label_create(cancel);
+    lv_label_set_text(cl, "Cancel");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_color(cl, DT_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(cl, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(cancel, _delete_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Delete — solid danger */
+    lv_obj_t *del = lv_btn_create(panel);
+    lv_obj_set_size(del, 160, 44);
+    lv_obj_align(del, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(del, DT_DANGER, 0);
+    lv_obj_set_style_bg_opa(del, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(del, 0, 0);
+    lv_obj_set_style_radius(del, DT_RADIUS_SM, 0);
+    lv_obj_set_style_shadow_width(del, 0, 0);
+    lv_obj_t *dl = lv_label_create(del);
+    lv_label_set_text(dl, LV_SYMBOL_TRASH "  Delete");
+    lv_obj_center(dl);
+    lv_obj_set_style_text_color(dl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(dl, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(del, _delete_confirm_cb, LV_EVENT_CLICKED, NULL);
+}
+
 /* ── Toolbar build / destroy ──────────────────────────────────────────────── */
 
 /* ── Toolbar drag (grip strip on top edge) ────────────────────────────────
@@ -989,16 +1100,45 @@ static void _build_toolbar(lv_obj_t *parent) {
 
     static const char chip_targets[4] = {'x', 'y', 'w', 'h'};
     for (int i = 0; i < 4; i++) {
-        lv_obj_t *c = _make_tbtn(chip_grp, 60, 40, "");
+        lv_obj_t *c = _make_tbtn(chip_grp, 56, 40, "");
         lv_obj_add_event_cb(c, _chip_clicked_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)chip_targets[i]);
         s_chip_btns[i] = c;
     }
     _update_readout();
 
-    /* Configure button — accent-blue, opens the per-widget config modal */
-    lv_obj_t *cfg = lv_btn_create(s_toolbar);
-    lv_obj_set_size(cfg, 130, 44);
+    /* Actions cluster (right side): Delete | Configure. Wrapped in a flex
+     * container so they stay adjacent even as flex SPACE_BETWEEN sprays
+     * other items across the toolbar. Delete is danger-tinted; Configure
+     * is accent-blue and remains the primary action. */
+    lv_obj_t *actions = lv_obj_create(s_toolbar);
+    lv_obj_set_size(actions, 152, 48);
+    lv_obj_set_style_bg_opa(actions, 0, 0);
+    lv_obj_set_style_border_width(actions, 0, 0);
+    lv_obj_set_style_pad_all(actions, 0, 0);
+    lv_obj_set_style_pad_column(actions, 6, 0);
+    lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    /* Delete: trash icon, subtle red tint resting → solid red on press. */
+    lv_obj_t *del_btn = _make_tbtn(actions, 40, 44, LV_SYMBOL_TRASH);
+    lv_obj_set_style_bg_color(del_btn, DT_DANGER, 0);
+    lv_obj_set_style_bg_opa(del_btn, 30, 0);
+    lv_obj_set_style_bg_color(del_btn, DT_DANGER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(del_btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(del_btn, DT_DANGER, 0);
+    lv_obj_set_style_border_opa(del_btn, 50, 0);
+    {
+        lv_obj_t *dl = lv_obj_get_child(del_btn, 0);
+        if (dl) lv_obj_set_style_text_color(dl, DT_DANGER, 0);
+    }
+    lv_obj_add_event_cb(del_btn, _delete_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Configure: solid accent — primary action contrast. */
+    lv_obj_t *cfg = lv_btn_create(actions);
+    lv_obj_set_size(cfg, 104, 44);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT, 0);
     lv_obj_set_style_bg_color(cfg, DT_ACCENT_HOVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(cfg, LV_OPA_COVER, 0);
@@ -1064,9 +1204,10 @@ void edit_mode_enter(void) {
 }
 
 void edit_mode_exit(void) {
-    if (!s_armed && !s_banner && !s_ring && !s_toolbar)
+    if (!s_armed && !s_banner && !s_ring && !s_toolbar && !s_delete_modal)
         return;   /* idempotent fast path */
     s_armed = false;
+    _close_delete_modal();
     _clear_selection();   /* destroys ring + toolbar (won't rebuild banner) */
     _set_decoration_clickable(false);
     _apply_pill_style_live();
@@ -1092,6 +1233,8 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
         if (s_handles[i] && lv_obj_is_valid(s_handles[i])) lv_obj_del(s_handles[i]);
         s_handles[i] = NULL;
     }
+    if (s_delete_modal && lv_obj_is_valid(s_delete_modal)) lv_obj_del(s_delete_modal);
+    s_delete_modal            = NULL;
     s_pill                    = NULL;
     s_pill_lbl                = NULL;
     s_banner                  = NULL;

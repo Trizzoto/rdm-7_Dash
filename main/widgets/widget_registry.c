@@ -25,6 +25,21 @@ bool widget_registry_add(widget_t *w) {
 	return true;
 }
 
+bool widget_registry_remove(widget_t *w) {
+	if (!w)
+		return false;
+	for (uint8_t i = 0; i < s_count; i++) {
+		if (s_widgets[i] != w)
+			continue;
+		/* Shift everyone after this slot down by one. */
+		for (uint8_t j = i; j < s_count - 1; j++)
+			s_widgets[j] = s_widgets[j + 1];
+		s_widgets[--s_count] = NULL;
+		return true;
+	}
+	return false;
+}
+
 uint8_t widget_registry_count(void) { return s_count; }
 
 void widget_registry_snapshot(widget_t **out, uint8_t max, uint8_t *out_count) {

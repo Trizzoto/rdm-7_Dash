@@ -292,6 +292,34 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	reconfigure_can_filter();
 }
 
+esp_err_t dashboard_delete_widget(widget_t *w) {
+	if (!w) return ESP_ERR_INVALID_ARG;
+
+	/* Locate in the dashboard's local snapshot and shift remaining entries
+	 * down. Order doesn't matter functionally but keeping it stable means
+	 * subsequent saves produce diffs the user can read. */
+	int found = -1;
+	for (uint8_t i = 0; i < s_widget_count; i++) {
+		if (s_widgets[i] == w) { found = (int)i; break; }
+	}
+	if (found < 0) {
+		ESP_LOGW(TAG, "dashboard_delete_widget: pointer not in dashboard");
+		return ESP_ERR_NOT_FOUND;
+	}
+	for (uint8_t j = (uint8_t)found; j < s_widget_count - 1; j++)
+		s_widgets[j] = s_widgets[j + 1];
+	s_widgets[--s_widget_count] = NULL;
+
+	/* Drop from the global registry so widget_registry_find_* won't return
+	 * a dangling pointer. */
+	widget_registry_remove(w);
+
+	/* Destroy frees the widget's LVGL tree and the struct itself. */
+	if (w->destroy) w->destroy(w);
+
+	return ESP_OK;
+}
+
 esp_err_t dashboard_persist_layout(void) {
 	char layout_name[LAYOUT_MAX_NAME];
 	esp_err_t err = layout_manager_get_active(layout_name, sizeof(layout_name));

@@ -62,6 +62,23 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root);
  */
 esp_err_t dashboard_persist_layout(void);
 
+/**
+ * @brief Delete a widget at runtime without rebuilding the layout.
+ *
+ * Removes @p w from the dashboard's local snapshot AND from the central
+ * widget_registry, then invokes the widget's destroy vtable (which frees
+ * its LVGL objects and the struct itself). After the call, @p w is no
+ * longer a valid pointer.
+ *
+ * Caller is responsible for clearing any external pointers they hold
+ * (e.g. edit_mode's selection) BEFORE calling this. Used by the on-device
+ * editor's Delete action.
+ *
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if @p w isn't in the
+ *         dashboard, ESP_ERR_INVALID_ARG if NULL.
+ */
+esp_err_t dashboard_delete_widget(widget_t *w);
+
 #ifdef __cplusplus
 }
 #endif
