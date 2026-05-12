@@ -17,12 +17,16 @@
 #include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
 #include "ui/dashboard.h"         /* dashboard_persist_layout */
 #include "ui/theme.h"
-#include "ui/ui.h"                /* ui_Menu_Button extern */
+#include "ui/ui.h"                /* ui_Menu_Button, ui_Screen3 externs */
+#include "layout/layout_manager.h"  /* build_json for undo snapshots */
 #include "storage/config_store.h" /* edit step px persistence */
+#include "esp_heap_caps.h"        /* PSRAM allocs for undo ring */
 #include "esp_log.h"
+#include "cJSON.h"
 #include <stdio.h>                /* snprintf */
 #include <stdlib.h>               /* abs, atoi */
 #include <stdint.h>               /* intptr_t */
+#include <string.h>               /* strlen */
 
 static const char *TAG = "edit_mode";
 
@@ -44,6 +48,16 @@ static void _schedule_save(void);
 static void _update_ring(void);
 static void _clear_selection(void);
 static void _close_delete_modal(void);
+static void _build_top_toolbar(lv_obj_t *parent);
+static void _destroy_top_toolbar(void);
+static void _refresh_undo_redo_styling(void);
+static void _update_status(void);
+static void _undo_snapshot(void);
+static void _do_undo(void);
+static void _do_redo(void);
+static void _do_duplicate(void);
+static lv_obj_t *_make_tbtn(lv_obj_t *parent, lv_coord_t w, lv_coord_t h,
+                            const char *text);
 
 /* ── Module state ─────────────────────────────────────────────────────────── */
 
@@ -95,6 +109,29 @@ static bool       s_popover_syncing= false;  /* re-entry guard for slider sync *
 /* Delete confirm modal — full-screen backdrop with a centered confirm panel.
  * Built lazily when the user taps the Delete button on the toolbar. */
 static lv_obj_t  *s_delete_modal   = NULL;
+
+/* Top toolbar — global editor actions (Exit / Undo / Redo / Duplicate)
+ * and selection status. Same dimensions as the bottom toolbar so the two
+ * read as a pair. Independently draggable along Y. */
+static lv_obj_t  *s_top_toolbar    = NULL;
+static lv_obj_t  *s_undo_btn       = NULL;
+static lv_obj_t  *s_redo_btn       = NULL;
+static lv_obj_t  *s_dup_btn        = NULL;
+static lv_obj_t  *s_status_lbl     = NULL;
+static int16_t    s_top_toolbar_y  = 10;     /* offset from TOP_MID anchor */
+static lv_point_t s_tt_drag_pt     = {0, 0};
+static int16_t    s_tt_drag_start  = 0;
+static bool       s_tt_dragging    = false;
+
+/* Undo ring — JSON-string snapshots of the layout. s_undo_pos points at the
+ * snapshot matching the current state; -1 = no snapshots yet. New edits
+ * truncate forward history before appending. PSRAM-backed so a 10-deep ring
+ * doesn't pressure internal RAM. */
+#define UNDO_MAX 10
+static char  *s_undo[UNDO_MAX];
+static int    s_undo_count        = 0;
+static int    s_undo_pos          = -1;
+static bool   s_suppress_snapshot = false;   /* set during undo/redo apply */
 
 /* Toolbar vertical position — user-draggable via the grip strip on top.
  * `LV_ALIGN_BOTTOM_MID` is the alignment anchor; the offset is measured
@@ -407,13 +444,10 @@ static void _clear_selection(void) {
     s_resize_dir              = -1;
     _destroy_ring();
     _destroy_toolbar();
-    /* Re-show the no-selection banner so the user has feedback that they're
-     * still in edit mode. Only rebuild while still armed — exit paths
-     * destroy the banner explicitly afterwards. */
-    if (s_armed && s_pill) {
-        lv_obj_t *parent = lv_obj_get_parent(s_pill);
-        if (parent) _build_banner(parent);
-    }
+    /* Top toolbar's status label flips back to "tap a widget to select"
+     * and the Duplicate button greys out (no target). */
+    _update_status();
+    _refresh_undo_redo_styling();
 }
 
 /* ── Layout persistence — debounced ───────────────────────────────────────
@@ -429,7 +463,32 @@ static void _save_timer_cb(lv_timer_t *t) {
     if (s_save_timer) { lv_timer_del(s_save_timer); s_save_timer = NULL; }
 }
 
+/* Undo snapshot is ALSO debounced. A drag (which fires PRESSING dozens of
+ * times) or a slider (VALUE_CHANGED every pixel) would otherwise blow
+ * through the 10-deep ring in seconds. By debouncing at 800 ms, one
+ * gesture = one snapshot. Discrete actions (delete, duplicate, keypad
+ * confirm) also flow through here — slightly less ideal but adequate. */
+static lv_timer_t *s_snap_timer = NULL;
+#define SNAP_DEBOUNCE_MS 800
+
+static void _snap_timer_cb(lv_timer_t *t) {
+    (void)t;
+    _undo_snapshot();
+    if (s_snap_timer) { lv_timer_del(s_snap_timer); s_snap_timer = NULL; }
+}
+
+static void _schedule_snapshot(void) {
+    if (s_suppress_snapshot) return;
+    if (s_snap_timer) {
+        lv_timer_reset(s_snap_timer);
+        return;
+    }
+    s_snap_timer = lv_timer_create(_snap_timer_cb, SNAP_DEBOUNCE_MS, NULL);
+    if (s_snap_timer) lv_timer_set_repeat_count(s_snap_timer, 1);
+}
+
 static void _schedule_save(void) {
+    _schedule_snapshot();
     if (s_save_timer) {
         lv_timer_reset(s_save_timer);
     } else {
@@ -1164,6 +1223,425 @@ static void _destroy_toolbar(void) {
     s_chip_btns[0] = s_chip_btns[1] = s_chip_btns[2] = s_chip_btns[3] = NULL;
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Undo / Redo ring
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Each snapshot is the current layout serialised to JSON (via
+ * layout_manager_build_json + cJSON_PrintUnformatted). Snapshots are stored
+ * in PSRAM-backed allocations to keep internal RAM free for LVGL.
+ *
+ * On every action commit, the post-action state is pushed. Undoing applies
+ * the previous snapshot (and selection is cleared because old widget
+ * pointers are about to be freed by widget_registry_reset). Re-edits after
+ * undo truncate the forward history. */
+
+/* s_suppress_snapshot defined at file scope above — set during undo/redo
+ * apply so the resulting _schedule_save doesn't push a redundant snapshot. */
+
+static char *_serialize_layout(void) {
+    char layout_name[LAYOUT_MAX_NAME] = "default";
+    layout_manager_get_active(layout_name, sizeof(layout_name));
+    widget_t **widgets = dashboard_get_widgets();
+    uint8_t   count    = dashboard_get_widget_count();
+    cJSON *root = layout_manager_build_json(layout_name, widgets, count);
+    if (!root) return NULL;
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) return NULL;
+    /* Copy into PSRAM so we don't squat on internal RAM. cJSON's allocator
+     * may have used either pool — duplicate explicitly to guarantee. */
+    size_t len = strlen(s);
+    char *copy = heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM);
+    if (!copy) copy = malloc(len + 1);
+    if (copy) memcpy(copy, s, len + 1);
+    cJSON_free(s);
+    return copy;
+}
+
+static void _undo_clear_ring(void) {
+    for (int i = 0; i < UNDO_MAX; i++) {
+        if (s_undo[i]) { free(s_undo[i]); s_undo[i] = NULL; }
+    }
+    s_undo_count = 0;
+    s_undo_pos   = -1;
+}
+
+static void _undo_snapshot(void) {
+    if (s_suppress_snapshot) return;
+
+    char *snap = _serialize_layout();
+    if (!snap) return;
+
+    /* Truncate redo branch — any forward history is invalidated by this new edit. */
+    for (int i = s_undo_pos + 1; i < s_undo_count; i++) {
+        if (s_undo[i]) { free(s_undo[i]); s_undo[i] = NULL; }
+    }
+    s_undo_count = s_undo_pos + 1;
+
+    /* Drop oldest if ring is full. */
+    if (s_undo_count >= UNDO_MAX) {
+        free(s_undo[0]);
+        for (int i = 0; i < UNDO_MAX - 1; i++) s_undo[i] = s_undo[i + 1];
+        s_undo[UNDO_MAX - 1] = NULL;
+        s_undo_count--;
+        s_undo_pos--;
+    }
+
+    s_undo[s_undo_count] = snap;
+    s_undo_count++;
+    s_undo_pos = s_undo_count - 1;
+
+    _refresh_undo_redo_styling();
+}
+
+static void _apply_snapshot(int idx) {
+    if (idx < 0 || idx >= s_undo_count || !s_undo[idx]) return;
+    cJSON *root = cJSON_Parse(s_undo[idx]);
+    if (!root) {
+        ESP_LOGE(TAG, "undo: failed to parse snapshot %d", idx);
+        return;
+    }
+    /* Clear selection BEFORE the widget tree is torn down — selection's
+     * widget pointer is about to be freed. */
+    _clear_selection();
+    s_suppress_snapshot = true;
+    dashboard_reapply_layout_keep_edit_mode(ui_Screen3, root);
+    s_suppress_snapshot = false;
+    cJSON_Delete(root);
+}
+
+static void _do_undo(void) {
+    if (s_undo_pos <= 0) return;
+    s_undo_pos--;
+    _apply_snapshot(s_undo_pos);
+    _refresh_undo_redo_styling();
+}
+
+static void _do_redo(void) {
+    if (s_undo_pos >= s_undo_count - 1) return;
+    s_undo_pos++;
+    _apply_snapshot(s_undo_pos);
+    _refresh_undo_redo_styling();
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Duplicate
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * JSON-round-trip approach: serialise the layout, find the source widget's
+ * entry in the widgets array, deep-clone it, assign an unused slot of the
+ * same widget type, offset the position so the clone is visible, append,
+ * and reapply.
+ *
+ * This is heavier than a surgical "add one widget" path but stays simple
+ * (reuses dashboard_reapply_layout_keep_edit_mode) and produces a clean
+ * snapshot for undo.  */
+
+static int _find_unused_slot(widget_type_t type) {
+    widget_t **widgets = dashboard_get_widgets();
+    uint8_t   count    = dashboard_get_widget_count();
+    /* Try slots 0..31 — covers every widget type's constraint with room. */
+    for (int s = 0; s < 32; s++) {
+        bool taken = false;
+        for (uint8_t i = 0; i < count; i++) {
+            if (widgets[i] && widgets[i]->type == type && widgets[i]->slot == s) {
+                taken = true;
+                break;
+            }
+        }
+        if (!taken) return s;
+    }
+    return -1;
+}
+
+static void _do_duplicate(void) {
+    if (!s_selected || !s_selected->to_json) return;
+    widget_type_t type = s_selected->type;
+    uint8_t       src_slot = s_selected->slot;
+
+    int new_slot = _find_unused_slot(type);
+    if (new_slot < 0) {
+        ESP_LOGW(TAG, "duplicate: no free slot for type %d", (int)type);
+        return;
+    }
+
+    char layout_name[LAYOUT_MAX_NAME] = "default";
+    layout_manager_get_active(layout_name, sizeof(layout_name));
+    widget_t **widgets = dashboard_get_widgets();
+    uint8_t    count   = dashboard_get_widget_count();
+    cJSON *root = layout_manager_build_json(layout_name, widgets, count);
+    if (!root) return;
+
+    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "widgets");
+    if (!arr) { cJSON_Delete(root); return; }
+
+    /* Locate the source widget's JSON entry. build_json walked widgets[]
+     * in the same order, so we can index directly. */
+    int src_idx = -1;
+    for (uint8_t i = 0; i < count; i++) {
+        if (widgets[i] == s_selected) { src_idx = (int)i; break; }
+    }
+    if (src_idx < 0) { cJSON_Delete(root); return; }
+
+    cJSON *src = cJSON_GetArrayItem(arr, src_idx);
+    if (!src) { cJSON_Delete(root); return; }
+
+    cJSON *dup = cJSON_Duplicate(src, true);
+    if (!dup) { cJSON_Delete(root); return; }
+
+    /* Reassign slot inside the clone's config object. */
+    cJSON *cfg = cJSON_GetObjectItemCaseSensitive(dup, "config");
+    if (cfg) {
+        cJSON_DeleteItemFromObject(cfg, "slot");
+        cJSON_AddNumberToObject(cfg, "slot", new_slot);
+    }
+
+    /* Update the top-level id so the registry can find both copies. */
+    cJSON_DeleteItemFromObject(dup, "id");
+    char new_id[16];
+    snprintf(new_id, sizeof(new_id), "%d_%u", (int)type, (unsigned)new_slot);
+    cJSON_AddStringToObject(dup, "id", new_id);
+
+    /* Offset position by 20 px so the clone sits where the user can see it
+     * instead of stacking dead-on the original. */
+    cJSON *x = cJSON_GetObjectItemCaseSensitive(dup, "x");
+    cJSON *y = cJSON_GetObjectItemCaseSensitive(dup, "y");
+    if (cJSON_IsNumber(x)) cJSON_SetNumberValue(x, x->valueint + 20);
+    if (cJSON_IsNumber(y)) cJSON_SetNumberValue(y, y->valueint + 20);
+
+    cJSON_AddItemToArray(arr, dup);
+
+    /* Push pre-action snapshot so undo can return to the un-duplicated state. */
+    /* (The post-state will be captured by _schedule_save below.) */
+
+    /* Selection chrome refers to the about-to-be-freed widget; tear down. */
+    _clear_selection();
+    s_suppress_snapshot = true;
+    dashboard_reapply_layout_keep_edit_mode(ui_Screen3, root);
+    s_suppress_snapshot = false;
+    cJSON_Delete(root);
+
+    /* Snapshot the post-duplicate state. */
+    _undo_snapshot();
+    _schedule_save();
+
+    (void)src_slot;   /* placeholder for future "select clone" UX */
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+
+static void _refresh_undo_redo_styling(void) {
+    bool can_undo = (s_undo_pos > 0);
+    bool can_redo = (s_undo_pos >= 0 && s_undo_pos < s_undo_count - 1);
+    if (s_undo_btn && lv_obj_is_valid(s_undo_btn)) {
+        lv_obj_set_style_bg_opa(s_undo_btn, can_undo ? 10 : 4, 0);
+        lv_obj_set_style_border_opa(s_undo_btn, can_undo ? 20 : 8, 0);
+        lv_obj_t *l = lv_obj_get_child(s_undo_btn, 0);
+        if (l) lv_obj_set_style_text_opa(l, can_undo ? LV_OPA_COVER : LV_OPA_40, 0);
+    }
+    if (s_redo_btn && lv_obj_is_valid(s_redo_btn)) {
+        lv_obj_set_style_bg_opa(s_redo_btn, can_redo ? 10 : 4, 0);
+        lv_obj_set_style_border_opa(s_redo_btn, can_redo ? 20 : 8, 0);
+        lv_obj_t *l = lv_obj_get_child(s_redo_btn, 0);
+        if (l) lv_obj_set_style_text_opa(l, can_redo ? LV_OPA_COVER : LV_OPA_40, 0);
+    }
+    if (s_dup_btn && lv_obj_is_valid(s_dup_btn)) {
+        bool can_dup = (s_selected != NULL);
+        lv_obj_set_style_bg_opa(s_dup_btn, can_dup ? 10 : 4, 0);
+        lv_obj_set_style_border_opa(s_dup_btn, can_dup ? 20 : 8, 0);
+        lv_obj_t *l = lv_obj_get_child(s_dup_btn, 0);
+        if (l) lv_obj_set_style_text_opa(l, can_dup ? LV_OPA_COVER : LV_OPA_40, 0);
+    }
+}
+
+static void _update_status(void) {
+    if (!s_status_lbl || !lv_obj_is_valid(s_status_lbl)) return;
+    if (s_selected) {
+        const char *type_name = "widget";
+        switch (s_selected->type) {
+            case WIDGET_PANEL:       type_name = "Panel"; break;
+            case WIDGET_RPM_BAR:     type_name = "RPM Bar"; break;
+            case WIDGET_BAR:         type_name = "Bar"; break;
+            case WIDGET_INDICATOR:   type_name = "Indicator"; break;
+            case WIDGET_WARNING:     type_name = "Alert"; break;
+            case WIDGET_TEXT:        type_name = "Text"; break;
+            case WIDGET_METER:       type_name = "Meter"; break;
+            case WIDGET_IMAGE:       type_name = "Image"; break;
+            case WIDGET_SHAPE_PANEL: type_name = "Shape"; break;
+            case WIDGET_ARC:         type_name = "Arc"; break;
+            case WIDGET_TOGGLE:      type_name = "Toggle"; break;
+            case WIDGET_BUTTON:      type_name = "Button"; break;
+            case WIDGET_SHIFT_LIGHT: type_name = "Shift Light"; break;
+            case WIDGET_LINE:        type_name = "Line"; break;
+            default: break;
+        }
+        lv_label_set_text_fmt(s_status_lbl, "%s  slot %u",
+                              type_name, (unsigned)s_selected->slot);
+    } else {
+        lv_label_set_text(s_status_lbl, "tap a widget to select");
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Top toolbar — Exit / Undo / Redo / Duplicate + selection status
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+#define TT_DRAG_THRESHOLD 4
+
+static void _exit_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    edit_mode_exit();
+}
+
+static void _undo_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _do_undo();
+}
+
+static void _redo_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _do_redo();
+}
+
+static void _dup_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _do_duplicate();
+}
+
+static void _top_toolbar_pressed_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_top_toolbar) return;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_indev_get_point(indev, &s_tt_drag_pt);
+    s_tt_drag_start = s_top_toolbar_y;
+    s_tt_dragging   = false;
+}
+
+static void _top_toolbar_pressing_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_top_toolbar || !lv_obj_is_valid(s_top_toolbar)) return;
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) return;
+    lv_point_t cur;
+    lv_indev_get_point(indev, &cur);
+    int dy = (int)cur.y - (int)s_tt_drag_pt.y;
+    if (!s_tt_dragging) {
+        if (abs(dy) < TT_DRAG_THRESHOLD) return;
+        s_tt_dragging = true;
+    }
+    /* Range: 4 px below top edge (offset 4) down to 4 px above bottom edge.
+     * TB_HEIGHT / TB_MIN_GAP carry over from the bottom toolbar's geometry. */
+    int new_y = s_tt_drag_start + dy;
+    if (new_y < TB_MIN_GAP) new_y = TB_MIN_GAP;
+    if (new_y > 480 - TB_HEIGHT - TB_MIN_GAP)
+        new_y = 480 - TB_HEIGHT - TB_MIN_GAP;
+    s_top_toolbar_y = (int16_t)new_y;
+    lv_obj_align(s_top_toolbar, LV_ALIGN_TOP_MID, 0, s_top_toolbar_y);
+}
+
+static void _build_top_toolbar(lv_obj_t *parent) {
+    if (s_top_toolbar && lv_obj_is_valid(s_top_toolbar)) return;
+
+    s_top_toolbar = lv_obj_create(parent);
+    lv_obj_set_size(s_top_toolbar, TB_WIDTH, TB_HEIGHT);
+    lv_obj_align(s_top_toolbar, LV_ALIGN_TOP_MID, 0, s_top_toolbar_y);
+    lv_obj_clear_flag(s_top_toolbar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_top_toolbar, DT_BG_PANEL, 0);
+    lv_obj_set_style_bg_opa(s_top_toolbar, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(s_top_toolbar, 0, 0);
+    lv_obj_set_style_radius(s_top_toolbar, DT_RADIUS_LG, 0);
+    lv_obj_set_style_pad_all(s_top_toolbar, 10, 0);
+    lv_obj_set_style_pad_column(s_top_toolbar, 6, 0);
+    lv_obj_set_style_shadow_width(s_top_toolbar, 16, 0);
+    lv_obj_set_style_shadow_color(s_top_toolbar, lv_color_black(), 0);
+    lv_obj_set_style_shadow_opa(s_top_toolbar, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_ofs_y(s_top_toolbar, 4, 0);
+
+    /* Grip — symmetric with the bottom toolbar (at bottom edge here so it
+     * reads as "drag me toward the screen middle"). */
+    lv_obj_t *grip = lv_obj_create(s_top_toolbar);
+    lv_obj_set_size(grip, 36, 4);
+    lv_obj_align(grip, LV_ALIGN_BOTTOM_MID, 0, 4);
+    lv_obj_clear_flag(grip, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(grip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(grip, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(grip, 60, 0);
+    lv_obj_set_style_radius(grip, 2, 0);
+    lv_obj_set_style_border_width(grip, 0, 0);
+    lv_obj_set_style_shadow_width(grip, 0, 0);
+    lv_obj_add_flag(grip, LV_OBJ_FLAG_IGNORE_LAYOUT);
+
+    lv_obj_add_event_cb(s_top_toolbar, _top_toolbar_pressed_cb,
+                        LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_top_toolbar, _top_toolbar_pressing_cb,
+                        LV_EVENT_PRESSING, NULL);
+
+    lv_obj_set_flex_flow(s_top_toolbar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_top_toolbar,
+                          LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    /* Exit button — solid danger, leftmost, prominent */
+    lv_obj_t *exit_btn = lv_btn_create(s_top_toolbar);
+    lv_obj_set_size(exit_btn, 150, 44);
+    lv_obj_set_style_bg_color(exit_btn, DT_DANGER, 0);
+    lv_obj_set_style_bg_opa(exit_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(exit_btn, DT_RADIUS_SM, 0);
+    lv_obj_set_style_border_width(exit_btn, 0, 0);
+    lv_obj_set_style_shadow_width(exit_btn, 0, 0);
+    lv_obj_set_style_pad_all(exit_btn, 0, 0);
+    lv_obj_t *exit_lbl = lv_label_create(exit_btn);
+    lv_label_set_text(exit_lbl, LV_SYMBOL_CLOSE "  Exit Edit Mode");
+    lv_obj_set_style_text_color(exit_lbl, lv_color_white(), 0);
+    lv_obj_set_style_text_font(exit_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_center(exit_lbl);
+    lv_obj_add_event_cb(exit_btn, _exit_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Undo / Redo cluster */
+    lv_obj_t *ur_grp = lv_obj_create(s_top_toolbar);
+    lv_obj_set_size(ur_grp, 96, 48);
+    lv_obj_set_style_bg_opa(ur_grp, 0, 0);
+    lv_obj_set_style_border_width(ur_grp, 0, 0);
+    lv_obj_set_style_pad_all(ur_grp, 0, 0);
+    lv_obj_set_style_pad_column(ur_grp, 4, 0);
+    lv_obj_clear_flag(ur_grp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(ur_grp, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ur_grp, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    /* Undo / Redo icons: LVGL doesn't ship arc-rotate symbols, so use the
+     * literal LV_SYMBOL_LEFT/RIGHT arrows which read well at 12 px. */
+    s_undo_btn = _make_tbtn(ur_grp, 44, 44, LV_SYMBOL_LEFT);
+    lv_obj_add_event_cb(s_undo_btn, _undo_btn_cb, LV_EVENT_CLICKED, NULL);
+    s_redo_btn = _make_tbtn(ur_grp, 44, 44, LV_SYMBOL_RIGHT);
+    lv_obj_add_event_cb(s_redo_btn, _redo_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Duplicate button */
+    s_dup_btn = _make_tbtn(s_top_toolbar, 124, 44, LV_SYMBOL_COPY "  Duplicate");
+    lv_obj_add_event_cb(s_dup_btn, _dup_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Status label — selection indicator on the right */
+    s_status_lbl = lv_label_create(s_top_toolbar);
+    lv_obj_set_style_text_color(s_status_lbl, DT_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(s_status_lbl, THEME_FONT_SMALL, 0);
+    _update_status();
+
+    _refresh_undo_redo_styling();
+    lv_obj_move_foreground(s_top_toolbar);
+}
+
+static void _destroy_top_toolbar(void) {
+    if (s_top_toolbar && lv_obj_is_valid(s_top_toolbar)) lv_obj_del(s_top_toolbar);
+    s_top_toolbar = NULL;
+    s_undo_btn    = NULL;
+    s_redo_btn    = NULL;
+    s_dup_btn     = NULL;
+    s_status_lbl  = NULL;
+}
+
 /* ── Pill click handler — toggles armed state ─────────────────────────────── */
 
 static void _pill_clicked_cb(lv_event_t *e) {
@@ -1180,43 +1658,48 @@ void edit_mode_enter(void) {
     if (s_armed) return;
     s_armed = true;
 
-    /* Hide the Menu button — only one toolbar action visible while armed. */
+    /* Hide both pills — top toolbar takes over the Exit + status role,
+     * and the Menu button is irrelevant while editing. */
     if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
         lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+    if (s_pill && lv_obj_is_valid(s_pill))
+        lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
 
     /* Promote decorations (image/shape_panel/line) so they can be selected
      * and dragged just like any other widget. */
     _set_decoration_clickable(true);
 
-    _apply_pill_style_armed();
-    if (s_pill && lv_obj_is_valid(s_pill)) {
-        lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
-        /* Pin to foreground so it stays above the banner / widgets. */
-        lv_obj_move_foreground(s_pill);
-
-        /* Build banner on the pill's parent — when the screen reloads, the
-         * parent goes with it and we don't leak a dangling banner. */
+    /* Build the top toolbar on the same parent the pill lives in (ui_Screen3). */
+    if (s_pill) {
         lv_obj_t *parent = lv_obj_get_parent(s_pill);
-        if (parent) _build_banner(parent);
+        if (parent) _build_top_toolbar(parent);
     }
+
+    /* Initial snapshot (immediate, no debounce) — undo can always return
+     * the user to the state they were in when Edit Mode opened. */
+    _undo_snapshot();
 
     ESP_LOGI(TAG, "Edit Mode armed");
 }
 
 void edit_mode_exit(void) {
-    if (!s_armed && !s_banner && !s_ring && !s_toolbar && !s_delete_modal)
+    if (!s_armed && !s_banner && !s_ring && !s_toolbar &&
+        !s_delete_modal && !s_top_toolbar)
         return;   /* idempotent fast path */
     s_armed = false;
     _close_delete_modal();
-    _clear_selection();   /* destroys ring + toolbar (won't rebuild banner) */
+    _clear_selection();   /* destroys ring + bottom toolbar + popover */
     _set_decoration_clickable(false);
+    _destroy_top_toolbar();
+    _destroy_banner();
+    _undo_clear_ring();
     _apply_pill_style_live();
     if (s_pill && lv_obj_is_valid(s_pill))
         lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
-    _destroy_banner();
     /* Cancel any pending debounced save — the layout's current state will
      * be re-saved next time the user edits, no rush to flush now. */
     if (s_save_timer) { lv_timer_del(s_save_timer); s_save_timer = NULL; }
+    if (s_snap_timer) { lv_timer_del(s_snap_timer); s_snap_timer = NULL; }
     ESP_LOGI(TAG, "Edit Mode exited");
 }
 
@@ -1235,6 +1718,16 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     }
     if (s_delete_modal && lv_obj_is_valid(s_delete_modal)) lv_obj_del(s_delete_modal);
     s_delete_modal            = NULL;
+    /* Top toolbar lived on the old screen — already gone. Forget the
+     * cached pointers; undo ring is layout-scoped, so reset it too. */
+    s_top_toolbar             = NULL;
+    s_undo_btn                = NULL;
+    s_redo_btn                = NULL;
+    s_dup_btn                 = NULL;
+    s_status_lbl              = NULL;
+    s_tt_dragging             = false;
+    _undo_clear_ring();
+    if (s_snap_timer) { lv_timer_del(s_snap_timer); s_snap_timer = NULL; }
     s_pill                    = NULL;
     s_pill_lbl                = NULL;
     s_banner                  = NULL;
@@ -1314,15 +1807,15 @@ void edit_mode_select(widget_t *w) {
     _build_ring();
     _update_ring();
 
-    /* Swap the no-selection banner for the selection toolbar (nudges, step
-     * toggle, live readout, Configure). They share the same bottom anchor,
-     * so the swap is visually clean. */
-    _destroy_banner();
+    /* Show the selection-toolbar at the bottom. Top toolbar (status + undo)
+     * is already up. */
     if (s_pill) {
         lv_obj_t *parent = lv_obj_get_parent(s_pill);
         if (parent) _build_toolbar(parent);
     }
     _update_readout();
+    _update_status();
+    _refresh_undo_redo_styling();
 }
 
 void edit_mode_refresh_selection(void) {

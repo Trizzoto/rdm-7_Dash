@@ -48,10 +48,26 @@ uint8_t dashboard_get_widget_count(void);
  * Resets registry, re-creates all widgets from @p root.
  * Falls back to default widgets if parsing fails.
  *
+ * Exits Edit Mode at the top, since this is used for external layout swaps
+ * (web save, dropdown switch) where the active selection should not survive.
+ *
  * @param parent LVGL screen object.
  * @param root   Parsed cJSON layout tree (must have "widgets" array).
  */
 void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root);
+
+/**
+ * @brief Same as dashboard_apply_layout_json but keeps Edit Mode armed.
+ *
+ * For internal editor actions (undo / redo / duplicate) that need to rebuild
+ * the widget tree without dropping the user back into live mode. The caller
+ * must clear any cached widget pointers (selection, etc.) BEFORE invoking
+ * this — widget_registry_reset frees the old widgets.
+ *
+ * @param parent LVGL screen object.
+ * @param root   Parsed cJSON layout tree.
+ */
+void dashboard_reapply_layout_keep_edit_mode(lv_obj_t *parent, cJSON *root);
 
 /**
  * @brief Persist the current dashboard layout to LittleFS as JSON.

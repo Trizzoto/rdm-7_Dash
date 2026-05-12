@@ -255,13 +255,9 @@ loaded:
 	reconfigure_can_filter();
 }
 
-void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
-	if (!root || !parent)
-		return;
-
-	/* Exit Edit Mode on layout swap — see dashboard_init for rationale. */
-	edit_mode_exit();
-
+/* Shared core: tear down + rebuild widgets from a parsed JSON tree. Callers
+ * decide whether to exit Edit Mode before invoking this. */
+static void _apply_layout_json_internal(lv_obj_t *parent, cJSON *root) {
 	s_widget_count = 0;
 	memset(s_widgets, 0, sizeof(s_widgets));
 	font_manager_reset_instances();
@@ -275,7 +271,7 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 
 	esp_err_t err = layout_manager_apply_json(root, parent);
 	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "dashboard_apply_layout_json failed (%s)",
+		ESP_LOGE(TAG, "apply_layout_json failed (%s)",
 				 esp_err_to_name(err));
 		_fallback_create_all(parent);
 	} else {
@@ -290,6 +286,24 @@ void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
 	 * filter so the bus actually delivers them. See dashboard_init for the
 	 * full rationale. */
 	reconfigure_can_filter();
+}
+
+void dashboard_apply_layout_json(lv_obj_t *parent, cJSON *root) {
+	if (!root || !parent)
+		return;
+
+	/* Exit Edit Mode on layout swap — see dashboard_init for rationale. */
+	edit_mode_exit();
+	_apply_layout_json_internal(parent, root);
+}
+
+void dashboard_reapply_layout_keep_edit_mode(lv_obj_t *parent, cJSON *root) {
+	if (!root || !parent)
+		return;
+	/* Editor-internal path. Caller is responsible for clearing the
+	 * selection BEFORE this — widget_registry_reset frees old widgets and
+	 * a stale s_selected would point at freed memory. */
+	_apply_layout_json_internal(parent, root);
 }
 
 esp_err_t dashboard_delete_widget(widget_t *w) {
