@@ -409,12 +409,6 @@ static void picker_st_free_cb(lv_event_t *e)
     picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
     if (st) lv_mem_free(st);
 }
-static void picker_close_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    lv_obj_t *ov = (lv_obj_t *)lv_event_get_user_data(e);
-    if (ov && lv_obj_is_valid(ov)) lv_obj_del(ov);
-}
 static void col_txt_free_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
@@ -493,16 +487,6 @@ static void sig_click_cb(lv_event_t *e)
      * The modal's SAVE button is the sole commit-to-disk action; pending
      * edits (including this preset binding) go out together on SAVE. */
     _apply_selection(st);
-}
-
-static void apply_click_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
-    _apply_selection(st);
-    if (st && st->overlay && lv_obj_is_valid(st->overlay)) {
-        lv_obj_del(st->overlay);
-    }
 }
 
 /* ── Preview footer update ───────────────────────────────────────────────── */

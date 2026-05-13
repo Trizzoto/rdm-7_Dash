@@ -1114,6 +1114,10 @@ static void _scan_apply_cb(lv_event_t *e) {
 }
 
 /** Called via lv_async_call from can_bus_test task on state changes. */
+/* Legacy in-page CAN scan overlay — superseded by the first-run wizard's
+ * CAN scan step. Kept compiled in for now in case it's resurrected; the
+ * unused attribute silences the warning until then. */
+__attribute__((unused))
 static void _scan_ui_update(void) {
     if (!s_scan_overlay || !lv_obj_is_valid(s_scan_overlay)) return;
 
@@ -1295,6 +1299,7 @@ static void _scan_ui_update(void) {
     }
 }
 
+__attribute__((unused))
 static void _open_scan_overlay(void) {
     /* Create modal overlay on lv_layer_top */
     s_scan_overlay = lv_obj_create(lv_layer_top());
@@ -1413,18 +1418,6 @@ static void _open_scan_overlay(void) {
     lv_obj_set_style_text_color(apply_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
     lv_obj_add_event_cb(s_scan_apply_btn, _scan_apply_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_scan_apply_btn, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void _scan_btn_cb(lv_event_t *e) {
-    (void)e;
-    if (can_bus_test_is_running()) return;
-
-    can_bus_test_set_ui_callback(_scan_ui_update);
-    _open_scan_overlay();
-
-    if (!can_bus_test_start()) {
-        lv_label_set_text(s_scan_status_label, "Failed to start scan");
-    }
 }
 
 /* "View More" button in the CAN BUS section header. Opens the live CAN ID
@@ -2865,6 +2858,7 @@ static void _build_section_testing(lv_obj_t *row) {
     lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
 }
 
+__attribute__((unused))
 static void _build_section_developer(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "DEVELOPER");
