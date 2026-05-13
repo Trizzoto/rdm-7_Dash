@@ -24,7 +24,7 @@ const preconfig_item_t preconfig_items[] = {
 { "Ford", "BA/BF", "KM RANGE",        "553", 0,  0, 16, 1.0,        0,  0, false },
 { "Ford", "BA/BF", "OIL TEMP",        "44D", 0, 48,  8, 1.0,      -40,  0, false },
 { "Ford", "BA/BF", "ODOMETER",        "4C0", 0,  0, 24, 0.1,        0,  1, false },
-{ "Ford", "BA/BF", "ENGINE RPM",      "12D", 0, 39, 16, 0.25,       0,  0, false },
+{ "Ford", "BA/BF", "ENGINE RPM",      "207", 0,  0, 16, 0.25,       0,  0, false },
 { "Ford", "BA/BF", "THROTTLE %",      "207", 0, 48,  8, 0.5,        0,  1, false },
 { "Ford", "BA/BF", "VEHICLE SPEED",   "207", 0, 32, 16, 0.0078125,  0,  2, false },
 
