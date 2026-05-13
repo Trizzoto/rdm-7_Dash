@@ -23,6 +23,8 @@ const preconfig_item_t preconfig_items[] = {
 { "Ford", "BA/BF", "INSTANT ECONOMY", "553", 0, 24,  8, 0.1,        0,  1, false },
 { "Ford", "BA/BF", "INSTANT FUEL",    "437", 0,  8,  8, 0.51,       0,  2, false },
 { "Ford", "BA/BF", "KM RANGE",        "553", 0,  0, 16, 1.0,        0,  0, false },
+{ "Ford", "BA/BF", "OIL PRESS SECTOR","427", 0,  8,  4, 1.0,        0,  0, false },
+{ "Ford", "BA/BF", "OIL PRESS WARN",  "427", 0, 43,  1, 1.0,        0,  0, false },
 { "Ford", "BA/BF", "OIL TEMP",        "44D", 0, 48,  8, 1.0,      -40,  0, false },
 { "Ford", "BA/BF", "ODOMETER",        "4C0", 0,  0, 24, 0.1,        0,  1, false },
 { "Ford", "BA/BF", "ENGINE RPM",      "207", 0,  0, 16, 0.25,       0,  0, false },
