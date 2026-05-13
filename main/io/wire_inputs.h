@@ -4,21 +4,20 @@
 extern "C" {
 #endif
 
-/** GPIO number for the left turn-indicator wire input (high = active).
- *  Set to -1 to disable — GPIO 43 is shared with UART1 TX (desktop serial
- *  protocol). Re-enabling requires free GPIO pins or a CH422G expander line,
- *  both pending a hardware revision. See #24 in launch-freeze docs. */
-#define WIRE_INPUT_LEFT_GPIO                                                   \
-  -1 // 43 — reserved for UART1 TX, do not enable without HW rework
-
-/** GPIO number for the right turn-indicator wire input (high = active).
- *  Shared with UART1 RX (desktop serial protocol). See note above. */
-#define WIRE_INPUT_RIGHT_GPIO                                                  \
-  -1 // 44 — reserved for UART1 RX, do not enable without HW rework
-
 /**
- * @brief Configure GPIO 43 and 44 as digital inputs with pull-down enabled.
- *        Call once during hardware initialisation, before the LVGL task starts.
+ * Indicator wire inputs share GPIO 43/44 with UART1 (desktop serial). They
+ * cannot both be active at the same time, so the assignment is gated by the
+ * NVS "wire_input_mode" flag set from Device Settings:
+ *
+ *   wire_input_mode = false (default): UART1 owns GPIO 43/44, wire inputs
+ *                                      resolve to -1 (disabled at init).
+ *   wire_input_mode = true:            wire inputs claim GPIO 43/44, UART1
+ *                                      init is skipped in main.c. Requires
+ *                                      reboot to take effect either direction.
+ *
+ * wire_inputs_init() reads the flag at boot and stores the resolved pin
+ * numbers in module-local state; the getters below are provided so other
+ * modules (currently just main.c for the boot log) can report them.
  */
 void wire_inputs_init(void);
 
@@ -35,6 +34,12 @@ void wire_inputs_init(void);
  *                                  2048, NULL, 3, NULL, 0);
  */
 void wire_inputs_task(void *pvParam);
+
+/* Pin getters — return the resolved GPIO number (>=0) or -1 if wire-input
+ * mode is disabled. Safe to call before wire_inputs_init(); both return -1
+ * until init runs. */
+int wire_inputs_get_left_gpio(void);
+int wire_inputs_get_right_gpio(void);
 
 #ifdef __cplusplus
 }

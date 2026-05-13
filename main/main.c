@@ -982,7 +982,7 @@ void app_main(void) {
 
   wire_inputs_init();
   ESP_LOGI(TAG, "Indicator wire inputs (GPIO %d left, %d right) initialized",
-           WIRE_INPUT_LEFT_GPIO, WIRE_INPUT_RIGHT_GPIO);
+           wire_inputs_get_left_gpio(), wire_inputs_get_right_gpio());
 
   /* Now that the LVGL mutex exists, start the CAN receive task */
   ESP_LOGI(TAG, "Creating CAN task now that LVGL mutex is ready...");

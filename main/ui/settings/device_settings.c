@@ -1651,6 +1651,8 @@ static lv_obj_t  *s_share_make_ta      = NULL;
 static lv_obj_t  *s_share_model_ta     = NULL;
 static lv_obj_t  *s_share_status_lbl   = NULL;
 static lv_obj_t  *s_share_upload_btn   = NULL;
+static lv_obj_t  *s_share_cancel_btn   = NULL;
+static lv_obj_t  *s_share_ok_btn       = NULL;
 static lv_obj_t  *s_share_keyboard     = NULL;
 static lv_timer_t *s_share_status_timer = NULL;
 static char       s_share_picked_file[64] = {0};
@@ -1811,8 +1813,14 @@ static void _share_status_timer_cb(lv_timer_t *t) {
     lv_label_set_text(s_share_status_lbl, st.message[0] ? st.message : "Idle");
     if (st.state == CAN_UPLOAD_SUCCESS) {
         lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_STATUS_CONNECTED, 0);
+        /* Swap Cancel + Upload for a single OK button — once the trace is up,
+         * the only meaningful action is closing the modal back to settings. */
+        if (s_share_cancel_btn && lv_obj_is_valid(s_share_cancel_btn))
+            lv_obj_add_flag(s_share_cancel_btn, LV_OBJ_FLAG_HIDDEN);
         if (s_share_upload_btn && lv_obj_is_valid(s_share_upload_btn))
-            lv_obj_clear_state(s_share_upload_btn, LV_STATE_DISABLED);
+            lv_obj_add_flag(s_share_upload_btn, LV_OBJ_FLAG_HIDDEN);
+        if (s_share_ok_btn && lv_obj_is_valid(s_share_ok_btn))
+            lv_obj_clear_flag(s_share_ok_btn, LV_OBJ_FLAG_HIDDEN);
         if (s_share_status_timer) { lv_timer_del(s_share_status_timer); s_share_status_timer = NULL; }
     } else if (st.state == CAN_UPLOAD_FAILED) {
         lv_obj_set_style_text_color(s_share_status_lbl, THEME_COLOR_BTN_DANGER, 0);
@@ -1884,6 +1892,8 @@ static void _share_modal_close(void) {
     s_share_model_ta     = NULL;
     s_share_status_lbl   = NULL;
     s_share_upload_btn   = NULL;
+    s_share_cancel_btn   = NULL;
+    s_share_ok_btn       = NULL;
     s_share_keyboard     = NULL;
 }
 
@@ -1950,7 +1960,7 @@ static void _share_modal_open(void) {
     lv_obj_add_event_cb(s_share_make_ta, _share_ta_focused_cb, LV_EVENT_FOCUSED, NULL);
 
     lv_obj_t *model_lbl = lv_label_create(s_share_overlay);
-    lv_label_set_text(model_lbl, "Model");
+    lv_label_set_text(model_lbl, "Model and Year");
     lv_obj_align(model_lbl, LV_ALIGN_TOP_LEFT, 360, 88);
     lv_obj_set_style_text_font(model_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(model_lbl, THEME_COLOR_TEXT_MUTED, 0);
@@ -1960,7 +1970,7 @@ static void _share_modal_open(void) {
     lv_obj_align(s_share_model_ta, LV_ALIGN_TOP_LEFT, 360, 108);
     lv_textarea_set_one_line(s_share_model_ta, true);
     lv_textarea_set_max_length(s_share_model_ta, 40);
-    lv_textarea_set_placeholder_text(s_share_model_ta, "Supra MK4");
+    lv_textarea_set_placeholder_text(s_share_model_ta, "Supra MK4 1998");
     lv_obj_set_style_text_font(s_share_model_ta, THEME_FONT_SMALL, 0);
     lv_obj_add_event_cb(s_share_model_ta, _share_ta_focused_cb, LV_EVENT_FOCUSED, NULL);
 
@@ -1976,21 +1986,23 @@ static void _share_modal_open(void) {
     lv_obj_align(s_share_keyboard, LV_ALIGN_BOTTOM_MID, 0, -50);
     lv_keyboard_set_mode(s_share_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
 
-    /* Buttons row at the very bottom */
-    lv_obj_t *cancel_btn = lv_btn_create(s_share_overlay);
-    lv_obj_set_size(cancel_btn, 110, 36);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_border_width(cancel_btn, 1, 0);
-    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(cancel_btn, 0, 0);
-    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    /* Buttons row at the very bottom — Cancel (left) and Upload (right)
+     * during the entry/in-progress phases; on success they're hidden and
+     * the OK button (same right slot) takes over. */
+    s_share_cancel_btn = lv_btn_create(s_share_overlay);
+    lv_obj_set_size(s_share_cancel_btn, 110, 36);
+    lv_obj_align(s_share_cancel_btn, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(s_share_cancel_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_border_width(s_share_cancel_btn, 1, 0);
+    lv_obj_set_style_border_color(s_share_cancel_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_radius(s_share_cancel_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_shadow_width(s_share_cancel_btn, 0, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(s_share_cancel_btn);
     lv_label_set_text(cancel_lbl, "Cancel");
     lv_obj_center(cancel_lbl);
     lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_MUTED, 0);
-    lv_obj_add_event_cb(cancel_btn, _share_close_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_share_cancel_btn, _share_close_btn_cb, LV_EVENT_CLICKED, NULL);
 
     s_share_upload_btn = lv_btn_create(s_share_overlay);
     lv_obj_set_size(s_share_upload_btn, 130, 36);
@@ -2005,6 +2017,24 @@ static void _share_modal_open(void) {
     lv_obj_set_style_text_font(upload_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(upload_lbl, lv_color_white(), 0);
     lv_obj_add_event_cb(s_share_upload_btn, _share_upload_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* OK button — replaces Upload + Cancel after a successful upload so the
+     * user has a single obvious "I'm done" affordance back to Device Settings.
+     * Reuses _share_close_btn_cb (same teardown path). */
+    s_share_ok_btn = lv_btn_create(s_share_overlay);
+    lv_obj_set_size(s_share_ok_btn, 130, 36);
+    lv_obj_align(s_share_ok_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(s_share_ok_btn, THEME_COLOR_STATUS_CONNECTED, 0);
+    lv_obj_set_style_radius(s_share_ok_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_share_ok_btn, 0, 0);
+    lv_obj_set_style_shadow_width(s_share_ok_btn, 0, 0);
+    lv_obj_t *ok_lbl = lv_label_create(s_share_ok_btn);
+    lv_label_set_text(ok_lbl, "OK");
+    lv_obj_center(ok_lbl);
+    lv_obj_set_style_text_font(ok_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(ok_lbl, lv_color_white(), 0);
+    lv_obj_add_event_cb(s_share_ok_btn, _share_close_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_share_ok_btn, LV_OBJ_FLAG_HIDDEN);
 
     if (!have_file) {
         lv_obj_add_state(s_share_upload_btn, LV_STATE_DISABLED);
@@ -2736,10 +2766,11 @@ static void _build_section_data_logging(lv_obj_t *row) {
     /* Share Raw CAN — opens a modal that uploads the latest canraw_*.csv
      * to the project's cloud bucket tagged with the user-entered car
      * make/model. Uses can_upload_start() under the hood (same path as
-     * the web editor's Share button). */
+     * the web editor's Share button). Sits to the right of Start Raw CAN
+     * (240+150+10 = 400 px from the section's left edge). */
     lv_obj_t *share_btn = lv_btn_create(s);
     lv_obj_set_size(share_btn, 150, 30);
-    lv_obj_align(share_btn, LV_ALIGN_TOP_LEFT, 240, 92);
+    lv_obj_align(share_btn, LV_ALIGN_TOP_LEFT, 400, 22);
     lv_obj_set_style_bg_color(share_btn, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(share_btn, LV_OPA_80, LV_STATE_PRESSED);
     lv_obj_set_style_radius(share_btn, THEME_RADIUS_NORMAL, 0);
@@ -3088,10 +3119,7 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
      * row of their own — previously crammed into one 3-column 95 px row
      * which left no horizontal room for additional controls (e.g. the new
      * Raw CAN Capture button in DATA LOGGING). */
-    /* Data Logging row is taller than the rest because it stacks two button
-     * rows (Start Raw CAN at y=22, Share Raw CAN at y=92) — 95 px clipped
-     * the lower button entirely on device. */
-    lv_obj_t *log_row    = _build_row(content, 140);
+    lv_obj_t *log_row    = _build_row(content, 95);
     _build_section_data_logging(log_row);
     lv_obj_t *peak_row   = _build_row(content, 95);
     _build_section_peak_hold(peak_row);

@@ -449,6 +449,7 @@ static void _btn_skip_forever_cb(lv_event_t *e) {
 }
 
 static void _wizard_check_wifi_return_cb(lv_timer_t *timer);
+static void _btn_finish_cb(lv_event_t *e);
 
 /* Shared body for the two WiFi-screen entry points (Join WiFi / Start Hotspot).
  * Keeps the wizard overlay alive so the user returns to step 3 after they
@@ -484,19 +485,19 @@ static void _btn_hotspot_start_cb(lv_event_t *e) {
     _open_wifi_ui_with_preset(WIFI_UI_PRESET_AP);
 }
 
-/* Called from the LVGL task after WiFi UI hides. Re-reveals the wizard
- * overlay so the user lands back on step 3. */
+/* Called from the LVGL task after WiFi UI hides. Picking either WiFi or
+ * Hotspot in step 3 is treated as wizard completion — the user has made
+ * their connection choice, so we mark first_run_done and tear down rather
+ * than bouncing them back to step 3 to tap Finish Setup. _btn_finish_cb
+ * handles the dashboard reload if step 2 applied an ECU preset. */
 static void _wizard_check_wifi_return_cb(lv_timer_t *timer) {
     if (!s_wifi_return_pending) return;
     if (wifi_ui_is_active()) return;  /* still up */
     s_wifi_return_pending = false;
     lv_timer_del(timer);
     s_wifi_return_timer = NULL;
-    if (s_overlay && lv_obj_is_valid(s_overlay)) {
-        lv_obj_clear_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(s_overlay);
-        ESP_LOGI(TAG, "Returned from WiFi UI — wizard overlay restored");
-    }
+    ESP_LOGI(TAG, "Returned from WiFi UI — wizard auto-completing");
+    _btn_finish_cb(NULL);
 }
 
 static void _btn_finish_cb(lv_event_t *e) {

@@ -97,14 +97,17 @@ static void _internal_timer_cb(lv_timer_t *timer)
         }
     }
 
-    /* GPIO indicator inputs (every tick, only if GPIOs are configured) */
-    if (WIRE_INPUT_LEFT_GPIO >= 0) {
+    /* GPIO indicator inputs (every tick, only if wire-input mode is on so
+     * the GPIOs are actually claimed — getters return -1 otherwise). */
+    int left_gpio  = wire_inputs_get_left_gpio();
+    int right_gpio = wire_inputs_get_right_gpio();
+    if (left_gpio >= 0) {
         signal_inject_test_value("INDICATOR_LEFT",
-                                 (float)gpio_get_level(WIRE_INPUT_LEFT_GPIO));
+                                 (float)gpio_get_level(left_gpio));
     }
-    if (WIRE_INPUT_RIGHT_GPIO >= 0) {
+    if (right_gpio >= 0) {
         signal_inject_test_value("INDICATOR_RIGHT",
-                                 (float)gpio_get_level(WIRE_INPUT_RIGHT_GPIO));
+                                 (float)gpio_get_level(right_gpio));
     }
 
     /* Fuel sender ADC voltage (every tick).
