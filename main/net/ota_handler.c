@@ -1,4 +1,5 @@
 #include "ota_handler.h"
+#include "ota_update_dialog.h"
 #include "version.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
@@ -18,6 +19,8 @@
 #include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
+#include "lvgl.h"
+#include <stdatomic.h>
 
 // Add these definitions from main.c
 #define EXAMPLE_LVGL_TASK_STACK_SIZE   (8 * 1024)
@@ -827,4 +830,77 @@ void debug_ota_connectivity(void) {
     
     esp_http_client_cleanup(client);
     ESP_LOGI(TAG, "=== End Debug ===");
-} 
+}
+
+/* ── Auto-check on first WiFi got-IP ────────────────────────────────────
+ * Once per boot, ~15 s after the dash gets an IP, run check_for_update()
+ * on a background task. If a new release is available, surface the same
+ * popup the manual button shows. Stay silent on no-update / failure so
+ * routine boots don't get a dialog. */
+static atomic_bool s_boot_check_armed = ATOMIC_VAR_INIT(false);
+
+static void _boot_show_dialog_async(void *param)
+{
+    (void)param;
+    show_ota_update_dialog(FIRMWARE_VERSION, get_latest_version(),
+                           get_update_file_size_mb(),
+                           get_release_notes());
+}
+
+static void _boot_check_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Auto-OTA-check: running check_for_update() on boot");
+    check_for_update();
+
+    ota_status_t status = get_ota_status();
+    if (status == OTA_UPDATE_AVAILABLE) {
+        ESP_LOGI(TAG, "Auto-OTA-check: update %s available — showing dialog",
+                 get_latest_version());
+        lv_async_call(_boot_show_dialog_async, NULL);
+    } else {
+        ESP_LOGI(TAG, "Auto-OTA-check: no popup (status=%d)", (int)status);
+    }
+    vTaskDelete(NULL);
+}
+
+static void _boot_check_timer_cb(lv_timer_t *t)
+{
+    /* Timer fires once on the LVGL task; spawn the actual HTTPS work on a
+     * dedicated task so the UI doesn't stall. Stack lives in PSRAM because
+     * mbedTLS needs ~8 KB plus our payload buffers, more than internal RAM
+     * comfortably affords post-WiFi init. */
+    lv_timer_del(t);
+
+    static StaticTask_t s_boot_chk_tcb;
+    static StackType_t *s_boot_chk_stack = NULL;
+    const uint32_t STACK_WORDS = 8192;
+
+    if (!s_boot_chk_stack) {
+        s_boot_chk_stack = heap_caps_calloc(STACK_WORDS, sizeof(StackType_t),
+                                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!s_boot_chk_stack) {
+        ESP_LOGE(TAG, "Auto-OTA-check: PSRAM alloc for stack failed, skipping");
+        return;
+    }
+    TaskHandle_t h = xTaskCreateStaticPinnedToCore(
+        _boot_check_task, "ota_boot_chk", STACK_WORDS, NULL, 4,
+        s_boot_chk_stack, &s_boot_chk_tcb, 0);
+    if (!h) {
+        ESP_LOGE(TAG, "Auto-OTA-check: task spawn failed");
+    }
+}
+
+void ota_handler_arm_boot_check(void)
+{
+    bool was_armed = atomic_exchange(&s_boot_check_armed, true);
+    if (was_armed) return;  /* already scheduled this boot */
+
+    ESP_LOGI(TAG, "Auto-OTA-check: scheduled in 15 s");
+    /* lv_timer_create runs the callback inside the LVGL task — safe from
+     * here even though we may be called from the WiFi event handler. */
+    lv_timer_t *t = lv_timer_create(_boot_check_timer_cb, 15000, NULL);
+    if (t) lv_timer_set_repeat_count(t, 1);
+}
+

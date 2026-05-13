@@ -438,6 +438,10 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
              * subsequent got-IP is a no-op. Required by Share Raw CAN
              * uploads which sign an HMAC over a unix timestamp. */
             initialize_sntp();
+            /* Arm the one-shot OTA auto-check (15 s delay so SNTP +
+             * routing settle). Internally a no-op after the first call
+             * per boot, so reconnect storms don't trigger repeat dialogs. */
+            ota_handler_arm_boot_check();
         } else if (event_id == IP_EVENT_STA_LOST_IP) {
             ESP_LOGW(TAG, "Lost IP address");
             memset(s_sta_ip, 0, sizeof(s_sta_ip));

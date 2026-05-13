@@ -36,4 +36,12 @@ void debug_ota_connectivity(void);
 void ota_set_firmware_url(const char *url);
 const char *ota_get_firmware_url(void);
 
+/* One-shot auto-update check, intended to be called from the WiFi got-IP
+ * handler. First call arms a 15-second delay (lets WiFi + SNTP settle),
+ * then spawns a background task that runs check_for_update(). If an
+ * update is available, schedules show_ota_update_dialog() on the LVGL
+ * task. Stays silent on no-update / failure (logs only — no popup spam
+ * on every reconnect). Subsequent calls within the same boot are no-ops. */
+void ota_handler_arm_boot_check(void);
+
 #endif
