@@ -1240,7 +1240,7 @@ static void _scan_ui_update(void) {
                 THEME_COLOR_STATUS_ERROR, 0);
 
             lv_label_set_text(s_scan_status_label,
-                "Scan finished — no valid CAN frames on any supported bitrate.");
+                "Scan finished - no valid CAN frames on any supported bitrate.");
             lv_obj_set_style_text_color(s_scan_status_label,
                 THEME_COLOR_STATUS_ERROR, 0);
 
@@ -1937,7 +1937,7 @@ static void _share_modal_open(void) {
         lv_obj_set_style_text_color(s_share_file_label, THEME_COLOR_TEXT_PRIMARY, 0);
     } else {
         lv_label_set_text(s_share_file_label,
-            "No Raw CAN recording found — start one first.");
+            "No Raw CAN recording found - start one first.");
         lv_obj_set_style_text_color(s_share_file_label, THEME_COLOR_BTN_DANGER, 0);
     }
     lv_obj_align(s_share_file_label, LV_ALIGN_TOP_LEFT, 0, 60);
@@ -2883,7 +2883,7 @@ static void _build_section_testing(lv_obj_t *row) {
     lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *test_note = lv_label_create(s);
-    lv_label_set_text(test_note, "Sim sweeps all signals  •  Wire Inputs: GPIO 43/44 as turn signals");
+    lv_label_set_text(test_note, "Sim sweeps all signals  |  Wire Inputs: GPIO 43/44 as turn signals");
     lv_obj_align(test_note, LV_ALIGN_TOP_LEFT, 0, 58);
     lv_obj_set_style_text_font(test_note, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(test_note, THEME_COLOR_TEXT_MUTED, 0);
