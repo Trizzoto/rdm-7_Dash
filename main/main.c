@@ -1067,17 +1067,19 @@ void app_main(void) {
   config_store_load_wifi_boot(&boot_cfg);
 
   /* First-run setup (#17): on a fresh device (no first_run_done flag in NVS),
-     auto-enable WiFi + AP so the user can reach the web UI immediately from
-     their phone. The on-screen wizard (shown from splash_screen.c after the
-     dashboard loads) presents CAN-scan + Wi-Fi-setup buttons; dismissing the
-     wizard is what sets first_run_done = true. We only touch the wifi_boot
-     config here, not the first_run flag. */
+     auto-enable WiFi (STA) on boot so the user can join their home network
+     from the on-screen wizard. Hotspot is NOT enabled by default — the user
+     opts in via the wizard's "Start Hotspot" button (or the WiFi screen)
+     if they don't have WiFi available. The on-screen wizard (shown from
+     splash_screen.c after the dashboard loads) presents CAN-scan and
+     Wi-Fi/Hotspot buttons; dismissing the wizard is what sets
+     first_run_done = true. */
   bool first_run_done = false;
   config_store_load_first_run_done(&first_run_done);
   if (!first_run_done) {
-    ESP_LOGW(TAG, "First run detected — enabling Wi-Fi + AP for onboarding");
+    ESP_LOGW(TAG, "First run detected — enabling Wi-Fi (STA) for onboarding");
     boot_cfg.wifi_on_boot = true;
-    boot_cfg.ap_enabled = true;
+    boot_cfg.ap_enabled = false;
     (void)config_store_save_wifi_boot(&boot_cfg);
     /* Do NOT mark first_run_done here — the wizard does that on dismissal
      */

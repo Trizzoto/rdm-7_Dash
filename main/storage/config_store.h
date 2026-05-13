@@ -58,8 +58,8 @@ esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg);
 
 /* ── WiFi boot settings ───────────────────────────────────────────────── */
 typedef struct {
-	bool wifi_on_boot;      /* Start WiFi on boot (default: false) */
-	bool ap_enabled;        /* AP mode enabled (default: false) */
+	bool wifi_on_boot;      /* Start WiFi (STA) on boot (default: true) */
+	bool ap_enabled;        /* Also enable AP on boot (default: false) */
 } wifi_boot_config_t;
 
 esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg);
