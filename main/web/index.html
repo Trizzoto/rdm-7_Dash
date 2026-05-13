@@ -12514,8 +12514,12 @@
             sel.innerHTML = '<option value="">— Loading recordings —</option>';
             try {
                 const r = await fetch('/api/log/list');
-                const j = r.ok ? await r.json() : { files: [] };
-                const files = (j.files || []).filter(f =>
+                const j = r.ok ? await r.json() : [];
+                /* /api/log/list returns a bare array, not {files:[...]}. Match
+                 * the same shape-tolerant unpack the Data Logger modal uses
+                 * (line ~12310) so the dropdown isn't always empty. */
+                const all = Array.isArray(j) ? j : (j.files || []);
+                const files = all.filter(f =>
                     (typeof f === 'string' ? f : f.name || '').startsWith('canraw_'));
                 if (files.length === 0) {
                     sel.innerHTML = '<option value="">No Raw CAN recordings found — start one first</option>';
