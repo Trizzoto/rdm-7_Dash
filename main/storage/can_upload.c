@@ -178,16 +178,27 @@ static void _upload_task(void *arg)
         strncpy(device_id, "unknown", sizeof(device_id) - 1);
     }
 
-    /* Timestamp (unix seconds) */
-    int64_t now_us = esp_timer_get_time();
-    (void)now_us;  /* unused — using wall clock if available */
+    /* Timestamp (unix seconds). The worker enforces a ±10 min replay
+     * window, so the device clock must be NTP-synced. Without sync,
+     * time() stays at the post-boot epoch — sending that fake value
+     * guaranteed a 401. SNTP is kicked off at WiFi got-IP (see
+     * initialize_sntp in ota_handler.c) and typically syncs in 1-3 s,
+     * but if the user hits Share moments after WiFi came up we may
+     * still be waiting — poll briefly here before giving up. */
     time_t now = 0;
-    time(&now);
+    s_status_set(CAN_UPLOAD_RUNNING, 0, "Waiting for clock sync...", 0);
+    for (int i = 0; i < 50; i++) {                /* 50 × 200 ms = 10 s */
+        time(&now);
+        if (now >= 1700000000) break;
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
     if (now < 1700000000) {
-        /* No NTP / RTC sync yet — server-side window will probably reject.
-         * Use seconds-since-boot as a degenerate fallback so the request
-         * still has a unique timestamp. */
-        now = (time_t)(esp_timer_get_time() / 1000000);
+        s_status_set(CAN_UPLOAD_FAILED, 0,
+            "Clock not set (NTP unreachable) — check internet, try again", 0);
+        free(file_buf);
+        free(p);
+        vTaskDelete(NULL);
+        return;
     }
 
     /* Canonical HMAC message — must match worker exactly. */

@@ -17,6 +17,7 @@
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 
 // Add these definitions from main.c
 #define EXAMPLE_LVGL_TASK_STACK_SIZE   (8 * 1024)
@@ -756,6 +757,22 @@ float get_update_file_size_mb(void) {
 
 const char* get_release_notes(void) {
     return release_notes;
+}
+
+/* SNTP — set the wall clock from a public NTP pool once WiFi STA has an
+ * IP. Required so anything that builds an HMAC over a unix timestamp
+ * (e.g. Share Raw CAN cloud upload, see storage/can_upload.c) lands inside
+ * the worker's ±10 min replay-protection window. Without this, time() stays
+ * at the post-boot epoch and the worker rejects every upload with 401.
+ * Idempotent — safe to call on every reconnect. */
+void initialize_sntp(void) {
+    static bool s_sntp_started = false;
+    if (s_sntp_started) return;
+    ESP_LOGI(TAG, "Starting SNTP sync (pool.ntp.org)");
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
+    s_sntp_started = true;
 }
 
 // Add this function to test the download URL and network connectivity:

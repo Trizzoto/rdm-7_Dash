@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "ota_handler.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -433,6 +434,10 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             snprintf(s_sta_ip, sizeof(s_sta_ip), IPSTR, IP2STR(&ev->ip_info.ip));
             ESP_LOGI(TAG, "Got IP: %s", s_sta_ip);
             _set_state(WIFI_MGR_STATE_CONNECTED);
+            /* Kick off NTP now that we have a route. Idempotent — every
+             * subsequent got-IP is a no-op. Required by Share Raw CAN
+             * uploads which sign an HMAC over a unix timestamp. */
+            initialize_sntp();
         } else if (event_id == IP_EVENT_STA_LOST_IP) {
             ESP_LOGW(TAG, "Lost IP address");
             memset(s_sta_ip, 0, sizeof(s_sta_ip));
