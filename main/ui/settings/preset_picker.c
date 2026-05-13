@@ -341,6 +341,34 @@ const preconfig_item_t preconfig_items[] = {
 { "Link ECU", "Generic Dash", "APS (MAIN)",            "3F5", 1, 16, 16, 0.1,    0,    1, false },
 { "Link ECU", "Generic Dash", "ETHANOL %",             "3F5", 1, 32, 16, 1.0,    0,    0, false },
 
+/* ── Toyota GT86 Gen 1 ──────────────────────────────────────────────────
+ * Decode params published by the GT86/BRZ enthusiast community. Brake
+ * pressure shares an 8-bit slot with Brake %; pick whichever is more
+ * useful for your dash layout. Brake % clips at 100 in the source data
+ * — clamp via widget max-value if you display it as a bar/gauge. */
+    { "Toyota", "GT86 Gen 1", "ACCEL PEDAL %",        "140", 1,  0,  8, 0.39215,    0, 1, false },
+    { "Toyota", "GT86 Gen 1", "BRAKE %",              "0D1", 1, 16,  8, 1.42857,    0, 0, false },
+    { "Toyota", "GT86 Gen 1", "BRAKE PRESSURE",       "0D1", 1, 16,  8, 128.0,      0, 0, false },
+    { "Toyota", "GT86 Gen 1", "COOLANT TEMP",         "360", 1, 24,  8, 1.0,      -40, 0, false },
+    { "Toyota", "GT86 Gen 1", "ENGINE RPM",           "140", 1, 16, 14, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "OIL TEMP",             "360", 1, 16,  8, 1.0,      -40, 0, false },
+    { "Toyota", "GT86 Gen 1", "VEHICLE SPEED",        "0D1", 1,  0, 16, 0.015694,   0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "STEERING ANGLE",       "0D0", 1,  0, 16, -0.1,       0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "LATERAL ACCEL",        "0D0", 1, 48,  8, 0.2,        0, 2, true  },
+    { "Toyota", "GT86 Gen 1", "LONGITUDINAL ACCEL",   "0D0", 1, 56,  8, -0.1,       0, 2, true  },
+    { "Toyota", "GT86 Gen 1", "THROTTLE %",           "140", 1, 48,  8, 0.39215,    0, 1, false },
+    { "Toyota", "GT86 Gen 1", "WHEEL SPD FL",         "0D4", 1,  0, 16, 0.015694,   0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "WHEEL SPD FR",         "0D4", 1, 16, 16, 0.015694,   0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "WHEEL SPD RL",         "0D4", 1, 32, 16, 0.015694,   0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "WHEEL SPD RR",         "0D4", 1, 48, 16, 0.015694,   0, 1, true  },
+    { "Toyota", "GT86 Gen 1", "YAW RATE",             "0D0", 1, 16, 16, -0.286478,  0, 2, true  },
+    { "Toyota", "GT86 Gen 1", "HAND BRAKE",           "152", 1, 51,  1, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "ANY DOOR OPEN",        "375", 1, 26,  1, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "LIGHTS ON",            "375", 1, 27,  1, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "DRIVER DOOR OPEN",     "375", 1,  8,  1, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "PASSENGER DOOR OPEN",  "375", 1,  9,  1, 1.0,        0, 0, false },
+    { "Toyota", "GT86 Gen 1", "BOOT OPEN",            "375", 1, 13,  1, 1.0,        0, 0, false },
+
 /* ── RDM-7 GPIO ──────────────────────────────────────────────────────── */
 { "RDM-7", "GPIO",     "FUEL SENDER V",   "0", 1, 0, 16, 1.0,  0, 2, false },
 { "RDM-7", "GPIO",     "INDICATOR LEFT",  "0", 1, 0, 8,  1.0,  0, 0, false },
