@@ -27,7 +27,6 @@
 extern TaskHandle_t lvglTaskHandle;
 extern void rdm_lvgl_port_task(void *pvParameter);
 #include "can/can_manager.h"
-#include "net/dns_hijack.h"
 #include "system/crash_log.h"
 
 // GitHub Releases API for OTA updates
@@ -262,9 +261,6 @@ static void ota_free_internal_ram(void) {
         }
     }
 
-    /* Stop captive-portal DNS hijack — frees lwIP socket + small internal buffers.
-       It only matters before STA is configured; we're past that now. */
-    dns_hijack_stop();
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 

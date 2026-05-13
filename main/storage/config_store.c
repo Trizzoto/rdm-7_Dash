@@ -140,7 +140,22 @@ esp_err_t config_store_clear_wifi(void)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NS_WIFI, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
-    nvs_erase_all(handle);
+
+    /* Erase credential keys only — preserve boot config (on_boot, ap_en)
+     * so that the user's WiFi/hotspot-on-boot preferences survive a
+     * "Forget network" operation. nvs_erase_all would wipe those too. */
+    nvs_erase_key(handle, "ssid");
+    nvs_erase_key(handle, "password");
+    nvs_erase_key(handle, "auto_con");
+    nvs_erase_key(handle, "list_count");
+    char sk[16], pk[16];
+    for (uint8_t i = 0; i < CONFIG_STORE_WIFI_SLOT_COUNT; i++) {
+        snprintf(sk, sizeof(sk), "ssid_%u", (unsigned)i);
+        snprintf(pk, sizeof(pk), "pw_%u",   (unsigned)i);
+        nvs_erase_key(handle, sk);
+        nvs_erase_key(handle, pk);
+    }
+
     err = nvs_commit(handle);
     nvs_close(handle);
     ESP_LOGI(TAG, "WiFi credentials cleared");
@@ -367,8 +382,8 @@ esp_err_t config_store_save_wifi_boot(const wifi_boot_config_t *cfg)
 esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg)
 {
     if (!cfg) return ESP_ERR_INVALID_ARG;
-    /* Defaults */
-    cfg->wifi_on_boot = false;
+    /* Defaults — WiFi on by default; AP off unless explicitly enabled */
+    cfg->wifi_on_boot = true;
     cfg->ap_enabled = false;
 
     nvs_handle_t handle;

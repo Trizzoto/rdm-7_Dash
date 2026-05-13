@@ -14,9 +14,11 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "storage/config_store.h"
+#include "storage/can_raw_logger.h"
 
 
 static const char *TAG = "CAN_MGR";
@@ -91,6 +93,11 @@ static void can_receive_task(void *pvParameter) {
 		} else if (ret == ESP_ERR_TIMEOUT) {
 			vTaskDelay(pdMS_TO_TICKS(1));
 		} else if (ret == ESP_ERR_INVALID_STATE) {
+			/* Intentional stop: _stop_can_task() calls twai_stop() which
+			 * makes twai_receive() return INVALID_STATE. Exit before the
+			 * recovery path calls twai_start() — that would race with
+			 * can_suspend()'s twai_driver_uninstall(). */
+			if (can_task_should_stop) break;
 			if (recovery_retries >= CAN_RECOVERY_MAX_RETRIES) {
 				ESP_LOGE(TAG, "CAN recovery failed after %d retries, giving up",
 						 CAN_RECOVERY_MAX_RETRIES);
@@ -235,8 +242,8 @@ void reconfigure_can_filter(void) {
 	twai_start();
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL,
-							CAN_TASK_PRIORITY, &canTaskHandle, 0);
+	xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096, NULL,
+	                    CAN_TASK_PRIORITY, &canTaskHandle, MALLOC_CAP_SPIRAM);
 }
 
 void can_init(void) {
@@ -321,12 +328,15 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	}
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	/* Recreate receive task */
-	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
-								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0) != pdPASS) {
+	/* Recreate receive task — PSRAM stack avoids internal-SRAM OOM after WiFi init */
+	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
+	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
+	                        MALLOC_CAP_SPIRAM) != pdPASS) {
 		ESP_LOGE(TAG, "Failed to create CAN task after bitrate change");
 		canTaskHandle = NULL;
 	}
+	/* Clear suspended flag: scan may have left it true if can_resume() failed */
+	s_suspended = false;
 	ESP_LOGI(TAG, "Bitrate change completed");
 }
 
@@ -362,6 +372,11 @@ void can_process_queued_frames(void) {
 			 * frame regardless of whether any signal matched. */
 			can_id_tracker_record(msg.identifier, msg.extd,
 			                      msg.data, msg.data_length_code);
+			/* Raw capture — cheap no-op when the logger isn't active.
+			 * Lets users send a full trace off-device for offline DBC
+			 * decoding without needing signals defined in the layout. */
+			can_raw_logger_record_frame(msg.identifier, msg.extd != 0,
+			                            msg.data, msg.data_length_code);
 		}
 		processed++;
 	}
@@ -460,9 +475,9 @@ void can_resume(void) {
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	can_task_should_stop = false;
-	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
-								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0)
-		!= pdPASS) {
+	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
+	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
+	                        MALLOC_CAP_SPIRAM) != pdPASS) {
 		ESP_LOGE(TAG, "Resume: failed to create CAN RX task");
 		canTaskHandle = NULL;
 		twai_stop();
@@ -519,9 +534,9 @@ bool can_recover(void) {
 		return true;
 	}
 	can_task_should_stop = false;
-	if (xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096,
-								NULL, CAN_TASK_PRIORITY, &canTaskHandle, 0)
-		!= pdPASS) {
+	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
+	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
+	                        MALLOC_CAP_SPIRAM) != pdPASS) {
 		ESP_LOGE(TAG, "Recovery: failed to create CAN RX task");
 		canTaskHandle = NULL;
 		twai_stop();

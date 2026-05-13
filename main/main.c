@@ -27,7 +27,6 @@
 #include "layout/layout_manager.h"
 #include "lvgl.h"
 #include "lvgl_helpers.h"
-#include "net/dns_hijack.h"
 #include "net/uart_protocol.h"
 #include "net/wifi_manager.h"
 #include "nvs.h"
@@ -37,10 +36,11 @@
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
 #include "storage/user_signals.h"
+#include "system/crash_log.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
-#include "system/crash_log.h"
 #include "ui/screens/ui_wifi.h"
+
 
 // #include "net/usb_cdc_protocol.h"  // Disabled — see USB CDC note in app_main
 #include "storage/config_store.h"
@@ -525,15 +525,6 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
     ESP_LOGI(TAG, "==============================");
   }
 
-  /* Answer DNS on :53. Without this, phones on the AP have no DNS and
-   * Android/iOS mark the hotspot as "no internet", silently refusing to
-   * route browser traffic to it. The hijack returns 192.168.4.1 for all
-   * queries, which (together with the captive-portal HTTP handlers)
-   * triggers the "Sign in to network" sheet on phones. */
-  if (dns_hijack_start() != ESP_OK) {
-    ESP_LOGW(TAG, "DNS hijack failed to start — captive portal won't "
-                  "trigger on phones");
-  }
 }
 
 void app_main(void) {
@@ -1032,7 +1023,7 @@ void app_main(void) {
    * logs remain visible on the USB-UART bridge past this point. Desktop app
    * cannot connect while this is enabled. Flip back to 0 for production. */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 0
+#define RDM7_DEBUG_KEEP_CONSOLE 1
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "

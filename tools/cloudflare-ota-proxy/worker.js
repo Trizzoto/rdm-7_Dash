@@ -39,6 +39,28 @@ export default {
       return handleCanUpload(request, env);
     }
 
+    // CAN log listing — requires the same HMAC secret as upload, passed as a
+    // query param `?secret=...` so it's curl-friendly. Returns the 100 most
+    // recent objects with their metadata.
+    if (path === "/can-list") {
+      if (!env.CAN_LOGS) return jsonResponse({ error: "R2 binding missing" }, 500);
+      const secret = url.searchParams.get("secret") || "";
+      if (!env.CAN_UPLOAD_HMAC_SECRET || secret !== env.CAN_UPLOAD_HMAC_SECRET) {
+        return jsonResponse({ error: "Unauthorized" }, 401);
+      }
+      const prefix = url.searchParams.get("prefix") || "";
+      const listed = await env.CAN_LOGS.list({
+        prefix, limit: 100, include: ["customMetadata", "httpMetadata"],
+      });
+      const items = listed.objects.map((o) => ({
+        key: o.key,
+        size: o.size,
+        uploaded: o.uploaded,
+        metadata: o.customMetadata || {},
+      }));
+      return jsonResponse({ count: items.length, truncated: listed.truncated, items });
+    }
+
     // OTA resolve endpoint: /<version>/<filename>.bin
     const match = path.match(/^\/([^/]+)\/([^/]+\.bin)$/);
     if (!match) {

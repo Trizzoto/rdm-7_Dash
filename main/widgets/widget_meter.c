@@ -874,7 +874,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "scale_padding");
 	if (cJSON_IsNumber(ap)) md->scale_padding = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
-	if (cJSON_IsNumber(ap)) md->label_gap = (int8_t)ap->valueint;
+	if (cJSON_IsNumber(ap)) md->label_gap = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font));

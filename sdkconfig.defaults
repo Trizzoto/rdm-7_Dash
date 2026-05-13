@@ -16,6 +16,11 @@ CONFIG_LV_USE_PERF_MONITOR=y
 # task hangs without false-tripping on heavy boot work.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
 
+# WiFi — reduce static RX buffers (10×1600B=16KB DMA RAM) to 6 so
+# esp_wifi_init succeeds on first boot when the first-run wizard holds
+# extra internal heap. SPIRAM_TRY_ALLOCATE_WIFI_LWIP covers higher layers.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+
 # LittleFS
 CONFIG_LITTLEFS_MAX_PARTITIONS=1
 CONFIG_LITTLEFS_PAGE_SIZE=256

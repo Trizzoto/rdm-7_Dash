@@ -351,10 +351,11 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 
 	bool is_splash = (strncmp(layout_name, "_splash_", 8) == 0);
 
-	/* User edits to "default" are deliberately preserved across reboots
-	 * (see CLAUDE.md). The old "cannot overwrite default" rejection broke
-	 * the auto-save flow and conflicted with the documented behaviour.
-	 * Factory reset remains the way to restore the compiled-in default. */
+	/* Factory-default protection lives client-side now (see
+	 * _resolveProtectedName in index.html). The web editor distinguishes
+	 * widget-only vs signal-only changes and prompts the user for an
+	 * overwrite-or-rename decision before sending the save. Firmware just
+	 * persists whatever name the client requests. */
 
 	// Persist raw JSON to LittleFS
 	esp_err_t err = layout_manager_save_raw(layout_name, root);
@@ -387,8 +388,14 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	const char *ok = "{\"status\":\"ok\"}";
-	return httpd_resp_send(req, ok, HTTPD_RESP_USE_STRLEN);
+	char resp[96];
+	int rn = snprintf(resp, sizeof(resp),
+		"{\"status\":\"ok\",\"name\":\"%s\"}", layout_name);
+	if (rn < 0 || rn >= (int)sizeof(resp)) {
+		const char *ok = "{\"status\":\"ok\"}";
+		return httpd_resp_send(req, ok, HTTPD_RESP_USE_STRLEN);
+	}
+	return httpd_resp_send(req, resp, rn);
 }
 
 static const httpd_uri_t layout_save_uri = {.uri = "/api/layout/save",

@@ -3094,7 +3094,10 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
      * row of their own — previously crammed into one 3-column 95 px row
      * which left no horizontal room for additional controls (e.g. the new
      * Raw CAN Capture button in DATA LOGGING). */
-    lv_obj_t *log_row    = _build_row(content, 95);
+    /* Data Logging row is taller than the rest because it stacks two button
+     * rows (Start Raw CAN at y=22, Share Raw CAN at y=92) — 95 px clipped
+     * the lower button entirely on device. */
+    lv_obj_t *log_row    = _build_row(content, 140);
     _build_section_data_logging(log_row);
     lv_obj_t *peak_row   = _build_row(content, 95);
     _build_section_peak_hold(peak_row);

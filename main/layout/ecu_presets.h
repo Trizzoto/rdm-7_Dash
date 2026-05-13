@@ -55,6 +55,7 @@ typedef struct {
     bool     is_signed;
     uint8_t  endian;       /* 0 = Motorola (BE), 1 = Intel (LE) */
     const char *unit;      /* metric unit string, or "" */
+    uint8_t  decimals;     /* display decimal places for panel/bar/text widgets */
 } ecu_signal_row_t;
 
 typedef struct {

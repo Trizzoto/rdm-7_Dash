@@ -523,10 +523,13 @@ void wifi_manager_start(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    /* Load AP config from NVS */
-    rdm_ap_config_t ap_cfg;
-    config_store_load_ap_config(&ap_cfg);
-    s_ap_enabled = ap_cfg.enabled;
+    /* Load AP enabled state from the boot-config store — single source of
+     * truth for the at-boot AP preference.  rdm_ap_config_t (NS_WIFI_AP)
+     * only carries the password; its legacy "enabled" field is ignored here
+     * so the two stores can't diverge and cause unexpected mode decisions. */
+    wifi_boot_config_t boot_cfg = {0};
+    config_store_load_wifi_boot(&boot_cfg);
+    s_ap_enabled = boot_cfg.ap_enabled;
 
     /* Pick mode. APSTA costs the AP radio time — the STA half keeps
      * probing/retrying even when it has no target, which spams
@@ -545,6 +548,10 @@ void wifi_manager_start(void)
 
     /* Configure AP if enabled */
     if (s_ap_enabled) {
+        /* Load password from dedicated AP config namespace */
+        rdm_ap_config_t ap_cfg = {0};
+        config_store_load_ap_config(&ap_cfg);
+
         wifi_config_t ap_wifi_cfg = {0};
         strncpy((char *)ap_wifi_cfg.ap.ssid, s_ap_ssid, sizeof(ap_wifi_cfg.ap.ssid) - 1);
         ap_wifi_cfg.ap.ssid_len      = strlen(s_ap_ssid);
@@ -875,7 +882,7 @@ void wifi_manager_set_ap_password(const char *password)
     wifi_config_t ap_wifi_cfg = {0};
     strncpy((char *)ap_wifi_cfg.ap.ssid, s_ap_ssid, sizeof(ap_wifi_cfg.ap.ssid) - 1);
     ap_wifi_cfg.ap.ssid_len       = strlen(s_ap_ssid);
-    ap_wifi_cfg.ap.channel        = 1;
+    ap_wifi_cfg.ap.channel        = 11;
     ap_wifi_cfg.ap.max_connection  = 4;
 
     if (password && strlen(password) >= 8) {

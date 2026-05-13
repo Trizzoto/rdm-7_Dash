@@ -32,7 +32,6 @@ idf_component_register(
         "net/uart_protocol.c"
         "net/serial_protocol.c"
         "net/serial_commands.c"
-        "net/dns_hijack.c"
         "system/device_id.c"
         "system/screen_config.c"
         "system/display_capture.c"

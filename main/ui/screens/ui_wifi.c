@@ -4,7 +4,6 @@
 #include "net/wifi_manager.h"
 #include "storage/config_store.h"
 #include "web_server.h"
-#include "net/dns_hijack.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -133,6 +132,27 @@ void wifi_ui_show(void)
     return_screen = lv_scr_act();
     _create_screen();
     lv_scr_load(wifi_screen);
+}
+
+void wifi_ui_show_with_preset(wifi_ui_preset_t preset)
+{
+    wifi_ui_mode_t mode = (preset == WIFI_UI_PRESET_AP)
+                              ? WIFI_UI_MODE_AP
+                              : WIFI_UI_MODE_STA;
+
+    /* Apply runtime mode (start radio, flip AP, etc.) — _apply_ui_mode also
+     * persists rdm_ap_config_t.enabled, so the AP side stays consistent. */
+    _apply_ui_mode(mode);
+
+    /* Persist Start-on-Boot to match. Mirrors the boot-dropdown handler so a
+     * power-cycle comes up in the user's chosen mode. */
+    wifi_boot_config_t boot_cfg = { .wifi_on_boot = false, .ap_enabled = false };
+    config_store_load_wifi_boot(&boot_cfg);
+    boot_cfg.wifi_on_boot = (mode == WIFI_UI_MODE_STA);
+    boot_cfg.ap_enabled   = (mode == WIFI_UI_MODE_AP);
+    config_store_save_wifi_boot(&boot_cfg);
+
+    wifi_ui_show();
 }
 
 void wifi_ui_hide(void)
@@ -1053,7 +1073,6 @@ static void _apply_ui_mode(wifi_ui_mode_t mode)
     switch (mode) {
     case WIFI_UI_MODE_OFF:
         if (wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(false);
-        dns_hijack_stop();
         web_server_stop();
         wifi_manager_stop();
         ESP_LOGI(TAG, "Mode → Off");
@@ -1065,7 +1084,6 @@ static void _apply_ui_mode(wifi_ui_mode_t mode)
         if (!wifi_manager_is_started()) {
             wifi_manager_start();
             web_server_start();
-            dns_hijack_start();
         }
         if (wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(false);
         wifi_manager_auto_connect();
@@ -1076,7 +1094,6 @@ static void _apply_ui_mode(wifi_ui_mode_t mode)
         if (!wifi_manager_is_started()) {
             wifi_manager_start();
             web_server_start();
-            dns_hijack_start();
         }
         if (!wifi_manager_is_ap_enabled()) wifi_manager_enable_ap(true);
         ESP_LOGI(TAG, "Mode → Hotspot (AP)");

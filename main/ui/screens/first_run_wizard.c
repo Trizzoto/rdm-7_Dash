@@ -22,7 +22,7 @@ static const char *TAG = "first_run";
 
 /* ── Layout constants ─────────────────────────────────────────────────── */
 #define CARD_W   560
-#define CARD_H   430
+#define CARD_H   470   /* Bumped from 430 to fit the Skip-for-good button in step 1 */
 #define BTN_W    500
 #define BTN_H     40
 
@@ -441,25 +441,28 @@ static void _btn_skip_cb(lv_event_t *e) {
     _close_wizard(false);
 }
 
+static void _btn_skip_forever_cb(lv_event_t *e) {
+    (void)e;
+    /* Skip for good - mark first-run done so the wizard never shows again.
+     * User can still reach the same setup screens from Device Settings. */
+    _close_wizard(true);
+}
+
 static void _wizard_check_wifi_return_cb(lv_timer_t *timer);
 
-static void _btn_wifi_join_cb(lv_event_t *e) {
-    (void)e;
-    /* Open the WiFi UI on top of the wizard overlay. We keep the wizard
-     * overlay alive (attached to the dashboard screen) so when the user
-     * returns from the WiFi UI they land back on the wizard and can
-     * choose Finish Setup — the user specifically asked for this flow
-     * because they were losing their place when the wizard tore itself
-     * down on Join. First-run-done is only written when the user
-     * explicitly taps Finish Setup. */
-    ESP_LOGI(TAG, "Wizard → WiFi UI (overlay preserved for return)");
+/* Shared body for the two WiFi-screen entry points (Join WiFi / Start Hotspot).
+ * Keeps the wizard overlay alive so the user returns to step 3 after they
+ * dismiss the WiFi screen. First-run-done is only written when the user
+ * explicitly taps Finish Setup, not from this path. */
+static void _open_wifi_ui_with_preset(wifi_ui_preset_t preset) {
+    ESP_LOGI(TAG, "Wizard → WiFi UI preset=%s (overlay preserved for return)",
+             preset == WIFI_UI_PRESET_AP ? "AP" : "STA");
     can_bus_test_set_ui_callback(NULL);
     if (can_bus_test_is_running()) can_bus_test_cancel();
 
     /* Temporarily hide the overlay so the WiFi screen isn't obscured.
      * When the user dismisses the WiFi screen, wifi_ui_hide restores the
-     * dashboard screen and we re-show the overlay below via a post-hide
-     * hook. */
+     * dashboard screen and the return-timer below re-shows the overlay. */
     if (s_overlay && lv_obj_is_valid(s_overlay)) {
         lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
     }
@@ -468,7 +471,17 @@ static void _btn_wifi_join_cb(lv_event_t *e) {
         s_wifi_return_timer = lv_timer_create(_wizard_check_wifi_return_cb,
                                               200, NULL);
     }
-    wifi_ui_show();
+    wifi_ui_show_with_preset(preset);
+}
+
+static void _btn_wifi_join_cb(lv_event_t *e) {
+    (void)e;
+    _open_wifi_ui_with_preset(WIFI_UI_PRESET_STA);
+}
+
+static void _btn_hotspot_start_cb(lv_event_t *e) {
+    (void)e;
+    _open_wifi_ui_with_preset(WIFI_UI_PRESET_AP);
 }
 
 /* Called from the LVGL task after WiFi UI hides. Re-reveals the wizard
@@ -553,7 +566,7 @@ static void _show_step3(void) {
     lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
 
     lv_obj_t *sub = lv_label_create(s_step3);
-    lv_label_set_text(sub, "Step 3 of 3  -  you have a few ways to connect");
+    lv_label_set_text(sub, "Step 3 of 3  -  pick how to connect");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
@@ -576,49 +589,39 @@ static void _show_step3(void) {
               THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_ON_ACCENT,
               false, 108, _btn_wifi_join_cb);
 
-    /* ── Option 2: USB ──────────────────────────────────────────────── */
+    /* ── Option 2: Hotspot fallback ─────────────────────────────────── */
+    const char *ap_ssid = wifi_manager_get_ap_ssid();
+    const char *ap_ip   = wifi_manager_get_ap_ip();
+
     lv_obj_t *opt2_label = lv_label_create(s_step3);
-    lv_label_set_text(opt2_label, "2.  USB");
-    lv_obj_align(opt2_label, LV_ALIGN_TOP_LEFT, 30, 164);
+    lv_label_set_text(opt2_label, "2.  Hotspot  (fallback, no WiFi needed)");
+    lv_obj_align(opt2_label, LV_ALIGN_TOP_LEFT, 30, 170);
     lv_obj_set_style_text_font(opt2_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(opt2_label, THEME_COLOR_TEXT_PRIMARY, 0);
 
     lv_obj_t *opt2_sub = lv_label_create(s_step3);
     lv_label_set_long_mode(opt2_sub, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(opt2_sub, BTN_W - 30);
-    lv_label_set_text(opt2_sub,
-        "Plug the UART USB port into your laptop - the RDM Desktop Studio app "
-        "will detect the device automatically. No setup required.");
-    lv_obj_align(opt2_sub, LV_ALIGN_TOP_LEFT, 30, 184);
-    lv_obj_set_style_text_font(opt2_sub, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(opt2_sub, THEME_COLOR_TEXT_MUTED, 0);
-
-    /* ── Option 3: Hotspot fallback ─────────────────────────────────── */
-    const char *ap_ssid = wifi_manager_get_ap_ssid();
-    const char *ap_ip   = wifi_manager_get_ap_ip();
-
-    lv_obj_t *opt3_label = lv_label_create(s_step3);
-    lv_label_set_text(opt3_label, "3.  Hotspot  (fallback, no WiFi needed)");
-    lv_obj_align(opt3_label, LV_ALIGN_TOP_LEFT, 30, 230);
-    lv_obj_set_style_text_font(opt3_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(opt3_label, THEME_COLOR_TEXT_PRIMARY, 0);
-
-    lv_obj_t *opt3_sub = lv_label_create(s_step3);
-    lv_label_set_long_mode(opt3_sub, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(opt3_sub, BTN_W - 30);
-    lv_label_set_text_fmt(opt3_sub,
+    lv_label_set_text_fmt(opt2_sub,
         "Connect to \"%s\"  /  password: rdm7dash\n"
         "Then open http://%s in a browser",
         ap_ssid ? ap_ssid : "RDM7-????",
         ap_ip   ? ap_ip   : "192.168.4.1");
-    lv_obj_align(opt3_sub, LV_ALIGN_TOP_LEFT, 30, 250);
-    lv_obj_set_style_text_font(opt3_sub, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(opt3_sub, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_align(opt2_sub, LV_ALIGN_TOP_LEFT, 30, 190);
+    lv_obj_set_style_text_font(opt2_sub, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(opt2_sub, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Start Hotspot button — flips runtime to AP mode AND persists
+     * hotspot-on-boot, then drops the user into the WiFi screen so they
+     * can see the SSID/IP/password live. */
+    _make_btn(s_step3, "Start Hotspot",
+              THEME_COLOR_SECTION_BG, THEME_COLOR_TEXT_PRIMARY,
+              true, 234, _btn_hotspot_start_cb);
 
     /* Finish button */
     _make_btn(s_step3, "Finish Setup",
               lv_color_black(), THEME_COLOR_TEXT_MUTED,
-              false, 296, _btn_finish_cb);
+              false, 300, _btn_finish_cb);
 }
 
 /* ── Step 1: CAN scan ─────────────────────────────────────────────────── */
@@ -710,10 +713,17 @@ static void _build_step1(void) {
                             true, 296, _btn_start_scan_cb);
     lv_obj_add_flag(s_btn_start, LV_OBJ_FLAG_HIDDEN);
 
-    /* Row 3 (Y=340): Skip (dismiss entire wizard) */
+    /* Row 3 (Y=340): Skip for now — wizard returns on next boot */
     _make_btn(s_step1, "Skip for now  (ask again next boot)",
               lv_color_black(), THEME_COLOR_TEXT_MUTED,
               false, 340, _btn_skip_cb);
+
+    /* Row 4 (Y=384): Skip for good — never show again.
+     * The same setup screens stay reachable from Device Settings, so
+     * this is non-destructive — just dismisses the boot prompt forever. */
+    _make_btn(s_step1, "Skip for good  (don't show again)",
+              lv_color_black(), THEME_COLOR_TEXT_MUTED,
+              false, 384, _btn_skip_forever_cb);
 }
 
 /* ── Public entry point ───────────────────────────────────────────────── */

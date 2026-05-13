@@ -14,6 +14,10 @@
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
+/* Embedded favicon (EMBED_FILES "web/favicon.ico" in CMakeLists.txt). */
+extern const uint8_t favicon_ico_start[] asm("_binary_favicon_ico_start");
+extern const uint8_t favicon_ico_end[]   asm("_binary_favicon_ico_end");
+
 static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
@@ -74,6 +78,17 @@ static esp_err_t index_handler(httpd_req_t *req) {
 // URI handlers
 static const httpd_uri_t index_uri = {
 	.uri = "/", .method = HTTP_GET, .handler = index_handler, .user_ctx = NULL};
+
+/* Favicon — embedded ICO (multi-size 16/32/48). Cached for a day so
+ * browsers don't re-fetch on every page load. */
+static esp_err_t favicon_handler(httpd_req_t *req) {
+	httpd_resp_set_type(req, "image/x-icon");
+	httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
+	size_t len = favicon_ico_end - favicon_ico_start;
+	return httpd_resp_send(req, (const char *)favicon_ico_start, len);
+}
+static const httpd_uri_t favicon_uri = {
+	.uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_handler, .user_ctx = NULL};
 
 /* image/font/storage/SD endpoints moved to web_server_assets.c */
 
@@ -159,6 +174,7 @@ esp_err_t web_server_start(void) {
 
 	// Register URI handlers
 	REGISTER_URI(server, &index_uri);
+	REGISTER_URI(server, &favicon_uri);
 	web_server_capture_register(server);
 	web_server_touch_register(server);
 	web_server_gear_register(server);

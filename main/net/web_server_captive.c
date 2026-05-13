@@ -10,8 +10,7 @@
  * The redirect target uses a hardcoded RDM-branded hostname rather than the
  * Host header from the probe, so the captive-portal mini-browser shows
  * "rdm-7-dash" in the address bar instead of "connectivitycheck.gstatic.com"
- * or "captive.apple.com". DNS hijack (dns_hijack.c) resolves any hostname
- * to 192.168.4.1 so the made-up name still loads the dash.
+ * or "captive.apple.com".
  *
  * Each platform's probe URL is a separate httpd_uri_t entry — do NOT merge
  * them into a wildcard handler. */

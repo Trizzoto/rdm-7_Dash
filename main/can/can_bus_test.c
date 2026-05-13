@@ -17,6 +17,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   /* xTaskCreateWithCaps / vTaskDeleteWithCaps */
 #include "lvgl.h"
 
 static const char *TAG = "CAN_TEST";
@@ -236,7 +237,8 @@ static void _scan_task(void *arg) {
              s_cancel ? "cancelled" : "complete", best_bitrate);
 
     s_task_handle = NULL;
-    vTaskDelete(NULL);
+    /* Matches xTaskCreateWithCaps so the PSRAM stack is freed too */
+    vTaskDeleteWithCaps(NULL);
 }
 
 /* ── Public API ────────────────────────────────────────────────────────── */
@@ -266,7 +268,8 @@ bool can_bus_test_start(void) {
         } else if (hung) {
             ESP_LOGW(TAG, "scan task hung for %lld ms - force-deleting",
                      age_us / 1000);
-            vTaskDelete(s_task_handle);
+            /* WithCaps variant frees the PSRAM stack from outside the task */
+            vTaskDeleteWithCaps(s_task_handle);
             s_running     = false;
             s_task_handle = NULL;
         } else {
@@ -284,11 +287,18 @@ bool can_bus_test_start(void) {
     s_running = true;
     s_task_start_us = esp_timer_get_time();
 
-    BaseType_t ret = xTaskCreatePinnedToCore(
-        _scan_task, "can_scan", 4096, NULL, 5, &s_task_handle, 0);
+    /* Stack in PSRAM — internal RAM is tight after WiFi init (often < 6 KB
+     * free) so the default xTaskCreatePinnedToCore would fail to allocate a
+     * 4 KB internal-RAM stack. xTaskCreateWithCaps + MALLOC_CAP_SPIRAM puts
+     * the stack in the 8 MB external RAM pool; task code still runs from
+     * IRAM/flash as normal. Pinning to core 0 isn't required for the scan
+     * — it's a self-contained probe and TWAI ISRs route independently. */
+    BaseType_t ret = xTaskCreateWithCaps(
+        _scan_task, "can_scan", 4096, NULL, 5, &s_task_handle,
+        MALLOC_CAP_SPIRAM);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "xTaskCreatePinnedToCore failed (heap=%lu) - aborting start",
-                 (unsigned long)xPortGetFreeHeapSize());
+        ESP_LOGE(TAG, "xTaskCreateWithCaps failed (internal heap=%lu, ret=%d) - aborting start",
+                 (unsigned long)xPortGetFreeHeapSize(), (int)ret);
         s_running = false;
         return false;
     }

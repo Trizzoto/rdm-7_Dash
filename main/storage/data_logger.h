@@ -55,6 +55,23 @@ void data_logger_set_rate_hz(uint16_t hz);
 /* Get the currently configured rate (0 = Max). */
 uint16_t data_logger_get_rate_hz(void);
 
+/* ── Storage tier ───────────────────────────────────────────────────────────
+ * Logger writes to /sdcard/logs when an SD card is mounted, else to
+ * /lfs/logs (capped per file — see data_logger_lfs_max_bytes). The web
+ * layer reads these to show storage location and look up files in the
+ * right directory for download/delete/replay. */
+
+/* "sd" or "lfs" — reflects the tier the last started log used. Returns
+ * "lfs" when not active (so a brand-new session that hasn't started yet
+ * shows the fallback tier in UI hints). */
+const char *data_logger_get_storage(void);
+
+/* Absolute directory holding logs (e.g. "/sdcard/logs" or "/lfs/logs"). */
+const char *data_logger_get_dir(void);
+
+/* Per-file cap on LFS (0 = no cap on SD). */
+uint32_t data_logger_lfs_max_bytes(void);
+
 #ifdef __cplusplus
 }
 #endif

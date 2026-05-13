@@ -45,8 +45,8 @@ const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
  * Unsupported slots use can_id=0 and are written unbound into the layout.
  */
 
-/* [0]=can_id, then bit_start, bit_length, scale, offset, is_signed, endian, unit */
-#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "" }
+/* [0]=can_id, then bit_start, bit_length, scale, offset, is_signed, endian, unit, decimals */
+#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "", 0 }
 
 const ecu_preset_t ECU_PRESETS[] = {
     /* ══════════════════════════════════════════════════════════════════
@@ -58,21 +58,21 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "Black/Classic",
         .display = "ECU Master Black / Classic",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x600,  0, 16, 1.0f,       0.0f,   false, 1, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x600, 32, 16, 1.0f,       0.0f,   false, 1, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x600, 16,  8, 0.5f,       0.0f,   false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x602, 48, 16, 1.0f,       0.0f,   true,  1, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x600, 24,  8, 1.0f,       0.0f,   true,  1, "degC"  },
-            [ECU_SIG_LAMBDA]          = { 0x603, 16,  8, 0.0078125f, 0.0f,   false, 1, "lambda"},
-            [ECU_SIG_OIL_TEMP]        = { 0x602, 24,  8, 1.0f,       0.0f,   false, 1, "degC"  },
-            [ECU_SIG_OIL_PRESSURE]    = { 0x602, 32,  8, 6.25f,      0.0f,   false, 1, "kPa"   },
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x602, 40,  8, 6.25f,      0.0f,   false, 1, "kPa"   },
-            [ECU_SIG_IGNITION]        = { 0x603,  0,  8, 0.5f,       0.0f,   true,  1, "deg"   },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x602,  0, 16, 1.0f,       0.0f,   false, 1, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x604,  0,  8, 1.0f,       0.0f,   true,  1, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x604, 16, 16, 0.027f,     0.0f,   false, 1, "V"     },
-            [ECU_SIG_FUEL_TRIM]       = { 0x603, 24,  8, 0.5f,       -100.0f,false, 1, "%"     },
-            [ECU_SIG_EGT]             = { 0x603, 32, 16, 1.0f,       0.0f,   false, 1, "degC"  },
+            [ECU_SIG_RPM]             = { 0x600,  0, 16, 1.0f,       0.0f,    false, 1, "rpm",    0 },
+            [ECU_SIG_MAP]             = { 0x600, 32, 16, 1.0f,       0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_THROTTLE]        = { 0x600, 16,  8, 0.5f,       0.0f,    false, 1, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x602, 48, 16, 1.0f,       0.0f,    true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x600, 24,  8, 1.0f,       0.0f,    true,  1, "degC",   0 },
+            [ECU_SIG_LAMBDA]          = { 0x603, 16,  8, 0.0078125f, 0.0f,    false, 1, "lambda", 2 },
+            [ECU_SIG_OIL_TEMP]        = { 0x602, 24,  8, 1.0f,       0.0f,    false, 1, "degC",   0 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x602, 32,  8, 6.25f,      0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x602, 40,  8, 6.25f,      0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_IGNITION]        = { 0x603,  0,  8, 0.5f,       0.0f,    true,  1, "deg",    1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x602,  0, 16, 1.0f,       0.0f,    false, 1, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x604,  0,  8, 1.0f,       0.0f,    true,  1, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x604, 16, 16, 0.027f,     0.0f,    false, 1, "V",      1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x603, 24,  8, 0.5f,       -100.0f, false, 1, "%",      1 },
+            [ECU_SIG_EGT]             = { 0x603, 32, 16, 1.0f,       0.0f,    false, 1, "degC",   0 },
         },
     },
 
@@ -86,25 +86,25 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "MS3-Pro",
         .display = "MegaSquirt MS3-Pro",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x5F0, 48, 16, 1.0f,       0.0f,      false, 0, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x5F2, 16, 16, 0.1f,       0.0f,      true,  0, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x5F3,  0, 16, 0.1f,       0.0f,      true,  0, "%"     },
+            [ECU_SIG_RPM]             = { 0x5F0, 48, 16, 1.0f,       0.0f,      false, 0, "rpm",    0 },
+            [ECU_SIG_MAP]             = { 0x5F2, 16, 16, 0.1f,       0.0f,      true,  0, "kPa",    1 },
+            [ECU_SIG_THROTTLE]        = { 0x5F3,  0, 16, 0.1f,       0.0f,      true,  0, "%",      1 },
             /* degF->degC: scale = 0.1 * 5/9, offset = -32 * 5/9 */
-            [ECU_SIG_COOLANT_TEMP]    = { 0x5F2, 48, 16, 0.0555556f, -17.7778f, true,  0, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x5F2, 32, 16, 0.0555556f, -17.7778f, true,  0, "degC"  },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x5F2, 48, 16, 0.0555556f, -17.7778f, true,  0, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x5F2, 32, 16, 0.0555556f, -17.7778f, true,  0, "degC",   0 },
             /* AFR->Lambda: scale = 0.1 / 14.7 */
-            [ECU_SIG_LAMBDA]          = { 0x5FF,  0,  8, 0.0068027f, 0.0f,      false, 0, "lambda"},
+            [ECU_SIG_LAMBDA]          = { 0x5FF,  0,  8, 0.0068027f, 0.0f,      false, 0, "lambda", 2 },
             [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,  /* generic ADC only */
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,  /* generic ADC only */
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x615,  0, 16, 0.1f,       0.0f,      true,  0, "kPa"   },
-            [ECU_SIG_IGNITION]        = { 0x5F1,  0, 16, 0.1f,       0.0f,      true,  0, "deg"   },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x615,  0, 16, 0.1f,       0.0f,      true,  0, "kPa",    1 },
+            [ECU_SIG_IGNITION]        = { 0x5F1,  0, 16, 0.1f,       0.0f,      true,  0, "deg",    1 },
             /* m/s->km/h: scale = 0.1 * 3.6 */
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x612,  0, 16, 0.36f,      0.0f,      false, 0, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x611, 48,  8, 1.0f,       0.0f,      true,  0, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x5F3, 16, 16, 0.1f,       0.0f,      true,  0, "V"     },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x612,  0, 16, 0.36f,      0.0f,      false, 0, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x611, 48,  8, 1.0f,       0.0f,      true,  0, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x5F3, 16, 16, 0.1f,       0.0f,      true,  0, "V",      1 },
             /* egocor1 - 1/10 % centered on 100 */
-            [ECU_SIG_FUEL_TRIM]       = { 0x5F4, 16, 16, 0.1f,       -100.0f,   true,  0, "%"     },
-            [ECU_SIG_EGT]             = { 0x606,  0, 16, 0.0555556f, -17.7778f, true,  0, "degC"  },
+            [ECU_SIG_FUEL_TRIM]       = { 0x5F4, 16, 16, 0.1f,       -100.0f,   true,  0, "%",      1 },
+            [ECU_SIG_EGT]             = { 0x606,  0, 16, 0.0555556f, -17.7778f, true,  0, "degC",   0 },
         },
     },
 
@@ -119,23 +119,23 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "Nexus",
         .display = "Haltech Nexus / Elite",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x360,  0, 16, 1.0f,     0.0f,     false, 0, "rpm"   },
+            [ECU_SIG_RPM]             = { 0x360,  0, 16, 1.0f,     0.0f,      false, 0, "rpm",    0 },
             /* Manifold pressure: raw*0.1 = kPa absolute -> gauge via -101.325 */
-            [ECU_SIG_MAP]             = { 0x360, 16, 16, 0.1f,     0.0f,     false, 0, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x360, 32, 16, 0.1f,     0.0f,     false, 0, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x3E0,  0, 16, 0.1f,     -273.15f, false, 0, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3E0, 16, 16, 0.1f,     -273.15f, false, 0, "degC"  },
+            [ECU_SIG_MAP]             = { 0x360, 16, 16, 0.1f,     0.0f,      false, 0, "kPa",    1 },
+            [ECU_SIG_THROTTLE]        = { 0x360, 32, 16, 0.1f,     0.0f,      false, 0, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x3E0,  0, 16, 0.1f,     -273.15f,  false, 0, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3E0, 16, 16, 0.1f,     -273.15f,  false, 0, "degC",   0 },
             /* Wideband 1 lambda: raw*0.001 directly */
-            [ECU_SIG_LAMBDA]          = { 0x368,  0, 16, 0.001f,   0.0f,     false, 0, "lambda"},
-            [ECU_SIG_OIL_TEMP]        = { 0x3E0, 48, 16, 0.1f,     -273.15f, false, 0, "degC"  },
-            [ECU_SIG_OIL_PRESSURE]    = { 0x361, 16, 16, 0.1f,     -101.325f,false, 0, "kPa"   },
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x361,  0, 16, 0.1f,     -101.325f,false, 0, "kPa"   },
-            [ECU_SIG_IGNITION]        = { 0x362, 32, 16, 0.1f,     0.0f,     true,  0, "deg"   },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x370,  0, 16, 0.1f,     0.0f,     false, 0, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x360, 48, 16, 1.0f,     0.0f,     false, 0, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x372,  0, 16, 0.1f,     0.0f,     false, 0, "V"     },
-            [ECU_SIG_FUEL_TRIM]       = { 0x3E3,  0, 16, 0.1f,     0.0f,     true,  0, "%"     },
-            [ECU_SIG_EGT]             = { 0x373,  0, 16, 0.1f,     -273.15f, false, 0, "degC"  },
+            [ECU_SIG_LAMBDA]          = { 0x368,  0, 16, 0.001f,   0.0f,      false, 0, "lambda", 2 },
+            [ECU_SIG_OIL_TEMP]        = { 0x3E0, 48, 16, 0.1f,     -273.15f,  false, 0, "degC",   0 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x361, 16, 16, 0.1f,     -101.325f, false, 0, "kPa",    0 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x361,  0, 16, 0.1f,     -101.325f, false, 0, "kPa",    0 },
+            [ECU_SIG_IGNITION]        = { 0x362, 32, 16, 0.1f,     0.0f,      true,  0, "deg",    1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x370,  0, 16, 0.1f,     0.0f,      false, 0, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x360, 48, 16, 1.0f,     0.0f,      false, 0, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x372,  0, 16, 0.1f,     0.0f,      false, 0, "V",      1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x3E3,  0, 16, 0.1f,     0.0f,      true,  0, "%",      1 },
+            [ECU_SIG_EGT]             = { 0x373,  0, 16, 0.1f,     -273.15f,  false, 0, "degC",   0 },
         },
     },
 
@@ -148,21 +148,21 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "1.2",
         .display = "MaxxECU (firmware 1.2)",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC"  },
-            [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda"},
+            [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
+            [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
+            [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,  /* not in 1.2 */
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg"   },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V"     },
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%"     },
-            [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC"  },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
+            [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },
 
@@ -179,20 +179,20 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "BA/BF",
         .display = "Ford Falcon BA / BF",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,       0.0f,   false, 0, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,        0.0f,   false, 0, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,        0.0f,   false, 0, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,       -40.0f,  false, 0, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f,  -30.0f,  false, 0, "degC"  },
+            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,      0.0f,   false, 0, "rpm",   0 },
+            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,       0.0f,   false, 0, "kPa",   0 },
+            [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,       0.0f,   false, 0, "%",     1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,      -40.0f,  false, 0, "degC",  0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f, -30.0f,  false, 0, "degC",  0 },
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
-            [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,       -40.0f,  false, 0, "degC"  },
+            [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,      -40.0f,  false, 0, "degC",  0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f,  0.0f,   false, 0, "km/h"  },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f, 0.0f,   false, 0, "km/h",  0 },
             [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V"     },
-            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr"  },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,       0.0f,   false, 0, "V",     1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,      0.0f,   false, 0, "L/hr",  1 },
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
         },
     },
@@ -206,18 +206,18 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "FG",
         .display = "Ford Falcon FG",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x109,  0, 16, 0.25f,    0.0f,   false, 1, "rpm"   },
+            [ECU_SIG_RPM]             = { 0x109,  0, 16, 0.25f,    0.0f,   false, 1, "rpm",  0 },
             [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
-            [ECU_SIG_THROTTLE]        = { 0x204,  0, 16, 0.01f,    0.0f,   false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x156,  0,  8, 1.0f,     -60.0f, false, 1, "degC"  },
+            [ECU_SIG_THROTTLE]        = { 0x204,  0, 16, 0.01f,    0.0f,   false, 1, "%",    1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x156,  0,  8, 1.0f,     -60.0f, false, 1, "degC", 0 },
             [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
-            [ECU_SIG_OIL_TEMP]        = { 0x156,  8,  8, 1.0f,     -60.0f, false, 1, "degC"  },
+            [ECU_SIG_OIL_TEMP]        = { 0x156,  8,  8, 1.0f,     -60.0f, false, 1, "degC", 0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x109, 32, 16, 0.01f,    0.0f,   false, 1, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x171,  0,  8, 1.0f,     0.0f,   false, 1, ""      },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x109, 32, 16, 0.01f,    0.0f,   false, 1, "km/h", 0 },
+            [ECU_SIG_GEAR]            = { 0x171,  0,  8, 1.0f,     0.0f,   false, 1, "",     0 },
             [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
@@ -234,21 +234,21 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "1.3",
         .display = "MaxxECU (firmware 1.3+)",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC"  },
-            [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda"},
-            [ECU_SIG_OIL_TEMP]        = { 0x536, 48, 16, 0.1f,       0.0f,     true,  1, "degC"  },
-            [ECU_SIG_OIL_PRESSURE]    = { 0x536, 32, 16, 0.1f,       0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg"   },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V"     },
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%"     },
-            [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC"  },
+            [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
+            [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
+            [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
+            [ECU_SIG_OIL_TEMP]        = { 0x536, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x536, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
+            [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },
 
@@ -262,19 +262,19 @@ const ecu_preset_t ECU_PRESETS[] = {
         .version = "Generic Dash",
         .display = "Link ECU (G4+ / G4X Generic Dash)",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,     false, 1, "rpm"   },
-            [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_THROTTLE]        = { 0x3E9, 32, 16, 0.1f,  0.0f,     false, 1, "%"     },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x3EA, 48, 16, 1.0f,  -50.0f,   false, 1, "degC"  },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3EB, 16, 16, 1.0f,  -50.0f,   false, 1, "degC"  },
-            [ECU_SIG_LAMBDA]          = { 0x3EE, 32, 16, 0.001f,0.0f,     false, 1, "lambda"},
-            [ECU_SIG_OIL_TEMP]        = { 0x3F0, 16, 16, 1.0f,  -50.0f,   false, 1, "degC"  },
-            [ECU_SIG_OIL_PRESSURE]    = { 0x3F0, 32, 16, 1.0f,  0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_FUEL_PRESSURE]   = { 0x3EF, 48, 16, 1.0f,  0.0f,     false, 1, "kPa"   },
-            [ECU_SIG_IGNITION]        = { 0x3EC, 48, 16, 0.1f,  -100.0f,  true,  1, "deg"   },
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x3F0, 48, 16, 0.1f,  0.0f,     false, 1, "km/h"  },
-            [ECU_SIG_GEAR]            = { 0x3EC, 16, 16, 1.0f,  0.0f,     false, 1, ""      },
-            [ECU_SIG_BATTERY_VOLTAGE] = { 0x3EB, 32, 16, 0.01f, 0.0f,     false, 1, "V"     },
+            [ECU_SIG_RPM]             = { 0x3E8, 16, 16, 1.0f,  0.0f,    false, 1, "rpm",    0 },
+            [ECU_SIG_MAP]             = { 0x3E8, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_THROTTLE]        = { 0x3E9, 32, 16, 0.1f,  0.0f,    false, 1, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x3EA, 48, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x3EB, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
+            [ECU_SIG_LAMBDA]          = { 0x3EE, 32, 16, 0.001f, 0.0f,   false, 1, "lambda", 2 },
+            [ECU_SIG_OIL_TEMP]        = { 0x3F0, 16, 16, 1.0f,  -50.0f,  false, 1, "degC",   0 },
+            [ECU_SIG_OIL_PRESSURE]    = { 0x3F0, 32, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_FUEL_PRESSURE]   = { 0x3EF, 48, 16, 1.0f,  0.0f,    false, 1, "kPa",    0 },
+            [ECU_SIG_IGNITION]        = { 0x3EC, 48, 16, 0.1f,  -100.0f, true,  1, "deg",    1 },
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x3F0, 48, 16, 0.1f,  0.0f,    false, 1, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x3EC, 16, 16, 1.0f,  0.0f,    false, 1, "",       0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x3EB, 32, 16, 0.01f, 0.0f,    false, 1, "V",      1 },
             [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* not in Generic Dash */
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,  /* optional extension */
         },
@@ -394,6 +394,31 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
     cJSON_DeleteItemFromObject(root, "ecu_version");
     cJSON_AddStringToObject(root, "ecu", preset->make);
     cJSON_AddStringToObject(root, "ecu_version", preset->version);
+
+    /* Stamp decimals onto widgets whose signal_name matches a preset slot.
+     * Applies to panel, bar, and text widgets which all read "decimals"
+     * from their config JSON. Other widget types ignore the field harmlessly. */
+    if (!is_marker_preset) {
+        cJSON *widgets = cJSON_GetObjectItemCaseSensitive(root, "widgets");
+        if (widgets) {
+            cJSON *widget;
+            cJSON_ArrayForEach(widget, widgets) {
+                cJSON *cfg = cJSON_GetObjectItemCaseSensitive(widget, "config");
+                if (!cfg) continue;
+                cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+                if (!cJSON_IsString(sig_item)) continue;
+                const char *sig_name = sig_item->valuestring;
+                for (int i = 0; i < ECU_SIG__COUNT; i++) {
+                    if (strcmp(sig_name, ECU_SIGNAL_NAMES[i]) == 0) {
+                        cJSON_DeleteItemFromObject(cfg, "decimals");
+                        cJSON_AddNumberToObject(cfg, "decimals",
+                                                (double)preset->rows[i].decimals);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     /* Write back. */
     err = layout_manager_save_raw(layout_name, root);

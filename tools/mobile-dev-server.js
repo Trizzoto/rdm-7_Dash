@@ -85,13 +85,19 @@ const MOCK = {
   'GET  /api/sd/files':         () => ({ files: [] }),
   'POST /api/sd/copy':          () => ({ ok: true }),
   'POST /api/sd/delete':        () => ({ ok: true }),
-  'GET  /api/log/status':       () => ({ logging: false, file: '', samples: 0 }),
-  'GET  /api/log/list':         () => ({ logs: [{ name: '2026-04-19_12-00.csv', size: 44000 }] }),
+  'GET  /api/log/status':       () => ({ active: false, file: '', samples: 0, rate_hz: 10, storage: 'lfs', sd_mounted: false, lfs_max_bytes: 1024*1024 }),
+  'GET  /api/log/list':         () => ([
+    { name: 'log_demo_lfs.csv', size: 44000, storage: 'lfs' }
+  ]),
   'GET  /api/log/config':       () => ({ rate_hz: 50 }),
   'POST /api/log/config':       () => ({ ok: true }),
   'POST /api/log/start':        () => ({ ok: true }),
   'POST /api/log/stop':         () => ({ ok: true }),
   'POST /api/log/delete':       () => ({ ok: true }),
+  'POST /api/log/upload':       () => ({ status: 'ok', name: 'uploaded.csv', size: 12345, storage: 'lfs' }),
+  'GET  /api/canraw/status':    () => ({ active: false, file: '', frames: 0, elapsed_ms: 0, storage: 'lfs', lfs_max_bytes: 1024*1024, sd_mounted: false }),
+  'POST /api/canraw/start':     () => ({ status: 'started' }),
+  'POST /api/canraw/stop':      () => ({ status: 'stopped' }),
   'GET  /api/replay/status':    () => ({ replaying: false, file: '', speed: 1, progress: 0 }),
   'POST /api/replay/start':     () => ({ ok: true }),
   'POST /api/replay/stop':      () => ({ ok: true }),
@@ -102,9 +108,9 @@ const MOCK = {
   'POST /api/splash/fade':      () => ({ ok: true }),
   'POST /api/splash/delete':    () => ({ ok: true }),
   'POST /api/screen/switch':    () => ({ ok: true }),
-  'GET  /api/fuel/status':      () => ({ calibrated: false, empty_raw: 0, full_raw: 4095, level_pct: 42 }),
-  'POST /api/fuel/set-empty':   () => ({ ok: true }),
-  'POST /api/fuel/set-full':    () => ({ ok: true })
+  'GET  /api/fuel/status':      () => ({ calibrated: false, voltage: 1.75 + Math.random() * 0.05, empty_raw: 0, full_raw: 4095, level_pct: 42 }),
+  'POST /api/fuel/set-empty':   () => ({ ok: true, voltage: 0.5 }),
+  'POST /api/fuel/set-full':    () => ({ ok: true, voltage: 3.0 })
 };
 
 function sendJson(res, body, code = 200) {
@@ -147,7 +153,7 @@ const server = http.createServer((req, res) => {
   const fp = path.join(ROOT, 'main', 'web', url);
   if (fp.startsWith(path.join(ROOT, 'main', 'web')) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
     const ext = path.extname(fp);
-    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.html': 'text/html' }[ext] || 'application/octet-stream';
+    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': ct });
     return res.end(fs.readFileSync(fp));
   }

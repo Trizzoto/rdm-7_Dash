@@ -88,7 +88,7 @@ typedef struct {
 	uint8_t    meter_bg_opa;         /* default: 255 */
 	/* Scale layout */
 	uint8_t    scale_padding;        /* default: 0 — pushes tick ring inward from border */
-	int8_t     label_gap;            /* default: 10 — distance from major tick to label */
+	int16_t    label_gap;            /* default: 10 — distance from major tick to label (range −150..+150) */
 	char       tick_label_font[32];  /* default: "" — font for tick value labels */
 	lv_color_t tick_label_color;    /* default: white (0xFFFFFF) */
 	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
