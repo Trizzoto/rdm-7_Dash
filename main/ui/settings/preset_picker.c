@@ -18,6 +18,7 @@ const preconfig_item_t preconfig_items[] = {
 { "Ford", "BA/BF", "BARO PRESSURE",   "44D", 0, 56,  8, 0.5,        0,  1, false },
 { "Ford", "BA/BF", "BATTERY VOLTAGE", "427", 0, 24,  8, 0.1,        0,  1, false },
 { "Ford", "BA/BF", "COOLANT TEMP",    "427", 0,  0,  8, 1.0,      -40,  0, false },
+{ "Ford", "BA/BF", "DAMPED FUEL LVL", "437", 0,  0,  8, 0.51,       0,  1, false },
 { "Ford", "BA/BF", "FUEL PULSE",      "427", 0, 56,  8, 0.0000788519, 0, 4, false },
 { "Ford", "BA/BF", "INSTANT ECONOMY", "553", 0, 24,  8, 0.1,        0,  1, false },
 { "Ford", "BA/BF", "INSTANT FUEL",    "437", 0,  8,  8, 0.51,       0,  2, false },
