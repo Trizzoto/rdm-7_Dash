@@ -24,6 +24,7 @@
 #include "signal.h"
 #include "signal_internal.h"
 #include "screen_config.h"
+#include "obd2.h"
 
 #include "cJSON.h"
 #include "esp_littlefs.h"
@@ -417,6 +418,31 @@ static void _load_signals(const cJSON *root) {
 
 	ESP_LOGI(TAG, "_load_signals: registered %u signals",
 			 (unsigned)signal_get_count());
+
+	/* Parse the layout's obd2_pids array (if any) and start OBD2 polling.
+	 * This works both for the OBD2 Standard primary preset (full PID list)
+	 * and for supplemental add-ons stacked on a native preset (small list).
+	 * Either way, obd2_start() registers each PID's signal name in the
+	 * registry so widgets can bind to them. Empty/missing array stops
+	 * polling — important on layout swap from OBD2 → native preset. */
+	uint8_t pid_list[OBD2_MAX_ENABLED];
+	uint8_t pid_count = 0;
+	const cJSON *pids_arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+	if (cJSON_IsArray(pids_arr)) {
+		const cJSON *pi;
+		cJSON_ArrayForEach(pi, pids_arr) {
+			if (!cJSON_IsNumber(pi)) continue;
+			if (pid_count >= OBD2_MAX_ENABLED) break;
+			int v = pi->valueint;
+			if (v < 0 || v > 0xFF) continue;
+			pid_list[pid_count++] = (uint8_t)v;
+		}
+	}
+	if (pid_count > 0) {
+		obd2_start(pid_list, pid_count);
+	} else {
+		obd2_stop();
+	}
 }
 
 /**
@@ -753,6 +779,20 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 
 	/* Serialise registered signals */
 	_save_signals(root);
+
+	/* Preserve OBD2 enabled-PID list on internal saves (e.g. serial save,
+	 * data logger snapshots). The web editor save_raw path already carries
+	 * obd2_pids forward from the editor's JSON tree. */
+	{
+		uint8_t pids[OBD2_MAX_ENABLED];
+		uint8_t pc = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
+		if (pc > 0) {
+			cJSON *pa = cJSON_AddArrayToObject(root, "obd2_pids");
+			for (uint8_t i = 0; i < pc; i++) {
+				cJSON_AddItemToArray(pa, cJSON_CreateNumber(pids[i]));
+			}
+		}
+	}
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "widgets");
 	if (!arr) { cJSON_Delete(root); return NULL; }

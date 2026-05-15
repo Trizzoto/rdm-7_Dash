@@ -302,6 +302,47 @@ void signal_inject_test_value(const char *name, float value)
     }
 }
 
+/* ── External value push (OBD2, internal synthesis, etc.) ──────────────── */
+
+void signal_set_external_value(const char *name, float value)
+{
+    if (!s_signals || !name) return;
+
+    int16_t idx = signal_find_by_name(name);
+    if (idx < 0) {
+        ESP_LOGD(TAG, "signal_set_external_value: '%s' not found", name);
+        return;
+    }
+
+    signal_t *sig = &s_signals[idx];
+
+    /* Test-lock gate: matches signal_dispatch_frame — if the user has
+     * pinned a manual value, external sources don't overwrite it. */
+    if (sig->test_locked) return;
+
+    uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    bool was_stale = sig->is_stale;
+    bool changed   = (value != sig->current_value);
+
+    /* Peak/min tracking — unlike inject, external pushes always feed peaks
+     * (they're real data from OBD2 / internal sensors). Still gate on sim
+     * being inactive so sim-only sweeps don't corrupt history. */
+    if (sig->tracking_active && !signal_sim_is_active()) {
+        if (value > sig->peak_value) { sig->peak_value = value; s_peaks_dirty = true; }
+        if (value < sig->min_value)  { sig->min_value  = value; s_peaks_dirty = true; }
+        if (value > sig->session_peak) sig->session_peak = value;
+        if (value < sig->session_min)  sig->session_min  = value;
+    }
+
+    sig->current_value  = value;
+    sig->is_stale       = false;
+    sig->last_update_ms = now_ms;
+
+    if (was_stale || changed) {
+        notify_subscribers(sig);
+    }
+}
+
 /* ── Timeout checking ───────────────────────────────────────────────────── */
 
 void signal_check_timeouts(uint64_t current_time_ms)

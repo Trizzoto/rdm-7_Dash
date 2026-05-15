@@ -20,6 +20,9 @@
 #include "screens/ui_ecu_picker.h"
 #include "screens/ui_can_list.h"
 #include "layout/ecu_presets.h"
+#include "layout/layout_manager.h"
+#include "obd2_picker.h"
+#include "obd2.h"
 #include "system/night_mode.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
@@ -2251,6 +2254,33 @@ static void _ecu_btn_cb(lv_event_t *e) {
     ecu_picker_open("default", true, _ecu_picker_done_cb, NULL);
 }
 
+/* ── OBD2 Signals button ─────────────────────────────────────────────── */
+
+static lv_obj_t *s_obd2_btn_label = NULL;
+
+/* Compose the button label based on current state:
+ *   "Add OBD2 Signals..." (no PIDs configured)
+ *   "OBD2 Signals... (N)" (some PIDs configured) */
+static void _obd2_label_compose(char *buf, size_t n)
+{
+    char layout[LAYOUT_MAX_NAME];
+    layout_manager_get_active(layout, sizeof(layout));
+    uint8_t pids[OBD2_MAX_ENABLED];
+    uint8_t count = 0;
+    ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
+    if (count == 0) {
+        snprintf(buf, n, "Add OBD2 Signals...");
+    } else {
+        snprintf(buf, n, "OBD2 Signals... (%u)", count);
+    }
+}
+
+static void _obd2_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    obd2_picker_open();
+}
+
 /* ── Factory Reset ────────────────────────────────────────────────────── */
 
 static void _factory_reset_confirm_cb(lv_event_t *e) {
@@ -2536,6 +2566,33 @@ static void _build_section_can_config(lv_obj_t *row) {
     lv_obj_set_style_text_font(s_ecu_value_label, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_ecu_value_label, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(ecu_btn, _ecu_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* OBD2 Signals — same modal handles all three cases:
+     *   - OBD2 Standard primary preset: edit the full polled-PID list
+     *   - native preset + add-ons: edit the supplemental gap-fillers
+     *   - native preset, no add-ons yet: label reads "Add OBD2 Signals..."
+     * Always rendered for discoverability. The label adapts to current state. */
+    {
+        lv_obj_t *obd2_btn = lv_btn_create(s);
+        lv_obj_set_size(obd2_btn, lv_pct(95), 28);
+        lv_obj_align(obd2_btn, LV_ALIGN_TOP_LEFT, 0, 126);
+        lv_obj_set_style_bg_color(obd2_btn, THEME_COLOR_INPUT_BG, 0);
+        lv_obj_set_style_bg_opa(obd2_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(obd2_btn, THEME_COLOR_BORDER, 0);
+        lv_obj_set_style_border_width(obd2_btn, 1, 0);
+        lv_obj_set_style_radius(obd2_btn, THEME_RADIUS_NORMAL, 0);
+        lv_obj_set_style_shadow_width(obd2_btn, 0, 0);
+        s_obd2_btn_label = lv_label_create(obd2_btn);
+        {
+            char txt[48];
+            _obd2_label_compose(txt, sizeof(txt));
+            lv_label_set_text(s_obd2_btn_label, txt);
+        }
+        lv_obj_set_style_text_font(s_obd2_btn_label, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_obd2_btn_label, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_center(s_obd2_btn_label);
+        lv_obj_add_event_cb(obd2_btn, _obd2_btn_cb, LV_EVENT_CLICKED, NULL);
+    }
 }
 
 static void _build_section_device_info(lv_obj_t *row) {
@@ -3105,8 +3162,11 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     _build_header(main_container);
     lv_obj_t *content = _build_content_area(main_container);
 
-    /* Row 1 (h=160): CAN BUS config + DEVICE INFO */
-    lv_obj_t *row1 = _build_row(content, 160);
+    /* Row 1 (h=195): CAN BUS config + DEVICE INFO.
+     * Bumped from 160 → 195 to fit the OBD2 Signals button under the ECU
+     * dropdown in the CAN BUS section. Device Info card has minimal content
+     * and benefits from the extra breathing room. */
+    lv_obj_t *row1 = _build_row(content, 195);
     _build_section_can_config(row1);
     _build_section_device_info(row1);
 

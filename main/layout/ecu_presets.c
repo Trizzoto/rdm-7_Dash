@@ -3,12 +3,20 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "layout_manager.h"
+#include "obd2.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "ecu_presets";
+
+/* Sentinel ECU make/version for the OBD2 preset. ecu_preset_is_obd2()
+ * checks these. The rows[] table is all SIG_UNSUPPORTED because OBD2
+ * doesn't use the slot-based bit decode — apply_to_layout writes the
+ * starter PID list into the layout's obd2_pids array instead. */
+#define OBD2_MAKE     "OBD2"
+#define OBD2_VERSION  "Standard"
 
 /* Normalized signal names (must match default_layout.c + widget bindings). */
 static const char *const ECU_SIGNAL_NAMES[ECU_SIG__COUNT] = {
@@ -316,6 +324,41 @@ const ecu_preset_t ECU_PRESETS[] = {
         },
     },
 
+    /* ══════════════════════════════════════════════════════════════════
+     * OBD2 Standard - SAE J1979 Mode 01 polling.
+     *
+     * No fixed-broadcast decoding: signals come from request/response
+     * polling against the vehicle's ECU(s) on 0x7DF / 0x7E8. The 30 PID
+     * starter set is defined in obd2_pids.c (default_enabled=true).
+     *
+     * apply_to_layout() detects this preset and writes the PID list into
+     * the layout's `obd2_pids` array instead of rewriting signals[].
+     * obd2_start() registers each enabled PID as an external signal at
+     * load time.
+     * ══════════════════════════════════════════════════════════════════ */
+    {
+        .make = OBD2_MAKE,
+        .version = OBD2_VERSION,
+        .display = "OBD2 Standard (any 2008+ car)",
+        .rows = {
+            [ECU_SIG_RPM]             = SIG_UNSUPPORTED,
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
+            [ECU_SIG_THROTTLE]        = SIG_UNSUPPORTED,
+            [ECU_SIG_COOLANT_TEMP]    = SIG_UNSUPPORTED,
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
+            [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
+            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
+            [ECU_SIG_VEHICLE_SPEED]   = SIG_UNSUPPORTED,
+            [ECU_SIG_GEAR]            = SIG_UNSUPPORTED,
+            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
+        },
+    },
+
     /* Sentinel */
     { .make = NULL, .version = NULL, .display = NULL, .rows = {{0}} },
 };
@@ -350,6 +393,12 @@ static cJSON *_build_signal_json(const char *name, const ecu_signal_row_t *row) 
     return s;
 }
 
+bool ecu_preset_is_obd2(const ecu_preset_t *preset) {
+    if (!preset || !preset->make || !preset->version) return false;
+    return strcmp(preset->make, OBD2_MAKE) == 0 &&
+           strcmp(preset->version, OBD2_VERSION) == 0;
+}
+
 esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
                                      const ecu_preset_t *preset) {
     if (!layout_name || !preset) return ESP_ERR_INVALID_ARG;
@@ -379,7 +428,24 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
     bool is_marker_preset = (strcmp(preset->make, "RDM-7") == 0 &&
                              strcmp(preset->version, "Internal") == 0);
 
-    if (!is_marker_preset) {
+    bool is_obd2 = ecu_preset_is_obd2(preset);
+
+    if (is_obd2) {
+        /* OBD2 takes over as primary. Drop any prior native preset signals
+         * and seed obd2_pids[] with the default starter set. signals[] is
+         * left empty — obd2_start() registers each enabled PID as an
+         * external signal when polling begins. */
+        cJSON_DeleteItemFromObject(root, "signals");
+        cJSON_AddArrayToObject(root, "signals");
+
+        cJSON_DeleteItemFromObject(root, "obd2_pids");
+        cJSON *pids_arr = cJSON_AddArrayToObject(root, "obd2_pids");
+        for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
+            if (OBD2_PIDS[i].default_enabled) {
+                cJSON_AddItemToArray(pids_arr, cJSON_CreateNumber(OBD2_PIDS[i].pid));
+            }
+        }
+    } else if (!is_marker_preset) {
         /* Replace signals array. */
         cJSON_DeleteItemFromObject(root, "signals");
         cJSON *sigs = cJSON_AddArrayToObject(root, "signals");
@@ -387,6 +453,14 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
             cJSON *s = _build_signal_json(ECU_SIGNAL_NAMES[i], &preset->rows[i]);
             if (s) cJSON_AddItemToArray(sigs, s);
         }
+
+        /* Switching FROM OBD2 to a native preset: drop any OBD2-supplemental
+         * PIDs whose signal name is now provided by the native preset. The UI
+         * picker prevents conflicts going forward, but legacy state from an
+         * earlier OBD2 session would still be in the layout. Simplest rule:
+         * just clear it. User can re-add supplemental gap-fillers via the
+         * OBD2 Signals modal later. */
+        cJSON_DeleteItemFromObject(root, "obd2_pids");
     }
 
     /* Update ecu make/version fields. */
@@ -397,8 +471,9 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
 
     /* Stamp decimals onto widgets whose signal_name matches a preset slot.
      * Applies to panel, bar, and text widgets which all read "decimals"
-     * from their config JSON. Other widget types ignore the field harmlessly. */
-    if (!is_marker_preset) {
+     * from their config JSON. Other widget types ignore the field harmlessly.
+     * OBD2 preset doesn't carry per-slot decimals so we skip this step. */
+    if (!is_marker_preset && !is_obd2) {
         cJSON *widgets = cJSON_GetObjectItemCaseSensitive(root, "widgets");
         if (widgets) {
             cJSON *widget;
@@ -429,4 +504,75 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
                  preset->make, preset->version, layout_name);
     }
     return err;
+}
+
+/* ── OBD2 PID list helpers ─────────────────────────────────────────────── */
+
+esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
+                                    const uint8_t *pids, uint8_t count) {
+    if (!layout_name) return ESP_ERR_INVALID_ARG;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return ESP_ERR_NO_MEM;
+
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) {
+        free(buf);
+        return err;
+    }
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+
+    cJSON_DeleteItemFromObject(root, "obd2_pids");
+    if (count > 0 && pids) {
+        cJSON *arr = cJSON_AddArrayToObject(root, "obd2_pids");
+        for (uint8_t i = 0; i < count; i++) {
+            cJSON_AddItemToArray(arr, cJSON_CreateNumber(pids[i]));
+        }
+    }
+
+    err = layout_manager_save_raw(layout_name, root);
+    cJSON_Delete(root);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Saved %u OBD2 PIDs to layout '%s'", count, layout_name);
+    }
+    return err;
+}
+
+esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
+                                    uint8_t *out, uint8_t max,
+                                    uint8_t *out_count) {
+    if (!layout_name || !out || !out_count) return ESP_ERR_INVALID_ARG;
+    *out_count = 0;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return ESP_ERR_NO_MEM;
+
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) {
+        free(buf);
+        return err;
+    }
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+
+    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+    if (cJSON_IsArray(arr)) {
+        cJSON *item;
+        cJSON_ArrayForEach(item, arr) {
+            if (!cJSON_IsNumber(item)) continue;
+            if (*out_count >= max) break;
+            int v = item->valueint;
+            if (v < 0 || v > 0xFF) continue;
+            out[(*out_count)++] = (uint8_t)v;
+        }
+    }
+    cJSON_Delete(root);
+    return ESP_OK;
 }

@@ -7,6 +7,7 @@
  */
 #include "can_manager.h"
 #include "can_id_tracker.h"
+#include "obd2.h"
 #include "signal.h"
 #include "signal_sim.h"
 
@@ -165,6 +166,19 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 				return;
 			}
 			ids[count++] = sid;
+		}
+	}
+
+	/* When OBD2 polling is active, we also need to RX the 0x7E8-0x7EF response
+	 * range. Add them so the single-mask filter widens enough to pass them. */
+	if (obd2_is_running()) {
+		for (uint32_t id = OBD2_RESPONSE_ID_FIRST; id <= OBD2_RESPONSE_ID_LAST; id++) {
+			if (count >= 64) break;
+			bool dup = false;
+			for (int j = 0; j < count; j++) {
+				if (ids[j] == id) { dup = true; break; }
+			}
+			if (!dup) ids[count++] = id;
 		}
 	}
 
@@ -368,6 +382,13 @@ void can_process_queued_frames(void) {
 		/* When simulator is active, drain queue but skip dispatch */
 		if (!signal_sim_is_active()) {
 			signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+			/* OBD2 response decoder: any frame on 0x7E8-0x7EF could be a
+			 * Mode 01 PID response. Cheap early-return when polling isn't
+			 * active or the ID is out of the OBD2 range. */
+			if (msg.identifier >= OBD2_RESPONSE_ID_FIRST &&
+			    msg.identifier <= OBD2_RESPONSE_ID_LAST) {
+				obd2_rx_handler(msg.identifier, msg.data, msg.data_length_code);
+			}
 			/* Per-ID tracker for live diagnostics screen — captures every
 			 * frame regardless of whether any signal matched. */
 			can_id_tracker_record(msg.identifier, msg.extd,

@@ -160,6 +160,20 @@ void signal_check_timeouts(uint64_t current_time_ms);
 void signal_inject_test_value(const char *name, float value);
 
 /**
+ * Push a value into a signal from a non-CAN-bit-decode source (OBD2, internal
+ * synthesis, etc.). Updates current_value, peaks, last_update_ms, and notifies
+ * subscribers — same effect as a successful CAN dispatch for the signal.
+ *
+ * Distinct from signal_inject_test_value() so peak tracking and sim/test gating
+ * stay separate. Peak/min tracking runs through this path (unlike inject which
+ * is gated by sim_is_active + test_locked).
+ *
+ * No-op if the signal name is not found in the registry. MUST be called on
+ * the LVGL task.
+ */
+void signal_set_external_value(const char *name, float value);
+
+/**
  * Set or clear the "test lock" on a signal by name. While locked,
  * signal_dispatch_frame() drops any matching CAN frame so an injected
  * test value won't be overwritten by live bus traffic. The signal also
