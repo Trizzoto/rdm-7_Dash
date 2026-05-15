@@ -1,10 +1,12 @@
 /**
  * obd2_picker.c — OBD2 Signals modal (see obd2_picker.h).
  *
- * Builds a 720x440 overlay on lv_layer_top() with a scrollable list of
+ * Builds a 640x360 overlay on lv_layer_top() with a scrollable list of
  * decodable OBD2 PIDs. The user toggles checkboxes to enable/disable
- * polling; "Scan Vehicle" probes the car for supported PIDs and badges
- * the rows the ECU responded to.
+ * polling; each row shows the live signal value so the user can see at
+ * a glance which PIDs are actually producing data. "Scan Vehicle"
+ * probes the car for supported PIDs and badges the rows the ECU
+ * responded to.
  *
  * On Save, the new list is written to the active layout's `obd2_pids`
  * array and obd2_start() is called to restart polling.
@@ -29,12 +31,17 @@
 
 static const char *TAG = "obd2_picker";
 
-#define MODAL_W  720
-#define MODAL_H  440
-#define HEADER_H  40
-#define SCAN_H    36
-#define FOOTER_H  44
-#define ROW_H     30
+/* Sized small to keep redraw cost down — 46 PID rows + scrolling on top
+ * of running OBD2 polling + dashboard widgets behind us. 640x360 → list
+ * area ~248 px tall + 24 px rows means ~10 rows on screen, ~36 off — LVGL
+ * still walks the whole tree, but a smaller modal redraws faster. */
+#define MODAL_W  640
+#define MODAL_H  360
+#define HEADER_H  34
+#define SCAN_H    32
+#define FOOTER_H  40
+#define ROW_H     24
+#define LIVE_REFRESH_MS 400
 
 /* ── State ─────────────────────────────────────────────────────────────── */
 
@@ -43,8 +50,10 @@ typedef struct {
     bool      checked;
     bool      provided_by_preset;   /* greyed out, uncheckable */
     bool      discovered;           /* showed up in last scan */
+    int16_t   signal_idx;           /* cached signal index or -1 */
     lv_obj_t *cb;                   /* checkbox object */
     lv_obj_t *row;                  /* row container */
+    lv_obj_t *value_lbl;            /* live current-value readout */
     lv_obj_t *badge;                /* small label for status */
 } pid_row_t;
 
@@ -53,7 +62,7 @@ static lv_obj_t  *s_card    = NULL;
 static lv_obj_t  *s_list    = NULL;
 static lv_obj_t  *s_status  = NULL;     /* scan status label */
 static lv_obj_t  *s_scan_btn = NULL;
-static lv_obj_t  *s_header_subtitle = NULL;
+static lv_timer_t *s_live_timer = NULL;
 static pid_row_t  s_rows[64];
 static int        s_row_count = 0;
 
@@ -66,6 +75,7 @@ static void  _scan_complete(const obd2_scan_result_t *r, void *user);
 static void  _build_rows(void);
 static bool  _signal_provided_by_preset(const char *signal_name);
 static void  _set_status(const char *text);
+static void  _live_refresh_cb(lv_timer_t *t);
 
 /* ── Public API ────────────────────────────────────────────────────────── */
 
@@ -74,13 +84,16 @@ bool obd2_picker_is_open(void) { return s_overlay != NULL; }
 void obd2_picker_close(void)
 {
     if (!s_overlay) return;
+    if (s_live_timer) {
+        lv_timer_del(s_live_timer);
+        s_live_timer = NULL;
+    }
     lv_obj_del(s_overlay);
     s_overlay = NULL;
     s_card    = NULL;
     s_list    = NULL;
     s_status  = NULL;
     s_scan_btn = NULL;
-    s_header_subtitle = NULL;
     memset(s_rows, 0, sizeof(s_rows));
     s_row_count = 0;
 }
@@ -168,18 +181,19 @@ void obd2_picker_open(void)
     lv_obj_set_style_text_color(s_status, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_align(s_status, LV_ALIGN_LEFT_MID, 168, 0);
 
-    s_header_subtitle = NULL; /* unused for now */
-
-    /* ── List body ── */
+    /* ── List body ──
+     * Scrollbar mode OFF intentionally — every drawn scrollbar adds two
+     * full-height drawn rects on each frame the user scrolls. The list
+     * still scrolls via touch drag; users figure that out fast. */
     s_list = lv_obj_create(s_card);
     lv_obj_set_size(s_list, MODAL_W, MODAL_H - HEADER_H - SCAN_H - FOOTER_H);
     lv_obj_align(s_list, LV_ALIGN_TOP_LEFT, 0, HEADER_H + SCAN_H);
     lv_obj_set_style_bg_color(s_list, THEME_COLOR_SURFACE, 0);
     lv_obj_set_style_border_width(s_list, 0, 0);
-    lv_obj_set_style_pad_all(s_list, 4, 0);
-    lv_obj_set_style_pad_row(s_list, 2, 0);
+    lv_obj_set_style_pad_all(s_list, 2, 0);
+    lv_obj_set_style_pad_row(s_list, 1, 0);
     lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_OFF);
 
     /* ── Footer ── */
     lv_obj_t *footer = lv_obj_create(s_card);
@@ -260,19 +274,20 @@ static void _build_rows(void)
         r->checked = checked;
         r->provided_by_preset = conflict;
         r->discovered = false;
+        r->signal_idx = signal_find_by_name(def->signal_name);
 
         r->row = lv_obj_create(s_list);
         lv_obj_set_size(r->row, lv_pct(100), ROW_H);
         lv_obj_set_style_bg_opa(r->row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(r->row, 0, 0);
         lv_obj_set_style_pad_all(r->row, 0, 0);
-        lv_obj_set_style_pad_left(r->row, 8, 0);
-        lv_obj_set_style_pad_right(r->row, 8, 0);
+        lv_obj_set_style_pad_left(r->row, 6, 0);
+        lv_obj_set_style_pad_right(r->row, 6, 0);
         lv_obj_clear_flag(r->row, LV_OBJ_FLAG_SCROLLABLE);
 
         r->cb = lv_checkbox_create(r->row);
         lv_obj_align(r->cb, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_text_font(r->cb, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_font(r->cb, THEME_FONT_TINY, 0);
         lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_PRIMARY, 0);
         lv_obj_set_style_bg_color(r->cb, THEME_COLOR_INPUT_BG, LV_PART_INDICATOR);
         lv_obj_set_style_bg_color(r->cb, THEME_COLOR_ACCENT_BLUE,
@@ -281,10 +296,10 @@ static void _build_rows(void)
                                       LV_PART_INDICATOR);
         lv_obj_set_style_border_width(r->cb, 1, LV_PART_INDICATOR);
 
-        char label[80];
-        snprintf(label, sizeof(label), "%s  (PID 0x%02X)  %s",
-                 def->human_name, def->pid,
-                 def->unit && def->unit[0] ? def->unit : "");
+        /* Compact label: "Engine RPM 0x0C" — unit moves to the live value
+         * column so it's not duplicated. Tighter to fit 24 px rows. */
+        char label[64];
+        snprintf(label, sizeof(label), "%s  0x%02X", def->human_name, def->pid);
         lv_checkbox_set_text(r->cb, label);
 
         if (checked && !conflict) {
@@ -302,6 +317,15 @@ static void _build_rows(void)
                                 LV_EVENT_VALUE_CHANGED, r);
         }
 
+        /* Live current-value readout: shows the signal's most recent value
+         * + unit when the signal is registered, "—" when not, and is muted
+         * when the signal is stale. Sits right of center. */
+        r->value_lbl = lv_label_create(r->row);
+        lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -72, 0);
+        lv_obj_set_style_text_font(r->value_lbl, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(r->value_lbl, THEME_COLOR_TEXT_HINT, 0);
+        lv_label_set_text(r->value_lbl, "—");
+
         /* Badge on the right. */
         r->badge = lv_label_create(r->row);
         lv_obj_align(r->badge, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -312,6 +336,72 @@ static void _build_rows(void)
         } else {
             lv_label_set_text(r->badge, "");
         }
+    }
+
+    /* Kick off the live-value refresh loop. */
+    if (!s_live_timer) {
+        s_live_timer = lv_timer_create(_live_refresh_cb, LIVE_REFRESH_MS, NULL);
+        /* Prime once so values are visible immediately instead of after
+         * the first 400 ms tick. */
+        _live_refresh_cb(s_live_timer);
+    }
+}
+
+/* Pick a sensible decimals count for display based on the magnitude of the
+ * value. Keeps the column compact while still readable. */
+static int _decimals_for(float v, const char *unit)
+{
+    /* lambda etc. benefit from 2 decimals always. */
+    if (unit && (strcmp(unit, "lambda") == 0)) return 3;
+    float a = v < 0 ? -v : v;
+    if (a >= 1000.0f) return 0;
+    if (a >= 100.0f)  return 0;
+    if (a >= 10.0f)   return 1;
+    return 2;
+}
+
+static void _live_refresh_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_overlay) return;
+
+    /* Only walk rows that have a registered signal. Unenabled PIDs keep
+     * their initial "—" label — no LVGL work for ~40 of the 46 rows on
+     * a typical setup. Single signal_find_by_name lookup per still-
+     * unresolved row to catch PIDs the user just enabled. */
+    for (int i = 0; i < s_row_count; i++) {
+        pid_row_t *r = &s_rows[i];
+        if (!r->value_lbl || !lv_obj_is_valid(r->value_lbl)) continue;
+
+        if (r->signal_idx < 0) {
+            const obd2_pid_def_t *def = obd2_pid_find(r->pid);
+            if (def) r->signal_idx = signal_find_by_name(def->signal_name);
+            if (r->signal_idx < 0) continue;   /* still unregistered */
+        }
+
+        signal_t *sig = signal_get_by_index((uint16_t)r->signal_idx);
+        if (!sig) continue;
+
+        char buf[24];
+        if (sig->is_stale || sig->last_update_ms == 0) {
+            snprintf(buf, sizeof(buf), "%s", "...");
+        } else {
+            int d = _decimals_for(sig->current_value, sig->unit);
+            snprintf(buf, sizeof(buf), "%.*f %s",
+                     d, (double)sig->current_value,
+                     sig->unit[0] ? sig->unit : "");
+        }
+        /* Skip invalidation if the rendered text hasn't changed. lv_label
+         * does its own strcmp on set_text, but doing it here also avoids
+         * the per-tick color set. */
+        const char *cur = lv_label_get_text(r->value_lbl);
+        if (cur && strcmp(cur, buf) == 0) continue;
+        lv_label_set_text(r->value_lbl, buf);
+        lv_obj_set_style_text_color(r->value_lbl,
+                                    (sig->is_stale || sig->last_update_ms == 0)
+                                        ? THEME_COLOR_TEXT_HINT
+                                        : THEME_COLOR_ACCENT_BLUE,
+                                    0);
     }
 }
 
