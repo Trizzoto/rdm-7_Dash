@@ -419,15 +419,17 @@ static void _load_signals(const cJSON *root) {
 	ESP_LOGI(TAG, "_load_signals: registered %u signals",
 			 (unsigned)signal_get_count());
 
-	/* Parse the layout's obd2_pids array (if any) and start OBD2 polling.
-	 * This works both for the OBD2 Standard primary preset (full PID list)
-	 * and for supplemental add-ons stacked on a native preset (small list).
-	 * Either way, obd2_start() registers each PID's signal name in the
-	 * registry so widgets can bind to them. Empty/missing array stops
-	 * polling — important on layout swap from OBD2 → native preset. */
+	/* Parse the layout's polled_pids array (if any) and start OBD2 polling.
+	 * `polled_pids` is the generic name — future Mode 22 / UDS / OEM PID
+	 * packs use the same array, with the per-PID definition carrying its
+	 * own service byte. Reads `obd2_pids` as a fallback so layouts written
+	 * by earlier firmware still load (silent backwards-compat). */
 	uint8_t pid_list[OBD2_MAX_ENABLED];
 	uint8_t pid_count = 0;
-	const cJSON *pids_arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+	const cJSON *pids_arr = cJSON_GetObjectItemCaseSensitive(root, "polled_pids");
+	if (!cJSON_IsArray(pids_arr)) {
+		pids_arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+	}
 	if (cJSON_IsArray(pids_arr)) {
 		const cJSON *pi;
 		cJSON_ArrayForEach(pi, pids_arr) {
@@ -780,14 +782,14 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	/* Serialise registered signals */
 	_save_signals(root);
 
-	/* Preserve OBD2 enabled-PID list on internal saves (e.g. serial save,
-	 * data logger snapshots). The web editor save_raw path already carries
-	 * obd2_pids forward from the editor's JSON tree. */
+	/* Preserve polled-PID list on internal saves (e.g. serial save, data
+	 * logger snapshots). The web editor save_raw path already carries
+	 * polled_pids forward from the editor's JSON tree. */
 	{
 		uint8_t pids[OBD2_MAX_ENABLED];
 		uint8_t pc = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
 		if (pc > 0) {
-			cJSON *pa = cJSON_AddArrayToObject(root, "obd2_pids");
+			cJSON *pa = cJSON_AddArrayToObject(root, "polled_pids");
 			for (uint8_t i = 0; i < pc; i++) {
 				cJSON_AddItemToArray(pa, cJSON_CreateNumber(pids[i]));
 			}

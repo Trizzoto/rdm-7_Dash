@@ -49,7 +49,16 @@ typedef enum {
  * where raw = (bytes=1) A    or    (bytes=2) A*256 + B.
  *
  * `signal_name` is the registry key widgets bind to (matches the ECU
- * preset normalized names where applicable: RPM, COOLANT_TEMP, etc.). */
+ * preset normalized names where applicable: RPM, COOLANT_TEMP, etc.).
+ *
+ * `service` selects the OBD2 service byte for the request frame:
+ *   0x01 = Mode 01 (standard J1979 live data)
+ *   0x22 = Mode 22 (manufacturer-specific PIDs, future)
+ *   0    = treated as 0x01 (backwards-compat default for existing entries)
+ *
+ * `category` is a free-form UI grouping hint (e.g. "Engine", "Fuel",
+ * "Transmission"). Picker UI can group by it once Mode 22 packs land
+ * and the flat list becomes too long. NULL = "General" / ungrouped. */
 typedef struct {
     uint8_t      pid;
     const char  *signal_name;
@@ -61,7 +70,14 @@ typedef struct {
     obd2_tier_t  tier;
     bool         default_enabled; /* in the 30 starter set */
     bool         suggested_filler; /* shown in "Suggested" group for supplemental mode */
+    uint8_t      service;         /* 0 or 0x01 = Mode 01; 0x22 = Mode 22 */
+    const char  *category;        /* UI group, or NULL */
 } obd2_pid_def_t;
+
+/* Helper: resolve the effective service byte (translates 0 → 0x01). */
+static inline uint8_t obd2_def_service(const obd2_pid_def_t *def) {
+    return (def && def->service) ? def->service : 0x01;
+}
 
 /* Static PID table — see obd2_pids.c */
 extern const obd2_pid_def_t OBD2_PIDS[];

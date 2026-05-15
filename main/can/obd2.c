@@ -63,7 +63,7 @@ static uint64_t          s_scan_sent_ms  = 0;
 
 /* Forward decls */
 static void _poll_timer_cb(lv_timer_t *t);
-static void _send_pid_request(uint8_t pid);
+static void _send_pid_request(uint8_t service, uint8_t pid);
 static void _register_pid_signal(const obd2_pid_def_t *def);
 static void _scan_send_next(void);
 static void _scan_finalize(bool completed);
@@ -265,23 +265,30 @@ static void _poll_timer_cb(lv_timer_t *t)
     }
 
     if (target_pid != 0xFF) {
-        _send_pid_request(target_pid);
+        const obd2_pid_def_t *tdef = obd2_pid_find(target_pid);
+        _send_pid_request(obd2_def_service(tdef), target_pid);
         s_pending_pid     = target_pid;
         s_pending_sent_ms = now;
     }
 }
 
-static void _send_pid_request(uint8_t pid)
+static void _send_pid_request(uint8_t service, uint8_t pid)
 {
-    /* ISO 15765-4 single-frame Mode 01 request:
-     *   byte 0: length (2)
-     *   byte 1: 0x01 (Mode 01)
+    /* ISO 15765-4 single-frame request:
+     *   byte 0: length (2 for Mode 01, varies for other services)
+     *   byte 1: service (0x01 for Mode 01, 0x22 for Mode 22, ...)
      *   byte 2: PID
-     *   byte 3..7: padding (0x55 per spec is conventional, 0x00 works) */
-    uint8_t data[8] = { 0x02, 0x01, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
+     *   byte 3..7: padding (0x55 per spec is conventional, 0x00 works)
+     *
+     * Mode 22 has 16-bit PIDs and would use a different framing
+     * (length=3, two PID bytes). Wired here to track only 8-bit PIDs
+     * — Mode 22 support would extend this path. */
+    if (service == 0) service = 0x01;
+    uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
     esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGD(TAG, "TX failed for PID 0x%02X: %s", pid, esp_err_to_name(err));
+        ESP_LOGD(TAG, "TX failed for service 0x%02X PID 0x%02X: %s",
+                 service, pid, esp_err_to_name(err));
     }
 }
 
@@ -324,14 +331,19 @@ void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 
     /* ISO-TP single-frame layout for live PID responses:
      *   byte 0 = 0x0N (N = payload length, upper nibble must be 0)
-     *   byte 1 = 0x41 (Mode 01 + 0x40)
+     *   byte 1 = service + 0x40 (0x41 for Mode 01, 0x62 for Mode 22)
      *   byte 2 = PID echo
-     *   bytes 3.. = data */
+     *   bytes 3.. = data
+     *
+     * Accept positive responses for any service we currently poll. For
+     * Mode 22 (16-bit PIDs) the framing differs — out of scope for now. */
     uint8_t len_nibble = data[0] >> 4;
     uint8_t len_bytes  = data[0] & 0x0F;
     if (len_nibble != 0) return;          /* multi-frame — defer to v2 */
     if (len_bytes < 3 || len_bytes > 7) return;
-    if (data[1] != 0x41) return;          /* not a Mode 01 positive response */
+    uint8_t resp_service = data[1];
+    if ((resp_service & 0xC0) != 0x40) return;   /* not a positive response */
+    if (resp_service != 0x41) return;     /* only Mode 01 wired up for now */
     if (dlc < (uint8_t)(1 + len_bytes)) return;
 
     uint8_t pid = data[2];
@@ -399,7 +411,9 @@ bool obd2_discovery_in_progress(void)
 
 static void _scan_send_next(void)
 {
-    _send_pid_request(s_scan_next_pid);
+    /* Discovery always uses Mode 01 — the 0x00/0x20/.../0xC0 supported-PID
+     * bitmask query is part of the standard J1979 service. */
+    _send_pid_request(0x01, s_scan_next_pid);
     s_scan_sent_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
     s_scan_state   = SCAN_WAIT_RESPONSE;
 }

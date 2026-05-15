@@ -432,14 +432,19 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
 
     if (is_obd2) {
         /* OBD2 takes over as primary. Drop any prior native preset signals
-         * and seed obd2_pids[] with the default starter set. signals[] is
+         * and seed polled_pids[] with the default starter set. signals[] is
          * left empty — obd2_start() registers each enabled PID as an
-         * external signal when polling begins. */
+         * external signal when polling begins.
+         *
+         * Also drop legacy `obd2_pids` if a previous firmware version wrote
+         * one — only `polled_pids` is read going forward (with backwards-
+         * compat fallback in layout_manager). */
         cJSON_DeleteItemFromObject(root, "signals");
         cJSON_AddArrayToObject(root, "signals");
 
         cJSON_DeleteItemFromObject(root, "obd2_pids");
-        cJSON *pids_arr = cJSON_AddArrayToObject(root, "obd2_pids");
+        cJSON_DeleteItemFromObject(root, "polled_pids");
+        cJSON *pids_arr = cJSON_AddArrayToObject(root, "polled_pids");
         for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
             if (OBD2_PIDS[i].default_enabled) {
                 cJSON_AddItemToArray(pids_arr, cJSON_CreateNumber(OBD2_PIDS[i].pid));
@@ -454,13 +459,14 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
             if (s) cJSON_AddItemToArray(sigs, s);
         }
 
-        /* Switching FROM OBD2 to a native preset: drop any OBD2-supplemental
-         * PIDs whose signal name is now provided by the native preset. The UI
-         * picker prevents conflicts going forward, but legacy state from an
-         * earlier OBD2 session would still be in the layout. Simplest rule:
-         * just clear it. User can re-add supplemental gap-fillers via the
-         * OBD2 Signals modal later. */
-        cJSON_DeleteItemFromObject(root, "obd2_pids");
+        /* Switching FROM OBD2 to a native preset: drop any supplemental
+         * polled PIDs whose signal name is now provided by the native preset.
+         * The UI picker prevents conflicts going forward, but legacy state
+         * from an earlier OBD2 session would still be in the layout.
+         * Simplest rule: just clear it. User can re-add supplemental
+         * gap-fillers via the OBD2 Signals modal later. */
+        cJSON_DeleteItemFromObject(root, "obd2_pids");    /* legacy name */
+        cJSON_DeleteItemFromObject(root, "polled_pids");
     }
 
     /* Update ecu make/version fields. */
@@ -526,9 +532,12 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
     free(buf);
     if (!root) return ESP_FAIL;
 
+    /* Always emit canonical `polled_pids`, and clear the legacy
+     * `obd2_pids` key so the layout file doesn't carry both. */
     cJSON_DeleteItemFromObject(root, "obd2_pids");
+    cJSON_DeleteItemFromObject(root, "polled_pids");
     if (count > 0 && pids) {
-        cJSON *arr = cJSON_AddArrayToObject(root, "obd2_pids");
+        cJSON *arr = cJSON_AddArrayToObject(root, "polled_pids");
         for (uint8_t i = 0; i < count; i++) {
             cJSON_AddItemToArray(arr, cJSON_CreateNumber(pids[i]));
         }
@@ -537,7 +546,7 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
     err = layout_manager_save_raw(layout_name, root);
     cJSON_Delete(root);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Saved %u OBD2 PIDs to layout '%s'", count, layout_name);
+        ESP_LOGI(TAG, "Saved %u polled PIDs to layout '%s'", count, layout_name);
     }
     return err;
 }
@@ -562,7 +571,13 @@ esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
     free(buf);
     if (!root) return ESP_FAIL;
 
-    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+    /* Prefer `polled_pids`; fall back to legacy `obd2_pids` so layouts
+     * written by earlier firmware still read correctly. The save path
+     * canonicalises to `polled_pids`, so the legacy key fades naturally. */
+    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "polled_pids");
+    if (!cJSON_IsArray(arr)) {
+        arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
+    }
     if (cJSON_IsArray(arr)) {
         cJSON *item;
         cJSON_ArrayForEach(item, arr) {
