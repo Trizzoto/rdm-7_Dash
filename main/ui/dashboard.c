@@ -122,9 +122,13 @@ static void _register_widget_long_press(void) {
 							LV_EVENT_RELEASED, w);
 
 		/* Long-press in dashboard view → legacy per-widget config modal.
-		 * Gated on !edit_mode_is_armed() so it never collides with drag. */
-		lv_obj_add_event_cb(w->root, _widget_long_press_cb,
-							LV_EVENT_LONG_PRESSED, w);
+		 * Gated on !edit_mode_is_armed() so it never collides with drag.
+		 * Skip for button/toggle: they have momentary press/release TX
+		 * semantics, so a long hold must remain a hold — never pop a modal. */
+		if (w->type != WIDGET_BUTTON && w->type != WIDGET_TOGGLE) {
+			lv_obj_add_event_cb(w->root, _widget_long_press_cb,
+								LV_EVENT_LONG_PRESSED, w);
+		}
 	}
 }
 
