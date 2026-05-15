@@ -25,6 +25,9 @@
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_warning.h"
 #include "../settings/preset_picker.h"
+#include "can/obd2.h"
+#include "layout/ecu_presets.h"
+#include "layout/layout_manager.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -334,10 +337,78 @@ static void can_toggle_btn_cb(lv_event_t *e)
  * Preset applied callback (invoked by embedded preset picker)
  * ========================================================================= */
 
+/* OBD2 apply path: enable the picked PID in the layout's obd2_pids[]
+ * (so polling persists across reload), restart polling so the signal
+ * exists in the registry, then bind the widget to the OBD2 signal name.
+ * Does NOT overwrite the widget's existing signal bit-decode fields —
+ * OBD2 signals carry can_id=0 because values come from polling, not
+ * bit extraction. Returns true if handled (caller should not fall
+ * through to the standard CAN-preset path). */
+static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
+{
+    const obd2_pid_def_t *def = obd2_pid_find(item->obd2_pid);
+    if (!def || !def->signal_name) return false;
+
+    /* Read current enabled list from the active layout, add this PID
+     * if it's not already there, save, restart polling. */
+    char layout[LAYOUT_MAX_NAME];
+    layout_manager_get_active(layout, sizeof(layout));
+
+    uint8_t enabled[OBD2_MAX_ENABLED];
+    uint8_t count = 0;
+    ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &count);
+
+    bool already = false;
+    for (uint8_t i = 0; i < count; i++) {
+        if (enabled[i] == def->pid) { already = true; break; }
+    }
+    if (!already && count < OBD2_MAX_ENABLED) {
+        enabled[count++] = def->pid;
+        ecu_preset_save_obd2_pids(layout, enabled, count);
+    }
+    /* Always restart polling — picks up the new PID immediately and
+     * registers the OBD2 signal in the registry if it's new. */
+    obd2_start(enabled, count);
+
+    /* Bind the widget to the OBD2 signal by name. */
+    int16_t idx = signal_find_by_name(def->signal_name);
+    if (idx < 0) return false;   /* shouldn't happen — obd2_start just registered */
+
+    ctx->signal_index = idx;
+    int16_t *idx_ptr = widget_get_signal_index_ptr(ctx->widget);
+    if (idx_ptr) *idx_ptr = idx;
+
+    char *sig_buf = widget_get_signal_name_buf(ctx->widget);
+    if (sig_buf) {
+        strncpy(sig_buf, def->signal_name, 31);
+        sig_buf[31] = '\0';
+    }
+    char *lbl_buf = widget_get_label_buf(ctx->widget);
+    if (lbl_buf) {
+        size_t max = (ctx->widget->type == WIDGET_PANEL) ? 63 : 31;
+        strncpy(lbl_buf, item->label, max);
+        lbl_buf[max] = '\0';
+    }
+
+    /* Refresh DATA tab UI. CAN ID field shows "OBD2" instead of a hex ID
+     * to make it visually clear this isn't a bit-decode binding. */
+    if (ctx->label_ta) lv_textarea_set_text(ctx->label_ta, item->label);
+    if (ctx->signal_info_lbl) lv_label_set_text(ctx->signal_info_lbl, item->label);
+    if (ctx->can_id_ta) lv_textarea_set_text(ctx->can_id_ta, "OBD2");
+    return true;
+}
+
 static void preset_applied_cb(const preconfig_item_t *item, void *user_data)
 {
     modal_ctx_t *ctx = (modal_ctx_t *)user_data;
     if (!ctx || !item) return;
+
+    /* OBD2 channel? Different apply path — no bit-decode overwrite. */
+    if (item->obd2_pid != 0) {
+        if (_apply_obd2_preset(ctx, item)) return;
+        /* If OBD2 apply failed (rare), fall through to standard path
+         * which will at least set a meaningful CAN-style entry. */
+    }
 
     signal_t *sig = ensure_signal(ctx);
     if (!sig) return;

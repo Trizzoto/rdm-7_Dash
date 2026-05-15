@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "storage/config_store.h"
+#include "can/obd2.h"
 
 
 /* preconfig_item_t is defined in preset_picker.h */
@@ -393,6 +394,71 @@ const preconfig_item_t preconfig_items[] = {
 const int preconfig_items_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
 static const int preconfig_data_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
 
+/* ── OBD2 channels (synthesized from OBD2_PIDS at runtime) ──────────────────
+ * Built lazily on first picker open. Each entry mirrors an OBD2 PID with
+ * obd2_pid set so the apply path (in config_modal.c) knows to enable the
+ * PID and bind the widget by signal name, rather than overwriting CAN
+ * bit-decode params on the widget's existing signal. */
+
+#define OBD2_LABEL_BUF_LEN 28
+static preconfig_item_t s_obd2_items[64];          /* sized > OBD2_PIDS_COUNT */
+static char             s_obd2_labels[64][OBD2_LABEL_BUF_LEN];
+static int              s_obd2_count = 0;
+
+static void _ensure_obd2_items_built(void)
+{
+    if (s_obd2_count > 0) return;
+    int n = OBD2_PIDS_COUNT;
+    if (n > 64) n = 64;
+    for (int i = 0; i < n; i++) {
+        const obd2_pid_def_t *p = &OBD2_PIDS[i];
+        /* Display label = signal_name with underscores → spaces. e.g.
+         * "COOLANT_TEMP" -> "COOLANT TEMP". label_to_signal_name in
+         * config_modal converts it back losslessly. */
+        size_t j = 0;
+        for (size_t k = 0; p->signal_name[k] && j < OBD2_LABEL_BUF_LEN - 1; k++) {
+            s_obd2_labels[i][j++] = (p->signal_name[k] == '_') ? ' '
+                                                              : p->signal_name[k];
+        }
+        s_obd2_labels[i][j] = '\0';
+
+        s_obd2_items[i].ecu          = "OBD2";
+        s_obd2_items[i].version      = "Standard";
+        s_obd2_items[i].label        = s_obd2_labels[i];
+        s_obd2_items[i].can_id       = "0";
+        s_obd2_items[i].endianess    = 0;
+        s_obd2_items[i].bit_start    = 0;
+        s_obd2_items[i].bit_length   = 0;
+        s_obd2_items[i].scale        = p->scale;
+        s_obd2_items[i].value_offset = p->offset;
+        s_obd2_items[i].decimals     = (p->scale >= 1.0f) ? 0
+                                     : (p->scale >= 0.1f) ? 1 : 2;
+        s_obd2_items[i].is_signed    = false;
+        s_obd2_items[i].obd2_pid     = p->pid;
+    }
+    s_obd2_count = n;
+}
+
+/* Resolve a sel_sig index that can point at either preconfig_items[] or the
+ * synthesized OBD2 entries. Indices < (preconfig_data_count - 1) are CAN
+ * preset entries; indices >= it are offsets into s_obd2_items[]. -1 = none. */
+static const preconfig_item_t *_resolve_item(int idx)
+{
+    if (idx < 0) return NULL;
+    int base = preconfig_data_count - 1;   /* exclude trailing sentinel */
+    if (idx < base) return &preconfig_items[idx];
+    int oi = idx - base;
+    _ensure_obd2_items_built();
+    if (oi >= 0 && oi < s_obd2_count) return &s_obd2_items[oi];
+    return NULL;
+}
+
+/* Encode an OBD2 entry's local index into the unified index space. */
+static int _obd2_idx_to_unified(int oi)
+{
+    return (preconfig_data_count - 1) + oi;
+}
+
 /* =========================================================================
  * Full-screen 3-column preset browser
  *
@@ -494,7 +560,8 @@ static void ver_click_cb(lv_event_t *e)
 static void _apply_selection(picker_st_t *st)
 {
     if (!st->apply_cb || st->sel_sig < 0) return;
-    const preconfig_item_t *it = &preconfig_items[st->sel_sig];
+    const preconfig_item_t *it = _resolve_item(st->sel_sig);
+    if (!it) return;
     st->apply_cb(it, st->apply_cb_ctx);
     if (st->preview_lbl) {
         char buf[96];
@@ -530,13 +597,26 @@ static void update_picker_preview(picker_st_t *st, int idx)
         lv_label_set_text(st->preview_lbl, "Select a brand, protocol, then channel");
         if (st->apply_btn) lv_obj_add_state(st->apply_btn, LV_STATE_DISABLED);
     } else {
-        const preconfig_item_t *it = &preconfig_items[idx];
+        const preconfig_item_t *it = _resolve_item(idx);
+        if (!it) {
+            lv_label_set_text(st->preview_lbl, "");
+            if (st->apply_btn) lv_obj_add_state(st->apply_btn, LV_STATE_DISABLED);
+            return;
+        }
         char buf[128];
-        snprintf(buf, sizeof(buf), "%s | CAN 0x%s | %s | Bit %d  Len %d | x%.4g",
-            it->label, it->can_id,
-            it->endianess ? "LE" : "BE",
-            it->bit_start, it->bit_length,
-            (double)it->scale);
+        if (it->obd2_pid != 0) {
+            snprintf(buf, sizeof(buf), "%s | OBD2 PID 0x%02X | polled @ ~%s Hz",
+                it->label, it->obd2_pid,
+                /* Lookup tier so we can hint at refresh rate. */
+                (obd2_pid_find(it->obd2_pid) &&
+                 obd2_pid_find(it->obd2_pid)->tier == OBD2_TIER_FAST) ? "10" : "1");
+        } else {
+            snprintf(buf, sizeof(buf), "%s | CAN 0x%s | %s | Bit %d  Len %d | x%.4g",
+                it->label, it->can_id,
+                it->endianess ? "LE" : "BE",
+                it->bit_start, it->bit_length,
+                (double)it->scale);
+        }
         lv_label_set_text(st->preview_lbl, buf);
         if (st->apply_btn) lv_obj_clear_state(st->apply_btn, LV_STATE_DISABLED);
     }
@@ -699,6 +779,13 @@ static void populate_ver_col(picker_st_t *st)
             if (strcmp(vers[j], preconfig_items[i].version) == 0) { dup = true; break; }
         if (!dup && nv < 16) vers[nv++] = preconfig_items[i].version;
     }
+    /* OBD2 brand → single "Standard" version. */
+    if (strcmp(st->sel_brand, "OBD2") == 0 && nv < 16) {
+        bool dup = false;
+        for (int j = 0; j < nv; j++)
+            if (strcmp(vers[j], "Standard") == 0) { dup = true; break; }
+        if (!dup) vers[nv++] = "Standard";
+    }
     /* Sort protocols alphabetically */
     for (int i = 0; i < nv - 1; i++)
         for (int j = i + 1; j < nv; j++)
@@ -721,23 +808,37 @@ static void populate_sig_col(picker_st_t *st)
     st->sel_sig = -1;
     update_picker_preview(st, -1);
 
-    /* Collect matching indices */
+    /* Collect matching unified indices (preconfig_items[] indices, or
+     * encoded indices into the OBD2 synthetic table via
+     * _obd2_idx_to_unified). _resolve_item dereferences either kind. */
     int idxs[256]; int nc = 0;
     for (int i = 0; i < preconfig_data_count - 1 && preconfig_items[i].ecu; i++) {
         if (strcmp(preconfig_items[i].ecu,     st->sel_brand) != 0) continue;
         if (strcmp(preconfig_items[i].version, st->sel_ver)   != 0) continue;
         if (nc < 256) idxs[nc++] = i;
     }
-    /* Sort channels alphabetically by label */
+    /* OBD2 synthetic entries — only relevant when the selected brand is OBD2. */
+    if (strcmp(st->sel_brand, "OBD2") == 0 &&
+        strcmp(st->sel_ver,   "Standard") == 0) {
+        _ensure_obd2_items_built();
+        for (int oi = 0; oi < s_obd2_count && nc < 256; oi++) {
+            idxs[nc++] = _obd2_idx_to_unified(oi);
+        }
+    }
+    /* Sort channels alphabetically by label (via _resolve_item). */
     for (int i = 0; i < nc - 1; i++)
-        for (int j = i + 1; j < nc; j++)
-            if (strcmp(preconfig_items[idxs[i]].label,
-                       preconfig_items[idxs[j]].label) > 0) {
+        for (int j = i + 1; j < nc; j++) {
+            const preconfig_item_t *a = _resolve_item(idxs[i]);
+            const preconfig_item_t *b = _resolve_item(idxs[j]);
+            if (a && b && strcmp(a->label, b->label) > 0) {
                 int tmp = idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp;
             }
+        }
     /* Create rows in sorted order */
     for (int k = 0; k < nc; k++) {
-        lv_obj_t *row = make_col_row(st->sig_list, preconfig_items[idxs[k]].label);
+        const preconfig_item_t *it = _resolve_item(idxs[k]);
+        if (!it) continue;
+        lv_obj_t *row = make_col_row(st->sig_list, it->label);
         col_sig_ctx_t *ctx = lv_mem_alloc(sizeof(col_sig_ctx_t));
         ctx->st = st; ctx->idx = idxs[k];
         lv_obj_add_event_cb(row, sig_click_cb,   LV_EVENT_CLICKED, ctx);
@@ -755,6 +856,14 @@ static void _populate_brands(lv_obj_t *brand_list, picker_st_t *st)
         for (int j = 0; j < nb; j++)
             if (strcmp(brands[j], preconfig_items[i].ecu) == 0) { dup = true; break; }
         if (!dup && nb < 16) brands[nb++] = preconfig_items[i].ecu;
+    }
+    /* Append OBD2 — synthetic brand from the runtime PID table. */
+    _ensure_obd2_items_built();
+    if (s_obd2_count > 0 && nb < 16) {
+        bool dup = false;
+        for (int j = 0; j < nb; j++)
+            if (strcmp(brands[j], "OBD2") == 0) { dup = true; break; }
+        if (!dup) brands[nb++] = "OBD2";
     }
     for (int i = 0; i < nb - 1; i++)
         for (int j = i + 1; j < nb; j++)

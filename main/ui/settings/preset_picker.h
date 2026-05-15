@@ -18,6 +18,11 @@ typedef struct {
     float value_offset;
     uint8_t decimals;
     bool is_signed;
+    /* Non-zero = this is an OBD2 PID rather than a CAN broadcast channel.
+     * The apply path enables the PID in the layout's obd2_pids[] and binds
+     * the widget to the OBD2 signal name — the bit/scale/offset fields are
+     * ignored because OBD2 decodes via polling, not bit extraction. */
+    uint8_t obd2_pid;
 } preconfig_item_t;
 
 /* NULL-terminated array of preset CAN signal definitions */
