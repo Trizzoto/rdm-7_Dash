@@ -46,6 +46,14 @@ static const char *TAG = "obd2";
  * half on cars with several enabled signals. */
 #define OBD2_MAX_BATCH_PIDS          6
 
+/* Minimum gap between successive TX. The premium ELM327 STN-chipset
+ * adapters call this their "adaptive timing minimum"; it prevents
+ * spamming the ECU faster than its receive ISR can keep up.
+ * 5 ms = max 200 req/sec which is way past any ECU's response rate.
+ * Real-world bus rate is capped by the ECU's response speed, not
+ * our TX schedule. */
+#define OBD2_MIN_INTER_TX_MS         5
+
 /* Target poll periods per tier (ms between requests for that PID). */
 #define OBD2_PERIOD_FAST_MS          100      /* ~10 Hz */
 #define OBD2_PERIOD_SLOW_MS         1000      /* ~1 Hz */
@@ -84,6 +92,11 @@ static uint8_t           s_poll_count = 0;
 static lv_timer_t       *s_poll_timer = NULL;
 static bool              s_running    = false;
 
+/* Last TX timestamp across the whole module — used by _try_dispatch to
+ * enforce the OBD2_MIN_INTER_TX_MS floor. Reset on obd2_start so a fresh
+ * polling session immediately fires its first request. */
+static uint64_t s_last_tx_ms_global = 0;
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -120,6 +133,7 @@ static void              *s_scan_user          = NULL;
 
 /* Forward decls */
 static void _poll_timer_cb(lv_timer_t *t);
+static void _try_dispatch(uint64_t now);
 static void _send_pid_request(uint8_t service, uint8_t pid);
 static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_t n);
 static void _register_pid_signal(const obd2_pid_def_t *def);
@@ -217,6 +231,7 @@ void obd2_start(const uint8_t *enabled_pids, uint8_t count)
         return;
     }
 
+    s_last_tx_ms_global = 0;     /* fire first request immediately */
     s_poll_timer = lv_timer_create(_poll_timer_cb, OBD2_TICK_MS, NULL);
     s_running = true;
     ESP_LOGI(TAG, "Started polling %u PIDs (pipelined, adaptive)", s_poll_count);
@@ -305,37 +320,31 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
     }
 }
 
-/* ── Polling timer — starvation-based scheduler ───────────────────────── */
+/* ── Scheduler ─────────────────────────────────────────────────────────
+ *
+ * The poll timer is a watchdog/safety net at 30 ms — but the real
+ * dispatch driver is _try_dispatch, which is called from both:
+ *   - the poll timer (so polling kicks off even if no responses arrive)
+ *   - the RX handler after each response (so the next request fires
+ *     immediately, not after waiting for the next 30 ms tick)
+ *
+ * This response-triggered behaviour mirrors the "pending response" mode
+ * of premium ELM327 / STN-chipset adapters: the bus stays saturated up
+ * to the ECU's natural response rate instead of being throttled by our
+ * timer. Typical effect: 30-50 Hz round-trips instead of 33 Hz capped.
+ *
+ * Hard floor: OBD2_MIN_INTER_TX_MS gap between TX so we can never spam
+ * an ECU faster than ~200 req/sec even if responses are arriving in
+ * back-to-back IRQs. */
 
-static void _poll_timer_cb(lv_timer_t *t)
+/* Pick the best PID to send right now and TX (single or batched).
+ * No-op if scan in progress, ISO-TP still reassembling, nothing due,
+ * or we're within the min-inter-TX window. */
+static void _try_dispatch(uint64_t now)
 {
-    (void)t;
-    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
-
-    /* ISO-TP RX timeout — if we sent a flow control then never got the
-     * expected CFs, abandon and let the next poll re-request. Prevents
-     * a stuck stream from gating future ECU responses. */
-    if (s_isotp.state == ISOTP_RECEIVING &&
-        (now - s_isotp.last_frame_ms) > OBD2_ISOTP_TIMEOUT_MS) {
-        ESP_LOGD(TAG, "ISO-TP RX timeout from 0x%03lX (%u/%u bytes)",
-                 (unsigned long)s_isotp.source_id,
-                 (unsigned)s_isotp.received, (unsigned)s_isotp.total_bytes);
-        s_isotp.state = ISOTP_IDLE;
-    }
-
-    /* Discovery scan owns the bus until its window closes. */
-    if (s_scan_state == SCAN_WINDOW_OPEN) {
-        if ((now - s_scan_window_start) >= OBD2_SCAN_WINDOW_MS) {
-            if (s_scan_advance) {
-                s_scan_advance = false;
-                _scan_send(s_scan_next_query);
-            } else {
-                _scan_finalize(s_scan_got_any);
-            }
-        }
-        return;
-    }
-
+    if (s_scan_state != SCAN_IDLE) return;
+    if (s_isotp.state == ISOTP_RECEIVING) return;
+    if ((now - s_last_tx_ms_global) < OBD2_MIN_INTER_TX_MS) return;
     if (s_poll_count == 0) return;
 
     _refresh_periods(now);
@@ -365,6 +374,7 @@ static void _poll_timer_cb(lv_timer_t *t)
     if (top->service != 0x01) {
         _send_pid_request(top->service, top->pid);
         top->last_tx_ms = now;
+        s_last_tx_ms_global = now;
         return;
     }
 
@@ -397,6 +407,43 @@ static void _poll_timer_cb(lv_timer_t *t)
     } else {
         _send_multi_pid_request(0x01, batch, batch_n);
     }
+    s_last_tx_ms_global = now;
+}
+
+/* Periodic safety-net tick. Drives ISO-TP timeout, scan window advance,
+ * and a baseline call to _try_dispatch so polling restarts even after
+ * silent ECUs. _try_dispatch also fires from obd2_rx_handler on every
+ * response so the bus stays saturated between ticks. */
+static void _poll_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+
+    /* ISO-TP RX timeout — if we sent a flow control then never got the
+     * expected CFs, abandon and let the next poll re-request. Prevents
+     * a stuck stream from gating future ECU responses. */
+    if (s_isotp.state == ISOTP_RECEIVING &&
+        (now - s_isotp.last_frame_ms) > OBD2_ISOTP_TIMEOUT_MS) {
+        ESP_LOGD(TAG, "ISO-TP RX timeout from 0x%03lX (%u/%u bytes)",
+                 (unsigned long)s_isotp.source_id,
+                 (unsigned)s_isotp.received, (unsigned)s_isotp.total_bytes);
+        s_isotp.state = ISOTP_IDLE;
+    }
+
+    /* Discovery scan owns the bus until its window closes. */
+    if (s_scan_state == SCAN_WINDOW_OPEN) {
+        if ((now - s_scan_window_start) >= OBD2_SCAN_WINDOW_MS) {
+            if (s_scan_advance) {
+                s_scan_advance = false;
+                _scan_send(s_scan_next_query);
+            } else {
+                _scan_finalize(s_scan_got_any);
+            }
+        }
+        return;
+    }
+
+    _try_dispatch(now);
 }
 
 static void _send_pid_request(uint8_t service, uint8_t pid)
@@ -718,6 +765,9 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             p   += consumed;
             rem -= consumed;
         }
+        /* Response done — kick off next request immediately. See note
+         * at end of function for the response-triggered dispatch path. */
+        _try_dispatch(now);
         return;
     }
 
@@ -740,6 +790,12 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             break;
         }
     }
+
+    /* Response done — kick off next request immediately if anything else
+     * is due. This is the response-triggered dispatch path that lets us
+     * saturate the bus at the ECU's natural response rate instead of
+     * waiting for the 30 ms timer tick (~3x throughput on busy buses). */
+    _try_dispatch(now);
 }
 
 /* ── Discovery scan ────────────────────────────────────────────────────── */
