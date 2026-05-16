@@ -146,6 +146,21 @@ void obd2_start(const uint8_t *enabled_pids, uint8_t count)
                      enabled_pids[i]);
             continue;
         }
+        /* Conflict guard: if a signal with this name already exists and
+         * is bound to a real CAN broadcast (can_id != 0), the native
+         * preset owns it — don't poll OBD2 too, or the response would
+         * overwrite the broadcast value via signal_set_external_value.
+         * Picker UI prevents the user from selecting these but the
+         * modal's preview-poll-all path could pass them through. */
+        int16_t existing = signal_find_by_name(def->signal_name);
+        if (existing >= 0) {
+            signal_t *sig = signal_get_by_index((uint16_t)existing);
+            if (sig && sig->can_id != 0) {
+                ESP_LOGD(TAG, "Skip OBD2 PID 0x%02X — '%s' owned by preset",
+                         def->pid, def->signal_name);
+                continue;
+            }
+        }
         obd2_poll_state_t *ns = &s_poll[s_poll_count++];
         memset(ns, 0, sizeof(*ns));
         ns->pid              = enabled_pids[i];

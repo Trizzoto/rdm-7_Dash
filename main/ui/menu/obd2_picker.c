@@ -66,6 +66,16 @@ static lv_timer_t *s_live_timer = NULL;
 static pid_row_t  s_rows[64];
 static int        s_row_count = 0;
 
+/* Snapshot of the enabled PID list at modal open. Used to:
+ *  - restore polling on Cancel/Close-without-Save (so preview-poll-all
+ *    doesn't leave stale wide polling running)
+ *  - decide which rows start checked
+ * `s_saved` is flipped true by _save_cb so the close handler knows
+ * not to restore — Save already pushed the new set. */
+static uint8_t s_snapshot[OBD2_MAX_ENABLED];
+static uint8_t s_snapshot_count = 0;
+static bool    s_saved = false;
+
 /* Forward decls */
 static void  _close_cb(lv_event_t *e);
 static void  _save_cb(lv_event_t *e);
@@ -88,6 +98,11 @@ void obd2_picker_close(void)
         lv_timer_del(s_live_timer);
         s_live_timer = NULL;
     }
+    /* If the user dismissed without Save, revert OBD2 polling to the
+     * pre-modal set — preview-poll-all should not persist past close. */
+    if (!s_saved) {
+        obd2_start(s_snapshot, s_snapshot_count);
+    }
     lv_obj_del(s_overlay);
     s_overlay = NULL;
     s_card    = NULL;
@@ -96,11 +111,35 @@ void obd2_picker_close(void)
     s_scan_btn = NULL;
     memset(s_rows, 0, sizeof(s_rows));
     s_row_count = 0;
+    s_saved = false;
 }
 
 void obd2_picker_open(void)
 {
     if (s_overlay) return;
+
+    /* Snapshot the currently-enabled set BEFORE we start preview polling,
+     * so a Cancel/Close-without-Save can restore it. */
+    s_snapshot_count = obd2_get_enabled(s_snapshot, OBD2_MAX_ENABLED);
+    s_saved = false;
+
+    /* Preview polling: kick off polling on every PID in the decode table.
+     * Users see live values for the whole list and can tell at a glance
+     * which PIDs the car responds to — vs. having to enable a row, save,
+     * and watch the dashboard. obd2_start() filters PIDs whose signal is
+     * already provided by the active native preset (conflict guard), so
+     * supplemental-mode users don't accidentally double-bind RPM etc.
+     * The adaptive scheduler drops unresponsive PIDs to a 5 sec probe
+     * rate within ~3 sec so bus load stays reasonable even with 46 PIDs
+     * enabled. */
+    {
+        uint8_t preview[OBD2_MAX_ENABLED];
+        uint8_t pn = 0;
+        for (int i = 0; i < OBD2_PIDS_COUNT && pn < OBD2_MAX_ENABLED; i++) {
+            preview[pn++] = OBD2_PIDS[i].pid;
+        }
+        obd2_start(preview, pn);
+    }
 
     /* Full-screen dimmer overlay. Doesn't dismiss on outside-tap — users
      * use the Close button (avoids LVGL event-bubbling gymnastics, and
@@ -508,8 +547,12 @@ static void _save_cb(lv_event_t *e)
      * enabled PIDs that the user just disabled stay registered in the
      * signal registry (they'll go stale after 2s with no responses) —
      * full cleanup happens on the next layout reload, which is fine for
-     * v1. Keeps the user on Device Settings without a jarring screen jump. */
+     * v1. Keeps the user on Device Settings without a jarring screen jump.
+     *
+     * s_saved = true tells obd2_picker_close not to revert to the
+     * snapshot — the saved set IS the new truth. */
     obd2_start(pids, count);
+    s_saved = true;
 
     obd2_picker_close();
 }
