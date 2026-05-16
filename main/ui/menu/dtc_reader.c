@@ -28,6 +28,7 @@
 
 #include "obd2.h"
 #include "obd2_dtc_db.h"
+#include "dtc_monitor.h"
 #include "theme.h"
 
 #include <stdarg.h>
@@ -430,6 +431,12 @@ static void _on_clear_response(bool ok, void *user) {
     if (!s_overlay) return;
     if (ok) {
         _set_status("Codes cleared. Re-reading...");
+        /* Kick the background DTC monitor so any warning widgets bound
+         * to DTC_COUNT drop to 0 right away (vs waiting up to 30 s for
+         * the next scheduled poll). The Mode 04 clear path can't reuse
+         * this same response — it explicitly only acks the clear. */
+        dtc_monitor_refresh_now();
+
         /* Re-fetch to confirm — many ECUs report ok then keep the codes
          * if conditions weren't right (e.g. engine running). */
         for (int i = 0; i < TAB_COUNT; i++) {

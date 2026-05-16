@@ -19,6 +19,7 @@
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "can/can_manager.h"
+#include "can/dtc_monitor.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -187,6 +188,12 @@ void dashboard_init(lv_obj_t *parent) {
 	font_manager_init();
 	signal_registry_init();
 	signal_peaks_start_autosave();
+	/* DTC monitor exposes DTC_COUNT as a synthetic signal so warning
+	 * widgets can bind it directly. Re-asserted on every dashboard_init
+	 * because signal_registry_reset() (called inside layout_manager_load)
+	 * wipes the signal table; the dtc_monitor_start path re-registers
+	 * DTC_COUNT and re-primes it with the cached count. */
+	dtc_monitor_start();
 	widget_registry_reset();
 	widget_warning_reset();
 	widget_indicator_reset();
