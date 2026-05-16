@@ -98,6 +98,18 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     { 0x4D, "MIL_ON_TIME",            "Time with MIL On",        "min",   2, 1.0f,        0.0f,    SLOW, false, false },
     { 0x4E, "RUN_TIME_SINCE_CLEAR",   "Run Time Since DTCs Cleared","min", 2, 1.0f,      0.0f,    SLOW, false, false },
 
+    /* ── Vehicle metadata / single-byte enums (info-only, low rate) ──
+     *
+     * Decode as raw bytes; widget rules can map values to text labels if
+     * the user wants a friendly display. PID 0x01 byte A packs MIL flag
+     * (bit 7) + DTC count (bits 0-6) — exposed as a single raw byte so
+     * users can build rules like "value >= 128 → MIL on" or "value & 127
+     * → DTC count". Splitting in firmware would require bit-mask support
+     * in the decoder, which we don't have. */
+    { 0x01, "MIL_DTC_STATUS",         "MIL + DTC Count (raw)",   "",      1, 1.0f,        0.0f,    SLOW, false, false },
+    { 0x1C, "OBD_STANDARD",           "OBD Standard (enum)",     "",      1, 1.0f,        0.0f,    SLOW, false, false },
+    { 0x51, "FUEL_TYPE",              "Fuel Type (enum)",        "",      1, 1.0f,        0.0f,    SLOW, false, false },
+
     /* ── Diesel-specific (SAE J1979-DA) ────────────────────────────────
      *
      * Confirmed on a 2024 Toyota HiAce diesel (Mode 01 PIDs 0x77, 0x78,

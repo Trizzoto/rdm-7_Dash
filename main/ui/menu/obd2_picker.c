@@ -670,12 +670,25 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
      * and the picker tracks the answer with no manual fiddling. */
     int decoder_signal_count = 0;     /* # of signals (rows) auto-enabled */
     int unknown = 0;                  /* # of PIDs with no decoder available */
+    int meta_count = 0;               /* # of 0x20/0x40/... bitmask PIDs (skipped) */
 
     /* Reset the unknown capture buffer — fresh scan, fresh list. */
     s_unknown_count = 0;
 
     for (uint8_t i = 0; i < r->count; i++) {
         uint8_t pid = r->pids[i];
+
+        /* "Supported PIDs in range" bitmasks at 0x20/0x40/0x60/0x80/etc.
+         * are metadata — the scan ITSELF walks them to discover the next
+         * 32-PID block. They aren't decodable signals, so don't count
+         * them as "unknown" and don't offer them in the Dump list (it'd
+         * just dump the bitmask the user already saw via Scan). */
+        if (pid == 0x20 || pid == 0x40 || pid == 0x60 || pid == 0x80 ||
+            pid == 0xA0 || pid == 0xC0 || pid == 0xE0) {
+            meta_count++;
+            continue;
+        }
+
         /* Scan only probes Mode 01 supported-PID bitmasks; match
          * accordingly so Toyota Mode 21 PID 0x80 doesn't accidentally
          * light up just because Mode 01's bitmask query 0x80 was sent. */
@@ -712,15 +725,21 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
         }
     }
 
+    /* "Supported" total excludes the discovery bitmask PIDs themselves
+     * (0x20/0x40/etc.) — they're scaffolding the scan walks, not
+     * decodable signals the user can put on a widget. */
+    int real_supported = (int)r->count - meta_count;
+    if (real_supported < 0) real_supported = 0;
+
     char status[96];
     if (unknown > 0) {
         snprintf(status, sizeof(status),
-                 "Scan: %u sup, %d on, %d unknown",
-                 r->count - unknown, decoder_signal_count, unknown);
+                 "Scan: %d sup, %d on, %d unknown",
+                 real_supported, decoder_signal_count, unknown);
     } else {
         snprintf(status, sizeof(status),
-                 "Scan: %u sup, %d on",
-                 r->count, decoder_signal_count);
+                 "Scan: %d sup, %d on",
+                 real_supported, decoder_signal_count);
     }
     _set_status(status);
 
