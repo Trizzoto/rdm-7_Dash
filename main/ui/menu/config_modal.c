@@ -347,10 +347,21 @@ static void can_toggle_btn_cb(lv_event_t *e)
 static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
 {
     const obd2_pid_def_t *def = obd2_pid_find(item->obd2_pid);
-    if (!def || !def->signal_name) return false;
+    if (!def) return false;
 
-    /* Read current enabled list from the active layout, add this PID
-     * if it's not already there, save, restart polling. */
+    /* Derive the bind name from the picker label rather than def->signal_name.
+     * Works for both cases:
+     *  - Single-value PID: label = signal_name with underscores → spaces,
+     *    label_to_signal_name reverses it back to the same name.
+     *  - Packed PID (def->signal_name is NULL, e.g. Toyota engine block):
+     *    label is the SUB-FIELD signal name with spaces, derives back to
+     *    e.g. "TY_RPM". This is how the long-press picker exposes
+     *    individual sub-fields without needing per-row metadata. */
+    char bind_name[32];
+    label_to_signal_name(item->label, bind_name, sizeof(bind_name));
+    if (!bind_name[0]) return false;
+
+    /* Enable polling for the parent PID in the layout's polled list. */
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
 
@@ -367,11 +378,14 @@ static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
         ecu_preset_save_obd2_pids(layout, enabled, count);
     }
     /* Always restart polling — picks up the new PID immediately and
-     * registers the OBD2 signal in the registry if it's new. */
+     * registers the OBD2 signal(s) in the registry if they're new.
+     * For packed PIDs this registers every sub-field, so even though
+     * the user only picked one (e.g. TY_RPM), the rest (TY_THROTTLE,
+     * TY_COOLANT_TEMP, …) become available for future widget bindings. */
     obd2_start(enabled, count);
 
-    /* Bind the widget to the OBD2 signal by name. */
-    int16_t idx = signal_find_by_name(def->signal_name);
+    /* Bind the widget to the derived signal by name. */
+    int16_t idx = signal_find_by_name(bind_name);
     if (idx < 0) return false;   /* shouldn't happen — obd2_start just registered */
 
     ctx->signal_index = idx;
@@ -380,7 +394,7 @@ static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
 
     char *sig_buf = widget_get_signal_name_buf(ctx->widget);
     if (sig_buf) {
-        strncpy(sig_buf, def->signal_name, 31);
+        strncpy(sig_buf, bind_name, 31);
         sig_buf[31] = '\0';
     }
     char *lbl_buf = widget_get_label_buf(ctx->widget);
