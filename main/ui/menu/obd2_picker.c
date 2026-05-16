@@ -2,11 +2,17 @@
  * obd2_picker.c — OBD2 Signals modal (see obd2_picker.h).
  *
  * Builds a 640x360 overlay on lv_layer_top() with a scrollable list of
- * decodable OBD2 PIDs. The user toggles checkboxes to enable/disable
- * polling; each row shows the live signal value so the user can see at
- * a glance which PIDs are actually producing data. "Scan Vehicle"
- * probes the car for supported PIDs and badges the rows the ECU
- * responded to.
+ * OBD2 SIGNALS — one row per signal (not per PID). Single-value PIDs
+ * produce one row each; packed PIDs (e.g. Toyota Mode 21 PID 0x80)
+ * produce N rows, one per sub-field, all sharing one polled request.
+ * Sub-field checkboxes are linked: ticking any one ticks all of them
+ * because they ride a single PID poll.
+ *
+ * Each row shows the live signal value, a (M01·0x05)-style mode/PID
+ * tag for protocol visibility, and a "supported" badge after a
+ * vehicle scan. Scan also auto-checks every supported signal — the
+ * dynamic-preset behaviour. The user un-checks anything they don't
+ * want, then hits Save.
  *
  * On Save, the new list is written to the active layout's `obd2_pids`
  * array and obd2_start() is called to restart polling.
@@ -45,26 +51,37 @@ static const char *TAG = "obd2_picker";
 
 /* ── State ─────────────────────────────────────────────────────────────── */
 
+/* One row = one signal. Single-value PIDs (Mode 01) produce one row each;
+ * packed PIDs (Mode 21 Toyota engine block) produce N rows — one per
+ * sub-field — that all share `parent_pid` and check/uncheck together
+ * because they ride one polled request. */
 typedef struct {
-    uint8_t   pid;
-    bool      checked;
-    bool      provided_by_preset;   /* greyed out, uncheckable */
-    bool      discovered;           /* showed up in last scan */
-    int16_t   signal_idx;           /* cached signal index or -1 */
-    lv_obj_t *cb;                   /* checkbox object */
-    lv_obj_t *row;                  /* row container */
-    lv_obj_t *value_lbl;            /* live current-value readout */
-    lv_obj_t *badge;                /* small label for status */
-} pid_row_t;
+    uint8_t     parent_pid;          /* the PID that produces this signal */
+    uint8_t     parent_service;      /* 0x01 = Mode 01, 0x21 = Mode 21 */
+    const char *signal_name;         /* registry name (never NULL — packed
+                                        sub-fields have their own names) */
+    const char *display_label;       /* short human label */
+    const char *unit;
+    bool        checked;             /* mirrors parent_pid's enabled state */
+    bool        provided_by_preset;  /* greyed out, uncheckable */
+    bool        supported;           /* parent_pid responded to last scan */
+    int16_t     signal_idx;          /* cached registry index or -1 */
+    lv_obj_t   *cb;
+    lv_obj_t   *row;
+    lv_obj_t   *value_lbl;
+    lv_obj_t   *badge;
+} signal_row_t;
 
-static lv_obj_t  *s_overlay = NULL;
-static lv_obj_t  *s_card    = NULL;
-static lv_obj_t  *s_list    = NULL;
-static lv_obj_t  *s_status  = NULL;     /* scan status label */
-static lv_obj_t  *s_scan_btn = NULL;
-static lv_timer_t *s_live_timer = NULL;
-static pid_row_t  s_rows[64];
-static int        s_row_count = 0;
+#define PICKER_MAX_ROWS 80   /* 46 Mode 01 + 7 Toyota sub-fields + headroom */
+
+static lv_obj_t      *s_overlay    = NULL;
+static lv_obj_t      *s_card       = NULL;
+static lv_obj_t      *s_list       = NULL;
+static lv_obj_t      *s_status     = NULL;     /* scan status label */
+static lv_obj_t      *s_scan_btn   = NULL;
+static lv_timer_t    *s_live_timer = NULL;
+static signal_row_t   s_rows[PICKER_MAX_ROWS];
+static int            s_row_count  = 0;
 
 /* Snapshot of the enabled PID list at modal open. Used to:
  *  - restore polling on Cancel/Close-without-Save (so preview-poll-all
@@ -285,6 +302,85 @@ static bool _signal_provided_by_preset(const char *signal_name)
     return sig && sig->can_id != 0;
 }
 
+/* Build one row for a given (parent_pid, signal_name, display_label). The
+ * caller passes the parent PID (so checkbox state can link across packed
+ * sub-fields), the signal name in the registry, and the display label. */
+static void _add_row(const obd2_pid_def_t *def,
+                     const char *signal_name,
+                     const char *display_label,
+                     const char *unit,
+                     bool checked)
+{
+    if (s_row_count >= PICKER_MAX_ROWS) return;
+    signal_row_t *r = &s_rows[s_row_count++];
+
+    r->parent_pid         = def->pid;
+    r->parent_service     = def->service ? def->service : 0x01;
+    r->signal_name        = signal_name;
+    r->display_label      = display_label;
+    r->unit               = unit ? unit : "";
+    r->provided_by_preset = _signal_provided_by_preset(signal_name);
+    r->checked            = checked && !r->provided_by_preset;
+    r->supported          = false;
+    r->signal_idx         = signal_find_by_name(signal_name);
+
+    r->row = lv_obj_create(s_list);
+    lv_obj_set_size(r->row, lv_pct(100), ROW_H);
+    lv_obj_set_style_bg_opa(r->row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(r->row, 0, 0);
+    lv_obj_set_style_pad_all(r->row, 0, 0);
+    lv_obj_set_style_pad_left(r->row, 6, 0);
+    lv_obj_set_style_pad_right(r->row, 6, 0);
+    lv_obj_clear_flag(r->row, LV_OBJ_FLAG_SCROLLABLE);
+
+    r->cb = lv_checkbox_create(r->row);
+    lv_obj_align(r->cb, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(r->cb, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_bg_color(r->cb, THEME_COLOR_INPUT_BG, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(r->cb, THEME_COLOR_ACCENT_BLUE,
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(r->cb, THEME_COLOR_BORDER_MED,
+                                  LV_PART_INDICATOR);
+    lv_obj_set_style_border_width(r->cb, 1, LV_PART_INDICATOR);
+
+    /* Label = signal name + mode/PID tag, e.g. "RPM  (M01·0x0C)" or
+     * "TY_RPM  (M21·0x80)" so the user can see at a glance which
+     * protocol and PID each signal comes from. */
+    char label[80];
+    snprintf(label, sizeof(label), "%s  (M%02X·0x%02X)",
+             display_label, r->parent_service, r->parent_pid);
+    lv_checkbox_set_text(r->cb, label);
+
+    if (r->checked) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
+
+    if (r->provided_by_preset) {
+        lv_obj_add_state(r->cb, LV_STATE_DISABLED);
+        lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_DISABLED, 0);
+    } else {
+        lv_obj_add_event_cb(r->cb, _checkbox_cb, LV_EVENT_VALUE_CHANGED, r);
+    }
+
+    /* Live value column. */
+    r->value_lbl = lv_label_create(r->row);
+    lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -72, 0);
+    lv_obj_set_style_text_font(r->value_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(r->value_lbl, THEME_COLOR_TEXT_HINT, 0);
+    lv_label_set_text(r->value_lbl, "—");
+
+    /* Status badge. */
+    r->badge = lv_label_create(r->row);
+    lv_obj_align(r->badge, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_text_font(r->badge, THEME_FONT_TINY, 0);
+    if (r->provided_by_preset) {
+        lv_label_set_text(r->badge, "in preset");
+        lv_obj_set_style_text_color(r->badge, THEME_COLOR_TEXT_HINT, 0);
+    } else {
+        lv_label_set_text(r->badge, "");
+    }
+}
+
 static void _build_rows(void)
 {
     s_row_count = 0;
@@ -297,92 +393,36 @@ static void _build_rows(void)
     uint8_t enabled_count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &enabled_count);
 
-    /* One row per decodable PID. */
-    for (int i = 0; i < OBD2_PIDS_COUNT && s_row_count < 64; i++) {
+    /* For each PID definition, expand into one row per emitted signal —
+     * single-value PIDs produce one row; packed PIDs produce one row per
+     * sub-field, all sharing the parent PID. */
+    for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
         const obd2_pid_def_t *def = &OBD2_PIDS[i];
 
-        bool checked = false;
+        bool pid_enabled = false;
         for (uint8_t k = 0; k < enabled_count; k++) {
-            if (enabled[k] == def->pid) { checked = true; break; }
+            if (enabled[k] == def->pid) { pid_enabled = true; break; }
         }
 
-        bool conflict = _signal_provided_by_preset(def->signal_name);
-
-        pid_row_t *r = &s_rows[s_row_count++];
-        r->pid = def->pid;
-        r->checked = checked;
-        r->provided_by_preset = conflict;
-        r->discovered = false;
-        r->signal_idx = signal_find_by_name(def->signal_name);
-
-        r->row = lv_obj_create(s_list);
-        lv_obj_set_size(r->row, lv_pct(100), ROW_H);
-        lv_obj_set_style_bg_opa(r->row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(r->row, 0, 0);
-        lv_obj_set_style_pad_all(r->row, 0, 0);
-        lv_obj_set_style_pad_left(r->row, 6, 0);
-        lv_obj_set_style_pad_right(r->row, 6, 0);
-        lv_obj_clear_flag(r->row, LV_OBJ_FLAG_SCROLLABLE);
-
-        r->cb = lv_checkbox_create(r->row);
-        lv_obj_align(r->cb, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_text_font(r->cb, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_PRIMARY, 0);
-        lv_obj_set_style_bg_color(r->cb, THEME_COLOR_INPUT_BG, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(r->cb, THEME_COLOR_ACCENT_BLUE,
-                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_border_color(r->cb, THEME_COLOR_BORDER_MED,
-                                      LV_PART_INDICATOR);
-        lv_obj_set_style_border_width(r->cb, 1, LV_PART_INDICATOR);
-
-        /* Compact label: "Engine RPM 0x0C" — unit moves to the live value
-         * column so it's not duplicated. Tighter to fit 24 px rows. */
-        char label[64];
-        snprintf(label, sizeof(label), "%s  0x%02X", def->human_name, def->pid);
-        lv_checkbox_set_text(r->cb, label);
-
-        if (checked && !conflict) {
-            lv_obj_add_state(r->cb, LV_STATE_CHECKED);
-        }
-
-        if (conflict) {
-            /* Disabled: provided by the native preset. Force-uncheck. */
-            lv_obj_add_state(r->cb, LV_STATE_DISABLED);
-            lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
-            lv_obj_set_style_text_color(r->cb, THEME_COLOR_TEXT_DISABLED, 0);
-            r->checked = false;
-        } else {
-            lv_obj_add_event_cb(r->cb, _checkbox_cb,
-                                LV_EVENT_VALUE_CHANGED, r);
-        }
-
-        /* Live current-value readout: shows the signal's most recent value
-         * + unit when the signal is registered, "—" when not, and is muted
-         * when the signal is stale. Sits right of center. */
-        r->value_lbl = lv_label_create(r->row);
-        lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -72, 0);
-        lv_obj_set_style_text_font(r->value_lbl, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(r->value_lbl, THEME_COLOR_TEXT_HINT, 0);
-        lv_label_set_text(r->value_lbl, "—");
-
-        /* Badge on the right. */
-        r->badge = lv_label_create(r->row);
-        lv_obj_align(r->badge, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_text_font(r->badge, THEME_FONT_TINY, 0);
-        if (conflict) {
-            lv_label_set_text(r->badge, "in preset");
-            lv_obj_set_style_text_color(r->badge, THEME_COLOR_TEXT_HINT, 0);
-        } else {
-            lv_label_set_text(r->badge, "");
+        if (def->sub_fields && def->sub_field_count > 0) {
+            /* Packed PID: one row per sub-field. */
+            for (uint8_t j = 0; j < def->sub_field_count; j++) {
+                const obd2_subfield_t *sf = &def->sub_fields[j];
+                if (!sf->signal_name) continue;
+                _add_row(def, sf->signal_name, sf->signal_name, sf->unit,
+                         pid_enabled);
+            }
+        } else if (def->signal_name) {
+            /* Single-value PID. */
+            _add_row(def, def->signal_name, def->human_name, def->unit,
+                     pid_enabled);
         }
     }
 
     /* Kick off the live-value refresh loop. */
     if (!s_live_timer) {
         s_live_timer = lv_timer_create(_live_refresh_cb, LIVE_REFRESH_MS, NULL);
-        /* Prime once so values are visible immediately instead of after
-         * the first 400 ms tick. */
-        _live_refresh_cb(s_live_timer);
+        _live_refresh_cb(s_live_timer);    /* prime first paint */
     }
 }
 
@@ -404,28 +444,18 @@ static void _live_refresh_cb(lv_timer_t *t)
     (void)t;
     if (!s_overlay) return;
 
-    /* Only walk rows that have a registered signal. Unenabled PIDs keep
-     * their initial "—" label — no LVGL work for ~40 of the 46 rows on
-     * a typical setup. Single signal_find_by_name lookup per still-
-     * unresolved row to catch PIDs the user just enabled. */
+    /* Walk every row and update its live value column from the signal
+     * registry. Each row owns its own signal_name now (sub-field rows
+     * point at their TY_* names), so no special-case for packed PIDs. */
     for (int i = 0; i < s_row_count; i++) {
-        pid_row_t *r = &s_rows[i];
+        signal_row_t *r = &s_rows[i];
         if (!r->value_lbl || !lv_obj_is_valid(r->value_lbl)) continue;
 
-        if (r->signal_idx < 0) {
-            const obd2_pid_def_t *def = obd2_pid_find(r->pid);
-            if (def) {
-                /* Packed PIDs have no top-level signal_name; use the
-                 * first sub-field as the "headline" live value so the
-                 * row at least shows that polling is working. */
-                const char *name = def->signal_name;
-                if (!name && def->sub_fields && def->sub_field_count > 0) {
-                    name = def->sub_fields[0].signal_name;
-                }
-                if (name) r->signal_idx = signal_find_by_name(name);
-            }
-            if (r->signal_idx < 0) continue;   /* still unregistered */
+        if (r->signal_idx < 0 && r->signal_name) {
+            r->signal_idx = signal_find_by_name(r->signal_name);
+            if (r->signal_idx < 0) continue;   /* not registered yet */
         }
+        if (r->signal_idx < 0) continue;
 
         signal_t *sig = signal_get_by_index((uint16_t)r->signal_idx);
         if (!sig) continue;
@@ -439,9 +469,6 @@ static void _live_refresh_cb(lv_timer_t *t)
                      d, (double)sig->current_value,
                      sig->unit[0] ? sig->unit : "");
         }
-        /* Skip invalidation if the rendered text hasn't changed. lv_label
-         * does its own strcmp on set_text, but doing it here also avoids
-         * the per-tick color set. */
         const char *cur = lv_label_get_text(r->value_lbl);
         if (cur && strcmp(cur, buf) == 0) continue;
         lv_label_set_text(r->value_lbl, buf);
@@ -463,9 +490,26 @@ static void _close_cb(lv_event_t *e)
 
 static void _checkbox_cb(lv_event_t *e)
 {
-    pid_row_t *r = (pid_row_t *)lv_event_get_user_data(e);
-    if (!r || !r->cb) return;
-    r->checked = lv_obj_has_state(r->cb, LV_STATE_CHECKED);
+    signal_row_t *clicked = (signal_row_t *)lv_event_get_user_data(e);
+    if (!clicked || !clicked->cb) return;
+    bool new_state = lv_obj_has_state(clicked->cb, LV_STATE_CHECKED);
+
+    /* Mirror the state across every row sharing the same parent PID.
+     * Packed PIDs (Toyota engine block) bundle multiple signals into one
+     * polled request — checking TY_RPM implicitly enables polling that
+     * also delivers TY_THROTTLE, TY_COOLANT_TEMP, etc. Keep the visual
+     * checkboxes in lockstep so the user isn't confused. */
+    for (int i = 0; i < s_row_count; i++) {
+        signal_row_t *r = &s_rows[i];
+        if (r->parent_pid != clicked->parent_pid) continue;
+        if (r->provided_by_preset) continue;
+        if (r->checked == new_state) continue;
+        r->checked = new_state;
+        if (r != clicked && r->cb && lv_obj_is_valid(r->cb)) {
+            if (new_state) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
+            else           lv_obj_clear_state(r->cb, LV_STATE_CHECKED);
+        }
+    }
 }
 
 static void _set_status(const char *text)
@@ -495,35 +539,52 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
         return;
     }
 
-    /* Mark each row that matches a discovered PID. */
-    int decoder_hits = 0;
-    int unknown = 0;
+    /* For every supported PID, mark and auto-check ALL rows that share
+     * that parent PID (a packed PID like Toyota Mode 21 PID 0x80 has
+     * 7 rows — they all become "supported" together). This is the
+     * dynamic-preset behaviour: scan tells us what the car responds to,
+     * and the picker tracks the answer with no manual fiddling. */
+    int decoder_signal_count = 0;     /* # of signals (rows) auto-enabled */
+    int decoder_pid_hits = 0;         /* # of PIDs that map to a decoder */
+    int unknown = 0;                  /* # of PIDs with no decoder available */
+
     for (uint8_t i = 0; i < r->count; i++) {
         uint8_t pid = r->pids[i];
         const obd2_pid_def_t *def = obd2_pid_find(pid);
         if (!def) { unknown++; continue; }
+        decoder_pid_hits++;
+
         for (int j = 0; j < s_row_count; j++) {
-            if (s_rows[j].pid == pid) {
-                s_rows[j].discovered = true;
-                if (s_rows[j].badge && !s_rows[j].provided_by_preset) {
-                    lv_label_set_text(s_rows[j].badge, "supported");
-                    lv_obj_set_style_text_color(s_rows[j].badge,
-                                                THEME_COLOR_ACCENT_BLUE, 0);
+            signal_row_t *row = &s_rows[j];
+            if (row->parent_pid != pid) continue;
+            row->supported = true;
+
+            if (row->badge && !row->provided_by_preset) {
+                lv_label_set_text(row->badge, "supported");
+                lv_obj_set_style_text_color(row->badge,
+                                            THEME_COLOR_ACCENT_BLUE, 0);
+            }
+            /* Auto-check: dynamic-preset shortcut. Doesn't auto-uncheck
+             * anything; users get to keep curated additions. */
+            if (!row->provided_by_preset && !row->checked) {
+                row->checked = true;
+                if (row->cb && lv_obj_is_valid(row->cb)) {
+                    lv_obj_add_state(row->cb, LV_STATE_CHECKED);
                 }
-                decoder_hits++;
-                break;
+                decoder_signal_count++;
             }
         }
     }
 
-    char status[96];
+    char status[128];
     if (unknown > 0) {
         snprintf(status, sizeof(status),
-                 "Found %u supported PIDs (%d decodable, %d unknown).",
-                 r->count, decoder_hits, unknown);
+                 "Supported: %u PIDs (%d decodable -> %d signals, %d unknown).",
+                 r->count, decoder_pid_hits, decoder_signal_count, unknown);
     } else {
         snprintf(status, sizeof(status),
-                 "Found %u supported PIDs.", r->count);
+                 "Supported: %u PIDs -> %d signals enabled.",
+                 r->count, decoder_signal_count);
     }
     _set_status(status);
 }
@@ -532,12 +593,19 @@ static void _save_cb(lv_event_t *e)
 {
     (void)e;
 
-    /* Collect checked PIDs (skipping conflicts which are uncheckable anyway). */
+    /* Collect distinct parent PIDs from checked rows. Sub-fields of the
+     * same packed PID get deduped here — one enable per PID is what the
+     * polling backend wants. */
     uint8_t pids[OBD2_MAX_ENABLED];
     uint8_t count = 0;
-    for (int i = 0; i < s_row_count && count < OBD2_MAX_ENABLED; i++) {
-        if (s_rows[i].checked && !s_rows[i].provided_by_preset) {
-            pids[count++] = s_rows[i].pid;
+    for (int i = 0; i < s_row_count; i++) {
+        if (!s_rows[i].checked || s_rows[i].provided_by_preset) continue;
+        bool dup = false;
+        for (uint8_t k = 0; k < count; k++) {
+            if (pids[k] == s_rows[i].parent_pid) { dup = true; break; }
+        }
+        if (!dup && count < OBD2_MAX_ENABLED) {
+            pids[count++] = s_rows[i].parent_pid;
         }
     }
 
