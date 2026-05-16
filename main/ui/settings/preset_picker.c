@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include "storage/config_store.h"
 #include "can/obd2.h"
+#include "widgets/signal.h"
+#include <ctype.h>
 
 
 /* preconfig_item_t is defined in preset_picker.h */
@@ -522,6 +524,11 @@ typedef struct {
     lv_obj_t *hi_brand;
     lv_obj_t *hi_ver;
     lv_obj_t *hi_sig;
+    /* Live indicator timer: walks signal-column rows every ~500 ms and
+     * shows a blue dot next to channels whose signal is currently fresh
+     * in the registry. Lets the user see at a glance which channels
+     * will actually work without trial-and-error binding. */
+    lv_timer_t       *live_timer;
     preset_apply_cb_t  apply_cb;
     void              *apply_cb_ctx;
 } picker_st_t;
@@ -533,13 +540,19 @@ typedef struct { picker_st_t *st; int idx; }           col_sig_ctx_t;
 static void populate_ver_col(picker_st_t *st);
 static void populate_sig_col(picker_st_t *st);
 static void update_picker_preview(picker_st_t *st, int idx);
+static void _live_indicator_refresh(lv_timer_t *t);
 
 /* ── Memory free callbacks ───────────────────────────────────────────────── */
 static void picker_st_free_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
     picker_st_t *st = (picker_st_t *)lv_event_get_user_data(e);
-    if (st) lv_mem_free(st);
+    if (!st) return;
+    if (st->live_timer) {
+        lv_timer_del(st->live_timer);
+        st->live_timer = NULL;
+    }
+    lv_mem_free(st);
 }
 static void col_txt_free_cb(lv_event_t *e)
 {
@@ -836,6 +849,63 @@ static void populate_ver_col(picker_st_t *st)
     }
 }
 
+/* Convert a picker row label (e.g. "COOLANT TEMP", "TY RPM") into the
+ * signal-registry key (e.g. "COOLANT_TEMP", "TY_RPM"). Inlined here
+ * because the same logic in config_modal.c is static. */
+static void _label_to_sig_key(const char *label, char *out, size_t out_sz)
+{
+    if (!label || !out || out_sz == 0) return;
+    size_t j = 0;
+    for (size_t i = 0; label[i] && j < out_sz - 1; i++) {
+        char c = label[i];
+        if (isalnum((unsigned char)c))
+            out[j++] = (char)toupper((unsigned char)c);
+        else if (j > 0 && out[j - 1] != '_')
+            out[j++] = '_';
+    }
+    if (j > 0 && out[j - 1] == '_') j--;
+    out[j] = '\0';
+}
+
+/* Walk the picker's signal-column rows and show/hide the blue live-dot
+ * stored on each row's user_data based on whether the matching registry
+ * signal is currently fresh. Catches OBD2 signals being polled right
+ * now, native preset CAN broadcasts producing live values, and internal
+ * synthesised signals (e.g. CALCULATED_GEAR) all the same way. */
+static void _live_indicator_refresh(lv_timer_t *t)
+{
+    picker_st_t *st = (picker_st_t *)t->user_data;
+    if (!st || !st->sig_list || !lv_obj_is_valid(st->sig_list)) return;
+
+    uint32_t n = lv_obj_get_child_cnt(st->sig_list);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *row = lv_obj_get_child(st->sig_list, i);
+        if (!row || !lv_obj_is_valid(row)) continue;
+        lv_obj_t *dot = (lv_obj_t *)lv_obj_get_user_data(row);
+        if (!dot || !lv_obj_is_valid(dot)) continue;
+
+        /* Label is always the first child of a row (made by make_col_row). */
+        lv_obj_t *label = lv_obj_get_child(row, 0);
+        if (!label) continue;
+        const char *text = lv_label_get_text(label);
+        if (!text) continue;
+
+        char key[32];
+        _label_to_sig_key(text, key, sizeof(key));
+        if (!key[0]) continue;
+
+        int16_t idx = signal_find_by_name(key);
+        bool live = false;
+        if (idx >= 0) {
+            signal_t *sig = signal_get_by_index((uint16_t)idx);
+            live = sig && !sig->is_stale && sig->last_update_ms > 0;
+        }
+
+        if (live) lv_obj_clear_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void populate_sig_col(picker_st_t *st)
 {
     lv_obj_clean(st->sig_list);
@@ -869,7 +939,9 @@ static void populate_sig_col(picker_st_t *st)
                 int tmp = idxs[i]; idxs[i] = idxs[j]; idxs[j] = tmp;
             }
         }
-    /* Create rows in sorted order */
+    /* Create rows in sorted order, each with a hidden live-indicator dot
+     * stashed via lv_obj_set_user_data so the live timer can reveal it
+     * without re-iterating LVGL children. */
     for (int k = 0; k < nc; k++) {
         const preconfig_item_t *it = _resolve_item(idxs[k]);
         if (!it) continue;
@@ -878,7 +950,31 @@ static void populate_sig_col(picker_st_t *st)
         ctx->st = st; ctx->idx = idxs[k];
         lv_obj_add_event_cb(row, sig_click_cb,   LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(row, col_sig_free_cb, LV_EVENT_DELETE, ctx);
+
+        /* Small accent-blue dot, right-aligned. Hidden by default; the
+         * 500 ms refresh timer reveals it when the matching signal in
+         * the registry has a fresh (non-stale) value. */
+        lv_obj_t *dot = lv_obj_create(row);
+        lv_obj_remove_style_all(dot);
+        lv_obj_set_size(dot, 9, 9);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, THEME_COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_align(dot, LV_ALIGN_RIGHT_MID, -8, 0);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_user_data(row, dot);
     }
+
+    /* (Re)start the live-indicator refresh timer for this column. */
+    if (st->live_timer) {
+        lv_timer_del(st->live_timer);
+        st->live_timer = NULL;
+    }
+    st->live_timer = lv_timer_create(_live_indicator_refresh, 500, st);
+    /* Prime immediately so dots appear without waiting for first tick. */
+    _live_indicator_refresh(st->live_timer);
 }
 
 /* ── Embedded picker (for config modal PRESETS tab) ─────────────────────── */
