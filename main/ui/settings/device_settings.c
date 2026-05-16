@@ -2260,14 +2260,19 @@ static lv_obj_t *s_obd2_btn_label = NULL;
 
 /* Compose the button label based on current state:
  *   "Add OBD2 Signals..." (no PIDs configured)
- *   "OBD2 Signals... (N)" (some PIDs configured) */
+ *   "OBD2 Signals... (N)" (some PIDs configured)
+ *
+ * Reads from the in-memory poll state, NOT the layout JSON on disk.
+ * Earlier versions called ecu_preset_read_obd2_pids() which fopen()ed
+ * the layout file every time Device Settings opened — and fopen needs
+ * an internal-RAM-only newlib lock that can fail with abort() when
+ * internal SRAM is fragmented (esp. after WiFi init + dashboard widgets
+ * load). obd2_get_enabled() returns the same count from zero-allocation
+ * static memory. */
 static void _obd2_label_compose(char *buf, size_t n)
 {
-    char layout[LAYOUT_MAX_NAME];
-    layout_manager_get_active(layout, sizeof(layout));
     uint32_t pids[OBD2_MAX_ENABLED];
-    uint8_t count = 0;
-    ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
+    uint8_t count = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
     if (count == 0) {
         snprintf(buf, n, "Add OBD2 Signals...");
     } else {
