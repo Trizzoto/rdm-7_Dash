@@ -14,6 +14,9 @@
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
 #include "widgets/signal_internal.h"
+#include "can/obd2.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "lvgl.h"
 #include <stdlib.h>
 #include <string.h>
@@ -291,6 +294,161 @@ static esp_err_t _signal_clear_handler(httpd_req_t *req) {
 	return httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
 }
 
+/* ── OBD2 test-PID endpoint ──────────────────────────────────────────────
+ *
+ * Powers the Test button in the custom-PID editor. Heap-allocates a
+ * context that survives the obd2_test_pid -> callback round-trip, and
+ * blocks the HTTP handler on a semaphore until the callback fires (or
+ * a generous overall timeout expires). obd2 enforces its own 500 ms
+ * deadline inside _process_full_message / _poll_timer_cb so the
+ * callback ALWAYS fires within ~600 ms — the HTTP-side 1.5 s wait is
+ * just a paranoid upper bound. */
+
+typedef struct {
+    SemaphoreHandle_t done;
+    bool              ok;
+    uint8_t           raw[64];
+    uint8_t           raw_len;
+    float             decoded;
+    uint32_t          elapsed_ms;
+    /* Test parameters (kept so _kick can call obd2_test_pid from the
+     * LVGL task after lv_async_call hands off). */
+    uint8_t           service;
+    uint8_t           pid;
+    uint32_t          request_id;
+    uint8_t           data_offset;
+    uint8_t           data_bytes;
+    float             scale;
+    float             offset;
+    bool              is_signed;
+} obd2_test_ctx_t;
+
+static void _obd2_test_done(bool ok, const uint8_t *raw, uint8_t raw_len,
+                            float decoded, uint32_t elapsed_ms, void *user)
+{
+    obd2_test_ctx_t *ctx = (obd2_test_ctx_t *)user;
+    ctx->ok = ok;
+    if (raw && raw_len > 0) {
+        if (raw_len > sizeof(ctx->raw)) raw_len = sizeof(ctx->raw);
+        memcpy(ctx->raw, raw, raw_len);
+        ctx->raw_len = raw_len;
+    }
+    ctx->decoded = decoded;
+    ctx->elapsed_ms = elapsed_ms;
+    xSemaphoreGive(ctx->done);
+}
+
+static void _obd2_test_kick(void *arg)
+{
+    obd2_test_ctx_t *ctx = (obd2_test_ctx_t *)arg;
+    obd2_test_pid(ctx->service, ctx->pid, ctx->request_id,
+                  ctx->data_offset, ctx->data_bytes,
+                  ctx->scale, ctx->offset, ctx->is_signed,
+                  _obd2_test_done, ctx);
+}
+
+static esp_err_t _obd2_test_pid_handler(httpd_req_t *req)
+{
+    char buf[384];
+    if (req->content_len >= sizeof(buf)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+        return ESP_FAIL;
+    }
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (ret <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+    buf[ret] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    obd2_test_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    ctx->done = xSemaphoreCreateBinary();
+    if (!ctx->done) {
+        free(ctx);
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "sem alloc");
+        return ESP_FAIL;
+    }
+
+    cJSON *t;
+    t = cJSON_GetObjectItemCaseSensitive(root, "service");
+    ctx->service = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 0x01;
+    t = cJSON_GetObjectItemCaseSensitive(root, "pid");
+    ctx->pid = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 0;
+    t = cJSON_GetObjectItemCaseSensitive(root, "request_id");
+    ctx->request_id = cJSON_IsNumber(t) ? (uint32_t)t->valueint : 0;
+    t = cJSON_GetObjectItemCaseSensitive(root, "data_offset");
+    ctx->data_offset = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 0;
+    t = cJSON_GetObjectItemCaseSensitive(root, "data_bytes");
+    ctx->data_bytes = cJSON_IsNumber(t) ? (uint8_t)t->valueint : 1;
+    t = cJSON_GetObjectItemCaseSensitive(root, "scale");
+    ctx->scale = cJSON_IsNumber(t) ? (float)t->valuedouble : 1.0f;
+    t = cJSON_GetObjectItemCaseSensitive(root, "offset");
+    ctx->offset = cJSON_IsNumber(t) ? (float)t->valuedouble : 0.0f;
+    t = cJSON_GetObjectItemCaseSensitive(root, "is_signed");
+    ctx->is_signed = cJSON_IsTrue(t);
+    cJSON_Delete(root);
+
+    /* Dispatch the actual test on the LVGL task — all obd2 state is
+     * LVGL-thread-only. */
+    lv_async_call(_obd2_test_kick, ctx);
+
+    /* Wait for the callback. obd2 internal timeout is 500 ms; give
+     * 1.5 s here as a generous upper bound. */
+    BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(1500));
+
+    cJSON *resp = cJSON_CreateObject();
+    if (got != pdTRUE) {
+        /* Shouldn't happen — obd2 always calls cb within 500ms. If it
+         * does, leak ctx (the late callback would UAF otherwise). Tiny
+         * leak; bounded. */
+        cJSON_AddBoolToObject(resp, "ok", false);
+        cJSON_AddStringToObject(resp, "error", "Internal timeout");
+    } else if (!ctx->ok) {
+        cJSON_AddBoolToObject(resp, "ok", false);
+        cJSON_AddStringToObject(resp, "error", "No response from ECU");
+        cJSON_AddNumberToObject(resp, "elapsed_ms", ctx->elapsed_ms);
+    } else {
+        cJSON_AddBoolToObject(resp, "ok", true);
+        cJSON_AddNumberToObject(resp, "decoded", (double)ctx->decoded);
+        cJSON_AddNumberToObject(resp, "elapsed_ms", ctx->elapsed_ms);
+        cJSON *raw_arr = cJSON_AddArrayToObject(resp, "raw");
+        for (uint8_t i = 0; i < ctx->raw_len; i++) {
+            cJSON_AddItemToArray(raw_arr, cJSON_CreateNumber(ctx->raw[i]));
+        }
+    }
+
+    /* Safe to free only after we know the callback already ran (got
+     * the sem). On timeout, leak — see above. */
+    if (got == pdTRUE) {
+        vSemaphoreDelete(ctx->done);
+        free(ctx);
+    }
+
+    char *json = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_sendstr(req, json);
+    free(json);
+    return r;
+}
+
 /* ── URI descriptors ─────────────────────────────────────────────────────── */
 
 static const httpd_uri_t signal_values_uri = {
@@ -317,6 +475,9 @@ static const httpd_uri_t fuel_set_empty_uri = {
 static const httpd_uri_t fuel_set_full_uri = {
     .uri = "/api/fuel/set-full", .method = HTTP_POST,
     .handler = _fuel_set_full_handler, .user_ctx = NULL};
+static const httpd_uri_t obd2_test_pid_uri = {
+    .uri = "/api/obd2/test_pid", .method = HTTP_POST,
+    .handler = _obd2_test_pid_handler, .user_ctx = NULL};
 
 void web_server_signals_register(httpd_handle_t server) {
 	REGISTER_URI(server, &signal_values_uri);
@@ -327,4 +488,5 @@ void web_server_signals_register(httpd_handle_t server) {
 	REGISTER_URI(server, &fuel_status_uri);
 	REGISTER_URI(server, &fuel_set_empty_uri);
 	REGISTER_URI(server, &fuel_set_full_uri);
+	REGISTER_URI(server, &obd2_test_pid_uri);
 }

@@ -203,6 +203,29 @@ bool obd2_custom_add(uint8_t service, uint8_t pid,
 /* Number of currently-registered custom PIDs. */
 uint8_t obd2_custom_count(void);
 
+/* ── One-shot test: send + capture single response ─────────────────────
+ *
+ * Powers the "Test" button in the custom-PID editor. Fires one
+ * request matching (service, pid), waits up to 500 ms for a response,
+ * decodes per the supplied parameters, and reports raw bytes + decoded
+ * value via the callback. Coexists with normal polling — just observes
+ * RX from any thread until the matching PID echo arrives or the
+ * timeout fires.
+ *
+ * Only one test is in flight at a time; calling while another test is
+ * pending invokes the callback with ok=false immediately. */
+
+typedef void (*obd2_test_cb_t)(bool ok,
+                                const uint8_t *raw_payload, uint8_t raw_len,
+                                float decoded,
+                                uint32_t elapsed_ms,
+                                void *user);
+
+void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
+                   uint8_t data_offset, uint8_t data_bytes,
+                   float scale, float offset, bool is_signed,
+                   obd2_test_cb_t cb, void *user);
+
 /* Indexed access into the custom-PID registry (0..custom_count-1). */
 const obd2_pid_def_t *obd2_custom_at(uint8_t index);
 

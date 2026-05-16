@@ -119,6 +119,27 @@ typedef struct {
 static obd2_custom_entry_t s_custom[OBD2_MAX_CUSTOM_PIDS];
 static uint8_t             s_custom_count = 0;
 
+/* ── One-shot test state ───────────────────────────────────────────────
+ *
+ * Captures the next matching response after obd2_test_pid() fires its
+ * request. Cleared by either the response intercept in
+ * _process_full_message or the timeout check in _poll_timer_cb. */
+#define OBD2_TEST_TIMEOUT_MS 500
+
+static struct {
+    bool            active;
+    uint8_t         service;
+    uint8_t         pid;
+    uint64_t        sent_ms;
+    obd2_test_cb_t  cb;
+    void           *user;
+    uint8_t         data_offset;
+    uint8_t         data_bytes;
+    float           scale;
+    float           offset;
+    bool            is_signed;
+} s_test = {0};
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -377,6 +398,96 @@ const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint8_t pid)
     return NULL;
 }
 
+/* ── One-shot test ────────────────────────────────────────────────── */
+
+void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
+                   uint8_t data_offset, uint8_t data_bytes,
+                   float scale, float offset, bool is_signed,
+                   obd2_test_cb_t cb, void *user)
+{
+    if (!cb) return;
+
+    if (s_test.active) {
+        ESP_LOGW(TAG, "Test already in progress");
+        cb(false, NULL, 0, 0.0f, 0, user);
+        return;
+    }
+    if (service == 0) service = 0x01;
+    if (data_bytes != 1 && data_bytes != 2 && data_bytes != 4) {
+        ESP_LOGW(TAG, "Test: data_bytes must be 1/2/4 (got %u)", data_bytes);
+        cb(false, NULL, 0, 0.0f, 0, user);
+        return;
+    }
+
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+
+    s_test.active      = true;
+    s_test.service     = service;
+    s_test.pid         = pid;
+    s_test.sent_ms     = now;
+    s_test.cb          = cb;
+    s_test.user        = user;
+    s_test.data_offset = data_offset;
+    s_test.data_bytes  = data_bytes;
+    s_test.scale       = scale;
+    s_test.offset      = offset;
+    s_test.is_signed   = is_signed;
+
+    /* Fire one request. Multi-PID Mode 01 NOT used here — we want a
+     * deterministic single-PID response for the test. */
+    uint32_t tx_id = request_id ? request_id : OBD2_REQUEST_ID_BROADCAST;
+    uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(tx_id, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Test TX failed: %s", esp_err_to_name(err));
+        s_test.active = false;
+        cb(false, NULL, 0, 0.0f, 0, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
+/* Helper used by the RX intercept (declared inside _process_full_message
+ * for locality, defined here so we can also call from the Mode 01 walk
+ * branch). Captures the payload bytes the test asked about, runs the
+ * decode, and fires the callback. */
+static void _test_capture(const uint8_t *payload, uint16_t payload_len,
+                          uint64_t now_ms)
+{
+    if (!s_test.active) return;
+
+    uint8_t max_take = (payload_len < 64) ? (uint8_t)payload_len : 64;
+    uint8_t raw[64];
+    memcpy(raw, payload, max_take);
+
+    bool ok = (payload_len >= (uint16_t)(s_test.data_offset + s_test.data_bytes));
+    float decoded = 0.0f;
+    if (ok) {
+        const uint8_t *p = payload + s_test.data_offset;
+        int32_t v = 0;
+        for (uint8_t i = 0; i < s_test.data_bytes; i++) {
+            v = (v << 8) | p[i];
+        }
+        if (s_test.is_signed && s_test.data_bytes < 4) {
+            uint32_t sign_bit = 1u << ((s_test.data_bytes * 8) - 1);
+            if ((uint32_t)v & sign_bit) {
+                v |= ~((int32_t)((sign_bit << 1) - 1));
+            }
+        }
+        decoded = (float)v * s_test.scale + s_test.offset;
+    }
+
+    uint32_t elapsed = (uint32_t)(now_ms - s_test.sent_ms);
+    obd2_test_cb_t cb = s_test.cb;
+    void *user = s_test.user;
+
+    s_test.active = false;
+    s_test.cb = NULL;
+    s_test.user = NULL;
+
+    cb(ok, raw, max_take, decoded, elapsed, user);
+}
+
 bool obd2_custom_add(uint8_t service, uint8_t pid,
                      const char *signal_name,
                      const char *human_name,
@@ -562,6 +673,18 @@ static void _poll_timer_cb(lv_timer_t *t)
                  (unsigned long)s_isotp.source_id,
                  (unsigned)s_isotp.received, (unsigned)s_isotp.total_bytes);
         s_isotp.state = ISOTP_IDLE;
+    }
+
+    /* One-shot test timeout — fire callback with ok=false if the ECU
+     * never answered within OBD2_TEST_TIMEOUT_MS. */
+    if (s_test.active && (now - s_test.sent_ms) > OBD2_TEST_TIMEOUT_MS) {
+        obd2_test_cb_t cb = s_test.cb;
+        void *user = s_test.user;
+        uint32_t elapsed = (uint32_t)(now - s_test.sent_ms);
+        s_test.active = false;
+        s_test.cb = NULL;
+        s_test.user = NULL;
+        if (cb) cb(false, NULL, 0, 0.0f, elapsed, user);
     }
 
     /* Discovery scan owns the bus until its window closes. */
@@ -827,6 +950,20 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
 
     uint8_t first_pid = msg[1];
 
+    /* ── One-shot test intercept ─────────────────────────────────────
+     * If a test is pending and this response matches its (service, pid)
+     * target, capture and call back. Test runs BEFORE the scan/decode
+     * branches so we don't double-process. For Mode 01 the test PID
+     * could appear later in a multi-PID response — handled in the
+     * Mode 01 walk branch below. */
+    if (s_test.active && service == s_test.service && first_pid == s_test.pid) {
+        uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+        _test_capture(&msg[2], (uint16_t)(len - 2), now_ms);
+        /* Fall through — test_capture doesn't suppress normal decode;
+         * the same response might still be useful (e.g. a stale signal
+         * picking up its value). */
+    }
+
     /* ── Discovery scan: only relevant for Mode 01 bitmask queries. ── */
     if (s_scan_state == SCAN_WINDOW_OPEN && service == 0x01 &&
         first_pid == s_scan_query_pid &&
@@ -872,6 +1009,14 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             if (rem < consumed) return;
 
             _decode_and_push(def, &p[1]);
+
+            /* Test intercept inside multi-PID walk: catches the case
+             * where the test PID is at position 2+ of a response that
+             * happened to land in the same batch. */
+            if (s_test.active && s_test.service == 0x01 &&
+                pid == s_test.pid) {
+                _test_capture(&p[1], (uint16_t)(rem - 1), now);
+            }
 
             for (uint8_t i = 0; i < s_poll_count; i++) {
                 if (s_poll[i].pid == pid && s_poll[i].service == 0x01) {
