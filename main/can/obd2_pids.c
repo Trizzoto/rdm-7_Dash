@@ -31,7 +31,13 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     { 0x0E, "TIMING_ADVANCE",         "Timing Advance",          "deg",   1, 0.5f,        -64.0f,  FAST, true,  false },
     { 0x0F, "INTAKE_AIR_TEMP",        "Intake Air Temperature",  "degC",  1, 1.0f,        -40.0f,  SLOW, true,  false },
     { 0x10, "MAF",                    "Mass Airflow Rate",       "g/s",   2, 0.01f,       0.0f,    FAST, true,  false },
-    { 0x11, "THROTTLE",               "Throttle Position",       "%",     1, 0.392157f,   0.0f,    FAST, true,  false },
+    /* PID 0x11 is the *raw* throttle position sensor — on most cars it
+     * reads ~12-15% at idle because the throttle plate is never fully
+     * closed and the sensor isn't calibrated to "0 at idle". Users see
+     * a "wrong" throttle %. We expose it as THROTTLE_ABS for diagnostics
+     * but default to PID 0x45 (relative) for the friendly "THROTTLE"
+     * signal that widgets actually want. */
+    { 0x11, "THROTTLE_ABS",           "Throttle Sensor (raw)",   "%",     1, 0.392157f,   0.0f,    FAST, false, false },
     { 0x14, "O2_B1S1",                "O2 Sensor B1S1 Voltage",  "V",     1, 0.005f,      0.0f,    SLOW, true,  false },
     { 0x1F, "RUN_TIME",               "Run Time Since Engine On","s",     2, 1.0f,        0.0f,    SLOW, true,  false },
     { 0x21, "DTC_DISTANCE",           "Distance with MIL on",    "km",    2, 1.0f,        0.0f,    SLOW, true,  false },
@@ -46,7 +52,11 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     /* Lambda (commanded equivalence ratio) raw is unitless 0..2 in steps of 2/65535.
      * Direct lambda output, no further conversion needed. */
     { 0x44, "LAMBDA",                 "Commanded Equivalence Ratio", "lambda", 2, 0.0000305f, 0.0f, FAST, true,  false },
-    { 0x45, "THROTTLE_REL",           "Relative Throttle Position","%",   1, 0.392157f,   0.0f,    FAST, true,  false },
+    /* PID 0x45 is the *calibrated* throttle position — 0% at idle, 100%
+     * at full pedal. This is what every OBD2 dash actually wants to show.
+     * Owns the canonical "THROTTLE" signal name so existing widgets bind
+     * to it without further config. */
+    { 0x45, "THROTTLE",               "Throttle",                "%",     1, 0.392157f,   0.0f,    FAST, true,  false },
     { 0x46, "AMBIENT_TEMP",           "Ambient Air Temperature", "degC",  1, 1.0f,        -40.0f,  SLOW, true,  true  },
     { 0x4C, "THROTTLE_CMD",           "Commanded Throttle Actuator","%",  1, 0.392157f,   0.0f,    FAST, true,  false },
     { 0x52, "ETHANOL_PCT",            "Ethanol Fuel %",          "%",     1, 0.392157f,   0.0f,    SLOW, true,  false },
