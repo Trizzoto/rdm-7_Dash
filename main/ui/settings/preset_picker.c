@@ -412,11 +412,12 @@ static const int preconfig_data_count = sizeof(preconfig_items)/sizeof(preconfig
  * bit-decode params on the widget's existing signal. */
 
 #define OBD2_LABEL_BUF_LEN 28
-/* Sized > OBD2_PIDS_COUNT plus headroom for packed-PID sub-fields (each
- * packed PID expands to N picker entries, one per sub-field) plus the
- * OBD2_MAX_CUSTOM_PIDS=32 user slots. As of the diesel decode adds we're
- * at ~69 entries; 128 gives 2x growth before hitting another cap. */
-#define OBD2_PICKER_MAX 128
+/* Sized for current built-in entry count + custom PID slack. 69 today
+ * (50 Mode 01 + 4 Toyota + 9 diesel sub-fields + 7 Toyota 0x80 subs)
+ * plus headroom for OBD2_MAX_CUSTOM_PIDS=32 puts us at ~100. 96 is a
+ * compromise: covers all built-ins + ~27 custom, without bloating BSS
+ * by 48 × sizeof(preconfig_item_t) ≈ 2 KB. */
+#define OBD2_PICKER_MAX 96
 static preconfig_item_t s_obd2_items[OBD2_PICKER_MAX];
 static char             s_obd2_labels[OBD2_PICKER_MAX][OBD2_LABEL_BUF_LEN];
 static int              s_obd2_count = 0;

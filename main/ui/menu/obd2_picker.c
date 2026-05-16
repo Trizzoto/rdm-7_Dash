@@ -72,11 +72,12 @@ typedef struct {
     lv_obj_t   *badge;
 } signal_row_t;
 
-/* Sized to match preset_picker.c's OBD2_PICKER_MAX. Headroom for the
- * 50 single Mode 01 + 4 Toyota Mode 21 + 9 new diesel sub-fields = ~69
- * entries today, plus OBD2_MAX_CUSTOM_PIDS=32 user-defined slots. 128
- * is safely above that with room for future built-in adds. */
-#define PICKER_MAX_ROWS 128
+/* Sized for current entry count + reasonable headroom. With 69 today
+ * (50 single Mode 01 + 4 Toyota Mode 21 + 9 diesel sub-fields + Toyota
+ * 0x80 sub-fields) we have ~27 spare slots for custom PIDs. 96 keeps
+ * BSS modest (~3.5 KB at 36 bytes/row) — earlier 128 cap was overkill
+ * and contributed to memory pressure during preview-poll-all. */
+#define PICKER_MAX_ROWS 96
 
 static lv_obj_t      *s_overlay    = NULL;
 static lv_obj_t      *s_card       = NULL;
@@ -98,8 +99,12 @@ static int            s_row_count  = 0;
  * thing for serial-monitor capture). Helps a user (or me) author new
  * obd2_pids.c entries for cars that report PIDs we don't yet decode. */
 
-#define DUMP_MAX        64       /* matches OBD2_SCAN_MAX_PIDS realistic ceiling */
-#define DUMP_LINE_LEN   80       /* "0xAA: 41 AA BB CC DD EE FF 00 ..." */
+/* Sized to fit the typical "unknown PID" set on a real vehicle. The user's
+ * 2024 HiAce returned 18 unknowns; 32 is double that, plenty of headroom.
+ * Shrinking from 64x80 to 32x64 also shrinks _dump_show_results' stack
+ * buffer from 5 KB to 2 KB, easing pressure on the LVGL task stack. */
+#define DUMP_MAX        32
+#define DUMP_LINE_LEN   64       /* "0xAA: 41 AA BB CC DD EE FF" fits */
 
 static uint8_t   s_unknown_pids[DUMP_MAX];
 static uint8_t   s_unknown_count = 0;
@@ -150,11 +155,10 @@ void obd2_picker_close(void)
         lv_timer_del(s_live_timer);
         s_live_timer = NULL;
     }
-    /* If the user dismissed without Save, revert OBD2 polling to the
-     * pre-modal set — preview-poll-all should not persist past close. */
-    if (!s_saved) {
-        obd2_start(s_snapshot, s_snapshot_count);
-    }
+    /* No revert needed — preview-poll-all was removed (caused OOM), so
+     * polling stays on the user's saved set throughout the modal session.
+     * Save (if pressed) is the only path that mutates the polled set,
+     * and that path drives obd2_start() with the new list directly. */
     /* Tear down dump results sub-overlay if still open. Halt any in-flight
      * dump walk — the test callback checks s_dump_running before touching
      * UI, so an outstanding obd2_test_pid() in flight is safe to drop. */
@@ -185,26 +189,19 @@ void obd2_picker_open(void)
     s_snapshot_count = obd2_get_enabled(s_snapshot, OBD2_MAX_ENABLED);
     s_saved = false;
 
-    /* Preview polling: kick off polling on every PID in the decode table.
-     * Users see live values for the whole list and can tell at a glance
-     * which PIDs the car responds to — vs. having to enable a row, save,
-     * and watch the dashboard. obd2_start() filters PIDs whose signal is
-     * already provided by the active native preset (conflict guard), so
-     * supplemental-mode users don't accidentally double-bind RPM etc.
-     * The adaptive scheduler drops unresponsive PIDs to a 5 sec probe
-     * rate within ~3 sec so bus load stays reasonable even with 46 PIDs
-     * enabled. */
-    {
-        uint32_t preview[OBD2_MAX_ENABLED];
-        uint8_t pn = 0;
-        uint8_t total = obd2_pid_total_count();
-        for (uint8_t i = 0; i < total && pn < OBD2_MAX_ENABLED; i++) {
-            const obd2_pid_def_t *p = obd2_pid_at(i);
-            if (!p) continue;
-            preview[pn++] = obd2_encode_pid(p->service, p->pid);
-        }
-        obd2_start(preview, pn);
-    }
+    /* Polling stays on the user's CURRENTLY-SAVED set while the modal is
+     * open. Earlier versions called obd2_start() with all 48 PIDs as a
+     * "preview" so users could see which respond — but that spiked the
+     * signal registry near MAX_SIGNALS (128) and stacked ISO-TP buffers
+     * for packed PIDs, causing OOM crashes on memory-tight builds.
+     *
+     * The modal still gives clear feedback without preview-polling:
+     *   - Live values appear for any row already in the user's saved set
+     *   - Scan reveals which PIDs the car SUPPORTS (binary indicator)
+     *   - Save commits new selections and starts polling them
+     *
+     * If a future "test these N rows now" feature is wanted, it should
+     * temporarily add JUST those rows to the polling list, not all 48. */
 
     /* Full-screen dimmer overlay. Doesn't dismiss on outside-tap — users
      * use the Close button (avoids LVGL event-bubbling gymnastics, and
