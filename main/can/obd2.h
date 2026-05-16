@@ -135,13 +135,80 @@ extern const int OBD2_PIDS_COUNT;
 /* Look up a definition by PID byte alone — returns the FIRST match
  * regardless of service. Kept for compat with callers that don't
  * distinguish services (e.g. live-indicator polling). Use
- * obd2_pid_find_svc() for unambiguous lookups across modes. */
+ * obd2_pid_find_svc() for unambiguous lookups across modes.
+ *
+ * Both lookups walk built-in OBD2_PIDS first, then runtime custom
+ * PIDs (registered via obd2_custom_add). */
 const obd2_pid_def_t *obd2_pid_find(uint8_t pid);
 
 /* Service-aware lookup: returns the def whose (service, pid) matches.
  * service=0 is treated as 0x01 (Mode 01). Falls back to first-match-by-byte
  * if no exact (service, pid) pair exists. */
 const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid);
+
+/* ── Unified PID iteration ─────────────────────────────────────────────
+ *
+ * Pickers and other UIs need to walk every available PID (built-in plus
+ * runtime custom). These helpers give that as a flat indexed list so
+ * callers don't have to walk two arrays separately. Built-in entries
+ * come first, custom entries after. */
+uint8_t obd2_pid_total_count(void);
+const obd2_pid_def_t *obd2_pid_at(uint8_t index);
+
+/* ── Custom (user-defined) PIDs ───────────────────────────────────────
+ *
+ * Custom PIDs let users add forum-found / community-documented OBD2
+ * signals at runtime without a firmware rebuild. They're stored in
+ * layout JSON (`custom_pids` array) and registered here at layout load.
+ * Internally each custom PID becomes a single-sub-field "packed" def
+ * so the existing packed-decode path handles it uniformly. */
+
+#define OBD2_MAX_CUSTOM_PIDS 32
+
+/* Clear all currently-registered custom PIDs. Called at layout load
+ * before parsing the new layout's custom_pids array. */
+void obd2_custom_reset(void);
+
+/* Register one custom PID. Strings are copied into internal storage so
+ * the caller need not keep them alive after this call. Returns false
+ * if the registry is full or required args are missing.
+ *
+ * @param service       OBD2 service byte (0 = 0x01 Mode 01).
+ * @param pid           PID byte.
+ * @param signal_name   Required. The registry key widgets bind to.
+ * @param human_name    Optional; defaults to signal_name.
+ * @param unit          Optional; defaults to "".
+ * @param data_offset   Byte offset into the response payload (0 = start
+ *                      right after the service+PID echoes).
+ * @param data_bytes    1, 2, or 4.
+ * @param scale         Linear decode: value = raw * scale + offset.
+ * @param offset
+ * @param is_signed     true → sign-extend `data_bytes` raw.
+ * @param tier          OBD2_TIER_FAST or _SLOW.
+ * @param category      Optional brand/grouping for the picker (e.g.
+ *                      "Toyota Custom"). NULL = falls into "OBD2 /
+ *                      Standard" or "(category) / Mode XX" by service.
+ * @param request_id    Override request CAN ID (0 = broadcast 0x7DF).
+ */
+bool obd2_custom_add(uint8_t service, uint8_t pid,
+                     const char *signal_name,
+                     const char *human_name,
+                     const char *unit,
+                     uint8_t data_offset, uint8_t data_bytes,
+                     float scale, float offset, bool is_signed,
+                     obd2_tier_t tier,
+                     const char *category,
+                     uint32_t request_id);
+
+/* Number of currently-registered custom PIDs. */
+uint8_t obd2_custom_count(void);
+
+/* Indexed access into the custom-PID registry (0..custom_count-1). */
+const obd2_pid_def_t *obd2_custom_at(uint8_t index);
+
+/* Service-aware search restricted to the custom-PID registry.
+ * Returns NULL if no match. Built-in OBD2_PIDS are NOT searched. */
+const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint8_t pid);
 
 /* ── Lifecycle ──────────────────────────────────────────────────────────── */
 

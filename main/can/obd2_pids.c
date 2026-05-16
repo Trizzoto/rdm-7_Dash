@@ -176,11 +176,15 @@ const int OBD2_PIDS_COUNT = (int)(sizeof(OBD2_PIDS) / sizeof(OBD2_PIDS[0]));
 const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid)
 {
     if (service == 0) service = 0x01;
+    /* Built-in first. */
     for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
         if (OBD2_PIDS[i].pid != pid) continue;
         uint8_t s = OBD2_PIDS[i].service ? OBD2_PIDS[i].service : 0x01;
         if (s == service) return &OBD2_PIDS[i];
     }
+    /* Custom PID registry. */
+    const obd2_pid_def_t *c = obd2_custom_find_svc(service, pid);
+    if (c) return c;
     /* Fall back to first match by PID byte alone (covers code paths
      * that don't know which service the PID came from). */
     return obd2_pid_find(pid);
@@ -191,5 +195,23 @@ const obd2_pid_def_t *obd2_pid_find(uint8_t pid)
     for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
         if (OBD2_PIDS[i].pid == pid) return &OBD2_PIDS[i];
     }
+    /* Custom PIDs — first match by byte. */
+    for (uint8_t i = 0; i < obd2_custom_count(); i++) {
+        const obd2_pid_def_t *d = obd2_custom_at(i);
+        if (d && d->pid == pid) return d;
+    }
     return NULL;
+}
+
+/* Unified iteration helpers — built-in first, then custom. */
+uint8_t obd2_pid_total_count(void)
+{
+    int total = OBD2_PIDS_COUNT + obd2_custom_count();
+    return (total > 0xFF) ? 0xFF : (uint8_t)total;
+}
+
+const obd2_pid_def_t *obd2_pid_at(uint8_t index)
+{
+    if (index < OBD2_PIDS_COUNT) return &OBD2_PIDS[index];
+    return obd2_custom_at((uint8_t)(index - OBD2_PIDS_COUNT));
 }

@@ -97,6 +97,28 @@ static bool              s_running    = false;
  * polling session immediately fires its first request. */
 static uint64_t s_last_tx_ms_global = 0;
 
+/* ── Custom PID storage ────────────────────────────────────────────────
+ *
+ * User-defined PIDs from the layout's custom_pids JSON array. Each entry
+ * presents as a regular obd2_pid_def_t via the sub_field path (single
+ * sub-field = legacy single-value semantics), so the polling loop,
+ * picker, and widget binding treat custom PIDs identically to built-ins.
+ *
+ * String fields (signal_name, human_name, unit, category) are stored in
+ * the entry struct itself for stable lifetime — pointers in the def
+ * reference these buffers. */
+typedef struct {
+    obd2_pid_def_t  def;
+    obd2_subfield_t sub_field;
+    char            signal_name[32];
+    char            human_name[48];
+    char            unit[8];
+    char            category[16];
+} obd2_custom_entry_t;
+
+static obd2_custom_entry_t s_custom[OBD2_MAX_CUSTOM_PIDS];
+static uint8_t             s_custom_count = 0;
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -323,6 +345,113 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
     if (idx < 0) {
         ESP_LOGW(TAG, "Failed to register OBD2 signal '%s'", def->signal_name);
     }
+}
+
+/* ── Custom PID storage API ────────────────────────────────────────── */
+
+void obd2_custom_reset(void)
+{
+    s_custom_count = 0;
+}
+
+uint8_t obd2_custom_count(void)
+{
+    return s_custom_count;
+}
+
+const obd2_pid_def_t *obd2_custom_at(uint8_t index)
+{
+    if (index >= s_custom_count) return NULL;
+    return &s_custom[index].def;
+}
+
+const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint8_t pid)
+{
+    if (service == 0) service = 0x01;
+    for (uint8_t i = 0; i < s_custom_count; i++) {
+        const obd2_pid_def_t *d = &s_custom[i].def;
+        if (d->pid != pid) continue;
+        uint8_t s = d->service ? d->service : 0x01;
+        if (s == service) return d;
+    }
+    return NULL;
+}
+
+bool obd2_custom_add(uint8_t service, uint8_t pid,
+                     const char *signal_name,
+                     const char *human_name,
+                     const char *unit,
+                     uint8_t data_offset, uint8_t data_bytes,
+                     float scale, float offset, bool is_signed,
+                     obd2_tier_t tier,
+                     const char *category,
+                     uint32_t request_id)
+{
+    if (s_custom_count >= OBD2_MAX_CUSTOM_PIDS) {
+        ESP_LOGW(TAG, "Custom PID registry full (max %u)", OBD2_MAX_CUSTOM_PIDS);
+        return false;
+    }
+    if (!signal_name || !signal_name[0]) {
+        ESP_LOGW(TAG, "Custom PID needs a signal_name");
+        return false;
+    }
+    if (data_bytes != 1 && data_bytes != 2 && data_bytes != 4) {
+        ESP_LOGW(TAG, "Custom PID data_bytes must be 1, 2 or 4 (got %u)", data_bytes);
+        return false;
+    }
+    if (service == 0) service = 0x01;
+
+    obd2_custom_entry_t *e = &s_custom[s_custom_count];
+    memset(e, 0, sizeof(*e));
+
+    /* Copy strings into stable buffers owned by the entry. */
+    strncpy(e->signal_name, signal_name, sizeof(e->signal_name) - 1);
+    if (human_name && human_name[0]) {
+        strncpy(e->human_name, human_name, sizeof(e->human_name) - 1);
+    } else {
+        strncpy(e->human_name, signal_name, sizeof(e->human_name) - 1);
+    }
+    if (unit && unit[0]) {
+        strncpy(e->unit, unit, sizeof(e->unit) - 1);
+    }
+    if (category && category[0]) {
+        strncpy(e->category, category, sizeof(e->category) - 1);
+    }
+
+    /* Wire the sub_field (the actual decoder). Using a sub-field even
+     * for "single value" PIDs keeps the decode path uniform with packed
+     * Toyota Mode 21 PIDs. */
+    e->sub_field.signal_name = e->signal_name;
+    e->sub_field.unit        = e->unit;
+    e->sub_field.byte_offset = data_offset;
+    e->sub_field.bytes       = data_bytes;
+    e->sub_field.is_signed   = is_signed;
+    e->sub_field.scale       = scale;
+    e->sub_field.offset      = offset;
+
+    /* Wire the def. signal_name = NULL marks this as a packed PID so the
+     * picker/decoder paths walk sub_fields rather than the legacy
+     * single-value fields. */
+    e->def.pid              = pid;
+    e->def.signal_name      = NULL;
+    e->def.human_name       = e->human_name;
+    e->def.unit             = e->unit;
+    e->def.bytes            = 0;
+    e->def.scale            = 0.0f;
+    e->def.offset           = 0.0f;
+    e->def.tier             = tier;
+    e->def.default_enabled  = false;
+    e->def.suggested_filler = false;
+    e->def.service          = service;
+    e->def.category         = e->category[0] ? e->category : NULL;
+    e->def.sub_fields       = &e->sub_field;
+    e->def.sub_field_count  = 1;
+    e->def.request_id       = request_id;
+
+    s_custom_count++;
+    ESP_LOGI(TAG, "Added custom PID svc 0x%02X 0x%02X -> '%s' (%u total)",
+             service, pid, signal_name, s_custom_count);
+    return true;
 }
 
 /* ── Scheduler ─────────────────────────────────────────────────────────

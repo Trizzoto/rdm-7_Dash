@@ -419,6 +419,67 @@ static void _load_signals(const cJSON *root) {
 	ESP_LOGI(TAG, "_load_signals: registered %u signals",
 			 (unsigned)signal_get_count());
 
+	/* Parse the layout's `custom_pids` array (if any) into the runtime
+	 * custom-PID registry. Must happen BEFORE obd2_start so polled_pids
+	 * referring to custom (service, pid) tuples can be found by
+	 * obd2_pid_find_svc. Reset first so the previous layout's custom set
+	 * doesn't leak into this one. */
+	obd2_custom_reset();
+	const cJSON *cust_arr = cJSON_GetObjectItemCaseSensitive(root, "custom_pids");
+	if (cJSON_IsArray(cust_arr)) {
+		const cJSON *ci;
+		cJSON_ArrayForEach(ci, cust_arr) {
+			if (!cJSON_IsObject(ci)) continue;
+			const cJSON *jn = cJSON_GetObjectItemCaseSensitive(ci, "signal_name");
+			const cJSON *jp = cJSON_GetObjectItemCaseSensitive(ci, "pid");
+			if (!cJSON_IsString(jn) || !cJSON_IsNumber(jp)) continue;
+
+			uint8_t  svc       = 0x01;
+			uint8_t  pid       = (uint8_t)jp->valueint;
+			uint8_t  offset_b  = 0;
+			uint8_t  bytes     = 1;
+			float    scale     = 1.0f;
+			float    sig_off   = 0.0f;
+			bool     is_signed = false;
+			uint32_t req_id    = 0;
+			obd2_tier_t tier   = OBD2_TIER_SLOW;
+			const char *label    = jn->valuestring;
+			const char *unit     = "";
+			const char *category = NULL;
+
+			const cJSON *t;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "service");
+			if (cJSON_IsNumber(t)) svc = (uint8_t)t->valueint;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "data_offset");
+			if (cJSON_IsNumber(t)) offset_b = (uint8_t)t->valueint;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "data_bytes");
+			if (cJSON_IsNumber(t)) bytes = (uint8_t)t->valueint;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "scale");
+			if (cJSON_IsNumber(t)) scale = (float)t->valuedouble;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "offset");
+			if (cJSON_IsNumber(t)) sig_off = (float)t->valuedouble;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "is_signed");
+			if (cJSON_IsBool(t)) is_signed = cJSON_IsTrue(t);
+			t = cJSON_GetObjectItemCaseSensitive(ci, "request_id");
+			if (cJSON_IsNumber(t)) req_id = (uint32_t)t->valueint;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "unit");
+			if (cJSON_IsString(t)) unit = t->valuestring;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "label");
+			if (cJSON_IsString(t)) label = t->valuestring;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "category");
+			if (cJSON_IsString(t)) category = t->valuestring;
+			t = cJSON_GetObjectItemCaseSensitive(ci, "tier");
+			if (cJSON_IsString(t) && t->valuestring &&
+			    strcmp(t->valuestring, "fast") == 0) {
+				tier = OBD2_TIER_FAST;
+			}
+
+			obd2_custom_add(svc, pid, jn->valuestring, label, unit,
+			                offset_b, bytes, scale, sig_off, is_signed,
+			                tier, category, req_id);
+		}
+	}
+
 	/* Parse the layout's polled_pids array (if any) and start OBD2 polling.
 	 * Numbers are encoded (service<<8 | pid) tuples; values <= 0xFF are
 	 * treated as Mode 01 for back-compat. Falls back to legacy `obd2_pids`
@@ -792,6 +853,45 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 			cJSON *pa = cJSON_AddArrayToObject(root, "polled_pids");
 			for (uint8_t i = 0; i < pc; i++) {
 				cJSON_AddItemToArray(pa, cJSON_CreateNumber(pids[i]));
+			}
+		}
+	}
+
+	/* Preserve the runtime custom-PID registry on internal saves. The
+	 * web editor save_raw path already carries custom_pids forward from
+	 * the editor's JSON tree, but build_json (used by serial save / data
+	 * logger snapshots) builds the JSON from scratch — without this
+	 * block, custom PIDs would silently disappear after such a save. */
+	{
+		uint8_t cc = obd2_custom_count();
+		if (cc > 0) {
+			cJSON *ca = cJSON_AddArrayToObject(root, "custom_pids");
+			for (uint8_t i = 0; i < cc; i++) {
+				const obd2_pid_def_t *d = obd2_custom_at(i);
+				if (!d || !d->sub_fields || d->sub_field_count == 0) continue;
+				const obd2_subfield_t *sf = &d->sub_fields[0];
+				cJSON *cj = cJSON_CreateObject();
+				if (!cj) continue;
+				cJSON_AddStringToObject(cj, "signal_name", sf->signal_name);
+				if (d->human_name && d->human_name[0])
+					cJSON_AddStringToObject(cj, "label", d->human_name);
+				cJSON_AddNumberToObject(cj, "service",
+				                        d->service ? d->service : 0x01);
+				cJSON_AddNumberToObject(cj, "pid", d->pid);
+				cJSON_AddNumberToObject(cj, "data_offset", sf->byte_offset);
+				cJSON_AddNumberToObject(cj, "data_bytes", sf->bytes);
+				cJSON_AddNumberToObject(cj, "scale", sf->scale);
+				cJSON_AddNumberToObject(cj, "offset", sf->offset);
+				cJSON_AddBoolToObject(cj, "is_signed", sf->is_signed);
+				if (sf->unit && sf->unit[0])
+					cJSON_AddStringToObject(cj, "unit", sf->unit);
+				if (d->category && d->category[0])
+					cJSON_AddStringToObject(cj, "category", d->category);
+				cJSON_AddStringToObject(cj, "tier",
+				                       (d->tier == OBD2_TIER_FAST) ? "fast" : "slow");
+				if (d->request_id)
+					cJSON_AddNumberToObject(cj, "request_id", d->request_id);
+				cJSON_AddItemToArray(ca, cj);
 			}
 		}
 	}

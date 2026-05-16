@@ -153,9 +153,11 @@ void obd2_picker_open(void)
     {
         uint16_t preview[OBD2_MAX_ENABLED];
         uint8_t pn = 0;
-        for (int i = 0; i < OBD2_PIDS_COUNT && pn < OBD2_MAX_ENABLED; i++) {
-            preview[pn++] = obd2_encode_pid(OBD2_PIDS[i].service,
-                                            OBD2_PIDS[i].pid);
+        uint8_t total = obd2_pid_total_count();
+        for (uint8_t i = 0; i < total && pn < OBD2_MAX_ENABLED; i++) {
+            const obd2_pid_def_t *p = obd2_pid_at(i);
+            if (!p) continue;
+            preview[pn++] = obd2_encode_pid(p->service, p->pid);
         }
         obd2_start(preview, pn);
     }
@@ -395,14 +397,16 @@ static void _build_rows(void)
     uint8_t enabled_count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &enabled_count);
 
-    /* For each PID definition, expand into one row per emitted signal —
-     * single-value PIDs produce one row; packed PIDs produce one row per
-     * sub-field, all sharing the parent PID. Match enabled state on the
-     * encoded (service, pid) tuple so Toyota Mode 21 PID 0x80 doesn't
-     * accidentally match Mode 01 PID 0x80 (or any other cross-service
-     * collision). */
-    for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
-        const obd2_pid_def_t *def = &OBD2_PIDS[i];
+    /* For each PID definition (built-in + custom), expand into one row
+     * per emitted signal — single-value PIDs produce one row; packed
+     * PIDs produce one row per sub-field, all sharing the parent PID.
+     * Match enabled state on the encoded (service, pid) tuple so
+     * Toyota Mode 21 PID 0x80 doesn't accidentally match Mode 01 PID
+     * 0x80 (or any other cross-service collision). */
+    uint8_t total_defs = obd2_pid_total_count();
+    for (uint8_t i = 0; i < total_defs; i++) {
+        const obd2_pid_def_t *def = obd2_pid_at(i);
+        if (!def) continue;
         uint16_t def_encoded = obd2_encode_pid(def->service, def->pid);
 
         bool pid_enabled = false;

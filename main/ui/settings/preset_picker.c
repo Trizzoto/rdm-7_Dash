@@ -484,9 +484,13 @@ static void _add_obd2_item(const obd2_pid_def_t *def,
 
 static void _ensure_obd2_items_built(void)
 {
-    if (s_obd2_count > 0) return;
-    for (int i = 0; i < OBD2_PIDS_COUNT && s_obd2_count < 64; i++) {
-        const obd2_pid_def_t *p = &OBD2_PIDS[i];
+    /* Always rebuild — custom PIDs may have been added/removed since the
+     * last picker open. ~80 entries × small struct = trivial cost. */
+    s_obd2_count = 0;
+    uint8_t total = obd2_pid_total_count();
+    for (uint8_t i = 0; i < total && s_obd2_count < 64; i++) {
+        const obd2_pid_def_t *p = obd2_pid_at(i);
+        if (!p) continue;
 
         if (p->sub_fields && p->sub_field_count > 0) {
             /* Packed PID (e.g. Toyota Mode 21 engine block): one entry
