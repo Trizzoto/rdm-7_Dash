@@ -37,6 +37,7 @@
 #include "storage/sd_manager.h"
 #include "storage/user_signals.h"
 #include "system/crash_log.h"
+#include "system/heap_monitor.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
 #include "ui/screens/ui_wifi.h"
@@ -525,6 +526,10 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
     ESP_LOGI(TAG, "==============================");
   }
 
+  /* Diagnostic: periodic heap snapshot to surface the ongoing PHY-leak
+   * crash. Started LAST so the first sample baselines the steady-state
+   * after all heavy allocators (WiFi, web server, LVGL) have settled. */
+  heap_monitor_start();
 }
 
 void app_main(void) {

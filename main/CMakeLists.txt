@@ -43,6 +43,7 @@ idf_component_register(
         "system/night_mode.c"
         "system/remote_touch.c"
         "system/crash_log.c"
+        "system/heap_monitor.c"
         "ui/ui.c"
         "ui/dashboard.c"
         "ui/ui_styles.c"
