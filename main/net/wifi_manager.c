@@ -20,6 +20,15 @@ static const char *TAG = "wifi_mgr";
 #define WIFI_RECONNECT_BASE_DELAY_MS 2000   /* doubles each attempt */
 #define WIFI_RECONNECT_MAX_DELAY_MS  30000
 
+/* Auth-class failures (wrong password, WPA mismatch, etc.) won't fix
+ * themselves by retrying. Each retry cycles the PHY power state which
+ * leaks a small amount of internal SRAM through esp_phy's PLL timer
+ * init — at ~3 cycles we've seen esp_timer_create return NO_MEM and
+ * the whole system abort. Cap auth-class retries at 2, then give up
+ * STA entirely and enable AP so the user can fix the password via
+ * the web editor. */
+#define WIFI_AUTH_FAIL_MAX           2
+
 /* ── Static state ─────────────────────────────────────────────────────── */
 
 static bool             s_initialized   = false;
@@ -28,6 +37,7 @@ static bool             s_ap_enabled    = false;
 static _Atomic wifi_mgr_state_t s_state  = WIFI_MGR_STATE_OFF;
 
 static int              s_reconnect_attempts = 0;
+static int              s_auth_failure_count = 0;   /* counts AUTH_EXPIRE / AUTH_FAIL / etc. */
 static bool             s_should_reconnect   = false;
 static bool             s_user_disconnect    = false;
 static TimerHandle_t    s_reconnect_timer    = NULL;
@@ -371,6 +381,38 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             s_connected_ssid[0] = '\0';
             memset(s_sta_ip, 0, sizeof(s_sta_ip));
 
+            /* Classify the disconnect — auth-class reasons mean wrong
+             * password / WPA mismatch / handshake failure; retrying won't
+             * help and each retry cycles the PHY (leaks esp_timer slots
+             * inside the IDF PHY layer, eventually crashes with NO_MEM).
+             * Track these separately and give up STA after a low cap. */
+            bool is_auth_fail =
+                (ev->reason == WIFI_REASON_AUTH_EXPIRE ||
+                 ev->reason == WIFI_REASON_AUTH_FAIL ||
+                 ev->reason == WIFI_REASON_HANDSHAKE_TIMEOUT ||
+                 ev->reason == WIFI_REASON_MIC_FAILURE ||
+                 ev->reason == WIFI_REASON_802_1X_AUTH_FAILED ||
+                 ev->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT);
+            if (is_auth_fail) {
+                s_auth_failure_count++;
+                if (s_auth_failure_count >= WIFI_AUTH_FAIL_MAX) {
+                    ESP_LOGW(TAG, "Auth failed %d times — giving up STA, "
+                                  "enabling AP for recovery (re-enter password "
+                                  "via web editor at 192.168.4.1)",
+                             s_auth_failure_count);
+                    s_should_reconnect = false;
+                    s_reconnect_attempts = 0;
+                    /* Switch to AP-only mode so the user has a way back
+                     * in without a USB cable. _Atomic store via setter
+                     * handles event dispatch. */
+                    if (!s_ap_enabled) {
+                        wifi_manager_enable_ap(true);
+                    }
+                    _set_state(WIFI_MGR_STATE_AP_ONLY);
+                    break;
+                }
+            }
+
             if (s_user_disconnect) {
                 /* User-initiated disconnect — do NOT auto-reconnect */
                 s_user_disconnect = false;
@@ -433,6 +475,10 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             ip_event_got_ip_t *ev = (ip_event_got_ip_t *)event_data;
             snprintf(s_sta_ip, sizeof(s_sta_ip), IPSTR, IP2STR(&ev->ip_info.ip));
             ESP_LOGI(TAG, "Got IP: %s", s_sta_ip);
+            /* Auth succeeded — reset the auth-failure cap so a future
+             * disconnect (e.g. router reboot, signal drop) gets the
+             * full retry budget again. */
+            s_auth_failure_count = 0;
             _set_state(WIFI_MGR_STATE_CONNECTED);
             /* Kick off NTP now that we have a route. Idempotent — every
              * subsequent got-IP is a no-op. Required by Share Raw CAN
@@ -704,6 +750,11 @@ void wifi_manager_connect(const char *ssid, const char *password)
         _stop_reconnect();
     }
     s_auto_connect_pending = false;
+    /* Reset auth-failure budget on every explicit connect call — if
+     * the user just entered fresh credentials via the web editor, they
+     * deserve a clean shot at WIFI_AUTH_FAIL_MAX attempts even if the
+     * previous (failed) password had already burned the cap. */
+    s_auth_failure_count = 0;
 
     ESP_LOGI(TAG, "Connecting to '%s'", ssid);
 
