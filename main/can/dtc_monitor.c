@@ -18,9 +18,23 @@
 
 static const char *TAG = "dtc_monitor";
 
-static lv_timer_t *s_timer       = NULL;
-static uint8_t     s_last_count  = 0;
-static bool        s_in_flight   = false;
+static lv_timer_t *s_timer                = NULL;
+static uint8_t     s_last_count           = 0;
+static bool        s_in_flight            = false;
+static uint16_t    s_consecutive_failures = 0;
+static bool        s_in_slow_mode         = false;
+
+/* Switch the timer period without recreating the timer. lv_timer_set_period
+ * is safe to call from inside a timer callback. */
+static void _set_cadence(uint32_t period_ms, bool slow) {
+    if (!s_timer) return;
+    if (s_in_slow_mode == slow) return;
+    lv_timer_set_period(s_timer, period_ms);
+    s_in_slow_mode = slow;
+    ESP_LOGI(TAG, "DTC poll cadence -> %s (%u ms)",
+             slow ? "SLOW (bus inactive)" : "FAST (bus alive)",
+             (unsigned)period_ms);
+}
 
 /* ── DTC response handler ────────────────────────────────────────────── */
 
@@ -29,11 +43,28 @@ static void _on_dtc_response(bool ok, const obd2_dtc_t *codes, uint8_t count,
     (void)codes; (void)mode; (void)user;
     s_in_flight = false;
     if (!ok) {
-        /* ECU didn't respond, or NRC. Don't clobber DTC_COUNT — keep
-         * whatever the last successful poll reported. A vehicle-off
-         * state shouldn't make a stale warning indicator flicker. */
-        ESP_LOGD(TAG, "Stored DTC poll: no response");
+        /* ECU didn't respond, NRC'd, or TX queued-but-not-acked because
+         * the bus is offline. Don't clobber DTC_COUNT — last good value
+         * remains; warning indicators don't flicker on transient drops.
+         *
+         * Adaptive backoff: after N consecutive failures, slow the poll
+         * cadence to keep bench/ignition-off use quiet. A single success
+         * snaps back to fast mode (handled in the success branch). */
+        if (s_consecutive_failures < UINT16_MAX) {
+            s_consecutive_failures++;
+        }
+        if (s_consecutive_failures == DTC_MONITOR_SLOW_THRESHOLD) {
+            _set_cadence(DTC_MONITOR_SLOW_INTERVAL_MS, true);
+        }
+        ESP_LOGD(TAG, "Stored DTC poll: no response (fails=%u)",
+                 s_consecutive_failures);
         return;
+    }
+    /* Success — reset failure counter and restore fast cadence if we'd
+     * been throttled. */
+    if (s_consecutive_failures > 0 || s_in_slow_mode) {
+        s_consecutive_failures = 0;
+        _set_cadence(DTC_MONITOR_FAST_INTERVAL_MS, false);
     }
     s_last_count = count;
     signal_set_external_value("DTC_COUNT", (float)count);
@@ -82,9 +113,15 @@ void dtc_monitor_start(void) {
 
     if (s_timer) return;   /* timer already running — nothing more to do */
 
-    s_timer = lv_timer_create(_tick_cb, DTC_MONITOR_DEFAULT_INTERVAL_MS, NULL);
-    ESP_LOGI(TAG, "DTC monitor started (poll every %u ms)",
-             (unsigned)DTC_MONITOR_DEFAULT_INTERVAL_MS);
+    /* Start in FAST mode; backoff path will switch to SLOW automatically
+     * if the bus is silent for DTC_MONITOR_SLOW_THRESHOLD ticks. */
+    s_timer = lv_timer_create(_tick_cb, DTC_MONITOR_FAST_INTERVAL_MS, NULL);
+    s_in_slow_mode = false;
+    s_consecutive_failures = 0;
+    ESP_LOGI(TAG, "DTC monitor started (fast: %u ms, slow: %u ms after %u fails)",
+             (unsigned)DTC_MONITOR_FAST_INTERVAL_MS,
+             (unsigned)DTC_MONITOR_SLOW_INTERVAL_MS,
+             (unsigned)DTC_MONITOR_SLOW_THRESHOLD);
 }
 
 void dtc_monitor_stop(void) {
@@ -93,6 +130,8 @@ void dtc_monitor_stop(void) {
         s_timer = NULL;
     }
     s_in_flight = false;
+    s_consecutive_failures = 0;
+    s_in_slow_mode = false;
     ESP_LOGI(TAG, "DTC monitor stopped");
 }
 

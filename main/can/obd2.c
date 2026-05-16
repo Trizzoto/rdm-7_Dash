@@ -566,7 +566,11 @@ static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
     uint8_t data[8] = { 0x01, mode, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
     esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "DTC mode 0x%02X TX failed: %s", mode, esp_err_to_name(err));
+        /* DEBUG level — TX failures here are normal when the bus is
+         * inactive (bench, ignition off, no CAN dongle plugged in).
+         * The caller (dtc_monitor) tracks consecutive failures and
+         * backs off cadence, so we don't need a per-attempt warning. */
+        ESP_LOGD(TAG, "DTC mode 0x%02X TX failed: %s", mode, esp_err_to_name(err));
         s_dtc_req.active = false;
         cb(false, NULL, 0, mode, user);
         return;
@@ -597,7 +601,7 @@ void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user) {
     uint8_t data[8] = { 0x01, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
     esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Clear DTC TX failed: %s", esp_err_to_name(err));
+        ESP_LOGD(TAG, "Clear DTC TX failed: %s", esp_err_to_name(err));
         s_clear_req.active = false;
         cb(false, user);
         return;
@@ -624,7 +628,7 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     uint8_t data[8] = { 0x02, 0x09, 0x02, 0x55, 0x55, 0x55, 0x55, 0x55 };
     esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "VIN TX failed: %s", esp_err_to_name(err));
+        ESP_LOGD(TAG, "VIN TX failed: %s", esp_err_to_name(err));
         s_vin_req.active = false;
         cb(false, NULL, user);
         return;
@@ -650,7 +654,7 @@ void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
     uint8_t data[8] = { 0x02, 0x09, 0x0A, 0x55, 0x55, 0x55, 0x55, 0x55 };
     esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "ECU-name TX failed: %s", esp_err_to_name(err));
+        ESP_LOGD(TAG, "ECU-name TX failed: %s", esp_err_to_name(err));
         s_ecuname_req.active = false;
         cb(false, NULL, user);
         return;

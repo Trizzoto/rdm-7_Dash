@@ -22,9 +22,24 @@
 extern "C" {
 #endif
 
-/* Default poll cadence — DTCs don't appear second-to-second so 30 s
- * keeps the signal "live enough" without significant bus traffic. */
-#define DTC_MONITOR_DEFAULT_INTERVAL_MS  30000
+/* Active poll cadence — used when the ECU is responding (or has been
+ * recently). DTCs don't appear second-to-second so 30 s keeps the signal
+ * "live enough" without significant bus traffic. */
+#define DTC_MONITOR_FAST_INTERVAL_MS   30000
+
+/* Slow cadence — used after N consecutive failures (typically bench,
+ * ignition off, or no CAN dongle). 5 min keeps spam off the serial
+ * monitor and bus while still recovering quickly once the car comes
+ * online (a successful response auto-switches back to fast). */
+#define DTC_MONITOR_SLOW_INTERVAL_MS  300000
+
+/* Failure threshold before switching to slow mode. Three 30-s ticks
+ * ≈ 90 s of consistent silence — long enough to rule out a one-off
+ * timing miss, short enough that bench-testing doesn't spam the log. */
+#define DTC_MONITOR_SLOW_THRESHOLD        3
+
+/* Backwards-compat alias used elsewhere in the codebase. */
+#define DTC_MONITOR_DEFAULT_INTERVAL_MS DTC_MONITOR_FAST_INTERVAL_MS
 
 /* Register the DTC_COUNT signal and start the periodic poll. Idempotent —
  * calling twice is a no-op. Call once at boot after signal_registry_init
