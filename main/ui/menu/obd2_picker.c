@@ -430,10 +430,10 @@ static void _add_row(const obd2_pid_def_t *def,
      * from. Mode 22 shows 4-digit PID. */
     char label[80];
     if (r->parent_service == 0x22) {
-        snprintf(label, sizeof(label), "%s  (M22·0x%04X)",
+        snprintf(label, sizeof(label), "%s  (M22:0x%04X)",
                  display_label, r->parent_pid);
     } else {
-        snprintf(label, sizeof(label), "%s  (M%02X·0x%02X)",
+        snprintf(label, sizeof(label), "%s  (M%02X:0x%02X)",
                  display_label, r->parent_service,
                  (unsigned)(r->parent_pid & 0xFF));
     }
@@ -454,7 +454,7 @@ static void _add_row(const obd2_pid_def_t *def,
     lv_obj_align(r->value_lbl, LV_ALIGN_RIGHT_MID, -72, 0);
     lv_obj_set_style_text_font(r->value_lbl, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(r->value_lbl, THEME_COLOR_TEXT_HINT, 0);
-    lv_label_set_text(r->value_lbl, "—");
+    lv_label_set_text(r->value_lbl, "-");
 
     /* Status badge. */
     r->badge = lv_label_create(r->row);
@@ -636,11 +636,11 @@ static void _refresh_count_status(void)
     char buf[96];
     if (supported > 0) {
         snprintf(buf, sizeof(buf),
-                 "%d sup · %d on (of %d)",
+                 "%d sup, %d on (of %d)",
                  supported, enabled, total);
     } else {
         snprintf(buf, sizeof(buf),
-                 "%d decoders · %d on · tap Scan",
+                 "%d decoders, %d on, tap Scan",
                  total, enabled);
     }
     lv_label_set_text(s_status, buf);
@@ -718,11 +718,11 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
     char status[96];
     if (unknown > 0) {
         snprintf(status, sizeof(status),
-                 "Scan: %u sup · %d on · %d unknown",
+                 "Scan: %u sup, %d on, %d unknown",
                  r->count - unknown, decoder_signal_count, unknown);
     } else {
         snprintf(status, sizeof(status),
-                 "Scan: %u sup · %d on",
+                 "Scan: %u sup, %d on",
                  r->count, decoder_signal_count);
     }
     _set_status(status);
@@ -822,7 +822,7 @@ static void _trim_btn_cb(lv_event_t *e)
         snprintf(buf, sizeof(buf), "Trimmed %d unsupported.", trimmed);
         _set_status(buf);
     } else {
-        _set_status("Nothing to trim — all enabled rows are supported.");
+        _set_status("Nothing to trim - all enabled rows are supported.");
     }
 }
 
