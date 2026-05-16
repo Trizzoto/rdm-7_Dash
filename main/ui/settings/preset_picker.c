@@ -418,34 +418,43 @@ static void _ensure_obd2_items_built(void)
 {
     if (s_obd2_count > 0) return;
     int n = OBD2_PIDS_COUNT;
-    if (n > 64) n = 64;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n && s_obd2_count < 64; i++) {
         const obd2_pid_def_t *p = &OBD2_PIDS[i];
+
+        /* Skip packed PIDs (sub_fields set, signal_name == NULL) — a
+         * single widget can't bind to multiple signals at once, so they
+         * don't fit the long-press preset model. User enables them via
+         * the Device Settings OBD2 Signals modal instead, and the
+         * sub-field signal names get registered by obd2_start so widgets
+         * can bind to them through other paths. */
+        if (!p->signal_name) continue;
+
+        int idx = s_obd2_count;
         /* Display label = signal_name with underscores → spaces. e.g.
          * "COOLANT_TEMP" -> "COOLANT TEMP". label_to_signal_name in
          * config_modal converts it back losslessly. */
         size_t j = 0;
         for (size_t k = 0; p->signal_name[k] && j < OBD2_LABEL_BUF_LEN - 1; k++) {
-            s_obd2_labels[i][j++] = (p->signal_name[k] == '_') ? ' '
-                                                              : p->signal_name[k];
+            s_obd2_labels[idx][j++] = (p->signal_name[k] == '_') ? ' '
+                                                                : p->signal_name[k];
         }
-        s_obd2_labels[i][j] = '\0';
+        s_obd2_labels[idx][j] = '\0';
 
-        s_obd2_items[i].ecu          = "OBD2";
-        s_obd2_items[i].version      = "Standard";
-        s_obd2_items[i].label        = s_obd2_labels[i];
-        s_obd2_items[i].can_id       = "0";
-        s_obd2_items[i].endianess    = 0;
-        s_obd2_items[i].bit_start    = 0;
-        s_obd2_items[i].bit_length   = 0;
-        s_obd2_items[i].scale        = p->scale;
-        s_obd2_items[i].value_offset = p->offset;
-        s_obd2_items[i].decimals     = (p->scale >= 1.0f) ? 0
-                                     : (p->scale >= 0.1f) ? 1 : 2;
-        s_obd2_items[i].is_signed    = false;
-        s_obd2_items[i].obd2_pid     = p->pid;
+        s_obd2_items[idx].ecu          = "OBD2";
+        s_obd2_items[idx].version      = "Standard";
+        s_obd2_items[idx].label        = s_obd2_labels[idx];
+        s_obd2_items[idx].can_id       = "0";
+        s_obd2_items[idx].endianess    = 0;
+        s_obd2_items[idx].bit_start    = 0;
+        s_obd2_items[idx].bit_length   = 0;
+        s_obd2_items[idx].scale        = p->scale;
+        s_obd2_items[idx].value_offset = p->offset;
+        s_obd2_items[idx].decimals     = (p->scale >= 1.0f) ? 0
+                                       : (p->scale >= 0.1f) ? 1 : 2;
+        s_obd2_items[idx].is_signed    = false;
+        s_obd2_items[idx].obd2_pid     = p->pid;
+        s_obd2_count++;
     }
-    s_obd2_count = n;
 }
 
 /* Resolve a sel_sig index that can point at either preconfig_items[] or the

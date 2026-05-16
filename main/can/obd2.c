@@ -252,7 +252,36 @@ void obd2_set_enabled(const uint8_t *pids, uint8_t count)
 
 static void _register_pid_signal(const obd2_pid_def_t *def)
 {
-    if (!def || !def->signal_name) return;
+    if (!def) return;
+
+    /* Packed multi-value PID (Mode 21 Toyota engine block, future Mode
+     * 22 OEM blocks): register one signal per sub-field. Without this,
+     * decoded values get dropped by signal_set_external_value because
+     * the names don't exist in the registry. */
+    if (def->sub_fields && def->sub_field_count > 0) {
+        for (uint8_t i = 0; i < def->sub_field_count; i++) {
+            const obd2_subfield_t *sf = &def->sub_fields[i];
+            if (!sf->signal_name) continue;
+            if (signal_find_by_name(sf->signal_name) >= 0) continue;
+            int16_t idx = signal_register(sf->signal_name,
+                                          /*can_id=*/0,
+                                          /*bit_start=*/0,
+                                          /*bit_length=*/0,
+                                          /*scale=*/1.0f,
+                                          /*offset=*/0.0f,
+                                          sf->is_signed,
+                                          /*endian=*/1,
+                                          sf->unit ? sf->unit : "");
+            if (idx < 0) {
+                ESP_LOGW(TAG, "Failed to register OBD2 signal '%s'",
+                         sf->signal_name);
+            }
+        }
+        return;
+    }
+
+    /* Legacy single-value PID. */
+    if (!def->signal_name) return;
     if (signal_find_by_name(def->signal_name) >= 0) return;
 
     int16_t idx = signal_register(def->signal_name,

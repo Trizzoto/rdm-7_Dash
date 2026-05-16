@@ -414,7 +414,16 @@ static void _live_refresh_cb(lv_timer_t *t)
 
         if (r->signal_idx < 0) {
             const obd2_pid_def_t *def = obd2_pid_find(r->pid);
-            if (def) r->signal_idx = signal_find_by_name(def->signal_name);
+            if (def) {
+                /* Packed PIDs have no top-level signal_name; use the
+                 * first sub-field as the "headline" live value so the
+                 * row at least shows that polling is working. */
+                const char *name = def->signal_name;
+                if (!name && def->sub_fields && def->sub_field_count > 0) {
+                    name = def->sub_fields[0].signal_name;
+                }
+                if (name) r->signal_idx = signal_find_by_name(name);
+            }
             if (r->signal_idx < 0) continue;   /* still unregistered */
         }
 
