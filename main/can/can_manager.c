@@ -230,6 +230,36 @@ static void _stop_can_task(void) {
 	can_task_should_stop = false;
 }
 
+/* Install the TWAI driver with retry. The peripheral sometimes needs more
+ * than the typical 50-100 ms quiet window to fully release after an
+ * uninstall before it'll accept a fresh install — single-shot install
+ * intermittently returns ESP_ERR_INVALID_STATE and leaves CAN dead until
+ * reboot. Centralised so every install path (boot, filter rebuild,
+ * bitrate change, resume, recovery) gets the same backoff behaviour.
+ *
+ * 3 attempts with exponential delays: 200, 400, 600 ms between retries.
+ * Each retry uninstalls again to clear any half-state from the failed
+ * attempt — without this the peripheral can latch into a partial-install
+ * mode that no amount of waiting clears.
+ *
+ * @param ctx  short context string for logging (e.g. "filter rebuild")
+ * @return     ESP_OK on success, last error code if all attempts fail.
+ */
+static esp_err_t _install_twai_with_retry(const char *ctx) {
+	esp_err_t err = ESP_FAIL;
+	for (int attempt = 0; attempt < 3; attempt++) {
+		err = twai_driver_install(&g_config, &g_t_config, &f_config);
+		if (err == ESP_OK) return ESP_OK;
+		ESP_LOGW(TAG, "%s: install attempt %d/3 failed: %s (0x%04x)",
+				 ctx, attempt + 1, esp_err_to_name(err), (unsigned)err);
+		twai_driver_uninstall();
+		vTaskDelay(pdMS_TO_TICKS(200 * (attempt + 1)));
+	}
+	ESP_LOGE(TAG, "%s: twai_driver_install failed after retries: %s",
+			 ctx, esp_err_to_name(err));
+	return err;
+}
+
 /** Map a bitrate index (0-3) to the corresponding TWAI timing config. */
 static twai_timing_config_t _bitrate_to_timing(uint8_t bitrate_code) {
 	switch (bitrate_code) {
@@ -248,11 +278,7 @@ void reconfigure_can_filter(void) {
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
 	vTaskDelay(pdMS_TO_TICKS(50));
-	esp_err_t err = twai_driver_install(&g_config, &g_t_config, &f_config);
-	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "twai_driver_install failed: %s", esp_err_to_name(err));
-		return;
-	}
+	if (_install_twai_with_retry("filter rebuild") != ESP_OK) return;
 	twai_start();
 	vTaskDelay(pdMS_TO_TICKS(50));
 
@@ -271,10 +297,8 @@ void can_init(void) {
 
 	build_twai_filter_from_signals(&f_config);
 
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) == ESP_OK)
+	if (_install_twai_with_retry("init") == ESP_OK)
 		ESP_LOGI(TAG, "TWAI driver installed");
-	else
-		ESP_LOGE(TAG, "TWAI driver install failed");
 
 	/* Do NOT call twai_start() here — the RX task is not running yet.
 	 * If CAN bus traffic arrives before the task drains the HW FIFO,
@@ -330,10 +354,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 
 	build_twai_filter_from_signals(&f_config);
 
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) != ESP_OK) {
-		ESP_LOGE(TAG, "TWAI driver install failed after bitrate change");
-		return;
-	}
+	if (_install_twai_with_retry("bitrate change") != ESP_OK) return;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	if (twai_start() != ESP_OK) {
@@ -466,25 +487,9 @@ void can_resume(void) {
 	twai_driver_uninstall();
 	vTaskDelay(pdMS_TO_TICKS(100));
 
-	/* Retry the driver install up to 3 times. The previous twai_driver_uninstall
-	 * (in scan task or can_suspend) needs the TWAI peripheral fully released
-	 * before reinstall — a tight loop right after uninstall sometimes returns
-	 * ESP_ERR_INVALID_STATE on the first attempt. Without this retry, a single
-	 * transient failure leaves CAN dead until reboot ("CAN status unavailable"). */
-	esp_err_t err = ESP_FAIL;
-	for (int attempt = 0; attempt < 3; attempt++) {
-		err = twai_driver_install(&g_config, &g_t_config, &f_config);
-		if (err == ESP_OK) break;
-		ESP_LOGW(TAG, "Resume: install attempt %d/3 failed: %s (0x%04x)",
-				 attempt + 1, esp_err_to_name(err), err);
-		twai_driver_uninstall();
-		vTaskDelay(pdMS_TO_TICKS(200 * (attempt + 1)));
-	}
-	if (err != ESP_OK) {
-		ESP_LOGE(TAG, "Resume: twai_driver_install failed after retries: %s",
-				 esp_err_to_name(err));
-		/* Leave s_suspended=true so a future call can retry. This was
-		 * previously cleared on failure, which silently locked CAN out. */
+	if (_install_twai_with_retry("Resume") != ESP_OK) {
+		/* Leave s_suspended=true so a future call can retry. Previously
+		 * cleared on failure, which silently locked CAN out until reboot. */
 		return;
 	}
 
@@ -545,10 +550,7 @@ bool can_recover(void) {
 	config_store_load_bitrate(&saved_bitrate);
 	g_t_config = _bitrate_to_timing(saved_bitrate);
 
-	if (twai_driver_install(&g_config, &g_t_config, &f_config) != ESP_OK) {
-		ESP_LOGE(TAG, "Recovery: twai_driver_install failed");
-		return true;
-	}
+	if (_install_twai_with_retry("Recovery") != ESP_OK) return true;
 	if (twai_start() != ESP_OK) {
 		ESP_LOGE(TAG, "Recovery: twai_start failed");
 		twai_driver_uninstall();
