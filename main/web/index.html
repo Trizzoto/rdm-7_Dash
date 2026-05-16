@@ -441,7 +441,6 @@
             header #layoutSelect { max-width: 180px; }
         }
         @media (max-width: 1199px) {
-            header #screenModeSelect,
             header #splashSelect,
             header #splashFadeLabel {
                 display: none !important;
@@ -2865,6 +2864,7 @@
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="openDeviceInfo(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device Info...</div>
                     <div class="layout-menu-item" onclick="openSignalDashboard(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Signal Dashboard...</div>
+                    <div class="layout-menu-item" onclick="openCustomPids(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 7v4M9 13v4M15 7v10"/><circle cx="15" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>OBD2 Custom PIDs...</div>
                     <div class="layout-menu-item" onclick="openDataLogger(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Data Logger...</div>
                     <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Dimmer Settings...</div>
                     <div class="layout-menu-sep"></div>
@@ -3198,6 +3198,171 @@
             </div>
         </div>
     </div>
+
+    <!-- OBD2 Custom PIDs modal — lets users define forum-found / community-
+         documented PIDs at runtime. Saved with the layout JSON and registered
+         in the firmware's custom-PID table on layout load. Import/Export
+         lets users share PID packs. -->
+    <div id="customPidsModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeCustomPids()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; width:780px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-weight:600; font-size:14px;">OBD2 Custom PIDs
+                    <span id="customPidsCount" style="color:var(--text-muted); font-weight:400; font-size:11px; margin-left:6px;"></span>
+                </span>
+                <button class="close-btn" onclick="closeCustomPids()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
+                <button class="btn btn-secondary" style="font-size:11px; padding:5px 10px;" onclick="customPidImport()">
+                    <svg viewBox="0 0 24 24" style="width:12px; height:12px; vertical-align:-2px; margin-right:4px;" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Import JSON
+                </button>
+                <button class="btn btn-secondary" style="font-size:11px; padding:5px 10px;" onclick="customPidExport()">
+                    <svg viewBox="0 0 24 24" style="width:12px; height:12px; vertical-align:-2px; margin-right:4px;" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Export JSON
+                </button>
+                <button class="btn" style="font-size:11px; padding:5px 10px; margin-left:auto;" onclick="customPidEditOpen(-1)">
+                    + Add PID
+                </button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:10px; line-height:1.4;">
+                Define OBD2 PIDs from forum threads or vehicle service manuals.
+                Picking <b>+ Add</b> opens a form with a <b>Test</b> button that
+                queries the ECU once and shows the raw bytes + decoded value, so
+                you can verify the decode formula before saving.
+            </div>
+            <div id="customPidsTableWrap" style="border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden;">
+                <table id="customPidsTable" style="width:100%; border-collapse:collapse; font-size:11px;">
+                    <thead style="background:var(--bg); color:var(--text-muted);">
+                        <tr>
+                            <th style="text-align:left; padding:6px 8px; font-weight:500;">Signal</th>
+                            <th style="text-align:left; padding:6px 8px; font-weight:500;">Mode</th>
+                            <th style="text-align:left; padding:6px 8px; font-weight:500;">PID</th>
+                            <th style="text-align:left; padding:6px 8px; font-weight:500;">Decode</th>
+                            <th style="text-align:right; padding:6px 8px; font-weight:500;">Live</th>
+                            <th style="text-align:right; padding:6px 8px; font-weight:500;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="customPidsBody"></tbody>
+                </table>
+            </div>
+            <div style="font-size:10px; color:var(--text-muted); margin-top:8px;">
+                Saved with your layout. Use Export to share with others.
+                Imported packs merge into the current list (duplicates by
+                signal name overwrite). Hit <b>Save Layout</b> in the header
+                to persist changes to the device.
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom PID edit modal — form for one PID (Add or Edit). Has the
+         Test button that calls POST /api/obd2/test_pid and renders the
+         raw response bytes + decoded value inline. -->
+    <div id="customPidEditModal" style="display:none; position:fixed; inset:0; z-index:10100; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="customPidEditClose()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <span id="customPidEditTitle" style="font-weight:600; font-size:14px;">Custom PID</span>
+                <button class="close-btn" onclick="customPidEditClose()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <label style="font-size:11px; color:var(--text-muted);">Signal name
+                    <input id="cpidSignalName" type="text" placeholder="e.g. ATF_TEMP"
+                           style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:'JetBrains Mono', monospace;">
+                    <span style="font-size:10px; opacity:0.7;">Widgets bind to this name in the signal picker.</span>
+                </label>
+                <label style="font-size:11px; color:var(--text-muted);">Display label
+                    <input id="cpidLabel" type="text" placeholder="e.g. ATF Temperature"
+                           style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                </label>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">Mode / Service
+                        <select id="cpidService" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                            <option value="1">Mode 01 (standard OBD2)</option>
+                            <option value="33">Mode 21 (KWP / Toyota, Honda)</option>
+                            <option value="34">Mode 22 (UDS — not wired yet)</option>
+                        </select>
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">PID (hex)
+                        <input id="cpidPidHex" type="text" placeholder="0x21"
+                               style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:'JetBrains Mono', monospace;">
+                    </label>
+                </div>
+
+                <label style="font-size:11px; color:var(--text-muted);">Request ID (hex)
+                    <input id="cpidReqIdHex" type="text" placeholder="0x7E0 (engine), 0x7E1 (TCM), blank = 0x7DF broadcast"
+                           style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:'JetBrains Mono', monospace;">
+                </label>
+
+                <div style="border-top:1px solid var(--border); padding-top:10px; font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Decode</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">Byte offset
+                        <input id="cpidOffset" type="number" min="0" max="63" value="0"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Length
+                        <select id="cpidBytes" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                            <option value="1">1 byte</option>
+                            <option value="2">2 bytes (big-endian)</option>
+                            <option value="4">4 bytes (big-endian)</option>
+                        </select>
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:flex-end;">
+                        <span style="display:flex; align-items:center; gap:6px; padding-bottom:5px;">
+                            <input id="cpidSigned" type="checkbox" style="width:14px; height:14px;"> Signed
+                        </span>
+                    </label>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">Scale
+                        <input id="cpidScale" type="number" step="any" value="1.0"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Offset
+                        <input id="cpidValueOffset" type="number" step="any" value="0"
+                               style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Unit
+                        <input id="cpidUnit" type="text" placeholder="e.g. degC"
+                               style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                </div>
+                <div style="font-size:10px; color:var(--text-muted);">
+                    Formula: <code>value = raw × scale + offset</code>
+                </div>
+
+                <div style="border-top:1px solid var(--border); padding-top:10px; font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Polling</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <label style="font-size:11px; color:var(--text-muted);">Refresh rate
+                        <select id="cpidTier" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                            <option value="slow">Slow (~1 Hz)</option>
+                            <option value="fast">Fast (~10 Hz)</option>
+                        </select>
+                    </label>
+                    <label style="font-size:11px; color:var(--text-muted);">Category
+                        <input id="cpidCategory" type="text" placeholder="e.g. Toyota (optional)"
+                               style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                        <span style="font-size:10px; opacity:0.7;">Groups under "(category) / Mode XX" in the picker.</span>
+                    </label>
+                </div>
+
+                <div style="border-top:1px solid var(--border); padding-top:10px; font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-top:4px;">Test</div>
+                <button class="btn btn-secondary" style="font-size:11px; padding:6px 10px; align-self:flex-start;" onclick="customPidTest()">
+                    🧪 Test once
+                </button>
+                <div id="cpidTestResult" style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:4px; min-height:34px;">
+                    Hit Test to query the ECU.
+                </div>
+
+                <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:6px;">
+                    <button class="btn btn-secondary" style="font-size:11px; padding:6px 14px;" onclick="customPidEditClose()">Cancel</button>
+                    <button class="btn" style="font-size:11px; padding:6px 14px;" onclick="customPidEditSave()">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden file input for Import JSON. -->
+    <input type="file" id="customPidsImportFile" accept="application/json,.json" style="display:none;" onchange="customPidImportHandler(event)">
 
     <!-- Fuel Sender Setup modal — configures the FUEL_SENDER_V analog input.
          Sets min (empty) and max (full) voltage + full-tank value. Opened via
@@ -12068,6 +12233,324 @@
             } catch (e) {
                 updateStatus('Failed to save dimmer settings', true);
             }
+        }
+
+        /* ── OBD2 Custom PIDs modal ────────────────────────────────────
+         *
+         * State lives in currentLayout.custom_pids (array of objects).
+         * Edits write to that array; buildFirmwarePayload copies
+         * currentLayout into the JSON sent to /api/layout/save, so
+         * custom_pids round-trip through the existing save flow without
+         * any extra plumbing. */
+
+        let _cpidEditIndex = -1;     // -1 = adding new, else index into array
+        let _cpidLiveTimer = null;
+
+        function _customPidsArray() {
+            if (!currentLayout) return [];
+            if (!Array.isArray(currentLayout.custom_pids)) {
+                currentLayout.custom_pids = [];
+            }
+            return currentLayout.custom_pids;
+        }
+
+        function _parseHexOrDec(s) {
+            if (s === null || s === undefined) return NaN;
+            const t = String(s).trim();
+            if (!t) return NaN;
+            if (/^0x[0-9a-f]+$/i.test(t)) return parseInt(t, 16);
+            if (/^[0-9a-f]+h$/i.test(t)) return parseInt(t.slice(0, -1), 16);
+            return parseInt(t, 10);
+        }
+
+        function _serviceLabel(svc) {
+            if (svc === 33) return 'M21';
+            if (svc === 34) return 'M22';
+            return 'M01';
+        }
+
+        function _decodeSummary(p) {
+            const sgn = p.is_signed ? 's' : '';
+            const off = (p.offset || 0);
+            const offStr = off >= 0 ? ('+' + off) : ('' + off);
+            return `B${p.data_offset || 0}×${p.scale || 1}${offStr} ${p.unit || ''} (${p.data_bytes || 1}${sgn}B)`;
+        }
+
+        function openCustomPids() {
+            const m = document.getElementById('customPidsModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            _renderCustomPidsTable();
+            /* Live values poll: pulls /api/signals/values every 800 ms
+             * and refreshes the Live column for matching rows. Cheap —
+             * single fetch, small JSON. */
+            if (_cpidLiveTimer) clearInterval(_cpidLiveTimer);
+            _cpidLiveTimer = setInterval(_refreshCustomPidsLive, 800);
+            _refreshCustomPidsLive();
+        }
+
+        function closeCustomPids() {
+            const m = document.getElementById('customPidsModal');
+            if (m) m.style.display = 'none';
+            if (_cpidLiveTimer) { clearInterval(_cpidLiveTimer); _cpidLiveTimer = null; }
+        }
+
+        function _renderCustomPidsTable() {
+            const body = document.getElementById('customPidsBody');
+            const count = document.getElementById('customPidsCount');
+            if (!body) return;
+            const arr = _customPidsArray();
+            count.textContent = arr.length ? `(${arr.length})` : '';
+            if (arr.length === 0) {
+                body.innerHTML = '<tr><td colspan="6" style="padding:14px; text-align:center; color:var(--text-muted); font-style:italic;">No custom PIDs yet. Click + Add PID or Import JSON.</td></tr>';
+                return;
+            }
+            body.innerHTML = arr.map((p, i) => {
+                const pidHex = '0x' + ((p.pid || 0) & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+                return `<tr style="border-top:1px solid var(--border);">
+                    <td style="padding:6px 8px; font-family:'JetBrains Mono', monospace;">${_escHTML(p.signal_name || '?')}</td>
+                    <td style="padding:6px 8px; color:var(--text-muted);">${_serviceLabel(p.service)}</td>
+                    <td style="padding:6px 8px; font-family:'JetBrains Mono', monospace; color:var(--text-muted);">${pidHex}</td>
+                    <td style="padding:6px 8px; font-size:10px; color:var(--text-muted);">${_escHTML(_decodeSummary(p))}</td>
+                    <td class="cpid-live" data-name="${_escHTML(p.signal_name || '')}" style="padding:6px 8px; text-align:right; font-family:'JetBrains Mono', monospace; color:var(--text-muted);">—</td>
+                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
+                        <button class="btn btn-secondary" style="font-size:10px; padding:3px 7px;" onclick="customPidEditOpen(${i})">Edit</button>
+                        <button class="btn btn-secondary" style="font-size:10px; padding:3px 7px;" onclick="customPidDuplicate(${i})">Copy</button>
+                        <button class="btn btn-secondary" style="font-size:10px; padding:3px 7px; color:hsl(0,70%,60%);" onclick="customPidDelete(${i})">Del</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function _escHTML(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        async function _refreshCustomPidsLive() {
+            try {
+                const r = await fetch('/api/signals/values');
+                if (!r.ok) return;
+                const data = await r.json();
+                const byName = {};
+                (data || []).forEach(s => { if (s && s.name) byName[s.name] = s; });
+                document.querySelectorAll('#customPidsBody .cpid-live').forEach(td => {
+                    const name = td.dataset.name;
+                    const sig = byName[name];
+                    if (!sig) { td.textContent = '—'; td.style.color = 'var(--text-muted)'; return; }
+                    if (sig.is_stale) { td.textContent = '...'; td.style.color = 'var(--text-muted)'; return; }
+                    const v = +sig.value;
+                    const dec = Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : 2;
+                    td.textContent = v.toFixed(dec);
+                    td.style.color = 'var(--accent)';
+                });
+            } catch (e) { /* offline; leave dashes */ }
+        }
+
+        function customPidEditOpen(index) {
+            _cpidEditIndex = index;
+            const isNew = index < 0;
+            const p = isNew ? {
+                signal_name: '', label: '', service: 1, pid: 0, request_id: 0,
+                data_offset: 0, data_bytes: 1, scale: 1.0, offset: 0.0,
+                is_signed: false, unit: '', tier: 'slow', category: ''
+            } : Object.assign({}, _customPidsArray()[index]);
+
+            document.getElementById('customPidEditTitle').textContent =
+                isNew ? 'Add Custom PID' : 'Edit Custom PID';
+            document.getElementById('cpidSignalName').value  = p.signal_name || '';
+            document.getElementById('cpidLabel').value       = p.label || '';
+            document.getElementById('cpidService').value     = String(p.service || 1);
+            document.getElementById('cpidPidHex').value      = '0x' + ((p.pid || 0) & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+            document.getElementById('cpidReqIdHex').value    = p.request_id ? ('0x' + (p.request_id & 0xFFF).toString(16).toUpperCase().padStart(3, '0')) : '';
+            document.getElementById('cpidOffset').value      = p.data_offset || 0;
+            document.getElementById('cpidBytes').value       = String(p.data_bytes || 1);
+            document.getElementById('cpidSigned').checked    = !!p.is_signed;
+            document.getElementById('cpidScale').value       = p.scale != null ? p.scale : 1.0;
+            document.getElementById('cpidValueOffset').value = p.offset != null ? p.offset : 0;
+            document.getElementById('cpidUnit').value        = p.unit || '';
+            document.getElementById('cpidTier').value        = p.tier || 'slow';
+            document.getElementById('cpidCategory').value    = p.category || '';
+            document.getElementById('cpidTestResult').textContent = 'Hit Test to query the ECU.';
+            document.getElementById('cpidTestResult').style.color = 'var(--text-muted)';
+            document.getElementById('customPidEditModal').style.display = 'flex';
+        }
+
+        function customPidEditClose() {
+            document.getElementById('customPidEditModal').style.display = 'none';
+        }
+
+        function _readEditForm() {
+            const pidVal = _parseHexOrDec(document.getElementById('cpidPidHex').value);
+            const reqVal = _parseHexOrDec(document.getElementById('cpidReqIdHex').value);
+            return {
+                signal_name: document.getElementById('cpidSignalName').value.trim(),
+                label:       document.getElementById('cpidLabel').value.trim(),
+                service:     parseInt(document.getElementById('cpidService').value, 10) || 1,
+                pid:         isNaN(pidVal) ? 0 : (pidVal & 0xFF),
+                request_id:  isNaN(reqVal) ? 0 : (reqVal & 0xFFFF),
+                data_offset: parseInt(document.getElementById('cpidOffset').value, 10) || 0,
+                data_bytes:  parseInt(document.getElementById('cpidBytes').value, 10) || 1,
+                scale:       parseFloat(document.getElementById('cpidScale').value) || 0,
+                offset:      parseFloat(document.getElementById('cpidValueOffset').value) || 0,
+                is_signed:   document.getElementById('cpidSigned').checked,
+                unit:        document.getElementById('cpidUnit').value.trim(),
+                tier:        document.getElementById('cpidTier').value || 'slow',
+                category:    document.getElementById('cpidCategory').value.trim()
+            };
+        }
+
+        function customPidEditSave() {
+            const p = _readEditForm();
+            if (!p.signal_name) {
+                alert('Signal name is required.');
+                return;
+            }
+            if (!/^[A-Z_][A-Z0-9_]*$/i.test(p.signal_name)) {
+                alert('Signal name must be alphanumeric/underscore (e.g. ATF_TEMP).');
+                return;
+            }
+            /* Normalise signal name to UPPER_SNAKE_CASE for registry consistency. */
+            p.signal_name = p.signal_name.toUpperCase().replace(/\s+/g, '_');
+            if (!p.label) p.label = p.signal_name;
+
+            const arr = _customPidsArray();
+            /* Replace existing entry with the same signal name (so re-saving
+             * doesn't create duplicates), otherwise insert. */
+            const existingIdx = arr.findIndex(e => e.signal_name === p.signal_name);
+            const targetIdx = _cpidEditIndex >= 0 ? _cpidEditIndex
+                             : (existingIdx >= 0 ? existingIdx : arr.length);
+            if (targetIdx < arr.length) arr[targetIdx] = p;
+            else arr.push(p);
+
+            customPidEditClose();
+            _renderCustomPidsTable();
+            updateStatus('Custom PID saved — Save Layout to push to device');
+        }
+
+        function customPidDelete(index) {
+            const arr = _customPidsArray();
+            if (index < 0 || index >= arr.length) return;
+            if (!confirm('Delete ' + (arr[index].signal_name || 'this PID') + '?')) return;
+            arr.splice(index, 1);
+            _renderCustomPidsTable();
+            updateStatus('Custom PID deleted — Save Layout to push to device');
+        }
+
+        function customPidDuplicate(index) {
+            const arr = _customPidsArray();
+            if (index < 0 || index >= arr.length) return;
+            const copy = Object.assign({}, arr[index]);
+            copy.signal_name = (copy.signal_name || 'COPY') + '_COPY';
+            arr.push(copy);
+            _renderCustomPidsTable();
+        }
+
+        async function customPidTest() {
+            const p = _readEditForm();
+            if (!p.signal_name) { alert('Signal name is required (used for the test).'); return; }
+            const out = document.getElementById('cpidTestResult');
+            out.textContent = 'Sending request...';
+            out.style.color = 'var(--text-muted)';
+            try {
+                const r = await fetch('/api/obd2/test_pid', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        service: p.service, pid: p.pid, request_id: p.request_id,
+                        data_offset: p.data_offset, data_bytes: p.data_bytes,
+                        scale: p.scale, offset: p.offset, is_signed: p.is_signed
+                    })
+                });
+                if (!r.ok) {
+                    out.textContent = 'Request failed (HTTP ' + r.status + ')';
+                    out.style.color = 'hsl(0,70%,60%)';
+                    return;
+                }
+                const j = await r.json();
+                if (!j.ok) {
+                    out.textContent = (j.error || 'No response') + (j.elapsed_ms ? ' (' + j.elapsed_ms + 'ms)' : '');
+                    out.style.color = 'hsl(35,85%,60%)';
+                    return;
+                }
+                const rawStr = (j.raw || []).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                const dec = j.decoded;
+                const decStr = (Math.abs(dec) >= 100 ? dec.toFixed(0)
+                               : Math.abs(dec) >= 10 ? dec.toFixed(1)
+                               : dec.toFixed(2));
+                out.innerHTML =
+                    '<div style="color:var(--accent);">Decoded: <b>' + decStr + ' ' + _escHTML(p.unit || '') + '</b></div>' +
+                    '<div style="color:var(--text-muted); margin-top:4px;">Raw: ' + rawStr + ' (' + j.elapsed_ms + 'ms)</div>';
+            } catch (e) {
+                out.textContent = 'Network error: ' + (e && e.message || e);
+                out.style.color = 'hsl(0,70%,60%)';
+            }
+        }
+
+        function customPidImport() {
+            const f = document.getElementById('customPidsImportFile');
+            if (f) { f.value = ''; f.click(); }
+        }
+
+        function customPidImportHandler(ev) {
+            const file = ev.target && ev.target.files && ev.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = function() {
+                try {
+                    const j = JSON.parse(r.result);
+                    /* Accept either {format, pids:[...]} or a bare array. */
+                    const list = Array.isArray(j) ? j : (Array.isArray(j.pids) ? j.pids : null);
+                    if (!list) { alert('Invalid pack file (no pids array).'); return; }
+                    const arr = _customPidsArray();
+                    let added = 0, replaced = 0;
+                    list.forEach(p => {
+                        if (!p || !p.signal_name) return;
+                        const norm = {
+                            signal_name: String(p.signal_name).toUpperCase().replace(/\s+/g, '_'),
+                            label:       String(p.label || p.signal_name),
+                            service:     parseInt(p.service, 10) || 1,
+                            pid:         parseInt(p.pid, 10) & 0xFF,
+                            request_id:  parseInt(p.request_id, 10) || 0,
+                            data_offset: parseInt(p.data_offset, 10) || 0,
+                            data_bytes:  parseInt(p.data_bytes, 10) || 1,
+                            scale:       parseFloat(p.scale) || 1.0,
+                            offset:      parseFloat(p.offset) || 0.0,
+                            is_signed:   !!p.is_signed,
+                            unit:        String(p.unit || ''),
+                            tier:        p.tier === 'fast' ? 'fast' : 'slow',
+                            category:    String(p.category || '')
+                        };
+                        const ex = arr.findIndex(e => e.signal_name === norm.signal_name);
+                        if (ex >= 0) { arr[ex] = norm; replaced++; }
+                        else         { arr.push(norm); added++; }
+                    });
+                    _renderCustomPidsTable();
+                    updateStatus('Imported: ' + added + ' added, ' + replaced + ' replaced — Save Layout to push');
+                } catch (e) {
+                    alert('Failed to parse JSON: ' + (e && e.message || e));
+                }
+            };
+            r.readAsText(file);
+        }
+
+        function customPidExport() {
+            const arr = _customPidsArray();
+            if (arr.length === 0) { alert('No custom PIDs to export.'); return; }
+            const pack = {
+                format: 'rdm7-obd2-pack/1',
+                exported: new Date().toISOString().slice(0, 10),
+                count: arr.length,
+                pids: arr
+            };
+            const blob = new Blob([JSON.stringify(pack, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'obd2-pids-' + (new Date().toISOString().slice(0, 10)) + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         /* ── Device Info modal ──────────────────────────────────────── */
