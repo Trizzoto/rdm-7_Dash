@@ -239,6 +239,76 @@ static void _vin_kick(void *arg) {
     obd2_read_vin(_vin_done, ctx);
 }
 
+/* ── ECU Name read ────────────────────────────────────────────────────
+ * Mirrors the VIN path — same context shape, same async bridge. */
+
+typedef struct {
+    SemaphoreHandle_t done;
+    bool              ok;
+    char              name[24];
+} ecuname_ctx_t;
+
+static void _ecuname_done(bool ok, const char *name, void *user) {
+    ecuname_ctx_t *ctx = (ecuname_ctx_t *)user;
+    ctx->ok = ok;
+    if (ok && name) {
+        strncpy(ctx->name, name, sizeof(ctx->name) - 1);
+        ctx->name[sizeof(ctx->name) - 1] = '\0';
+    }
+    xSemaphoreGive(ctx->done);
+}
+
+static void _ecuname_kick(void *arg) {
+    ecuname_ctx_t *ctx = (ecuname_ctx_t *)arg;
+    obd2_read_ecu_name(_ecuname_done, ctx);
+}
+
+static esp_err_t _ecuname_handler(httpd_req_t *req) {
+    ecuname_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    ctx->done = xSemaphoreCreateBinary();
+    if (!ctx->done) {
+        free(ctx);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "sem alloc");
+        return ESP_FAIL;
+    }
+
+    lv_async_call(_ecuname_kick, ctx);
+    BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
+
+    cJSON *resp = cJSON_CreateObject();
+    if (got != pdTRUE) {
+        cJSON_AddBoolToObject(resp, "ok", false);
+        cJSON_AddStringToObject(resp, "error", "Internal timeout");
+    } else if (!ctx->ok) {
+        cJSON_AddBoolToObject(resp, "ok", false);
+        cJSON_AddStringToObject(resp, "error", "No response from ECU");
+    } else {
+        cJSON_AddBoolToObject(resp, "ok", true);
+        cJSON_AddStringToObject(resp, "ecu_name", ctx->name);
+    }
+
+    if (got == pdTRUE) {
+        vSemaphoreDelete(ctx->done);
+        free(ctx);
+    }
+
+    char *json = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_sendstr(req, json);
+    free(json);
+    return r;
+}
+
 static esp_err_t _vin_handler(httpd_req_t *req) {
     vin_ctx_t *ctx = calloc(1, sizeof(*ctx));
     if (!ctx) {
@@ -313,6 +383,7 @@ typedef struct {
     bool        pending_ok;    uint8_t    pending_count;   obd2_dtc_t pending[OBD2_MAX_DTCS];
     bool        permanent_ok;  uint8_t    permanent_count; obd2_dtc_t permanent[OBD2_MAX_DTCS];
     bool        vin_ok;        char       vin[20];
+    bool        ecuname_ok;    char       ecu_name[24];
     /* Output */
     char        out_path[96];
     size_t      out_bytes;
@@ -323,6 +394,7 @@ static void _snap_kick_stored(void *arg);
 static void _snap_kick_pending(void *arg);
 static void _snap_kick_permanent(void *arg);
 static void _snap_kick_vin(void *arg);
+static void _snap_kick_ecuname(void *arg);
 static void _snap_write_and_done(snap_ctx_t *ctx);
 
 static void _snap_stage_dtc_done(bool ok, const obd2_dtc_t *codes, uint8_t count,
@@ -350,9 +422,19 @@ static void _snap_vin_done(bool ok, const char *vin, void *user) {
     if (ok && vin) {
         strncpy(ctx->vin, vin, sizeof(ctx->vin) - 1);
     }
-    /* All OBD2 fetches done — write the file. Live signal snapshot
-     * happens here too because it needs the LVGL task (signal registry
-     * is single-threaded). */
+    /* Chain to ECU name — last OBD2 fetch in the snapshot chain. */
+    lv_async_call(_snap_kick_ecuname, ctx);
+}
+
+static void _snap_ecuname_done(bool ok, const char *name, void *user) {
+    snap_ctx_t *ctx = (snap_ctx_t *)user;
+    ctx->ecuname_ok = ok;
+    if (ok && name) {
+        strncpy(ctx->ecu_name, name, sizeof(ctx->ecu_name) - 1);
+    }
+    /* Final stage — write the file. Live signal snapshot happens here
+     * too because it needs the LVGL task (signal registry is
+     * single-threaded). */
     _snap_write_and_done(ctx);
 }
 
@@ -368,6 +450,9 @@ static void _snap_kick_permanent(void *arg) {
 static void _snap_kick_vin(void *arg) {
     obd2_read_vin(_snap_vin_done, arg);
 }
+static void _snap_kick_ecuname(void *arg) {
+    obd2_read_ecu_name(_snap_ecuname_done, arg);
+}
 
 /* Build the JSON document, write it to SD, fill out_path/out_bytes,
  * release the semaphore. Runs on LVGL task. */
@@ -376,6 +461,7 @@ static void _snap_write_and_done(snap_ctx_t *ctx) {
     int64_t now_us = esp_timer_get_time();
     cJSON_AddNumberToObject(root, "uptime_s", (double)now_us / 1000000.0);
     cJSON_AddStringToObject(root, "vin", ctx->vin_ok ? ctx->vin : "");
+    cJSON_AddStringToObject(root, "ecu_name", ctx->ecuname_ok ? ctx->ecu_name : "");
 
     /* DTC sections — one array per bucket. */
     const struct { const char *name; bool ok; uint8_t count; obd2_dtc_t *codes; } buckets[] = {
@@ -487,11 +573,11 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
      * (cb) -> Mode 0A -> (cb) -> Mode 09 -> (cb) -> write file -> sem. */
     lv_async_call(_snap_kick_stored, ctx);
 
-    /* Generous 10 s budget: 4 OBD2 round-trips × 2 s each = 8 s, plus a
-     * couple of seconds for the SD write. If we time out, the in-flight
-     * obd2 request will still complete and harmlessly write into the
-     * leaked context. */
-    BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(10000));
+    /* Generous 12 s budget: 5 OBD2 round-trips (Mode 03/07/0A + VIN +
+     * ECU name) × 2 s each = 10 s, plus a couple of seconds for the SD
+     * write. If we time out, the in-flight obd2 request will still
+     * complete and harmlessly write into the leaked context. */
+    BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(12000));
 
     cJSON *resp = cJSON_CreateObject();
     if (got != pdTRUE) {
@@ -512,6 +598,7 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
         cJSON_AddNumberToObject(summary, "pending",   ctx->pending_count);
         cJSON_AddNumberToObject(summary, "permanent", ctx->permanent_count);
         cJSON_AddStringToObject(summary, "vin", ctx->vin_ok ? ctx->vin : "");
+        cJSON_AddStringToObject(summary, "ecu_name", ctx->ecuname_ok ? ctx->ecu_name : "");
     }
 
     if (got == pdTRUE) {
@@ -543,6 +630,9 @@ static const httpd_uri_t clear_uri = {
 static const httpd_uri_t vin_uri = {
     .uri = "/api/obd2/vin", .method = HTTP_GET,
     .handler = _vin_handler, .user_ctx = NULL};
+static const httpd_uri_t ecuname_uri = {
+    .uri = "/api/obd2/ecuname", .method = HTTP_GET,
+    .handler = _ecuname_handler, .user_ctx = NULL};
 static const httpd_uri_t snapshot_uri = {
     .uri = "/api/obd2/snapshot", .method = HTTP_POST,
     .handler = _snapshot_handler, .user_ctx = NULL};
@@ -551,5 +641,6 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
     REGISTER_URI(server, &clear_uri);
     REGISTER_URI(server, &vin_uri);
+    REGISTER_URI(server, &ecuname_uri);
     REGISTER_URI(server, &snapshot_uri);
 }

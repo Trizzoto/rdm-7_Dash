@@ -360,6 +360,12 @@ typedef void (*obd2_vin_cb_t)(bool ok, const char *vin, void *user);
 
 void obd2_read_vin(obd2_vin_cb_t cb, void *user);
 
+/* Mode 09 PID 0x0A — ECU name. Up to 20 ASCII chars (typically the
+ * module's family code, e.g. "ECM-EngineControl"). Same response shape
+ * as VIN minus the fixed 17-char convention. */
+typedef void (*obd2_ecuname_cb_t)(bool ok, const char *name, void *user);
+void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user);
+
 #ifdef __cplusplus
 }
 #endif

@@ -178,6 +178,17 @@ static struct {
     char            vin[18];        /* 17 chars + NUL */
 } s_vin_req = {0};
 
+/* ── ECU name request state (Mode 09 PID 0x0A) ─────────────────────── */
+#define OBD2_ECUNAME_TIMEOUT_MS 1500
+
+static struct {
+    bool                active;
+    uint64_t            sent_ms;
+    obd2_ecuname_cb_t   cb;
+    void               *user;
+    char                name[24];   /* up to 20 chars + slack + NUL */
+} s_ecuname_req = {0};
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -621,6 +632,32 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     s_last_tx_ms_global = now;
 }
 
+void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
+    if (!cb) return;
+    if (s_ecuname_req.active) {
+        ESP_LOGW(TAG, "ECU-name request already in progress");
+        cb(false, NULL, user);
+        return;
+    }
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_ecuname_req.active  = true;
+    s_ecuname_req.sent_ms = now;
+    s_ecuname_req.cb      = cb;
+    s_ecuname_req.user    = user;
+    memset(s_ecuname_req.name, 0, sizeof(s_ecuname_req.name));
+
+    /* Mode 09 PID 0x0A. Same framing as VIN. */
+    uint8_t data[8] = { 0x02, 0x09, 0x0A, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "ECU-name TX failed: %s", esp_err_to_name(err));
+        s_ecuname_req.active = false;
+        cb(false, NULL, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
 /* Decode one DTC byte-pair per SAE J2012. The top 2 bits of byte A
  * select the category letter; next 2 bits the first digit (0-3); the
  * remaining 12 bits are 3 hex digits. */
@@ -896,6 +933,15 @@ static void _poll_timer_cb(lv_timer_t *t)
         void *user = s_vin_req.user;
         ESP_LOGW(TAG, "VIN read timed out");
         s_vin_req.active = false;
+        if (cb) cb(false, NULL, user);
+    }
+
+    /* ECU name timeout. */
+    if (s_ecuname_req.active && (now - s_ecuname_req.sent_ms) > OBD2_ECUNAME_TIMEOUT_MS) {
+        obd2_ecuname_cb_t cb = s_ecuname_req.cb;
+        void *user = s_ecuname_req.user;
+        ESP_LOGW(TAG, "ECU name read timed out");
+        s_ecuname_req.active = false;
         if (cb) cb(false, NULL, user);
     }
 
@@ -1204,6 +1250,14 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             cb(false, NULL, user);
             return;
         }
+        if (s_ecuname_req.active && rejected_svc == 0x09) {
+            ESP_LOGW(TAG, "Mode 09 (ECU name) rejected — NRC 0x%02X", msg[2]);
+            obd2_ecuname_cb_t cb = s_ecuname_req.cb;
+            void *user = s_ecuname_req.user;
+            s_ecuname_req.active = false;
+            cb(false, NULL, user);
+            return;
+        }
         return;
     }
 
@@ -1279,6 +1333,41 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
         void *user = s_vin_req.user;
         s_vin_req.active = false;
         cb(true, s_vin_req.vin, user);
+        return;
+    }
+
+    /* ── Mode 09 PID 0x0A — ECU Name ─────────────────────────────────
+     * Same shape as VIN. Up to 20 ASCII chars (typically the module's
+     * family code, e.g. "ECM-EngineControl" or "TCM"). */
+    if (s_ecuname_req.active && service == 0x09 && len >= 3 && msg[1] == 0x0A) {
+        const uint8_t *p   = &msg[2];
+        uint16_t      plen = (uint16_t)(len - 2);
+        if (plen > 0 && p[0] >= 0x01 && p[0] <= 0x05) {
+            /* DI byte present; skip it (same convention as VIN). */
+            p++;
+            plen--;
+        }
+        uint16_t take = (plen < sizeof(s_ecuname_req.name) - 1)
+                        ? plen : (uint16_t)(sizeof(s_ecuname_req.name) - 1);
+        memcpy(s_ecuname_req.name, p, take);
+        s_ecuname_req.name[take] = '\0';
+        /* Strip leading non-printable chars; some ECUs pre-pad with NULs. */
+        char *start = s_ecuname_req.name;
+        while (*start && (*start < 0x20 || *start > 0x7E)) start++;
+        if (start != s_ecuname_req.name) {
+            memmove(s_ecuname_req.name, start, strlen(start) + 1);
+        }
+        /* Trim trailing whitespace / non-printable. */
+        size_t blen = strlen(s_ecuname_req.name);
+        while (blen > 0 && (s_ecuname_req.name[blen-1] <= 0x20)) {
+            s_ecuname_req.name[--blen] = '\0';
+        }
+        ESP_LOGI(TAG, "ECU name received: '%s'", s_ecuname_req.name);
+
+        obd2_ecuname_cb_t cb = s_ecuname_req.cb;
+        void *user = s_ecuname_req.user;
+        s_ecuname_req.active = false;
+        cb(true, s_ecuname_req.name, user);
         return;
     }
 

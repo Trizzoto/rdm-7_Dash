@@ -2293,12 +2293,15 @@ static void _dtc_btn_cb(lv_event_t *e)
     dtc_reader_open();
 }
 
-/* VIN cache — populated by the first successful Mode 09 PID 0x02
- * response and reused thereafter (a vehicle's VIN doesn't change for
- * the life of the dash mount). Empty string = "not fetched yet".
- * "Unknown" = "tried but ECU didn't answer or rejected". */
-static char       s_vin_cache[20]  = {0};
-static lv_obj_t  *s_vin_label_obj  = NULL;   /* re-validated via lv_obj_is_valid */
+/* Vehicle identity caches — both VIN and ECU name come from Mode 09
+ * and don't change for the life of the dash mount. First successful
+ * read populates the cache and subsequent Settings opens repaint from
+ * cache instantly. Empty = "not fetched yet"; "Unknown" = "tried but
+ * ECU didn't answer or rejected". */
+static char       s_vin_cache[20]      = {0};
+static char       s_ecuname_cache[24]  = {0};
+static lv_obj_t  *s_vin_label_obj      = NULL;
+static lv_obj_t  *s_ecuname_label_obj  = NULL;
 
 static void _vin_done(bool ok, const char *vin, void *user)
 {
@@ -2311,6 +2314,20 @@ static void _vin_done(bool ok, const char *vin, void *user)
     }
     if (s_vin_label_obj && lv_obj_is_valid(s_vin_label_obj)) {
         lv_label_set_text(s_vin_label_obj, s_vin_cache);
+    }
+}
+
+static void _ecuname_done(bool ok, const char *name, void *user)
+{
+    (void)user;
+    if (ok && name && name[0]) {
+        strncpy(s_ecuname_cache, name, sizeof(s_ecuname_cache) - 1);
+        s_ecuname_cache[sizeof(s_ecuname_cache) - 1] = '\0';
+    } else if (!s_ecuname_cache[0]) {
+        strncpy(s_ecuname_cache, "Unknown", sizeof(s_ecuname_cache) - 1);
+    }
+    if (s_ecuname_label_obj && lv_obj_is_valid(s_ecuname_label_obj)) {
+        lv_label_set_text(s_ecuname_label_obj, s_ecuname_cache);
     }
 }
 
@@ -2703,6 +2720,26 @@ static void _build_section_device_info(lv_obj_t *row) {
     } else {
         lv_label_set_text(s_vin_label_obj, "Reading...");
         obd2_read_vin(_vin_done, NULL);
+    }
+
+    /* ECU Name — Mode 09 PID 0x0A. Same caching pattern as VIN. Stacked
+     * vertically under VIN at y=140/154 (label / value 14 px apart). */
+    lv_obj_t *ecuname_label = lv_label_create(s);
+    lv_label_set_text(ecuname_label, "ECU");
+    lv_obj_align(ecuname_label, LV_ALIGN_TOP_LEFT, 0, 140);
+    lv_obj_set_style_text_font(ecuname_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(ecuname_label, THEME_COLOR_TEXT_HINT, 0);
+
+    s_ecuname_label_obj = lv_label_create(s);
+    lv_obj_align(s_ecuname_label_obj, LV_ALIGN_TOP_LEFT, 0, 154);
+    lv_obj_set_style_text_font(s_ecuname_label_obj, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_ecuname_label_obj, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    if (s_ecuname_cache[0]) {
+        lv_label_set_text(s_ecuname_label_obj, s_ecuname_cache);
+    } else {
+        lv_label_set_text(s_ecuname_label_obj, "Reading...");
+        obd2_read_ecu_name(_ecuname_done, NULL);
     }
 }
 
