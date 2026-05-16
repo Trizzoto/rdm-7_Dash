@@ -41,37 +41,61 @@ typedef enum {
     OBD2_TIER_SLOW = 1,   /* temps, voltages, slow vars — every Nth cycle. */
 } obd2_tier_t;
 
+/* A single sub-field within a packed PID response. Used for Mode 21/22
+ * PIDs that return multiple values in one response — common on Toyota
+ * (Mode 21 PID 0x80 packs RPM + speed + temps in one ISO-TP frame).
+ * byte_offset is relative to the start of the data payload (after the
+ * response service echo byte and the PID echo byte). */
+typedef struct {
+    const char *signal_name;
+    const char *unit;
+    uint8_t     byte_offset;
+    uint8_t     bytes;        /* 1, 2, 4 */
+    bool        is_signed;
+    float       scale;
+    float       offset;
+} obd2_subfield_t;
+
 /* Definition of a single decodable PID.
  *
- * All J1979 standard PID decodes happen to be linear, so we encode them as
- * (scale, offset, byte_count) and let one shared formula do the work:
- *     value = raw * scale + offset
- * where raw = (bytes=1) A    or    (bytes=2) A*256 + B.
+ * Two decode modes:
+ *  - Single-value (legacy / most Mode 01 PIDs): use `bytes/scale/offset`
+ *    with the implicit raw = (bytes=1) A or (bytes=2) A*256 + B.
+ *  - Packed multi-value: set `sub_fields` + `sub_field_count`. One
+ *    request → N signal_set_external_value calls, one per sub-field.
  *
  * `signal_name` is the registry key widgets bind to (matches the ECU
  * preset normalized names where applicable: RPM, COOLANT_TEMP, etc.).
+ * For packed PIDs, `signal_name` is unused (each sub-field carries its
+ * own name) but `human_name` still labels the row in the picker.
  *
  * `service` selects the OBD2 service byte for the request frame:
- *   0x01 = Mode 01 (standard J1979 live data)
- *   0x22 = Mode 22 (manufacturer-specific PIDs, future)
- *   0    = treated as 0x01 (backwards-compat default for existing entries)
+ *   0x01 = Mode 01 (standard J1979 live data, single-frame)
+ *   0x21 = Mode 21 (KWP-derived, used by Toyota/Honda — often multi-frame)
+ *   0x22 = Mode 22 (UDS, used by Ford/GM/VW — 16-bit PIDs, future)
+ *   0    = treated as 0x01 (backwards-compat default)
  *
- * `category` is a free-form UI grouping hint (e.g. "Engine", "Fuel",
- * "Transmission"). Picker UI can group by it once Mode 22 packs land
- * and the flat list becomes too long. NULL = "General" / ungrouped. */
+ * `request_id` overrides the default broadcast 0x7DF when set non-zero —
+ * use 0x7E0 to address the engine ECU specifically (avoids NRCs from
+ * other ECUs that don't handle this PID).
+ *
+ * `category` is a free-form UI grouping hint. NULL = ungrouped. */
 typedef struct {
     uint8_t      pid;
     const char  *signal_name;
     const char  *human_name;     /* UI label, e.g. "Engine RPM" */
     const char  *unit;
-    uint8_t      bytes;          /* 1 or 2 */
+    uint8_t      bytes;          /* 1 or 2 (single-value mode) */
     float        scale;
     float        offset;
     obd2_tier_t  tier;
     bool         default_enabled; /* in the 30 starter set */
     bool         suggested_filler; /* shown in "Suggested" group for supplemental mode */
-    uint8_t      service;         /* 0 or 0x01 = Mode 01; 0x22 = Mode 22 */
+    uint8_t      service;         /* 0/0x01 = Mode 01, 0x21 = Mode 21, 0x22 = Mode 22 */
     const char  *category;        /* UI group, or NULL */
+    const obd2_subfield_t *sub_fields; /* packed-decode sub-fields; NULL → single-value */
+    uint8_t      sub_field_count;
+    uint32_t     request_id;      /* 0 → use OBD2_REQUEST_ID_BROADCAST */
 } obd2_pid_def_t;
 
 /* Helper: resolve the effective service byte (translates 0 → 0x01). */

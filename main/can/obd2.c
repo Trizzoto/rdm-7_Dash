@@ -54,6 +54,14 @@ static const char *TAG = "obd2";
  * ECUs (TCU, hybrid battery) to chime in after the engine ECU. */
 #define OBD2_SCAN_WINDOW_MS          250
 
+/* ISO-TP multi-frame RX. Toyota Mode 21 PID 0x80 returns ~24-28 bytes
+ * (an FF + 3 CFs). Buffer comfortably above the largest expected
+ * response. Single in-flight stream — if two ECUs answer the same
+ * multi-frame request we lose the second; in practice that's fine for
+ * the engine-ECU-targeted Mode 21 requests we use. */
+#define OBD2_ISOTP_BUF_LEN           64
+#define OBD2_ISOTP_TIMEOUT_MS       500
+
 /* ── Per-PID poll state ───────────────────────────────────────────────── */
 
 typedef struct {
@@ -69,6 +77,23 @@ static obd2_poll_state_t s_poll[OBD2_MAX_ENABLED];
 static uint8_t           s_poll_count = 0;
 static lv_timer_t       *s_poll_timer = NULL;
 static bool              s_running    = false;
+
+/* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
+
+typedef enum {
+    ISOTP_IDLE = 0,
+    ISOTP_RECEIVING,
+} obd2_isotp_state_t;
+
+static struct {
+    obd2_isotp_state_t state;
+    uint32_t           source_id;
+    uint8_t            buf[OBD2_ISOTP_BUF_LEN];
+    uint16_t           total_bytes;     /* expected total payload length */
+    uint16_t           received;
+    uint8_t            next_seq;        /* 0-15, wraps */
+    uint64_t           last_frame_ms;
+} s_isotp = {0};
 
 /* ── Discovery scan state ─────────────────────────────────────────────── */
 
@@ -93,6 +118,10 @@ static void _send_pid_request(uint8_t service, uint8_t pid);
 static void _register_pid_signal(const obd2_pid_def_t *def);
 static void _scan_send(uint8_t pid);
 static void _scan_finalize(bool completed);
+static void _send_flow_control(uint32_t target_id);
+static void _process_full_message(uint8_t *msg, uint16_t len);
+static uint32_t _request_id_for_response(uint32_t resp_id);
+static const obd2_pid_def_t *_find_for_service(uint8_t service, uint8_t pid);
 
 /* ── Period helpers ───────────────────────────────────────────────────── */
 
@@ -247,6 +276,17 @@ static void _poll_timer_cb(lv_timer_t *t)
     (void)t;
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
 
+    /* ISO-TP RX timeout — if we sent a flow control then never got the
+     * expected CFs, abandon and let the next poll re-request. Prevents
+     * a stuck stream from gating future ECU responses. */
+    if (s_isotp.state == ISOTP_RECEIVING &&
+        (now - s_isotp.last_frame_ms) > OBD2_ISOTP_TIMEOUT_MS) {
+        ESP_LOGD(TAG, "ISO-TP RX timeout from 0x%03lX (%u/%u bytes)",
+                 (unsigned long)s_isotp.source_id,
+                 (unsigned)s_isotp.received, (unsigned)s_isotp.total_bytes);
+        s_isotp.state = ISOTP_IDLE;
+    }
+
     /* Discovery scan owns the bus until its window closes. */
     if (s_scan_state == SCAN_WINDOW_OPEN) {
         if ((now - s_scan_window_start) >= OBD2_SCAN_WINDOW_MS) {
@@ -290,20 +330,65 @@ static void _poll_timer_cb(lv_timer_t *t)
 static void _send_pid_request(uint8_t service, uint8_t pid)
 {
     /* ISO 15765-4 single-frame request:
-     *   byte 0: length (2 for Mode 01)
-     *   byte 1: service (0x01 for Mode 01, 0x22 for Mode 22)
+     *   byte 0: length (2 for 8-bit PID)
+     *   byte 1: service (0x01 Mode 01, 0x21 Mode 21, 0x22 Mode 22)
      *   byte 2: PID
-     *   byte 3..7: padding (0x55 conventional per spec, 0x00 works)
+     *   byte 3..7: padding (0x55 conventional)
      *
      * Mode 22 has 16-bit PIDs and uses length=3 + two PID bytes —
-     * would extend this path. */
+     * would extend this path when wired.
+     *
+     * Per-PID request_id override addresses a specific ECU (e.g. 0x7E0
+     * = engine ECU). Used for Mode 21 to avoid NRCs from other ECUs
+     * that don't recognise the PID. Default = broadcast 0x7DF. */
     if (service == 0) service = 0x01;
+    const obd2_pid_def_t *def = _find_for_service(service, pid);
+    uint32_t tx_id = (def && def->request_id) ? def->request_id
+                                              : OBD2_REQUEST_ID_BROADCAST;
     uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = can_transmit_frame(tx_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "TX failed for service 0x%02X PID 0x%02X: %s",
                  service, pid, esp_err_to_name(err));
     }
+}
+
+/* Find a PID definition matching both service and PID byte. Used by RX
+ * decode (we know the service from the response code) and by TX setup
+ * for the request_id override. Falls back to first-match-by-PID-byte
+ * if no exact match exists, which preserves behaviour for the common
+ * case where service==0 in the def is treated as Mode 01. */
+static const obd2_pid_def_t *_find_for_service(uint8_t service, uint8_t pid)
+{
+    if (service == 0) service = 0x01;
+    for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
+        if (OBD2_PIDS[i].pid != pid) continue;
+        uint8_t s = OBD2_PIDS[i].service ? OBD2_PIDS[i].service : 0x01;
+        if (s == service) return &OBD2_PIDS[i];
+    }
+    return obd2_pid_find(pid);
+}
+
+/* Send a flow-control frame back to the ECU that just sent us a first
+ * frame. {0x30, BS=0 (no block limit), STmin=0 (no separation)} tells
+ * the ECU to send all remaining consecutive frames at full speed.
+ * target_id is the ECU's REQUEST id (inverse of its response id —
+ * 0x7E8 response → 0x7E0 request). */
+static void _send_flow_control(uint32_t target_id)
+{
+    uint8_t data[8] = { 0x30, 0x00, 0x00, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(target_id, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "ISO-TP FC TX failed: %s", esp_err_to_name(err));
+    }
+}
+
+static uint32_t _request_id_for_response(uint32_t resp_id)
+{
+    if (resp_id >= OBD2_RESPONSE_ID_FIRST && resp_id <= OBD2_RESPONSE_ID_LAST) {
+        return 0x7E0u + (resp_id - OBD2_RESPONSE_ID_FIRST);
+    }
+    return OBD2_REQUEST_ID_BROADCAST;
 }
 
 /* ── RX handler ────────────────────────────────────────────────────────── */
@@ -345,40 +430,145 @@ static void _scan_consume_bitmask(uint8_t base_pid, const uint8_t *bm)
 void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 {
     if (can_id < OBD2_RESPONSE_ID_FIRST || can_id > OBD2_RESPONSE_ID_LAST) return;
-    if (!data || dlc < 3) return;
+    if (!data || dlc < 2) return;
 
-    /* ISO-TP single-frame layout for live PID responses:
-     *   byte 0 = 0x0N (N = payload length, upper nibble must be 0)
-     *   byte 1 = service + 0x40 (0x41 for Mode 01, 0x62 for Mode 22)
-     *   byte 2 = PID echo
-     *   bytes 3.. = data
-     *
-     * Multi-frame responses (length nibble != 0) are Mode 22 / DTC / VIN
-     * territory — out of scope for now. */
-    uint8_t len_nibble = data[0] >> 4;
-    uint8_t len_bytes  = data[0] & 0x0F;
-    if (len_nibble != 0) return;
-    if (len_bytes < 3 || len_bytes > 7) return;
-    uint8_t resp_service = data[1];
+    uint8_t pci         = data[0];
+    uint8_t pci_type    = pci >> 4;       /* 0=SF, 1=FF, 2=CF, 3=FC */
+    uint64_t now        = (uint64_t)(esp_timer_get_time() / 1000ULL);
+
+    if (pci_type == 0) {
+        /* ── Single frame — payload fits in one CAN frame. ───────── */
+        uint8_t len_bytes = pci & 0x0F;
+        if (len_bytes < 2 || len_bytes > 7) return;
+        if (dlc < (uint8_t)(1 + len_bytes)) return;
+        _process_full_message((uint8_t *)&data[1], len_bytes);
+        return;
+    }
+
+    if (pci_type == 1) {
+        /* ── First frame — multi-frame response begins. ──────────── */
+        if (dlc < 8) return;
+        uint16_t total = (((uint16_t)(pci & 0x0F)) << 8) | data[1];
+        if (total < 2 || total > OBD2_ISOTP_BUF_LEN) return;
+
+        /* If we were mid-stream from another source, drop it. Single
+         * in-flight stream — multi-ECU concurrent multi-frame would
+         * collide anyway and Mode 21 requests are addressed. */
+        s_isotp.state         = ISOTP_RECEIVING;
+        s_isotp.source_id     = can_id;
+        s_isotp.total_bytes   = total;
+        s_isotp.received      = 0;
+        s_isotp.next_seq      = 1;
+        s_isotp.last_frame_ms = now;
+
+        /* FF carries 6 payload bytes (data[2..7]). */
+        uint8_t take = (total < 6) ? total : 6;
+        memcpy(s_isotp.buf, &data[2], take);
+        s_isotp.received = take;
+
+        /* Ask the ECU to keep streaming consecutive frames. FC goes back
+         * to the ECU's request id (response 0x7E8 → request 0x7E0). */
+        _send_flow_control(_request_id_for_response(can_id));
+
+        if (s_isotp.received >= s_isotp.total_bytes) {
+            _process_full_message(s_isotp.buf, s_isotp.received);
+            s_isotp.state = ISOTP_IDLE;
+        }
+        return;
+    }
+
+    if (pci_type == 2) {
+        /* ── Consecutive frame. ──────────────────────────────────── */
+        if (s_isotp.state != ISOTP_RECEIVING) return;
+        if (s_isotp.source_id != can_id) return;
+        uint8_t seq = pci & 0x0F;
+        if (seq != s_isotp.next_seq) {
+            ESP_LOGD(TAG, "ISO-TP seq mismatch: expected %u got %u",
+                     s_isotp.next_seq, seq);
+            s_isotp.state = ISOTP_IDLE;
+            return;
+        }
+        s_isotp.next_seq      = (uint8_t)((seq + 1) & 0x0F);
+        s_isotp.last_frame_ms = now;
+
+        uint16_t remaining = s_isotp.total_bytes - s_isotp.received;
+        uint8_t  avail     = (dlc > 1) ? (uint8_t)(dlc - 1) : 0;
+        uint8_t  take      = (remaining < avail) ? (uint8_t)remaining : avail;
+        if (s_isotp.received + take > OBD2_ISOTP_BUF_LEN) {
+            s_isotp.state = ISOTP_IDLE;
+            return;
+        }
+        memcpy(&s_isotp.buf[s_isotp.received], &data[1], take);
+        s_isotp.received += take;
+
+        if (s_isotp.received >= s_isotp.total_bytes) {
+            _process_full_message(s_isotp.buf, s_isotp.received);
+            s_isotp.state = ISOTP_IDLE;
+        }
+        return;
+    }
+    /* pci_type == 3 = flow control we sent; ignore loopback. */
+}
+
+/* Extract a 1/2/4 byte big-endian value, optionally sign-extending. */
+static int32_t _extract_bytes(const uint8_t *p, uint8_t bytes, bool is_signed)
+{
+    uint32_t v = 0;
+    for (uint8_t i = 0; i < bytes; i++) {
+        v = (v << 8) | p[i];
+    }
+    if (is_signed && bytes < 4) {
+        uint32_t sign_bit = 1u << ((bytes * 8) - 1);
+        if (v & sign_bit) v |= ~((sign_bit << 1) - 1);
+    }
+    return (int32_t)v;
+}
+
+/* Apply a packed PID definition to its sub-fields, pushing each value
+ * into the signal registry. */
+static void _decode_packed(const obd2_pid_def_t *def,
+                           const uint8_t *payload, uint16_t payload_len)
+{
+    for (uint8_t i = 0; i < def->sub_field_count; i++) {
+        const obd2_subfield_t *sf = &def->sub_fields[i];
+        if ((uint16_t)(sf->byte_offset + sf->bytes) > payload_len) continue;
+        int32_t raw = _extract_bytes(&payload[sf->byte_offset],
+                                     sf->bytes, sf->is_signed);
+        float value = (float)raw * sf->scale + sf->offset;
+        signal_set_external_value(sf->signal_name, value);
+    }
+}
+
+/* Process a fully-reassembled response message. `msg` points at the
+ * service-echo byte (e.g. 0x41 / 0x61), `len` is total bytes including
+ * service+PID echoes. Routes to discovery-scan handling, single-value
+ * decode, or packed-sub-field decode based on the matched PID def. */
+static void _process_full_message(uint8_t *msg, uint16_t len)
+{
+    if (len < 2) return;
+    uint8_t resp_service = msg[0];
     if ((resp_service & 0xC0) != 0x40) return;   /* not a positive response */
-    if (resp_service != 0x41) return;            /* only Mode 01 wired for now */
-    if (dlc < (uint8_t)(1 + len_bytes)) return;
+    if (resp_service == 0x7F) return;            /* NRC (negative response) */
 
-    uint8_t pid = data[2];
+    uint8_t service = (uint8_t)(resp_service - 0x40);
+    /* Only services we know how to decode. Add 0x22 here when Mode 22
+     * (16-bit PIDs) lands — it'd need different framing on TX too. */
+    if (service != 0x01 && service != 0x21) return;
 
-    /* ── Discovery scan: collect into the open window. ───────────────── */
-    if (s_scan_state == SCAN_WINDOW_OPEN && pid == s_scan_query_pid &&
+    uint8_t pid = msg[1];
+    const uint8_t *payload = &msg[2];
+    uint16_t payload_len = (uint16_t)(len - 2);
+
+    /* ── Discovery scan: only relevant for Mode 01 bitmask queries. ── */
+    if (s_scan_state == SCAN_WINDOW_OPEN && service == 0x01 &&
+        pid == s_scan_query_pid &&
         (pid == 0x00 || pid == 0x20 || pid == 0x40 || pid == 0x60 ||
          pid == 0x80 || pid == 0xA0 || pid == 0xC0 || pid == 0xE0)) {
-        if (len_bytes >= 6) {
+        if (payload_len >= 4) {
             s_scan_got_any = true;
-            _scan_consume_bitmask(pid, &data[3]);
-            /* Bottom bit of the last byte indicates whether the next
-             * 32-PID block is supported by *this* ECU. We OR across
-             * all responders — if any ECU says yes, we advance to the
-             * next query when the window closes. */
-            bool next_supported = (data[6] & 0x01) != 0;
-            uint8_t next_pid = pid + 0x20;
+            _scan_consume_bitmask(pid, payload);
+            bool next_supported = (payload[3] & 0x01) != 0;
+            uint8_t next_pid = (uint8_t)(pid + 0x20);
             if (next_supported && next_pid <= 0xC0) {
                 s_scan_advance    = true;
                 s_scan_next_query = next_pid;
@@ -387,21 +577,21 @@ void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc)
         return;
     }
 
-    /* ── Regular live-data response. ─────────────────────────────────── */
-    const obd2_pid_def_t *def = obd2_pid_find(pid);
+    /* ── Regular decode. ─────────────────────────────────────────── */
+    const obd2_pid_def_t *def = _find_for_service(service, pid);
     if (!def) return;
 
-    uint8_t expected_payload = (uint8_t)(len_bytes - 2);
-    if (expected_payload < def->bytes) return;
+    if (def->sub_fields && def->sub_field_count > 0) {
+        _decode_packed(def, payload, payload_len);
+    } else {
+        if (payload_len < def->bytes) return;
+        _decode_and_push(def, payload);
+    }
 
-    _decode_and_push(def, &data[3]);
-
-    /* Mark every matching enabled-PID slot as freshly-responded. With
-     * pipelining there's no single "pending" — responses just close out
-     * whatever pid they happen to match. */
+    /* Mark the matching enabled-PID slot as freshly responded. */
     uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
     for (uint8_t i = 0; i < s_poll_count; i++) {
-        if (s_poll[i].pid == pid) {
+        if (s_poll[i].pid == pid && s_poll[i].service == service) {
             s_poll[i].last_response_ms = now;
             break;
         }

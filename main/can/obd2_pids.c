@@ -81,6 +81,51 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     { 0x61, "ENGINE_TORQUE_DEMAND",   "Engine Torque Demand",    "%",     1, 1.0f,        -125.0f, SLOW, false, false },
     { 0x62, "ENGINE_TORQUE_ACT",      "Actual Engine Torque",    "%",     1, 1.0f,        -125.0f, SLOW, false, false },
     { 0x63, "ENGINE_REF_TORQUE",      "Engine Reference Torque", "Nm",    2, 1.0f,        0.0f,    SLOW, false, false },
+
+    /* ── Toyota Mode 21 (PID 0x80 = engine real-time block) ───────────
+     *
+     * This is the most commonly-implemented Toyota Mode 21 PID across
+     * ETC-i powertrains (modern I4/V6 petrol). The response is a single
+     * ISO-TP multi-frame message (~20-28 bytes) packing every key live
+     * value into one round-trip — substantially faster than polling
+     * each value individually via Mode 01.
+     *
+     * The byte layout below is a best-effort decode derived from
+     * cross-referenced forum / Techstream sources for modern Toyota
+     * petrol engines (2TR-FE / 2AR-FE / 2GR-FE class). It is
+     * EXPERIMENTAL — the layout varies by model and ECU version, so
+     * the user should verify by enabling on their vehicle and
+     * sanity-checking values (rev the engine, watch RPM track).
+     *
+     * Signals are namespaced TY_* so they don't fight with Mode 01
+     * sources of the same value (RPM/COOLANT_TEMP/etc) — users bind
+     * widgets explicitly to TY_RPM if they want Toyota's source.
+     *
+     * Addresses the engine ECU directly on 0x7E0 (response 0x7E8) to
+     * avoid the transmission/hybrid ECUs returning NRCs on broadcast. */
+    {
+        .pid = 0x80,
+        .signal_name = NULL,               /* packed — see sub_fields */
+        .human_name = "Toyota Engine Block (experimental)",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,          /* opt-in: avoid surprises on non-Toyota cars */
+        .suggested_filler = false,
+        .service = 0x21,
+        .category = "Toyota",
+        .sub_fields = (const obd2_subfield_t[]){
+            { "TY_RPM",          "rpm",   2,  2, false, 0.25f,       0.0f   },
+            { "TY_THROTTLE",     "%",     4,  1, false, 0.392157f,   0.0f   },
+            { "TY_SPEED",        "km/h",  5,  1, false, 1.0f,        0.0f   },
+            { "TY_COOLANT_TEMP", "degC",  6,  1, false, 1.0f,        -40.0f },
+            { "TY_INTAKE_TEMP",  "degC",  7,  1, false, 1.0f,        -40.0f },
+            { "TY_MAF",          "g/s",   8,  2, false, 0.01f,       0.0f   },
+            { "TY_BATT_VOLT",    "V",    12,  1, false, 0.1f,        0.0f   },
+        },
+        .sub_field_count = 7,
+        .request_id = 0x7E0u,
+    },
 };
 
 const int OBD2_PIDS_COUNT = (int)(sizeof(OBD2_PIDS) / sizeof(OBD2_PIDS[0]));
