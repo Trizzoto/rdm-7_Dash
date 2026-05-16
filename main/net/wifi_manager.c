@@ -397,17 +397,42 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
                 s_auth_failure_count++;
                 if (s_auth_failure_count >= WIFI_AUTH_FAIL_MAX) {
                     ESP_LOGW(TAG, "Auth failed %d times — giving up STA, "
-                                  "enabling AP for recovery (re-enter password "
+                                  "AP-only for recovery (re-enter password "
                                   "via web editor at 192.168.4.1)",
                              s_auth_failure_count);
                     s_should_reconnect = false;
                     s_reconnect_attempts = 0;
-                    /* Switch to AP-only mode so the user has a way back
-                     * in without a USB cable. _Atomic store via setter
-                     * handles event dispatch. */
+                    s_auto_connect_pending = false;
+
+                    /* Kill any pending reconnect timer + active scan —
+                     * we're done trying. */
+                    if (s_reconnect_timer) {
+                        xTimerStop(s_reconnect_timer, 0);
+                    }
+                    esp_wifi_scan_stop();
+
+                    /* Bring up AP if not already running so user has a
+                     * recovery interface. wifi_manager_enable_ap will
+                     * choose APSTA (because saved creds exist) — we
+                     * immediately downgrade to AP-only below. */
                     if (!s_ap_enabled) {
                         wifi_manager_enable_ap(true);
                     }
+
+                    /* CRITICAL: explicitly force WIFI_MODE_AP. APSTA
+                     * keeps the STA interface alive, and an idle STA
+                     * still cycles the PHY via pm_disconnected_wake on
+                     * scan / beacon intervals. Each cycle leaks an
+                     * esp_timer slot inside the IDF PHY layer; after
+                     * a few minutes the system aborts with NO_MEM. By
+                     * dropping to pure AP mode we stop the wake cycle
+                     * entirely until the user explicitly re-connects. */
+                    esp_err_t mode_err = esp_wifi_set_mode(WIFI_MODE_AP);
+                    if (mode_err != ESP_OK) {
+                        ESP_LOGW(TAG, "Forcing AP-only mode failed: %s",
+                                 esp_err_to_name(mode_err));
+                    }
+
                     _set_state(WIFI_MGR_STATE_AP_ONLY);
                     break;
                 }
