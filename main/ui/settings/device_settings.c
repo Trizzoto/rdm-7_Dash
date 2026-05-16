@@ -2617,14 +2617,14 @@ static void _build_section_can_config(lv_obj_t *row) {
     lv_obj_set_style_text_color(s_ecu_value_label, THEME_COLOR_TEXT_PRIMARY, 0);
     lv_obj_add_event_cb(ecu_btn, _ecu_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* OBD2 Signals — same modal handles all three cases:
-     *   - OBD2 Standard primary preset: edit the full polled-PID list
-     *   - native preset + add-ons: edit the supplemental gap-fillers
-     *   - native preset, no add-ons yet: label reads "Add OBD2 Signals..."
-     * Always rendered for discoverability. The label adapts to current state. */
+    /* OBD2 Signals + Read Trouble Codes — rendered side-by-side at the
+     * same y to save vertical space in the CAN section. Each ~47% wide
+     * with a small gap between. The OBD2 Signals label adapts to current
+     * state ("Add OBD2 Signals..." vs "OBD2 Signals... (N)") so its
+     * width is the variable one. */
     {
         lv_obj_t *obd2_btn = lv_btn_create(s);
-        lv_obj_set_size(obd2_btn, lv_pct(95), 28);
+        lv_obj_set_size(obd2_btn, lv_pct(47), 28);
         lv_obj_align(obd2_btn, LV_ALIGN_TOP_LEFT, 0, 126);
         lv_obj_set_style_bg_color(obd2_btn, THEME_COLOR_INPUT_BG, 0);
         lv_obj_set_style_bg_opa(obd2_btn, LV_OPA_COVER, 0);
@@ -2638,20 +2638,22 @@ static void _build_section_can_config(lv_obj_t *row) {
             _obd2_label_compose(txt, sizeof(txt));
             lv_label_set_text(s_obd2_btn_label, txt);
         }
+        /* Constrain + truncate so the label doesn't bleed out of a 47%
+         * button on narrower content panes. */
+        lv_label_set_long_mode(s_obd2_btn_label, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(s_obd2_btn_label, lv_pct(90));
         lv_obj_set_style_text_font(s_obd2_btn_label, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(s_obd2_btn_label, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_align(s_obd2_btn_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_center(s_obd2_btn_label);
         lv_obj_add_event_cb(obd2_btn, _obd2_btn_cb, LV_EVENT_CLICKED, NULL);
-    }
 
-    /* Read Trouble Codes — opens the DTC reader modal. Independent of
-     * whether OBD2 polling is enabled or which preset is active: the
-     * Mode 03/07/0A/04 requests don't require any PIDs to be enabled,
-     * they query the ECU directly via the existing OBD2 plumbing. */
-    {
         lv_obj_t *dtc_btn = lv_btn_create(s);
-        lv_obj_set_size(dtc_btn, lv_pct(95), 28);
-        lv_obj_align(dtc_btn, LV_ALIGN_TOP_LEFT, 0, 160);
+        lv_obj_set_size(dtc_btn, lv_pct(47), 28);
+        /* Anchor to the right edge of the section so the gap between
+         * the two buttons stays balanced regardless of section width
+         * (it varies per row across the Device Settings flex layout). */
+        lv_obj_align(dtc_btn, LV_ALIGN_TOP_RIGHT, 0, 126);
         lv_obj_set_style_bg_color(dtc_btn, THEME_COLOR_INPUT_BG, 0);
         lv_obj_set_style_bg_opa(dtc_btn, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(dtc_btn, THEME_COLOR_BORDER, 0);
@@ -2659,9 +2661,12 @@ static void _build_section_can_config(lv_obj_t *row) {
         lv_obj_set_style_radius(dtc_btn, THEME_RADIUS_NORMAL, 0);
         lv_obj_set_style_shadow_width(dtc_btn, 0, 0);
         lv_obj_t *dtc_lbl = lv_label_create(dtc_btn);
-        lv_label_set_text(dtc_lbl, "Read Trouble Codes...");
+        lv_label_set_text(dtc_lbl, "Trouble Codes...");
+        lv_label_set_long_mode(dtc_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(dtc_lbl, lv_pct(90));
         lv_obj_set_style_text_font(dtc_lbl, THEME_FONT_SMALL, 0);
         lv_obj_set_style_text_color(dtc_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_align(dtc_lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_center(dtc_lbl);
         lv_obj_add_event_cb(dtc_btn, _dtc_btn_cb, LV_EVENT_CLICKED, NULL);
     }
