@@ -478,6 +478,7 @@ static void _add_obd2_item(const obd2_pid_def_t *def,
                                    : (scale >= 0.1f) ? 1 : 2;
     s_obd2_items[idx].is_signed    = is_signed;
     s_obd2_items[idx].obd2_pid     = def->pid;
+    s_obd2_items[idx].obd2_service = def->service ? def->service : 0x01;
     s_obd2_count++;
 }
 
@@ -682,11 +683,11 @@ static void update_picker_preview(picker_st_t *st, int idx)
         }
         char buf[128];
         if (it->obd2_pid != 0) {
-            snprintf(buf, sizeof(buf), "%s | OBD2 PID 0x%02X | polled @ ~%s Hz",
-                it->label, it->obd2_pid,
-                /* Lookup tier so we can hint at refresh rate. */
-                (obd2_pid_find(it->obd2_pid) &&
-                 obd2_pid_find(it->obd2_pid)->tier == OBD2_TIER_FAST) ? "10" : "1");
+            uint8_t svc = it->obd2_service ? it->obd2_service : 0x01;
+            const obd2_pid_def_t *d = obd2_pid_find_svc(svc, it->obd2_pid);
+            snprintf(buf, sizeof(buf), "%s | M%02X 0x%02X | polled @ ~%s Hz",
+                it->label, svc, it->obd2_pid,
+                (d && d->tier == OBD2_TIER_FAST) ? "10" : "1");
         } else {
             snprintf(buf, sizeof(buf), "%s | CAN 0x%s | %s | Bit %d  Len %d | x%.4g",
                 it->label, it->can_id,

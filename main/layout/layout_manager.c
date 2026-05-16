@@ -420,11 +420,10 @@ static void _load_signals(const cJSON *root) {
 			 (unsigned)signal_get_count());
 
 	/* Parse the layout's polled_pids array (if any) and start OBD2 polling.
-	 * `polled_pids` is the generic name — future Mode 22 / UDS / OEM PID
-	 * packs use the same array, with the per-PID definition carrying its
-	 * own service byte. Reads `obd2_pids` as a fallback so layouts written
-	 * by earlier firmware still load (silent backwards-compat). */
-	uint8_t pid_list[OBD2_MAX_ENABLED];
+	 * Numbers are encoded (service<<8 | pid) tuples; values <= 0xFF are
+	 * treated as Mode 01 for back-compat. Falls back to legacy `obd2_pids`
+	 * key (always Mode 01) for layouts written by earlier firmware. */
+	uint16_t pid_list[OBD2_MAX_ENABLED];
 	uint8_t pid_count = 0;
 	const cJSON *pids_arr = cJSON_GetObjectItemCaseSensitive(root, "polled_pids");
 	if (!cJSON_IsArray(pids_arr)) {
@@ -436,8 +435,8 @@ static void _load_signals(const cJSON *root) {
 			if (!cJSON_IsNumber(pi)) continue;
 			if (pid_count >= OBD2_MAX_ENABLED) break;
 			int v = pi->valueint;
-			if (v < 0 || v > 0xFF) continue;
-			pid_list[pid_count++] = (uint8_t)v;
+			if (v < 0 || v > 0xFFFF) continue;
+			pid_list[pid_count++] = (uint16_t)v;
 		}
 	}
 	if (pid_count > 0) {
@@ -783,10 +782,11 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	_save_signals(root);
 
 	/* Preserve polled-PID list on internal saves (e.g. serial save, data
-	 * logger snapshots). The web editor save_raw path already carries
-	 * polled_pids forward from the editor's JSON tree. */
+	 * logger snapshots). Each value is the encoded (service<<8 | pid)
+	 * tuple. The web editor save_raw path already carries polled_pids
+	 * forward from the editor's JSON tree. */
 	{
-		uint8_t pids[OBD2_MAX_ENABLED];
+		uint16_t pids[OBD2_MAX_ENABLED];
 		uint8_t pc = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
 		if (pc > 0) {
 			cJSON *pa = cJSON_AddArrayToObject(root, "polled_pids");

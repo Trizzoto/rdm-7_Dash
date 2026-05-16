@@ -36,6 +36,31 @@ extern "C" {
 #define OBD2_RESPONSE_ID_FIRST    0x7E8u
 #define OBD2_RESPONSE_ID_LAST     0x7EFu
 
+/* ── Encoded (service, pid) tuples ──────────────────────────────────────
+ *
+ * Polled-PID storage encodes service + PID into a single uint16 so the
+ * polling backend can disambiguate same-byte PIDs that mean different
+ * things in different services (e.g. Mode 01 PID 0x21 = DTC distance
+ * vs Mode 21 PID 0x21 = Toyota ATF temp). Encoding:
+ *     value = (service << 8) | pid
+ *
+ * Back-compat: values <= 0xFF (high byte zero) are treated as Mode 01
+ * — lets old layouts that stored bare PID bytes still load cleanly. */
+
+static inline uint16_t obd2_encode_pid(uint8_t service, uint8_t pid) {
+    if (service == 0) service = 0x01;
+    return (uint16_t)(((uint16_t)service << 8) | pid);
+}
+
+static inline uint8_t obd2_decode_service(uint16_t encoded) {
+    uint8_t s = (uint8_t)(encoded >> 8);
+    return s ? s : 0x01;
+}
+
+static inline uint8_t obd2_decode_pid(uint16_t encoded) {
+    return (uint8_t)(encoded & 0xFF);
+}
+
 typedef enum {
     OBD2_TIER_FAST = 0,   /* RPM, MAP, speed — polled every cycle (~10 Hz). */
     OBD2_TIER_SLOW = 1,   /* temps, voltages, slow vars — every Nth cycle. */
@@ -107,18 +132,29 @@ static inline uint8_t obd2_def_service(const obd2_pid_def_t *def) {
 extern const obd2_pid_def_t OBD2_PIDS[];
 extern const int OBD2_PIDS_COUNT;
 
-/* Look up a definition by PID number. Returns NULL if no decoder available. */
+/* Look up a definition by PID byte alone — returns the FIRST match
+ * regardless of service. Kept for compat with callers that don't
+ * distinguish services (e.g. live-indicator polling). Use
+ * obd2_pid_find_svc() for unambiguous lookups across modes. */
 const obd2_pid_def_t *obd2_pid_find(uint8_t pid);
+
+/* Service-aware lookup: returns the def whose (service, pid) matches.
+ * service=0 is treated as 0x01 (Mode 01). Falls back to first-match-by-byte
+ * if no exact (service, pid) pair exists. */
+const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid);
 
 /* ── Lifecycle ──────────────────────────────────────────────────────────── */
 
 /** Initialise internal state (idempotent). No polling starts yet. */
 void obd2_init(void);
 
-/** Start polling the given PID list. Registers each PID's signal in the
- *  signal registry if it's not already present. Stops any prior polling.
- *  Called from the ECU preset apply path and on layout load. */
-void obd2_start(const uint8_t *enabled_pids, uint8_t count);
+/** Start polling the given encoded (service, pid) list. Each uint16
+ *  element is obd2_encode_pid(service, pid) — values <= 0xFF are
+ *  treated as Mode 01 for back-compat with old layouts. Registers each
+ *  PID's signal in the registry if not already present. Stops any
+ *  prior polling. Called from the ECU preset apply path and on layout
+ *  load. */
+void obd2_start(const uint16_t *enabled_pids, uint8_t count);
 
 /** Stop polling and tear down the timer. Idempotent. */
 void obd2_stop(void);
@@ -128,12 +164,13 @@ bool obd2_is_running(void);
 
 /* ── Enabled PID list ───────────────────────────────────────────────────── */
 
-/** Copy the currently-enabled PID list into @p out. Returns count written. */
-uint8_t obd2_get_enabled(uint8_t *out, uint8_t max);
+/** Copy the currently-enabled (encoded) PID list into @p out. Returns
+ *  count written. Each entry is obd2_encode_pid(service, pid). */
+uint8_t obd2_get_enabled(uint16_t *out, uint8_t max);
 
 /** Replace the enabled list and restart polling. Caller is responsible
  *  for persisting the new list to NVS / layout JSON. */
-void obd2_set_enabled(const uint8_t *pids, uint8_t count);
+void obd2_set_enabled(const uint16_t *pids, uint8_t count);
 
 /* ── CAN dispatch ───────────────────────────────────────────────────────── */
 

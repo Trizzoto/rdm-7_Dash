@@ -83,15 +83,16 @@ static lv_timer_t    *s_live_timer = NULL;
 static signal_row_t   s_rows[PICKER_MAX_ROWS];
 static int            s_row_count  = 0;
 
-/* Snapshot of the enabled PID list at modal open. Used to:
+/* Snapshot of the enabled PID list at modal open. Encoded (service<<8|pid)
+ * tuples. Used to:
  *  - restore polling on Cancel/Close-without-Save (so preview-poll-all
  *    doesn't leave stale wide polling running)
  *  - decide which rows start checked
  * `s_saved` is flipped true by _save_cb so the close handler knows
  * not to restore — Save already pushed the new set. */
-static uint8_t s_snapshot[OBD2_MAX_ENABLED];
-static uint8_t s_snapshot_count = 0;
-static bool    s_saved = false;
+static uint16_t s_snapshot[OBD2_MAX_ENABLED];
+static uint8_t  s_snapshot_count = 0;
+static bool     s_saved = false;
 
 /* Forward decls */
 static void  _close_cb(lv_event_t *e);
@@ -150,10 +151,11 @@ void obd2_picker_open(void)
      * rate within ~3 sec so bus load stays reasonable even with 46 PIDs
      * enabled. */
     {
-        uint8_t preview[OBD2_MAX_ENABLED];
+        uint16_t preview[OBD2_MAX_ENABLED];
         uint8_t pn = 0;
         for (int i = 0; i < OBD2_PIDS_COUNT && pn < OBD2_MAX_ENABLED; i++) {
-            preview[pn++] = OBD2_PIDS[i].pid;
+            preview[pn++] = obd2_encode_pid(OBD2_PIDS[i].service,
+                                            OBD2_PIDS[i].pid);
         }
         obd2_start(preview, pn);
     }
@@ -389,19 +391,23 @@ static void _build_rows(void)
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
 
-    uint8_t enabled[OBD2_MAX_ENABLED] = {0};
+    uint16_t enabled[OBD2_MAX_ENABLED] = {0};
     uint8_t enabled_count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &enabled_count);
 
     /* For each PID definition, expand into one row per emitted signal —
      * single-value PIDs produce one row; packed PIDs produce one row per
-     * sub-field, all sharing the parent PID. */
+     * sub-field, all sharing the parent PID. Match enabled state on the
+     * encoded (service, pid) tuple so Toyota Mode 21 PID 0x80 doesn't
+     * accidentally match Mode 01 PID 0x80 (or any other cross-service
+     * collision). */
     for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
         const obd2_pid_def_t *def = &OBD2_PIDS[i];
+        uint16_t def_encoded = obd2_encode_pid(def->service, def->pid);
 
         bool pid_enabled = false;
         for (uint8_t k = 0; k < enabled_count; k++) {
-            if (enabled[k] == def->pid) { pid_enabled = true; break; }
+            if (enabled[k] == def_encoded) { pid_enabled = true; break; }
         }
 
         if (def->sub_fields && def->sub_field_count > 0) {
@@ -550,13 +556,16 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
 
     for (uint8_t i = 0; i < r->count; i++) {
         uint8_t pid = r->pids[i];
-        const obd2_pid_def_t *def = obd2_pid_find(pid);
-        if (!def) { unknown++; continue; }
+        /* Scan only probes Mode 01 supported-PID bitmasks; match
+         * accordingly so Toyota Mode 21 PID 0x80 doesn't accidentally
+         * light up just because Mode 01's bitmask query 0x80 was sent. */
+        const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
+        if (!def || def->service > 0x01) { unknown++; continue; }
         decoder_pid_hits++;
 
         for (int j = 0; j < s_row_count; j++) {
             signal_row_t *row = &s_rows[j];
-            if (row->parent_pid != pid) continue;
+            if (row->parent_service != 0x01 || row->parent_pid != pid) continue;
             row->supported = true;
 
             if (row->badge && !row->provided_by_preset) {
@@ -593,19 +602,21 @@ static void _save_cb(lv_event_t *e)
 {
     (void)e;
 
-    /* Collect distinct parent PIDs from checked rows. Sub-fields of the
-     * same packed PID get deduped here — one enable per PID is what the
-     * polling backend wants. */
-    uint8_t pids[OBD2_MAX_ENABLED];
+    /* Collect distinct (service, parent_pid) tuples from checked rows.
+     * Sub-fields of the same packed PID dedupe to one encoded entry —
+     * one enable per PID is what the polling backend wants. */
+    uint16_t pids[OBD2_MAX_ENABLED];
     uint8_t count = 0;
     for (int i = 0; i < s_row_count; i++) {
         if (!s_rows[i].checked || s_rows[i].provided_by_preset) continue;
+        uint16_t enc = obd2_encode_pid(s_rows[i].parent_service,
+                                       s_rows[i].parent_pid);
         bool dup = false;
         for (uint8_t k = 0; k < count; k++) {
-            if (pids[k] == s_rows[i].parent_pid) { dup = true; break; }
+            if (pids[k] == enc) { dup = true; break; }
         }
         if (!dup && count < OBD2_MAX_ENABLED) {
-            pids[count++] = s_rows[i].parent_pid;
+            pids[count++] = enc;
         }
     }
 

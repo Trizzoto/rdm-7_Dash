@@ -2265,7 +2265,7 @@ static void _obd2_label_compose(char *buf, size_t n)
 {
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
-    uint8_t pids[OBD2_MAX_ENABLED];
+    uint16_t pids[OBD2_MAX_ENABLED];
     uint8_t count = 0;
     ecu_preset_read_obd2_pids(layout, pids, OBD2_MAX_ENABLED, &count);
     if (count == 0) {

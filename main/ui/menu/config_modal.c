@@ -346,7 +346,8 @@ static void can_toggle_btn_cb(lv_event_t *e)
  * through to the standard CAN-preset path). */
 static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
 {
-    const obd2_pid_def_t *def = obd2_pid_find(item->obd2_pid);
+    uint8_t service = item->obd2_service ? item->obd2_service : 0x01;
+    const obd2_pid_def_t *def = obd2_pid_find_svc(service, item->obd2_pid);
     if (!def) return false;
 
     /* Derive the bind name from the picker label rather than def->signal_name.
@@ -355,8 +356,8 @@ static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
      *    label_to_signal_name reverses it back to the same name.
      *  - Packed PID (def->signal_name is NULL, e.g. Toyota engine block):
      *    label is the SUB-FIELD signal name with spaces, derives back to
-     *    e.g. "TY_RPM". This is how the long-press picker exposes
-     *    individual sub-fields without needing per-row metadata. */
+     *    e.g. "RPM" / "COOLANT_TEMP". This is how the long-press picker
+     *    exposes individual sub-fields without needing per-row metadata. */
     char bind_name[32];
     label_to_signal_name(item->label, bind_name, sizeof(bind_name));
     if (!bind_name[0]) return false;
@@ -365,23 +366,24 @@ static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
 
-    uint8_t enabled[OBD2_MAX_ENABLED];
+    uint16_t enabled[OBD2_MAX_ENABLED];
     uint8_t count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &count);
 
+    uint16_t want = obd2_encode_pid(service, item->obd2_pid);
     bool already = false;
     for (uint8_t i = 0; i < count; i++) {
-        if (enabled[i] == def->pid) { already = true; break; }
+        if (enabled[i] == want) { already = true; break; }
     }
     if (!already && count < OBD2_MAX_ENABLED) {
-        enabled[count++] = def->pid;
+        enabled[count++] = want;
         ecu_preset_save_obd2_pids(layout, enabled, count);
     }
     /* Always restart polling — picks up the new PID immediately and
      * registers the OBD2 signal(s) in the registry if they're new.
      * For packed PIDs this registers every sub-field, so even though
-     * the user only picked one (e.g. TY_RPM), the rest (TY_THROTTLE,
-     * TY_COOLANT_TEMP, …) become available for future widget bindings. */
+     * the user only picked one (e.g. RPM), the rest (THROTTLE,
+     * COOLANT_TEMP, …) become available for future widget bindings. */
     obd2_start(enabled, count);
 
     /* Bind the widget to the derived signal by name. */

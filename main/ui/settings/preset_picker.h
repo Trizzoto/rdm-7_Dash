@@ -19,10 +19,15 @@ typedef struct {
     uint8_t decimals;
     bool is_signed;
     /* Non-zero = this is an OBD2 PID rather than a CAN broadcast channel.
-     * The apply path enables the PID in the layout's obd2_pids[] and binds
-     * the widget to the OBD2 signal name — the bit/scale/offset fields are
-     * ignored because OBD2 decodes via polling, not bit extraction. */
+     * The apply path enables the PID in the layout's polled_pids[] and
+     * binds the widget to the OBD2 signal name — the bit/scale/offset
+     * fields are ignored because OBD2 decodes via polling, not bit
+     * extraction. */
     uint8_t obd2_pid;
+    /* OBD2 service byte (0x01 = Mode 01, 0x21 = Mode 21 Toyota etc.).
+     * 0 → treated as Mode 01 for back-compat. Pairs with obd2_pid so
+     * the apply path can disambiguate same-byte PIDs across services. */
+    uint8_t obd2_service;
 } preconfig_item_t;
 
 /* NULL-terminated array of preset CAN signal definitions */

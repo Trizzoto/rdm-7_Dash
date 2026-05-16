@@ -137,11 +137,54 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         .sub_field_count = 7,
         .request_id = 0x7E0u,
     },
+
+    /* ── Toyota Mode 21 PID 0x21 — transmission ATF temperature ───────
+     *
+     * Single-value response carrying ATF (auto trans fluid) temperature
+     * on many Toyota AT models — Hilux, HiAce, Tundra, 4Runner, Tacoma,
+     * many petrol Camrys, etc. Format: byte 0 = temp - 40 °C. The TCM
+     * answers on 0x7E9, so addressed request to 0x7E1.
+     *
+     * Coexists with Mode 01 PID 0x21 (DTC_DISTANCE) safely thanks to
+     * service-aware lookup — they're distinct entries.
+     *
+     * EXPERIMENTAL — layout varies; some models put gear position in
+     * byte 1 and TCM mode in byte 2. We only decode byte 0 for now. */
+    {
+        .pid = 0x21,
+        .signal_name = "ATF_TEMP",
+        .human_name = "Toyota ATF Temperature (experimental)",
+        .unit = "degC",
+        .bytes = 1,
+        .scale = 1.0f,
+        .offset = -40.0f,
+        .tier = OBD2_TIER_SLOW,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x21,
+        .category = "Toyota",
+        .sub_fields = NULL,
+        .sub_field_count = 0,
+        .request_id = 0x7E1u,    /* TCM */
+    },
 };
 
 #pragma GCC diagnostic pop
 
 const int OBD2_PIDS_COUNT = (int)(sizeof(OBD2_PIDS) / sizeof(OBD2_PIDS[0]));
+
+const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid)
+{
+    if (service == 0) service = 0x01;
+    for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
+        if (OBD2_PIDS[i].pid != pid) continue;
+        uint8_t s = OBD2_PIDS[i].service ? OBD2_PIDS[i].service : 0x01;
+        if (s == service) return &OBD2_PIDS[i];
+    }
+    /* Fall back to first match by PID byte alone (covers code paths
+     * that don't know which service the PID came from). */
+    return obd2_pid_find(pid);
+}
 
 const obd2_pid_def_t *obd2_pid_find(uint8_t pid)
 {

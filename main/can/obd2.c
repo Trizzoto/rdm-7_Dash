@@ -142,7 +142,6 @@ static void _scan_finalize(bool completed);
 static void _send_flow_control(uint32_t target_id);
 static void _process_full_message(uint8_t *msg, uint16_t len);
 static uint32_t _request_id_for_response(uint32_t resp_id);
-static const obd2_pid_def_t *_find_for_service(uint8_t service, uint8_t pid);
 
 /* ── Period helpers ───────────────────────────────────────────────────── */
 
@@ -159,7 +158,7 @@ static void _refresh_periods(uint64_t now)
 {
     for (uint8_t i = 0; i < s_poll_count; i++) {
         obd2_poll_state_t *ps = &s_poll[i];
-        const obd2_pid_def_t *def = obd2_pid_find(ps->pid);
+        const obd2_pid_def_t *def = obd2_pid_find_svc(ps->service, ps->pid);
         bool alive = (ps->last_response_ms != 0) &&
                      ((now - ps->last_response_ms) < OBD2_DEAD_THRESHOLD_MS);
         ps->target_period_ms = alive ? _alive_period_for(def)
@@ -176,7 +175,7 @@ void obd2_init(void)
     }
 }
 
-void obd2_start(const uint8_t *enabled_pids, uint8_t count)
+void obd2_start(const uint16_t *enabled_pids, uint8_t count)
 {
     /* Preserve per-PID state for PIDs that are still in the new list —
      * keeps last_response_ms / "alive" classification across saves so a
@@ -190,34 +189,38 @@ void obd2_start(const uint8_t *enabled_pids, uint8_t count)
     if (count > OBD2_MAX_ENABLED) count = OBD2_MAX_ENABLED;
     s_poll_count = 0;
     for (uint8_t i = 0; i < count; i++) {
-        const obd2_pid_def_t *def = obd2_pid_find(enabled_pids[i]);
+        uint8_t service = obd2_decode_service(enabled_pids[i]);
+        uint8_t pid     = obd2_decode_pid(enabled_pids[i]);
+        const obd2_pid_def_t *def = obd2_pid_find_svc(service, pid);
         if (!def) {
-            ESP_LOGW(TAG, "Skipping unknown PID 0x%02X in enable list",
-                     enabled_pids[i]);
+            ESP_LOGW(TAG, "Skipping unknown PID svc 0x%02X / 0x%02X",
+                     service, pid);
             continue;
         }
         /* Conflict guard: if a signal with this name already exists and
          * is bound to a real CAN broadcast (can_id != 0), the native
          * preset owns it — don't poll OBD2 too, or the response would
          * overwrite the broadcast value via signal_set_external_value.
-         * Picker UI prevents the user from selecting these but the
-         * modal's preview-poll-all path could pass them through. */
-        int16_t existing = signal_find_by_name(def->signal_name);
-        if (existing >= 0) {
-            signal_t *sig = signal_get_by_index((uint16_t)existing);
-            if (sig && sig->can_id != 0) {
-                ESP_LOGD(TAG, "Skip OBD2 PID 0x%02X — '%s' owned by preset",
-                         def->pid, def->signal_name);
-                continue;
+         * Skipped for packed PIDs (def->signal_name is NULL — they own
+         * their sub-fields' signals). */
+        if (def->signal_name) {
+            int16_t existing = signal_find_by_name(def->signal_name);
+            if (existing >= 0) {
+                signal_t *sig = signal_get_by_index((uint16_t)existing);
+                if (sig && sig->can_id != 0) {
+                    ESP_LOGD(TAG, "Skip OBD2 PID 0x%02X — '%s' owned by preset",
+                             pid, def->signal_name);
+                    continue;
+                }
             }
         }
         obd2_poll_state_t *ns = &s_poll[s_poll_count++];
         memset(ns, 0, sizeof(*ns));
-        ns->pid              = enabled_pids[i];
-        ns->service          = obd2_def_service(def);
+        ns->pid              = pid;
+        ns->service          = service;
         ns->target_period_ms = _alive_period_for(def);
         for (uint8_t j = 0; j < prev_count; j++) {
-            if (prev[j].pid == enabled_pids[i]) {
+            if (prev[j].pid == pid && prev[j].service == service) {
                 ns->last_tx_ms       = prev[j].last_tx_ms;
                 ns->last_response_ms = prev[j].last_response_ms;
                 break;
@@ -256,16 +259,18 @@ bool obd2_is_running(void)
 
 /* ── Enabled list ──────────────────────────────────────────────────────── */
 
-uint8_t obd2_get_enabled(uint8_t *out, uint8_t max)
+uint8_t obd2_get_enabled(uint16_t *out, uint8_t max)
 {
     uint8_t n = s_poll_count < max ? s_poll_count : max;
     if (out && n) {
-        for (uint8_t i = 0; i < n; i++) out[i] = s_poll[i].pid;
+        for (uint8_t i = 0; i < n; i++) {
+            out[i] = obd2_encode_pid(s_poll[i].service, s_poll[i].pid);
+        }
     }
     return n;
 }
 
-void obd2_set_enabled(const uint8_t *pids, uint8_t count)
+void obd2_set_enabled(const uint16_t *pids, uint8_t count)
 {
     obd2_start(pids, count);
 }
@@ -461,7 +466,7 @@ static void _send_pid_request(uint8_t service, uint8_t pid)
      * = engine ECU). Used for Mode 21 to avoid NRCs from other ECUs
      * that don't recognise the PID. Default = broadcast 0x7DF. */
     if (service == 0) service = 0x01;
-    const obd2_pid_def_t *def = _find_for_service(service, pid);
+    const obd2_pid_def_t *def = obd2_pid_find_svc(service, pid);
     uint32_t tx_id = (def && def->request_id) ? def->request_id
                                               : OBD2_REQUEST_ID_BROADCAST;
     uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
@@ -488,7 +493,7 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
     /* Per-PID request_id override: use the first PID's def (in practice
      * Mode 01 PIDs all broadcast on 0x7DF — no per-PID overrides — but
      * be defensive). */
-    const obd2_pid_def_t *def0 = _find_for_service(service, pids[0]);
+    const obd2_pid_def_t *def0 = obd2_pid_find_svc(service, pids[0]);
     uint32_t tx_id = (def0 && def0->request_id) ? def0->request_id
                                                 : OBD2_REQUEST_ID_BROADCAST;
 
@@ -503,22 +508,6 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
         ESP_LOGD(TAG, "Multi-PID TX failed (%u PIDs, svc 0x%02X): %s",
                  n, service, esp_err_to_name(err));
     }
-}
-
-/* Find a PID definition matching both service and PID byte. Used by RX
- * decode (we know the service from the response code) and by TX setup
- * for the request_id override. Falls back to first-match-by-PID-byte
- * if no exact match exists, which preserves behaviour for the common
- * case where service==0 in the def is treated as Mode 01. */
-static const obd2_pid_def_t *_find_for_service(uint8_t service, uint8_t pid)
-{
-    if (service == 0) service = 0x01;
-    for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
-        if (OBD2_PIDS[i].pid != pid) continue;
-        uint8_t s = OBD2_PIDS[i].service ? OBD2_PIDS[i].service : 0x01;
-        if (s == service) return &OBD2_PIDS[i];
-    }
-    return obd2_pid_find(pid);
 }
 
 /* Send a flow-control frame back to the ECU that just sent us a first
@@ -742,7 +731,7 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
         uint16_t rem = (uint16_t)(len - 1);
         while (rem >= 2) {
             uint8_t pid = p[0];
-            const obd2_pid_def_t *def = _find_for_service(0x01, pid);
+            const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
             if (!def) {
                 ESP_LOGD(TAG, "Multi-PID resp: no decoder for 0x%02X, stopping walk", pid);
                 return;
@@ -772,7 +761,7 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
     }
 
     /* ── Mode 21 (and future Mode 22): single-PID, possibly packed. ── */
-    const obd2_pid_def_t *def = _find_for_service(service, first_pid);
+    const obd2_pid_def_t *def = obd2_pid_find_svc(service, first_pid);
     if (!def) return;
     const uint8_t *payload = &msg[2];
     uint16_t payload_len = (uint16_t)(len - 2);

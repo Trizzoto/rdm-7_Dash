@@ -95,30 +95,32 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
 bool ecu_preset_is_obd2(const ecu_preset_t *preset);
 
 /**
- * Replace the layout's `obd2_pids` array with the given list. Used by the
+ * Replace the layout's `polled_pids` array with the given list. Used by the
  * OBD2 Signals picker after the user changes the enabled-PID set. Does NOT
  * touch the signals[] array, ecu/ecu_version fields, or widgets.
  *
  * @param layout_name  Layout to rewrite (typically "default").
- * @param pids         PID bytes to enable.
+ * @param pids         Encoded (service, pid) tuples — obd2_encode_pid().
  * @param count        Number of PIDs.
  * @return ESP_OK on success.
  */
 esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
-                                    const uint8_t *pids, uint8_t count);
+                                    const uint16_t *pids, uint8_t count);
 
 /**
- * Read the layout's `obd2_pids` array. Used by dashboard_init after a layout
- * load to know which PIDs to start polling.
+ * Read the layout's `polled_pids` array. Used by dashboard_init after a
+ * layout load to know which PIDs to start polling. Falls back to the
+ * legacy `obd2_pids` key for older layouts (bare bytes interpreted as
+ * Mode 01).
  *
  * @param layout_name  Layout to read from.
- * @param out          Buffer to receive PID bytes.
+ * @param out          Buffer to receive encoded (service, pid) tuples.
  * @param max          Capacity of @p out.
  * @param out_count    On return, number of PIDs written.
  * @return ESP_OK on success (may return zero PIDs).
  */
 esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
-                                    uint8_t *out, uint8_t max,
+                                    uint16_t *out, uint8_t max,
                                     uint8_t *out_count);
 
 #ifdef __cplusplus

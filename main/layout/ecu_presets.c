@@ -515,7 +515,7 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
 /* ── OBD2 PID list helpers ─────────────────────────────────────────────── */
 
 esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
-                                    const uint8_t *pids, uint8_t count) {
+                                    const uint16_t *pids, uint8_t count) {
     if (!layout_name) return ESP_ERR_INVALID_ARG;
 
     char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
@@ -532,8 +532,9 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
     free(buf);
     if (!root) return ESP_FAIL;
 
-    /* Always emit canonical `polled_pids`, and clear the legacy
-     * `obd2_pids` key so the layout file doesn't carry both. */
+    /* Always emit canonical `polled_pids` with encoded (service<<8|pid)
+     * tuples, and clear the legacy `obd2_pids` key so the layout file
+     * doesn't carry both. */
     cJSON_DeleteItemFromObject(root, "obd2_pids");
     cJSON_DeleteItemFromObject(root, "polled_pids");
     if (count > 0 && pids) {
@@ -552,7 +553,7 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
 }
 
 esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
-                                    uint8_t *out, uint8_t max,
+                                    uint16_t *out, uint8_t max,
                                     uint8_t *out_count) {
     if (!layout_name || !out || !out_count) return ESP_ERR_INVALID_ARG;
     *out_count = 0;
@@ -572,8 +573,9 @@ esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
     if (!root) return ESP_FAIL;
 
     /* Prefer `polled_pids`; fall back to legacy `obd2_pids` so layouts
-     * written by earlier firmware still read correctly. The save path
-     * canonicalises to `polled_pids`, so the legacy key fades naturally. */
+     * written by earlier firmware still read correctly. Numbers up to
+     * 0xFF mean Mode 01 (back-compat); larger numbers carry the
+     * (service<<8|pid) encoded form. */
     cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "polled_pids");
     if (!cJSON_IsArray(arr)) {
         arr = cJSON_GetObjectItemCaseSensitive(root, "obd2_pids");
@@ -584,8 +586,8 @@ esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
             if (!cJSON_IsNumber(item)) continue;
             if (*out_count >= max) break;
             int v = item->valueint;
-            if (v < 0 || v > 0xFF) continue;
-            out[(*out_count)++] = (uint8_t)v;
+            if (v < 0 || v > 0xFFFF) continue;
+            out[(*out_count)++] = (uint16_t)v;
         }
     }
     cJSON_Delete(root);
