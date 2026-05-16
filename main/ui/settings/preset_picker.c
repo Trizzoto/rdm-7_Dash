@@ -416,19 +416,44 @@ static preconfig_item_t s_obd2_items[64];          /* sized > OBD2_PIDS_COUNT */
 static char             s_obd2_labels[64][OBD2_LABEL_BUF_LEN];
 static int              s_obd2_count = 0;
 
+/* Map an OBD2 PID definition to a (brand, version) pair for picker
+ * grouping. PIDs with category set get their own brand bucket; bare
+ * PIDs (Mode 01 standard) fall under OBD2 / Standard. */
+static void _brand_version_for_def(const obd2_pid_def_t *def,
+                                   const char **out_brand,
+                                   const char **out_version)
+{
+    if (def->category && def->category[0]) {
+        *out_brand = def->category;     /* e.g. "Toyota" */
+        /* Map service byte to a human-recognisable version label.
+         * Toyota uses Mode 21 (KWP-derived); future Mode 22 packs
+         * would naturally land in "Mode 22". */
+        uint8_t s = def->service ? def->service : 0x01;
+        switch (s) {
+            case 0x21: *out_version = "Mode 21"; break;
+            case 0x22: *out_version = "Mode 22"; break;
+            default:   *out_version = "Standard"; break;
+        }
+    } else {
+        *out_brand   = "OBD2";
+        *out_version = "Standard";
+    }
+}
+
 /* Populate one preconfig_item_t for an OBD2 signal — used for both
  * single-value PIDs and packed-PID sub-fields. The label round-trips
  * through label_to_signal_name in config_modal so the apply path can
  * recover the signal name without storing it separately. */
-static void _add_obd2_item(const char *signal_name, uint8_t pid,
+static void _add_obd2_item(const obd2_pid_def_t *def,
+                           const char *signal_name,
                            float scale, float offset, bool is_signed)
 {
     if (!signal_name || s_obd2_count >= 64) return;
     int idx = s_obd2_count;
 
     /* Build label by replacing underscores with spaces.
-     * "COOLANT_TEMP" -> "COOLANT TEMP", "TY_RPM" -> "TY RPM".
-     * label_to_signal_name reverses it lossless. */
+     * "COOLANT_TEMP" -> "COOLANT TEMP". label_to_signal_name reverses
+     * it lossless so the apply path recovers the signal name. */
     size_t j = 0;
     for (size_t k = 0; signal_name[k] && j < OBD2_LABEL_BUF_LEN - 1; k++) {
         s_obd2_labels[idx][j++] = (signal_name[k] == '_') ? ' '
@@ -436,8 +461,12 @@ static void _add_obd2_item(const char *signal_name, uint8_t pid,
     }
     s_obd2_labels[idx][j] = '\0';
 
-    s_obd2_items[idx].ecu          = "OBD2";
-    s_obd2_items[idx].version      = "Standard";
+    const char *brand = NULL;
+    const char *version = NULL;
+    _brand_version_for_def(def, &brand, &version);
+
+    s_obd2_items[idx].ecu          = brand;
+    s_obd2_items[idx].version      = version;
     s_obd2_items[idx].label        = s_obd2_labels[idx];
     s_obd2_items[idx].can_id       = "0";
     s_obd2_items[idx].endianess    = 0;
@@ -448,7 +477,7 @@ static void _add_obd2_item(const char *signal_name, uint8_t pid,
     s_obd2_items[idx].decimals     = (scale >= 1.0f) ? 0
                                    : (scale >= 0.1f) ? 1 : 2;
     s_obd2_items[idx].is_signed    = is_signed;
-    s_obd2_items[idx].obd2_pid     = pid;
+    s_obd2_items[idx].obd2_pid     = def->pid;
     s_obd2_count++;
 }
 
@@ -460,19 +489,19 @@ static void _ensure_obd2_items_built(void)
 
         if (p->sub_fields && p->sub_field_count > 0) {
             /* Packed PID (e.g. Toyota Mode 21 engine block): one entry
-             * per sub-field. Picking any will auto-enable polling for the
-             * parent PID via _apply_obd2_preset, and the widget binds to
-             * the specific sub-field's signal name. */
+             * per sub-field. Picking any will auto-enable polling for
+             * the parent PID via _apply_obd2_preset, and the widget
+             * binds to that sub-field's signal name. */
             for (uint8_t j = 0; j < p->sub_field_count && s_obd2_count < 64; j++) {
                 const obd2_subfield_t *sf = &p->sub_fields[j];
-                _add_obd2_item(sf->signal_name, p->pid,
+                _add_obd2_item(p, sf->signal_name,
                                sf->scale, sf->offset, sf->is_signed);
             }
             continue;
         }
 
-        if (!p->signal_name) continue;   /* defensive: shouldn't happen */
-        _add_obd2_item(p->signal_name, p->pid, p->scale, p->offset, false);
+        if (!p->signal_name) continue;
+        _add_obd2_item(p, p->signal_name, p->scale, p->offset, false);
     }
 }
 
@@ -827,12 +856,17 @@ static void populate_ver_col(picker_st_t *st)
             if (strcmp(vers[j], preconfig_items[i].version) == 0) { dup = true; break; }
         if (!dup && nv < 16) vers[nv++] = preconfig_items[i].version;
     }
-    /* OBD2 brand → single "Standard" version. */
-    if (strcmp(st->sel_brand, "OBD2") == 0 && nv < 16) {
+    /* Add any OBD2-synthesised versions for this brand (e.g. OBD2 →
+     * Standard, Toyota → Mode 21, future Ford → Mode 22). */
+    _ensure_obd2_items_built();
+    for (int oi = 0; oi < s_obd2_count && nv < 16; oi++) {
+        const preconfig_item_t *it = &s_obd2_items[oi];
+        if (!it->ecu || strcmp(it->ecu, st->sel_brand) != 0) continue;
+        if (!it->version) continue;
         bool dup = false;
         for (int j = 0; j < nv; j++)
-            if (strcmp(vers[j], "Standard") == 0) { dup = true; break; }
-        if (!dup) vers[nv++] = "Standard";
+            if (strcmp(vers[j], it->version) == 0) { dup = true; break; }
+        if (!dup) vers[nv++] = it->version;
     }
     /* Sort protocols alphabetically */
     for (int i = 0; i < nv - 1; i++)
@@ -922,13 +956,15 @@ static void populate_sig_col(picker_st_t *st)
         if (strcmp(preconfig_items[i].version, st->sel_ver)   != 0) continue;
         if (nc < 256) idxs[nc++] = i;
     }
-    /* OBD2 synthetic entries — only relevant when the selected brand is OBD2. */
-    if (strcmp(st->sel_brand, "OBD2") == 0 &&
-        strcmp(st->sel_ver,   "Standard") == 0) {
-        _ensure_obd2_items_built();
-        for (int oi = 0; oi < s_obd2_count && nc < 256; oi++) {
-            idxs[nc++] = _obd2_idx_to_unified(oi);
-        }
+    /* OBD2 synthetic entries — include any whose ecu/version pair matches
+     * the current picker selection. The brand can be "OBD2" (standard
+     * Mode 01) or any category-derived brand like "Toyota". */
+    _ensure_obd2_items_built();
+    for (int oi = 0; oi < s_obd2_count && nc < 256; oi++) {
+        const preconfig_item_t *it = &s_obd2_items[oi];
+        if (!it->ecu || strcmp(it->ecu, st->sel_brand) != 0) continue;
+        if (!it->version || strcmp(it->version, st->sel_ver) != 0) continue;
+        idxs[nc++] = _obd2_idx_to_unified(oi);
     }
     /* Sort channels alphabetically by label (via _resolve_item). */
     for (int i = 0; i < nc - 1; i++)
@@ -988,13 +1024,17 @@ static void _populate_brands(lv_obj_t *brand_list, picker_st_t *st)
             if (strcmp(brands[j], preconfig_items[i].ecu) == 0) { dup = true; break; }
         if (!dup && nb < 16) brands[nb++] = preconfig_items[i].ecu;
     }
-    /* Append OBD2 — synthetic brand from the runtime PID table. */
+    /* Append any synthetic brands from the runtime OBD2 table — "OBD2"
+     * for standard Mode 01 PIDs, "Toyota" for category="Toyota" PIDs,
+     * and so on as future Mode 22 packs land. */
     _ensure_obd2_items_built();
-    if (s_obd2_count > 0 && nb < 16) {
+    for (int oi = 0; oi < s_obd2_count && nb < 16; oi++) {
+        const preconfig_item_t *it = &s_obd2_items[oi];
+        if (!it->ecu) continue;
         bool dup = false;
         for (int j = 0; j < nb; j++)
-            if (strcmp(brands[j], "OBD2") == 0) { dup = true; break; }
-        if (!dup) brands[nb++] = "OBD2";
+            if (strcmp(brands[j], it->ecu) == 0) { dup = true; break; }
+        if (!dup) brands[nb++] = it->ecu;
     }
     for (int i = 0; i < nb - 1; i++)
         for (int j = i + 1; j < nb; j++)

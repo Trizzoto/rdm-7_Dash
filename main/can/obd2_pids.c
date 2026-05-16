@@ -104,9 +104,13 @@ const obd2_pid_def_t OBD2_PIDS[] = {
      * the user should verify by enabling on their vehicle and
      * sanity-checking values (rev the engine, watch RPM track).
      *
-     * Signals are namespaced TY_* so they don't fight with Mode 01
-     * sources of the same value (RPM/COOLANT_TEMP/etc) — users bind
-     * widgets explicitly to TY_RPM if they want Toyota's source.
+     * Signals use the canonical Mode 01 names (RPM, COOLANT_TEMP, etc.)
+     * rather than a TY_-prefixed namespace. If the user has both this
+     * PID AND Mode 01 PID 0x0C (RPM) enabled at once, both write to the
+     * same "RPM" registry slot — last-write-wins. In practice users
+     * enable Toyota's bundle OR Mode 01 individuals, not both, because
+     * the preset picker exposes them under separate brands (Toyota /
+     * Mode 21 vs OBD2 / Standard).
      *
      * Addresses the engine ECU directly on 0x7E0 (response 0x7E8) to
      * avoid the transmission/hybrid ECUs returning NRCs on broadcast. */
@@ -122,13 +126,13 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         .service = 0x21,
         .category = "Toyota",
         .sub_fields = (const obd2_subfield_t[]){
-            { "TY_RPM",          "rpm",   2,  2, false, 0.25f,       0.0f   },
-            { "TY_THROTTLE",     "%",     4,  1, false, 0.392157f,   0.0f   },
-            { "TY_SPEED",        "km/h",  5,  1, false, 1.0f,        0.0f   },
-            { "TY_COOLANT_TEMP", "degC",  6,  1, false, 1.0f,        -40.0f },
-            { "TY_INTAKE_TEMP",  "degC",  7,  1, false, 1.0f,        -40.0f },
-            { "TY_MAF",          "g/s",   8,  2, false, 0.01f,       0.0f   },
-            { "TY_BATT_VOLT",    "V",    12,  1, false, 0.1f,        0.0f   },
+            { "RPM",              "rpm",   2,  2, false, 0.25f,       0.0f   },
+            { "THROTTLE",         "%",     4,  1, false, 0.392157f,   0.0f   },
+            { "VEHICLE_SPEED",    "km/h",  5,  1, false, 1.0f,        0.0f   },
+            { "COOLANT_TEMP",     "degC",  6,  1, false, 1.0f,        -40.0f },
+            { "INTAKE_AIR_TEMP",  "degC",  7,  1, false, 1.0f,        -40.0f },
+            { "MAF",              "g/s",   8,  2, false, 0.01f,       0.0f   },
+            { "BATTERY_VOLTAGE",  "V",    12,  1, false, 0.1f,        0.0f   },
         },
         .sub_field_count = 7,
         .request_id = 0x7E0u,
