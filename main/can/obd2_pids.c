@@ -18,6 +18,13 @@
 #define FAST OBD2_TIER_FAST
 #define SLOW OBD2_TIER_SLOW
 
+/* Silence -Wmissing-field-initializers across the table — positional
+ * initializers omit `service`, `category`, `sub_fields`, `sub_field_count`,
+ * and `request_id` which C zero-inits. service=0 is translated to 0x01
+ * (Mode 01) by obd2_def_service(); the rest correctly default to absent. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 const obd2_pid_def_t OBD2_PIDS[] = {
     /* PID,  signal_name,             human_name,                unit,    bytes, scale,        offset,  tier, default, filler */
     { 0x04, "ENGINE_LOAD",            "Calculated Engine Load",  "%",     1, 0.392157f,   0.0f,    FAST, true,  false },
@@ -127,6 +134,8 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         .request_id = 0x7E0u,
     },
 };
+
+#pragma GCC diagnostic pop
 
 const int OBD2_PIDS_COUNT = (int)(sizeof(OBD2_PIDS) / sizeof(OBD2_PIDS[0]));
 

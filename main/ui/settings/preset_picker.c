@@ -12,6 +12,13 @@
 
 /* preconfig_item_t is defined in preset_picker.h */
 
+/* Silence -Wmissing-field-initializers across the table — positional
+ * initializers omit the trailing `obd2_pid` field, which C zero-inits
+ * (= 0 = "not OBD2"), which is exactly what we want for every native
+ * preset entry. Adding `, 0` to ~400 rows would be churn for nothing. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 const preconfig_item_t preconfig_items[] = {
 
 /* ── Ford BA/BF ──────────────────────────────────────────────────────── */
@@ -390,6 +397,8 @@ const preconfig_item_t preconfig_items[] = {
 
 { NULL, NULL, NULL, NULL, 0, 0, 0, 0.0, 0, 0, false }
 };
+
+#pragma GCC diagnostic pop
 
 const int preconfig_items_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
 static const int preconfig_data_count = sizeof(preconfig_items)/sizeof(preconfig_items[0]);
