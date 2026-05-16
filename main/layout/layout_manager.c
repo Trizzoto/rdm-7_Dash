@@ -37,11 +37,14 @@
 #include "freertos/semphr.h"
 
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "layout_mgr";
 
@@ -668,17 +671,18 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	FILE *f = fopen(path, "r");
-	if (!f) {
+	/* POSIX open() — see layout_manager_read_raw for rationale. */
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
 		/* Try recovering from backup if primary file is missing */
 		char bak_path[96];
 		snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
 		if (rename(bak_path, path) == 0) {
 			ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
-			f = fopen(path, "r");
+			fd = open(path, O_RDONLY);
 		}
-		if (!f) {
-			ESP_LOGE(TAG, "layout_load: cannot open %s", path);
+		if (fd < 0) {
+			ESP_LOGE(TAG, "layout_load: cannot open %s (errno=%d)", path, errno);
 			xSemaphoreGiveRecursive(s_layout_mutex);
 			return ESP_ERR_NOT_FOUND;
 		}
@@ -687,13 +691,25 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	/* Read entire file into a heap buffer */
 	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
 	if (!buf) {
-		fclose(f);
+		close(fd);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NO_MEM;
 	}
 
-	size_t nread = fread(buf, 1, LAYOUT_MAX_FILE_BYTES - 1, f);
-	fclose(f);
+	size_t nread = 0;
+	while (nread < LAYOUT_MAX_FILE_BYTES - 1) {
+		ssize_t n = read(fd, buf + nread, LAYOUT_MAX_FILE_BYTES - 1 - nread);
+		if (n < 0) {
+			ESP_LOGE(TAG, "layout_load: read failed (errno=%d)", errno);
+			close(fd);
+			free(buf);
+			xSemaphoreGiveRecursive(s_layout_mutex);
+			return ESP_FAIL;
+		}
+		if (n == 0) break;
+		nread += (size_t)n;
+	}
+	close(fd);
 	buf[nread] = '\0';
 
 	cJSON *root = cJSON_Parse(buf);
@@ -952,9 +968,12 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
 	rename(path, bak_path);
 
-	FILE *f = fopen(path, "w");
-	if (!f) {
-		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing", path);
+	/* POSIX open()/write()/close() — see layout_manager_read_raw for rationale.
+	 * fsync() replaces fflush() to ensure data reaches flash before close. */
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing (errno=%d)",
+				 path, errno);
 		rename(bak_path, path);
 		free(json_str);
 		xSemaphoreGiveRecursive(s_layout_mutex);
@@ -962,29 +981,34 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	}
 
 	size_t len = strlen(json_str);
-	size_t nw = fwrite(json_str, 1, len, f);
+	size_t total_written = 0;
+	while (total_written < len) {
+		ssize_t n = write(fd, json_str + total_written, len - total_written);
+		if (n <= 0) {
+			ESP_LOGE(TAG, "layout_save_raw: write failed at %u/%u (errno=%d)",
+					 (unsigned)total_written, (unsigned)len, errno);
+			close(fd);
+			free(json_str);
+			remove(path);
+			rename(bak_path, path);
+			xSemaphoreGiveRecursive(s_layout_mutex);
+			return ESP_FAIL;
+		}
+		total_written += (size_t)n;
+	}
 	free(json_str);
 
-	if (nw != len) {
-		ESP_LOGE(TAG, "layout_save_raw: short write (%u/%u bytes) for %s",
-				 (unsigned)nw, (unsigned)len, path);
-		fclose(f);
+	/* close() commits LittleFS writes to flash — no separate fsync needed
+	 * with POSIX write() (which bypasses the stdio userspace buffer that
+	 * the previous fflush() was draining). */
+	if (close(fd) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: close failed for %s (errno=%d)",
+				 path, errno);
 		remove(path);
 		rename(bak_path, path);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
-
-	/* Explicit flush before close to ensure data reaches flash */
-	if (fflush(f) != 0) {
-		ESP_LOGE(TAG, "layout_save_raw: fflush failed for %s", path);
-		fclose(f);
-		remove(path);
-		rename(bak_path, path);
-		xSemaphoreGiveRecursive(s_layout_mutex);
-		return ESP_FAIL;
-	}
-	fclose(f);
 
 	s_layout_version++;
 	ESP_LOGI(TAG, "layout_save_raw: saved '%s' to %s (%u bytes, version %lu)",
@@ -1007,21 +1031,40 @@ esp_err_t layout_manager_read_raw(const char *name, char *buf,
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	FILE *f = fopen(path, "r");
-	if (!f) {
-		ESP_LOGE(TAG, "layout_read_raw: cannot open %s", path);
+	/* POSIX open()/read()/close() instead of fopen()/fread()/fclose() — the
+	 * stdio path mallocs a per-FILE newlib lock from internal SRAM on every
+	 * fopen(), and newlib calls abort() if that alloc fails. The Device
+	 * Settings open path used to hit this in production. POSIX file
+	 * descriptors don't allocate per-handle locks, so this path is heap-safe
+	 * even when internal SRAM is fragmented. */
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		ESP_LOGE(TAG, "layout_read_raw: cannot open %s (errno=%d)", path, errno);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_ERR_NOT_FOUND;
 	}
 
-	size_t nread = fread(buf, 1, buf_size - 1, f);
-	fclose(f);
-	buf[nread] = '\0';
+	/* Drain the file. read() may return short reads on some VFS backends;
+	 * loop until EOF or buffer full. */
+	size_t total = 0;
+	while (total < buf_size - 1) {
+		ssize_t n = read(fd, buf + total, buf_size - 1 - total);
+		if (n < 0) {
+			ESP_LOGE(TAG, "layout_read_raw: read failed (errno=%d)", errno);
+			close(fd);
+			xSemaphoreGiveRecursive(s_layout_mutex);
+			return ESP_FAIL;
+		}
+		if (n == 0) break;  /* EOF */
+		total += (size_t)n;
+	}
+	close(fd);
+	buf[total] = '\0';
 
 	if (out_len)
-		*out_len = nread;
+		*out_len = total;
 
-	ESP_LOGD(TAG, "layout_read_raw: read '%s' (%u bytes)", name, (unsigned)nread);
+	ESP_LOGD(TAG, "layout_read_raw: read '%s' (%u bytes)", name, (unsigned)total);
 	xSemaphoreGiveRecursive(s_layout_mutex);
 	return ESP_OK;
 }
