@@ -189,6 +189,18 @@ static struct {
     char                name[24];   /* up to 20 chars + slack + NUL */
 } s_ecuname_req = {0};
 
+/* ── Freeze frame request state (Mode 02) ──────────────────────────── */
+#define OBD2_FREEZE_TIMEOUT_MS 600   /* single PID per call; 600 ms ample */
+
+static struct {
+    bool              active;
+    uint64_t          sent_ms;
+    obd2_freeze_cb_t  cb;
+    void             *user;
+    uint8_t           data_pid;   /* echoed in response, used to match */
+    uint8_t           frame_no;   /* echoed in response */
+} s_freeze_req = {0};
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -636,6 +648,37 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     s_last_tx_ms_global = now;
 }
 
+void obd2_read_freeze_pid(uint8_t data_pid, uint8_t frame_no,
+                          obd2_freeze_cb_t cb, void *user) {
+    if (!cb) return;
+    if (s_freeze_req.active) {
+        ESP_LOGW(TAG, "Freeze-frame request already in progress");
+        cb(false, NULL, 0, user);
+        return;
+    }
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_freeze_req.active   = true;
+    s_freeze_req.sent_ms  = now;
+    s_freeze_req.cb       = cb;
+    s_freeze_req.user     = user;
+    s_freeze_req.data_pid = data_pid;
+    s_freeze_req.frame_no = frame_no;
+
+    /* Mode 02 request: length=3, service=0x02, then data_pid + frame_no.
+     * ECU answers with 0x42 [data_pid] [frame_no] [...data...] — same
+     * data shape as the Mode 01 response for that PID, just frozen. */
+    uint8_t data[8] = { 0x03, 0x02, data_pid, frame_no,
+                        0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "Freeze TX failed: %s", esp_err_to_name(err));
+        s_freeze_req.active = false;
+        cb(false, NULL, 0, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
 void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
     if (!cb) return;
     if (s_ecuname_req.active) {
@@ -947,6 +990,15 @@ static void _poll_timer_cb(lv_timer_t *t)
         ESP_LOGW(TAG, "ECU name read timed out");
         s_ecuname_req.active = false;
         if (cb) cb(false, NULL, user);
+    }
+
+    /* Freeze-frame timeout — short because each query is single-PID. */
+    if (s_freeze_req.active && (now - s_freeze_req.sent_ms) > OBD2_FREEZE_TIMEOUT_MS) {
+        obd2_freeze_cb_t cb = s_freeze_req.cb;
+        void *user = s_freeze_req.user;
+        ESP_LOGD(TAG, "Freeze PID 0x%02X timed out", s_freeze_req.data_pid);
+        s_freeze_req.active = false;
+        if (cb) cb(false, NULL, 0, user);
     }
 
     /* Discovery scan owns the bus until its window closes. */
@@ -1262,12 +1314,44 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
             cb(false, NULL, user);
             return;
         }
+        if (s_freeze_req.active && rejected_svc == 0x02) {
+            /* NRC 0x12 (sub-function not supported) is the typical
+             * response when no freeze frame exists for the requested
+             * PID — fire ok=false so the UI shows "not stored". */
+            ESP_LOGD(TAG, "Mode 02 (freeze) rejected — NRC 0x%02X (PID 0x%02X)",
+                     msg[2], s_freeze_req.data_pid);
+            obd2_freeze_cb_t cb = s_freeze_req.cb;
+            void *user = s_freeze_req.user;
+            s_freeze_req.active = false;
+            cb(false, NULL, 0, user);
+            return;
+        }
         return;
     }
 
     if ((resp_service & 0xC0) != 0x40) return;   /* not a positive response */
 
     uint8_t service = (uint8_t)(resp_service - 0x40);
+
+    /* ── Mode 02 — Freeze Frame response ─────────────────────────────
+     * Format: 0x42 [data_pid] [frame_no] [data_bytes...]
+     * Match against the pending request's (pid, frame_no) so a stale
+     * response from a different call (rare but possible if the user
+     * fires fast) doesn't get attributed to the wrong query. */
+    if (s_freeze_req.active && service == 0x02 && len >= 3) {
+        uint8_t resp_pid   = msg[1];
+        uint8_t resp_frame = msg[2];
+        if (resp_pid == s_freeze_req.data_pid &&
+            resp_frame == s_freeze_req.frame_no) {
+            const uint8_t *payload = (len > 3) ? &msg[3] : NULL;
+            uint8_t payload_len    = (len > 3) ? (uint8_t)(len - 3) : 0;
+            obd2_freeze_cb_t cb = s_freeze_req.cb;
+            void *user = s_freeze_req.user;
+            s_freeze_req.active = false;
+            cb(true, payload, payload_len, user);
+            return;
+        }
+    }
 
     /* ── Mode 03/07/0A — DTC read response ────────────────────────────
      * Payload format: [count_byte (optional)][DTC_pairs...]

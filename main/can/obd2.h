@@ -366,6 +366,37 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user);
 typedef void (*obd2_ecuname_cb_t)(bool ok, const char *name, void *user);
 void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user);
 
+/* ── Mode 02 — Freeze Frame Data ─────────────────────────────────────────
+ *
+ * When a DTC is set, the ECU snapshots a set of live-data values so
+ * later inspection can see the conditions that triggered it. Mode 02
+ * queries those frozen values, one PID at a time.
+ *
+ * Request format: 0x02 0x02 [data_pid] [frame_no]
+ *   data_pid = one of the Mode 01 PIDs (RPM=0x0C, COOLANT=0x05, etc.)
+ *              OR 0x02 itself = "which DTC triggered this frame"
+ *   frame_no = which freeze frame to query (0 = first, almost always
+ *              the only one most ECUs store)
+ *
+ * Response: 0x42 [data_pid] [frame_no] [data...] — same data layout as
+ * the equivalent Mode 01 response, just the value AT THE MOMENT the
+ * DTC set.
+ *
+ * Use case: tap-a-DTC-to-see-the-conditions feature in the Code
+ * Reader modal. The UI orchestrates a sequence of obd2_read_freeze_pid()
+ * calls (one per PID of interest) and assembles the frame view.
+ *
+ * Raw-bytes callback shape mirrors obd2_test_pid — caller decodes
+ * with knowledge of which PID was queried (because the response
+ * format mirrors Mode 01). */
+
+typedef void (*obd2_freeze_cb_t)(bool ok,
+                                  const uint8_t *raw_payload, uint8_t raw_len,
+                                  void *user);
+
+void obd2_read_freeze_pid(uint8_t data_pid, uint8_t frame_no,
+                          obd2_freeze_cb_t cb, void *user);
+
 #ifdef __cplusplus
 }
 #endif

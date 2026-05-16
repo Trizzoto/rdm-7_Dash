@@ -93,6 +93,57 @@ static void _on_dtc_response(bool ok, const obd2_dtc_t *codes, uint8_t count,
 static void _on_clear_response(bool ok, void *user);
 static void _clear_disarm_cb(lv_timer_t *t);
 static void _clear_button_set_state(bool armed);
+static void _row_click_cb(lv_event_t *e);
+
+/* ── Freeze-frame sub-modal state ────────────────────────────────────
+ *
+ * Tap a DTC row → opens a small overlay that fires a sequence of
+ * Mode 02 queries for the standard set of "snapshot" PIDs (RPM, speed,
+ * coolant temp, load, throttle, MAP, MAF, fuel level, run time). Each
+ * comes back individually; the panel updates row-by-row as data
+ * arrives. Some ECUs reject many PIDs with NRC — those show "—". */
+
+#define FF_MAX_ROWS 12
+
+/* Standard set of freeze-frame PIDs we query. Order = render order. */
+typedef struct {
+    uint8_t     pid;
+    const char *label;
+    const char *unit;
+    /* decode: same scale/offset/bytes as Mode 01 for that PID. */
+    uint8_t     bytes;
+    float       scale;
+    float       offset;
+    int         decimals;
+} ff_spec_t;
+
+static const ff_spec_t FF_PIDS[] = {
+    { 0x04, "Engine load",     "%",     1, 0.392157f,  0.0f,    1 },
+    { 0x05, "Coolant temp",    "degC",  1, 1.0f,       -40.0f,  0 },
+    { 0x0B, "MAP",             "kPa",   1, 1.0f,        0.0f,   0 },
+    { 0x0C, "RPM",             "rpm",   2, 0.25f,       0.0f,   0 },
+    { 0x0D, "Vehicle speed",   "km/h",  1, 1.0f,        0.0f,   0 },
+    { 0x0E, "Timing adv",      "deg",   1, 0.5f,       -64.0f,  1 },
+    { 0x0F, "Intake air temp", "degC",  1, 1.0f,       -40.0f,  0 },
+    { 0x10, "MAF",             "g/s",   2, 0.01f,       0.0f,   2 },
+    { 0x11, "Throttle pos",    "%",     1, 0.392157f,   0.0f,   1 },
+    { 0x1F, "Run time",        "s",     2, 1.0f,        0.0f,   0 },
+    { 0x2F, "Fuel level",      "%",     1, 0.392157f,   0.0f,   1 },
+};
+#define FF_PID_COUNT (sizeof(FF_PIDS) / sizeof(FF_PIDS[0]))
+
+static lv_obj_t *s_ff_overlay        = NULL;
+static lv_obj_t *s_ff_value_lbls[FF_PID_COUNT] = {0};
+static uint8_t   s_ff_dtc_for_modal[6] = {0};   /* "P0420" */
+static uint8_t   s_ff_index            = 0;     /* next PID to query */
+static bool      s_ff_running          = false;
+
+static void _ff_open(const char *code);
+static void _ff_close(void);
+static void _ff_close_cb(lv_event_t *e);
+static void _ff_kick_next(void);
+static void _ff_on_response(bool ok, const uint8_t *raw, uint8_t raw_len,
+                             void *user);
 
 /* ── Public API ────────────────────────────────────────────────────────── */
 
@@ -104,6 +155,9 @@ void dtc_reader_close(void) {
         lv_timer_del(s_clear_timer);
         s_clear_timer = NULL;
     }
+    /* Tear down freeze-frame sub-modal if it's open — same safety pattern
+     * as the existing dump overlay handling. */
+    _ff_close();
     lv_obj_del(s_overlay);
     s_overlay     = NULL;
     s_card        = NULL;
@@ -511,7 +565,32 @@ static void _render_list(void) {
         lv_obj_set_width(desc_lbl, MODAL_W - 90);
         lv_label_set_long_mode(desc_lbl, LV_LABEL_LONG_DOT);
         lv_obj_align(desc_lbl, LV_ALIGN_LEFT_MID, 70, 0);
+
+        /* Tap-to-expand → freeze frame sub-modal. Stored DTCs only; the
+         * ECU normally only retains a freeze frame for confirmed faults
+         * (Mode 03), so wiring it on pending/permanent rows would just
+         * mostly produce "no data" panels. user_data is a small heap
+         * copy of the code so the event handler doesn't need to walk
+         * back to s_buckets to find it. */
+        if (s_current_tab == TAB_STORED) {
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            /* Pass the index as user_data (cheap) and look it up in the
+             * handler — saves a per-row malloc. */
+            lv_obj_add_event_cb(row, _row_click_cb, LV_EVENT_CLICKED,
+                                 (void *)(intptr_t)i);
+            /* Subtle hover/press feedback */
+            lv_obj_set_style_bg_color(row, THEME_COLOR_ACCENT_BLUE,
+                                      LV_STATE_PRESSED);
+            lv_obj_set_style_bg_opa(row, LV_OPA_30, LV_STATE_PRESSED);
+        }
     }
+}
+
+static void _row_click_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    bucket_state_t *b = &s_buckets[s_current_tab];
+    if (idx < 0 || idx >= b->count) return;
+    _ff_open(b->codes[idx].code);
 }
 
 static void _set_status(const char *text) {
@@ -528,4 +607,157 @@ static void _set_status_fmt(const char *fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     lv_label_set_text(s_status, buf);
+}
+
+/* ── Freeze-frame sub-modal ──────────────────────────────────────────
+ *
+ * Lightweight overlay (400 x 360) shown above the DTC reader card.
+ * Fires the FF_PIDS sequence one at a time and updates each row as
+ * data arrives. Each PID slot starts as "..." and resolves to either
+ * a decoded value or "-" (the ECU didn't have a freeze frame for it).
+ *
+ * obd2_read_freeze_pid is single-in-flight; we chain them via the
+ * callback. Total wall clock: ~11 PIDs × <100 ms = ~1 s typical, up
+ * to ~6.6 s worst case if every PID hits the 600 ms timeout. */
+
+static int32_t _ff_decode(const ff_spec_t *s,
+                          const uint8_t *raw, uint8_t raw_len) {
+    if (raw_len < s->bytes) return INT32_MIN;
+    int32_t v = 0;
+    for (uint8_t i = 0; i < s->bytes; i++) v = (v << 8) | raw[i];
+    return v;
+}
+
+static void _ff_on_response(bool ok, const uint8_t *raw, uint8_t raw_len,
+                             void *user) {
+    (void)user;
+    if (!s_ff_running || !s_ff_overlay) return;
+    if (s_ff_index >= FF_PID_COUNT) return;
+
+    const ff_spec_t *s = &FF_PIDS[s_ff_index];
+    lv_obj_t *lbl = s_ff_value_lbls[s_ff_index];
+
+    if (ok && raw && raw_len >= s->bytes && lbl && lv_obj_is_valid(lbl)) {
+        int32_t raw_v = _ff_decode(s, raw, raw_len);
+        float value  = (float)raw_v * s->scale + s->offset;
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.*f %s",
+                 s->decimals, (double)value, s->unit);
+        lv_label_set_text(lbl, buf);
+        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    } else if (lbl && lv_obj_is_valid(lbl)) {
+        lv_label_set_text(lbl, "-");
+        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_HINT, 0);
+    }
+
+    s_ff_index++;
+    _ff_kick_next();
+}
+
+static void _ff_kick_next(void) {
+    if (!s_ff_running) return;
+    if (s_ff_index >= FF_PID_COUNT) {
+        s_ff_running = false;
+        return;
+    }
+    /* frame_no = 0 — most ECUs only store the first/only freeze frame. */
+    obd2_read_freeze_pid(FF_PIDS[s_ff_index].pid, 0,
+                         _ff_on_response, NULL);
+}
+
+static void _ff_close(void) {
+    s_ff_running = false;
+    s_ff_index   = 0;
+    if (s_ff_overlay && lv_obj_is_valid(s_ff_overlay)) {
+        lv_obj_del(s_ff_overlay);
+    }
+    s_ff_overlay = NULL;
+    for (size_t i = 0; i < FF_PID_COUNT; i++) s_ff_value_lbls[i] = NULL;
+}
+
+static void _ff_close_cb(lv_event_t *e) {
+    (void)e;
+    _ff_close();
+}
+
+static void _ff_open(const char *code) {
+    /* Tear down any previous sub-modal — fire-twice resilience. */
+    _ff_close();
+
+    strncpy((char *)s_ff_dtc_for_modal, code,
+            sizeof(s_ff_dtc_for_modal) - 1);
+
+    /* Overlay sits on lv_layer_top, slightly more opaque dimmer so it
+     * visually reads as "on top of" the DTC reader card. */
+    s_ff_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_ff_overlay);
+    lv_obj_set_size(s_ff_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_ff_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_ff_overlay, LV_OPA_80, 0);
+    lv_obj_clear_flag(s_ff_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_ff_overlay);
+    lv_obj_set_size(card, 420, 360);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_radius(card, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_pad_all(card, 14, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Title — "Freeze Frame: P0420". */
+    lv_obj_t *title = lv_label_create(card);
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "Freeze Frame: %s", code);
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Hint */
+    lv_obj_t *hint = lv_label_create(card);
+    lv_label_set_text(hint,
+        "Live values at the moment this code set.\n"
+        "'-' = ECU has no freeze-frame data for this PID.");
+    lv_obj_set_style_text_font(hint, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, 28);
+
+    /* Two-column layout: labels on left, values on right. */
+    int row_y0 = 70;
+    int row_h  = 22;
+    for (size_t i = 0; i < FF_PID_COUNT; i++) {
+        lv_obj_t *lbl = lv_label_create(card);
+        lv_label_set_text(lbl, FF_PIDS[i].label);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_HINT, 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, row_y0 + (int)i * row_h);
+
+        s_ff_value_lbls[i] = lv_label_create(card);
+        lv_label_set_text(s_ff_value_lbls[i], "...");
+        lv_obj_set_style_text_font(s_ff_value_lbls[i], THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_ff_value_lbls[i], THEME_COLOR_TEXT_HINT, 0);
+        lv_obj_align(s_ff_value_lbls[i], LV_ALIGN_TOP_LEFT,
+                     180, row_y0 + (int)i * row_h);
+    }
+
+    /* Close button. */
+    lv_obj_t *close = lv_btn_create(card);
+    lv_obj_set_size(close, 90, 30);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(close, THEME_COLOR_BTN_DIM, 0);
+    lv_obj_set_style_radius(close, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_shadow_width(close, 0, 0);
+    lv_obj_t *close_lbl = lv_label_create(close);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_center(close_lbl);
+    lv_obj_set_style_text_font(close_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(close_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(close, _ff_close_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Kick off the sequence. */
+    s_ff_running = true;
+    s_ff_index   = 0;
+    _ff_kick_next();
 }
