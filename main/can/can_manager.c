@@ -12,6 +12,7 @@
 #include "signal_sim.h"
 
 #include "driver/twai.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -242,6 +243,12 @@ static void _stop_can_task(void) {
  * attempt — without this the peripheral can latch into a partial-install
  * mode that no amount of waiting clears.
  *
+ * Heap snapshot logged on each failure: the TWAI driver allocates ~4-6 KB
+ * of internal SRAM at install time (queue + ISR + driver object). When
+ * internal SRAM is fragmented or exhausted, the driver's allocation
+ * path can report ESP_ERR_INVALID_STATE rather than ESP_ERR_NO_MEM,
+ * making it look like a state bug. Logging free heap pinpoints which.
+ *
  * @param ctx  short context string for logging (e.g. "filter rebuild")
  * @return     ESP_OK on success, last error code if all attempts fail.
  */
@@ -250,14 +257,35 @@ static esp_err_t _install_twai_with_retry(const char *ctx) {
 	for (int attempt = 0; attempt < 3; attempt++) {
 		err = twai_driver_install(&g_config, &g_t_config, &f_config);
 		if (err == ESP_OK) return ESP_OK;
-		ESP_LOGW(TAG, "%s: install attempt %d/3 failed: %s (0x%04x)",
-				 ctx, attempt + 1, esp_err_to_name(err), (unsigned)err);
+
+		size_t free_int  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+		size_t free_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+		size_t largest_int = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+		ESP_LOGW(TAG, "%s: install attempt %d/3 failed: %s (0x%04x) — "
+				 "free int=%u 8bit=%u largest_int=%u",
+				 ctx, attempt + 1, esp_err_to_name(err), (unsigned)err,
+				 (unsigned)free_int, (unsigned)free_8bit, (unsigned)largest_int);
 		twai_driver_uninstall();
 		vTaskDelay(pdMS_TO_TICKS(200 * (attempt + 1)));
 	}
 	ESP_LOGE(TAG, "%s: twai_driver_install failed after retries: %s",
 			 ctx, esp_err_to_name(err));
 	return err;
+}
+
+/* Compare two TWAI acceptance filters bit-for-bit. Returns true if they
+ * would deliver the exact same set of frames. Used to short-circuit
+ * reconfigure_can_filter() when the rebuilt filter matches what's
+ * already installed — most widget preset changes don't actually change
+ * the bus filter (e.g. binding a gauge to RPM vs MAP when both already
+ * pass through). Skipping the teardown saves the TWAI bounce AND the
+ * memory churn that triggers ESP_ERR_INVALID_STATE on heap-tight builds. */
+static bool _twai_filter_equal(const twai_filter_config_t *a,
+								const twai_filter_config_t *b) {
+	if (!a || !b) return false;
+	return a->acceptance_code == b->acceptance_code &&
+	       a->acceptance_mask == b->acceptance_mask &&
+	       a->single_filter   == b->single_filter;
 }
 
 /** Map a bitrate index (0-3) to the corresponding TWAI timing config. */
@@ -271,9 +299,25 @@ static twai_timing_config_t _bitrate_to_timing(uint8_t bitrate_code) {
 }
 
 void reconfigure_can_filter(void) {
-	_stop_can_task();
+	/* Build the new filter first WITHOUT touching the live one. If the
+	 * resulting filter would deliver the same set of frames as what's
+	 * already installed, skip the entire teardown/reinstall — saves a
+	 * ~600 ms TWAI bounce AND avoids the heap churn that triggers
+	 * ESP_ERR_INVALID_STATE on memory-tight builds. Most widget preset
+	 * changes don't actually change the bus filter (e.g. rebinding a
+	 * gauge between two signals that share a CAN ID, or switching among
+	 * OBD2 PIDs while the 0x7E8-0x7EF response range stays mapped). */
+	twai_filter_config_t new_filter;
+	build_twai_filter_from_signals(&new_filter);
+	if (_twai_filter_equal(&new_filter, &f_config)) {
+		ESP_LOGI(TAG, "Filter rebuild: unchanged (code=0x%08X mask=0x%08X) — skipping",
+				 (unsigned)new_filter.acceptance_code,
+				 (unsigned)new_filter.acceptance_mask);
+		return;
+	}
 
-	build_twai_filter_from_signals(&f_config);
+	_stop_can_task();
+	f_config = new_filter;
 
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
