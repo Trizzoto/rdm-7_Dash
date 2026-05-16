@@ -623,13 +623,33 @@ static void _try_dispatch(uint64_t now)
         return;
     }
 
-    /* Mode 01: batch up to OBD2_MAX_BATCH_PIDS due+alive PIDs into one
-     * request. Cuts bus traffic ~2.4x vs polling each PID individually
-     * and shrinks effective latency because the car sends one ISO-TP
-     * stream instead of N single-frame responses. Dead PIDs stay on
-     * their 5-sec individual probe schedule (excluded from batches —
-     * including them risks NRC from ECUs that reject the whole batch
-     * when any one PID is unknown). */
+    /* Packed Mode 01 PIDs (diesel EGT/DPF/boost/rail pressure — 9+ byte
+     * responses) get sent SOLO, not batched. Two reasons:
+     *  - Some ECUs reject multi-PID requests whose total response would
+     *    exceed an internal buffer (~31 bytes typical limit).
+     *  - The multi-PID walker advances by `1 + span` per PID; if any
+     *    ECU truncates the packed response under batching pressure, the
+     *    walker falls off the end and trailing PIDs go un-decoded.
+     * Single-PID requests for packed PIDs are clean: one stream, one
+     * decode, no ambiguity. */
+    const obd2_pid_def_t *top_def = obd2_pid_find_svc(0x01, top->pid);
+    bool top_packed = (top_def && top_def->sub_fields &&
+                       top_def->sub_field_count > 0);
+    if (top_packed) {
+        _send_pid_request(0x01, top->pid);
+        top->last_tx_ms = now;
+        s_last_tx_ms_global = now;
+        return;
+    }
+
+    /* Mode 01: batch up to OBD2_MAX_BATCH_PIDS due+alive single-value
+     * PIDs into one request. Cuts bus traffic ~2.4x vs polling each
+     * individually and shrinks effective latency because the car sends
+     * one ISO-TP stream instead of N single-frame responses. Dead PIDs
+     * stay on their 5-sec individual probe schedule (excluded from
+     * batches — including them risks NRC from ECUs that reject the
+     * whole batch when any one PID is unknown). Packed PIDs likewise
+     * excluded — see SOLO branch above. */
     uint8_t batch[OBD2_MAX_BATCH_PIDS];
     uint8_t batch_n = 0;
     batch[batch_n++] = top->pid;
@@ -640,6 +660,8 @@ static void _try_dispatch(uint64_t now)
         obd2_poll_state_t *ps = &s_poll[j];
         if (ps->service != 0x01) continue;
         if (ps->target_period_ms >= OBD2_PERIOD_DEAD_MS) continue;
+        const obd2_pid_def_t *cand = obd2_pid_find_svc(0x01, ps->pid);
+        if (cand && cand->sub_fields && cand->sub_field_count > 0) continue;
         int64_t starv = (int64_t)(now - ps->last_tx_ms)
                         - (int64_t)ps->target_period_ms;
         if (starv < 0) continue;     /* not yet due — let it wait */
@@ -1049,13 +1071,40 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
                 ESP_LOGD(TAG, "Multi-PID resp: no decoder for 0x%02X, stopping walk", pid);
                 return;
             }
-            /* Packed sub_fields shouldn't appear under Mode 01 (only Mode 21
-             * uses them) but guard anyway. */
-            if (def->sub_fields && def->sub_field_count > 0) return;
-            uint8_t consumed = (uint8_t)(1 + def->bytes);
+
+            /* Determine how many data bytes this PID's response carries
+             * and how to decode them. Both branches must agree on the
+             * `consumed` count so the walk stays in sync for any
+             * trailing PIDs in a multi-PID batch response. */
+            uint8_t  consumed;
+            uint16_t data_len;
+            bool     packed = (def->sub_fields && def->sub_field_count > 0);
+
+            if (packed) {
+                /* Packed Mode 01 (diesel EGT / DPF / boost / rail
+                 * pressure etc.). Compute the byte span as the max
+                 * (byte_offset + bytes) across all sub-fields — that's
+                 * how many data bytes the ECU emits for this PID. */
+                uint16_t span = 0;
+                for (uint8_t i = 0; i < def->sub_field_count; i++) {
+                    uint16_t end = (uint16_t)def->sub_fields[i].byte_offset +
+                                    (uint16_t)def->sub_fields[i].bytes;
+                    if (end > span) span = end;
+                }
+                if (span == 0) { ESP_LOGW(TAG, "Packed PID 0x%02X span=0", pid); return; }
+                data_len = span;
+                consumed = (uint8_t)(1 + span);
+            } else {
+                data_len = def->bytes;
+                consumed = (uint8_t)(1 + def->bytes);
+            }
             if (rem < consumed) return;
 
-            _decode_and_push(def, &p[1]);
+            if (packed) {
+                _decode_packed(def, &p[1], data_len);
+            } else {
+                _decode_and_push(def, &p[1]);
+            }
 
             /* Test intercept inside multi-PID walk: catches the case
              * where the test PID is at position 2+ of a response that

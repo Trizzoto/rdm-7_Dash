@@ -412,8 +412,13 @@ static const int preconfig_data_count = sizeof(preconfig_items)/sizeof(preconfig
  * bit-decode params on the widget's existing signal. */
 
 #define OBD2_LABEL_BUF_LEN 28
-static preconfig_item_t s_obd2_items[64];          /* sized > OBD2_PIDS_COUNT */
-static char             s_obd2_labels[64][OBD2_LABEL_BUF_LEN];
+/* Sized > OBD2_PIDS_COUNT plus headroom for packed-PID sub-fields (each
+ * packed PID expands to N picker entries, one per sub-field) plus the
+ * OBD2_MAX_CUSTOM_PIDS=32 user slots. As of the diesel decode adds we're
+ * at ~69 entries; 128 gives 2x growth before hitting another cap. */
+#define OBD2_PICKER_MAX 128
+static preconfig_item_t s_obd2_items[OBD2_PICKER_MAX];
+static char             s_obd2_labels[OBD2_PICKER_MAX][OBD2_LABEL_BUF_LEN];
 static int              s_obd2_count = 0;
 
 /* Map an OBD2 PID definition to a (brand, version) pair for picker
@@ -448,7 +453,7 @@ static void _add_obd2_item(const obd2_pid_def_t *def,
                            const char *signal_name,
                            float scale, float offset, bool is_signed)
 {
-    if (!signal_name || s_obd2_count >= 64) return;
+    if (!signal_name || s_obd2_count >= OBD2_PICKER_MAX) return;
     int idx = s_obd2_count;
 
     /* Build label by replacing underscores with spaces.
@@ -488,7 +493,7 @@ static void _ensure_obd2_items_built(void)
      * last picker open. ~80 entries × small struct = trivial cost. */
     s_obd2_count = 0;
     uint8_t total = obd2_pid_total_count();
-    for (uint8_t i = 0; i < total && s_obd2_count < 64; i++) {
+    for (uint8_t i = 0; i < total && s_obd2_count < OBD2_PICKER_MAX; i++) {
         const obd2_pid_def_t *p = obd2_pid_at(i);
         if (!p) continue;
 
@@ -497,7 +502,7 @@ static void _ensure_obd2_items_built(void)
              * per sub-field. Picking any will auto-enable polling for
              * the parent PID via _apply_obd2_preset, and the widget
              * binds to that sub-field's signal name. */
-            for (uint8_t j = 0; j < p->sub_field_count && s_obd2_count < 64; j++) {
+            for (uint8_t j = 0; j < p->sub_field_count && s_obd2_count < OBD2_PICKER_MAX; j++) {
                 const obd2_subfield_t *sf = &p->sub_fields[j];
                 _add_obd2_item(p, sf->signal_name,
                                sf->scale, sf->offset, sf->is_signed);

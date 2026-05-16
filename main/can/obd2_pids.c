@@ -89,6 +89,179 @@ const obd2_pid_def_t OBD2_PIDS[] = {
     { 0x62, "ENGINE_TORQUE_ACT",      "Actual Engine Torque",    "%",     1, 1.0f,        -125.0f, SLOW, false, false },
     { 0x63, "ENGINE_REF_TORQUE",      "Engine Reference Torque", "Nm",    2, 1.0f,        0.0f,    SLOW, false, false },
 
+    /* ── Diagnostic counters (J1979 standard, low-rate) ───────────────
+     *
+     * These are SLOW-tier engine-life / MIL-status counters that don't
+     * change second-to-second but make great "engine health" widgets.
+     * All single-value, A or A*256+B per spec — no support byte to skip. */
+    { 0x30, "WARMUPS_SINCE_CLEAR",    "Warmups Since Codes Cleared","count", 1, 1.0f,    0.0f,    SLOW, false, false },
+    { 0x4D, "MIL_ON_TIME",            "Time with MIL On",        "min",   2, 1.0f,        0.0f,    SLOW, false, false },
+    { 0x4E, "RUN_TIME_SINCE_CLEAR",   "Run Time Since DTCs Cleared","min", 2, 1.0f,      0.0f,    SLOW, false, false },
+
+    /* ── Diesel-specific (SAE J1979-DA) ────────────────────────────────
+     *
+     * Confirmed on a 2024 Toyota HiAce diesel (Mode 01 PIDs 0x77, 0x78,
+     * 0x7A reported supported via discovery scan, raw bytes captured via
+     * the picker's "Dump Unknowns" button).
+     *
+     * Each of these PIDs carries a leading "support" byte indicating
+     * which downstream sensor slots are populated, then the data slots.
+     * We use the packed (sub_fields) decode path with byte_offset=1+ to
+     * skip the support byte. Unsupported sensors usually return zero,
+     * which decodes as the floor (e.g. -40 °C for an EGT slot). */
+
+    /* PID 0x77 — Charge Air Cooler Temperature (intercooler outlet).
+     * Byte 1 = T1A (charge air cooler 1, sensor A), simple temp - 40 °C. */
+    {
+        .pid = 0x77,
+        .signal_name = NULL,
+        .human_name = "Charge Air Cooler Temp",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_SLOW,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "CHARGE_AIR_TEMP", "degC", 1, 1, false, 1.0f, -40.0f },
+        },
+        .sub_field_count = 1,
+        .request_id = 0,
+    },
+
+    /* PID 0x78 — Exhaust Gas Temperature, Bank 1 (up to 4 sensors,
+     * each 2 bytes, formula (A*256+B)/10 - 40 °C). On modern diesels
+     * EGT1 is usually pre-turbo, EGT2 post-turbo, EGT3 pre-DPF, EGT4
+     * post-DPF — exact mapping varies by manufacturer. */
+    {
+        .pid = 0x78,
+        .signal_name = NULL,
+        .human_name = "EGT Bank 1 (4 sensors)",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "EGT_1", "degC", 1, 2, false, 0.1f, -40.0f },
+            { "EGT_2", "degC", 3, 2, false, 0.1f, -40.0f },
+            { "EGT_3", "degC", 5, 2, false, 0.1f, -40.0f },
+            { "EGT_4", "degC", 7, 2, false, 0.1f, -40.0f },
+        },
+        .sub_field_count = 4,
+        .request_id = 0,
+    },
+
+    /* PID 0x7A — DPF differential pressure (across the DPF).
+     * Bytes 1,2 signed 16-bit, scale 0.01 kPa. Clean filter reads ~0,
+     * climbs to ~5-20 kPa as soot loads up, triggers regen at threshold. */
+    {
+        .pid = 0x7A,
+        .signal_name = NULL,
+        .human_name = "DPF Differential Pressure",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_SLOW,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "DPF_DELTA_P", "kPa", 1, 2, true, 0.01f, 0.0f },
+        },
+        .sub_field_count = 1,
+        .request_id = 0,
+    },
+
+    /* ── Tier 3: Diesel-specific, EXPERIMENTAL decodes ─────────────────
+     *
+     * These PIDs have multiple competing formulas in different revisions
+     * of SAE J1979 / J1979-DA. The decodes below are the MOST CITED
+     * interpretations and produce plausible values against a 2024
+     * Toyota HiAce 1GD-FTV dump. Each PID exposes only the first
+     * commanded / actual slot — the spec defines additional cmd_B and
+     * act_B fields for twin-turbo / dual-rail systems, but for a
+     * single-turbo single-rail diesel those extra slots return zero
+     * and just create widget noise. Users with twin-turbo / dual-rail
+     * setups can decode the remaining fields via Custom PIDs in the
+     * web editor (Service 01, same PID byte, different byte_offset). */
+
+    /* PID 0x70 — Boost Pressure Control.
+     * Bytes 1,2 = pressure value, scale 0.03125 kPa per count.
+     * Spec interpretation varies between "commanded" and "actual" by
+     * model — most cars use slot A for actual boost (absolute manifold
+     * pressure including atmospheric). A reading of ~100 kPa at idle
+     * confirms absolute (= atm); ~0 kPa at idle would mean gauge.
+     * Range with 0.03125 scale: 0..~2 MPa, plenty for diesel boost. */
+    {
+        .pid = 0x70,
+        .signal_name = NULL,
+        .human_name = "Boost Pressure (experimental)",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "BOOST_PRESSURE_ABS", "kPa", 1, 2, false, 0.03125f, 0.0f },
+        },
+        .sub_field_count = 1,
+        .request_id = 0,
+    },
+
+    /* PID 0x6D — Fuel Pressure Control System (Diesel common rail).
+     * Bytes 1,2 = commanded rail pressure, scale 10 kPa per count.
+     * Typical diesel hot-idle setpoint is 25-40 MPa; cranking is ~30 MPa;
+     * heavy load can hit 200+ MPa on modern injection systems.
+     * Distinct from PID 0x23 (FUEL_RAIL_PRESSURE) which is a simpler
+     * single-value PID on petrol/older diesel. */
+    {
+        .pid = 0x6D,
+        .signal_name = NULL,
+        .human_name = "Commanded Fuel Rail Pressure (experimental)",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "RAIL_PRESSURE_CMD", "kPa", 1, 2, false, 10.0f, 0.0f },
+        },
+        .sub_field_count = 1,
+        .request_id = 0,
+    },
+
+    /* PID 0x71 — Variable Geometry Turbo (VGT) actuator position.
+     * Byte 1 single-byte, scale 100/255 ≈ 0.392157 (% per count).
+     * 0% = vanes fully open (low boost / coast), 100% = fully closed
+     * (max boost). Typical idle: 20-30%; full-load acceleration: 70-95%.
+     * Note: some manufacturers invert the convention (0% = closed); if
+     * the value goes DOWN under acceleration, your ECU uses inverted. */
+    {
+        .pid = 0x71,
+        .signal_name = NULL,
+        .human_name = "VGT Position (experimental)",
+        .unit = "",
+        .bytes = 0, .scale = 0, .offset = 0,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x01,
+        .category = NULL,
+        .sub_fields = (const obd2_subfield_t[]){
+            { "VGT_POSITION", "%", 1, 1, false, 0.392157f, 0.0f },
+        },
+        .sub_field_count = 1,
+        .request_id = 0,
+    },
+
     /* ── Toyota Mode 21 (PID 0x80 = engine real-time block) ───────────
      *
      * This is the most commonly-implemented Toyota Mode 21 PID across
