@@ -23,6 +23,7 @@
 #include "layout/layout_manager.h"
 #include "obd2_picker.h"
 #include "obd2.h"
+#include "dtc_reader.h"
 #include "system/night_mode.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
@@ -2286,6 +2287,33 @@ static void _obd2_btn_cb(lv_event_t *e)
     obd2_picker_open();
 }
 
+static void _dtc_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    dtc_reader_open();
+}
+
+/* VIN cache — populated by the first successful Mode 09 PID 0x02
+ * response and reused thereafter (a vehicle's VIN doesn't change for
+ * the life of the dash mount). Empty string = "not fetched yet".
+ * "Unknown" = "tried but ECU didn't answer or rejected". */
+static char       s_vin_cache[20]  = {0};
+static lv_obj_t  *s_vin_label_obj  = NULL;   /* re-validated via lv_obj_is_valid */
+
+static void _vin_done(bool ok, const char *vin, void *user)
+{
+    (void)user;
+    if (ok && vin && vin[0]) {
+        strncpy(s_vin_cache, vin, sizeof(s_vin_cache) - 1);
+        s_vin_cache[sizeof(s_vin_cache) - 1] = '\0';
+    } else if (!s_vin_cache[0]) {
+        strncpy(s_vin_cache, "Unknown", sizeof(s_vin_cache) - 1);
+    }
+    if (s_vin_label_obj && lv_obj_is_valid(s_vin_label_obj)) {
+        lv_label_set_text(s_vin_label_obj, s_vin_cache);
+    }
+}
+
 /* ── Factory Reset ────────────────────────────────────────────────────── */
 
 static void _factory_reset_confirm_cb(lv_event_t *e) {
@@ -2598,6 +2626,28 @@ static void _build_section_can_config(lv_obj_t *row) {
         lv_obj_center(s_obd2_btn_label);
         lv_obj_add_event_cb(obd2_btn, _obd2_btn_cb, LV_EVENT_CLICKED, NULL);
     }
+
+    /* Read Trouble Codes — opens the DTC reader modal. Independent of
+     * whether OBD2 polling is enabled or which preset is active: the
+     * Mode 03/07/0A/04 requests don't require any PIDs to be enabled,
+     * they query the ECU directly via the existing OBD2 plumbing. */
+    {
+        lv_obj_t *dtc_btn = lv_btn_create(s);
+        lv_obj_set_size(dtc_btn, lv_pct(95), 28);
+        lv_obj_align(dtc_btn, LV_ALIGN_TOP_LEFT, 0, 160);
+        lv_obj_set_style_bg_color(dtc_btn, THEME_COLOR_INPUT_BG, 0);
+        lv_obj_set_style_bg_opa(dtc_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(dtc_btn, THEME_COLOR_BORDER, 0);
+        lv_obj_set_style_border_width(dtc_btn, 1, 0);
+        lv_obj_set_style_radius(dtc_btn, THEME_RADIUS_NORMAL, 0);
+        lv_obj_set_style_shadow_width(dtc_btn, 0, 0);
+        lv_obj_t *dtc_lbl = lv_label_create(dtc_btn);
+        lv_label_set_text(dtc_lbl, "Read Trouble Codes...");
+        lv_obj_set_style_text_font(dtc_lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(dtc_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_center(dtc_lbl);
+        lv_obj_add_event_cb(dtc_btn, _dtc_btn_cb, LV_EVENT_CLICKED, NULL);
+    }
 }
 
 static void _build_section_device_info(lv_obj_t *row) {
@@ -2632,6 +2682,28 @@ static void _build_section_device_info(lv_obj_t *row) {
     lv_obj_align(fw_value, LV_ALIGN_TOP_LEFT, 0, 76);
     lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    /* VIN — pulled via Mode 09 PID 0x02 on first render. Cached statically
+     * because the VIN doesn't change for the life of the vehicle (and
+     * therefore the life of the dash mount). After successful first
+     * fetch we just paint the cached value on subsequent Settings opens. */
+    lv_obj_t *vin_label = lv_label_create(s);
+    lv_label_set_text(vin_label, "VIN");
+    lv_obj_align(vin_label, LV_ALIGN_TOP_LEFT, 0, 102);
+    lv_obj_set_style_text_font(vin_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(vin_label, THEME_COLOR_TEXT_HINT, 0);
+
+    s_vin_label_obj = lv_label_create(s);
+    lv_obj_align(s_vin_label_obj, LV_ALIGN_TOP_LEFT, 0, 116);
+    lv_obj_set_style_text_font(s_vin_label_obj, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_vin_label_obj, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    if (s_vin_cache[0]) {
+        lv_label_set_text(s_vin_label_obj, s_vin_cache);
+    } else {
+        lv_label_set_text(s_vin_label_obj, "Reading...");
+        obd2_read_vin(_vin_done, NULL);
+    }
 }
 
 static void _build_section_network(lv_obj_t *row) {

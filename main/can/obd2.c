@@ -140,6 +140,44 @@ static struct {
     bool            is_signed;
 } s_test = {0};
 
+/* ── DTC read request state (Modes 03 / 07 / 0A) ───────────────────────
+ *
+ * Single in-flight at a time. Accumulator buffer holds up to OBD2_MAX_DTCS
+ * codes from one response. Multi-frame ISO-TP responses are reassembled
+ * by the shared s_isotp path; we just decode the resulting payload. */
+#define OBD2_DTC_TIMEOUT_MS 2000   /* multi-frame allow ample time */
+
+static struct {
+    bool            active;
+    uint8_t         mode;          /* 0x03 / 0x07 / 0x0A */
+    uint64_t        sent_ms;
+    obd2_dtc_cb_t   cb;
+    void           *user;
+    obd2_dtc_t      codes[OBD2_MAX_DTCS];
+    uint8_t         count;
+} s_dtc_req = {0};
+
+/* ── Clear DTCs request state (Mode 04) ─────────────────────────────── */
+#define OBD2_CLEAR_TIMEOUT_MS 1500   /* some ECUs respond slowly */
+
+static struct {
+    bool            active;
+    uint64_t        sent_ms;
+    obd2_clear_cb_t cb;
+    void           *user;
+} s_clear_req = {0};
+
+/* ── VIN request state (Mode 09 PID 0x02) ──────────────────────────── */
+#define OBD2_VIN_TIMEOUT_MS 1500
+
+static struct {
+    bool            active;
+    uint64_t        sent_ms;
+    obd2_vin_cb_t   cb;
+    void           *user;
+    char            vin[18];        /* 17 chars + NUL */
+} s_vin_req = {0};
+
 /* ── ISO-TP RX (single in-flight stream) ──────────────────────────────── */
 
 typedef enum {
@@ -488,6 +526,129 @@ static void _test_capture(const uint8_t *payload, uint16_t payload_len,
     cb(ok, raw, max_take, decoded, elapsed, user);
 }
 
+/* ── DTC / VIN / Clear request helpers ──────────────────────────────────
+ *
+ * All three follow the same shape as obd2_test_pid: stash a request
+ * descriptor, fire one TX frame, let RX intercept fill it in, expire
+ * via the poll-timer timeout check. Each has its own state struct so
+ * they don't collide with each other or with a pending test_pid. */
+
+static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
+    if (!cb) return;
+    if (s_dtc_req.active) {
+        ESP_LOGW(TAG, "DTC request already in progress");
+        cb(false, NULL, 0, mode, user);
+        return;
+    }
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_dtc_req.active  = true;
+    s_dtc_req.mode    = mode;
+    s_dtc_req.sent_ms = now;
+    s_dtc_req.cb      = cb;
+    s_dtc_req.user    = user;
+    s_dtc_req.count   = 0;
+    memset(s_dtc_req.codes, 0, sizeof(s_dtc_req.codes));
+
+    /* Mode 03/07/0A: single-byte service request, no PID. ISO-TP single
+     * frame: [length=1][service]. ECUs may respond multi-frame if they
+     * have many codes — handled by the shared ISO-TP RX reassembly. */
+    uint8_t data[8] = { 0x01, mode, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "DTC mode 0x%02X TX failed: %s", mode, esp_err_to_name(err));
+        s_dtc_req.active = false;
+        cb(false, NULL, 0, mode, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
+void obd2_read_stored_dtcs(obd2_dtc_cb_t cb, void *user)   { _dtc_start(0x03, cb, user); }
+void obd2_read_pending_dtcs(obd2_dtc_cb_t cb, void *user)  { _dtc_start(0x07, cb, user); }
+void obd2_read_permanent_dtcs(obd2_dtc_cb_t cb, void *user){ _dtc_start(0x0A, cb, user); }
+
+void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user) {
+    if (!cb) return;
+    if (s_clear_req.active) {
+        ESP_LOGW(TAG, "Clear DTC already in progress");
+        cb(false, user);
+        return;
+    }
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_clear_req.active  = true;
+    s_clear_req.sent_ms = now;
+    s_clear_req.cb      = cb;
+    s_clear_req.user    = user;
+
+    /* Mode 04: single-byte service request. ECU responds with 0x44 on
+     * success or 0x7F 04 NN as negative. Many cars require engine off
+     * (NRC 0x22 conditionsNotCorrect if running). */
+    uint8_t data[8] = { 0x01, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Clear DTC TX failed: %s", esp_err_to_name(err));
+        s_clear_req.active = false;
+        cb(false, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
+void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
+    if (!cb) return;
+    if (s_vin_req.active) {
+        ESP_LOGW(TAG, "VIN request already in progress");
+        cb(false, NULL, user);
+        return;
+    }
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_vin_req.active  = true;
+    s_vin_req.sent_ms = now;
+    s_vin_req.cb      = cb;
+    s_vin_req.user    = user;
+    memset(s_vin_req.vin, 0, sizeof(s_vin_req.vin));
+
+    /* Mode 09 PID 0x02 = VIN. Single-frame request, multi-frame response
+     * (17 chars + 3 byte preamble = 20 bytes typical). */
+    uint8_t data[8] = { 0x02, 0x09, 0x02, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "VIN TX failed: %s", esp_err_to_name(err));
+        s_vin_req.active = false;
+        cb(false, NULL, user);
+        return;
+    }
+    s_last_tx_ms_global = now;
+}
+
+/* Decode one DTC byte-pair per SAE J2012. The top 2 bits of byte A
+ * select the category letter; next 2 bits the first digit (0-3); the
+ * remaining 12 bits are 3 hex digits. */
+static void _decode_dtc_pair(uint8_t a, uint8_t b, char out[6]) {
+    static const char categories[4] = { 'P', 'C', 'B', 'U' };
+    static const char hex[17]       = "0123456789ABCDEF";
+    out[0] = categories[(a >> 6) & 0x03];
+    out[1] = (char)('0' + ((a >> 4) & 0x03));
+    out[2] = hex[a & 0x0F];
+    out[3] = hex[(b >> 4) & 0x0F];
+    out[4] = hex[b & 0x0F];
+    out[5] = '\0';
+}
+
+/* Parse a DTC response payload (after the service+count framing has been
+ * stripped) into the request accumulator. Walks 2-byte pairs, stops at
+ * 0x00 0x00 padding or buffer limit. */
+static void _dtc_decode_payload(const uint8_t *p, uint16_t len) {
+    while (len >= 2 && s_dtc_req.count < OBD2_MAX_DTCS) {
+        if (p[0] == 0x00 && p[1] == 0x00) break;  /* end-of-list pad */
+        _decode_dtc_pair(p[0], p[1], s_dtc_req.codes[s_dtc_req.count].code);
+        s_dtc_req.codes[s_dtc_req.count].status = 0;
+        s_dtc_req.count++;
+        p   += 2;
+        len -= 2;
+    }
+}
+
 bool obd2_custom_add(uint8_t service, uint16_t pid,
                      const char *signal_name,
                      const char *human_name,
@@ -707,6 +868,35 @@ static void _poll_timer_cb(lv_timer_t *t)
         s_test.cb = NULL;
         s_test.user = NULL;
         if (cb) cb(false, NULL, 0, 0.0f, elapsed, user);
+    }
+
+    /* DTC read timeout — multi-frame ISO-TP may legitimately take ~1 s
+     * on cars with many codes; cap at OBD2_DTC_TIMEOUT_MS. */
+    if (s_dtc_req.active && (now - s_dtc_req.sent_ms) > OBD2_DTC_TIMEOUT_MS) {
+        obd2_dtc_cb_t cb = s_dtc_req.cb;
+        void *user = s_dtc_req.user;
+        uint8_t mode = s_dtc_req.mode;
+        ESP_LOGW(TAG, "DTC mode 0x%02X timed out", mode);
+        s_dtc_req.active = false;
+        if (cb) cb(false, NULL, 0, mode, user);
+    }
+
+    /* Clear DTC timeout. */
+    if (s_clear_req.active && (now - s_clear_req.sent_ms) > OBD2_CLEAR_TIMEOUT_MS) {
+        obd2_clear_cb_t cb = s_clear_req.cb;
+        void *user = s_clear_req.user;
+        ESP_LOGW(TAG, "Clear DTC timed out");
+        s_clear_req.active = false;
+        if (cb) cb(false, user);
+    }
+
+    /* VIN timeout. */
+    if (s_vin_req.active && (now - s_vin_req.sent_ms) > OBD2_VIN_TIMEOUT_MS) {
+        obd2_vin_cb_t cb = s_vin_req.cb;
+        void *user = s_vin_req.user;
+        ESP_LOGW(TAG, "VIN read timed out");
+        s_vin_req.active = false;
+        if (cb) cb(false, NULL, user);
     }
 
     /* Discovery scan owns the bus until its window closes. */
@@ -976,10 +1166,122 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
 {
     if (len < 2) return;
     uint8_t resp_service = msg[0];
+
+    /* ── Negative Response Code (NRC) — service rejected ─────────────
+     * Format: 0x7F <requested_service> <NRC_byte>. Common NRCs:
+     *   0x11 service not supported / 0x12 sub-function not supported
+     *   0x22 conditionsNotCorrect (e.g. clear DTC with engine running)
+     *   0x33 securityAccessDenied
+     *
+     * For pending request types that block on a specific service we
+     * fire their callback with ok=false here so the user gets a
+     * timely failure instead of waiting for timeout. */
+    if (resp_service == 0x7F && len >= 3) {
+        uint8_t rejected_svc = msg[1];
+        if (s_clear_req.active && rejected_svc == 0x04) {
+            ESP_LOGW(TAG, "Mode 04 (clear) rejected — NRC 0x%02X", msg[2]);
+            obd2_clear_cb_t cb = s_clear_req.cb;
+            void *user = s_clear_req.user;
+            s_clear_req.active = false;
+            cb(false, user);
+            return;
+        }
+        if (s_dtc_req.active && rejected_svc == s_dtc_req.mode) {
+            ESP_LOGW(TAG, "DTC mode 0x%02X rejected — NRC 0x%02X",
+                     rejected_svc, msg[2]);
+            obd2_dtc_cb_t cb = s_dtc_req.cb;
+            void *user = s_dtc_req.user;
+            uint8_t mode = s_dtc_req.mode;
+            s_dtc_req.active = false;
+            cb(false, NULL, 0, mode, user);
+            return;
+        }
+        if (s_vin_req.active && rejected_svc == 0x09) {
+            ESP_LOGW(TAG, "Mode 09 (VIN) rejected — NRC 0x%02X", msg[2]);
+            obd2_vin_cb_t cb = s_vin_req.cb;
+            void *user = s_vin_req.user;
+            s_vin_req.active = false;
+            cb(false, NULL, user);
+            return;
+        }
+        return;
+    }
+
     if ((resp_service & 0xC0) != 0x40) return;   /* not a positive response */
-    if (resp_service == 0x7F) return;            /* NRC (negative response) */
 
     uint8_t service = (uint8_t)(resp_service - 0x40);
+
+    /* ── Mode 03/07/0A — DTC read response ────────────────────────────
+     * Payload format: [count_byte (optional)][DTC_pairs...]
+     * Newer SAE J1979: explicit count byte at msg[1].
+     * Older / some ECUs: no count, pairs start at msg[1].
+     * Heuristic: if count*2+1 == len-1, treat byte as count; else
+     * decode from msg[1] directly. */
+    if (s_dtc_req.active &&
+        (service == 0x03 || service == 0x07 || service == 0x0A) &&
+        service == s_dtc_req.mode) {
+        const uint8_t *p   = &msg[1];
+        uint16_t      plen = (uint16_t)(len - 1);
+        if (plen >= 1) {
+            uint8_t maybe_count = p[0];
+            if ((uint16_t)(maybe_count * 2 + 1) == plen) {
+                p++;
+                plen--;
+            }
+        }
+        _dtc_decode_payload(p, plen);
+        obd2_dtc_cb_t cb = s_dtc_req.cb;
+        void *user = s_dtc_req.user;
+        uint8_t mode = s_dtc_req.mode;
+        uint8_t count = s_dtc_req.count;
+        s_dtc_req.active = false;
+        cb(true, count > 0 ? s_dtc_req.codes : NULL, count, mode, user);
+        return;
+    }
+
+    /* ── Mode 04 — Clear DTCs ack ────────────────────────────────────
+     * Positive response is just the service echo (0x44) with no payload.
+     * NRC was handled above. */
+    if (s_clear_req.active && service == 0x04) {
+        ESP_LOGI(TAG, "Clear DTC acknowledged");
+        obd2_clear_cb_t cb = s_clear_req.cb;
+        void *user = s_clear_req.user;
+        s_clear_req.active = false;
+        cb(true, user);
+        return;
+    }
+
+    /* ── Mode 09 PID 0x02 — VIN ──────────────────────────────────────
+     * Response: 0x49 0x02 0x01 <17 ASCII bytes>. The 0x01 between PID
+     * and payload is the "data identifier" / message count — discarded.
+     * Some ECUs return without it; handle both shapes. */
+    if (s_vin_req.active && service == 0x09 && len >= 3 && msg[1] == 0x02) {
+        const uint8_t *p   = &msg[2];
+        uint16_t      plen = (uint16_t)(len - 2);
+        if (plen > 0 && p[0] >= 0x01 && p[0] <= 0x05 && plen >= (uint16_t)(p[0] * 17 + 1)) {
+            /* DI byte present; skip it. */
+            p++;
+            plen--;
+        }
+        uint8_t take = (plen < 17) ? (uint8_t)plen : 17;
+        memcpy(s_vin_req.vin, p, take);
+        /* Pad / trim — VIN is 17 fixed ASCII chars; sometimes leading
+         * null bytes precede the VIN on certain ECUs. Strip them. */
+        s_vin_req.vin[17] = '\0';
+        char *start = s_vin_req.vin;
+        while (*start && (*start < 0x20 || *start > 0x7E)) start++;
+        if (start != s_vin_req.vin) {
+            memmove(s_vin_req.vin, start, strlen(start) + 1);
+        }
+        ESP_LOGI(TAG, "VIN received: '%s'", s_vin_req.vin);
+
+        obd2_vin_cb_t cb = s_vin_req.cb;
+        void *user = s_vin_req.user;
+        s_vin_req.active = false;
+        cb(true, s_vin_req.vin, user);
+        return;
+    }
+
     /* Services we currently decode. Mode 22 (16-bit PIDs / UDS Read
      * Data By Identifier) gets its own walk further down. */
     if (service != 0x01 && service != 0x21 && service != 0x22) return;

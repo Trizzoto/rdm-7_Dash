@@ -307,6 +307,59 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user);
 /** True while a scan is in progress. */
 bool obd2_discovery_in_progress(void);
 
+/* ── Diagnostic Trouble Codes (Mode 03 / 07 / 0A) ───────────────────────
+ *
+ * Three DTC "buckets" defined by SAE J1979:
+ *   Mode 03 — STORED: codes the ECU has confirmed and the MIL may be lit
+ *   Mode 07 — PENDING: codes detected but not yet confirmed (one trip)
+ *   Mode 0A — PERMANENT: regulatory codes that survive Mode 04 clearing
+ *
+ * Each code is encoded as a 5-char string per SAE J2012 (e.g. "P0420",
+ * "C1234", "B0048", "U0100"). Up to OBD2_MAX_DTCS per request — ECUs
+ * with more codes than that need a follow-up Mode 03 with a starting
+ * offset, which we don't implement (cap covers ~99% of real cars).
+ *
+ * Mode 04 clears all stored + pending. Permanent DTCs survive — the
+ * ECU clears those itself once self-tests pass. */
+
+#define OBD2_MAX_DTCS  16   /* per request — far above typical 1-3 codes */
+
+typedef struct {
+    char    code[6];         /* "P0420" + NUL */
+    uint8_t status;          /* reserved for future severity flags */
+} obd2_dtc_t;
+
+/* Service byte for the bucket the codes came from (0x03 / 0x07 / 0x0A).
+ * Lets one callback handle all three modes. */
+typedef void (*obd2_dtc_cb_t)(bool ok,
+                              const obd2_dtc_t *codes, uint8_t count,
+                              uint8_t mode,
+                              void *user);
+
+void obd2_read_stored_dtcs(obd2_dtc_cb_t cb, void *user);     /* Mode 03 */
+void obd2_read_pending_dtcs(obd2_dtc_cb_t cb, void *user);    /* Mode 07 */
+void obd2_read_permanent_dtcs(obd2_dtc_cb_t cb, void *user);  /* Mode 0A */
+
+/* Mode 04 — clear stored + pending DTCs (NOT permanent). Many ECUs
+ * require engine off OR ignition on without crank. Returns ok=false
+ * if the ECU rejects with NRC (typical: 0x22 conditionsNotCorrect). */
+typedef void (*obd2_clear_cb_t)(bool ok, void *user);
+void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user);
+
+/* ── Mode 09 — Vehicle Identity ─────────────────────────────────────────
+ *
+ * Pull static "what is this car" info exposed by Mode 09:
+ *   PID 0x02 — VIN (17 chars)
+ *   PID 0x0A — ECU name (up to 20 chars)
+ *
+ * Both arrive as multi-frame ISO-TP — reassembled by the shared RX path.
+ * For VIN the response is `49 02 01 <17 bytes ASCII>`. The leading 0x01
+ * is a "message count" field; ignored. */
+
+typedef void (*obd2_vin_cb_t)(bool ok, const char *vin, void *user);
+
+void obd2_read_vin(obd2_vin_cb_t cb, void *user);
+
 #ifdef __cplusplus
 }
 #endif
