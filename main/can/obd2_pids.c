@@ -167,6 +167,65 @@ const obd2_pid_def_t OBD2_PIDS[] = {
         .sub_field_count = 0,
         .request_id = 0x7E1u,    /* TCM */
     },
+
+    /* ── Toyota Mode 21 PID 0xA8 — knock retard angle ─────────────────
+     *
+     * Knock-correction ignition retard. Widely consistent across Toyota
+     * engine families (1GD-FTV diesel, 2TR-FE / 2AR-FE / 2GR-FE petrol)
+     * because it's a single self-contained value the ECU exposes via
+     * a standard slot. Value is byte 0 in 0.5° increments — typically
+     * 0° at idle/cruise, increasing under knock conditions.
+     *
+     * EXPERIMENTAL — confirm on your vehicle by enabling, then watch
+     * the value: should stay near 0 at steady throttle, may climb to
+     * 2-5° under aggressive acceleration on hot day / cheap fuel.
+     * Bytes 1-7 (if present) often carry per-cylinder retard or knock
+     * counts; not decoded here. */
+    {
+        .pid = 0xA8,
+        .signal_name = "KNOCK_RETARD",
+        .human_name = "Toyota Knock Retard (experimental)",
+        .unit = "deg",
+        .bytes = 1,
+        .scale = 0.5f,
+        .offset = 0.0f,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x21,
+        .category = "Toyota",
+        .sub_fields = NULL,
+        .sub_field_count = 0,
+        .request_id = 0x7E0u,    /* engine ECU */
+    },
+
+    /* ── Toyota Mode 21 PID 0xC1 — accelerator pedal sensor 1 raw ────
+     *
+     * Drive-by-wire pedal position from sensor 1 (most Toyota DBW
+     * engines have a redundant sensor 2 on a different PID). Single
+     * byte, 0.5% per count → 0% pedal off, ~100% pedal floored.
+     *
+     * EXPERIMENTAL — on some hybrids and diesels the layout differs
+     * (raw ADC counts, signed offset, etc.). The "Test" button in the
+     * Custom PIDs editor will show whether the decoded value tracks
+     * your pedal position. */
+    {
+        .pid = 0xC1,
+        .signal_name = "PEDAL_RAW",
+        .human_name = "Toyota Accel Pedal Raw (experimental)",
+        .unit = "%",
+        .bytes = 1,
+        .scale = 0.5f,
+        .offset = 0.0f,
+        .tier = OBD2_TIER_FAST,
+        .default_enabled = false,
+        .suggested_filler = false,
+        .service = 0x21,
+        .category = "Toyota",
+        .sub_fields = NULL,
+        .sub_field_count = 0,
+        .request_id = 0x7E0u,
+    },
 };
 
 #pragma GCC diagnostic pop
