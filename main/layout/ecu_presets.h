@@ -105,7 +105,7 @@ bool ecu_preset_is_obd2(const ecu_preset_t *preset);
  * @return ESP_OK on success.
  */
 esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
-                                    const uint16_t *pids, uint8_t count);
+                                    const uint32_t *pids, uint8_t count);
 
 /**
  * Read the layout's `polled_pids` array. Used by dashboard_init after a
@@ -120,7 +120,7 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
  * @return ESP_OK on success (may return zero PIDs).
  */
 esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
-                                    uint16_t *out, uint8_t max,
+                                    uint32_t *out, uint8_t max,
                                     uint8_t *out_count);
 
 #ifdef __cplusplus

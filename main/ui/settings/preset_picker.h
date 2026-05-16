@@ -22,8 +22,11 @@ typedef struct {
      * The apply path enables the PID in the layout's polled_pids[] and
      * binds the widget to the OBD2 signal name — the bit/scale/offset
      * fields are ignored because OBD2 decodes via polling, not bit
-     * extraction. */
-    uint8_t obd2_pid;
+     * extraction.
+     *
+     * 16-bit so Mode 22 (UDS) PIDs (Ford/GM/VW/newer Toyota) fit
+     * without truncation. Mode 01/21 PIDs sit in the low byte. */
+    uint16_t obd2_pid;
     /* OBD2 service byte (0x01 = Mode 01, 0x21 = Mode 21 Toyota etc.).
      * 0 → treated as Mode 01 for back-compat. Pairs with obd2_pid so
      * the apply path can disambiguate same-byte PIDs across services. */

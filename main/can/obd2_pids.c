@@ -232,7 +232,7 @@ const obd2_pid_def_t OBD2_PIDS[] = {
 
 const int OBD2_PIDS_COUNT = (int)(sizeof(OBD2_PIDS) / sizeof(OBD2_PIDS[0]));
 
-const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid)
+const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint16_t pid)
 {
     if (service == 0) service = 0x01;
     /* Built-in first. */
@@ -249,7 +249,7 @@ const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid)
     return obd2_pid_find(pid);
 }
 
-const obd2_pid_def_t *obd2_pid_find(uint8_t pid)
+const obd2_pid_def_t *obd2_pid_find(uint16_t pid)
 {
     for (int i = 0; i < OBD2_PIDS_COUNT; i++) {
         if (OBD2_PIDS[i].pid == pid) return &OBD2_PIDS[i];

@@ -435,7 +435,7 @@ static void _load_signals(const cJSON *root) {
 			if (!cJSON_IsString(jn) || !cJSON_IsNumber(jp)) continue;
 
 			uint8_t  svc       = 0x01;
-			uint8_t  pid       = (uint8_t)jp->valueint;
+			uint16_t pid       = (uint16_t)jp->valueint;
 			uint8_t  offset_b  = 0;
 			uint8_t  bytes     = 1;
 			float    scale     = 1.0f;
@@ -484,7 +484,7 @@ static void _load_signals(const cJSON *root) {
 	 * Numbers are encoded (service<<8 | pid) tuples; values <= 0xFF are
 	 * treated as Mode 01 for back-compat. Falls back to legacy `obd2_pids`
 	 * key (always Mode 01) for layouts written by earlier firmware. */
-	uint16_t pid_list[OBD2_MAX_ENABLED];
+	uint32_t pid_list[OBD2_MAX_ENABLED];
 	uint8_t pid_count = 0;
 	const cJSON *pids_arr = cJSON_GetObjectItemCaseSensitive(root, "polled_pids");
 	if (!cJSON_IsArray(pids_arr)) {
@@ -495,9 +495,9 @@ static void _load_signals(const cJSON *root) {
 		cJSON_ArrayForEach(pi, pids_arr) {
 			if (!cJSON_IsNumber(pi)) continue;
 			if (pid_count >= OBD2_MAX_ENABLED) break;
-			int v = pi->valueint;
-			if (v < 0 || v > 0xFFFF) continue;
-			pid_list[pid_count++] = (uint16_t)v;
+			double v = pi->valuedouble;
+			if (v < 0 || v > 0xFFFFFFu) continue;
+			pid_list[pid_count++] = (uint32_t)v;
 		}
 	}
 	if (pid_count > 0) {
@@ -847,7 +847,7 @@ cJSON *layout_manager_build_json(const char *name, widget_t **widgets,
 	 * tuple. The web editor save_raw path already carries polled_pids
 	 * forward from the editor's JSON tree. */
 	{
-		uint16_t pids[OBD2_MAX_ENABLED];
+		uint32_t pids[OBD2_MAX_ENABLED];
 		uint8_t pc = obd2_get_enabled(pids, OBD2_MAX_ENABLED);
 		if (pc > 0) {
 			cJSON *pa = cJSON_AddArrayToObject(root, "polled_pids");

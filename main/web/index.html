@@ -3279,11 +3279,11 @@
                         <select id="cpidService" style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
                             <option value="1">Mode 01 (standard OBD2)</option>
                             <option value="33">Mode 21 (KWP / Toyota, Honda)</option>
-                            <option value="34">Mode 22 (UDS — not wired yet)</option>
+                            <option value="34">Mode 22 (UDS — Ford, GM, VW, newer Toyota)</option>
                         </select>
                     </label>
                     <label style="font-size:11px; color:var(--text-muted);">PID (hex)
-                        <input id="cpidPidHex" type="text" placeholder="0x21"
+                        <input id="cpidPidHex" type="text" placeholder="0x21 or 0x115C (Mode 22)"
                                style="width:100%; margin-top:2px; padding:5px 7px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:'JetBrains Mono', monospace;">
                     </label>
                 </div>
@@ -12306,7 +12306,10 @@
                 return;
             }
             body.innerHTML = arr.map((p, i) => {
-                const pidHex = '0x' + ((p.pid || 0) & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+                /* Mode 22 → 4-hex-digit PID; everything else 2 digits. */
+                const wide = p.service === 0x22;
+                const pidHex = '0x' + ((p.pid || 0) & (wide ? 0xFFFF : 0xFF))
+                                .toString(16).padStart(wide ? 4 : 2, '0').toUpperCase();
                 return `<tr style="border-top:1px solid var(--border);">
                     <td style="padding:6px 8px; font-family:'JetBrains Mono', monospace;">${_escHTML(p.signal_name || '?')}</td>
                     <td style="padding:6px 8px; color:var(--text-muted);">${_serviceLabel(p.service)}</td>
@@ -12360,7 +12363,13 @@
             document.getElementById('cpidSignalName').value  = p.signal_name || '';
             document.getElementById('cpidLabel').value       = p.label || '';
             document.getElementById('cpidService').value     = String(p.service || 1);
-            document.getElementById('cpidPidHex').value      = '0x' + ((p.pid || 0) & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+            {
+                const wide = (p.service || 1) === 0x22;
+                const mask = wide ? 0xFFFF : 0xFF;
+                const len  = wide ? 4 : 2;
+                document.getElementById('cpidPidHex').value =
+                    '0x' + ((p.pid || 0) & mask).toString(16).toUpperCase().padStart(len, '0');
+            }
             document.getElementById('cpidReqIdHex').value    = p.request_id ? ('0x' + (p.request_id & 0xFFF).toString(16).toUpperCase().padStart(3, '0')) : '';
             document.getElementById('cpidOffset').value      = p.data_offset || 0;
             document.getElementById('cpidBytes').value       = String(p.data_bytes || 1);
@@ -12382,11 +12391,16 @@
         function _readEditForm() {
             const pidVal = _parseHexOrDec(document.getElementById('cpidPidHex').value);
             const reqVal = _parseHexOrDec(document.getElementById('cpidReqIdHex').value);
+            const svc    = parseInt(document.getElementById('cpidService').value, 10) || 1;
+            /* Mode 22 supports 16-bit PIDs; Mode 01/21 are 8-bit. Clamp
+             * accordingly so the user can't accidentally enter 0x115C
+             * for Mode 01. */
+            const pidMask = (svc === 0x22) ? 0xFFFF : 0xFF;
             return {
                 signal_name: document.getElementById('cpidSignalName').value.trim(),
                 label:       document.getElementById('cpidLabel').value.trim(),
-                service:     parseInt(document.getElementById('cpidService').value, 10) || 1,
-                pid:         isNaN(pidVal) ? 0 : (pidVal & 0xFF),
+                service:     svc,
+                pid:         isNaN(pidVal) ? 0 : (pidVal & pidMask),
                 request_id:  isNaN(reqVal) ? 0 : (reqVal & 0xFFFF),
                 data_offset: parseInt(document.getElementById('cpidOffset').value, 10) || 0,
                 data_bytes:  parseInt(document.getElementById('cpidBytes').value, 10) || 1,
@@ -12505,11 +12519,13 @@
                     let added = 0, replaced = 0;
                     list.forEach(p => {
                         if (!p || !p.signal_name) return;
+                        const svc = parseInt(p.service, 10) || 1;
+                        const pidMask = (svc === 0x22) ? 0xFFFF : 0xFF;
                         const norm = {
                             signal_name: String(p.signal_name).toUpperCase().replace(/\s+/g, '_'),
                             label:       String(p.label || p.signal_name),
-                            service:     parseInt(p.service, 10) || 1,
-                            pid:         parseInt(p.pid, 10) & 0xFF,
+                            service:     svc,
+                            pid:         parseInt(p.pid, 10) & pidMask,
                             request_id:  parseInt(p.request_id, 10) || 0,
                             data_offset: parseInt(p.data_offset, 10) || 0,
                             data_bytes:  parseInt(p.data_bytes, 10) || 1,

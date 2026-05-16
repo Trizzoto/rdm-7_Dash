@@ -79,7 +79,7 @@ static const char *TAG = "obd2";
 /* ── Per-PID poll state ───────────────────────────────────────────────── */
 
 typedef struct {
-    uint8_t  pid;
+    uint16_t pid;              /* 8-bit for Mode 01/21, 16-bit for Mode 22 */
     uint8_t  service;          /* cached from def, used in TX framing */
     uint16_t target_period_ms; /* current poll rate (alive uses tier;
                                   dead uses OBD2_PERIOD_DEAD_MS) */
@@ -177,7 +177,7 @@ static void              *s_scan_user          = NULL;
 /* Forward decls */
 static void _poll_timer_cb(lv_timer_t *t);
 static void _try_dispatch(uint64_t now);
-static void _send_pid_request(uint8_t service, uint8_t pid);
+static void _send_pid_request(uint8_t service, uint16_t pid);
 static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_t n);
 static void _register_pid_signal(const obd2_pid_def_t *def);
 static void _scan_send(uint8_t pid);
@@ -218,7 +218,7 @@ void obd2_init(void)
     }
 }
 
-void obd2_start(const uint16_t *enabled_pids, uint8_t count)
+void obd2_start(const uint32_t *enabled_pids, uint8_t count)
 {
     /* Preserve per-PID state for PIDs that are still in the new list —
      * keeps last_response_ms / "alive" classification across saves so a
@@ -302,7 +302,7 @@ bool obd2_is_running(void)
 
 /* ── Enabled list ──────────────────────────────────────────────────────── */
 
-uint8_t obd2_get_enabled(uint16_t *out, uint8_t max)
+uint8_t obd2_get_enabled(uint32_t *out, uint8_t max)
 {
     uint8_t n = s_poll_count < max ? s_poll_count : max;
     if (out && n) {
@@ -313,7 +313,7 @@ uint8_t obd2_get_enabled(uint16_t *out, uint8_t max)
     return n;
 }
 
-void obd2_set_enabled(const uint16_t *pids, uint8_t count)
+void obd2_set_enabled(const uint32_t *pids, uint8_t count)
 {
     obd2_start(pids, count);
 }
@@ -386,7 +386,7 @@ const obd2_pid_def_t *obd2_custom_at(uint8_t index)
     return &s_custom[index].def;
 }
 
-const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint8_t pid)
+const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint16_t pid)
 {
     if (service == 0) service = 0x01;
     for (uint8_t i = 0; i < s_custom_count; i++) {
@@ -488,7 +488,7 @@ static void _test_capture(const uint8_t *payload, uint16_t payload_len,
     cb(ok, raw, max_take, decoded, elapsed, user);
 }
 
-bool obd2_custom_add(uint8_t service, uint8_t pid,
+bool obd2_custom_add(uint8_t service, uint16_t pid,
                      const char *signal_name,
                      const char *human_name,
                      const char *unit,
@@ -560,7 +560,7 @@ bool obd2_custom_add(uint8_t service, uint8_t pid,
     e->def.request_id       = request_id;
 
     s_custom_count++;
-    ESP_LOGI(TAG, "Added custom PID svc 0x%02X 0x%02X -> '%s' (%u total)",
+    ESP_LOGI(TAG, "Added custom PID svc 0x%02X 0x%04X -> '%s' (%u total)",
              service, pid, signal_name, s_custom_count);
     return true;
 }
@@ -703,16 +703,20 @@ static void _poll_timer_cb(lv_timer_t *t)
     _try_dispatch(now);
 }
 
-static void _send_pid_request(uint8_t service, uint8_t pid)
+static void _send_pid_request(uint8_t service, uint16_t pid)
 {
-    /* ISO 15765-4 single-frame request:
-     *   byte 0: length (2 for 8-bit PID)
-     *   byte 1: service (0x01 Mode 01, 0x21 Mode 21, 0x22 Mode 22)
-     *   byte 2: PID
-     *   byte 3..7: padding (0x55 conventional)
-     *
-     * Mode 22 has 16-bit PIDs and uses length=3 + two PID bytes —
-     * would extend this path when wired.
+    /* ISO 15765-4 single-frame requests:
+     *   Mode 01 / Mode 21 (8-bit PID):
+     *     byte 0: length 2  (service + PID byte)
+     *     byte 1: service (0x01 / 0x21)
+     *     byte 2: PID
+     *     byte 3..7: 0x55 padding
+     *   Mode 22 (16-bit PID, UDS Read Data By Identifier):
+     *     byte 0: length 3  (service + 2 PID bytes)
+     *     byte 1: 0x22
+     *     byte 2: PID hi byte
+     *     byte 3: PID lo byte
+     *     byte 4..7: 0x55 padding
      *
      * Per-PID request_id override addresses a specific ECU (e.g. 0x7E0
      * = engine ECU). Used for Mode 21 to avoid NRCs from other ECUs
@@ -721,10 +725,20 @@ static void _send_pid_request(uint8_t service, uint8_t pid)
     const obd2_pid_def_t *def = obd2_pid_find_svc(service, pid);
     uint32_t tx_id = (def && def->request_id) ? def->request_id
                                               : OBD2_REQUEST_ID_BROADCAST;
-    uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    uint8_t data[8] = { 0, 0, 0, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    if (service == 0x22) {
+        data[0] = 0x03;
+        data[1] = 0x22;
+        data[2] = (uint8_t)((pid >> 8) & 0xFF);
+        data[3] = (uint8_t)(pid & 0xFF);
+    } else {
+        data[0] = 0x02;
+        data[1] = service;
+        data[2] = (uint8_t)(pid & 0xFF);
+    }
     esp_err_t err = can_transmit_frame(tx_id, data, 8);
     if (err != ESP_OK) {
-        ESP_LOGD(TAG, "TX failed for service 0x%02X PID 0x%02X: %s",
+        ESP_LOGD(TAG, "TX failed for service 0x%02X PID 0x%04X: %s",
                  service, pid, esp_err_to_name(err));
     }
 }
@@ -944,9 +958,42 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
     if (resp_service == 0x7F) return;            /* NRC (negative response) */
 
     uint8_t service = (uint8_t)(resp_service - 0x40);
-    /* Only services we know how to decode. Add 0x22 here when Mode 22
-     * (16-bit PIDs) lands — it'd need different framing on TX too. */
-    if (service != 0x01 && service != 0x21) return;
+    /* Services we currently decode. Mode 22 (16-bit PIDs / UDS Read
+     * Data By Identifier) gets its own walk further down. */
+    if (service != 0x01 && service != 0x21 && service != 0x22) return;
+
+    /* ── Mode 22 path: 16-bit PID at msg[1..2], payload from msg[3]. ── */
+    if (service == 0x22) {
+        if (len < 3) return;
+        uint16_t pid22 = (uint16_t)(((uint16_t)msg[1] << 8) | msg[2]);
+        const uint8_t *payload = &msg[3];
+        uint16_t payload_len = (uint16_t)(len - 3);
+
+        /* Test intercept (Mode 22). */
+        if (s_test.active && s_test.service == 0x22 && s_test.pid == pid22) {
+            uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+            _test_capture(payload, payload_len, now_ms);
+        }
+
+        const obd2_pid_def_t *def22 = obd2_pid_find_svc(0x22, pid22);
+        if (!def22) return;
+        if (def22->sub_fields && def22->sub_field_count > 0) {
+            _decode_packed(def22, payload, payload_len);
+        } else {
+            if (payload_len < def22->bytes) return;
+            _decode_and_push(def22, payload);
+        }
+
+        uint64_t now22 = (uint64_t)(esp_timer_get_time() / 1000ULL);
+        for (uint8_t i = 0; i < s_poll_count; i++) {
+            if (s_poll[i].pid == pid22 && s_poll[i].service == 0x22) {
+                s_poll[i].last_response_ms = now22;
+                break;
+            }
+        }
+        _try_dispatch(now22);
+        return;
+    }
 
     uint8_t first_pid = msg[1];
 

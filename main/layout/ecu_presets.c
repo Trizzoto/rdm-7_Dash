@@ -515,7 +515,7 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
 /* ── OBD2 PID list helpers ─────────────────────────────────────────────── */
 
 esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
-                                    const uint16_t *pids, uint8_t count) {
+                                    const uint32_t *pids, uint8_t count) {
     if (!layout_name) return ESP_ERR_INVALID_ARG;
 
     char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
@@ -553,7 +553,7 @@ esp_err_t ecu_preset_save_obd2_pids(const char *layout_name,
 }
 
 esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
-                                    uint16_t *out, uint8_t max,
+                                    uint32_t *out, uint8_t max,
                                     uint8_t *out_count) {
     if (!layout_name || !out || !out_count) return ESP_ERR_INVALID_ARG;
     *out_count = 0;
@@ -585,9 +585,12 @@ esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
         cJSON_ArrayForEach(item, arr) {
             if (!cJSON_IsNumber(item)) continue;
             if (*out_count >= max) break;
-            int v = item->valueint;
-            if (v < 0 || v > 0xFFFF) continue;
-            out[(*out_count)++] = (uint16_t)v;
+            /* Numbers can be up to 24-bit (Mode 22 16-bit PID + service
+             * byte). cJSON's valueint is int — fine for 24-bit values.
+             * Use valuedouble for the rare case of larger numbers. */
+            double v = item->valuedouble;
+            if (v < 0 || v > 0xFFFFFFu) continue;
+            out[(*out_count)++] = (uint32_t)v;
         }
     }
     cJSON_Delete(root);

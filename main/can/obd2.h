@@ -38,27 +38,42 @@ extern "C" {
 
 /* ── Encoded (service, pid) tuples ──────────────────────────────────────
  *
- * Polled-PID storage encodes service + PID into a single uint16 so the
+ * Polled-PID storage encodes service + PID into a single uint32 so the
  * polling backend can disambiguate same-byte PIDs that mean different
  * things in different services (e.g. Mode 01 PID 0x21 = DTC distance
- * vs Mode 21 PID 0x21 = Toyota ATF temp). Encoding:
- *     value = (service << 8) | pid
+ * vs Mode 21 PID 0x21 = Toyota ATF temp), AND handle Mode 22 16-bit PIDs
+ * (Ford, GM, VW, newer Toyota).
  *
- * Back-compat: values <= 0xFF (high byte zero) are treated as Mode 01
- * — lets old layouts that stored bare PID bytes still load cleanly. */
+ * Three encoding ranges (decoded by value):
+ *   value <= 0xFF      → legacy Mode 01 bare byte (service=1, pid=value)
+ *   0x100..0xFFFF      → 8-bit PID: (service<<8) | pid  — Mode 01/21
+ *   value > 0xFFFF     → 16-bit PID: (service<<16) | pid — Mode 22
+ *
+ * Encoders pick the smallest valid form so existing 8-bit PIDs serialise
+ * to the same shape as before (no JSON bloat for the common case). */
 
-static inline uint16_t obd2_encode_pid(uint8_t service, uint8_t pid) {
+static inline uint32_t obd2_encode_pid(uint8_t service, uint16_t pid) {
     if (service == 0) service = 0x01;
-    return (uint16_t)(((uint16_t)service << 8) | pid);
+    if (pid <= 0xFF) {
+        return (uint32_t)(((uint32_t)service << 8) | pid);
+    }
+    return (uint32_t)(((uint32_t)service << 16) | pid);
 }
 
-static inline uint8_t obd2_decode_service(uint16_t encoded) {
-    uint8_t s = (uint8_t)(encoded >> 8);
+static inline uint8_t obd2_decode_service(uint32_t encoded) {
+    if (encoded <= 0xFF) return 0x01;
+    if (encoded <= 0xFFFF) {
+        uint8_t s = (uint8_t)(encoded >> 8);
+        return s ? s : 0x01;
+    }
+    uint8_t s = (uint8_t)(encoded >> 16);
     return s ? s : 0x01;
 }
 
-static inline uint8_t obd2_decode_pid(uint16_t encoded) {
-    return (uint8_t)(encoded & 0xFF);
+static inline uint16_t obd2_decode_pid(uint32_t encoded) {
+    if (encoded <= 0xFF)   return (uint16_t)encoded;
+    if (encoded <= 0xFFFF) return (uint16_t)(encoded & 0xFF);
+    return (uint16_t)(encoded & 0xFFFF);
 }
 
 typedef enum {
@@ -106,7 +121,7 @@ typedef struct {
  *
  * `category` is a free-form UI grouping hint. NULL = ungrouped. */
 typedef struct {
-    uint8_t      pid;
+    uint16_t     pid;             /* 8-bit for Mode 01/21; 16-bit for Mode 22 */
     const char  *signal_name;
     const char  *human_name;     /* UI label, e.g. "Engine RPM" */
     const char  *unit;
@@ -139,12 +154,12 @@ extern const int OBD2_PIDS_COUNT;
  *
  * Both lookups walk built-in OBD2_PIDS first, then runtime custom
  * PIDs (registered via obd2_custom_add). */
-const obd2_pid_def_t *obd2_pid_find(uint8_t pid);
+const obd2_pid_def_t *obd2_pid_find(uint16_t pid);
 
 /* Service-aware lookup: returns the def whose (service, pid) matches.
  * service=0 is treated as 0x01 (Mode 01). Falls back to first-match-by-byte
  * if no exact (service, pid) pair exists. */
-const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint8_t pid);
+const obd2_pid_def_t *obd2_pid_find_svc(uint8_t service, uint16_t pid);
 
 /* ── Unified PID iteration ─────────────────────────────────────────────
  *
@@ -190,7 +205,7 @@ void obd2_custom_reset(void);
  *                      Standard" or "(category) / Mode XX" by service.
  * @param request_id    Override request CAN ID (0 = broadcast 0x7DF).
  */
-bool obd2_custom_add(uint8_t service, uint8_t pid,
+bool obd2_custom_add(uint8_t service, uint16_t pid,
                      const char *signal_name,
                      const char *human_name,
                      const char *unit,
@@ -231,20 +246,20 @@ const obd2_pid_def_t *obd2_custom_at(uint8_t index);
 
 /* Service-aware search restricted to the custom-PID registry.
  * Returns NULL if no match. Built-in OBD2_PIDS are NOT searched. */
-const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint8_t pid);
+const obd2_pid_def_t *obd2_custom_find_svc(uint8_t service, uint16_t pid);
 
 /* ── Lifecycle ──────────────────────────────────────────────────────────── */
 
 /** Initialise internal state (idempotent). No polling starts yet. */
 void obd2_init(void);
 
-/** Start polling the given encoded (service, pid) list. Each uint16
- *  element is obd2_encode_pid(service, pid) — values <= 0xFF are
- *  treated as Mode 01 for back-compat with old layouts. Registers each
+/** Start polling the given encoded (service, pid) list. Each uint32
+ *  element is obd2_encode_pid(service, pid). Layout-encoded values
+ *  <= 0xFF are treated as Mode 01 for back-compat. Registers each
  *  PID's signal in the registry if not already present. Stops any
  *  prior polling. Called from the ECU preset apply path and on layout
  *  load. */
-void obd2_start(const uint16_t *enabled_pids, uint8_t count);
+void obd2_start(const uint32_t *enabled_pids, uint8_t count);
 
 /** Stop polling and tear down the timer. Idempotent. */
 void obd2_stop(void);
@@ -256,11 +271,11 @@ bool obd2_is_running(void);
 
 /** Copy the currently-enabled (encoded) PID list into @p out. Returns
  *  count written. Each entry is obd2_encode_pid(service, pid). */
-uint8_t obd2_get_enabled(uint16_t *out, uint8_t max);
+uint8_t obd2_get_enabled(uint32_t *out, uint8_t max);
 
 /** Replace the enabled list and restart polling. Caller is responsible
  *  for persisting the new list to NVS / layout JSON. */
-void obd2_set_enabled(const uint16_t *pids, uint8_t count);
+void obd2_set_enabled(const uint32_t *pids, uint8_t count);
 
 /* ── CAN dispatch ───────────────────────────────────────────────────────── */
 

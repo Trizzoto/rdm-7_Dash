@@ -56,7 +56,7 @@ static const char *TAG = "obd2_picker";
  * sub-field — that all share `parent_pid` and check/uncheck together
  * because they ride one polled request. */
 typedef struct {
-    uint8_t     parent_pid;          /* the PID that produces this signal */
+    uint16_t    parent_pid;          /* the PID that produces this signal (16-bit for Mode 22) */
     uint8_t     parent_service;      /* 0x01 = Mode 01, 0x21 = Mode 21 */
     const char *signal_name;         /* registry name (never NULL — packed
                                         sub-fields have their own names) */
@@ -90,7 +90,7 @@ static int            s_row_count  = 0;
  *  - decide which rows start checked
  * `s_saved` is flipped true by _save_cb so the close handler knows
  * not to restore — Save already pushed the new set. */
-static uint16_t s_snapshot[OBD2_MAX_ENABLED];
+static uint32_t s_snapshot[OBD2_MAX_ENABLED];
 static uint8_t  s_snapshot_count = 0;
 static bool     s_saved = false;
 
@@ -151,7 +151,7 @@ void obd2_picker_open(void)
      * rate within ~3 sec so bus load stays reasonable even with 46 PIDs
      * enabled. */
     {
-        uint16_t preview[OBD2_MAX_ENABLED];
+        uint32_t preview[OBD2_MAX_ENABLED];
         uint8_t pn = 0;
         uint8_t total = obd2_pid_total_count();
         for (uint8_t i = 0; i < total && pn < OBD2_MAX_ENABLED; i++) {
@@ -349,11 +349,18 @@ static void _add_row(const obd2_pid_def_t *def,
     lv_obj_set_style_border_width(r->cb, 1, LV_PART_INDICATOR);
 
     /* Label = signal name + mode/PID tag, e.g. "RPM  (M01·0x0C)" or
-     * "TY_RPM  (M21·0x80)" so the user can see at a glance which
-     * protocol and PID each signal comes from. */
+     * "TY_RPM  (M21·0x80)" or "ATF_TEMP_22  (M22·0x115C)" so the user
+     * can see at a glance which protocol and PID each signal comes
+     * from. Mode 22 shows 4-digit PID. */
     char label[80];
-    snprintf(label, sizeof(label), "%s  (M%02X·0x%02X)",
-             display_label, r->parent_service, r->parent_pid);
+    if (r->parent_service == 0x22) {
+        snprintf(label, sizeof(label), "%s  (M22·0x%04X)",
+                 display_label, r->parent_pid);
+    } else {
+        snprintf(label, sizeof(label), "%s  (M%02X·0x%02X)",
+                 display_label, r->parent_service,
+                 (unsigned)(r->parent_pid & 0xFF));
+    }
     lv_checkbox_set_text(r->cb, label);
 
     if (r->checked) lv_obj_add_state(r->cb, LV_STATE_CHECKED);
@@ -393,7 +400,7 @@ static void _build_rows(void)
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
 
-    uint16_t enabled[OBD2_MAX_ENABLED] = {0};
+    uint32_t enabled[OBD2_MAX_ENABLED] = {0};
     uint8_t enabled_count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &enabled_count);
 
@@ -407,7 +414,7 @@ static void _build_rows(void)
     for (uint8_t i = 0; i < total_defs; i++) {
         const obd2_pid_def_t *def = obd2_pid_at(i);
         if (!def) continue;
-        uint16_t def_encoded = obd2_encode_pid(def->service, def->pid);
+        uint32_t def_encoded = obd2_encode_pid(def->service, def->pid);
 
         bool pid_enabled = false;
         for (uint8_t k = 0; k < enabled_count; k++) {
@@ -609,11 +616,11 @@ static void _save_cb(lv_event_t *e)
     /* Collect distinct (service, parent_pid) tuples from checked rows.
      * Sub-fields of the same packed PID dedupe to one encoded entry —
      * one enable per PID is what the polling backend wants. */
-    uint16_t pids[OBD2_MAX_ENABLED];
+    uint32_t pids[OBD2_MAX_ENABLED];
     uint8_t count = 0;
     for (int i = 0; i < s_row_count; i++) {
         if (!s_rows[i].checked || s_rows[i].provided_by_preset) continue;
-        uint16_t enc = obd2_encode_pid(s_rows[i].parent_service,
+        uint32_t enc = obd2_encode_pid(s_rows[i].parent_service,
                                        s_rows[i].parent_pid);
         bool dup = false;
         for (uint8_t k = 0; k < count; k++) {

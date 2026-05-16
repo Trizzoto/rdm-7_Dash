@@ -366,11 +366,11 @@ static bool _apply_obd2_preset(modal_ctx_t *ctx, const preconfig_item_t *item)
     char layout[LAYOUT_MAX_NAME];
     layout_manager_get_active(layout, sizeof(layout));
 
-    uint16_t enabled[OBD2_MAX_ENABLED];
+    uint32_t enabled[OBD2_MAX_ENABLED];
     uint8_t count = 0;
     ecu_preset_read_obd2_pids(layout, enabled, OBD2_MAX_ENABLED, &count);
 
-    uint16_t want = obd2_encode_pid(service, item->obd2_pid);
+    uint32_t want = obd2_encode_pid(service, item->obd2_pid);
     bool already = false;
     for (uint8_t i = 0; i < count; i++) {
         if (enabled[i] == want) { already = true; break; }

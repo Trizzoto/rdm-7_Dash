@@ -689,9 +689,17 @@ static void update_picker_preview(picker_st_t *st, int idx)
         if (it->obd2_pid != 0) {
             uint8_t svc = it->obd2_service ? it->obd2_service : 0x01;
             const obd2_pid_def_t *d = obd2_pid_find_svc(svc, it->obd2_pid);
-            snprintf(buf, sizeof(buf), "%s | M%02X 0x%02X | polled @ ~%s Hz",
-                it->label, svc, it->obd2_pid,
-                (d && d->tier == OBD2_TIER_FAST) ? "10" : "1");
+            const char *rate = (d && d->tier == OBD2_TIER_FAST) ? "10" : "1";
+            if (svc == 0x22) {
+                snprintf(buf, sizeof(buf),
+                         "%s | M22 0x%04X | polled @ ~%s Hz",
+                         it->label, (unsigned)it->obd2_pid, rate);
+            } else {
+                snprintf(buf, sizeof(buf),
+                         "%s | M%02X 0x%02X | polled @ ~%s Hz",
+                         it->label, svc,
+                         (unsigned)(it->obd2_pid & 0xFF), rate);
+            }
         } else {
             snprintf(buf, sizeof(buf), "%s | CAN 0x%s | %s | Bit %d  Len %d | x%.4g",
                 it->label, it->can_id,
