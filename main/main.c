@@ -807,22 +807,30 @@ void app_main(void) {
   ESP_LOGI(TAG, "Initialize LVGL library");
   lv_init();
 
-  /* Try internal SRAM first — much faster writes than PSRAM since
-   * the LCD DMA is constantly reading the PSRAM framebuffer.
-   * Internal SRAM avoids the SPI bus contention bottleneck.
+  /* Try internal SRAM first — faster writes than PSRAM since the LCD
+   * DMA is constantly reading the PSRAM framebuffer. Internal SRAM
+   * avoids the SPI bus contention bottleneck.
    *
-   * Cap the internal allocation aggressively so that:
-   *   (a) total free internal DRAM stays high enough for WiFi's
-   *       esf_buf_setup_static pool (~50 KB contiguous required),
-   *   (b) largest_free_block doesn't drop below ~32 KB — two big
-   *       48 KB chunks fragment the heap so badly that no single
-   *       contiguous WiFi allocation can succeed later.
-   * 10–20 lines is standard for an 800×480 panel on ESP32-S3. */
+   * SIZING: kept INTENTIONALLY SMALL after diagnostics (heap_monitor)
+   * caught us running with int_free < 200 BYTES post-boot. The previous
+   * sizing (20 lines = 64 KB total) ate the entire margin available for
+   * WiFi's esp_phy esp_timer_create + esf_buf_setup_static and produced
+   * recurring ESP_ERR_NO_MEM crashes inside phy_track_pll_init the
+   * moment any auth attempt cycled the radio.
+   *
+   * With 6 lines × 2 buffers = ~19 KB internal we leave ~45 KB more
+   * internal headroom for the WiFi/PHY stack. LVGL flushes more often
+   * (480 / 6 = 80 partial flushes per full screen redraw) but on this
+   * dash that's still well above visual refresh — most renders only
+   * touch a sub-region anyway. If a particular widget feels janky we
+   * can re-tune this cap downward; bigger is only worth it once we
+   * have real internal-heap profiling that shows we can afford it. */
   void *buf1 = NULL, *buf2 = NULL;
   size_t buf_size = 0;
 
-  /* Internal SRAM: try 20, then 16, then 10 lines */
-  static const int try_lines[] = {20, 16, 10};
+  /* Internal SRAM: try 8, 6, then 4 lines. All small enough to leave
+   * the WiFi/PHY headroom; smallest still gives a usable flush size. */
+  static const int try_lines[] = {8, 6, 4};
   for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
     int lines = try_lines[i];
     buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
