@@ -6389,8 +6389,17 @@
         }
 
         /** Slot limits per widget type.
-         *  Positive = hard cap. 0 = unlimited (finds next free slot). undefined = not slotted. */
-        const SLOT_LIMITS = { panel: 16, bar: 0, indicator: 2, warning: 8 };
+         *  Positive = hard cap. 0 = unlimited (finds next free slot, up to 256). undefined = not slotted.
+         *
+         *  panel: 0 (unlimited) — firmware widget_panel.c doesn't cap; slots
+         *    8+ just don't get auto-positioned (s_panel_default_x is 8 long),
+         *    user positions them by hand. Was 16 before; the limit blocked
+         *    copy-paste once the user wanted 16+ panels on a dense layout.
+         *  bar: 0 (unlimited).
+         *  indicator: 2 — firmware caps in widget_indicator.c at `slot >= 2`.
+         *  warning: 8 — firmware caps in widget_warning.c at `slot >= 8`.
+         */
+        const SLOT_LIMITS = { panel: 0, bar: 0, indicator: 2, warning: 8 };
 
         /** Find next available slot for a widget type, or -1 if all taken. */
         function nextAvailableSlot(type) {
