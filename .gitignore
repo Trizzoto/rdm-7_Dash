@@ -22,3 +22,15 @@ _build_tmp.bat
 .claude/worktrees/
 .claude/launch.json
 .claude/settings.local.json
+
+# Python bytecode cache (tools/ scripts get run from here and leave
+# __pycache__ behind; not worth committing)
+__pycache__/
+*.pyc
+*.pyo
+
+# Accidental Windows-path-as-directory — created when a shell misinterprets
+# an unquoted Windows path like `C:\Users\ruuva\workspace\rdm7-sandbox` as
+# a relative path, turning it into a literal directory named
+# `Usersruuvaworkspacerdm7-sandbox`. Catch the whole pattern.
+Usersruuvaworkspace*/

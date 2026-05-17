@@ -50,13 +50,21 @@ tests/native/     Unity C unit tests (CAN decode, layout migration, widget rules
 
 ## Widget System
 
-13 types in `widget_type_t` (`widget_types.h`). Slot limits: panel(16), bar(2), indicator(2), warning(8).
+13 types in `widget_type_t` (`widget_types.h`). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
+
+| Type | Web cap | Firmware cap | Notes |
+|---|---|---|---|
+| `panel` | unlimited | none | Slots 8+ skip auto-positioning |
+| `bar` | unlimited | none | |
+| `indicator` | 2 | `slot >= 2` | Hard cap, firmware drops higher |
+| `warning` | 8 | `slot >= 8` | Hard cap |
+| others | not slotted | — | Position-based, not slot-based |
 
 **Lifecycle:** factory → `from_json()` → `create()` → signal callbacks → `to_json()` → `destroy()`
 
 - `from_json`: resolve signal name→index via `signal_find_by_name()`, call `widget_rules_from_json()`
 - `create`: build LVGL objects, subscribe signals **after** `w->root` is set
-- `to_json`: **defaults-only** — omit fields matching factory defaults (16 KB JSON budget)
+- `to_json`: **defaults-only** — omit fields matching factory defaults (32 KB JSON budget per `RDM_LAYOUT_MAX_BYTES`)
 - `destroy`: `widget_rules_free()`, free `type_data`
 - Per-instance styles via `lv_obj_set_style_*()` — not shared `lv_style_t`
 - Conditional rules: `widget_rules.c/h` — requires `apply_overrides` vtable + `widget_rules_subscribe()` after create
@@ -106,8 +114,10 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
   via EMBED_TXTFILES, also served directly by `tools/mobile-dev-server.js` for
   browser-based dev without a device.
 - The Tauri desktop copy at `../rdm7-desktop/src/index.html` (separate repo) has
-  its own delta (USB transport, Tauri wrapper, auto-updater) — keep that in sync
-  manually when web-editor changes need to land there too.
+  its own delta (USB transport, Tauri wrapper, auto-updater, ~1300 lines of
+  edits) — keep that in sync manually when web-editor changes need to land
+  there too. Custom PIDs feature lives only in firmware copy currently; the
+  desktop OBD2 menu intentionally omits that item until the modal is ported.
 
 ## Fonts
 
@@ -121,8 +131,8 @@ JSON: `"Family:size"` (e.g. `"Fugaz:28"`) or legacy `"fugaz_28"`. Call `font_man
 3. Add factory `widget_X_create_instance(uint8_t slot)`
 4. Register in: `widget_type_t` enum, `widget_constraints[]`, `widget_type_name()`, `_type_from_str()`, `_factory()` in `layout_manager.c`
 5. Add `.c` to `main/CMakeLists.txt` SRCS
-6. Add to `WIDGET_DEFS` in all three `index.html` copies
-7. Bump `LAYOUT_SCHEMA_VERSION` if schema changes
+6. Add to `WIDGET_DEFS` in **both** `index.html` copies (firmware `main/web/`, desktop `../rdm7-desktop/src/`)
+7. Bump `LAYOUT_SCHEMA_VERSION` if schema changes (current: **v13**)
 
 ## Coding Conventions
 
@@ -156,4 +166,15 @@ debugging via the "Share Raw CAN" button (data logger modal in the web editor).
 - **Field not saved:** check `to_json` defaults-only logic and that `from_json` reads it
 - **Config modal field missing:** add a section in `config_modal.c` even if web editor already handles it
 - **`pdMS_TO_TICKS(1) = 0`** at `CONFIG_FREERTOS_HZ=500` — use `vTaskDelay(1)` literal for real yields
-- **`max_uri_handlers`** is 100 — count `REGISTER_URI` calls before adding endpoints
+- **`max_uri_handlers`** is 160 (~106 currently used) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
+- **`w->root` may be a container, not the widget's LVGL primitive** — e.g. `widget_arc` standard mode wraps `lv_arc` in a transparent container so siblings (redline arc, value label) can coexist. Don't assume `w->root` is the type-specific object; use `type_data->arc_obj` etc.
+- **Layout > 32 KB silently truncates** — `to_json` must be defaults-only or the budget blows. Pre-save check in `_checkLayoutSize` catches it client-side, but firmware-side a non-default emit can sneak through.
+
+## Diagnostic Tooling
+
+- `system/heap_monitor.c/h` — periodic heap snapshot + esp_timer_dump. **Disabled by
+  default in production**; flip `RDM_HEAP_MONITOR_ENABLED=1` (in `main.c` or via
+  `-D` build flag) when chasing leaks. Code stays compiled-in so re-enabling is one flag.
+- Boot log line `URI registration: N/M FAILED — bump max_uri_handlers` means
+  endpoints fell through to the CORS wildcard and returned 405. Increase
+  `config.max_uri_handlers` in `web_server.c`.

@@ -526,10 +526,22 @@ static void _deferred_wifi_boot_cb(lv_timer_t *timer) {
     ESP_LOGI(TAG, "==============================");
   }
 
-  /* Diagnostic: periodic heap snapshot to surface the ongoing PHY-leak
-   * crash. Started LAST so the first sample baselines the steady-state
-   * after all heavy allocators (WiFi, web server, LVGL) have settled. */
+  /* Diagnostic: periodic heap snapshot to surface heap leaks (was wired
+   * for the PHY-leak crash, kept around for future debugging). Disabled
+   * by default in production — flip `RDM_HEAP_MONITOR_ENABLED` to 1 (or
+   * build with `-DRDM_HEAP_MONITOR_ENABLED=1`) when you need a live
+   * heap series in the log. The diagnostic code stays compiled so
+   * enabling it later doesn't require pulling files back into the
+   * build; only the start call is gated.
+   *
+   * Started LAST so the first sample baselines the steady-state after
+   * all heavy allocators (WiFi, web server, LVGL) have settled. */
+#ifndef RDM_HEAP_MONITOR_ENABLED
+#define RDM_HEAP_MONITOR_ENABLED 0
+#endif
+#if RDM_HEAP_MONITOR_ENABLED
   heap_monitor_start();
+#endif
 }
 
 void app_main(void) {
