@@ -26,6 +26,12 @@
 #include "screen_config.h"
 #include "obd2.h"
 
+/* Loggers/replay need stopping on layout reload so they don't keep writing
+ * stale signal indices or hold a file handle open through the swap. */
+#include "data_logger.h"
+#include "signal_replay.h"
+#include "can_raw_logger.h"
+
 #include "cJSON.h"
 #include "esp_littlefs.h"
 #include "esp_log.h"
@@ -569,6 +575,15 @@ static void _save_signals(cJSON *root) {
  */
 static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 									  const char *caller) {
+	/* Stop any active loggers / replay BEFORE wiping the signal registry.
+	 * They reference signal indices into the old registry; if we reset
+	 * without stopping, data_logger keeps writing rows with stale column
+	 * mappings and signal_replay injects into recycled slot numbers that
+	 * now belong to different signals. Each stop is a no-op if not active. */
+	data_logger_stop();
+	signal_replay_stop();
+	can_raw_logger_stop();
+
 	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
 	signal_registry_reset();
 	_load_signals(root);
