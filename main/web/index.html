@@ -5420,7 +5420,48 @@
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
-                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true }
+                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                            /* Redline zone — a static red arc segment from
+                             * redline_threshold to signal_max, drawn on top
+                             * of the track. The moving fill also recolors
+                             * red while value >= threshold when
+                             * redline_recolor_fill is true. */
+                            { name: "redline_enabled", label: "Redline", type: "checkbox", def: false, cat: "alerts" },
+                            { name: "redline_threshold", label: "Redline Threshold", type: "number", def: 80, cat: "alerts", enabledBy: "redline_enabled" },
+                            { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "alerts", enabledBy: "redline_enabled", nightOverridable: true },
+                            { name: "redline_arc_width", label: "Redline Width", type: "stepper", def: 0, cat: "alerts", min: 0, max: 50, enabledBy: "redline_enabled", help: "0 = match Arc Width" },
+                            { name: "redline_recolor_fill", label: "Recolor Fill in Zone", type: "checkbox", def: true, cat: "alerts", enabledBy: "redline_enabled" },
+                            /* Limiter — applied when value >= limiter_value.
+                             * Effect 0=None, 1=Flash (toggles every flash_speed_ms),
+                             * 2=Solid (steady limiter_color). */
+                            { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "alerts",
+                              options: [
+                                  { v: 0, l: "None" },
+                                  { v: 1, l: "Flash" },
+                                  { v: 2, l: "Solid" }
+                              ] },
+                            { name: "limiter_value", label: "Limiter Value", type: "number", def: 90, cat: "alerts", enabledBy: "limiter_effect" },
+                            { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "alerts", enabledBy: "limiter_effect" },
+                            { name: "flash_speed_ms", label: "Flash Speed (ms)", type: "select", def: 200, cat: "alerts", enabledBy: "limiter_effect",
+                              options: [
+                                  { v: 50,  l: "50 ms (very fast)" },
+                                  { v: 100, l: "100 ms (fast)" },
+                                  { v: 150, l: "150 ms" },
+                                  { v: 200, l: "200 ms (default)" },
+                                  { v: 300, l: "300 ms" },
+                                  { v: 500, l: "500 ms (slow)" },
+                                  { v: 1000, l: "1 s (very slow)" }
+                              ] },
+                            /* Center value text overlay — optional label
+                             * showing current value with optional decimals
+                             * and unit suffix. Sits on top of the arc at
+                             * value_y_offset from center. */
+                            { name: "show_value", label: "Show Value", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance", enabledBy: "show_value" },
+                            { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_value", nightOverridable: true },
+                            { name: "value_y_offset", label: "Value Y Offset", type: "stepper", def: 0, cat: "appearance", min: -200, max: 200, enabledBy: "show_value" },
+                            { name: "value_decimals", label: "Decimals", type: "stepper", def: 0, cat: "appearance", min: 0, max: 4, enabledBy: "show_value" },
+                            { name: "value_unit", label: "Unit Suffix", type: "text", def: "", cat: "appearance", enabledBy: "show_value", help: "e.g. RPM, °C, kPa" }
                         ]
                     },
                     "toggle": {
