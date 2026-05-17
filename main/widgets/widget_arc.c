@@ -760,7 +760,14 @@ static void _arc_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 
     /* If limiter/redline is currently active, _arc_apply_fill_color owns the
      * indicator color — skip overriding it so the rule doesn't fight the
-     * limiter flash. Background + width can still be applied. */
+     * limiter flash. Background + width can still be applied.
+     *
+     * KNOWN LIMITATION: when the zone clears (value drops below threshold),
+     * _arc_apply_fill_color restores d->arc_color, NOT the rule-overridden
+     * fg. The rule's color stays lost until the rule's condition changes
+     * again. Niche combo (rules + limiter on same widget); the fix would be
+     * caching fg in arc_data_t and reading it in _arc_apply_fill_color.
+     * Deferred — see TODO. */
     bool zone_owns_fill = (d->in_limiter && d->limiter_effect != 0) ||
                           (d->redline_enabled && d->redline_recolor_fill &&
                            d->_cached_value >= d->redline_threshold);
