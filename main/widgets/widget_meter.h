@@ -28,7 +28,6 @@ typedef struct {
 	int32_t max;
 	int16_t start_angle;
 	int16_t end_angle;
-	bool    reverse;          /* swap value direction along arc; default false */
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
 	lv_meter_indicator_t *needle;
@@ -46,6 +45,9 @@ typedef struct {
 	uint8_t    needle_width;         /* default: 4 */
 	lv_color_t needle_color;         /* default: white (0xFFFFFF) */
 	int16_t    needle_r_mod;         /* default: -10 */
+	/* Rear extension behind the pivot, in pixels. Drawn in the same color and
+	 * width as the needle line; works alongside any tip style. 0 = no rear. */
+	uint8_t    needle_rear_length;   /* default: 0 */
 	/* Tip style for line needles (ignored when needle_image_name is set):
 	 *   0 = Flat    (plain line end, LVGL default)
 	 *   1 = Rounded (soft round caps)
@@ -91,33 +93,33 @@ typedef struct {
 	int16_t    label_gap;            /* default: 10 — distance from major tick to label (range −150..+150) */
 	char       tick_label_font[32];  /* default: "" — font for tick value labels */
 	lv_color_t tick_label_color;    /* default: white (0xFFFFFF) */
+	/* Tick label denomination: divides the displayed tick value by this
+	 * factor. Useful for tachs (range 0..7000 with divisor=1000 reads
+	 * "0..7") and similar high-magnitude scales where the user wants short
+	 * labels and prints the unit elsewhere ("RPM x1000"). Default 1 = no
+	 * change. Applies to all tick labels, regardless of anchor/reverse. */
+	uint16_t   tick_label_divisor;  /* default: 1 */
 	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
-	/* Anchor-based non-linear scale. Maps a single DATA value to a specific
-	 * position along the angular sweep, splitting the range into two linear
-	 * segments. e.g. "anchor coolant 90°C at 50% of the sweep" makes the
-	 * over-90 zone visually expanded. Default off = linear pass-through.
-	 * Tick labels stay linear — only the needle is warped. */
-	int32_t    anchor_value;
-	uint8_t    anchor_position;     /* 0..100 along sweep angle, default 50 */
-	bool       anchor_enabled;      /* false = linear pass-through */
-	/* Redline zone: visual cues drawn between [redline_threshold..max]. Each
-	 * effect maps to one LVGL meter indicator added in _meter_create:
-	 *   - redline_show_arc      → lv_meter_add_arc (colored arc segment)
-	 *   - redline_recolor_ticks → lv_meter_add_scale_lines (tick recolor)
-	 * Both are static segments — no per-frame work after creation. */
-	bool       redline_enabled;
-	int32_t    redline_threshold;
-	lv_color_t redline_color;
-	bool       redline_show_arc;
-	bool       redline_recolor_ticks;
-	uint8_t    redline_arc_width;   /* default: 6 */
-	int8_t     redline_arc_r_mod;   /* default: 0, range: -50..50 */
-	lv_meter_indicator_t *redline_arc_indic;   /* runtime LVGL ptr */
-	lv_meter_indicator_t *redline_tick_indic;  /* runtime LVGL ptr */
-	/* Optional rear extension of a line needle: draws a second short line
-	 * pointing 180° away from the needle (counterweight tail). 0 = disabled. */
-	uint8_t    needle_rear_length;  /* default: 0, range 0..100 px */
+	/* Redline zone — visual emphasis for "danger" range [threshold, max]. */
+	bool       redline_enabled;     /* default: false — master toggle */
+	int32_t    redline_threshold;   /* default: 80 — value at which the zone starts */
+	lv_color_t redline_color;       /* default: red (0xFF0000) */
+	bool       redline_show_arc;    /* default: true — draw a colored arc segment */
+	uint8_t    redline_arc_width;   /* default: 6 — arc thickness in px */
+	int16_t    redline_arc_r_mod;   /* default: 0 — radius offset from scale */
+	bool       redline_recolor_ticks; /* default: true — repaint ticks ≥ threshold */
+	/* Anchor curve — piecewise-linear value→angle mapping. When enabled the
+	 * needle treats `anchor_value` as landing at `anchor_position`% of the
+	 * sweep, giving two linear segments instead of one. Tick label positions
+	 * remain linear (LVGL v8 scale is single-segment). */
+	bool       anchor_enabled;       /* default: false */
+	int32_t    anchor_value;         /* default: 50 */
+	uint8_t    anchor_position;      /* default: 50 — percent of sweep */
+	/* Reverse — flip the value axis. With reverse=true, max sits at the
+	 * START of the sweep and min at the END. Combines cleanly with anchor
+	 * (anchor curve is applied first, then the result is mirrored). */
+	bool       reverse;              /* default: false */
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* Night-mode appearance overrides */

@@ -25,10 +25,48 @@
 
 static const char *TAG = "widget_meter";
 
-/* Inverse of _meter_apply_curve. Given an angular position 0..100% along
- * the sweep, returns the data value the user expects to see at that point
- * (used to relabel tick marks so they align with the warped needle). */
-static int32_t _meter_value_for_angle_pct(meter_data_t *md, int32_t pct) {
+#define METER_DEFAULT_W 140
+#define METER_DEFAULT_H 140
+
+/* Invalidate just the bounding box swept by the rear extension at one value.
+ * Mirrors LVGL's built-in inv_line for the front needle, but for the segment
+ * BEHIND the pivot (which LVGL doesn't know about). Called for both the old
+ * and the new value so partial-refresh clears stale rear pixels and paints
+ * the new ones — without invalidating the whole meter every signal tick. */
+static void _meter_inv_rear(lv_obj_t *m, lv_meter_scale_t *scale,
+                             int32_t value, uint8_t rear_len, uint8_t width) {
+	if (!m || !scale || rear_len == 0) return;
+
+	lv_area_t scale_area;
+	lv_obj_get_content_coords(m, &scale_area);
+	lv_coord_t r_edge = LV_MIN(lv_area_get_width(&scale_area),
+	                            lv_area_get_height(&scale_area)) / 2;
+	lv_point_t scale_center;
+	scale_center.x = scale_area.x1 + r_edge;
+	scale_center.y = scale_area.y1 + r_edge;
+
+	int32_t angle = lv_map(value, scale->min, scale->max,
+	                        scale->rotation, scale->rotation + scale->angle_range);
+
+	/* Rear endpoint: opposite direction of the needle, distance = rear_len. */
+	lv_point_t p_rear;
+	p_rear.x = scale_center.x - (lv_trigo_cos(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
+	p_rear.y = scale_center.y - (lv_trigo_sin(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
+
+	int32_t pad = (int32_t)width / 2 + 2;
+	lv_area_t a;
+	a.x1 = LV_MIN(scale_center.x, p_rear.x) - pad;
+	a.y1 = LV_MIN(scale_center.y, p_rear.y) - pad;
+	a.x2 = LV_MAX(scale_center.x, p_rear.x) + pad;
+	a.y2 = LV_MAX(scale_center.y, p_rear.y) + pad;
+	lv_obj_invalidate_area(m, &a);
+}
+
+/* Inverse of _meter_apply_anchor. Given an angular position 0..100% along
+ * the sweep, return the data value the user should see at that point.
+ * Used to relabel major tick texts so the numbers shown match the warped
+ * needle position. (Linear pass-through when anchor is disabled.) */
+static int32_t _meter_value_for_angle_pct(const meter_data_t *md, int32_t pct) {
 	if (md->max <= md->min) return md->min;
 	if (pct <= 0)   return md->min;
 	if (pct >= 100) return md->max;
@@ -49,36 +87,34 @@ static int32_t _meter_value_for_angle_pct(meter_data_t *md, int32_t pct) {
 	                          * (pct - ap)) / hp);
 }
 
-/* Apply the user-configured anchor curve. Returns the "virtual" value to
- * pass to lv_meter_set_indicator_value so the needle lands at the desired
- * non-linear position. Two linear segments split at (anchor_value,
- * anchor_position%): values in [min..anchor] map to [0..anchor_pos%] of the
- * sweep, values in [anchor..max] map to [anchor_pos%..100%]. Disabled
- * (anchor_enabled=false) = linear pass-through. */
-static int32_t _meter_apply_curve(meter_data_t *md, int32_t v) {
-	if (!md->anchor_enabled || md->max <= md->min) return v;
-	int32_t a  = md->anchor_value;
-	int32_t ap = md->anchor_position;
-	if (ap < 0)   ap = 0;
-	if (ap > 100) ap = 100;
-	int32_t pct;
+/* Apply the anchor curve to a clamped raw value, returning the value to feed
+ * to lv_meter_set_indicator_value on a linear scale spanning [min, max].
+ * Maps raw `v` so that `anchor_value` lands at `anchor_position`% of the
+ * sweep — two linear segments. No-op when anchor_enabled is false. */
+static int32_t _meter_apply_anchor(const meter_data_t *md, int32_t v) {
+	if (!md->anchor_enabled) return v;
+	int32_t lo = md->min;
+	int32_t hi = md->max;
+	if (hi <= lo) return v;
+	int32_t a = md->anchor_value;
+	if (a <= lo || a >= hi) return v;
+	int32_t pos = md->anchor_position;
+	if (pos <= 0)   pos = 0;
+	if (pos >= 100) pos = 100;
+	int32_t range  = hi - lo;
+	int32_t pivot  = lo + (range * pos) / 100;
 	if (v <= a) {
-		pct = (a > md->min)
-		    ? (int32_t)(((int64_t)(v - md->min) * ap) / (a - md->min))
-		    : 0;
+		/* Map [lo, a] -> [lo, pivot] linearly. */
+		int32_t span = a - lo;
+		if (span <= 0) return lo;
+		return lo + ((int64_t)(v - lo) * (pivot - lo)) / span;
 	} else {
-		int32_t hp = 100 - ap;
-		pct = (md->max > a)
-		    ? ap + (int32_t)(((int64_t)(v - a) * hp) / (md->max - a))
-		    : 100;
+		/* Map [a, hi] -> [pivot, hi] linearly. */
+		int32_t span = hi - a;
+		if (span <= 0) return hi;
+		return pivot + ((int64_t)(v - a) * (hi - pivot)) / span;
 	}
-	if (pct < 0)   pct = 0;
-	if (pct > 100) pct = 100;
-	return md->min + (int32_t)(((int64_t)pct * (md->max - md->min)) / 100);
 }
-
-#define METER_DEFAULT_W 140
-#define METER_DEFAULT_H 140
 
 static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
@@ -93,9 +129,8 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		if (v < md->min) v = md->min;
 		if (v > md->max) v = md->max;
 	}
-	/* Apply non-linear scale curve (gamma) — affects only the needle
-	 * angle, not the tick labels. See _meter_apply_curve docstring. */
-	v = _meter_apply_curve(md, v);
+	v = _meter_apply_anchor(md, v);
+	if (md->reverse) v = md->max + md->min - v;
 	/* Only drive whichever meter is currently visible. Updating the hidden
 	 * sibling costs an LVGL indicator recompute + invalidation-mark that
 	 * nobody ever sees — with meters bound to fast-moving sim signals
@@ -103,12 +138,32 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	 * When night mode toggles, _meter_apply_night_mode immediately pushes
 	 * the current value into the newly-visible meter so the swap stays
 	 * continuous. */
+	/* Rear extension lives outside LVGL's inv_line bbox (center→tip), so on
+	 * partial-refresh the rear pixels go stale. Snapshot the indicator's
+	 * current end_value before set, then invalidate the rear bboxes for the
+	 * old AND new value — same pattern LVGL uses for the front line. Tight
+	 * bbox = doesn't tank framerate the way invalidating the whole meter
+	 * does on fast signals. */
 	if (md->night_meter && md->night_needle && lv_obj_is_valid(md->night_meter) &&
 	    !lv_obj_has_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN)) {
+		int32_t old_v = (md->needle_rear_length > 0) ? md->night_needle->end_value : 0;
 		lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
+		if (md->needle_rear_length > 0) {
+			_meter_inv_rear(md->night_meter, md->night_scale, old_v,
+			                md->needle_rear_length, md->needle_width);
+			_meter_inv_rear(md->night_meter, md->night_scale, v,
+			                md->needle_rear_length, md->needle_width);
+		}
 	} else if (md->meter && md->needle &&
 	           !lv_obj_has_flag(md->meter, LV_OBJ_FLAG_HIDDEN)) {
+		int32_t old_v = (md->needle_rear_length > 0) ? md->needle->end_value : 0;
 		lv_meter_set_indicator_value(md->meter, md->needle, v);
+		if (md->needle_rear_length > 0) {
+			_meter_inv_rear(md->meter, md->scale, old_v,
+			                md->needle_rear_length, md->needle_width);
+			_meter_inv_rear(md->meter, md->scale, v,
+			                md->needle_rear_length, md->needle_width);
+		}
 	}
 }
 
@@ -168,84 +223,142 @@ static inline lv_point_t _tip_pt(const lv_point_t *p1, int32_t dx, int32_t dy,
  * libm pull-in. Tip styles are ignored for image needles. */
 static void _meter_needle_draw_cb(lv_event_t *e) {
 	lv_event_code_t code = lv_event_get_code(e);
+
+	meter_data_t *md = (meter_data_t *)lv_event_get_user_data(e);
+	if (!md) return;
+
+	/* Tell LVGL how much extra draw area we need outside the meter's rect.
+	 * The needle rear extends backwards from the pivot; without this hook
+	 * LVGL's clip_area is the meter's bounds, so the rear gets cut off at
+	 * the edges. Reporting `rear_length + line width` here makes LVGL
+	 * expand the clip region (up to the parent's bounds) so the rear can
+	 * draw past the meter without being chopped. */
+	if (code == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+		if (md->needle_rear_length > 0) {
+			lv_coord_t pad = (lv_coord_t)md->needle_rear_length +
+			                 (lv_coord_t)(md->needle_width / 2 + 2);
+			lv_event_set_ext_draw_size(e, pad);
+		}
+		return;
+	}
+
 	if (code != LV_EVENT_DRAW_PART_BEGIN && code != LV_EVENT_DRAW_PART_END) return;
 
 	lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
 	if (!dsc) return;
 
-	meter_data_t *md = (meter_data_t *)lv_event_get_user_data(e);
-	if (!md) return;
+	/* Tick part — two BEGIN-time mutations:
+	 *   1. Anchor relabel: rewrite major-tick label text in place so the
+	 *      numbers shown align with the warped needle. LVGL gives us a
+	 *      small mutable buffer in dsc->text and re-measures/draws using
+	 *      the new content.
+	 *   2. Redline recolor: paint tick line + label with redline_color
+	 *      when the tick's *displayed* value crosses redline_threshold.
+	 *      Using the warped value (not dsc->value, which is linear) is
+	 *      what makes the redline ticks visually match the threshold —
+	 *      e.g. with anchor on, the tick whose label says "105" recolors
+	 *      when threshold=105, not the tick whose linear value is 105
+	 *      (which displays a different number under the curve).
+	 * Only fires on BEGIN — END is post-draw, dsc fields are stale. */
+	if (dsc->type == LV_METER_DRAW_PART_TICK) {
+		if (code != LV_EVENT_DRAW_PART_BEGIN) return;
 
-	/* TICK label override — when anchor is on, relabel major ticks so the
-	 * numbers shown match the warped needle. LVGL fires DRAW_PART_BEGIN for
-	 * each tick after filling dsc->text with the linear value; only major
-	 * ticks have a non-NULL label_dsc. We rewrite the buffer in place
-	 * (LVGL gives us a 16-byte stack buffer). LVGL then uses the new text
-	 * for both size measurement and the actual draw. */
-	if (code == LV_EVENT_DRAW_PART_BEGIN &&
-	    dsc->type == LV_METER_DRAW_PART_TICK &&
-	    dsc->label_dsc != NULL && dsc->text != NULL &&
-	    md->anchor_enabled) {
-		uint16_t total = (md->minor_tick_count > 1) ? (uint16_t)(md->minor_tick_count - 1) : 1;
-		int32_t pct = (int32_t)(((int64_t)dsc->id * 100) / (int64_t)total);
-		int32_t v = _meter_value_for_angle_pct(md, pct);
-		lv_snprintf(dsc->text, 16, "%d", (int)v);
+		/* Pick the value to display at this tick (and to test against the
+		 * redline threshold). When neither anchor nor reverse is active we
+		 * trust LVGL's linear dsc->value. With either flag on we recompute
+		 * from the tick's angle position: convert id→pct, mirror pct under
+		 * reverse, then run through _meter_value_for_angle_pct (which
+		 * handles the anchor curve, falling back to linear pass-through
+		 * when anchor is off). */
+		int32_t shown_value = dsc->value;
+		bool needs_relabel = md->anchor_enabled || md->reverse;
+		if (needs_relabel) {
+			uint16_t total = (md->minor_tick_count > 1)
+			                 ? (uint16_t)(md->minor_tick_count - 1) : 1;
+			int32_t pct = (int32_t)(((int64_t)dsc->id * 100) / (int64_t)total);
+			if (md->reverse) pct = 100 - pct;
+			shown_value = _meter_value_for_angle_pct(md, pct);
+		}
+		/* Compose the label text. Rewrite when:
+		 *   - anchor/reverse warped the linear LVGL value, OR
+		 *   - tick_label_divisor scales the display (e.g. 1000 → "6"
+		 *     instead of "6000" on a tach).
+		 * Tick recolor below uses the un-divided shown_value because
+		 * redline_threshold is in real value space. */
+		uint16_t div = md->tick_label_divisor > 0 ? md->tick_label_divisor : 1;
+		if ((needs_relabel || div > 1) &&
+		    dsc->label_dsc != NULL && dsc->text != NULL) {
+			int32_t display_v = (div > 1) ? (shown_value / (int32_t)div)
+			                              : shown_value;
+			lv_snprintf(dsc->text, 16, "%d", (int)display_v);
+		}
+		if (md->redline_enabled && md->redline_recolor_ticks &&
+		    shown_value >= md->redline_threshold) {
+			if (dsc->line_dsc)  dsc->line_dsc->color  = md->redline_color;
+			if (dsc->label_dsc) dsc->label_dsc->color = md->redline_color;
+		}
 		return;
 	}
 
-	/* Below this point: needle-only logic (tip styles + rear extension). */
 	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
 	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
-	uint8_t style = md->needle_tip_style;
+
+	uint8_t style    = md->needle_tip_style;
+	uint8_t rear_len = md->needle_rear_length;
+	/* Fast path: no tip polygon or rear extension needed. */
+	if (style == 0 && rear_len == 0) return;
+
 	lv_draw_line_dsc_t *line_dsc = dsc->line_dsc;
 
+	/* Static across BEGIN/END so the pointer we hand back to LVGL stays valid
+	 * during the lv_draw_line call inside the meter draw loop, AND so END can
+	 * recover the original pivot for tip-polygon math after BEGIN mutated p1.
+	 * Single-threaded LVGL — no races between needle instances because each
+	 * needle draws BEGIN→line→END as a tight sequence. */
+	static lv_point_t s_orig_pivot;
+	static lv_point_t s_extended_p1;
+
 	if (code == LV_EVENT_DRAW_PART_BEGIN) {
+		s_orig_pivot = *dsc->p1;
+
 		if (style == 1) {
 			line_dsc->round_start = 1;
 			line_dsc->round_end   = 1;
 		} else if (style >= 2 && style <= 5) {
-			/* Polygon styles replace the line — hide the original. */
+			/* Polygon tip styles replace the line — hide the original. */
 			line_dsc->opa = LV_OPA_TRANSP;
+		}
+
+		/* For non-polygon styles + rear: extend dsc->p1 backward so LVGL
+		 * draws ONE continuous line from rear endpoint through pivot to
+		 * tip. Geometry is guaranteed coherent — it's literally the same
+		 * lv_draw_line call that draws the front, so the rear can't be
+		 * at a different angle. For polygon styles (2-5) the line is
+		 * already hidden, so we leave p1 alone and draw the rear
+		 * separately in END (alongside the tip polygon). */
+		if (rear_len > 0 && style <= 1) {
+			int32_t dx = dsc->p2->x - dsc->p1->x;
+			int32_t dy = dsc->p2->y - dsc->p1->y;
+			uint32_t len_sq = (uint32_t)(dx * dx + dy * dy);
+			if (len_sq > 0) {
+				lv_sqrt_res_t sres;
+				lv_sqrt(len_sq, &sres, 0x800);
+				int32_t len = sres.i;
+				if (len > 0) {
+					s_extended_p1.x = (lv_coord_t)(dsc->p1->x - (dx * (int32_t)rear_len) / len);
+					s_extended_p1.y = (lv_coord_t)(dsc->p1->y - (dy * (int32_t)rear_len) / len);
+					dsc->p1 = &s_extended_p1;
+				}
+			}
 		}
 		return;
 	}
 
-	/* === DRAW_PART_END === */
-
-	/* Rear counterweight extension. Draws a short line in the opposite
-	 * direction from the pivot, so a needle that points at "8 o'clock"
-	 * also has a small "2 o'clock" tail. Length in pixels. */
-	if (md->needle_rear_length > 0) {
-		int32_t rdx = dsc->p2->x - dsc->p1->x;
-		int32_t rdy = dsc->p2->y - dsc->p1->y;
-		uint32_t rlen_sq = (uint32_t)(rdx * rdx + rdy * rdy);
-		if (rlen_sq > 0) {
-			lv_sqrt_res_t rsres;
-			lv_sqrt(rlen_sq, &rsres, 0x800);
-			int32_t rlen = rsres.i;
-			if (rlen > 0) {
-				int32_t back = md->needle_rear_length;
-				lv_point_t rear_pt;
-				rear_pt.x = dsc->p1->x - (rdx * back) / rlen;
-				rear_pt.y = dsc->p1->y - (rdy * back) / rlen;
-				lv_draw_line_dsc_t rear_dsc;
-				lv_draw_line_dsc_init(&rear_dsc);
-				rear_dsc.color       = line_dsc->color;
-				rear_dsc.width       = line_dsc->width > 0 ? line_dsc->width
-				                                          : md->needle_width;
-				rear_dsc.opa         = LV_OPA_COVER;
-				rear_dsc.round_start = line_dsc->round_start;
-				rear_dsc.round_end   = line_dsc->round_end;
-				lv_draw_line(dsc->draw_ctx, &rear_dsc, dsc->p1, &rear_pt);
-			}
-		}
-	}
-
-	/* Only polygon styles have custom geometry beyond this point. */
-	if (style < 2 || style > 5) return;
-
-	const lv_point_t *p1 = dsc->p1;   /* pivot */
-	const lv_point_t *p2 = dsc->p2;   /* tip   */
+	/* DRAW_PART_END: tip polygon (styles 2-5), and rear for polygon styles.
+	 * Use the SAVED original pivot — dsc->p1 may have been mutated in BEGIN
+	 * to extend the front line backward. */
+	const lv_point_t *p1 = &s_orig_pivot;
+	const lv_point_t *p2 = dsc->p2;
 	int32_t dx = p2->x - p1->x;
 	int32_t dy = p2->y - p1->y;
 	uint32_t len_sq = (uint32_t)(dx * dx + dy * dy);
@@ -263,6 +376,9 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	rdsc.bg_opa       = LV_OPA_COVER;
 	rdsc.border_width = 0;
 
+	/* Tip polygon (styles 2-5). Rear extension below runs independently for
+	 * any style with rear_len > 0. */
+	if (style >= 2 && style <= 5) {
 	lv_point_t pts[6];
 	uint16_t   npts = 0;
 
@@ -344,10 +460,25 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 		break;
 	}
 	default:
-		return;
+		break;
 	}
 
-	lv_draw_polygon(dsc->draw_ctx, &rdsc, pts, npts);
+	if (npts > 0) lv_draw_polygon(dsc->draw_ctx, &rdsc, pts, npts);
+	} /* end of tip-polygon block */
+
+	/* Rear extension for POLYGON tip styles only. Flat (0) and Rounded (1) get
+	 * the rear via dsc->p1 mutation in BEGIN — LVGL draws one continuous
+	 * line that already includes the rear. Polygon styles (2-5) hide the
+	 * line, so we draw the rear here as a separate line using the same
+	 * line_dsc with opacity restored. */
+	if (rear_len > 0 && style >= 2 && style <= 5) {
+		int32_t rx = p1->x - (dx * (int32_t)rear_len) / len;
+		int32_t ry = p1->y - (dy * (int32_t)rear_len) / len;
+		lv_point_t rear_start = { (lv_coord_t)rx, (lv_coord_t)ry };
+		lv_draw_line_dsc_t rear_dsc = *line_dsc;
+		rear_dsc.opa = LV_OPA_COVER;
+		lv_draw_line(dsc->draw_ctx, &rear_dsc, &rear_start, p1);
+	}
 }
 
 /* Build a single meter (day or night). When `use_night` is true, any field
@@ -403,13 +534,12 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	lv_meter_scale_t *scale = lv_meter_add_scale(m);
 	uint32_t angle_range = (360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
 	if (angle_range == 0 && md->start_angle != md->end_angle) angle_range = 360;
-	/* reverse=true swaps min/max so the needle (and tick labels) sweep the
-	 * opposite direction along the same visual arc. Indicator value APIs
-	 * (lv_meter_set_indicator_value, redline start/end) keep using actual
-	 * signal-domain values — LVGL re-maps them via this swapped scale. */
-	int32_t scale_min = md->reverse ? md->max : md->min;
-	int32_t scale_max = md->reverse ? md->min : md->max;
-	lv_meter_set_scale_range(m, scale, scale_min, scale_max, angle_range, (int32_t)md->start_angle);
+	/* Counter-clockwise / reverse: scale's start_angle stays as configured —
+	 * the value mirror (max+min-v in _meter_on_signal) is what makes max
+	 * land at the start position and min land at the end of the sweep, so
+	 * a Top-start meter with reverse=true ends up with 0 at the bottom and
+	 * max at the top. Mirrors a Bottom-start meter to face it. */
+	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range, (int32_t)md->start_angle);
 	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 	/* show_ticks=false zeroes the widths so LVGL draws no tick marks. Range
@@ -432,37 +562,28 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
 	}
 
-	/* Redline indicators. Drawn BEFORE the needle so the needle stays on
-	 * top. Both arc and tick-recolor are static segments — set start_value
-	 * once at create, no per-frame work. Threshold is clamped into the
-	 * scale range so an out-of-range threshold still produces sensible
-	 * output (no segment if threshold >= max). */
-	md->redline_arc_indic  = NULL;
-	md->redline_tick_indic = NULL;
-	if (md->redline_enabled) {
-		int32_t rt = md->redline_threshold;
-		if (rt < md->min) rt = md->min;
-		if (rt < md->max) {
-			if (md->redline_show_arc) {
-				uint16_t aw = md->redline_arc_width > 0 ? md->redline_arc_width : 6;
-				md->redline_arc_indic = lv_meter_add_arc(
-				    m, scale, aw, md->redline_color, md->redline_arc_r_mod);
-				if (md->redline_arc_indic) {
-					lv_meter_set_indicator_start_value(m, md->redline_arc_indic, rt);
-					lv_meter_set_indicator_end_value  (m, md->redline_arc_indic, md->max);
-				}
-			}
-			if (md->redline_recolor_ticks) {
-				/* local=true → start/end values are this indicator's own
-				 * range, so the same color is used across the whole segment
-				 * (no gradient). width_mod=0 keeps tick widths intact. */
-				md->redline_tick_indic = lv_meter_add_scale_lines(
-				    m, scale, md->redline_color, md->redline_color, false, 0);
-				if (md->redline_tick_indic) {
-					lv_meter_set_indicator_start_value(m, md->redline_tick_indic, rt);
-					lv_meter_set_indicator_end_value  (m, md->redline_tick_indic, md->max);
-				}
-			}
+	/* Redline arc — drawn before the needle so the needle paints on top.
+	 * The arc spans [threshold, max] in real value space. We need the
+	 * LVGL-linear values that produce the SAME angles as those real values,
+	 * which means applying the same transforms (anchor → reverse) the
+	 * needle goes through. With reverse on the high real values land at
+	 * low LVGL values, so the arc covers [min, mirror_of(threshold)]. */
+	if (md->redline_enabled && md->redline_show_arc) {
+		int32_t arc_thresh = _meter_apply_anchor(md, md->redline_threshold);
+		if (arc_thresh < md->min) arc_thresh = md->min;
+		if (arc_thresh > md->max) arc_thresh = md->max;
+		int32_t arc_start_v = arc_thresh;
+		int32_t arc_end_v   = md->max;
+		if (md->reverse) {
+			arc_start_v = md->min;
+			arc_end_v   = md->max + md->min - arc_thresh;
+		}
+		lv_meter_indicator_t *arc = lv_meter_add_arc(m, scale,
+			md->redline_arc_width > 0 ? md->redline_arc_width : 6,
+			md->redline_color, md->redline_arc_r_mod);
+		if (arc) {
+			lv_meter_set_indicator_start_value(m, arc, arc_start_v);
+			lv_meter_set_indicator_end_value(m, arc, arc_end_v);
 		}
 	}
 
@@ -475,7 +596,7 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		if (ndsc) {
 			if (md->needle_angle_offset != 0) {
 				lv_meter_scale_t *ns = lv_meter_add_scale(m);
-				lv_meter_set_scale_range(m, ns, scale_min, scale_max, angle_range,
+				lv_meter_set_scale_range(m, ns, md->min, md->max, angle_range,
 				                         (int32_t)(md->start_angle + md->needle_angle_offset));
 				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
 				*out_needle_scale = ns;
@@ -501,7 +622,26 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		lv_obj_set_style_bg_opa(m, LV_OPA_COVER, LV_PART_INDICATOR);
 	}
 
-	lv_meter_set_indicator_value(m, needle, md->min);
+	/* Initial needle position. Pull the current signal value if one is
+	 * bound and fresh, otherwise fall back to md->min. Then apply the
+	 * same anchor + invert transforms _meter_on_signal does, so toggling
+	 * "Invert Direction" on a meter with no live signal still snaps the
+	 * needle to the correct end of the sweep instead of leaving it stuck
+	 * at the start (where untransformed md->min would land) until the
+	 * next signal tick. */
+	int32_t init_v = md->min;
+	if (md->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
+		if (sig && !sig->is_stale) {
+			float fv = sig->current_value;
+			if (fv < (float)md->min) fv = (float)md->min;
+			if (fv > (float)md->max) fv = (float)md->max;
+			init_v = (int32_t)fv;
+		}
+	}
+	init_v = _meter_apply_anchor(md, init_v);
+	if (md->reverse) init_v = md->max + md->min - init_v;
+	lv_meter_set_indicator_value(m, needle, init_v);
 
 	/* Custom needle-tip hook. Fires for every DRAW_PART — the callback gates
 	 * on style==0 so the fast path is just a couple of pointer loads when
@@ -509,6 +649,10 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	 * (different part type); line needles handle all 4 styles. */
 	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
 	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, md);
+	/* Force LVGL to query the ext draw size now so the initial clip area
+	 * accounts for the rear before the first frame renders. */
+	lv_obj_refresh_ext_draw_size(m);
 
 	*out_meter = m;
 	*out_scale = scale;
@@ -629,8 +773,6 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "max", md->max);
 	cJSON_AddNumberToObject(cfg, "start_angle", md->start_angle);
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
-	if (md->reverse)
-		cJSON_AddBoolToObject(cfg, "reverse", true);
 	if (md->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
 
@@ -659,26 +801,6 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
 	if (md->needle_rear_length != 0)
 		cJSON_AddNumberToObject(cfg, "needle_rear_length", md->needle_rear_length);
-	if (md->anchor_enabled)
-		cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
-	if (md->anchor_enabled || md->anchor_value != (md->min + md->max) / 2)
-		cJSON_AddNumberToObject(cfg, "anchor_value", md->anchor_value);
-	if (md->anchor_enabled || md->anchor_position != 50)
-		cJSON_AddNumberToObject(cfg, "anchor_position", md->anchor_position);
-	if (md->redline_enabled)
-		cJSON_AddBoolToObject(cfg, "redline_enabled", true);
-	if (md->redline_enabled) {
-		cJSON_AddNumberToObject(cfg, "redline_threshold", md->redline_threshold);
-		cJSON_AddNumberToObject(cfg, "redline_color",     (int)md->redline_color.full);
-		if (!md->redline_show_arc)
-			cJSON_AddBoolToObject(cfg, "redline_show_arc", false);
-		if (!md->redline_recolor_ticks)
-			cJSON_AddBoolToObject(cfg, "redline_recolor_ticks", false);
-		if (md->redline_arc_width != 6)
-			cJSON_AddNumberToObject(cfg, "redline_arc_width", md->redline_arc_width);
-		if (md->redline_arc_r_mod != 0)
-			cJSON_AddNumberToObject(cfg, "redline_arc_r_mod", md->redline_arc_r_mod);
-	}
 	if (md->needle_tip_style != 0)
 		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
 	if (md->needle_tip_base_w != 0)
@@ -719,10 +841,40 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
 	if (md->tick_label_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "tick_label_color", (int)md->tick_label_color.full);
+	if (md->tick_label_divisor != 1)
+		cJSON_AddNumberToObject(cfg, "tick_label_divisor", md->tick_label_divisor);
 	if (!md->show_ticks)
 		cJSON_AddBoolToObject(cfg, "show_ticks", false);
 	if (!md->show_tick_labels)
 		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
+
+	/* Redline */
+	if (md->redline_enabled)
+		cJSON_AddBoolToObject(cfg, "redline_enabled", true);
+	if (md->redline_threshold != 80)
+		cJSON_AddNumberToObject(cfg, "redline_threshold", md->redline_threshold);
+	if (md->redline_color.full != lv_color_hex(0xFF0000).full)
+		cJSON_AddNumberToObject(cfg, "redline_color", (int)md->redline_color.full);
+	if (!md->redline_show_arc)
+		cJSON_AddBoolToObject(cfg, "redline_show_arc", false);
+	if (md->redline_arc_width != 6)
+		cJSON_AddNumberToObject(cfg, "redline_arc_width", md->redline_arc_width);
+	if (md->redline_arc_r_mod != 0)
+		cJSON_AddNumberToObject(cfg, "redline_arc_r_mod", md->redline_arc_r_mod);
+	if (!md->redline_recolor_ticks)
+		cJSON_AddBoolToObject(cfg, "redline_recolor_ticks", false);
+
+	/* Anchor curve */
+	if (md->anchor_enabled)
+		cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
+	if (md->anchor_value != 50)
+		cJSON_AddNumberToObject(cfg, "anchor_value", md->anchor_value);
+	if (md->anchor_position != 50)
+		cJSON_AddNumberToObject(cfg, "anchor_position", md->anchor_position);
+
+	/* Reverse */
+	if (md->reverse)
+		cJSON_AddBoolToObject(cfg, "reverse", true);
 
 	/* Rules */
 	widget_rules_to_json(w, cfg);
@@ -770,9 +922,6 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
 		md->end_angle = (int16_t)ea_item->valueint;
-	cJSON *rev_item = cJSON_GetObjectItemCaseSensitive(cfg, "reverse");
-	if (cJSON_IsBool(rev_item))
-		md->reverse = cJSON_IsTrue(rev_item);
 	cJSON *sig_item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
 		safe_strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name));
@@ -810,31 +959,6 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_rear_length");
 	if (cJSON_IsNumber(ap)) md->needle_rear_length = (uint8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
-	if (cJSON_IsBool(ap)) md->anchor_enabled = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
-	if (cJSON_IsNumber(ap)) md->anchor_value = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
-	if (cJSON_IsNumber(ap)) {
-		int v = ap->valueint;
-		if (v < 0)   v = 0;
-		if (v > 100) v = 100;
-		md->anchor_position = (uint8_t)v;
-	}
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
-	if (cJSON_IsBool(ap)) md->redline_enabled = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_threshold");
-	if (cJSON_IsNumber(ap)) md->redline_threshold = (int32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_color");
-	if (cJSON_IsNumber(ap)) md->redline_color.full = (uint32_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_show_arc");
-	if (cJSON_IsBool(ap)) md->redline_show_arc = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_recolor_ticks");
-	if (cJSON_IsBool(ap)) md->redline_recolor_ticks = cJSON_IsTrue(ap);
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_width");
-	if (cJSON_IsNumber(ap)) md->redline_arc_width = (uint8_t)ap->valueint;
-	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_r_mod");
-	if (cJSON_IsNumber(ap)) md->redline_arc_r_mod = (int8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
 	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
@@ -881,10 +1005,45 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_color");
 	if (cJSON_IsNumber(ap)) md->tick_label_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_divisor");
+	if (cJSON_IsNumber(ap)) {
+		int32_t d = ap->valueint;
+		if (d < 1)     d = 1;
+		if (d > 65535) d = 65535;
+		md->tick_label_divisor = (uint16_t)d;
+	}
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
 	if (cJSON_IsBool(ap)) md->show_ticks = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
 	if (cJSON_IsBool(ap)) md->show_tick_labels = cJSON_IsTrue(ap);
+
+	/* Redline */
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
+	if (cJSON_IsBool(ap)) md->redline_enabled = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_threshold");
+	if (cJSON_IsNumber(ap)) md->redline_threshold = (int32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_color");
+	if (cJSON_IsNumber(ap)) md->redline_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_show_arc");
+	if (cJSON_IsBool(ap)) md->redline_show_arc = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_width");
+	if (cJSON_IsNumber(ap)) md->redline_arc_width = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_arc_r_mod");
+	if (cJSON_IsNumber(ap)) md->redline_arc_r_mod = (int16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_recolor_ticks");
+	if (cJSON_IsBool(ap)) md->redline_recolor_ticks = cJSON_IsTrue(ap);
+
+	/* Anchor curve */
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
+	if (cJSON_IsBool(ap)) md->anchor_enabled = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
+	if (cJSON_IsNumber(ap)) md->anchor_value = (int32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
+	if (cJSON_IsNumber(ap)) md->anchor_position = (uint8_t)ap->valueint;
+
+	/* Reverse */
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "reverse");
+	if (cJSON_IsBool(ap)) md->reverse = cJSON_IsTrue(ap);
 
 	/* Rules */
 	widget_rules_from_json(w, cfg);
@@ -1049,7 +1208,8 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 			if (fv > (float)md->max) fv = (float)md->max;
 			v = (int32_t)fv;
 		}
-		v = _meter_apply_curve(md, v);
+		v = _meter_apply_anchor(md, v);
+		if (md->reverse) v = md->max + md->min - v;
 
 		if (active) {
 			if (md->night_needle)
@@ -1105,7 +1265,6 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 
 	md->start_angle = 135;
 	md->end_angle = 45;
-	md->reverse = false;
 	md->meter = NULL;
 	md->scale = NULL;
 	md->needle = NULL;
@@ -1125,18 +1284,6 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
 	md->needle_rear_length = 0;
-	md->anchor_value    = 50;     /* midpoint of default 0..100 range */
-	md->anchor_position = 50;
-	md->anchor_enabled  = false;  /* off by default — pure linear */
-	md->redline_enabled       = false;
-	md->redline_threshold     = 80;       /* sensible default for 0..100 */
-	md->redline_color         = lv_color_hex(0xFF0000);
-	md->redline_show_arc      = true;
-	md->redline_recolor_ticks = true;
-	md->redline_arc_width     = 6;
-	md->redline_arc_r_mod     = 0;
-	md->redline_arc_indic     = NULL;
-	md->redline_tick_indic    = NULL;
 	md->needle_tip_style   = 0;
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;
@@ -1145,6 +1292,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_ball_color = lv_color_white();
 	/* Tick label defaults */
 	md->tick_label_color = lv_color_white();
+	md->tick_label_divisor = 1;
 	md->show_ticks = true;
 	md->show_tick_labels = true;
 	/* Border defaults */
@@ -1157,6 +1305,22 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	/* Scale layout defaults */
 	md->scale_padding = 0;
 	md->label_gap = 10;
+	/* Redline defaults — match web UI defs (0xFF0000 red, threshold 80,
+	 * arc width 6 px, show_arc + recolor_ticks ON so toggling redline_enabled
+	 * gives an immediate visible result). */
+	md->redline_enabled       = false;
+	md->redline_threshold     = 80;
+	md->redline_color         = lv_color_hex(0xFF0000);
+	md->redline_show_arc      = true;
+	md->redline_arc_width     = 6;
+	md->redline_arc_r_mod     = 0;
+	md->redline_recolor_ticks = true;
+	/* Anchor curve defaults — disabled, with a no-op midpoint mapping. */
+	md->anchor_enabled  = false;
+	md->anchor_value    = 50;
+	md->anchor_position = 50;
+	/* Reverse axis — off by default (low=start, high=end). */
+	md->reverse         = false;
 
 	w->type = WIDGET_METER;
 	w->slot = md->value_idx;

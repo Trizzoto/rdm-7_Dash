@@ -5291,6 +5291,10 @@
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
+                            /* Tick label divisor: divides each tick label by
+                             * this factor for display. e.g. tach 0..7000
+                             * with divisor=1000 reads "0..7". 1 = no scaling. */
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "number", def: 1, cat: "appearance", enabledBy: "show_tick_labels" },
                             { name: "needle_image_name", label: "Needle Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "needle_pivot_x", label: "Needle Pivot X", type: "stepper", def: 0, cat: "appearance", min: -400, max: 400, enabledBy: "needle_image_name" },
                             { name: "needle_pivot_y", label: "Needle Pivot Y", type: "stepper", def: 0, cat: "appearance", min: -400, max: 400, enabledBy: "needle_image_name" },
