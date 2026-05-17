@@ -48,7 +48,6 @@ idf_component_register(
         "ui/dashboard.c"
         "ui/ui_styles.c"
         "ui/ui_helpers.c"
-        "ui/utils.c"
         "ui/signals.c"
         "ui/settings/preset_picker.c"
         "ui/settings/device_settings.c"
