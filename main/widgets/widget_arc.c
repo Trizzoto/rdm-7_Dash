@@ -105,8 +105,14 @@ static void _update_arc_value(arc_data_t *d, float value) {
 static void _arc_apply_fill_color(arc_data_t *d, bool active) {
     if (!d || !d->arc_obj || !lv_obj_is_valid(d->arc_obj)) return;
 
-    /* Pick the base "normal" fill color (with night override if set). */
-    lv_color_t normal = NIGHT_PICK_COLOR(active, d->night, arc_color, d->arc_color);
+    /* Pick the base "normal" fill color.
+     *   - If a widget_rule has overridden arc_color (cached in
+     *     _rule_arc_color), it wins over both the default and the night
+     *     override. The rule is the strongest non-zone signal of intent.
+     *   - Otherwise: night override if active, else default arc_color. */
+    lv_color_t normal = d->_rule_arc_color_set
+        ? d->_rule_arc_color
+        : NIGHT_PICK_COLOR(active, d->night, arc_color, d->arc_color);
     lv_color_t redline = NIGHT_PICK_COLOR(active, d->night, redline_color, d->redline_color);
     lv_color_t fill = normal;
 
@@ -740,15 +746,21 @@ static void _arc_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
     /* Overrides only apply to standard arc mode */
     if (!d->arc_obj) return;
 
-    lv_color_t fg = d->arc_color;
+    /* Walk the override list. We track arc_color separately because the
+     * indicator paint is delegated to _arc_apply_fill_color (which knows
+     * limiter / redline precedence). Background color + both widths are
+     * applied directly here. */
+    bool       rule_sets_fg = false;
+    lv_color_t rule_fg = d->arc_color;
     lv_color_t bg = d->bg_arc_color;
-    uint8_t fg_w = d->arc_width;
-    uint8_t bg_w = d->bg_arc_width;
+    uint8_t    fg_w = d->arc_width;
+    uint8_t    bg_w = d->bg_arc_width;
 
     for (uint8_t i = 0; i < count; i++) {
         const rule_override_t *o = &ov[i];
         if (strcmp(o->field_name, "arc_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-            fg.full = (uint16_t)o->value.color;
+            rule_fg.full = (uint16_t)o->value.color;
+            rule_sets_fg = true;
         } else if (strcmp(o->field_name, "bg_arc_color") == 0 && o->value_type == RULE_VAL_COLOR) {
             bg.full = (uint16_t)o->value.color;
         } else if (strcmp(o->field_name, "arc_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
@@ -758,22 +770,23 @@ static void _arc_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
         }
     }
 
-    /* If limiter/redline is currently active, _arc_apply_fill_color owns the
-     * indicator color — skip overriding it so the rule doesn't fight the
-     * limiter flash. Background + width can still be applied.
-     *
-     * KNOWN LIMITATION: when the zone clears (value drops below threshold),
-     * _arc_apply_fill_color restores d->arc_color, NOT the rule-overridden
-     * fg. The rule's color stays lost until the rule's condition changes
-     * again. Niche combo (rules + limiter on same widget); the fix would be
-     * caching fg in arc_data_t and reading it in _arc_apply_fill_color.
-     * Deferred — see TODO. */
-    bool zone_owns_fill = (d->in_limiter && d->limiter_effect != 0) ||
-                          (d->redline_enabled && d->redline_recolor_fill &&
-                           d->_cached_value >= d->redline_threshold);
-    if (!zone_owns_fill) {
-        lv_obj_set_style_arc_color(d->arc_obj, fg, LV_PART_INDICATOR);
+    /* Update the rule-fg cache that _arc_apply_fill_color reads. Setting
+     * (or clearing) it here means the next call — including the one we
+     * make below AND every future _arc_recompute_value tick — will pick
+     * the right "normal" base. This is what fixes the previously-known
+     * limitation: when a limiter or redline zone clears, the indicator
+     * snaps back to the rule colour instead of to d->arc_color. */
+    if (rule_sets_fg) {
+        d->_rule_arc_color = rule_fg;
+        d->_rule_arc_color_set = true;
+    } else {
+        d->_rule_arc_color_set = false;
     }
+
+    /* Delegate the indicator paint — _arc_apply_fill_color honours
+     * limiter solid / limiter flash phase / redline-recolor / rule-fg
+     * precedence in one place. Background + widths apply directly. */
+    _arc_apply_fill_color(d, night_mode_is_active());
     lv_obj_set_style_arc_width(d->arc_obj, fg_w, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(d->arc_obj, bg, LV_PART_MAIN);
     lv_obj_set_style_arc_width(d->arc_obj, bg_w, LV_PART_MAIN);

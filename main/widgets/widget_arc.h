@@ -84,6 +84,15 @@ typedef struct {
      * don't have to wait for the next signal tick to look right. */
     float      _cached_value;
 
+    /* Rule-override cached fg color. When a widget_rule overrides arc_color,
+     * _arc_apply_fill_color uses this as the "normal" base instead of
+     * d->arc_color. Cleared when the active rule set drops the arc_color
+     * override (or when no rule is active). Lets limiter/redline flash
+     * without clobbering the rule color permanently — the rule color is
+     * restored when the zone clears. */
+    lv_color_t _rule_arc_color;
+    bool       _rule_arc_color_set;
+
     /* Night-mode appearance overrides (only applied when night_mode active) */
     arc_night_overrides_t night;
 } arc_data_t;
