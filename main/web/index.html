@@ -2868,6 +2868,7 @@
                 <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions">&#9776;</button>
                 <div class="layout-menu" id="layoutMenu">
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Layout...</div>
+                    <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Save As...</div>
                     <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename...</div>
                     <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete Layout</div>
                     <div class="layout-menu-sep"></div>
@@ -4719,23 +4720,25 @@
         async function layoutEditorSaveAs() {
             const currentName = currentLayout.name || '';
             const suggested = currentName === 'default' ? '' : currentName + '_copy';
-            const name = prompt('Save as new layout name:', suggested);
-            if (!name || !name.trim()) return;
-            const safeName = name.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-            if (safeName === 'default') {
-                updateStatus('Cannot overwrite default layout', true);
-                return;
-            }
-            currentLayout.name = safeName;
-            try {
-                updateStatus('Saving as ' + safeName + '...');
-                const payload = buildFirmwarePayload();
-                const response = await fetch('/api/layout/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (response.ok) {
+            _showPromptOverlay('Save As New Layout', suggested, async (safeName) => {
+                if (safeName === 'default') {
+                    updateStatus('Cannot overwrite default layout', true);
+                    return;
+                }
+                /* Stash the original so we can roll back if the save fails —
+                 * otherwise the in-memory layout would be left with a name
+                 * that doesn't exist on disk. */
+                const originalName = currentLayout.name;
+                currentLayout.name = safeName;
+                try {
+                    updateStatus('Saving as ' + safeName + '...');
+                    const payload = buildFirmwarePayload();
+                    const response = await fetch('/api/layout/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) throw new Error();
                     updateStatus('Saved as ' + safeName);
                     history = [JSON.stringify(currentLayout)];
                     historyIndex = 0;
@@ -4743,8 +4746,11 @@
                     try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
                     await fetchLayoutsKeepCurrent();
                     setTimeout(captureScreenshot, 1500);
-                } else throw new Error();
-            } catch (e) { updateStatus('Save As failed', true); }
+                } catch (e) {
+                    currentLayout.name = originalName;
+                    updateStatus('Save As failed', true);
+                }
+            });
         }
 
         /** Shared firmware→web conversion for imported layouts.
@@ -5248,7 +5254,7 @@
                              * _meterSyncDerived translates this into the LVGL
                              * start_angle/end_angle pair the firmware reads. */
                             { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", min: 0, max: 359, step: 5 },
-                            { name: "sweep_degrees", label: "Sweep", type: "select", def: 270, cat: "data", options: _METER_SWEEP_OPTIONS },
+                            { name: "sweep_degrees", label: "Sweep", type: "slider", def: 270, cat: "data", min: 30, max: 360, step: 5 },
                             { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data" },
                             /* auto_ticks lives in w.config but is NOT in the inspector
                              * - see _meterSyncDerived. Min/Major Tick Spacing replace
@@ -13816,6 +13822,7 @@
                     { type: 'select', id: 'layoutSelect' },
                     { type: 'button', label: 'Save',        icon: 'save',   onclick: 'saveActiveLayout()' },
                     { type: 'button', label: 'New Layout\u2026', icon: 'plus', onclick: 'layoutEditorNew()' },
+                    { type: 'button', label: 'Save As\u2026',    icon: 'copy', onclick: 'layoutEditorSaveAs()' },
                     { type: 'button', label: 'Rename\u2026',  icon: 'edit',   onclick: 'renameCurrentLayout()' }
                 ]},
                 { heading: 'Screen', items: [

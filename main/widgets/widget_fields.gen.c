@@ -1007,8 +1007,8 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "sweep_degrees", .label = "Sweep",
-        .type = WF_TYPE_SELECT, .category = WF_CAT_DATA,
-        .min_int = 0, .max_int = 0, .step_int = 0,
+        .type = WF_TYPE_SLIDER, .category = WF_CAT_DATA,
+        .min_int = 30, .max_int = 360, .step_int = 5,
         .default_int = 270, .default_float = 270.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
@@ -1298,7 +1298,7 @@ static const widget_field_t meter_fields[] = {
     {
         .name = "label_gap", .label = "Label Gap",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
-        .min_int = -20, .max_int = 50, .step_int = 0,
+        .min_int = -150, .max_int = 150, .step_int = 0,
         .default_int = 10, .default_float = 10.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
