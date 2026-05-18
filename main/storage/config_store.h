@@ -154,6 +154,16 @@ typedef struct {
 esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg);
 esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
 
+/* ── OTA: dismissed-version sentinel ─────────────────────────────────────
+ * When the user hits "Skip this version" in the auto-OTA popup we store
+ * the offered version string here. On every subsequent boot OTA check, if
+ * the latest remote version still matches this string, the popup stays
+ * silent. When the upstream release moves past this version, the stored
+ * value is stale and the popup fires again. Length budget: typical
+ * semver strings like "1.2.3" or "1.2.3-rc1" — 32 bytes is plenty. */
+esp_err_t config_store_save_ota_skip_version(const char *version);
+esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

@@ -1,6 +1,7 @@
 #include "ota_handler.h"
 #include "ota_update_dialog.h"
 #include "version.h"
+#include "storage/config_store.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
@@ -855,9 +856,22 @@ static void _boot_check_task(void *arg)
 
     ota_status_t status = get_ota_status();
     if (status == OTA_UPDATE_AVAILABLE) {
-        ESP_LOGI(TAG, "Auto-OTA-check: update %s available — showing dialog",
-                 get_latest_version());
-        lv_async_call(_boot_show_dialog_async, NULL);
+        const char *latest = get_latest_version();
+        /* Honour the per-version dismissal: if the offered version still
+         * matches the one the user explicitly skipped, stay silent. As soon
+         * as upstream releases anything newer the stored value is stale and
+         * the popup fires normally. NVS load returning NOT_FOUND is the
+         * unset case → empty skip string → never matches. */
+        char skip[32] = {0};
+        config_store_load_ota_skip_version(skip, sizeof(skip));
+        if (latest && skip[0] && strcmp(latest, skip) == 0) {
+            ESP_LOGI(TAG, "Auto-OTA-check: %s previously skipped — no popup",
+                     latest);
+        } else {
+            ESP_LOGI(TAG, "Auto-OTA-check: update %s available — showing dialog",
+                     latest);
+            lv_async_call(_boot_show_dialog_async, NULL);
+        }
     } else {
         ESP_LOGI(TAG, "Auto-OTA-check: no popup (status=%d)", (int)status);
     }

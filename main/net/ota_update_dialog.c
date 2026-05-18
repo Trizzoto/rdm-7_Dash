@@ -1,5 +1,6 @@
 #include "ota_update_dialog.h"
 #include "theme.h"
+#include "storage/config_store.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,13 +16,19 @@ static lv_obj_t *progress_label = NULL;
 static lv_obj_t *status_label = NULL;
 static lv_obj_t *install_btn = NULL;
 static lv_obj_t *cancel_btn = NULL;
+static lv_obj_t *skip_btn = NULL;
 static lv_timer_t *progress_timer = NULL;
 static lv_timer_t *checking_timeout_timer = NULL;
 static bool update_in_progress = false;
+/* Version offered by the current dialog. Stashed by show_ota_update_dialog
+ * so the "Skip This Version" handler can persist it to NVS without having
+ * to re-derive it from the live OTA state (which may have raced by then). */
+static char s_offered_version[32] = {0};
 
 // Forward declarations
 static void install_btn_event_cb(lv_event_t *e);
 static void cancel_btn_event_cb(lv_event_t *e);
+static void skip_btn_event_cb(lv_event_t *e);
 static void progress_timer_cb(lv_timer_t *timer);
 void show_ota_check_failed_dialog(void);
 
@@ -32,10 +39,14 @@ static void install_btn_event_cb(lv_event_t *e) {
     ESP_LOGI(TAG, "Starting OTA update...");
     update_in_progress = true;
     
-    // Hide install button and show progress
-    if (install_btn && lv_obj_is_valid(install_btn)) {
+    // Hide install + cancel + skip during the update so the user can't
+    // trigger another flow mid-flash.
+    if (install_btn && lv_obj_is_valid(install_btn))
         lv_obj_add_flag(install_btn, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (cancel_btn && lv_obj_is_valid(cancel_btn))
+        lv_obj_add_flag(cancel_btn, LV_OBJ_FLAG_HIDDEN);
+    if (skip_btn && lv_obj_is_valid(skip_btn))
+        lv_obj_add_flag(skip_btn, LV_OBJ_FLAG_HIDDEN);
     
     // Update status and show progress bar
     if (status_label && lv_obj_is_valid(status_label)) {
@@ -63,15 +74,31 @@ static void install_btn_event_cb(lv_event_t *e) {
     start_ota_update_task();
 }
 
-// Cancel button event handler
+// "Later" button event handler — closes the dialog. The auto-OTA-check
+// is gated per-boot, so this version will pop again on the next reboot.
 static void cancel_btn_event_cb(lv_event_t *e) {
     if (update_in_progress) {
         // Cannot cancel during update - could brick device
         ESP_LOGW(TAG, "Cannot cancel update in progress");
         return;
     }
-    
-    ESP_LOGI(TAG, "OTA update cancelled by user");
+
+    ESP_LOGI(TAG, "OTA update postponed by user (will reappear next boot)");
+    close_ota_update_dialog();
+}
+
+// "Skip This Version" button event handler — writes the offered version
+// string to NVS so the auto-OTA-check stays silent until a *newer*
+// release appears upstream.
+static void skip_btn_event_cb(lv_event_t *e) {
+    if (update_in_progress) return;
+
+    if (s_offered_version[0] != '\0') {
+        ESP_LOGI(TAG, "OTA: user skipped version %s", s_offered_version);
+        esp_err_t err = config_store_save_ota_skip_version(s_offered_version);
+        if (err != ESP_OK)
+            ESP_LOGW(TAG, "Failed to persist skip-version: %s", esp_err_to_name(err));
+    }
     close_ota_update_dialog();
 }
 
@@ -149,7 +176,17 @@ static void progress_timer_cb(lv_timer_t *timer) {
 void show_ota_update_dialog(const char* current_version, const char* new_version, float file_size_mb, const char* release_notes) {
     // Close existing dialog if any
     close_ota_update_dialog();
-    
+
+    /* Remember which version we're offering — the "Skip This Version"
+     * handler reads this back when the user dismisses, since by then
+     * the live get_latest_version() may have raced or returned NULL. */
+    if (new_version) {
+        strncpy(s_offered_version, new_version, sizeof(s_offered_version) - 1);
+        s_offered_version[sizeof(s_offered_version) - 1] = '\0';
+    } else {
+        s_offered_version[0] = '\0';
+    }
+
     ESP_LOGI(TAG, "Showing OTA update dialog for version %s", new_version);
     
     // Create modal background
@@ -242,31 +279,52 @@ void show_ota_update_dialog(const char* current_version, const char* new_version
     lv_obj_set_flex_align(btn_container, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(btn_container, LV_OBJ_FLAG_SCROLLABLE);
     
-    // Cancel button
+    /* Three buttons across the 450 px footer: Later (postpone, dialog
+     * reappears next boot) → Skip This Version (writes to NVS, silent
+     * until a newer release lands) → Install Update (primary action).
+     * 140 wide × 3 + flex space-between fits comfortably. */
+    const lv_coord_t BTN_W = 140, BTN_H = 40;
+
+    // "Later" button (postpone until next boot)
     cancel_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(cancel_btn, 200, 40);
+    lv_obj_set_size(cancel_btn, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(cancel_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(cancel_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "Cancel");
+    lv_label_set_text(cancel_label, "Later");
     lv_obj_center(cancel_label);
     lv_obj_set_style_text_color(cancel_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(cancel_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(cancel_btn, cancel_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Install button
+    // "Skip This Version" button (persisted dismiss until a newer release)
+    skip_btn = lv_btn_create(btn_container);
+    lv_obj_set_size(skip_btn, BTN_W, BTN_H);
+    lv_obj_set_style_bg_color(skip_btn, THEME_COLOR_BTN_GRAY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(skip_btn, THEME_COLOR_BTN_GRAY_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(skip_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(skip_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_obj_t *skip_label = lv_label_create(skip_btn);
+    lv_label_set_text(skip_label, "Skip Version");
+    lv_obj_center(skip_label);
+    lv_obj_set_style_text_color(skip_label, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(skip_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(skip_btn, skip_btn_event_cb, LV_EVENT_CLICKED, NULL);
+
+    // Install button (primary)
     install_btn = lv_btn_create(btn_container);
-    lv_obj_set_size(install_btn, 200, 40);
+    lv_obj_set_size(install_btn, BTN_W, BTN_H);
     lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_SAVE, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(install_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(install_btn, THEME_RADIUS_NORMAL, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(install_btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t *install_label = lv_label_create(install_btn);
-    lv_label_set_text(install_label, "Install Update");
+    lv_label_set_text(install_label, "Install");
     lv_obj_center(install_label);
     lv_obj_set_style_text_color(install_label, THEME_COLOR_TEXT_ON_ACCENT, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(install_label, THEME_FONT_SMALL, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -302,6 +360,7 @@ void close_ota_update_dialog(void) {
     status_label = NULL;
     install_btn = NULL;
     cancel_btn = NULL;
+    skip_btn = NULL;
     update_in_progress = false;
 
     ESP_LOGI(TAG, "OTA update dialog closed");

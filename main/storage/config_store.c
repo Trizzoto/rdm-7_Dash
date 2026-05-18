@@ -712,6 +712,40 @@ esp_err_t config_store_load_night_mode(night_mode_config_t *cfg)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  OTA SKIP-VERSION (one short string, no schema)
+ *  Set when the user dismisses an offered firmware version via the
+ *  "Skip this version" button. Auto-OTA-check consults this on every
+ *  boot before showing the popup; a match silences the dialog.
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_OTA "ota_cfg"
+
+esp_err_t config_store_save_ota_skip_version(const char *version)
+{
+    if (!version) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_OTA, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(handle, "skip_ver", version);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) ESP_LOGI(TAG, "OTA skip-version saved: %s", version);
+    return err;
+}
+
+esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len)
+{
+    if (!out || out_len == 0) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    nvs_handle_t handle;
+    if (nvs_open(NS_OTA, NVS_READONLY, &handle) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    size_t n = out_len;
+    esp_err_t err = nvs_get_str(handle, "skip_ver", out, &n);
+    nvs_close(handle);
+    if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FACTORY RESET
  * ═══════════════════════════════════════════════════════════════════════ */
 
