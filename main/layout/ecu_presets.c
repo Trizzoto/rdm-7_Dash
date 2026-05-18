@@ -206,28 +206,47 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Ford FG - factory CAN, richer broadcast than BA/BF.
-     * Source: existing preconfig_items[] entries.
+     * Ford FG — factory CAN broadcast. Inherits the BA/BF frame layout
+     * (FG keeps the same engine-side broadcasts: 0x12D / 0x207 / 0x427 /
+     * 0x44D / 0x437 / 0x353). The previous FG preset used CAN IDs that
+     * don't appear anywhere on the actual FG bus (0x109 / 0x204 / 0x156 /
+     * 0x171) — those were placeholder values from an early experiment
+     * and have been retired.
+     *
+     * Sources cross-referenced 2026-05-18:
+     *   - BA/BF preset (verified in real BA/BF vehicles)
+     *   - jakka351/FG-Falcon "BigFalconSheet.xlsx" DBC tab
+     *   - jakka351/FG-Falcon resources/fg_controller_area.dbc
+     *
+     * GEAR is new: FG broadcasts TransmissionMode on 0x210 byte 8 (bit 56,
+     * 8-bit). Value is an integer mode code (P=1/R=2/N=3/D=4 typical) —
+     * widget can map via a value table.
+     *
+     * Boost pressure, damped fuel level, lateral acceleration, yaw rate
+     * and park-brake state also exist on the FG bus (0x425, 0x4B0, 0x000,
+     * 0x360) but the spreadsheet's bit-lengths for those are placeholder
+     * defaults — they'll land as schema-defined optional signals after a
+     * live capture confirms the actual encoding.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Ford",
         .version = "FG",
         .display = "Ford Falcon FG",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x109,  0, 16, 0.25f,    0.0f,   false, 1, "rpm",  0 },
-            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
-            [ECU_SIG_THROTTLE]        = { 0x204,  0, 16, 0.01f,    0.0f,   false, 1, "%",    1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x156,  0,  8, 1.0f,     -60.0f, false, 1, "degC", 0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
+            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,       0.0f,   false, 0, "rpm",   0 },
+            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,        0.0f,   false, 0, "kPa",   0 },
+            [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,        0.0f,   false, 0, "%",     1 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f,  -30.0f,  false, 0, "degC",  0 },
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
-            [ECU_SIG_OIL_TEMP]        = { 0x156,  8,  8, 1.0f,     -60.0f, false, 1, "degC", 0 },
+            [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
-            [ECU_SIG_VEHICLE_SPEED]   = { 0x109, 32, 16, 0.01f,    0.0f,   false, 1, "km/h", 0 },
-            [ECU_SIG_GEAR]            = { 0x171,  0,  8, 1.0f,     0.0f,   false, 1, "",     0 },
-            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,
-            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f,  0.0f,   false, 0, "km/h",  0 },
+            [ECU_SIG_GEAR]            = { 0x210, 56,  8, 1.0f,        0.0f,   false, 0, "",      0 },
+            [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V",     1 },
+            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr",  1 },
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
         },
     },
