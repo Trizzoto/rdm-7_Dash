@@ -6,6 +6,10 @@
  *
  * The frame parser is identical to the UART version — only the I/O layer
  * differs (tinyusb_cdcacm_read / tinyusb_cdcacm_write_queue).
+ *
+ * NOTE: This file is intentionally NOT included in the firmware build —
+ * see the BUILD STATUS block in usb_cdc_protocol.h for the rationale and
+ * re-enable steps.
  */
 #include "usb_cdc_protocol.h"
 #include "serial_protocol.h"
