@@ -461,6 +461,132 @@ static void _shape_panel_night_cb(bool active, void *user_data) {
     _shape_panel_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Polygon shapes (trapezoid+) are drawn in a custom DRAW_MAIN_END callback
+ * that reads bg_color/bg_opa from sd directly, so live preview is just
+ * "write the field + lv_obj_invalidate". Rectangle/circle use LVGL native
+ * styles, so we also propagate the style writes for those modes. */
+
+static bool _shape_panel_inspector_get(const widget_t *w, const char *name,
+                                       widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_SHAPE_PANEL || !w->type_data || !name || !out) return false;
+	const shape_panel_data_t *sd = (const shape_panel_data_t *)w->type_data;
+
+	if (strcmp(name, "shape_type") == 0)    { out->i = sd->shape_type;       return true; }
+	if (strcmp(name, "taper") == 0)         { out->i = sd->taper;            return true; }
+	if (strcmp(name, "taper_side") == 0)    { out->i = sd->taper_bottom ? 1 : 0; return true; }
+	if (strcmp(name, "bg_color") == 0)      { out->color = lv_color_to32(sd->bg_color)      & 0xFFFFFF; return true; }
+	if (strcmp(name, "bg_opa") == 0)        { out->i = sd->bg_opa;           return true; }
+	if (strcmp(name, "border_color") == 0)  { out->color = lv_color_to32(sd->border_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "border_width") == 0)  { out->i = sd->border_width;     return true; }
+	if (strcmp(name, "border_radius") == 0) { out->i = sd->border_radius;    return true; }
+	if (strcmp(name, "shadow_width") == 0)  { out->i = sd->shadow_width;     return true; }
+	if (strcmp(name, "shadow_color") == 0)  { out->color = lv_color_to32(sd->shadow_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "shadow_opa") == 0)    { out->i = sd->shadow_opa;       return true; }
+	if (strcmp(name, "shadow_ofs_x") == 0)  { out->i = sd->shadow_ofs_x;     return true; }
+	if (strcmp(name, "shadow_ofs_y") == 0)  { out->i = sd->shadow_ofs_y;     return true; }
+	return false;
+}
+
+static bool _shape_panel_inspector_set(widget_t *w, const char *name,
+                                       const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_SHAPE_PANEL || !w->type_data || !name || !in) return false;
+	shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
+	lv_obj_t *obj = w->root;
+	bool is_poly = _is_polygon_shape(sd->shape_type);
+
+	if (strcmp(name, "shape_type") == 0) {
+		int v = in->i; if (v < 0 || v > SHAPE_TYPE_CHEVRON_LEFT) v = 0;
+		sd->shape_type = (shape_panel_type_t)v;
+		/* shape switch may flip between native-style and polygon-draw modes —
+		 * rebuilding the LVGL object is the safest way to flip the draw path. */
+		return true;
+	}
+	if (strcmp(name, "taper") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
+		sd->taper = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj)) lv_obj_invalidate(obj);
+		return true;
+	}
+	if (strcmp(name, "taper_side") == 0) {
+		sd->taper_bottom = (in->i != 0);
+		if (obj && lv_obj_is_valid(obj)) lv_obj_invalidate(obj);
+		return true;
+	}
+	if (strcmp(name, "bg_color") == 0) {
+		sd->bg_color = lv_color_hex(in->color);
+		if (obj && lv_obj_is_valid(obj)) {
+			if (!is_poly) lv_obj_set_style_bg_color(obj, sd->bg_color, LV_PART_MAIN);
+			lv_obj_invalidate(obj);
+		}
+		return true;
+	}
+	if (strcmp(name, "bg_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		sd->bg_opa = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj)) {
+			if (!is_poly) lv_obj_set_style_bg_opa(obj, sd->bg_opa, LV_PART_MAIN);
+			lv_obj_invalidate(obj);
+		}
+		return true;
+	}
+	if (strcmp(name, "border_color") == 0) {
+		sd->border_color = lv_color_hex(in->color);
+		if (obj && lv_obj_is_valid(obj) && !is_poly)
+			lv_obj_set_style_border_color(obj, sd->border_color, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "border_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 20) v = 20;
+		sd->border_width = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj) && !is_poly)
+			lv_obj_set_style_border_width(obj, sd->border_width, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "border_radius") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 200) v = 200;
+		sd->border_radius = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj) && !is_poly &&
+		    sd->shape_type != SHAPE_TYPE_CIRCLE)
+			lv_obj_set_style_radius(obj, sd->border_radius, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "shadow_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
+		sd->shadow_width = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj))
+			lv_obj_set_style_shadow_width(obj, sd->shadow_width, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "shadow_color") == 0) {
+		sd->shadow_color = lv_color_hex(in->color);
+		if (obj && lv_obj_is_valid(obj))
+			lv_obj_set_style_shadow_color(obj, sd->shadow_color, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "shadow_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		sd->shadow_opa = (uint8_t)v;
+		if (obj && lv_obj_is_valid(obj))
+			lv_obj_set_style_shadow_opa(obj, sd->shadow_opa, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "shadow_ofs_x") == 0) {
+		sd->shadow_ofs_x = (int8_t)in->i;
+		if (obj && lv_obj_is_valid(obj))
+			lv_obj_set_style_shadow_ofs_x(obj, sd->shadow_ofs_x, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "shadow_ofs_y") == 0) {
+		sd->shadow_ofs_y = (int8_t)in->i;
+		if (obj && lv_obj_is_valid(obj))
+			lv_obj_set_style_shadow_ofs_y(obj, sd->shadow_ofs_y, LV_PART_MAIN);
+		return true;
+	}
+	return false;
+}
+
 /* ── Factory ────────────────────────────────────────────────────────────── */
 
 widget_t *widget_shape_panel_create_instance(uint8_t slot) {
@@ -505,6 +631,8 @@ widget_t *widget_shape_panel_create_instance(uint8_t slot) {
     w->destroy          = _shape_panel_destroy;
     w->apply_overrides  = _shape_panel_apply_overrides;
     w->apply_night_mode = _shape_panel_apply_night_mode;
+    w->inspector_get    = _shape_panel_inspector_get;
+    w->inspector_set    = _shape_panel_inspector_set;
 
     ESP_LOGI(TAG, "Created shape_panel instance slot=%u", slot);
     return w;

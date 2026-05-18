@@ -1024,6 +1024,91 @@ static void _indicator_night_cb(bool active, void *user_data) {
  * y=-133 */
 static const int16_t s_indicator_default_x[2] = {-95, 95};
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Schema names: schema/widgets.schema.json -> indicator fields. Live preview
+ * routes through update_indicator_ui_immediate(slot) so the visible recolor
+ * / opacity matches the runtime path exactly. `slot` is read-only here —
+ * the widget IS its slot, so the schema entry exists to display the side
+ * in the inspector header but writes are no-ops (changing slot would mean
+ * re-instantiating). */
+
+static bool _indicator_inspector_get(const widget_t *w, const char *name,
+                                     widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_INDICATOR || !w->type_data || !name || !out) return false;
+	const indicator_data_t *id = (const indicator_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)  { out->str = id->signal_name;        return true; }
+	if (strcmp(name, "slot") == 0)         { out->i = id->slot;                 return true; }
+	if (strcmp(name, "input_source") == 0) { out->i = id->input_source;         return true; }
+	if (strcmp(name, "animation") == 0)    { out->b = id->animation_enabled;    return true; }
+	if (strcmp(name, "is_momentary") == 0) { out->b = id->is_momentary;         return true; }
+	if (strcmp(name, "opa_on") == 0)       { out->i = id->opa_on;               return true; }
+	if (strcmp(name, "opa_off") == 0)      { out->i = id->opa_off;              return true; }
+	if (strcmp(name, "color_on") == 0)     { out->color = lv_color_to32(id->color_on)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_off") == 0)    { out->color = lv_color_to32(id->color_off) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _indicator_inspector_set(widget_t *w, const char *name,
+                                     const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_INDICATOR || !w->type_data || !name || !in) return false;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (id->signal_index >= 0)
+			signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+		safe_strncpy(id->signal_name, in->str, sizeof(id->signal_name));
+		id->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _indicator_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "slot") == 0) {
+		/* No-op — changing slot live would mean retargeting the global
+		 * ui_Indicator_Left / Right pair. Persists for layout reload. */
+		return true;
+	}
+	if (strcmp(name, "input_source") == 0) {
+		id->input_source = (uint8_t)in->i;
+		return true;
+	}
+	if (strcmp(name, "animation") == 0) {
+		id->animation_enabled = in->b;
+		return true;
+	}
+	if (strcmp(name, "is_momentary") == 0) {
+		id->is_momentary = in->b;
+		return true;
+	}
+	if (strcmp(name, "color_on") == 0) {
+		id->color_on = lv_color_hex(in->color);
+		update_indicator_ui_immediate(id->slot);
+		return true;
+	}
+	if (strcmp(name, "color_off") == 0) {
+		id->color_off = lv_color_hex(in->color);
+		update_indicator_ui_immediate(id->slot);
+		return true;
+	}
+	if (strcmp(name, "opa_on") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		id->opa_on = (uint8_t)v;
+		update_indicator_ui_immediate(id->slot);
+		return true;
+	}
+	if (strcmp(name, "opa_off") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		id->opa_off = (uint8_t)v;
+		update_indicator_ui_immediate(id->slot);
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_indicator_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1061,6 +1146,8 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	w->from_json = _indicator_from_json;
 	w->destroy = _indicator_destroy;
 	w->apply_night_mode = _indicator_apply_night_mode;
+	w->inspector_get = _indicator_inspector_get;
+	w->inspector_set = _indicator_inspector_set;
 
 	return w;
 }

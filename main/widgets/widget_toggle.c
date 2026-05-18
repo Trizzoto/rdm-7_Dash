@@ -647,6 +647,161 @@ static void _toggle_night_cb(bool active, void *user_data) {
     _toggle_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Live preview paths:
+ *   - Image-mode colour / opacity changes  -> _toggle_apply_image_state(d)
+ *   - Switch-mode colour changes           -> lv_obj_set_style_bg_color(sw_obj)
+ *   - Label text / font / align            -> direct on d->label_obj
+ *   - image_name and momentary             -> persisted only (rebuild required;
+ *                                             momentary flips the event-binding) */
+
+static bool _toggle_inspector_get(const widget_t *w, const char *name,
+                                  widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_TOGGLE || !w->type_data || !name || !out) return false;
+	const toggle_data_t *d = (const toggle_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)         { out->str = d->signal_name;  return true; }
+	if (strcmp(name, "label") == 0)               { out->str = d->label;        return true; }
+	if (strcmp(name, "font") == 0)                { out->str = d->font;         return true; }
+	if (strcmp(name, "image_name") == 0)          { out->str = d->image_name;   return true; }
+	if (strcmp(name, "show_label") == 0)          { out->b = d->show_label;     return true; }
+	if (strcmp(name, "signal_on_threshold") == 0) { out->i = (int32_t)d->signal_on_threshold; return true; }
+	if (strcmp(name, "tx_can_id") == 0)           { out->i = (int32_t)d->tx_can_id;    return true; }
+	if (strcmp(name, "tx_bit_start") == 0)        { out->i = d->tx_bit_start;   return true; }
+	if (strcmp(name, "tx_bit_length") == 0)       { out->i = d->tx_bit_length;  return true; }
+	if (strcmp(name, "tx_endian") == 0)           { out->i = d->tx_endian;      return true; }
+	if (strcmp(name, "tx_rate_hz") == 0)          { out->i = d->tx_rate_hz;     return true; }
+	if (strcmp(name, "active_opa") == 0)          { out->i = d->active_opa;     return true; }
+	if (strcmp(name, "inactive_opa") == 0)        { out->i = d->inactive_opa;   return true; }
+	if (strcmp(name, "label_align") == 0)         { out->i = d->label_align;    return true; }
+	if (strcmp(name, "label_x") == 0)             { out->i = d->label_x;        return true; }
+	if (strcmp(name, "label_y") == 0)             { out->i = d->label_y;        return true; }
+	if (strcmp(name, "active_color") == 0)        { out->color = lv_color_to32(d->active_color)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "inactive_color") == 0)      { out->color = lv_color_to32(d->inactive_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "label_color") == 0)         { out->color = lv_color_to32(d->label_color)    & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _toggle_inspector_set(widget_t *w, const char *name,
+                                  const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_TOGGLE || !w->type_data || !name || !in) return false;
+	toggle_data_t *d = (toggle_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (d->signal_index >= 0)
+			signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
+		safe_strncpy(d->signal_name, in->str, sizeof(d->signal_name));
+		d->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _toggle_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "label") == 0 && in->str) {
+		safe_strncpy(d->label, in->str, sizeof(d->label));
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_label_set_text(d->label_obj, d->label);
+		return true;
+	}
+	if (strcmp(name, "font") == 0 && in->str) {
+		safe_strncpy(d->font, in->str, sizeof(d->font));
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			const lv_font_t *f = widget_resolve_font(d->font);
+			if (f) lv_obj_set_style_text_font(d->label_obj, f,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	if (strcmp(name, "image_name") == 0 && in->str) {
+		safe_strncpy(d->image_name, in->str, sizeof(d->image_name));
+		return true;   /* switch <-> image flips object type — needs rebuild */
+	}
+	if (strcmp(name, "show_label") == 0) {
+		d->show_label = in->b;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			if (d->show_label) lv_obj_clear_flag(d->label_obj, LV_OBJ_FLAG_HIDDEN);
+			else               lv_obj_add_flag  (d->label_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
+	}
+	if (strcmp(name, "signal_on_threshold") == 0) {
+		d->signal_on_threshold = (float)in->i;
+		return true;
+	}
+	if (strcmp(name, "tx_can_id") == 0)     { d->tx_can_id     = (uint32_t)in->i; return true; }
+	if (strcmp(name, "tx_bit_start") == 0)  { d->tx_bit_start  = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_bit_length") == 0) { d->tx_bit_length = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_endian") == 0)     { d->tx_endian     = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_rate_hz") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
+		d->tx_rate_hz = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "active_color") == 0) {
+		d->active_color = lv_color_hex(in->color);
+		if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
+			lv_obj_set_style_bg_color(d->sw_obj, d->active_color,
+				LV_PART_INDICATOR | LV_STATE_CHECKED);
+		_toggle_apply_image_state(d);
+		return true;
+	}
+	if (strcmp(name, "inactive_color") == 0) {
+		d->inactive_color = lv_color_hex(in->color);
+		if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
+			lv_obj_set_style_bg_color(d->sw_obj, d->inactive_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		_toggle_apply_image_state(d);
+		return true;
+	}
+	if (strcmp(name, "active_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		d->active_opa = (uint8_t)v;
+		_toggle_apply_image_state(d);
+		return true;
+	}
+	if (strcmp(name, "inactive_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		d->inactive_opa = (uint8_t)v;
+		_toggle_apply_image_state(d);
+		return true;
+	}
+	if (strcmp(name, "label_color") == 0) {
+		d->label_color = lv_color_hex(in->color);
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_obj_set_style_text_color(d->label_obj, d->label_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_align") == 0) {
+		uint8_t a = (uint8_t)in->i; if (a > 2) a = 1;
+		d->label_align = a;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_obj_set_style_text_align(d->label_obj, _to_lv_align(a),
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_x") == 0) {
+		d->label_x = (int16_t)in->i;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			lv_obj_set_align(d->label_obj, LV_ALIGN_CENTER);
+			lv_obj_set_pos(d->label_obj, d->label_x, d->label_y);
+		}
+		return true;
+	}
+	if (strcmp(name, "label_y") == 0) {
+		d->label_y = (int16_t)in->i;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			lv_obj_set_align(d->label_obj, LV_ALIGN_CENTER);
+			lv_obj_set_pos(d->label_obj, d->label_x, d->label_y);
+		}
+		return true;
+	}
+	return false;
+}
+
 /* ── Factory ────────────────────────────────────────────────────────────── */
 widget_t *widget_toggle_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
@@ -691,6 +846,8 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     w->destroy          = _toggle_destroy;
     w->apply_overrides  = _toggle_apply_overrides;
     w->apply_night_mode = _toggle_apply_night_mode;
+    w->inspector_get    = _toggle_inspector_get;
+    w->inspector_set    = _toggle_inspector_set;
 
     return w;
 }

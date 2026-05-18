@@ -236,6 +236,85 @@ static void _text_night_cb(bool active, void *user_data) {
 	_text_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────── */
+
+static bool _text_inspector_get(const widget_t *w, const char *name,
+                                widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_TEXT || !w->type_data || !name || !out) return false;
+	const text_data_t *td = (const text_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0) { out->str = td->signal_name; return true; }
+	if (strcmp(name, "static_text") == 0) { out->str = td->static_text; return true; }
+	if (strcmp(name, "font") == 0)        { out->str = td->font;        return true; }
+	if (strcmp(name, "decimals") == 0)    { out->i = td->decimals;      return true; }
+	if (strcmp(name, "rotation") == 0)    { out->i = td->rotation;      return true; }
+	if (strcmp(name, "text_color") == 0)  { out->color = lv_color_to32(td->text_color) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _text_inspector_set(widget_t *w, const char *name,
+                                const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_TEXT || !w->type_data || !name || !in) return false;
+	text_data_t *td = (text_data_t *)w->type_data;
+	lv_obj_t *lbl = w->root;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (td->signal_index >= 0)
+			signal_unsubscribe(td->signal_index, _text_on_signal, w);
+		safe_strncpy(td->signal_name, in->str, sizeof(td->signal_name));
+		td->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _text_on_signal, w);
+		/* If newly unbound, fall back to static_text immediately. */
+		if (new_idx < 0 && lbl && lv_obj_is_valid(lbl))
+			lv_label_set_text(lbl, td->static_text[0] ? td->static_text : "---");
+		return true;
+	}
+	if (strcmp(name, "static_text") == 0 && in->str) {
+		safe_strncpy(td->static_text, in->str, sizeof(td->static_text));
+		if (lbl && lv_obj_is_valid(lbl) && td->signal_index < 0)
+			lv_label_set_text(lbl, td->static_text);
+		return true;
+	}
+	if (strcmp(name, "font") == 0 && in->str) {
+		safe_strncpy(td->font, in->str, sizeof(td->font));
+		const lv_font_t *f = widget_resolve_font(td->font);
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_font(lbl, f ? f : THEME_FONT_BODY,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "decimals") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 4) v = 4;
+		td->decimals = (uint8_t)v;
+		return true;   /* picked up by the next _text_on_signal call */
+	}
+	if (strcmp(name, "rotation") == 0) {
+		int v = in->i; v %= 360; if (v < 0) v += 360;
+		td->rotation = (int16_t)v;
+		if (lbl && lv_obj_is_valid(lbl)) {
+			lv_obj_set_style_transform_angle(lbl, td->rotation * 10,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_transform_pivot_x(lbl, (lv_coord_t)(w->w / 2),
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_transform_pivot_y(lbl, (lv_coord_t)(w->h / 2),
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	if (strcmp(name, "text_color") == 0) {
+		td->text_color = lv_color_hex(in->color);
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_color(lbl, td->text_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	return false;
+}
+
 /* ── Factory ─────────────────────────────────────────────────────────────── */
 
 widget_t *widget_text_create_instance(uint8_t value_idx) {
@@ -268,6 +347,8 @@ widget_t *widget_text_create_instance(uint8_t value_idx) {
 	w->destroy = _text_destroy;
 	w->apply_overrides = _text_apply_overrides;
 	w->apply_night_mode = _text_apply_night_mode;
+	w->inspector_get = _text_inspector_get;
+	w->inspector_set = _text_inspector_set;
 
 	return w;
 }

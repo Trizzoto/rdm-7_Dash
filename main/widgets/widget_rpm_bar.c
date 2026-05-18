@@ -1233,6 +1233,104 @@ static void _rpm_bar_night_cb(bool active, void *user_data) {
 	_rpm_bar_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ──────────────────────────────────────────────────
+ *
+ * Schema names: schema/widgets.schema.json -> rpm_bar fields. Note two
+ * field-name remappings:
+ *   schema "rpm_max"     -> rpm_bar_data_t.gauge_max + legacy global rpm_gauge_max
+ *   schema "flash_speed" -> rpm_bar_data_t.flash_speed_ms
+ *
+ * Live preview leans on the existing _apply_limiter_effect() and tick-line
+ * rebuild helpers — same path the legacy on-device config callbacks use. */
+
+static bool _rpm_bar_inspector_get(const widget_t *w, const char *name,
+                                   widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !name || !out) return false;
+	const rpm_bar_data_t *rd = (const rpm_bar_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)    { out->str = rd->signal_name;   return true; }
+	if (strcmp(name, "rpm_max") == 0)        { out->i = rd->gauge_max;       return true; }
+	if (strcmp(name, "redline") == 0)        { out->i = rd->redline;         return true; }
+	if (strcmp(name, "limiter_effect") == 0) { out->i = rd->limiter_effect;  return true; }
+	if (strcmp(name, "limiter_value") == 0)  { out->i = rd->limiter_value;   return true; }
+	if (strcmp(name, "flash_speed") == 0)    { out->i = rd->flash_speed_ms;  return true; }
+	if (strcmp(name, "bar_color") == 0)      { out->color = lv_color_to32(rd->bar_color)     & 0xFFFFFF; return true; }
+	if (strcmp(name, "limiter_color") == 0)  { out->color = lv_color_to32(rd->limiter_color) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
+                                   const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_RPM_BAR || !w->type_data || !name || !in) return false;
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (rd->signal_index >= 0)
+			signal_unsubscribe(rd->signal_index, _rpm_bar_on_signal, w);
+		safe_strncpy(rd->signal_name, in->str, sizeof(rd->signal_name));
+		rd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _rpm_bar_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "rpm_max") == 0) {
+		int v = in->i;
+		if (v < 1000)  v = 1000;
+		if (v > 20000) v = 20000;
+		rd->gauge_max = v;
+		rpm_gauge_max = v;   /* mirror global used by tick / redline helpers */
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
+			lv_bar_set_range(rpm_bar_gauge, 0, rpm_gauge_max);
+		if (w->root && lv_obj_is_valid(w->root))
+			update_rpm_lines(w->root);
+		update_redline_position();
+		return true;
+	}
+	if (strcmp(name, "redline") == 0) {
+		int v = in->i;
+		if (v < 0) v = 0;
+		rd->redline = v;
+		rpm_redline_value = v;
+		update_redline_position();
+		return true;
+	}
+	if (strcmp(name, "bar_color") == 0) {
+		rd->bar_color = lv_color_hex(in->color);
+		_apply_limiter_effect();   /* repaints with new bar / limiter colours */
+		return true;
+	}
+	if (strcmp(name, "limiter_color") == 0) {
+		rd->limiter_color = lv_color_hex(in->color);
+		_apply_limiter_effect();
+		return true;
+	}
+	if (strcmp(name, "limiter_effect") == 0) {
+		uint8_t v = (uint8_t)in->i;
+		if (v > 2) v = 0;
+		rd->limiter_effect = v;
+		_ensure_flash_timer(v == 1 ? (rd->flash_speed_ms ? rd->flash_speed_ms : 200) : 0);
+		_apply_limiter_effect();
+		return true;
+	}
+	if (strcmp(name, "limiter_value") == 0) {
+		rd->limiter_value = (int32_t)in->i;
+		_apply_limiter_effect();
+		return true;
+	}
+	if (strcmp(name, "flash_speed") == 0) {
+		int v = in->i;
+		if (v < 50)   v = 50;
+		if (v > 1000) v = 1000;
+		rd->flash_speed_ms = (uint16_t)v;
+		if (rd->limiter_effect == 1) _ensure_flash_timer(rd->flash_speed_ms);
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_rpm_bar_create_instance(void) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1276,6 +1374,8 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	w->destroy = _rpm_bar_destroy;
 	w->apply_overrides = _rpm_bar_apply_overrides;
 	w->apply_night_mode = _rpm_bar_apply_night_mode;
+	w->inspector_get = _rpm_bar_inspector_get;
+	w->inspector_set = _rpm_bar_inspector_set;
 
 	return w;
 }

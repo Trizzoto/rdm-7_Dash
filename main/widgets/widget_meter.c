@@ -1247,6 +1247,238 @@ static void _meter_night_cb(bool active, void *user_data) {
 	_meter_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Meter is the largest widget — most of its fields are baked into the
+ * lv_meter scale / indicator at create time and aren't safely mutable live
+ * (LVGL v8 limitation: no public API to repaint tick widths / colours after
+ * lv_meter_add_scale_*). Strategy:
+ *   - Always write the field into type_data so a save + dashboard reload
+ *     picks it up.
+ *   - For the small set of fields that map to lv_obj_set_style_* on the
+ *     meter object (bg / border), apply live too.
+ *   - Schema field deltas:
+ *       "start_angle_user" -> md->start_angle (raw)
+ *       "sweep_degrees"    -> recomputes md->end_angle from start_angle
+ *       "minor_tick_step"  -> derives md->minor_tick_count from (max-min)
+ *       "major_tick_step"  -> derives md->major_tick_every from minor_count */
+
+static bool _meter_inspector_get(const widget_t *w, const char *name,
+                                 widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_METER || !w->type_data || !name || !out) return false;
+	const meter_data_t *md = (const meter_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)        { out->str = md->signal_name;       return true; }
+	if (strcmp(name, "tick_label_font") == 0)    { out->str = md->tick_label_font;   return true; }
+	if (strcmp(name, "needle_image_name") == 0)  { out->str = md->needle_image_name; return true; }
+	if (strcmp(name, "bg_image_name") == 0)      { out->str = md->bg_image_name;     return true; }
+	if (strcmp(name, "min") == 0)                { out->i = md->min;                 return true; }
+	if (strcmp(name, "max") == 0)                { out->i = md->max;                 return true; }
+	if (strcmp(name, "start_angle_user") == 0)   { out->i = md->start_angle;         return true; }
+	if (strcmp(name, "sweep_degrees") == 0) {
+		int sweep = ((int)md->end_angle - (int)md->start_angle + 360) % 360;
+		if (sweep == 0 && md->start_angle != md->end_angle) sweep = 360;
+		out->i = sweep;
+		return true;
+	}
+	if (strcmp(name, "reverse") == 0)            { out->b = md->reverse;             return true; }
+	if (strcmp(name, "minor_tick_step") == 0) {
+		int32_t range = md->max - md->min;
+		int32_t denom = md->minor_tick_count > 1 ? md->minor_tick_count - 1 : 1;
+		out->i = range / denom;
+		return true;
+	}
+	if (strcmp(name, "major_tick_step") == 0) {
+		int32_t range = md->max - md->min;
+		int32_t denom = md->minor_tick_count > 1 ? md->minor_tick_count - 1 : 1;
+		int32_t mstep = range / denom;
+		out->i = mstep * md->major_tick_every;
+		return true;
+	}
+	if (strcmp(name, "anchor_enabled") == 0)     { out->b = md->anchor_enabled;      return true; }
+	if (strcmp(name, "anchor_value") == 0)       { out->i = md->anchor_value;        return true; }
+	if (strcmp(name, "anchor_position") == 0)    { out->i = md->anchor_position;     return true; }
+	if (strcmp(name, "redline_enabled") == 0)    { out->b = md->redline_enabled;     return true; }
+	if (strcmp(name, "redline_threshold") == 0)  { out->i = md->redline_threshold;   return true; }
+	if (strcmp(name, "redline_show_arc") == 0)   { out->b = md->redline_show_arc;    return true; }
+	if (strcmp(name, "redline_arc_width") == 0)  { out->i = md->redline_arc_width;   return true; }
+	if (strcmp(name, "redline_arc_r_mod") == 0)  { out->i = md->redline_arc_r_mod;   return true; }
+	if (strcmp(name, "redline_recolor_ticks") == 0) { out->b = md->redline_recolor_ticks; return true; }
+	if (strcmp(name, "redline_color") == 0)      { out->color = lv_color_to32(md->redline_color)    & 0xFFFFFF; return true; }
+	if (strcmp(name, "meter_bg_opa") == 0)       { out->i = md->meter_bg_opa;        return true; }
+	if (strcmp(name, "meter_bg_color") == 0)     { out->color = lv_color_to32(md->meter_bg_color)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "border_color") == 0)       { out->color = lv_color_to32(md->border_color)     & 0xFFFFFF; return true; }
+	if (strcmp(name, "border_width") == 0)       { out->i = md->border_width;        return true; }
+	if (strcmp(name, "border_opa") == 0)         { out->i = md->border_opa;          return true; }
+	if (strcmp(name, "scale_padding") == 0)      { out->i = md->scale_padding;       return true; }
+	if (strcmp(name, "show_ticks") == 0)         { out->b = md->show_ticks;          return true; }
+	if (strcmp(name, "show_tick_labels") == 0)   { out->b = md->show_tick_labels;    return true; }
+	if (strcmp(name, "label_gap") == 0)          { out->i = md->label_gap;           return true; }
+	if (strcmp(name, "tick_label_color") == 0)   { out->color = lv_color_to32(md->tick_label_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "minor_tick_width") == 0)   { out->i = md->minor_tick_width;    return true; }
+	if (strcmp(name, "minor_tick_length") == 0)  { out->i = md->minor_tick_length;   return true; }
+	if (strcmp(name, "major_tick_width") == 0)   { out->i = md->major_tick_width;    return true; }
+	if (strcmp(name, "major_tick_length") == 0)  { out->i = md->major_tick_length;   return true; }
+	if (strcmp(name, "minor_tick_color") == 0)   { out->color = lv_color_to32(md->minor_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "major_tick_color") == 0)   { out->color = lv_color_to32(md->major_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "needle_width") == 0)       { out->i = md->needle_width;        return true; }
+	if (strcmp(name, "needle_color") == 0)       { out->color = lv_color_to32(md->needle_color)     & 0xFFFFFF; return true; }
+	if (strcmp(name, "needle_r_mod") == 0)       { out->i = md->needle_r_mod;        return true; }
+	if (strcmp(name, "needle_rear_length") == 0) { out->i = md->needle_rear_length;  return true; }
+	if (strcmp(name, "needle_tip_style") == 0)   { out->i = md->needle_tip_style;    return true; }
+	if (strcmp(name, "needle_tip_base_w") == 0)  { out->i = md->needle_tip_base_w;   return true; }
+	if (strcmp(name, "needle_tip_point_w") == 0) { out->i = md->needle_tip_point_w;  return true; }
+	if (strcmp(name, "needle_tip_taper") == 0)   { out->i = md->needle_tip_taper;    return true; }
+	if (strcmp(name, "needle_ball_size") == 0)   { out->i = md->needle_ball_size;    return true; }
+	if (strcmp(name, "needle_ball_color") == 0)  { out->color = lv_color_to32(md->needle_ball_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "needle_pivot_x") == 0)     { out->i = md->needle_pivot_x;      return true; }
+	if (strcmp(name, "needle_pivot_y") == 0)     { out->i = md->needle_pivot_y;      return true; }
+	if (strcmp(name, "needle_angle_offset") == 0){ out->i = md->needle_angle_offset; return true; }
+	return false;
+}
+
+static bool _meter_inspector_set(widget_t *w, const char *name,
+                                 const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_METER || !w->type_data || !name || !in) return false;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	lv_obj_t *m = md->meter;
+	#define LV_VALID(o) ((o) && lv_obj_is_valid(o))
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (md->signal_index >= 0)
+			signal_unsubscribe(md->signal_index, _meter_on_signal, w);
+		safe_strncpy(md->signal_name, in->str, sizeof(md->signal_name));
+		md->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _meter_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "tick_label_font") == 0 && in->str) {
+		safe_strncpy(md->tick_label_font, in->str, sizeof(md->tick_label_font));
+		return true;
+	}
+	if (strcmp(name, "needle_image_name") == 0 && in->str) {
+		safe_strncpy(md->needle_image_name, in->str, sizeof(md->needle_image_name));
+		return true;
+	}
+	if (strcmp(name, "bg_image_name") == 0 && in->str) {
+		safe_strncpy(md->bg_image_name, in->str, sizeof(md->bg_image_name));
+		return true;
+	}
+	if (strcmp(name, "min") == 0) { md->min = (int32_t)in->i; return true; }
+	if (strcmp(name, "max") == 0) { md->max = (int32_t)in->i; return true; }
+	if (strcmp(name, "start_angle_user") == 0) {
+		int v = in->i; v %= 360; if (v < 0) v += 360;
+		md->start_angle = (int16_t)v;
+		return true;
+	}
+	if (strcmp(name, "sweep_degrees") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 360) v = 360;
+		md->end_angle = (int16_t)((md->start_angle + v) % 360);
+		return true;
+	}
+	if (strcmp(name, "reverse") == 0) { md->reverse = in->b; return true; }
+	if (strcmp(name, "minor_tick_step") == 0) {
+		int step = in->i;
+		if (step < 1) step = 1;
+		int32_t range = md->max - md->min;
+		int count = range / step + 1;
+		if (count < 2)   count = 2;
+		if (count > 200) count = 200;
+		md->minor_tick_count = (uint8_t)count;
+		return true;
+	}
+	if (strcmp(name, "major_tick_step") == 0) {
+		int mstep = in->i;
+		if (mstep < 1) mstep = 1;
+		int32_t range = md->max - md->min;
+		int32_t denom = md->minor_tick_count > 1 ? md->minor_tick_count - 1 : 1;
+		int32_t minor_step = range / denom;
+		if (minor_step < 1) minor_step = 1;
+		int every = mstep / minor_step;
+		if (every < 1)   every = 1;
+		if (every > 200) every = 200;
+		md->major_tick_every = (uint8_t)every;
+		return true;
+	}
+	if (strcmp(name, "anchor_enabled") == 0) { md->anchor_enabled = in->b; return true; }
+	if (strcmp(name, "anchor_value") == 0)   { md->anchor_value = (int32_t)in->i; return true; }
+	if (strcmp(name, "anchor_position") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 100) v = 100;
+		md->anchor_position = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "redline_enabled") == 0)        { md->redline_enabled = in->b; return true; }
+	if (strcmp(name, "redline_threshold") == 0)      { md->redline_threshold = (int32_t)in->i; return true; }
+	if (strcmp(name, "redline_show_arc") == 0)       { md->redline_show_arc = in->b; return true; }
+	if (strcmp(name, "redline_arc_width") == 0)      { md->redline_arc_width = (uint8_t)in->i; return true; }
+	if (strcmp(name, "redline_arc_r_mod") == 0)      { md->redline_arc_r_mod = (int16_t)in->i; return true; }
+	if (strcmp(name, "redline_recolor_ticks") == 0)  { md->redline_recolor_ticks = in->b; return true; }
+	if (strcmp(name, "redline_color") == 0)          { md->redline_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "meter_bg_color") == 0) {
+		md->meter_bg_color = lv_color_hex(in->color);
+		if (LV_VALID(m)) lv_obj_set_style_bg_color(m, md->meter_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "meter_bg_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		md->meter_bg_opa = (uint8_t)v;
+		if (LV_VALID(m)) lv_obj_set_style_bg_opa(m, md->meter_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "border_color") == 0) {
+		md->border_color = lv_color_hex(in->color);
+		if (LV_VALID(m)) lv_obj_set_style_border_color(m, md->border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "border_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 20) v = 20;
+		md->border_width = (uint8_t)v;
+		if (LV_VALID(m)) lv_obj_set_style_border_width(m, md->border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "border_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		md->border_opa = (uint8_t)v;
+		if (LV_VALID(m)) lv_obj_set_style_border_opa(m, md->border_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "scale_padding") == 0)    { md->scale_padding = (uint8_t)in->i; return true; }
+	if (strcmp(name, "show_ticks") == 0)       { md->show_ticks = in->b;             return true; }
+	if (strcmp(name, "show_tick_labels") == 0) { md->show_tick_labels = in->b;       return true; }
+	if (strcmp(name, "label_gap") == 0)        { md->label_gap = (int16_t)in->i;     return true; }
+	if (strcmp(name, "tick_label_color") == 0) { md->tick_label_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "minor_tick_width") == 0)  { md->minor_tick_width = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "minor_tick_length") == 0) { md->minor_tick_length = (uint8_t)in->i; return true; }
+	if (strcmp(name, "major_tick_width") == 0)  { md->major_tick_width = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "major_tick_length") == 0) { md->major_tick_length = (uint8_t)in->i; return true; }
+	if (strcmp(name, "minor_tick_color") == 0)  { md->minor_tick_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "major_tick_color") == 0)  { md->major_tick_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "needle_width") == 0)        { md->needle_width = (uint8_t)in->i;      return true; }
+	if (strcmp(name, "needle_color") == 0)        { md->needle_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "needle_r_mod") == 0)        { md->needle_r_mod = (int16_t)in->i;      return true; }
+	if (strcmp(name, "needle_rear_length") == 0)  { md->needle_rear_length = (uint8_t)in->i; return true; }
+	if (strcmp(name, "needle_tip_style") == 0)    { md->needle_tip_style = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "needle_tip_base_w") == 0)   { md->needle_tip_base_w = (uint8_t)in->i; return true; }
+	if (strcmp(name, "needle_tip_point_w") == 0)  { md->needle_tip_point_w = (uint8_t)in->i; return true; }
+	if (strcmp(name, "needle_tip_taper") == 0)    { md->needle_tip_taper = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "needle_ball_size") == 0)    { md->needle_ball_size = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "needle_ball_color") == 0) {
+		md->needle_ball_color = lv_color_hex(in->color);
+		if (LV_VALID(m))
+			lv_obj_set_style_bg_color(m, md->needle_ball_color, LV_PART_INDICATOR);
+		return true;
+	}
+	if (strcmp(name, "needle_pivot_x") == 0)      { md->needle_pivot_x = (int16_t)in->i;     return true; }
+	if (strcmp(name, "needle_pivot_y") == 0)      { md->needle_pivot_y = (int16_t)in->i;     return true; }
+	if (strcmp(name, "needle_angle_offset") == 0) { md->needle_angle_offset = (int16_t)in->i; return true; }
+	#undef LV_VALID
+	return false;
+}
+
 widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1339,6 +1571,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	w->destroy = _meter_destroy;
 	w->apply_overrides = _meter_apply_overrides;
 	w->apply_night_mode = _meter_apply_night_mode;
+	w->inspector_get = _meter_inspector_get;
+	w->inspector_set = _meter_inspector_set;
 
 	return w;
 }

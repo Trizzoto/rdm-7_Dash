@@ -360,6 +360,79 @@ static void _image_night_cb(bool active, void *user_data) {
 	_image_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Note: schema "image_scale" is expressed as a 1..200 percent (default 100),
+ * but the runtime stores the raw LVGL zoom value (256 = 100%). The hooks
+ * here convert between the two so the inspector slider reads / writes the
+ * expected percent values. image_name writes through to type_data — the
+ * lv_img source swap needs a rebuild to honour the auto_size fit logic. */
+
+static bool _image_inspector_get(const widget_t *w, const char *name,
+                                 widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_IMAGE || !w->type_data || !name || !out) return false;
+	const image_data_t *id = (const image_data_t *)w->type_data;
+
+	if (strcmp(name, "image_name") == 0)  { out->str = id->image_name; return true; }
+	if (strcmp(name, "image_scale") == 0) { out->i = (id->image_scale * 100 + 128) / 256; return true; }
+	if (strcmp(name, "opacity") == 0)     { out->i = id->opacity;     return true; }
+	if (strcmp(name, "recolor_opa") == 0) { out->i = id->recolor_opa; return true; }
+	if (strcmp(name, "recolor") == 0)     { out->color = lv_color_to32(id->recolor) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _image_inspector_set(widget_t *w, const char *name,
+                                 const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_IMAGE || !w->type_data || !name || !in) return false;
+	image_data_t *id = (image_data_t *)w->type_data;
+
+	if (strcmp(name, "image_name") == 0 && in->str) {
+		safe_strncpy(id->image_name, in->str, sizeof(id->image_name));
+		return true;   /* needs rebuild — auto_size fit + descriptor load on _image_create */
+	}
+	if (strcmp(name, "image_scale") == 0) {
+		int pct = in->i; if (pct < 10) pct = 10; if (pct > 200) pct = 200;
+		id->image_scale = (uint16_t)((pct * 256 + 50) / 100);
+		id->auto_size = false;   /* explicit scale wins over auto-fit */
+		if (id->img_obj && lv_obj_is_valid(id->img_obj))
+			lv_img_set_zoom(id->img_obj, id->image_scale);
+		return true;
+	}
+	if (strcmp(name, "opacity") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		id->opacity = (uint8_t)v;
+		if (id->img_obj && lv_obj_is_valid(id->img_obj))
+			lv_obj_set_style_img_opa(id->img_obj, id->opacity,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (id->night_img_obj && lv_obj_is_valid(id->night_img_obj))
+			lv_obj_set_style_img_opa(id->night_img_obj, id->opacity,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "recolor_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		id->recolor_opa = (uint8_t)v;
+		if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
+			lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	if (strcmp(name, "recolor") == 0) {
+		id->recolor = lv_color_hex(in->color);
+		if (id->img_obj && lv_obj_is_valid(id->img_obj) && id->recolor_opa > 0) {
+			lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_image_create_instance(uint8_t slot) {
 	(void)slot; /* images don't use slots */
 
@@ -391,6 +464,8 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	w->from_json = _image_from_json;
 	w->destroy = _image_destroy;
 	w->apply_night_mode = _image_apply_night_mode;
+	w->inspector_get = _image_inspector_get;
+	w->inspector_set = _image_inspector_set;
 
 	return w;
 }

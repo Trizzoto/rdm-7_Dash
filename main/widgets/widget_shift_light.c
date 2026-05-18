@@ -499,6 +499,150 @@ static void _shl_night_cb(bool active, void *user_data) {
     _shl_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Live preview: colour changes re-apply on every LED based on the current
+ * active_count; geometry changes call _update_led_layout(); flash_speed
+ * tears down and rebuilds the lv_timer. led_count writes through to data
+ * but defers the visible change to the next layout reload because the LED
+ * objects are created in _shl_create(). Threshold fields are 0..1 floats —
+ * the inspector currently only forwards int via the numeric keypad, so
+ * these are stored as (float)i and effectively snap to 0 or 1 from the UI
+ * until the schema gains a SLIDER-percent or float input. */
+
+static void _shl_repaint(widget_t *w) {
+	shift_light_data_t *d = (shift_light_data_t *)w->type_data;
+	if (!d || !w->root || !lv_obj_is_valid(w->root)) return;
+
+	bool active[16] = {false};
+	int  step_of[16] = {0};
+	for (int f = 0; f < d->led_count && f < 16; f++) {
+		int phys = _fill_order(d, f);
+		if (phys < 0 || phys >= 16) continue;
+		step_of[phys] = f;
+		if (f < d->active_count) active[phys] = true;
+	}
+	for (int i = 0; i < d->led_count && i < 16; i++) {
+		if (!d->leds[i]) continue;
+		lv_color_t c = active[i]
+			? _led_color_for_pos(d, i, step_of[i])
+			: d->color_off;
+		lv_obj_set_style_bg_color(d->leds[i], c, LV_PART_MAIN);
+	}
+}
+
+static bool _shl_inspector_get(const widget_t *w, const char *name,
+                               widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_SHIFT_LIGHT || !w->type_data || !name || !out) return false;
+	const shift_light_data_t *d = (const shift_light_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)     { out->str = d->signal_name;          return true; }
+	if (strcmp(name, "led_count") == 0)       { out->i = d->led_count;              return true; }
+	if (strcmp(name, "range_min") == 0)       { out->i = (int32_t)d->range_min;     return true; }
+	if (strcmp(name, "range_max") == 0)       { out->i = (int32_t)d->range_max;     return true; }
+	if (strcmp(name, "flash_threshold") == 0) { out->i = (int32_t)d->flash_threshold; return true; }
+	if (strcmp(name, "flash_speed") == 0)     { out->i = d->flash_speed;            return true; }
+	if (strcmp(name, "led_spacing") == 0)     { out->i = d->led_spacing;            return true; }
+	if (strcmp(name, "border_radius") == 0)   { out->i = d->border_radius;          return true; }
+	if (strcmp(name, "led_width") == 0)       { out->i = d->led_width;              return true; }
+	if (strcmp(name, "led_height") == 0)      { out->i = d->led_height;             return true; }
+	if (strcmp(name, "fill_mode") == 0)       { out->i = d->fill_mode;              return true; }
+	if (strcmp(name, "threshold_mid") == 0)   { out->i = (int32_t)d->threshold_mid;  return true; }
+	if (strcmp(name, "threshold_high") == 0)  { out->i = (int32_t)d->threshold_high; return true; }
+	if (strcmp(name, "color_low") == 0)       { out->color = lv_color_to32(d->color_low)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_mid") == 0)       { out->color = lv_color_to32(d->color_mid)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_high") == 0)      { out->color = lv_color_to32(d->color_high) & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_off") == 0)       { out->color = lv_color_to32(d->color_off)  & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _shl_inspector_set(widget_t *w, const char *name,
+                               const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_SHIFT_LIGHT || !w->type_data || !name || !in) return false;
+	shift_light_data_t *d = (shift_light_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (d->signal_index >= 0)
+			signal_unsubscribe(d->signal_index, _shift_light_on_signal, w);
+		strncpy(d->signal_name, in->str, sizeof(d->signal_name) - 1);
+		d->signal_name[sizeof(d->signal_name) - 1] = '\0';
+		d->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _shift_light_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "led_count") == 0) {
+		int v = in->i; if (v < 4) v = 4; if (v > 16) v = 16;
+		d->led_count = (uint8_t)v;
+		return true;   /* LEDs are created in _shl_create; visible change on reload */
+	}
+	if (strcmp(name, "range_min") == 0)       { d->range_min       = (float)in->i; return true; }
+	if (strcmp(name, "range_max") == 0)       { d->range_max       = (float)in->i; return true; }
+	if (strcmp(name, "flash_threshold") == 0) { d->flash_threshold = (float)in->i; return true; }
+	if (strcmp(name, "flash_speed") == 0) {
+		int v = in->i; if (v < 50) v = 50; if (v > 1000) v = 1000;
+		d->flash_speed = (uint16_t)v;
+		if (d->flash_timer) {
+			lv_timer_del(d->flash_timer);
+			d->flash_timer = lv_timer_create(_flash_timer_cb, d->flash_speed, w);
+			if (d->flash_timer) lv_timer_set_repeat_count(d->flash_timer, -1);
+		}
+		return true;
+	}
+	if (strcmp(name, "led_spacing") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 200) v = 200;
+		d->led_spacing = (uint8_t)v;
+		_update_led_layout(w);
+		return true;
+	}
+	if (strcmp(name, "border_radius") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		d->border_radius = (uint8_t)v;
+		_update_led_layout(w);
+		return true;
+	}
+	if (strcmp(name, "led_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 100) v = 100;
+		d->led_width = (uint8_t)v;
+		_update_led_layout(w);
+		return true;
+	}
+	if (strcmp(name, "led_height") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 100) v = 100;
+		d->led_height = (uint8_t)v;
+		_update_led_layout(w);
+		return true;
+	}
+	if (strcmp(name, "fill_mode") == 0) {
+		uint8_t v = (uint8_t)in->i; if (v > 1) v = 0;
+		d->fill_mode = v;
+		_shl_repaint(w);
+		return true;
+	}
+	if (strcmp(name, "threshold_mid") == 0) {
+		d->threshold_mid = (float)in->i;
+		if (d->threshold_mid < 0)  d->threshold_mid = 0;
+		if (d->threshold_mid > 1)  d->threshold_mid = 1;
+		_shl_repaint(w);
+		return true;
+	}
+	if (strcmp(name, "threshold_high") == 0) {
+		d->threshold_high = (float)in->i;
+		if (d->threshold_high < 0) d->threshold_high = 0;
+		if (d->threshold_high > 1) d->threshold_high = 1;
+		_shl_repaint(w);
+		return true;
+	}
+	if (strcmp(name, "color_low") == 0)  { d->color_low  = lv_color_hex(in->color); _shl_repaint(w); return true; }
+	if (strcmp(name, "color_mid") == 0)  { d->color_mid  = lv_color_hex(in->color); _shl_repaint(w); return true; }
+	if (strcmp(name, "color_high") == 0) { d->color_high = lv_color_hex(in->color); _shl_repaint(w); return true; }
+	if (strcmp(name, "color_off") == 0)  { d->color_off  = lv_color_hex(in->color); _shl_repaint(w); return true; }
+	return false;
+}
+
 widget_t *widget_shift_light_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
     if (!w) return NULL;
@@ -547,6 +691,8 @@ widget_t *widget_shift_light_create_instance(uint8_t slot) {
     w->destroy         = _shl_destroy;
     w->apply_overrides = _shl_apply_overrides;
     w->apply_night_mode = _shl_apply_night_mode;
+    w->inspector_get   = _shl_inspector_get;
+    w->inspector_set   = _shl_inspector_set;
 
     return w;
 }

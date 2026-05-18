@@ -1443,6 +1443,170 @@ static void _warning_night_cb(bool active, void *user_data) {
 	_warning_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Schema name -> struct field deltas:
+ *   "border_color_style" -> wd->border_color
+ *
+ * Live preview leans on update_warning_ui_immediate(slot) for colour / opa
+ * changes — same path the runtime CAN callback uses. Image swaps (image_name)
+ * write through to type_data but defer LVGL rebuild to the next layout
+ * reload because circle <-> image mode flips the underlying LVGL object
+ * type (lv_obj vs lv_img). */
+
+static bool _warning_inspector_get(const widget_t *w, const char *name,
+                                   widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_WARNING || !w->type_data || !name || !out) return false;
+	const warning_data_t *wd = (const warning_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)        { out->str = wd->signal_name;        return true; }
+	if (strcmp(name, "label") == 0)              { out->str = wd->label;              return true; }
+	if (strcmp(name, "label_font") == 0)         { out->str = wd->label_font;         return true; }
+	if (strcmp(name, "image_name") == 0)         { out->str = wd->image_name;         return true; }
+	if (strcmp(name, "is_momentary") == 0)       { out->b = wd->is_momentary;         return true; }
+	if (strcmp(name, "invert_toggle") == 0)      { out->b = wd->invert_toggle;        return true; }
+	if (strcmp(name, "show_label") == 0)         { out->b = wd->show_label;           return true; }
+	if (strcmp(name, "active_opa") == 0)         { out->i = wd->active_opa;           return true; }
+	if (strcmp(name, "inactive_opa") == 0)       { out->i = wd->inactive_opa;         return true; }
+	if (strcmp(name, "border_width") == 0)       { out->i = wd->border_width;         return true; }
+	if (strcmp(name, "radius") == 0)             { out->i = wd->radius;               return true; }
+	if (strcmp(name, "label_y_offset") == 0)     { out->i = wd->label_y_offset;       return true; }
+	if (strcmp(name, "label_text_align") == 0)   { out->i = wd->label_text_align;     return true; }
+	if (strcmp(name, "active_color") == 0)       { out->color = lv_color_to32(wd->active_color)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "inactive_color") == 0)     { out->color = lv_color_to32(wd->inactive_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "border_color_style") == 0) { out->color = lv_color_to32(wd->border_color)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "label_color") == 0)        { out->color = lv_color_to32(wd->label_color)    & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _warning_inspector_set(widget_t *w, const char *name,
+                                   const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_WARNING || !w->type_data || !name || !in) return false;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	uint8_t slot = wd->slot;
+
+	lv_obj_t *circle = (slot < 8) ? warning_circles[slot] : NULL;
+	lv_obj_t *lbl    = (slot < 8) ? warning_labels[slot]  : NULL;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (wd->signal_index >= 0)
+			signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
+		safe_strncpy(wd->signal_name, in->str, sizeof(wd->signal_name));
+		wd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _warning_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "label") == 0 && in->str) {
+		safe_strncpy(wd->label, in->str, sizeof(wd->label));
+		if (lbl && lv_obj_is_valid(lbl)) lv_label_set_text(lbl, wd->label);
+		return true;
+	}
+	if (strcmp(name, "image_name") == 0 && in->str) {
+		safe_strncpy(wd->image_name, in->str, sizeof(wd->image_name));
+		return true;   /* circle <-> image mode flip needs layout reload */
+	}
+	if (strcmp(name, "label_font") == 0 && in->str) {
+		safe_strncpy(wd->label_font, in->str, sizeof(wd->label_font));
+		const lv_font_t *f = widget_resolve_font(wd->label_font);
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_font(lbl, f ? f : THEME_FONT_TINY,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "is_momentary") == 0)  { wd->is_momentary  = in->b; return true; }
+	if (strcmp(name, "invert_toggle") == 0) { wd->invert_toggle = in->b; return true; }
+	if (strcmp(name, "show_label") == 0) {
+		wd->show_label = in->b;
+		if (lbl && lv_obj_is_valid(lbl)) {
+			/* Active state still gates visibility — defer to the runtime path
+			 * which already honours show_label. */
+			update_warning_ui_immediate(slot);
+		}
+		return true;
+	}
+	if (strcmp(name, "active_color") == 0) {
+		wd->active_color = lv_color_hex(in->color);
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "inactive_color") == 0) {
+		wd->inactive_color = lv_color_hex(in->color);
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "active_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		wd->active_opa = (uint8_t)v;
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "inactive_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		wd->inactive_opa = (uint8_t)v;
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "border_width") == 0) {
+		wd->border_width = (uint8_t)in->i;
+		if (circle && lv_obj_is_valid(circle) && !wd->img_obj)
+			lv_obj_set_style_border_width(circle, wd->border_width,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "border_color_style") == 0) {
+		wd->border_color = lv_color_hex(in->color);
+		if (circle && lv_obj_is_valid(circle) && !wd->img_obj) {
+			lv_obj_set_style_border_color(circle, wd->border_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_opa(circle, 255,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	if (strcmp(name, "radius") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 200) v = 200;
+		wd->radius = (uint8_t)v;
+		if (circle && lv_obj_is_valid(circle) && !wd->img_obj)
+			lv_obj_set_style_radius(circle, wd->radius,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_color") == 0) {
+		wd->label_color = lv_color_hex(in->color);
+		if (lbl && lv_obj_is_valid(lbl))
+			lv_obj_set_style_text_color(lbl, wd->label_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_y_offset") == 0) {
+		int v = in->i; if (v < -127) v = -127; if (v > 127) v = 127;
+		wd->label_y_offset = (int8_t)v;
+		if (circle && lbl && lv_obj_is_valid(lbl) && lv_obj_is_valid(circle)) {
+			int16_t obj_h = lv_obj_get_height(circle);
+			if (obj_h <= 0) obj_h = 15;
+			lv_obj_set_y(lbl, w->y + obj_h / 2 + 4 + wd->label_y_offset);
+		}
+		return true;
+	}
+	if (strcmp(name, "label_text_align") == 0) {
+		uint8_t a = (uint8_t)in->i;
+		if (a > 2) a = 1;
+		wd->label_text_align = a;
+		if (lbl && lv_obj_is_valid(lbl)) {
+			lv_text_align_t lv_a =
+				(a == 0) ? LV_TEXT_ALIGN_LEFT :
+				(a == 2) ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_CENTER;
+			lv_obj_set_style_text_align(lbl, lv_a, LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_warning_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1492,6 +1656,8 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	w->destroy = _warning_destroy;
 	w->apply_overrides = _warning_apply_overrides;
 	w->apply_night_mode = _warning_apply_night_mode;
+	w->inspector_get = _warning_inspector_get;
+	w->inspector_set = _warning_inspector_set;
 
 	return w;
 }

@@ -567,6 +567,137 @@ static void _button_night_cb(bool active, void *user_data) {
 
 /* ── Factory ──────────────────────────────────────────────────────────────── */
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Button is TX-only — no signal_name field, so the DATA tab in the inspector
+ * shows TX fields without the SIGNAL card. image_name swaps require a
+ * rebuild (button mode vs image mode use different LVGL objects). */
+
+static bool _button_inspector_get(const widget_t *w, const char *name,
+                                  widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_BUTTON || !w->type_data || !name || !out) return false;
+	const button_data_t *d = (const button_data_t *)w->type_data;
+
+	if (strcmp(name, "label") == 0)           { out->str = d->label;       return true; }
+	if (strcmp(name, "font") == 0)            { out->str = d->font;        return true; }
+	if (strcmp(name, "image_name") == 0)      { out->str = d->image_name;  return true; }
+	if (strcmp(name, "show_label") == 0)      { out->b = d->show_label;    return true; }
+	if (strcmp(name, "latch") == 0)           { out->b = d->latch;         return true; }
+	if (strcmp(name, "tx_send_release") == 0) { out->b = d->tx_send_release; return true; }
+	if (strcmp(name, "tx_can_id") == 0)       { out->i = (int32_t)d->tx_can_id;  return true; }
+	if (strcmp(name, "tx_bit_start") == 0)    { out->i = d->tx_bit_start;  return true; }
+	if (strcmp(name, "tx_bit_length") == 0)   { out->i = d->tx_bit_length; return true; }
+	if (strcmp(name, "tx_endian") == 0)       { out->i = d->tx_endian;     return true; }
+	if (strcmp(name, "tx_rate_hz") == 0)      { out->i = d->tx_rate_hz;    return true; }
+	if (strcmp(name, "border_radius") == 0)   { out->i = d->border_radius; return true; }
+	if (strcmp(name, "label_align") == 0)     { out->i = d->label_align;   return true; }
+	if (strcmp(name, "label_x") == 0)         { out->i = d->label_x;       return true; }
+	if (strcmp(name, "label_y") == 0)         { out->i = d->label_y;       return true; }
+	if (strcmp(name, "bg_color") == 0)        { out->color = lv_color_to32(d->bg_color)      & 0xFFFFFF; return true; }
+	if (strcmp(name, "text_color") == 0)      { out->color = lv_color_to32(d->text_color)    & 0xFFFFFF; return true; }
+	if (strcmp(name, "pressed_color") == 0)   { out->color = lv_color_to32(d->pressed_color) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _button_inspector_set(widget_t *w, const char *name,
+                                  const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_BUTTON || !w->type_data || !name || !in) return false;
+	button_data_t *d = (button_data_t *)w->type_data;
+
+	if (strcmp(name, "label") == 0 && in->str) {
+		safe_strncpy(d->label, in->str, sizeof(d->label));
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_label_set_text(d->label_obj, d->label);
+		return true;
+	}
+	if (strcmp(name, "font") == 0 && in->str) {
+		safe_strncpy(d->font, in->str, sizeof(d->font));
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			const lv_font_t *f = widget_resolve_font(d->font);
+			if (f) lv_obj_set_style_text_font(d->label_obj, f,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		return true;
+	}
+	if (strcmp(name, "image_name") == 0 && in->str) {
+		safe_strncpy(d->image_name, in->str, sizeof(d->image_name));
+		return true;   /* normal-vs-image button needs rebuild */
+	}
+	if (strcmp(name, "show_label") == 0) {
+		d->show_label = in->b;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			if (d->show_label) lv_obj_clear_flag(d->label_obj, LV_OBJ_FLAG_HIDDEN);
+			else               lv_obj_add_flag  (d->label_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
+	}
+	if (strcmp(name, "latch") == 0)           { d->latch           = in->b; return true; }
+	if (strcmp(name, "tx_send_release") == 0) { d->tx_send_release = in->b; return true; }
+	if (strcmp(name, "tx_can_id") == 0)       { d->tx_can_id       = (uint32_t)in->i; return true; }
+	if (strcmp(name, "tx_bit_start") == 0)    { d->tx_bit_start    = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_bit_length") == 0)   { d->tx_bit_length   = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_endian") == 0)       { d->tx_endian       = (uint8_t)in->i;  return true; }
+	if (strcmp(name, "tx_rate_hz") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
+		d->tx_rate_hz = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "border_radius") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 100) v = 100;
+		d->border_radius = (uint8_t)v;
+		if (d->btn_obj && lv_obj_is_valid(d->btn_obj))
+			lv_obj_set_style_radius(d->btn_obj, d->border_radius,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bg_color") == 0) {
+		d->bg_color = lv_color_hex(in->color);
+		if (d->btn_obj && lv_obj_is_valid(d->btn_obj))
+			lv_obj_set_style_bg_color(d->btn_obj, d->bg_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "pressed_color") == 0) {
+		d->pressed_color = lv_color_hex(in->color);
+		if (d->btn_obj && lv_obj_is_valid(d->btn_obj))
+			lv_obj_set_style_bg_color(d->btn_obj, d->pressed_color,
+				LV_PART_MAIN | LV_STATE_PRESSED);
+		return true;
+	}
+	if (strcmp(name, "text_color") == 0) {
+		d->text_color = lv_color_hex(in->color);
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_obj_set_style_text_color(d->label_obj, d->text_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_align") == 0) {
+		uint8_t a = (uint8_t)in->i; if (a > 2) a = 1;
+		d->label_align = a;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj))
+			lv_obj_set_style_text_align(d->label_obj, _to_lv_align(a),
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_x") == 0) {
+		d->label_x = (int16_t)in->i;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			lv_obj_set_align(d->label_obj, LV_ALIGN_CENTER);
+			lv_obj_set_pos(d->label_obj, d->label_x, d->label_y);
+		}
+		return true;
+	}
+	if (strcmp(name, "label_y") == 0) {
+		d->label_y = (int16_t)in->i;
+		if (d->label_obj && lv_obj_is_valid(d->label_obj)) {
+			lv_obj_set_align(d->label_obj, LV_ALIGN_CENTER);
+			lv_obj_set_pos(d->label_obj, d->label_x, d->label_y);
+		}
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_button_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
     if (!w) return NULL;
@@ -610,6 +741,8 @@ widget_t *widget_button_create_instance(uint8_t slot) {
     w->destroy          = _button_destroy;
     w->apply_overrides  = _button_apply_overrides;
     w->apply_night_mode = _button_apply_night_mode;
+    w->inspector_get    = _button_inspector_get;
+    w->inspector_set    = _button_inspector_set;
 
     ESP_LOGI(TAG, "Created button instance slot=%u", slot);
     return w;

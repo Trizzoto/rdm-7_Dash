@@ -271,6 +271,55 @@ static void _line_night_cb(bool active, void *user_data) {
     _line_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Line is a purely visual widget — no signal binding. The line is drawn in
+ * a DRAW_MAIN_END custom callback, so live updates just need to invalidate
+ * the root for the next redraw to pick up the new field. */
+
+static bool _line_inspector_get(const widget_t *w, const char *name,
+                                widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_LINE || !w->type_data || !name || !out) return false;
+	const line_data_t *ld = (const line_data_t *)w->type_data;
+
+	if (strcmp(name, "line_color") == 0)  { out->color = lv_color_to32(ld->line_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "line_width") == 0)  { out->i = ld->line_width;   return true; }
+	if (strcmp(name, "line_opa") == 0)    { out->i = ld->line_opa;     return true; }
+	if (strcmp(name, "rounded") == 0)     { out->b = ld->rounded;      return true; }
+	if (strcmp(name, "orientation") == 0) { out->i = ld->orientation;  return true; }
+	if (strcmp(name, "dash_gap") == 0)    { out->i = ld->dash_gap;     return true; }
+	return false;
+}
+
+static bool _line_inspector_set(widget_t *w, const char *name,
+                                const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_LINE || !w->type_data || !name || !in) return false;
+	line_data_t *ld = (line_data_t *)w->type_data;
+
+	if (strcmp(name, "line_color") == 0) {
+		ld->line_color = lv_color_hex(in->color);
+	} else if (strcmp(name, "line_width") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 30) v = 30;
+		ld->line_width = (uint8_t)v;
+	} else if (strcmp(name, "line_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		ld->line_opa = (lv_opa_t)v;
+	} else if (strcmp(name, "rounded") == 0) {
+		ld->rounded = in->b;
+	} else if (strcmp(name, "orientation") == 0) {
+		int v = in->i; if (v < 0 || v > 3) v = 0;
+		ld->orientation = (line_orientation_t)v;
+	} else if (strcmp(name, "dash_gap") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 40) v = 40;
+		ld->dash_gap = (uint8_t)v;
+	} else {
+		return false;
+	}
+
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+	return true;
+}
+
 /* ── Factory ────────────────────────────────────────────────────────────── */
 
 widget_t *widget_line_create_instance(uint8_t slot) {
@@ -308,6 +357,8 @@ widget_t *widget_line_create_instance(uint8_t slot) {
     w->destroy          = _line_destroy;
     w->apply_overrides  = _line_apply_overrides;
     w->apply_night_mode = _line_apply_night_mode;
+    w->inspector_get    = _line_inspector_get;
+    w->inspector_set    = _line_inspector_set;
 
     ESP_LOGI(TAG, "Created line instance slot=%u", slot);
     return w;

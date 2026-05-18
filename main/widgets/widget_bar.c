@@ -565,12 +565,22 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_text_font(lbl, bar_lbl_font ? bar_lbl_font : THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Create the value label to the right of the bar */
+	/* Value label sits at the bar's right end, vertically centered with the
+	 * bar fill, right-aligned so the digits hug the inside of the right edge.
+	 * Width 60px is enough for "1234" / "75.3" style readouts; the label is
+	 * raised to the foreground so the bar's coloured fill doesn't paint over
+	 * it when the bar is near full. The previous position (+50px past the
+	 * right edge, above the bar) put BAR2's label entirely off-screen — show
+	 * value silently did nothing for the right-side bar. */
+	#define BAR_VALUE_W      60
+	#define BAR_VALUE_PAD_R  3   /* gap between digits and bar's right edge */
 	lv_obj_t *val = lv_label_create(parent);
-	lv_obj_set_width(val, 80);
+	lv_obj_set_width(val, BAR_VALUE_W);
 	lv_obj_set_height(val, LV_SIZE_CONTENT);
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
-	lv_obj_set_pos(val, w->x + (w->w / 2) + 50, w->y - 28);
+	lv_obj_set_pos(val,
+		w->x + (w->w / 2) - (BAR_VALUE_W / 2) - BAR_VALUE_PAD_R,
+		w->y);
 	lv_label_set_text(val, "---");
 	lv_obj_set_style_text_color(val, bd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -579,6 +589,7 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_move_foreground(val);
 	if (!(bd && bd->show_bar_value))
 		lv_obj_add_flag(val, LV_OBJ_FLAG_HIDDEN);
 
@@ -620,6 +631,16 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
+	/* Keep the label + value glued to their relative positions when the bar
+	 * grows / shrinks live in the editor. Without this the value label stays
+	 * pinned to the original right-edge x and drifts off the bar end. */
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (bd && bd->label_obj && lv_obj_is_valid(bd->label_obj))
+		lv_obj_set_pos(bd->label_obj, w->x, w->y - 28);
+	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
+		lv_obj_set_pos(bd->value_obj,
+			w->x + (w->w / 2) - 33,   /* BAR_VALUE_W/2 + BAR_VALUE_PAD_R */
+			w->y);
 }
 static void _bar_open_settings(widget_t *w) { (void)w; }
 static void _bar_to_json(widget_t *w, cJSON *out) {
@@ -963,6 +984,242 @@ static void _bar_night_cb(bool active, void *user_data) {
 	_bar_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Schema names match schema/widgets.schema.json. The set hook writes BOTH
+ * the type_data field AND the matching LVGL property on the live objects so
+ * the user sees the edit land immediately through the translucent dock.
+ *
+ * Image fields (bar_image / bar_image_full) write through to type_data but
+ * skip live LVGL preview — swapping the underlying lv_img source would need
+ * to coordinate with the existing track / fill / clip object tree, which
+ * differs depending on whether the bar started in colour or image mode. The
+ * change lands on the next dashboard rebuild. */
+
+static bool _bar_inspector_get(const widget_t *w, const char *name,
+                               widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data || !name || !out) return false;
+	const bar_data_t *bd = (const bar_data_t *)w->type_data;
+
+	if (strcmp(name, "label") == 0)              { out->str = bd->label;              return true; }
+	if (strcmp(name, "signal_name") == 0)        { out->str = bd->signal_name;        return true; }
+	if (strcmp(name, "label_font") == 0)         { out->str = bd->label_font;         return true; }
+	if (strcmp(name, "value_font") == 0)         { out->str = bd->value_font;         return true; }
+	if (strcmp(name, "bar_image") == 0)          { out->str = bd->bar_image;          return true; }
+	if (strcmp(name, "bar_image_full") == 0)     { out->str = bd->bar_image_full;     return true; }
+	if (strcmp(name, "bar_min") == 0)            { out->i = bd->bar_min;              return true; }
+	if (strcmp(name, "bar_max") == 0)            { out->i = bd->bar_max;              return true; }
+	if (strcmp(name, "decimals") == 0)           { out->i = bd->decimals;             return true; }
+	if (strcmp(name, "show_bar_value") == 0)     { out->b = bd->show_bar_value;       return true; }
+	if (strcmp(name, "invert_bar_value") == 0)   { out->b = bd->invert_bar_value;     return true; }
+	if (strcmp(name, "anchor_enabled") == 0)     { out->b = bd->anchor_enabled;       return true; }
+	if (strcmp(name, "anchor_value") == 0)       { out->i = bd->anchor_value;         return true; }
+	if (strcmp(name, "anchor_position") == 0)    { out->i = bd->anchor_position;      return true; }
+	if (strcmp(name, "bar_radius") == 0)         { out->i = bd->bar_radius;           return true; }
+	if (strcmp(name, "bar_border_width") == 0)   { out->i = bd->bar_border_width;     return true; }
+	if (strcmp(name, "indicator_radius") == 0)   { out->i = bd->indicator_radius;     return true; }
+	if (strcmp(name, "bar_in_range_color") == 0) { out->color = lv_color_to32(bd->bar_in_range_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "bar_bg_color") == 0)       { out->color = lv_color_to32(bd->bar_bg_color)       & 0xFFFFFF; return true; }
+	if (strcmp(name, "bar_border_color") == 0)   { out->color = lv_color_to32(bd->bar_border_color)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "label_color") == 0)        { out->color = lv_color_to32(bd->label_color)        & 0xFFFFFF; return true; }
+	if (strcmp(name, "value_color") == 0)        { out->color = lv_color_to32(bd->value_color)        & 0xFFFFFF; return true; }
+	if (strcmp(name, "bar_low") == 0)            { out->i = bd->bar_low;              return true; }
+	if (strcmp(name, "bar_high") == 0)           { out->i = bd->bar_high;             return true; }
+	if (strcmp(name, "bar_low_color") == 0)      { out->color = lv_color_to32(bd->bar_low_color)      & 0xFFFFFF; return true; }
+	if (strcmp(name, "bar_high_color") == 0)     { out->color = lv_color_to32(bd->bar_high_color)     & 0xFFFFFF; return true; }
+	/* bar_alerts_enabled is derived — the bar has no dedicated enable flag,
+	 * the runtime treats "both thresholds == 0" as alerts off. */
+	if (strcmp(name, "bar_alerts_enabled") == 0) {
+		out->b = (bd->bar_low != 0 || bd->bar_high != 0);
+		return true;
+	}
+	return false;
+}
+
+static bool _bar_inspector_set(widget_t *w, const char *name,
+                               const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_BAR || !w->type_data || !name || !in) return false;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+
+	if (strcmp(name, "label") == 0 && in->str) {
+		safe_strncpy(bd->label, in->str, sizeof(bd->label));
+		if (bd->label_obj && lv_obj_is_valid(bd->label_obj))
+			lv_label_set_text(bd->label_obj, bd->label);
+		return true;
+	}
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (bd->signal_index >= 0)
+			signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+		safe_strncpy(bd->signal_name, in->str, sizeof(bd->signal_name));
+		bd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _bar_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "label_font") == 0 && in->str) {
+		safe_strncpy(bd->label_font, in->str, sizeof(bd->label_font));
+		const lv_font_t *f = widget_resolve_font(bd->label_font);
+		if (bd->label_obj && lv_obj_is_valid(bd->label_obj))
+			lv_obj_set_style_text_font(bd->label_obj,
+				f ? f : THEME_FONT_DASH_LABEL, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "value_font") == 0 && in->str) {
+		safe_strncpy(bd->value_font, in->str, sizeof(bd->value_font));
+		const lv_font_t *f = widget_resolve_font(bd->value_font);
+		if (bd->value_obj && lv_obj_is_valid(bd->value_obj))
+			lv_obj_set_style_text_font(bd->value_obj,
+				f ? f : THEME_FONT_BODY, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_image") == 0 && in->str) {
+		safe_strncpy(bd->bar_image, in->str, sizeof(bd->bar_image));
+		return true;   /* live swap requires rebuild — applied on next reload */
+	}
+	if (strcmp(name, "bar_image_full") == 0 && in->str) {
+		safe_strncpy(bd->bar_image_full, in->str, sizeof(bd->bar_image_full));
+		return true;   /* see bar_image */
+	}
+	if (strcmp(name, "bar_min") == 0) {
+		bd->bar_min = (int32_t)in->i;
+		widget_bar_sync_range(bd);
+		return true;
+	}
+	if (strcmp(name, "bar_max") == 0) {
+		bd->bar_max = (int32_t)in->i;
+		widget_bar_sync_range(bd);
+		return true;
+	}
+	if (strcmp(name, "decimals") == 0) {
+		bd->decimals = (uint8_t)in->i;
+		widget_bar_sync_range(bd);
+		return true;
+	}
+	if (strcmp(name, "show_bar_value") == 0) {
+		bd->show_bar_value = in->b;
+		if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
+			if (bd->show_bar_value) lv_obj_clear_flag(bd->value_obj, LV_OBJ_FLAG_HIDDEN);
+			else                    lv_obj_add_flag  (bd->value_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
+	}
+	if (strcmp(name, "invert_bar_value") == 0) {
+		bd->invert_bar_value = in->b;
+		return true;   /* picked up by the next _bar_on_signal call */
+	}
+	if (strcmp(name, "anchor_enabled") == 0) {
+		bd->anchor_enabled = in->b;
+		return true;
+	}
+	if (strcmp(name, "anchor_value") == 0) {
+		bd->anchor_value = (int32_t)in->i;
+		return true;
+	}
+	if (strcmp(name, "anchor_position") == 0) {
+		int v = in->i;
+		if (v < 0)   v = 0;
+		if (v > 100) v = 100;
+		bd->anchor_position = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "bar_radius") == 0) {
+		bd->bar_radius = (uint8_t)in->i;
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_radius(bd->bar_obj, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_border_width") == 0) {
+		bd->bar_border_width = (uint8_t)in->i;
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_border_width(bd->bar_obj, bd->bar_border_width,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "indicator_radius") == 0) {
+		bd->indicator_radius = (uint8_t)in->i;
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_radius(bd->bar_obj, bd->indicator_radius,
+				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_bg_color") == 0) {
+		bd->bar_bg_color = lv_color_hex(in->color);
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_bg_color(bd->bar_obj, bd->bar_bg_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		/* In track-image-less + fill-image mode, the styled lv_obj track lives
+		 * on bd->img_bg_obj — mirror the colour there too. */
+		if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj))
+			lv_obj_set_style_bg_color(bd->img_bg_obj, bd->bar_bg_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_border_color") == 0) {
+		bd->bar_border_color = lv_color_hex(in->color);
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_border_color(bd->bar_obj, bd->bar_border_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj))
+			lv_obj_set_style_border_color(bd->img_bg_obj, bd->bar_border_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_in_range_color") == 0) {
+		bd->bar_in_range_color = lv_color_hex(in->color);
+		/* Set indicator immediately for preview; runtime _bar_on_signal will
+		 * pick the appropriate low / high / in-range colour on the next CAN
+		 * frame regardless. */
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+			lv_obj_set_style_bg_color(bd->bar_obj, bd->bar_in_range_color,
+				LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "label_color") == 0) {
+		bd->label_color = lv_color_hex(in->color);
+		if (bd->label_obj && lv_obj_is_valid(bd->label_obj))
+			lv_obj_set_style_text_color(bd->label_obj, bd->label_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "value_color") == 0) {
+		bd->value_color = lv_color_hex(in->color);
+		if (bd->value_obj && lv_obj_is_valid(bd->value_obj))
+			lv_obj_set_style_text_color(bd->value_obj, bd->value_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	if (strcmp(name, "bar_low") == 0) {
+		bd->bar_low = (int32_t)in->i;
+		return true;
+	}
+	if (strcmp(name, "bar_high") == 0) {
+		bd->bar_high = (int32_t)in->i;
+		return true;
+	}
+	if (strcmp(name, "bar_low_color") == 0) {
+		bd->bar_low_color = lv_color_hex(in->color);
+		return true;
+	}
+	if (strcmp(name, "bar_high_color") == 0) {
+		bd->bar_high_color = lv_color_hex(in->color);
+		return true;
+	}
+	if (strcmp(name, "bar_alerts_enabled") == 0) {
+		/* Synthesised toggle: turning alerts OFF clears both thresholds so the
+		 * runtime stops applying low / high colours. Turning ON is a no-op —
+		 * the user must still pick the threshold values themselves. */
+		if (!in->b) {
+			bd->bar_low  = 0;
+			bd->bar_high = 0;
+		}
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_bar_create_instance(uint8_t slot) {
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
@@ -1009,6 +1266,8 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	w->destroy = _bar_destroy;
 	w->apply_overrides = _bar_apply_overrides;
 	w->apply_night_mode = _bar_apply_night_mode;
+	w->inspector_get = _bar_inspector_get;
+	w->inspector_set = _bar_inspector_set;
 
 	return w;
 }

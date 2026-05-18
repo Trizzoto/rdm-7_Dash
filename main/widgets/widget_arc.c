@@ -839,6 +839,109 @@ static void _arc_night_cb(bool active, void *user_data) {
     _arc_apply_night_mode((widget_t *)user_data, active);
 }
 
+/* ── Inspector get / set ───────────────────────────────────────────────────
+ *
+ * Schema covers the headline arc fields; redline/limiter/value-overlay live
+ * in arc_data_t but aren't yet surfaced through the inspector schema, so
+ * those stay out of the hook. Image swaps (arc_image / arc_image_full)
+ * defer to the next layout reload because flipping between standard /
+ * static-image / image modes changes the underlying LVGL object tree. */
+
+static bool _arc_inspector_get(const widget_t *w, const char *name,
+                               widget_field_value_t *out) {
+	if (!w || w->type != WIDGET_ARC || !w->type_data || !name || !out) return false;
+	const arc_data_t *d = (const arc_data_t *)w->type_data;
+
+	if (strcmp(name, "signal_name") == 0)    { out->str = d->signal_name;    return true; }
+	if (strcmp(name, "arc_image") == 0)      { out->str = d->arc_image;      return true; }
+	if (strcmp(name, "arc_image_full") == 0) { out->str = d->arc_image_full; return true; }
+	if (strcmp(name, "start_angle") == 0)    { out->i = d->start_angle;      return true; }
+	if (strcmp(name, "end_angle") == 0)      { out->i = d->end_angle;        return true; }
+	if (strcmp(name, "signal_min") == 0)     { out->i = (int32_t)d->signal_min; return true; }
+	if (strcmp(name, "signal_max") == 0)     { out->i = (int32_t)d->signal_max; return true; }
+	if (strcmp(name, "arc_width") == 0)      { out->i = d->arc_width;        return true; }
+	if (strcmp(name, "bg_arc_width") == 0)   { out->i = d->bg_arc_width;     return true; }
+	if (strcmp(name, "rounded_ends") == 0)   { out->b = d->rounded_ends;     return true; }
+	if (strcmp(name, "arc_color") == 0)      { out->color = lv_color_to32(d->arc_color)    & 0xFFFFFF; return true; }
+	if (strcmp(name, "bg_arc_color") == 0)   { out->color = lv_color_to32(d->bg_arc_color) & 0xFFFFFF; return true; }
+	return false;
+}
+
+static bool _arc_inspector_set(widget_t *w, const char *name,
+                               const widget_field_value_t *in) {
+	if (!w || w->type != WIDGET_ARC || !w->type_data || !name || !in) return false;
+	arc_data_t *d = (arc_data_t *)w->type_data;
+	lv_obj_t *a = d->arc_obj;
+
+	if (strcmp(name, "signal_name") == 0 && in->str) {
+		int16_t new_idx = (in->str[0] != '\0') ? signal_find_by_name(in->str) : -1;
+		if (in->str[0] != '\0' && new_idx < 0) return false;
+
+		if (d->signal_index >= 0)
+			signal_unsubscribe(d->signal_index, _arc_on_signal, w);
+		safe_strncpy(d->signal_name, in->str, sizeof(d->signal_name));
+		d->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _arc_on_signal, w);
+		return true;
+	}
+	if (strcmp(name, "arc_image") == 0 && in->str) {
+		safe_strncpy(d->arc_image, in->str, sizeof(d->arc_image));
+		return true;   /* mode flip — needs rebuild */
+	}
+	if (strcmp(name, "arc_image_full") == 0 && in->str) {
+		safe_strncpy(d->arc_image_full, in->str, sizeof(d->arc_image_full));
+		return true;
+	}
+	if (strcmp(name, "start_angle") == 0 || strcmp(name, "end_angle") == 0) {
+		int v = in->i; v %= 360; if (v < 0) v += 360;
+		if (strcmp(name, "start_angle") == 0) d->start_angle = (int16_t)v;
+		else                                  d->end_angle   = (int16_t)v;
+		if (a && lv_obj_is_valid(a)) {
+			lv_arc_set_bg_angles(a, d->start_angle, d->end_angle);
+			lv_arc_set_angles(a, d->start_angle, d->end_angle);
+		}
+		return true;
+	}
+	if (strcmp(name, "signal_min") == 0) { d->signal_min = (float)in->i; return true; }
+	if (strcmp(name, "signal_max") == 0) { d->signal_max = (float)in->i; return true; }
+	if (strcmp(name, "arc_width") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 50) v = 50;
+		d->arc_width = (uint8_t)v;
+		if (a && lv_obj_is_valid(a))
+			lv_obj_set_style_arc_width(a, d->arc_width, LV_PART_INDICATOR);
+		return true;
+	}
+	if (strcmp(name, "bg_arc_width") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 50) v = 50;
+		d->bg_arc_width = (uint8_t)v;
+		if (a && lv_obj_is_valid(a))
+			lv_obj_set_style_arc_width(a, d->bg_arc_width, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "rounded_ends") == 0) {
+		d->rounded_ends = in->b;
+		if (a && lv_obj_is_valid(a)) {
+			lv_obj_set_style_arc_rounded(a, d->rounded_ends, LV_PART_MAIN);
+			lv_obj_set_style_arc_rounded(a, d->rounded_ends, LV_PART_INDICATOR);
+		}
+		return true;
+	}
+	if (strcmp(name, "arc_color") == 0) {
+		d->arc_color = lv_color_hex(in->color);
+		if (a && lv_obj_is_valid(a) && !d->in_limiter)
+			lv_obj_set_style_arc_color(a, d->arc_color, LV_PART_INDICATOR);
+		return true;
+	}
+	if (strcmp(name, "bg_arc_color") == 0) {
+		d->bg_arc_color = lv_color_hex(in->color);
+		if (a && lv_obj_is_valid(a))
+			lv_obj_set_style_arc_color(a, d->bg_arc_color, LV_PART_MAIN);
+		return true;
+	}
+	return false;
+}
+
 widget_t *widget_arc_create_instance(uint8_t slot) {
     widget_t *w = calloc(1, sizeof(widget_t));
     if (!w) return NULL;
@@ -902,6 +1005,8 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     w->destroy       = _arc_destroy;
     w->apply_overrides = _arc_apply_overrides;
     w->apply_night_mode = _arc_apply_night_mode;
+    w->inspector_get   = _arc_inspector_get;
+    w->inspector_set   = _arc_inspector_set;
 
     ESP_LOGI(TAG, "Created arc widget instance (slot %u)", slot);
     return w;
