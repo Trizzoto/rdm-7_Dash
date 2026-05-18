@@ -35,6 +35,11 @@ static const char *const ECU_SIGNAL_NAMES[ECU_SIG__COUNT] = {
     "BATTERY_VOLTAGE",
     "FUEL_TRIM",
     "EGT",
+    "BOOST",
+    "FUEL_LEVEL",
+    "PARK_BRAKE",
+    "YAW_RATE",
+    "LATERAL_G",
 };
 
 const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
@@ -222,11 +227,20 @@ const ecu_preset_t ECU_PRESETS[] = {
      * 8-bit). Value is an integer mode code (P=1/R=2/N=3/D=4 typical) —
      * widget can map via a value table.
      *
-     * Boost pressure, damped fuel level, lateral acceleration, yaw rate
-     * and park-brake state also exist on the FG bus (0x425, 0x4B0, 0x000,
-     * 0x360) but the spreadsheet's bit-lengths for those are placeholder
-     * defaults — they'll land as schema-defined optional signals after a
-     * live capture confirms the actual encoding.
+     * Chassis extras enabled here based on the DBC tab in BigFalconSheet.xlsx
+     * (a more complete reverse-engineering than fg_controller_area.dbc).
+     * Bit positions sourced from the DBC `BO_/SG_` lines; scales are best
+     * guesses since the original DBC encodes them as raw=1.0 (the actual
+     * physical scaling isn't documented). The user can adjust scale/offset
+     * via the Signals modal after a live capture confirms the encoding:
+     *
+     *   - BOOST       0x425 PCM_MSG_15  bit 31, 16-bit BE, kPa
+     *   - FUEL_LEVEL  0x425 PCM_MSG_15  bit 47, 8-bit BE  (raw -> 0.392% per cnt
+     *                                                     assumes 0..255 = 0..100%)
+     *   - LATERAL_G   0x4B0 PCM_WHEEL_SPEED bit 56, 8-bit BE (raw scaled 0.01 g)
+     *   - PARK_BRAKE  0x360 ReverseParkingSenseSystem bit 16, 8-bit LE (status flag)
+     *   - YAW_RATE    0x000 ABS broadcast bit 16, 8-bit LE (placeholder — ID 0x000
+     *                       and scaling are the least-confirmed bits in the sheet)
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Ford",
@@ -248,6 +262,11 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V",     1 },
             [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr",  1 },
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
+            [ECU_SIG_BOOST]           = { 0x425, 31, 16, 1.0f,        0.0f,   false, 0, "kPa",   0 },
+            [ECU_SIG_FUEL_LEVEL]      = { 0x425, 47,  8, 0.392157f,   0.0f,   false, 0, "%",     0 },
+            [ECU_SIG_PARK_BRAKE]      = { 0x360, 16,  8, 1.0f,        0.0f,   false, 1, "",      0 },
+            [ECU_SIG_YAW_RATE]        = { 0x000, 16,  8, 1.0f,        0.0f,   true,  1, "deg/s", 1 },
+            [ECU_SIG_LATERAL_G]       = { 0x4B0, 56,  8, 0.01f,       0.0f,   true,  0, "g",     2 },
         },
     },
 

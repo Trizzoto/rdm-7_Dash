@@ -39,6 +39,15 @@ typedef enum {
     ECU_SIG_BATTERY_VOLTAGE,
     ECU_SIG_FUEL_TRIM,
     ECU_SIG_EGT,
+    /* Chassis / driver-aid signals — most factory presets won't broadcast
+     * these (left SIG_UNSUPPORTED) but Ford FG does. Added as optional
+     * standard slots so future OEM presets (Holden/HSV, Subaru WRX, etc.)
+     * can wire them up without bespoke per-preset machinery. */
+    ECU_SIG_BOOST,
+    ECU_SIG_FUEL_LEVEL,
+    ECU_SIG_PARK_BRAKE,
+    ECU_SIG_YAW_RATE,
+    ECU_SIG_LATERAL_G,
     ECU_SIG__COUNT,
 } ecu_signal_slot_t;
 
