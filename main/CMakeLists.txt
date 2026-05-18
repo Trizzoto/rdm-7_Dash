@@ -155,9 +155,68 @@ idf_component_register(
         "esp-tls"
         "esp_http_server"
         "joltwallet__littlefs"
-    EMBED_TXTFILES "web/index.html"
-    EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico"
+    EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
 )
+
+# ─── Gzip the web editor at configure time ─────────────────────────────────
+#
+# web/index.html is 14.5k lines / ~825 KB. Embedding it raw eats most of the
+# OTA partition's slack. Gzipping at build time gets it to ~150 KB on the
+# wire AND inside the firmware image — every modern browser handles
+# Content-Encoding: gzip transparently.
+#
+# Why configure-time and not build-time:
+#   - EMBED_FILES verifies file existence during CMake configure, so the
+#     .gz must already be on disk when idf_component_register runs.
+#   - execute_process runs synchronously during configure, before
+#     EMBED_FILES processing — gzip output is guaranteed available.
+#   - CMAKE_CONFIGURE_DEPENDS re-triggers configure whenever index.html
+#     changes, so the .gz stays in sync with the source automatically.
+#   - File is small (~825 KB → ~150 KB) so re-running gzip per configure
+#     is a fraction of a second; no point in a build-time custom command
+#     with cache invalidation logic.
+#
+# The Python one-liner uses gzip.compress(..., 9) for max compression and
+# writes a standard .gz file. ${Python3_EXECUTABLE} is set up by the IDF
+# build infrastructure (its bundled Python venv).
+# ────────────────────────────────────────────────────────────────────────────
+set(_RDM_INDEX_HTML_SRC "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html")
+set(_RDM_INDEX_HTML_GZ  "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz")
+
+# Re-run CMake configure when index.html changes so the .gz gets regenerated.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${_RDM_INDEX_HTML_SRC}")
+
+# The build-tree component dir is lazily created by ESP-IDF and may not exist
+# yet when we're configuring — make sure it does before Python tries to write
+# its output into it.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+# Prefer Python3_EXECUTABLE if FindPython3 has been run by upstream code by
+# this point; fall back to the bare "python" name (ESP-IDF's export script
+# puts its venv first on PATH). Using a variable so the diagnostic below
+# shows what we actually invoked.
+if(Python3_EXECUTABLE)
+    set(_RDM_PYTHON "${Python3_EXECUTABLE}")
+else()
+    set(_RDM_PYTHON "python")
+endif()
+
+execute_process(
+    COMMAND "${_RDM_PYTHON}" -c
+        "import gzip,sys; open(sys.argv[2],'wb').write(gzip.compress(open(sys.argv[1],'rb').read(), 9))"
+        "${_RDM_INDEX_HTML_SRC}" "${_RDM_INDEX_HTML_GZ}"
+    RESULT_VARIABLE _rdm_gzip_result
+    OUTPUT_VARIABLE _rdm_gzip_stdout
+    ERROR_VARIABLE  _rdm_gzip_stderr
+)
+if(NOT _rdm_gzip_result EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to gzip ${_RDM_INDEX_HTML_SRC} -> ${_RDM_INDEX_HTML_GZ}\n"
+            "  python: ${_RDM_PYTHON}\n"
+            "  result: ${_rdm_gzip_result}\n"
+            "  stderr: ${_rdm_gzip_stderr}")
+endif()
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_INCLUDE_SIMPLE")
 target_compile_definitions(${COMPONENT_LIB} PUBLIC "-DLV_CONF_PATH=\"lv_conf.h\"")

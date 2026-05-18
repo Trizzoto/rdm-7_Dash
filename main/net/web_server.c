@@ -10,9 +10,12 @@
 #define LAYOUT_MAX_FILE_BYTES 32768
 #endif
 
-/* Embedded web UI (provided by EMBED_TXTFILES in CMakeLists.txt) */
-extern const uint8_t index_html_start[] asm("_binary_index_html_start");
-extern const uint8_t index_html_end[] asm("_binary_index_html_end");
+/* Embedded web UI — gzipped at CMake configure time and added to
+ * EMBED_FILES in main/CMakeLists.txt as ${CMAKE_CURRENT_BINARY_DIR}/index.html.gz.
+ * Served verbatim with Content-Encoding: gzip; every modern browser
+ * inflates transparently. Compressed payload is ~150 KB vs ~825 KB raw. */
+extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t index_html_gz_end[]   asm("_binary_index_html_gz_end");
 
 /* Embedded favicon (EMBED_FILES "web/favicon.ico" in CMakeLists.txt). */
 extern const uint8_t favicon_ico_start[] asm("_binary_favicon_ico_start");
@@ -62,17 +65,23 @@ bool web_server_filename_is_safe(const char *name) {
 	return true;
 }
 
-// HTTP handler for the main page (serves embedded web/index.html)
-// TODO: Serve gzip-compressed HTML for ~4x size reduction (~433KB -> ~60KB).
-// Implementation: change CMakeLists.txt EMBED_TXTFILES to EMBED_FILES with a
-// pre-compressed .gz file, then set Content-Encoding: gzip here when the
-// client's Accept-Encoding includes "gzip". This requires a build-time gzip
-// step (e.g. a custom CMake command or pre-committed .gz file).
+/* HTTP handler for the main page — serves the gzipped web/index.html.
+ *
+ * Every browser shipped this decade negotiates gzip transparently, and
+ * captive-portal probes that hit "/" (vs. the dedicated captive routes in
+ * web_server_captive.c) all support it too. No Accept-Encoding sniffing —
+ * we just always send gzip. If a non-gzip client ever shows up, the fix is
+ * to add the negotiation here, not to ship a 5× larger payload by default.
+ *
+ * Cache-Control: no-cache makes the browser revalidate every page load.
+ * Cheap on a local network and means firmware updates surface the new UI
+ * immediately. */
 static esp_err_t index_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "text/html; charset=UTF-8");
+	httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
 	httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-	size_t len = index_html_end - index_html_start;
-	return httpd_resp_send(req, (const char *)index_html_start, len);
+	size_t len = index_html_gz_end - index_html_gz_start;
+	return httpd_resp_send(req, (const char *)index_html_gz_start, len);
 }
 
 // URI handlers
