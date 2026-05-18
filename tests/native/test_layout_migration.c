@@ -27,7 +27,13 @@
  *     int schema_ver = cJSON_IsNumber(sv) ? sv->valueint : 0;
  *     if (schema_ver < 1)                       → FAIL (reject)
  *     if (schema_ver > LAYOUT_SCHEMA_VERSION)   → WARN, continue
- *     else                                      → accept
+ *     else                                      → accept, then run
+ *                                                  _migrate_layout_root()
+ *
+ *   layout_manager.c, _migrate_layout_root:
+ *     Walks v -> v+1 per-version migrators (currently all empty, every
+ *     bump through v14 is additive). Stamps current schema_version on
+ *     the root. NULL root + future-version layouts are no-ops.
  *
  * ── Historical note ──────────────────────────────────────────────────────
  *
@@ -59,7 +65,7 @@
  * Tests below pin behaviour against this value; if the firmware bumps the
  * schema, this constant should be bumped to match (the assertions still
  * hold for any value ≥ 1). */
-#define TEST_LAYOUT_SCHEMA_VERSION 13
+#define TEST_LAYOUT_SCHEMA_VERSION 14
 
 /* ── Helper under test ───────────────────────────────────────────────────
  *
@@ -165,6 +171,148 @@ static void test_schema_far_future_still_loads_with_warning(void) {
     cJSON_Delete(root);
 }
 
+/* ── Migration helper under test ─────────────────────────────────────────
+ *
+ * Mirror of _migrate_layout_root from main/layout/layout_manager.c.
+ * Same source-of-truth pattern as the schema_gate helper above: copy the
+ * essential logic verbatim so the host test doesn't need to drag in
+ * ESP-IDF / LVGL.
+ *
+ * Today every defined migration is a no-op (every schema bump through v14
+ * has been additive). The skeleton's behaviour is therefore:
+ *
+ *   - from_ver >= LAYOUT_SCHEMA_VERSION    -> root unchanged
+ *   - from_ver <  LAYOUT_SCHEMA_VERSION    -> schema_version stamped to current
+ *   - from_ver <  1                        -> treated as 1 then walked forward
+ *
+ * When a real migration lands (case N: in the firmware switch), add an
+ * assertion here that the corresponding field transformation occurred.
+ */
+static void migrate_layout_root(cJSON *root, int from_ver) {
+    if (!root) return;
+    if (from_ver < 1) from_ver = 1;
+    if (from_ver >= TEST_LAYOUT_SCHEMA_VERSION) return;
+
+    for (int v = from_ver; v < TEST_LAYOUT_SCHEMA_VERSION; v++) {
+        switch (v) {
+            /* No real migrations defined yet — keep this in lockstep with
+             * _migrate_layout_root() in layout_manager.c. */
+            default: break;
+        }
+    }
+
+    cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+    if (cJSON_IsNumber(sv)) {
+        cJSON_SetNumberValue(sv, TEST_LAYOUT_SCHEMA_VERSION);
+    } else {
+        cJSON_AddNumberToObject(root, "schema_version",
+                                TEST_LAYOUT_SCHEMA_VERSION);
+    }
+}
+
+/* Convenience: read the schema_version number off a root, or -1 if absent
+ * or non-numeric. */
+static int read_schema_ver(const cJSON *root) {
+    const cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+    return cJSON_IsNumber(sv) ? sv->valueint : -1;
+}
+
+/* ── Migration helper tests ─────────────────────────────────────────────── */
+
+static void test_migrate_current_version_is_noop(void) {
+    /* A layout already at the current schema must not be touched. */
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "{\"schema_version\": %d, \"widgets\": [{\"type\": \"bar\"}]}",
+             TEST_LAYOUT_SCHEMA_VERSION);
+    cJSON *root = cJSON_Parse(buf);
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, TEST_LAYOUT_SCHEMA_VERSION);
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION, read_schema_ver(root));
+    /* widgets array still has one entry, untouched. */
+    const cJSON *widgets = cJSON_GetObjectItemCaseSensitive(root, "widgets");
+    TEST_ASSERT_NOT_NULL(widgets);
+    TEST_ASSERT_TRUE(cJSON_IsArray(widgets));
+    TEST_ASSERT_EQUAL_INT(1, cJSON_GetArraySize(widgets));
+
+    cJSON_Delete(root);
+}
+
+static void test_migrate_future_version_is_noop(void) {
+    /* A layout saved by a NEWER firmware than us must NOT be downgraded.
+     * The gate accepts these with a warning; the migrator must leave the
+     * stamped version alone so the next save (if any) doesn't lie about
+     * what shape it was originally written in. */
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "{\"schema_version\": %d, \"widgets\": []}",
+             TEST_LAYOUT_SCHEMA_VERSION + 5);
+    cJSON *root = cJSON_Parse(buf);
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, TEST_LAYOUT_SCHEMA_VERSION + 5);
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION + 5, read_schema_ver(root));
+    cJSON_Delete(root);
+}
+
+static void test_migrate_old_version_stamps_current(void) {
+    /* The whole point of the skeleton: an older layout that walks through
+     * every (currently empty) migration ends up stamped at the current
+     * schema. The widgets array is untouched because no real migration
+     * has been defined yet. */
+    cJSON *root = cJSON_Parse("{\"schema_version\": 1, \"widgets\": []}");
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, 1);
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION, read_schema_ver(root));
+    cJSON_Delete(root);
+}
+
+static void test_migrate_zero_or_negative_treated_as_v1(void) {
+    /* If someone hands us from_ver <= 0 (sloppy producer, defaulted on
+     * cJSON_IsNumber failure), the migrator should not infinite-loop or
+     * go negative — it should clamp to 1 and walk forward normally. */
+    cJSON *root = cJSON_Parse("{\"schema_version\": 0, \"widgets\": []}");
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, 0);
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION, read_schema_ver(root));
+    cJSON_Delete(root);
+
+    root = cJSON_Parse("{\"schema_version\": -42, \"widgets\": []}");
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, -42);
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION, read_schema_ver(root));
+    cJSON_Delete(root);
+}
+
+static void test_migrate_missing_schema_field_is_added(void) {
+    /* Editor-built trees from apply_json may omit schema_version. After
+     * migration, the field must exist and equal current version so a
+     * follow-up save writes the right shape. */
+    cJSON *root = cJSON_Parse("{\"widgets\": []}");
+    TEST_ASSERT_NOT_NULL(root);
+
+    migrate_layout_root(root, 5);  /* hypothetical from_ver */
+
+    TEST_ASSERT_EQUAL_INT(TEST_LAYOUT_SCHEMA_VERSION, read_schema_ver(root));
+    cJSON_Delete(root);
+}
+
+static void test_migrate_handles_null_root(void) {
+    /* No crash on NULL — defensive guard in the helper. */
+    migrate_layout_root(NULL, 1);
+    /* If we got here, the NULL guard worked. */
+    TEST_ASSERT_TRUE(true);
+}
+
 /* ── Runner ─────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -180,6 +328,14 @@ int main(void) {
     RUN_TEST(test_schema_one_below_current_loads);
     RUN_TEST(test_schema_newer_than_firmware_loads_with_warning);
     RUN_TEST(test_schema_far_future_still_loads_with_warning);
+
+    /* migration helper (added for schema-migration skeleton) */
+    RUN_TEST(test_migrate_current_version_is_noop);
+    RUN_TEST(test_migrate_future_version_is_noop);
+    RUN_TEST(test_migrate_old_version_stamps_current);
+    RUN_TEST(test_migrate_zero_or_negative_treated_as_v1);
+    RUN_TEST(test_migrate_missing_schema_field_is_added);
+    RUN_TEST(test_migrate_handles_null_root);
 
     return UNITY_END();
 }

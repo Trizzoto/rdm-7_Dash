@@ -563,6 +563,77 @@ static void _save_signals(cJSON *root) {
 	}
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Schema migration
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Hook for migrating older layout JSON shapes up to LAYOUT_SCHEMA_VERSION.
+ *
+ *   _migrate_layout_root(root, from_ver)
+ *     - Mutates `root` in place, walking it from `from_ver` to the current
+ *       LAYOUT_SCHEMA_VERSION.
+ *     - For each step (v -> v+1), runs the corresponding case in the switch
+ *       below. Empty cases are intentional — every schema bump since v1 has
+ *       been "additive only," so older layouts decode cleanly as long as
+ *       widget-side from_json() supplies defaults for missing fields.
+ *     - Stamps the current schema version onto `root` so any subsequent save
+ *       writes the up-to-date shape.
+ *     - No-op if from_ver >= LAYOUT_SCHEMA_VERSION (covers both
+ *       current-version layouts and the rare case of loading a layout saved
+ *       by a newer firmware build).
+ *
+ * Adding a real migration:
+ *   1. Bump LAYOUT_SCHEMA_VERSION in layout_manager.h.
+ *   2. Write a `static void _migrate_v{N}_to_v{N+1}(cJSON *root)` that does
+ *      the mutation in place (rename a field, split an enum, convert units,
+ *      etc.).
+ *   3. Add `case N: _migrate_v{N}_to_v{N+1}(root); break;` to the switch.
+ *
+ * Why the skeleton exists today:
+ *   Without a defined hook, the first time a field needs to be renamed or
+ *   semantically changed there's no "obvious" place for the migration to
+ *   land — it ends up scattered across widget from_json() paths. Pre-wiring
+ *   the dispatch makes the next migration a one-function diff instead of
+ *   a refactor.
+ */
+static void _migrate_layout_root(cJSON *root, int from_ver) {
+	if (!root) return;
+	if (from_ver < 1) from_ver = 1;
+	if (from_ver >= LAYOUT_SCHEMA_VERSION) return;
+
+	for (int v = from_ver; v < LAYOUT_SCHEMA_VERSION; v++) {
+		switch (v) {
+			/* ---------------------------------------------------------------
+			 * Every transition through v14 is additive: new fields with
+			 * widget-side defaults, optional sub-objects (night_mode block),
+			 * new optional ECU signal slots. Older layouts load fine as-is.
+			 *
+			 * When that stops being true, replace the case for the version
+			 * being left behind. Example:
+			 *
+			 *   case 14:
+			 *       _migrate_v14_to_v15(root);
+			 *       break;
+			 * ---------------------------------------------------------------
+			 */
+			default:
+				break;
+		}
+	}
+
+	/* Stamp current schema version so downstream readers (and the next save)
+	 * see the up-to-date shape. */
+	cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	if (cJSON_IsNumber(sv)) {
+		cJSON_SetNumberValue(sv, LAYOUT_SCHEMA_VERSION);
+	} else {
+		cJSON_AddNumberToObject(root, "schema_version", LAYOUT_SCHEMA_VERSION);
+	}
+
+	ESP_LOGI(TAG, "_migrate: layout root migrated v%d -> v%d",
+	         from_ver, LAYOUT_SCHEMA_VERSION);
+}
+
 /**
  * Shared helper: reset signals, load signal definitions, then iterate the
  * "widgets" array — calling factory → from_json → rules → create for each.
@@ -751,6 +822,12 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 				 schema_ver, LAYOUT_SCHEMA_VERSION);
 	}
 
+	/* ── Migrate older shapes up to current schema (no-op for current-version
+	 *    layouts; today there are no concrete migrations to run, but the hook
+	 *    is here so a future field rename / removal has a defined place to
+	 *    land — see _migrate_layout_root above). ── */
+	_migrate_layout_root(root, schema_ver);
+
 	/* ── Extract optional ECU context fields ── */
 	const cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
 	if (cJSON_IsString(ecu_item) && ecu_item->valuestring[0]) {
@@ -827,6 +904,15 @@ bool layout_manager_get_night_trigger(char *out_signal, size_t signal_buf_size,
 esp_err_t layout_manager_apply_json(cJSON *root, lv_obj_t *parent) {
 	if (!root || !parent)
 		return ESP_ERR_INVALID_ARG;
+
+	/* Hot-reload path — web editor / live preview deliver an already-parsed
+	 * cJSON tree. Run the same migration walk as layout_load so an editor
+	 * preview of an older layout doesn't drift behind disk-load behaviour.
+	 * Missing schema_version is treated as "already current" so editor-built
+	 * trees that omit the field don't trip the migrator. */
+	cJSON *sv = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	int schema_ver = cJSON_IsNumber(sv) ? sv->valueint : LAYOUT_SCHEMA_VERSION;
+	_migrate_layout_root(root, schema_ver);
 
 	esp_err_t ret = _instantiate_widgets(root, parent, "apply_json");
 	if (ret != ESP_OK)
