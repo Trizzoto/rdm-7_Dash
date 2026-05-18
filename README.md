@@ -15,7 +15,17 @@ Firmware for the **RDM-7 Digital Dashboard** — an ESP32-S3-based 7" automotive
 
 ## For Developers
 
-This firmware is built with **ESP-IDF v5.3.1** and **LVGL v8**. See [`CLAUDE.md`](CLAUDE.md) for the architectural overview.
+This firmware is built with **ESP-IDF v5.3.1** and **LVGL v8**.
+
+**Start here:**
+- [`docs/handover/README.md`](docs/handover/README.md) — developer handover docs. 10 numbered chapters covering architecture, build, widgets, signals, storage, UI, web server, and conventions. Read in order if you're new.
+- [`CLAUDE.md`](CLAUDE.md) — terse architectural reference. Best for "I know the codebase, I just need to remember a detail."
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records. The "we already tried that" answers live here.
+- [`tests/README.md`](tests/README.md) — native-host test suite (122 tests, sub-second feedback loop).
+- [`CHANGELOG.md`](CHANGELOG.md) — what landed when, with commit SHAs.
+- [`SECURITY.md`](SECURITY.md) — security posture + pre-release hardening checklist.
+
+**Build + flash:**
 
 ```bash
 # Configure IDF environment (one-time)
