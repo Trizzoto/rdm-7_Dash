@@ -170,17 +170,22 @@ void build_twai_filter_from_signals(twai_filter_config_t *out_filter) {
 		}
 	}
 
-	/* When OBD2 polling is active, we also need to RX the 0x7E8-0x7EF response
-	 * range. Add them so the single-mask filter widens enough to pass them. */
-	if (obd2_is_running()) {
-		for (uint32_t id = OBD2_RESPONSE_ID_FIRST; id <= OBD2_RESPONSE_ID_LAST; id++) {
-			if (count >= 64) break;
-			bool dup = false;
-			for (int j = 0; j < count; j++) {
-				if (ids[j] == id) { dup = true; break; }
-			}
-			if (!dup) ids[count++] = id;
+	/* Always include the OBD2 response range 0x7E8..0x7EF in the filter.
+	 * One-shot diagnostic endpoints (DTC read/clear, VIN, ECU name) and the
+	 * background DTC monitor can fire at any time — even when no PIDs are
+	 * being polled (e.g. user is on a native broadcast preset like FG or
+	 * BA/BF). Previously this was gated on obd2_is_running(), which left
+	 * responses filtered out for those callers and made every diagnostic
+	 * UI silently time out. Software paths in obd2_rx_handler / signal
+	 * dispatch already filter unwanted frames, so widening the hardware
+	 * mask costs nothing functionally. */
+	for (uint32_t id = OBD2_RESPONSE_ID_FIRST; id <= OBD2_RESPONSE_ID_LAST; id++) {
+		if (count >= 64) break;
+		bool dup = false;
+		for (int j = 0; j < count; j++) {
+			if (ids[j] == id) { dup = true; break; }
 		}
+		if (!dup) ids[count++] = id;
 	}
 
 	if (count == 0) {
