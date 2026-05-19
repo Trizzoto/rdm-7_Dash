@@ -164,6 +164,29 @@ esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
 esp_err_t config_store_save_ota_skip_version(const char *version);
 esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len);
 
+/* ── ECU preset-picker mode (Auto vs Manual filter) ────────────────────── */
+
+/**
+ * Save the ECU picker's Auto-vs-Manual mode flag.
+ *
+ * Auto (true, the default): the picker shows every preset, with detected
+ *   ones decorated. The user sees what auto would pick plus alternatives.
+ *
+ * Manual (false): the picker hides presets that didn't match the latest
+ *   can_bus_test scan (match score < ECU_PRESET_MATCH_THRESHOLD). Used
+ *   to declutter once the user knows which vehicle they're configuring.
+ *
+ * Persisted in NVS namespace "ecu_pick" / key "auto" (one byte).
+ */
+esp_err_t config_store_save_ecu_picker_auto(bool auto_mode);
+
+/**
+ * Read the ECU picker's Auto-vs-Manual mode flag. Returns true (Auto) if
+ * NVS read fails or the flag was never set — Auto is the safer default,
+ * because it never hides a preset the user might need.
+ */
+bool config_store_load_ecu_picker_auto(void);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

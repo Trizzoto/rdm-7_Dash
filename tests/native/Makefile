@@ -13,7 +13,7 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -Wno-unused-function -O0 -g
 LDFLAGS ?= -lm
 
 # One test binary per file in the TESTS list. Add new tests here.
-TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_ota_skip_version test_calculated_gear test_web_path_safety
+TESTS = test_can_decode test_widget_rules test_layout_migration test_widget_arc_precedence test_obd2_freeze_frame test_ota_skip_version test_calculated_gear test_web_path_safety test_ecu_preset_match
 
 BIN_DIR := build
 BINS    := $(addprefix $(BIN_DIR)/, $(TESTS))

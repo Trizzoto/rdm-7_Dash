@@ -745,6 +745,37 @@ esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len)
     return err;
 }
 
+/* ── ECU preset-picker Auto-vs-Manual mode ─────────────────────────────── */
+
+#define NS_ECU_PICKER "ecu_pick"
+
+esp_err_t config_store_save_ecu_picker_auto(bool auto_mode)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_ECU_PICKER, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "auto", auto_mode ? 1u : 0u);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "ECU picker mode saved: %s", auto_mode ? "Auto" : "Manual");
+    }
+    return err;
+}
+
+bool config_store_load_ecu_picker_auto(void)
+{
+    nvs_handle_t handle;
+    /* Default to Auto on any read failure — the safer choice. Manual hides
+     * presets, and a missing/corrupt NVS value should never cause a UI to
+     * silently drop options the user might need. */
+    if (nvs_open(NS_ECU_PICKER, NVS_READONLY, &handle) != ESP_OK) return true;
+    uint8_t v = 1;
+    if (nvs_get_u8(handle, "auto", &v) != ESP_OK) v = 1;
+    nvs_close(handle);
+    return v != 0;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  FACTORY RESET
  * ═══════════════════════════════════════════════════════════════════════ */

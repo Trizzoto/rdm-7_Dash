@@ -10,6 +10,7 @@
 
 #include "esp_log.h"
 #include "lvgl.h"
+#include <string.h>
 
 #include "../theme.h"
 #include "../../layout/ecu_presets.h"
@@ -19,7 +20,7 @@
 static const char *TAG = "ecu_picker";
 
 #define CARD_W 600
-#define CARD_H 360
+#define CARD_H 400  /* +40 over the original 360 to fit the Auto/Manual row */
 
 /* Extra pseudo-option for "Custom / None (configure signals manually)".
  * Stored as the string below ECU_PRESETS in the make dropdown. */
@@ -28,31 +29,56 @@ static const char *TAG = "ecu_picker";
 typedef struct {
     lv_obj_t *overlay;
     lv_obj_t *card;
+    lv_obj_t *auto_sw;          /* Auto/Manual toggle */
+    lv_obj_t *match_lbl;        /* "★ Detected on bus" hint under version_dd */
     lv_obj_t *make_dd;
     lv_obj_t *version_dd;
     lv_obj_t *apply_btn;
     lv_obj_t *apply_label;
     char      layout_name[LAYOUT_MAX_NAME];
+    bool      manual_mode;      /* true = filter to matched presets only */
     ecu_picker_done_cb_t cb;
     void     *ctx;
 } ecu_picker_state_t;
 
 static ecu_picker_state_t s;
 
-/* Count how many versions exist for the given make in ECU_PRESETS. */
-static int _versions_for_make(const char *make, const char *out_names[], int max) {
+/* Is this preset "detected" — score above the ECU_PRESET_MATCH_THRESHOLD?
+ * Helper centralises the threshold check; both manual-mode filtering and
+ * the "Detected on bus" hint use it. */
+static bool _preset_is_detected(const ecu_preset_t *p) {
+    if (!p) return false;
+    return ecu_preset_match_score(p) >= ECU_PRESET_MATCH_THRESHOLD;
+}
+
+/* Does this make have at least one detected version? Used by manual mode
+ * to decide whether to show the make in the make dropdown at all. */
+static bool _make_has_detected_version(const char *make) {
+    for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
+        if (strcmp(ECU_PRESETS[i].make, make) != 0) continue;
+        if (_preset_is_detected(&ECU_PRESETS[i])) return true;
+    }
+    return false;
+}
+
+/* Count versions for the given make. In manual mode, only includes
+ * versions whose match score clears the threshold. */
+static int _versions_for_make(const char *make, const char *out_names[],
+                              int max, bool manual_only) {
     int n = 0;
     for (int i = 0; i < ECU_PRESETS_COUNT && n < max; i++) {
-        if (strcmp(ECU_PRESETS[i].make, make) == 0) {
-            out_names[n++] = ECU_PRESETS[i].version;
-        }
+        if (strcmp(ECU_PRESETS[i].make, make) != 0) continue;
+        if (manual_only && !_preset_is_detected(&ECU_PRESETS[i])) continue;
+        out_names[n++] = ECU_PRESETS[i].version;
     }
     return n;
 }
 
 /* Build a newline-separated dedup'd list of makes from ECU_PRESETS,
- * plus the trailing "Custom / None" pseudo-option. */
-static void _build_make_options(char *buf, size_t n) {
+ * plus the trailing "Custom / None" pseudo-option. In manual mode,
+ * only includes makes with at least one detected version — Custom / None
+ * stays present regardless so the user always has an exit hatch. */
+static void _build_make_options(char *buf, size_t n, bool manual_only) {
     buf[0] = '\0';
     for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
         bool dup = false;
@@ -60,6 +86,7 @@ static void _build_make_options(char *buf, size_t n) {
             if (strcmp(ECU_PRESETS[j].make, ECU_PRESETS[i].make) == 0) { dup = true; break; }
         }
         if (dup) continue;
+        if (manual_only && !_make_has_detected_version(ECU_PRESETS[i].make)) continue;
         if (buf[0]) strncat(buf, "\n", n - strlen(buf) - 1);
         strncat(buf, ECU_PRESETS[i].make, n - strlen(buf) - 1);
     }
@@ -88,6 +115,30 @@ static void _update_apply_state(void) {
     }
 }
 
+/* Push the "Detected on bus" hint label based on the currently-selected
+ * make+version. Empty string when no preset is selected or the selection
+ * isn't detected. */
+static void _refresh_match_lbl(void) {
+    if (!s.match_lbl) return;
+    char make[48] = {0}, ver[48] = {0};
+    lv_dropdown_get_selected_str(s.make_dd, make, sizeof(make));
+    if (strcmp(make, CUSTOM_LABEL) == 0) {
+        lv_label_set_text(s.match_lbl, "");
+        return;
+    }
+    lv_dropdown_get_selected_str(s.version_dd, ver, sizeof(ver));
+    const ecu_preset_t *p = ecu_preset_find(make, ver);
+    if (p && _preset_is_detected(p)) {
+        int score = ecu_preset_match_score(p);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "Detected on bus  (%d%% match)", score);
+        lv_label_set_text(s.match_lbl, buf);
+        lv_obj_set_style_text_color(s.match_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+    } else {
+        lv_label_set_text(s.match_lbl, "");
+    }
+}
+
 /* Repopulate the version dropdown based on the current make selection. */
 static void _refresh_version_dd(const char *preselect_version) {
     if (!s.version_dd) return;
@@ -99,15 +150,25 @@ static void _refresh_version_dd(const char *preselect_version) {
         lv_dropdown_set_selected(s.version_dd, 0);
         lv_obj_add_state(s.version_dd, LV_STATE_DISABLED);
         _update_apply_state();
+        _refresh_match_lbl();
         return;
     }
     lv_obj_clear_state(s.version_dd, LV_STATE_DISABLED);
 
-    const char *vers[8]; int n = _versions_for_make(make, vers, 8);
+    /* Manual mode: filter version list to detected only. If filtering would
+     * empty the list (the current make's versions are all undetected — only
+     * possible mid-toggle), fall back to the unfiltered list so the picker
+     * stays usable. */
+    const char *vers[8];
+    int n = _versions_for_make(make, vers, 8, s.manual_mode);
+    if (n == 0) {
+        n = _versions_for_make(make, vers, 8, false);
+    }
     if (n == 0) {
         lv_dropdown_set_options(s.version_dd, "(no versions)");
         lv_dropdown_set_selected(s.version_dd, 0);
         _update_apply_state();
+        _refresh_match_lbl();
         return;
     }
     char buf[256]; buf[0] = '\0';
@@ -125,11 +186,35 @@ static void _refresh_version_dd(const char *preselect_version) {
     }
     lv_dropdown_set_selected(s.version_dd, sel);
     _update_apply_state();
+    _refresh_match_lbl();
 }
 
 static void _make_dd_event_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
     _refresh_version_dd(NULL);
+}
+
+/* Forward — defined after the helper that rebuilds the make dropdown. */
+static void _rebuild_make_dd(const char *preselect_make);
+
+/* Auto switch flipped: persist the new mode to NVS and rebuild both
+ * dropdowns. The current selection is preserved across the rebuild when
+ * possible — in Manual mode, if the user's saved make/version was not
+ * detected, the dropdown will fall back to whatever the first available
+ * option is. The match-label hint reflects the actual selection. */
+static void _auto_sw_event_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    bool checked = lv_obj_has_state(s.auto_sw, LV_STATE_CHECKED);
+    bool auto_mode = checked;
+    s.manual_mode = !auto_mode;
+    config_store_save_ecu_picker_auto(auto_mode);
+
+    /* Remember current selection so the rebuild preserves it where it can. */
+    char make[48] = {0}, ver[48] = {0};
+    lv_dropdown_get_selected_str(s.make_dd, make, sizeof(make));
+    lv_dropdown_get_selected_str(s.version_dd, ver, sizeof(ver));
+    _rebuild_make_dd(make[0] ? make : NULL);
+    _refresh_version_dd(ver[0] ? ver : NULL);
 }
 
 static void _close(bool applied) {
@@ -201,6 +286,29 @@ static void _style_dropdown(lv_obj_t *dd) {
     lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
 }
 
+/* Rebuild the make dropdown to reflect the current manual_mode. Restores
+ * a selection (by name) when it still exists in the filtered list; falls
+ * back to the trailing Custom row when the saved make has been hidden by
+ * Manual-mode filtering. */
+static void _rebuild_make_dd(const char *preselect_make) {
+    if (!s.make_dd) return;
+    char buf[256];
+    _build_make_options(buf, sizeof(buf), s.manual_mode);
+    lv_dropdown_set_options(s.make_dd, buf);
+
+    uint16_t cnt = lv_dropdown_get_option_cnt(s.make_dd);
+    uint16_t target = cnt > 0 ? cnt - 1 : 0;  /* default = Custom (last) */
+    if (preselect_make && preselect_make[0]) {
+        char opts[256];
+        _build_make_options(opts, sizeof(opts), s.manual_mode);
+        int idx = 0;
+        for (char *tok = strtok(opts, "\n"); tok; tok = strtok(NULL, "\n"), idx++) {
+            if (strcmp(tok, preselect_make) == 0) { target = idx; break; }
+        }
+    }
+    lv_dropdown_set_selected(s.make_dd, target);
+}
+
 void ecu_picker_open(const char *layout_name, bool allow_skip,
                      ecu_picker_done_cb_t cb, void *ctx) {
     if (s.overlay && lv_obj_is_valid(s.overlay)) return;
@@ -210,6 +318,7 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
     s.ctx = ctx;
     strncpy(s.layout_name, layout_name ? layout_name : "default",
             sizeof(s.layout_name) - 1);
+    s.manual_mode = !config_store_load_ecu_picker_auto();
 
     char cur_make[32] = {0}, cur_ver[32] = {0};
     config_store_load_ecu(cur_make, sizeof(cur_make), cur_ver, sizeof(cur_ver));
@@ -250,6 +359,26 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
     lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(sub, THEME_COLOR_TEXT_MUTED, 0);
 
+    /* Auto/Manual toggle — top-right corner of the card.
+     * Auto (default): every ECU shown, even ones the bus scan didn't hit.
+     * Manual: hides makes/versions that didn't surface in the last scan
+     * so the picker isn't a long list of vehicles you definitely don't
+     * have. State persists in NVS via config_store_save_ecu_picker_auto. */
+    lv_obj_t *auto_lbl = lv_label_create(s.card);
+    lv_label_set_text(auto_lbl, "Auto");
+    lv_obj_align(auto_lbl, LV_ALIGN_TOP_RIGHT, -60, 4);
+    lv_obj_set_style_text_font(auto_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(auto_lbl, THEME_COLOR_TEXT_MUTED, 0);
+
+    s.auto_sw = lv_switch_create(s.card);
+    lv_obj_set_size(s.auto_sw, 40, 22);
+    lv_obj_align(s.auto_sw, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(s.auto_sw, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s.auto_sw, THEME_COLOR_ACCENT_BLUE,
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (!s.manual_mode) lv_obj_add_state(s.auto_sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(s.auto_sw, _auto_sw_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     /* Make row */
     lv_obj_t *mk_lbl = lv_label_create(s.card);
     lv_label_set_text(mk_lbl, "Make");
@@ -263,7 +392,7 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
     _style_dropdown(s.make_dd);
     {
         char buf[256];
-        _build_make_options(buf, sizeof(buf));
+        _build_make_options(buf, sizeof(buf), s.manual_mode);
         lv_dropdown_set_options(s.make_dd, buf);
     }
     lv_obj_add_event_cb(s.make_dd, _make_dd_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -280,6 +409,13 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
     lv_obj_align(s.version_dd, LV_ALIGN_TOP_LEFT, 100, 134);
     _style_dropdown(s.version_dd);
 
+    /* Match-status hint label under the version dropdown. Updated by
+     * _refresh_match_lbl() whenever make/version changes. */
+    s.match_lbl = lv_label_create(s.card);
+    lv_label_set_text(s.match_lbl, "");
+    lv_obj_align(s.match_lbl, LV_ALIGN_TOP_LEFT, 100, 180);
+    lv_obj_set_style_text_font(s.match_lbl, THEME_FONT_TINY, 0);
+
     /* Preselect saved ECU. If cur_make matches a known make, pick that;
      * otherwise default to the Custom option. Then cascade to version. */
     if (cur_make[0] == '\0') {
@@ -288,12 +424,18 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
         if (cnt > 0) lv_dropdown_set_selected(s.make_dd, cnt - 1);
         _refresh_version_dd(NULL);
     } else {
-        /* Find make index in the dropdown string. */
+        /* Find make index in the (possibly-filtered) dropdown string. */
         char opts[256];
-        _build_make_options(opts, sizeof(opts));
+        _build_make_options(opts, sizeof(opts), s.manual_mode);
         int idx = 0, pos = 0;
+        bool found = false;
         for (char *tok = strtok(opts, "\n"); tok; tok = strtok(NULL, "\n"), idx++) {
-            if (strcmp(tok, cur_make) == 0) { pos = idx; break; }
+            if (strcmp(tok, cur_make) == 0) { pos = idx; found = true; break; }
+        }
+        /* Manual mode may have hidden the saved make; fall back to Custom. */
+        if (!found) {
+            uint16_t cnt = lv_dropdown_get_option_cnt(s.make_dd);
+            pos = cnt > 0 ? cnt - 1 : 0;
         }
         lv_dropdown_set_selected(s.make_dd, pos);
         _refresh_version_dd(cur_ver[0] ? cur_ver : NULL);

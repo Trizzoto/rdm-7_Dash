@@ -1,5 +1,6 @@
 #include "ecu_presets.h"
 
+#include "can/can_bus_test.h"
 #include "cJSON.h"
 #include "esp_log.h"
 #include "layout_manager.h"
@@ -435,6 +436,64 @@ bool ecu_preset_is_obd2(const ecu_preset_t *preset) {
     if (!preset || !preset->make || !preset->version) return false;
     return strcmp(preset->make, OBD2_MAKE) == 0 &&
            strcmp(preset->version, OBD2_VERSION) == 0;
+}
+
+/* ── Bus-scan match scoring ─────────────────────────────────────────────
+ *
+ * Builds two sorted-de-duplicated ID lists at small cost:
+ *   1. The preset's unique CAN IDs (walking rows[], skipping can_id == 0).
+ *   2. The latest bus-scan's unique IDs at the recommended bitrate.
+ * Then returns 100 * |intersection| / |preset_unique|.
+ *
+ * Skipped corner cases (all return 0):
+ *   - No preset, or preset is OBD2 (no native broadcast IDs to match against).
+ *   - No bus scan run yet, or last scan didn't pick a bitrate.
+ *   - Preset has zero non-zero CAN IDs (all SIG_UNSUPPORTED — placeholder).
+ *
+ * Implementation note: ECU_SIG__COUNT is small (~20) and bus_test caps at
+ * 32 unique IDs, so the O(n*m) intersection runs in well under a microsecond
+ * per call. No need for hashing.
+ */
+int ecu_preset_match_score(const ecu_preset_t *preset) {
+    if (!preset) return 0;
+    if (ecu_preset_is_obd2(preset)) return 0;  /* OBD2 has no broadcast IDs to match */
+
+    /* Collect unique CAN IDs from the preset. */
+    uint32_t preset_ids[ECU_SIG__COUNT];
+    int preset_count = 0;
+    for (int s = 0; s < ECU_SIG__COUNT; s++) {
+        uint32_t id = preset->rows[s].can_id;
+        if (id == 0) continue;  /* SIG_UNSUPPORTED */
+        bool dup = false;
+        for (int j = 0; j < preset_count; j++) {
+            if (preset_ids[j] == id) { dup = true; break; }
+        }
+        if (!dup) preset_ids[preset_count++] = id;
+    }
+    if (preset_count == 0) return 0;  /* nothing to match against */
+
+    /* Pull the latest bus-scan result. NULL or no-bitrate-picked -> no scan
+     * has happened, score is 0 across the board (callers should treat 0 as
+     * "unknown" rather than "definitely not matching"). */
+    const can_scan_report_t *r = can_bus_test_get_report();
+    if (!r || r->recommended_bitrate < 0) return 0;
+    uint8_t bi = (uint8_t)r->recommended_bitrate;
+    if (bi >= 4) return 0;
+    const can_scan_bitrate_result_t *bres = &r->results[bi];
+    if (!bres->traffic_detected || bres->unique_id_count == 0) return 0;
+
+    /* Intersection count. */
+    int hits = 0;
+    for (int i = 0; i < preset_count; i++) {
+        for (uint8_t j = 0; j < bres->unique_id_count; j++) {
+            if (preset_ids[i] == bres->unique_ids[j]) { hits++; break; }
+        }
+    }
+
+    /* Round-to-nearest percentage so a 1/3 split surfaces as 33 not 33.33 -> 33. */
+    int score = (hits * 100 + preset_count / 2) / preset_count;
+    if (score > 100) score = 100;
+    return score;
 }
 
 esp_err_t ecu_preset_apply_to_layout(const char *layout_name,

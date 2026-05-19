@@ -564,16 +564,32 @@ static const httpd_uri_t presets_list_uri = {.uri = "/api/presets",
  *  ECU selection endpoints
  * â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-/* GET /api/ecu/list - returns the array of ECU presets from ecu_presets.c */
+/* GET /api/ecu/list - returns the array of ECU presets from ecu_presets.c.
+ *
+ * Each entry now includes a `match_score` field (0..100), computed from the
+ * intersection of the preset's broadcast CAN IDs and the IDs captured by the
+ * last can_bus_test scan. Web UI uses match_score:
+ *   - >= ECU_PRESET_MATCH_THRESHOLD (30%) → render with a blue indicator
+ *   - In Manual mode, presets below the threshold are filtered out client-side
+ *   - 0 means either "no overlap" or "no scan has been run yet" — UIs treat
+ *     these the same: no decoration, included in Auto mode, hidden in Manual
+ *
+ * `match_threshold` is included in the response so the web side doesn't have
+ * to hard-code it. */
 static esp_err_t ecu_list_handler(httpd_req_t *req) {
-	cJSON *root = cJSON_CreateArray();
+	cJSON *root = cJSON_CreateObject();
+	cJSON *arr  = cJSON_AddArrayToObject(root, "presets");
 	for (int i = 0; i < ECU_PRESETS_COUNT; i++) {
 		cJSON *item = cJSON_CreateObject();
 		cJSON_AddStringToObject(item, "make",    ECU_PRESETS[i].make);
 		cJSON_AddStringToObject(item, "version", ECU_PRESETS[i].version);
 		cJSON_AddStringToObject(item, "display", ECU_PRESETS[i].display);
-		cJSON_AddItemToArray(root, item);
+		cJSON_AddNumberToObject(item, "match_score",
+		                        ecu_preset_match_score(&ECU_PRESETS[i]));
+		cJSON_AddItemToArray(arr, item);
 	}
+	cJSON_AddNumberToObject(root, "match_threshold", ECU_PRESET_MATCH_THRESHOLD);
+	cJSON_AddBoolToObject  (root, "auto_mode",       config_store_load_ecu_picker_auto());
 	char *s = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
 	if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
@@ -582,6 +598,45 @@ static esp_err_t ecu_list_handler(httpd_req_t *req) {
 	esp_err_t r = httpd_resp_send(req, s, strlen(s));
 	free(s);
 	return r;
+}
+
+/* GET /api/ecu/picker_mode - returns {"auto": bool} */
+static esp_err_t ecu_picker_mode_get_handler(httpd_req_t *req) {
+	char body[24];
+	int  n = snprintf(body, sizeof(body), "{\"auto\":%s}",
+	                  config_store_load_ecu_picker_auto() ? "true" : "false");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, body, n);
+}
+
+/* POST /api/ecu/picker_mode  body: {"auto": true|false} */
+static esp_err_t ecu_picker_mode_post_handler(httpd_req_t *req) {
+	char buf[64];
+	if (req->content_len >= sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
+	buf[n] = '\0';
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
+	const cJSON *ja = cJSON_GetObjectItemCaseSensitive(root, "auto");
+	if (!cJSON_IsBool(ja)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "auto must be bool");
+		return ESP_FAIL;
+	}
+	bool auto_mode = cJSON_IsTrue(ja);
+	cJSON_Delete(root);
+	if (config_store_save_ecu_picker_auto(auto_mode) != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", 11);
 }
 
 /* GET /api/ecu/current - returns {"make":"...","version":"..."} or empty strings */
@@ -651,9 +706,11 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	return httpd_resp_send(req, "{\"ok\":true}", 11);
 }
 
-static const httpd_uri_t ecu_list_uri    = { .uri = "/api/ecu/list",    .method = HTTP_GET,  .handler = ecu_list_handler,    .user_ctx = NULL };
-static const httpd_uri_t ecu_current_uri = { .uri = "/api/ecu/current", .method = HTTP_GET,  .handler = ecu_current_handler, .user_ctx = NULL };
-static const httpd_uri_t ecu_set_uri     = { .uri = "/api/ecu/set",     .method = HTTP_POST, .handler = ecu_set_handler,     .user_ctx = NULL };
+static const httpd_uri_t ecu_list_uri        = { .uri = "/api/ecu/list",        .method = HTTP_GET,  .handler = ecu_list_handler,             .user_ctx = NULL };
+static const httpd_uri_t ecu_current_uri     = { .uri = "/api/ecu/current",     .method = HTTP_GET,  .handler = ecu_current_handler,          .user_ctx = NULL };
+static const httpd_uri_t ecu_set_uri         = { .uri = "/api/ecu/set",         .method = HTTP_POST, .handler = ecu_set_handler,              .user_ctx = NULL };
+static const httpd_uri_t ecu_picker_get_uri  = { .uri = "/api/ecu/picker_mode", .method = HTTP_GET,  .handler = ecu_picker_mode_get_handler,  .user_ctx = NULL };
+static const httpd_uri_t ecu_picker_post_uri = { .uri = "/api/ecu/picker_mode", .method = HTTP_POST, .handler = ecu_picker_mode_post_handler, .user_ctx = NULL };
 
 /* â”€â”€ Custom signal presets (stored as JSON in /lfs/presets/) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
@@ -1513,6 +1570,8 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &ecu_list_uri);
     REGISTER_URI(server, &ecu_current_uri);
     REGISTER_URI(server, &ecu_set_uri);
+    REGISTER_URI(server, &ecu_picker_get_uri);
+    REGISTER_URI(server, &ecu_picker_post_uri);
     REGISTER_URI(server, &custom_presets_list_uri);
     REGISTER_URI(server, &custom_preset_save_uri);
     REGISTER_URI(server, &custom_preset_delete_uri);
