@@ -1811,6 +1811,23 @@
             text-align: center;
             flex-shrink: 0;
         }
+        /* Per-signal status dot in the sidebar card header.
+         *   .live (signal received a frame inside SIGNAL_TIMEOUT_MS) takes
+         *      priority — paints solid accent-blue with a subtle glow.
+         *   .bound (a widget references this signal) is the green secondary
+         *      state when the signal isn't currently producing live values.
+         *   Default (neither set) is a dim grey — signal exists in the
+         *      registry but nothing's bound and nothing's incoming. */
+        .sig-card-header .sig-dot {
+            width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+            background: #404040;
+            transition: background 0.18s, box-shadow 0.18s;
+        }
+        .sig-card-header .sig-dot.bound { background: hsl(152, 70%, 42%); }
+        .sig-card-header .sig-dot.live  {
+            background: #2d8ceb;
+            box-shadow: 0 0 6px rgba(45, 140, 235, 0.55);
+        }
         .sig-card.expanded .sig-card-header .sig-expand-icon { transform: rotate(90deg); }
         .sig-card.highlighted {
             border-left: 2px solid var(--accent);
@@ -9275,7 +9292,10 @@
                 let html = `<div class="${cls}" data-sig-idx="${i}">`;
                 html += `<div class="sig-card-header" onclick="toggleSignalExpand(${i})" draggable="true" ondragstart="signalDragStart(event,'${s.name.replace(/'/g, "\\'")}')" ondragend="signalDragEnd(event)">`;
                 html += `<span class="sig-expand-icon">\u25B6</span>`;
-                html += `<span class="sig-dot ${bound.length ? 'bound' : 'unbound'}"></span>`;
+                /* data-sig-name lets _updateLiveValueCells flip the .live class
+                 * when a frame arrives. Initial classes only carry the bound state;
+                 * .live is added/removed by the poll loop. */
+                html += `<span class="sig-dot ${bound.length ? 'bound' : 'unbound'}" data-sig-name="${s.name.replace(/"/g, '&quot;')}"></span>`;
                 html += `<div class="sig-info">`;
                 html += `<span class="sig-name"${sIsInternal ? ' style="color:#4fc3f7;"' : ''}>${s.name}</span>`;
                 html += `<span class="sig-meta">${sigMeta}</span>`;
@@ -9384,6 +9404,18 @@
                     el.textContent = info.stale ? '---' : display;
                     el.style.color = info.stale ? 'var(--text-ghost)' : '#4fc3f7';
                 }
+            });
+
+            /* Per-signal sidebar dot: blue when receiving a recent value,
+             * falls back to bound/unbound state otherwise. Same data source
+             * (_signalLiveValues, populated by _pollSignalValues every 1.5 s)
+             * so the dot stays in sync with the live-value column. */
+            document.querySelectorAll('.sig-dot[data-sig-name]').forEach(el => {
+                const name = el.dataset.sigName;
+                const info = _signalLiveValues[name];
+                const fresh = info !== undefined && !info.stale;
+                if (fresh) el.classList.add('live');
+                else       el.classList.remove('live');
             });
         }
 

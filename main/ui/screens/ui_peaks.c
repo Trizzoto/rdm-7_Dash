@@ -28,13 +28,21 @@
 #define MAX_TRACKED        128   /* matches MAX_SIGNALS */
 
 /* One LVGL row per signal. We cache the labels so the refresh callback
- * just rewrites text instead of rebuilding the row. The signal name and
- * the three value labels live in this struct. */
+ * just rewrites text instead of rebuilding the row. The signal name,
+ * three value labels, and the freshness dot all live here.
+ *
+ * The dot is a tiny circle on the left edge of the row that fills in
+ * blue when sig->is_stale == false (= a frame arrived inside
+ * SIGNAL_TIMEOUT_MS), and grey when stale. last_dot_state caches the
+ * last painted state so the 100 ms refresh skips redundant style
+ * writes (LVGL invalidates on every style write regardless of value). */
 typedef struct {
 	int16_t   signal_index;
+	lv_obj_t *dot;
 	lv_obj_t *cur_lbl;
 	lv_obj_t *min_lbl;
 	lv_obj_t *max_lbl;
+	int8_t    last_dot_fresh;  /* -1 = never painted, 0 = stale, 1 = fresh */
 } peak_row_t;
 
 static lv_obj_t   *s_screen          = NULL;
@@ -90,15 +98,26 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 	lv_obj_set_style_pad_hor(row, 8, 0);
 	lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-	/* Layout: 35% name | 20% cur | 18% min | 18% max | 9% reset btn */
+	/* Layout: dot | 35% name | 20% cur | 18% min | 18% max | 9% reset btn
+	 * The dot sits in the row's left padding (4 px) — name aligns at 16 px
+	 * to leave clearance. */
+
+	lv_obj_t *dot = lv_obj_create(row);
+	lv_obj_remove_style_all(dot);
+	lv_obj_set_size(dot, 10, 10);
+	lv_obj_align(dot, LV_ALIGN_LEFT_MID, 0, 0);
+	lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(dot, THEME_COLOR_BORDER_MED, LV_PART_MAIN);
+	lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, LV_PART_MAIN);
+	lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE);
 
 	lv_obj_t *name = lv_label_create(row);
 	lv_label_set_text(name, sig->name);
 	lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
 	lv_obj_set_style_text_color(name, THEME_COLOR_TEXT_PRIMARY, 0);
-	lv_obj_set_width(name, lv_pct(35));
+	lv_obj_set_width(name, lv_pct(33));
 	lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-	lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
+	lv_obj_align(name, LV_ALIGN_LEFT_MID, 16, 0);
 
 	lv_obj_t *cur = lv_label_create(row);
 	lv_label_set_text(cur, "-");
@@ -142,10 +161,12 @@ static void _add_row(lv_obj_t *parent, int16_t sig_idx, signal_t *sig)
 	lv_obj_set_style_text_color(rst_lbl, THEME_COLOR_TEXT_MUTED, 0);
 	lv_obj_center(rst_lbl);
 
-	s_rows[s_row_count].signal_index = sig_idx;
-	s_rows[s_row_count].cur_lbl      = cur;
-	s_rows[s_row_count].min_lbl      = mn;
-	s_rows[s_row_count].max_lbl      = mx;
+	s_rows[s_row_count].signal_index   = sig_idx;
+	s_rows[s_row_count].dot            = dot;
+	s_rows[s_row_count].cur_lbl        = cur;
+	s_rows[s_row_count].min_lbl        = mn;
+	s_rows[s_row_count].max_lbl        = mx;
+	s_rows[s_row_count].last_dot_fresh = -1;  /* force first refresh to paint */
 	s_row_count++;
 }
 
@@ -179,11 +200,23 @@ static void _refresh(lv_timer_t *t)
 		s_seen_signal_count = now_count;
 	}
 
-	/* Update each row's three value labels */
+	/* Update each row's freshness dot + value labels */
 	char buf[24];
 	for (uint16_t i = 0; i < s_row_count; i++) {
 		signal_t *sig = signal_get_by_index((uint16_t)s_rows[i].signal_index);
 		if (!sig) continue;
+
+		/* Freshness dot — blue when receiving a recent frame, grey when
+		 * stale. The last_dot_fresh cache lets us skip lv_obj_set_style_*
+		 * when nothing's changed (LVGL invalidates on every style write
+		 * regardless of value). */
+		int8_t want = sig->is_stale ? 0 : 1;
+		if (want != s_rows[i].last_dot_fresh && s_rows[i].dot) {
+			lv_color_t c = want ? THEME_COLOR_ACCENT_BLUE
+			                    : THEME_COLOR_BORDER_MED;
+			lv_obj_set_style_bg_color(s_rows[i].dot, c, LV_PART_MAIN);
+			s_rows[i].last_dot_fresh = want;
+		}
 
 		if (sig->is_stale) {
 			lv_label_set_text(s_rows[i].cur_lbl, "-");
