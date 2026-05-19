@@ -44,6 +44,24 @@ static float s_last_fuel_voltage = 0.0f;
 /* ── Calculated gear config (loaded from NVS on start, refreshed via API) ── */
 static gear_cal_config_t s_gear_cal = {0};
 
+/* ── Odometer state ────────────────────────────────────────────────────────
+ *
+ * s_odometer_km holds the live running total — published each tick as the
+ * "ODOMETER" signal. s_odo_unsaved_km is the accumulator that decides when
+ * to flush to NVS; reset to zero on every successful save.
+ *
+ * Save trigger:  ≥ 1 km unsaved  OR  ≥ 5 min since the last save with any
+ * non-zero unsaved distance. Worst-case loss on unexpected power-off is
+ * ~1 km at highway speed and ~0.4 km at very low speeds. */
+#define ODOMETER_SAVE_THRESHOLD_KM   1.0f
+#define ODOMETER_SAVE_PERIOD_US      ((int64_t)300000000)  /* 5 min */
+#define INTERNAL_TIMER_PERIOD_S      0.5f                   /* mirrors lv_timer_create() */
+
+static float   s_odometer_km        = 0.0f;
+static float   s_odo_unsaved_km     = 0.0f;
+static int64_t s_odo_last_save_us   = 0;
+static bool    s_odo_speed_warned   = false;
+
 /* Simple FPS counter — incremented by the flush callback, read and
  * reset every timer period (~500 ms) to derive frames per second. */
 static uint32_t s_frame_count = 0;
@@ -198,6 +216,73 @@ static void _internal_timer_cb(lv_timer_t *timer)
             }
         }
     }
+
+    /* ── ODOMETER ────────────────────────────────────────────────────
+     * Integrate the configured vehicle-speed signal each tick:
+     *
+     *   km_per_tick = speed_kmh × dt_seconds / 3600
+     *
+     * Source signal: gear_cal.speed_signal if set, else "VEHICLE_SPEED".
+     * (Reusing gear_cal's speed_signal field means the user only sets the
+     * speed source once and it powers both features.)
+     *
+     * Skipped silently when the signal isn't in the registry or is stale —
+     * no point integrating zero, and a stale signal usually means the
+     * engine is off.
+     *
+     * Persistence happens inside this block on the hybrid trigger
+     * (≥ ODOMETER_SAVE_THRESHOLD_KM accumulated OR
+     *  ≥ ODOMETER_SAVE_PERIOD_US since last save).
+     *
+     * The ODOMETER signal value is published every tick regardless so
+     * widgets show a steady reading even before the next save fires. */
+    {
+        const char *speed_name = s_gear_cal.speed_signal[0]
+                               ? s_gear_cal.speed_signal
+                               : "VEHICLE_SPEED";
+        int16_t   sidx = signal_find_by_name(speed_name);
+        signal_t *sig  = (sidx >= 0) ? signal_get_by_index((uint16_t)sidx) : NULL;
+        if (sig && !sig->is_stale) {
+            s_odo_speed_warned = false;
+            float speed = sig->current_value;
+            if (speed > 0.0f) {
+                float km_per_tick = speed * INTERNAL_TIMER_PERIOD_S / 3600.0f;
+                s_odometer_km    += km_per_tick;
+                s_odo_unsaved_km += km_per_tick;
+            }
+        } else if (!s_odo_speed_warned) {
+            ESP_LOGI(TAG, "ODOMETER: speed signal '%s' not in registry — "
+                          "odometer will only update once it's registered",
+                     speed_name);
+            s_odo_speed_warned = true;
+        }
+        signal_inject_test_value("ODOMETER", s_odometer_km);
+
+        /* Persist on threshold OR period. The period branch only fires if
+         * there's actually unsaved distance — no point burning an NVS write
+         * to re-save the same value when the car has been parked for hours. */
+        int64_t now_us = esp_timer_get_time();
+        bool save_due = false;
+        if (s_odo_unsaved_km >= ODOMETER_SAVE_THRESHOLD_KM) save_due = true;
+        if (!save_due &&
+            s_odo_unsaved_km > 0.001f &&
+            s_odo_last_save_us > 0 &&
+            (now_us - s_odo_last_save_us) > ODOMETER_SAVE_PERIOD_US) {
+            save_due = true;
+        }
+        if (save_due) {
+            esp_err_t err = config_store_save_odometer_km(s_odometer_km);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "ODOMETER persisted: %.3f km (+%.3f km since last save)",
+                         (double)s_odometer_km, (double)s_odo_unsaved_km);
+                s_odo_unsaved_km   = 0.0f;
+                s_odo_last_save_us = now_us;
+            } else {
+                ESP_LOGW(TAG, "ODOMETER NVS save failed: %s — will retry next tick",
+                         esp_err_to_name(err));
+            }
+        }
+    }
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
@@ -227,6 +312,21 @@ void signal_internal_start(void)
      * once the user has configured it. First boot: enabled=false, timer
      * skips the compute branch — no CPU overhead. */
     config_store_load_gear_cal(&s_gear_cal);
+
+    /* Load saved odometer reading. First boot returns ESP_ERR_NOT_FOUND and
+     * leaves s_odometer_km at 0 — the user can match the factory reading
+     * via the Vehicle Settings card. last_save_us = 0 sentinel disables
+     * the period-based save until we've actually saved at least once. */
+    float saved_odo = 0.0f;
+    if (config_store_load_odometer_km(&saved_odo) == ESP_OK) {
+        s_odometer_km = saved_odo;
+        ESP_LOGI(TAG, "ODOMETER restored from NVS: %.3f km",
+                 (double)s_odometer_km);
+    } else {
+        ESP_LOGI(TAG, "ODOMETER: no saved value — starting at 0");
+    }
+    s_odo_unsaved_km   = 0.0f;
+    s_odo_last_save_us = esp_timer_get_time();
 
     s_internal_timer = lv_timer_create(_internal_timer_cb, 500, NULL);
     ESP_LOGI(TAG, "internal signal timer started (500 ms)");
@@ -292,4 +392,32 @@ void signal_internal_get_gear_cal(void *out)
 {
     if (!out) return;
     *(gear_cal_config_t *)out = s_gear_cal;
+}
+
+/* ── Odometer public API ──────────────────────────────────────────────── */
+
+void signal_internal_set_odometer_km(float km)
+{
+    if (!isfinite(km) || km < 0.0f) km = 0.0f;
+    s_odometer_km      = km;
+    s_odo_unsaved_km   = 0.0f;
+    /* Commit straight to NVS so a manual entry survives an immediate
+     * power-cycle (common pattern when fitting the dash: user types in
+     * the existing odometer reading then walks away to check wiring). */
+    esp_err_t err = config_store_save_odometer_km(km);
+    s_odo_last_save_us = esp_timer_get_time();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "ODOMETER manually set to %.3f km", (double)km);
+    } else {
+        ESP_LOGW(TAG, "ODOMETER manual set: NVS save failed: %s",
+                 esp_err_to_name(err));
+    }
+    /* Publish immediately so any open Vehicle Settings card / widget sees
+     * the new value without waiting for the next 500 ms tick. */
+    signal_inject_test_value("ODOMETER", s_odometer_km);
+}
+
+float signal_internal_get_odometer_km(void)
+{
+    return s_odometer_km;
 }

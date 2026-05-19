@@ -154,6 +154,25 @@ typedef struct {
 esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg);
 esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
 
+/* ── Vehicle odometer (kilometres) ───────────────────────────────────────
+ * The odometer is maintained by signal_internal.c — it integrates the
+ * configured vehicle-speed signal each tick and accumulates kilometres.
+ * Persistence is on a hybrid trigger: every 1 km of unsaved accumulation
+ * OR every 5 minutes of operation, whichever comes first. Worst-case loss
+ * on unexpected power-off is ~1 km at highway speed, ~0.4 km at 5 km/h.
+ *
+ * Manual entry (e.g. when first installing the dash, to match the
+ * vehicle's existing odometer reading) is supported via
+ * signal_internal_set_odometer_km(), which calls save immediately.
+ *
+ * Stored as a single float blob in NVS namespace "vehicle" key "odo_km". */
+esp_err_t config_store_save_odometer_km(float km);
+
+/* Loads the saved odometer reading into @p out. Returns ESP_ERR_NOT_FOUND
+ * if no value has ever been saved (first boot) — caller should treat that
+ * as "start at 0". On error @p out is set to 0.0f. */
+esp_err_t config_store_load_odometer_km(float *out);
+
 /* ── OTA: dismissed-version sentinel ─────────────────────────────────────
  * When the user hits "Skip this version" in the auto-OTA popup we store
  * the offered version string here. On every subsequent boot OTA check, if

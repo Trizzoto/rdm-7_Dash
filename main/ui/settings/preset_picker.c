@@ -397,6 +397,11 @@ const preconfig_item_t preconfig_items[] = {
 { "RDM-7", "Internal", "FPS",             "0", 1, 0, 16, 1.0,  0, 0, false },
 { "RDM-7", "Internal", "FREE HEAP KB",    "0", 1, 0, 16, 1.0,  0, 0, false },
 { "RDM-7", "Internal", "FREE PSRAM KB",   "0", 1, 0, 16, 1.0,  0, 0, false },
+/* ODOMETER is published by signal_internal.c: accumulates km from the
+ * configured vehicle-speed signal each tick, persists to NVS on a
+ * hybrid trigger (≥ 1 km OR ≥ 5 min unsaved). Editable via the
+ * Vehicle Settings card (on-device) or POST /api/odometer (web). */
+{ "RDM-7", "Internal", "ODOMETER",        "0", 1, 0, 16, 1.0,  0, 1, false },
 { "RDM-7", "Internal", "UPTIME S",        "0", 1, 0, 16, 1.0,  0, 0, false },
 { "RDM-7", "Internal", "WIFI RSSI",       "0", 1, 0, 16, 1.0,  0, 0, true  },
 

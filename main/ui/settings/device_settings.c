@@ -24,6 +24,8 @@
 #include "obd2_picker.h"
 #include "obd2.h"
 #include "dtc_reader.h"
+#include "settings/ui_gear_setup.h"
+#include "widgets/signal_internal.h"
 #include "system/night_mode.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
@@ -117,6 +119,14 @@ static void _night_btn_cb(lv_event_t *e) {
     }
 }
 static lv_timer_t *s_log_status_timer = NULL;
+
+/* VEHICLE section — calculated gear setup button + live odometer label.
+ * Defined here (rather than next to _build_section_vehicle) so that
+ * close_menu_event_cb can null/free them without forward-declaration. */
+static lv_obj_t   *s_veh_odo_value_lbl = NULL;
+static lv_timer_t *s_veh_odo_timer     = NULL;
+static lv_obj_t   *s_odo_edit_overlay  = NULL;
+static lv_obj_t   *s_odo_edit_textarea = NULL;
 
 /* CAN diagnostics — redesigned with health indicator + collapsible details */
 static lv_obj_t  *s_can_health_dot     = NULL;
@@ -1454,6 +1464,21 @@ static void close_menu_event_cb(lv_event_t * e) {
         lv_timer_del(s_can_diag_timer);
         s_can_diag_timer = NULL;
     }
+
+    // Delete Vehicle odometer refresh timer
+    if (s_veh_odo_timer) {
+        lv_timer_del(s_veh_odo_timer);
+        s_veh_odo_timer = NULL;
+    }
+    s_veh_odo_value_lbl = NULL;
+
+    /* Close odometer-edit overlay if user navigated away with it open
+     * (lv_layer_top isn't part of the screen, so it doesn't auto-delete). */
+    if (s_odo_edit_overlay && lv_obj_is_valid(s_odo_edit_overlay)) {
+        lv_obj_del(s_odo_edit_overlay);
+    }
+    s_odo_edit_overlay  = NULL;
+    s_odo_edit_textarea = NULL;
 
     /* Close scan overlay (lives on lv_layer_top, not auto-deleted) */
     if (s_scan_overlay && lv_obj_is_valid(s_scan_overlay)) {
@@ -2966,6 +2991,210 @@ static void _share_btn_cb(lv_event_t *e) {
     _share_modal_open();
 }
 
+/* ── VEHICLE section ─────────────────────────────────────────────────────
+ *
+ * Container for vehicle-tied user state that doesn't fit cleanly under
+ * CAN BUS or DATA LOGGING:
+ *   • Calculated gear setup (RPM/speed source, wheel circumference,
+ *     final drive, per-gear ratios). Opens the existing ui_gear_setup
+ *     overlay — same modal that auto-pops after picking RDM-7 Internal.
+ *   • Odometer reading: live display (refreshed once a second from
+ *     signal_internal_get_odometer_km), plus an Edit button that opens
+ *     a numeric-keyboard overlay for manual entry on first install.
+ *
+ * Odometer accumulation runs continuously inside signal_internal.c's
+ * tick — this card just exposes the running value and lets the user
+ * snap it to a starting reading.
+ *
+ * State for this section (s_veh_odo_*, s_odo_edit_*) is hoisted to the
+ * file-level static block near the top so the screen-close handler can
+ * tear it down without forward-declaration. */
+
+static void _veh_odo_refresh_timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (!s_veh_odo_value_lbl || !lv_obj_is_valid(s_veh_odo_value_lbl)) return;
+    float km = signal_internal_get_odometer_km();
+    char buf[40];
+    snprintf(buf, sizeof(buf), "Odometer: %.1f km", (double)km);
+    lv_label_set_text(s_veh_odo_value_lbl, buf);
+}
+
+static void _odo_edit_close(void) {
+    if (s_odo_edit_overlay && lv_obj_is_valid(s_odo_edit_overlay)) {
+        lv_obj_del(s_odo_edit_overlay);
+    }
+    s_odo_edit_overlay  = NULL;
+    s_odo_edit_textarea = NULL;
+}
+
+static void _odo_edit_save_cb(lv_event_t *e) {
+    (void)e;
+    if (!s_odo_edit_textarea) { _odo_edit_close(); return; }
+    const char *txt = lv_textarea_get_text(s_odo_edit_textarea);
+    float km = txt ? strtof(txt, NULL) : 0.0f;
+    /* signal_internal_set_odometer_km clamps + persists + publishes. */
+    signal_internal_set_odometer_km(km);
+    _odo_edit_close();
+    /* Force-refresh the section's value label so the user sees the new
+     * reading immediately rather than waiting up to a second for the
+     * timer. */
+    _veh_odo_refresh_timer_cb(NULL);
+}
+
+static void _odo_edit_cancel_cb(lv_event_t *e) {
+    (void)e;
+    _odo_edit_close();
+}
+
+/* Numeric-keyboard overlay for manual odometer entry. Mirrors the
+ * WiFi password modal pattern (ui_wifi.c) — full-screen dimmer plus a
+ * centred card holding a textarea + LV_KEYBOARD_MODE_NUMBER keyboard +
+ * Save / Cancel buttons. */
+static void _odo_edit_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (s_odo_edit_overlay) return;  /* already open */
+
+    lv_obj_t *scr = lv_layer_top();
+    s_odo_edit_overlay = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_odo_edit_overlay);
+    lv_obj_set_size(s_odo_edit_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_odo_edit_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_odo_edit_overlay, LV_OPA_80, 0);
+    lv_obj_clear_flag(s_odo_edit_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_odo_edit_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *card = lv_obj_create(s_odo_edit_overlay);
+    lv_obj_set_size(card, 480, 380);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(card);
+    lv_label_set_text(title, "Set Odometer (km)");
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_LARGE, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    s_odo_edit_textarea = lv_textarea_create(card);
+    lv_obj_set_size(s_odo_edit_textarea, 448, 36);
+    lv_obj_align(s_odo_edit_textarea, LV_ALIGN_TOP_LEFT, 0, 32);
+    lv_textarea_set_one_line(s_odo_edit_textarea, true);
+    lv_textarea_set_accepted_chars(s_odo_edit_textarea, "0123456789.");
+    lv_textarea_set_max_length(s_odo_edit_textarea, 16);
+    lv_obj_set_style_text_font(s_odo_edit_textarea, THEME_FONT_MEDIUM, 0);
+    /* Pre-fill with the current reading so a small adjustment doesn't
+     * require typing the whole number again. */
+    char prefill[24];
+    snprintf(prefill, sizeof(prefill), "%.1f",
+             (double)signal_internal_get_odometer_km());
+    lv_textarea_set_text(s_odo_edit_textarea, prefill);
+
+    lv_obj_t *kb = lv_keyboard_create(card);
+    lv_obj_set_size(kb, 448, 220);
+    lv_obj_align(kb, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+    lv_keyboard_set_textarea(kb, s_odo_edit_textarea);
+
+    /* Save / Cancel buttons. */
+    lv_obj_t *save = lv_btn_create(card);
+    lv_obj_set_size(save, 200, 36);
+    lv_obj_align(save, LV_ALIGN_BOTTOM_RIGHT, 0, -6);
+    lv_obj_set_style_bg_color(save, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(save, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(save, 0, 0);
+    lv_obj_set_style_shadow_width(save, 0, 0);
+    lv_obj_t *save_lbl = lv_label_create(save);
+    lv_label_set_text(save_lbl, "Save");
+    lv_obj_center(save_lbl);
+    lv_obj_set_style_text_color(save_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_set_style_text_font(save_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(save, _odo_edit_save_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cancel = lv_btn_create(card);
+    lv_obj_set_size(cancel, 200, 36);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, -6);
+    lv_obj_set_style_bg_color(cancel, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_radius(cancel, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(cancel, 0, 0);
+    lv_obj_set_style_shadow_width(cancel, 0, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_set_style_text_color(cancel_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_font(cancel_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(cancel, _odo_edit_cancel_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void _veh_gear_btn_cb(lv_event_t *e) {
+    (void)e;
+    ui_gear_setup_open(NULL, NULL);
+}
+
+static void _build_section_vehicle(lv_obj_t *row) {
+    lv_obj_t *s = _make_flex_section(row);
+    _make_section_title(s, "VEHICLE");
+
+    /* Left button: opens the existing Gear Setup overlay. */
+    lv_obj_t *gear_btn = lv_btn_create(s);
+    lv_obj_set_size(gear_btn, 200, 30);
+    lv_obj_align(gear_btn, LV_ALIGN_TOP_LEFT, 0, 22);
+    lv_obj_set_style_bg_color(gear_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(gear_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(gear_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(gear_btn, 1, 0);
+    lv_obj_set_style_border_color(gear_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(gear_btn, 0, 0);
+    lv_obj_t *gear_lbl = lv_label_create(gear_btn);
+    lv_label_set_text(gear_lbl, "Calculated Gear Setup...");
+    lv_obj_center(gear_lbl);
+    lv_obj_set_style_text_font(gear_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(gear_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(gear_btn, _veh_gear_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Middle: live odometer reading. Updated every second by
+     * _veh_odo_refresh_timer_cb. */
+    s_veh_odo_value_lbl = lv_label_create(s);
+    lv_label_set_text(s_veh_odo_value_lbl, "Odometer: ---");
+    lv_obj_align(s_veh_odo_value_lbl, LV_ALIGN_TOP_LEFT, 220, 28);
+    lv_obj_set_style_text_font(s_veh_odo_value_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_veh_odo_value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    /* Right button: opens the numeric-keyboard editor. */
+    lv_obj_t *edit_btn = lv_btn_create(s);
+    lv_obj_set_size(edit_btn, 150, 30);
+    lv_obj_align(edit_btn, LV_ALIGN_TOP_RIGHT, 0, 22);
+    lv_obj_set_style_bg_color(edit_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(edit_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(edit_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(edit_btn, 1, 0);
+    lv_obj_set_style_border_color(edit_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(edit_btn, 0, 0);
+    lv_obj_t *edit_lbl = lv_label_create(edit_btn);
+    lv_label_set_text(edit_lbl, "Edit Odometer...");
+    lv_obj_center(edit_lbl);
+    lv_obj_set_style_text_font(edit_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(edit_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(edit_btn, _odo_edit_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *note = lv_label_create(s);
+    lv_label_set_text(note,
+        "Auto-accumulates from VEHICLE_SPEED. Persists every 1 km or 5 min.");
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Kick off the periodic refresh — single shared timer for the open
+     * Settings screen. Cleaned up at screen-destroy time. */
+    if (s_veh_odo_timer) lv_timer_del(s_veh_odo_timer);
+    s_veh_odo_timer = lv_timer_create(_veh_odo_refresh_timer_cb, 1000, NULL);
+    /* Render immediately so the user doesn't see "---" for a second. */
+    _veh_odo_refresh_timer_cb(NULL);
+}
+
 static void _build_section_peak_hold(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "PEAK HOLD");
@@ -3294,10 +3523,13 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     _build_section_network(row2);
     _build_section_display(row2);
 
-    /* Rows 3/4/5: DATA LOGGING / PEAK HOLD / TESTING each get a full-width
-     * row of their own — previously crammed into one 3-column 95 px row
-     * which left no horizontal room for additional controls (e.g. the new
-     * Raw CAN Capture button in DATA LOGGING). */
+    /* Rows 3..6: VEHICLE / DATA LOGGING / PEAK HOLD / TESTING each get a
+     * full-width row of their own — previously crammed into one 3-column
+     * 95 px row which left no horizontal room for additional controls
+     * (e.g. the new Raw CAN Capture button in DATA LOGGING). The Vehicle
+     * row sits up top so the gear-calc / odometer pair is easy to find. */
+    lv_obj_t *veh_row    = _build_row(content, 95);
+    _build_section_vehicle(veh_row);
     lv_obj_t *log_row    = _build_row(content, 95);
     _build_section_data_logging(log_row);
     lv_obj_t *peak_row   = _build_row(content, 95);

@@ -94,7 +94,75 @@ static const httpd_uri_t api_gear_cfg_post_uri = {
     .uri = "/api/gear/config", .method = HTTP_POST,
     .handler = api_gear_cfg_post_handler, .user_ctx = NULL};
 
+/* GET /api/odometer — current odometer reading + helper info.
+ * Lives next to the gear config because they share a configuration page
+ * in the Vehicle Settings card: the gear speed-signal is also the
+ * odometer's source signal. */
+static esp_err_t api_odometer_get_handler(httpd_req_t *req) {
+	float km = signal_internal_get_odometer_km();
+	gear_cal_config_t cfg = {0};
+	signal_internal_get_gear_cal(&cfg);
+	const char *speed_src = cfg.speed_signal[0] ? cfg.speed_signal : "VEHICLE_SPEED";
+	char body[128];
+	int n = snprintf(body, sizeof(body),
+	                 "{\"km\":%.3f,\"speed_signal\":\"%s\"}",
+	                 (double)km, speed_src);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, body, n);
+}
+
+/* POST /api/odometer — manual override of the odometer reading.
+ * Body: {"km": 12345.6}. Negative or non-finite values are clamped to 0
+ * server-side. Commits to NVS immediately (matches manual-entry intent). */
+static esp_err_t api_odometer_post_handler(httpd_req_t *req) {
+	char body[64];
+	int total = req->content_len;
+	if (total <= 0 || total >= (int)sizeof(body)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+		return ESP_FAIL;
+	}
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[got] = '\0';
+	cJSON *root = cJSON_Parse(body);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
+		return ESP_FAIL;
+	}
+	cJSON *jkm = cJSON_GetObjectItemCaseSensitive(root, "km");
+	if (!cJSON_IsNumber(jkm)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "km must be a number");
+		return ESP_FAIL;
+	}
+	float km = (float)jkm->valuedouble;
+	cJSON_Delete(root);
+
+	signal_internal_set_odometer_km(km);  /* clamps + persists */
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t api_odometer_get_uri = {
+    .uri = "/api/odometer", .method = HTTP_GET,
+    .handler = api_odometer_get_handler, .user_ctx = NULL};
+static const httpd_uri_t api_odometer_post_uri = {
+    .uri = "/api/odometer", .method = HTTP_POST,
+    .handler = api_odometer_post_handler, .user_ctx = NULL};
+
 void web_server_gear_register(httpd_handle_t server) {
 	REGISTER_URI(server, &api_gear_cfg_get_uri);
 	REGISTER_URI(server, &api_gear_cfg_post_uri);
+	REGISTER_URI(server, &api_odometer_get_uri);
+	REGISTER_URI(server, &api_odometer_post_uri);
 }

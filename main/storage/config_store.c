@@ -5,6 +5,7 @@
 #include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <math.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -742,6 +743,38 @@ esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len)
     esp_err_t err = nvs_get_str(handle, "skip_ver", out, &n);
     nvs_close(handle);
     if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+
+/* ── Vehicle odometer ──────────────────────────────────────────────────── */
+
+#define NS_VEHICLE "vehicle"
+
+esp_err_t config_store_save_odometer_km(float km)
+{
+    if (!isfinite(km) || km < 0.0f) km = 0.0f;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_VEHICLE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(handle, "odo_km", &km, sizeof(km));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_odometer_km(float *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    *out = 0.0f;
+    nvs_handle_t handle;
+    if (nvs_open(NS_VEHICLE, NVS_READONLY, &handle) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    float km = 0.0f;
+    size_t sz = sizeof(km);
+    esp_err_t err = nvs_get_blob(handle, "odo_km", &km, &sz);
+    nvs_close(handle);
+    if (err == ESP_OK && sz == sizeof(km) && isfinite(km) && km >= 0.0f) {
+        *out = km;
+    }
     return err;
 }
 

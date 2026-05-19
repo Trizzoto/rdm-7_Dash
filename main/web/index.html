@@ -3238,6 +3238,29 @@
                 <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
                     <input id="gearEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled — publish CALCULATED_GEAR
                 </label>
+
+                <!-- ────────────────────────────────────────────────────────
+                     Odometer subsection. Lives inside the Gear Setup modal
+                     because they share the same Speed Signal config — the
+                     odometer integrates whichever signal name lives in
+                     `Speed Signal (km/h)` above. Reads /api/odometer on
+                     open and writes back through the same Save button only
+                     if the user actually edited the value.
+                     ──────────────────────────────────────────────────────── -->
+                <div style="margin-top:4px; padding-top:10px; border-top:1px dashed var(--border);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:11px; color:var(--text-muted); font-weight:600; letter-spacing:0.5px;">ODOMETER</span>
+                        <span id="gearOdoLive" style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;" title="Live reading from the device — refreshes when the modal opens">live: —</span>
+                    </div>
+                    <label style="font-size:11px; color:var(--text-muted);">Manual reading (km)
+                        <input id="gearOdoKm" type="number" step="0.1" min="0" max="9999999" placeholder="e.g. 145320"
+                            style="width:100%; margin-top:2px; padding:5px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px;">
+                    </label>
+                    <div style="font-size:10px; color:var(--text-muted); margin-top:6px; line-height:1.45;">
+                        Auto-accumulates from your selected Speed Signal. Persists every 1 km or 5 min.
+                        Enter a starting reading once to match the vehicle's factory odo.
+                    </div>
+                </div>
                 <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveGearSetup()">Save</button>
             </div>
         </div>
@@ -12536,6 +12559,25 @@
                 document.getElementById('gearSpeedSig').value = cfg.speed_signal;
             }
             _gearRenderRatios(cfg.ratios && cfg.ratios.length ? cfg.ratios : [0, 3.321, 1.902, 1.308, 1.000, 0.759]);
+
+            /* ── Odometer load ────────────────────────────────────────────
+             * Fetch the current km reading + show the same value in the
+             * input so saveGearSetup() can detect "did the user actually
+             * edit this?" via a strict equality check. */
+            try {
+                const ro = await fetch('/api/odometer');
+                if (ro.ok) {
+                    const jo = await ro.json();
+                    const km = (typeof jo.km === 'number') ? jo.km : 0;
+                    const odoInput = document.getElementById('gearOdoKm');
+                    const odoLive  = document.getElementById('gearOdoLive');
+                    if (odoInput) {
+                        odoInput.value = km.toFixed(1);
+                        odoInput.dataset.loaded = km.toFixed(1);  /* tracker for "did the user change it?" */
+                    }
+                    if (odoLive) odoLive.textContent = 'live: ' + km.toFixed(1) + ' km';
+                }
+            } catch (e) { /* offline — leave the field empty */ }
         }
         async function saveGearSetup() {
             /* UI shows mm; firmware expects metres. */
@@ -12555,6 +12597,33 @@
                     body: JSON.stringify(payload)
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
+
+                /* ── Odometer save ────────────────────────────────────────
+                 * Only POST /api/odometer if the user actually edited the
+                 * input — otherwise we'd be clobbering the live, ticking
+                 * value with whatever reading was loaded N seconds ago
+                 * when the modal opened. */
+                const odoInput = document.getElementById('gearOdoKm');
+                if (odoInput) {
+                    const current = (odoInput.value || '').trim();
+                    const loaded  = odoInput.dataset.loaded || '';
+                    if (current && current !== loaded) {
+                        const km = parseFloat(current);
+                        if (isFinite(km) && km >= 0) {
+                            try {
+                                const ro = await fetch('/api/odometer', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ km })
+                                });
+                                if (!ro.ok) throw new Error('odo HTTP ' + ro.status);
+                            } catch (e2) {
+                                if (typeof showToast === 'function') showToast('Odometer update failed: ' + e2.message, 'error');
+                            }
+                        }
+                    }
+                }
+
                 if (typeof showToast === 'function') showToast('Gear setup saved', 'success');
                 closeGearSetup();
             } catch (e) {

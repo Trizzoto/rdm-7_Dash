@@ -48,6 +48,20 @@ typedef struct gear_cal_config gear_cal_config_t_fwd;  /* placeholder — real t
 void signal_internal_set_gear_cal(const void *cfg);
 void signal_internal_get_gear_cal(void *out);
 
+/* ── Odometer (kilometres) ───────────────────────────────────────────────
+ *
+ * The ODOMETER signal accumulates kilometres from whichever signal name
+ * lives in gear_cal_config_t::speed_signal (defaults to "VEHICLE_SPEED").
+ * Integration runs every signal-internal tick (500 ms). Persistence to
+ * NVS is hybrid — every 1 km of unsaved distance OR every 5 minutes,
+ * whichever comes first.
+ *
+ * signal_internal_set_odometer_km() is the manual-entry path: lets the
+ * user match the vehicle's factory odometer when first installing the
+ * dash. Writes to NVS immediately. */
+void  signal_internal_set_odometer_km(float km);
+float signal_internal_get_odometer_km(void);
+
 #ifdef __cplusplus
 }
 #endif
