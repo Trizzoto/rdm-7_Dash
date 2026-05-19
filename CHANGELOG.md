@@ -9,11 +9,19 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Added
-- **ECU preset bus-match scoring + Auto/Manual picker filter.** New `ecu_preset_match_score(preset)` returns a 0..100% score representing how many of the preset's broadcast CAN IDs were captured during the last `can_bus_test_start()` ("Scan Car") run. Threshold `ECU_PRESET_MATCH_THRESHOLD = 30%` decides whether a preset is "detected on this bus."
-  - **Web modal**: new ECU Preset card in the OBD2 Setup quick-jump grid opens a list of all firmware presets. Detected presets get a blue dot + score badge. An Auto/Manual switch at the top filters the list — Manual hides presets that didn't match (falls back to showing all if nothing matched, so the user is never stranded with an empty list).
-  - **On-device picker**: `ui_ecu_picker.c` gets the same Auto/Manual switch + a "Detected on bus (N% match)" hint label under the version dropdown. Manual mode filters both make and version dropdowns.
-  - **API**: `/api/ecu/list` response shape changed from a bare array to `{presets: [...], match_threshold: 30, auto_mode: bool}`. Each preset object now carries `match_score`. New endpoints `GET /api/ecu/picker_mode` and `POST /api/ecu/picker_mode` for the Auto flag (persisted in NVS namespace `ecu_pick`).
-  - **Tests**: `tests/native/test_ecu_preset_match.c` — 16 mirror-pattern tests covering degenerate inputs, intersection math, the 30% threshold boundary, rounding, de-duplication, and two realistic preset shapes. Suite now 157 tests, all green.
+- **Live "is this receiving signal right now?" indicators across the picker chain.** The on-device OBD2 PID picker already had per-row blue badges showing live receive status; this release extends the same pattern up and across:
+
+  - **ECU preset picker (on-device + web)** — each preset row carries a live blue dot that lights up when the bus is broadcasting the preset's CAN IDs and dims when it isn't. Detected presets sort to the top with an "NN% match" badge. The on-device picker was rewritten from a two-dropdown UI to a scrollable card list to fit per-row dots. Auto/Manual switch at the header filters out non-detected presets when the user wants to declutter (falls back to showing all if nothing matched, so the user is never stranded).
+  - **Signals screen (on-device `ui_peaks.c`)** — each signal row gets a small dot on its left edge: blue when `signal_t.is_stale == false`, grey otherwise. 100 ms cadence so a freshly arriving frame lights up within a tick.
+  - **Web sidebar signal cards** — `.sig-dot` now gets a `.live` class toggled by the existing `/api/signals/values` poll loop (1.5 s cadence). Three states: blue + glow when live, green when bound-but-stale, grey when neither.
+
+  Implementation pieces:
+  - `ecu_preset_match_score(preset)` returns 0..100% based on the **live** `can_id_tracker` (continuous per-CAN-ID `last_seen_us` recording), not the static `can_bus_test` scan. Threshold `ECU_PRESET_MATCH_THRESHOLD = 30%`. Plug a loom in → dot lights within ~2 s. Unplug → fades within ~2.5 s.
+  - `/api/ecu/list` response shape changed from a bare array to `{presets: [...], match_threshold: 30, auto_mode: bool}`. Each preset carries `match_score`. New endpoints `GET /api/ecu/picker_mode` and `POST /api/ecu/picker_mode` for the Auto flag (persisted in NVS namespace `ecu_pick`).
+  - On-device picker uses a 500 ms refresh timer; web modal polls `/api/ecu/list` every 1.5 s while open.
+  - **Tests**: `tests/native/test_ecu_preset_match.c` — 16 mirror-pattern tests covering degenerate inputs, intersection math, the 30% threshold boundary, rounding, de-duplication, and two realistic preset shapes. Suite now **157 tests, all green**.
+
+  Not done in this batch (deferred): protocol-level (OBD2 mode M01/M22/etc.) indicators in the OBD2 Setup modal.
 
 ### Changed
 - _nothing yet_
