@@ -38,6 +38,43 @@ static warning_data_t *_lookup_warning_data(uint8_t slot) {
 	return w ? (warning_data_t *)w->type_data : NULL;
 }
 
+/* ── Flash effect ──────────────────────────────────────────────────────────
+ * Per-warning periodic timer that flips flash_phase and re-renders the
+ * widget. Only created while flash_mode=1 AND current_state=true so a
+ * solid (or inactive) lamp costs zero CPU. The user_data carries the
+ * slot index so a single static callback can service every instance. */
+
+static void _warn_flash_timer_cb(lv_timer_t *t) {
+	uint8_t slot = (uint8_t)(uintptr_t)t->user_data;
+	warning_data_t *wd = _lookup_warning_data(slot);
+	if (!wd) return;
+	wd->flash_phase = !wd->flash_phase;
+	update_warning_ui_immediate(slot);
+}
+
+/* (Re)create the flash timer if `desired_ms` differs from the active
+ * period. Pass 0 to tear it down. Cheap to call every render — most
+ * frames hit the early-return on no period change. */
+static void _warn_ensure_flash_timer(warning_data_t *wd, uint16_t desired_ms) {
+	if (!wd) return;
+	if (desired_ms == 0) {
+		if (wd->flash_timer) {
+			lv_timer_del(wd->flash_timer);
+			wd->flash_timer = NULL;
+		}
+		wd->flash_phase = false;
+		return;
+	}
+	if (wd->flash_timer) {
+		/* Adjust period in place — cheaper than delete+create. */
+		lv_timer_set_period(wd->flash_timer, desired_ms);
+		return;
+	}
+	wd->flash_timer = lv_timer_create(_warn_flash_timer_cb, desired_ms,
+	                                   (void *)(uintptr_t)wd->slot);
+	wd->flash_phase = true;   /* start in the "active" half of the cycle */
+}
+
 /* forward declarations */
 static void free_warning_idx_event_cb(lv_event_t *e);
 static void invert_warning_toggle_event_cb(lv_event_t *e);
@@ -398,10 +435,28 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
-	lv_color_t new_color = state ? active : inactive;
 	uint8_t active_opa = wd ? wd->active_opa : 255;
 	uint8_t inactive_opa = wd ? wd->inactive_opa : 180;
-	uint8_t new_opa = state ? active_opa : inactive_opa;
+
+	/* Flash effect — when active AND flash mode is on, alternate between
+	 * the active and inactive look at flash_speed_ms cadence. The timer
+	 * itself lives on the warning instance and is (re)created here so it
+	 * automatically starts when the signal activates and stops when it
+	 * deactivates or flash_mode is turned off. */
+	uint16_t flash_ms = (wd && wd->flash_mode == 1 && state)
+		? (wd->flash_speed_ms ? wd->flash_speed_ms : 200) : 0;
+	_warn_ensure_flash_timer(wd, flash_ms);
+
+	bool render_active = state;
+	if (flash_ms != 0) {
+		/* During an "off" half of the cycle, paint the inactive look while
+		 * keeping the label hidden (the label flash should follow the
+		 * lamp). */
+		render_active = wd->flash_phase;
+	}
+
+	lv_color_t new_color = render_active ? active : inactive;
+	uint8_t new_opa = render_active ? active_opa : inactive_opa;
 
 	bool is_image = wd && wd->img_obj != NULL;
 
@@ -1183,6 +1238,12 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
 		if (wd->inactive_opa != 180)
 			cJSON_AddNumberToObject(cfg, "inactive_opa", wd->inactive_opa);
+		/* Flash effect — defaults-only. flash_mode 0 = Solid (no emit),
+		 * flash_speed_ms 200 = the default rate (no emit). */
+		if (wd->flash_mode != 0)
+			cJSON_AddNumberToObject(cfg, "flash_mode", wd->flash_mode);
+		if (wd->flash_speed_ms != 0 && wd->flash_speed_ms != 200)
+			cJSON_AddNumberToObject(cfg, "flash_speed", wd->flash_speed_ms);
 		/* Night-mode overrides — emit only fields that have an override set */
 		{
 			cJSON *n = cJSON_CreateObject();
@@ -1253,6 +1314,18 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) wd->active_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
 	if (cJSON_IsNumber(item)) wd->inactive_opa = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_mode");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		wd->flash_mode = (v == 1) ? 1 : 0;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_speed");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 50)   v = 50;
+		if (v > 1000) v = 1000;
+		wd->flash_speed_ms = (uint16_t)v;
+	}
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -1293,6 +1366,9 @@ static void _warning_destroy(widget_t *w) {
 		*globals[slot] = NULL;
 	}
 	if (wd) {
+		/* Tear down the flash timer so we don't leak it past destroy.
+		 * _warn_ensure_flash_timer with 0 also resets flash_phase. */
+		_warn_ensure_flash_timer(wd, 0);
 		rdm_image_free(wd->img_dsc);
 		wd->img_dsc = NULL;
 		wd->img_obj = NULL;
@@ -1467,6 +1543,8 @@ static bool _warning_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "invert_toggle") == 0)      { out->b = wd->invert_toggle;        return true; }
 	if (strcmp(name, "show_label") == 0)         { out->b = wd->show_label;           return true; }
 	if (strcmp(name, "active_opa") == 0)         { out->i = wd->active_opa;           return true; }
+	if (strcmp(name, "flash_mode") == 0)         { out->i = wd->flash_mode;           return true; }
+	if (strcmp(name, "flash_speed") == 0)        { out->i = wd->flash_speed_ms;       return true; }
 	if (strcmp(name, "inactive_opa") == 0)       { out->i = wd->inactive_opa;         return true; }
 	if (strcmp(name, "border_width") == 0)       { out->i = wd->border_width;         return true; }
 	if (strcmp(name, "radius") == 0)             { out->i = wd->radius;               return true; }
@@ -1541,6 +1619,23 @@ static bool _warning_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "active_opa") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		wd->active_opa = (uint8_t)v;
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "flash_mode") == 0) {
+		wd->flash_mode = (in->i == 1) ? 1 : 0;
+		/* update_warning_ui_immediate (re-)evaluates the flash timer:
+		 * starting it on Solid→Flashing while active, stopping it on
+		 * Flashing→Solid. No need for a separate timer-management call
+		 * here. */
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "flash_speed") == 0) {
+		int v = in->i; if (v < 50) v = 50; if (v > 1000) v = 1000;
+		wd->flash_speed_ms = (uint16_t)v;
+		/* lv_timer_set_period inside _warn_ensure_flash_timer makes the
+		 * new rate live immediately on the next render. */
 		update_warning_ui_immediate(slot);
 		return true;
 	}
@@ -1636,6 +1731,10 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->image_name[0] = '\0';
 	wd->active_opa = 255;
 	wd->inactive_opa = 180;
+	wd->flash_mode = 0;                 /* Solid by default — no flashing */
+	wd->flash_speed_ms = 200;           /* matches RPM-bar limiter flash rate */
+	wd->flash_timer = NULL;
+	wd->flash_phase = false;
 	wd->img_dsc = NULL;
 	wd->img_obj = NULL;
 

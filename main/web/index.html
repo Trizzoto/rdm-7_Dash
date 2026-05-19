@@ -5245,7 +5245,8 @@
                     "bar": {
                         displayName: "Bar Graph", defW: 300, defH: 30,
                         fields: [
-                            { name: "label", label: "Label", type: "text", def: "", cat: "data" },
+                            { name: "show_bar_label", label: "Show Label", type: "checkbox", def: true, cat: "data" },
+                            { name: "label", label: "Label", type: "text", def: "", cat: "data", enabledBy: "show_bar_label" },
                             { name: "bar_min", label: "Min Value", type: "number", def: 0, cat: "data" },
                             { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data" },
                             { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
@@ -5308,6 +5309,12 @@
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
                             { name: "active_opa", label: "Active Opacity", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
+                            { name: "flash_mode", label: "Alert Type", type: "select", def: 0, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Solid" },
+                                  { v: 1, l: "Flashing" }
+                              ] },
+                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", min: 50, max: 1000, step: 50 },
                             { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
                             { name: "invert_toggle", label: "Invert State", type: "checkbox", def: false, cat: "appearance" },
                             { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x292C29, cat: "appearance", nightOverridable: true },

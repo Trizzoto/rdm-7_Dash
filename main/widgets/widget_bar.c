@@ -388,7 +388,18 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		lv_obj_set_width(bd->img_clip_obj, clip_w);
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
-		lv_bar_set_value(bd->bar_obj, bar_value, LV_ANIM_OFF);
+		/* Invert is implemented by reflecting the value about the midpoint:
+		 * (min + max - value) keeps the bar filling left→right but maps a
+		 * "full" reading to an empty fill and vice versa. We do this on the
+		 * already-scaled bar_value because the LVGL bar's range is also
+		 * scaled (see _bar_resolution_scale). Stale → 0 anyway, no flip. */
+		int32_t display_value = bar_value;
+		if (bd->invert_bar_value && !is_stale) {
+			int32_t scaled_min = bd->bar_min * scale;
+			int32_t scaled_max = bd->bar_max * scale;
+			display_value = scaled_min + scaled_max - bar_value;
+		}
+		lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
 		bool night_active = night_mode_is_active();
 		lv_color_t low_col  = NIGHT_PICK_COLOR(night_active, bd->night, bar_low_color,      bd->bar_low_color);
 		lv_color_t high_col = NIGHT_PICK_COLOR(night_active, bd->night, bar_high_color,     bd->bar_high_color);
@@ -564,6 +575,10 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *bar_lbl_font = bd ? widget_resolve_font(bd->label_font) : NULL;
 	lv_obj_set_style_text_font(lbl, bar_lbl_font ? bar_lbl_font : THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply Show Label preference. Default is true so existing layouts keep
+	 * their label rendered; user can hide it for a clean value-only bar. */
+	if (bd && !bd->show_bar_label)
+		lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
 
 	/* Value label sits at the bar's right end, vertically centered with the
 	 * bar fill, right-aligned so the digits hug the inside of the right edge.
@@ -666,6 +681,10 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
 		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
+		/* Defaults-only: emit show_bar_label only when the user has hidden it.
+		 * Saves a few bytes in the common path (default true). */
+		if (!bd->show_bar_label)
+			cJSON_AddBoolToObject(cfg, "show_bar_label", false);
 		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
 		cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
 		if (bd->label_font[0] != '\0')
@@ -755,6 +774,8 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->bar_in_range_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_value");
 	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_label");
+	if (cJSON_IsBool(item)) bd->show_bar_label = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
@@ -1012,6 +1033,7 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "decimals") == 0)           { out->i = bd->decimals;             return true; }
 	if (strcmp(name, "show_bar_value") == 0)     { out->b = bd->show_bar_value;       return true; }
 	if (strcmp(name, "invert_bar_value") == 0)   { out->b = bd->invert_bar_value;     return true; }
+	if (strcmp(name, "show_bar_label") == 0)     { out->b = bd->show_bar_label;       return true; }
 	if (strcmp(name, "anchor_enabled") == 0)     { out->b = bd->anchor_enabled;       return true; }
 	if (strcmp(name, "anchor_value") == 0)       { out->i = bd->anchor_value;         return true; }
 	if (strcmp(name, "anchor_position") == 0)    { out->i = bd->anchor_position;      return true; }
@@ -1109,6 +1131,14 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "invert_bar_value") == 0) {
 		bd->invert_bar_value = in->b;
 		return true;   /* picked up by the next _bar_on_signal call */
+	}
+	if (strcmp(name, "show_bar_label") == 0) {
+		bd->show_bar_label = in->b;
+		if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
+			if (bd->show_bar_label) lv_obj_clear_flag(bd->label_obj, LV_OBJ_FLAG_HIDDEN);
+			else                    lv_obj_add_flag  (bd->label_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
 	}
 	if (strcmp(name, "anchor_enabled") == 0) {
 		bd->anchor_enabled = in->b;
@@ -1248,6 +1278,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->indicator_radius = 5;
 	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
+	bd->show_bar_label = true;        /* show the text label above the bar by default */
 
 	w->type = WIDGET_BAR;
 	w->slot = slot & 1;

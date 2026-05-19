@@ -33,6 +33,7 @@ typedef struct {
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
 	bool     show_bar_value;
+	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;
 	uint8_t  decimals;
 	char     label_font[32];
