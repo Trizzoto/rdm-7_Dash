@@ -3229,6 +3229,11 @@
                         </span>
                     </div>
                     <div id="gearRatioList" style="display:flex; flex-direction:column; gap:4px;"></div>
+                    <div style="font-size:10px; color:var(--text-muted); margin-top:6px; line-height:1.45;">
+                        <b style="color:var(--text);">Sync tip:</b> drive in that gear above 5 km/h, then tap Sync.
+                        The ratio is back-calculated from live RPM and speed using your wheel circumference and final drive.
+                    </div>
+                    <div id="gearSyncStatus" style="font-size:11px; min-height:14px; margin-top:6px; text-align:center; font-family:'JetBrains Mono', monospace;"></div>
                 </div>
                 <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
                     <input id="gearEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled — publish CALCULATED_GEAR
@@ -12385,10 +12390,17 @@
             ratios.forEach((r, i) => {
                 if (i === 0) return;  /* hide N row */
                 const row = document.createElement('div');
-                row.style.cssText = 'display:grid; grid-template-columns:50px 1fr; gap:8px; align-items:center;';
+                /* 50px gear# | flexible input | Sync button (auto width).
+                 * The Sync button is MaxxECU-style: drive in this gear,
+                 * tap Sync, the ratio is back-computed from live RPM/speed
+                 * (signal values fetched at click time). */
+                row.style.cssText = 'display:grid; grid-template-columns:50px 1fr auto; gap:8px; align-items:center;';
                 row.innerHTML = `<span style="font-size:12px; font-weight:600; color:var(--text-muted); text-align:right;">${i}</span>
                     <input type="number" step="0.001" min="0" value="${r.toFixed(3)}" data-gear-idx="${i}"
-                           style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:monospace;">`;
+                           style="width:100%; padding:4px 6px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:monospace;">
+                    <button type="button" class="btn" data-gear-sync="${i}" onclick="_gearSyncRatio(${i})"
+                            title="Drive in gear ${i} above 5 km/h, then press Sync to back-compute the ratio from live RPM and speed."
+                            style="padding:4px 10px; font-size:11px;">Sync</button>`;
                 list.appendChild(row);
             });
         }
@@ -12415,6 +12427,81 @@
             if (r.length <= 2) return;  /* keep at least N + 1st */
             r.pop();
             _gearRenderRatios(r);
+        }
+        /* Sync a single gear's ratio from live RPM + vehicle speed. Same
+         * math as signal_internal.c's forward calc, run in reverse so the
+         * computed ratio drops the driver into this slot the next time
+         * the calculator fires.
+         *
+         *   wheel_rps     = (speed_kmh × 1000 / 3600) ÷ wheel_circ_m
+         *   overall_ratio = (rpm / 60) ÷ wheel_rps
+         *   gearbox_ratio = overall_ratio ÷ final_drive
+         *
+         * Bail-out conditions match the firmware-side validation so a
+         * stale-bus or stationary sync doesn't write garbage:
+         *   - signals listed by the modal must be present + non-stale
+         *   - speed ≥ 5 km/h and RPM ≥ 500 (matches the calc's idle gate)
+         *   - computed ratio must land in [0.20, 6.0] */
+        async function _gearSyncRatio(gearIdx) {
+            const rpmName   = (document.getElementById('gearRpmSig')   || {}).value || 'RPM';
+            const speedName = (document.getElementById('gearSpeedSig') || {}).value || 'VEHICLE_SPEED';
+            const wheelMm   = parseFloat(document.getElementById('gearWheelM').value);
+            const fd        = parseFloat(document.getElementById('gearFinalDrive').value);
+            const wheelM    = isFinite(wheelMm) && wheelMm > 0 ? wheelMm / 1000 : NaN;
+            const showStatus = (msg, isError) => {
+                const el = document.getElementById('gearSyncStatus');
+                if (!el) return;
+                el.textContent  = msg || '';
+                el.style.color  = isError ? 'hsl(0, 60%, 60%)' : '#2d8ceb';
+                /* Auto-clear after ~4s — gives the user time to read it but
+                 * doesn't linger if they sync several gears in a row. */
+                if (window._gearSyncStatusTimer) clearTimeout(window._gearSyncStatusTimer);
+                window._gearSyncStatusTimer = setTimeout(() => {
+                    if (el.textContent === msg) el.textContent = '';
+                }, 4000);
+            };
+
+            if (!isFinite(wheelM) || wheelM <= 0 || !isFinite(fd) || fd <= 0) {
+                showStatus('Set wheel circumference and final drive first', true);
+                return;
+            }
+            let signals = [];
+            try {
+                const r = await fetch('/api/signals/values');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const j = await r.json();
+                signals = Array.isArray(j) ? j : (j.signals || []);
+            } catch (e) {
+                showStatus('Could not fetch live signals from device', true);
+                return;
+            }
+            const rpmS   = signals.find(s => s.name === rpmName);
+            const speedS = signals.find(s => s.name === speedName);
+            if (!rpmS || !speedS) {
+                showStatus(`Signal not in registry (${!rpmS ? rpmName : speedName})`, true);
+                return;
+            }
+            if (rpmS.stale || speedS.stale) {
+                showStatus('Signals stale — engine running?', true);
+                return;
+            }
+            const rpm   = +rpmS.value;
+            const speed = +speedS.value;
+            if (!isFinite(rpm) || !isFinite(speed) || speed < 5 || rpm < 500) {
+                showStatus('Drive >5 km/h above idle to sync', true);
+                return;
+            }
+            const wheelRps = (speed * 1000 / 3600) / wheelM;
+            if (wheelRps < 0.01) { showStatus('Speed too low to sync', true); return; }
+            const overall = (rpm / 60) / wheelRps;
+            const gearbox = overall / fd;
+            if (!isFinite(gearbox) || gearbox < 0.20 || gearbox > 6.0) {
+                showStatus('Computed ratio out of range — recheck wheel/FD', true);
+                return;
+            }
+            const input = document.querySelector(`#gearRatioList input[data-gear-idx="${gearIdx}"]`);
+            if (input) input.value = gearbox.toFixed(3);
+            showStatus(`Synced gear ${gearIdx}: ${gearbox.toFixed(3)}  (RPM ${rpm.toFixed(0)}, ${speed.toFixed(0)} km/h)`, false);
         }
         async function openGearSetup() {
             if (typeof closeMobileMenu === 'function') closeMobileMenu();

@@ -24,6 +24,7 @@
 
 #include "esp_log.h"
 #include "lvgl.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -54,6 +55,9 @@ typedef struct {
     lv_obj_t *ratio_row[MAX_RATIO_ROWS];
     lv_obj_t *ratio_lbl[MAX_RATIO_ROWS];
 
+    lv_obj_t   *status_lbl;          /* one-line "Synced Gear N: …" hint */
+    lv_timer_t *status_timer;        /* clears status_lbl after ~3 s */
+
     /* Cached signal-registry options (dropdown text). NULL if no signals
      * are registered yet — UI falls back to a one-line note then. */
     char     dd_options[1024];
@@ -78,6 +82,9 @@ static void _wheel_step_cb(lv_event_t *e);
 static void _fd_step_cb(lv_event_t *e);
 static void _count_step_cb(lv_event_t *e);
 static void _ratio_step_cb(lv_event_t *e);
+static void _sync_btn_cb(lv_event_t *e);
+static void _status_timer_cb(lv_timer_t *t);
+static void _show_status(const char *msg, bool is_error);
 static void _build_signal_options(char *buf, size_t n);
 static void _select_dd_by_name(lv_obj_t *dd, const char *name);
 static void _read_dd_into(char *dst, size_t dst_sz, lv_obj_t *dd);
@@ -259,6 +266,101 @@ static void _ratio_step_cb(lv_event_t *e) {
     _refresh_value_labels();
 }
 
+/* ── Status banner ─────────────────────────────────────────────────────
+ * Single-line label below the scrollable list, briefly shows the result
+ * of a Sync action (or any error). Cleared automatically after ~3 s by
+ * a one-shot lv_timer so the user can fire multiple syncs in succession
+ * without manually dismissing anything. */
+
+static void _status_timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (s.status_lbl && lv_obj_is_valid(s.status_lbl)) {
+        lv_label_set_text(s.status_lbl, "");
+    }
+    if (s.status_timer) {
+        lv_timer_del(s.status_timer);
+        s.status_timer = NULL;
+    }
+}
+
+static void _show_status(const char *msg, bool is_error) {
+    if (!s.status_lbl || !lv_obj_is_valid(s.status_lbl)) return;
+    lv_label_set_text(s.status_lbl, msg ? msg : "");
+    lv_obj_set_style_text_color(s.status_lbl,
+        is_error ? THEME_COLOR_STATUS_ERROR : THEME_COLOR_ACCENT_BLUE, 0);
+    /* Reset auto-clear timer so each new message gets its full ~3s window. */
+    if (s.status_timer) lv_timer_del(s.status_timer);
+    s.status_timer = lv_timer_create(_status_timer_cb, 3000, NULL);
+    lv_timer_set_repeat_count(s.status_timer, 1);
+}
+
+/* Sync: read current RPM + vehicle speed signals, back-compute the gearbox
+ * ratio for the gear the driver is currently in, and stamp it into the
+ * working config. Math mirrors signal_internal.c's forward calculation so
+ * a freshly-synced ratio drops the driver exactly into that gear's slot
+ * when the calc fires next:
+ *
+ *   wheel_rps = (speed_kmh × 1000 / 3600) / wheel_circumference_m
+ *   overall   = (rpm / 60)              / wheel_rps
+ *   gearbox   = overall                 / final_drive
+ *
+ * Validation matches the same stationary-detection thresholds used by
+ * the forward calc — speed ≥ 5 km/h, RPM ≥ 500 — plus a freshness check
+ * on both source signals so a stale-bus sync doesn't produce nonsense. */
+static void _sync_btn_cb(lv_event_t *e) {
+    void *u = lv_event_get_user_data(e);
+    int idx  = _unpack_idx(u);            /* gear index, 0 = 1st gear */
+    int slot = idx + 1;
+    if (slot < 1 || slot >= GEAR_CAL_MAX_GEARS) return;
+
+    if (s.cfg.wheel_circumference_m < 0.01f || s.cfg.final_drive < 0.01f) {
+        _show_status("Set wheel circumference and final drive first", true);
+        return;
+    }
+
+    int16_t rpm_idx   = signal_find_by_name(s.cfg.rpm_signal);
+    int16_t speed_idx = signal_find_by_name(s.cfg.speed_signal);
+    signal_t *rpm_sig   = (rpm_idx   >= 0) ? signal_get_by_index((uint16_t)rpm_idx)   : NULL;
+    signal_t *speed_sig = (speed_idx >= 0) ? signal_get_by_index((uint16_t)speed_idx) : NULL;
+    if (!rpm_sig || !speed_sig) {
+        _show_status("RPM or speed signal not in registry", true);
+        return;
+    }
+    if (rpm_sig->is_stale || speed_sig->is_stale) {
+        _show_status("Signals stale — engine running?", true);
+        return;
+    }
+
+    float rpm   = rpm_sig->current_value;
+    float speed = speed_sig->current_value;
+    if (speed < 5.0f || rpm < 500.0f) {
+        _show_status("Drive >5 km/h above idle to sync", true);
+        return;
+    }
+
+    float wheel_rps = (speed * 1000.0f / 3600.0f) / s.cfg.wheel_circumference_m;
+    if (wheel_rps < 0.01f) {
+        _show_status("Speed too low to sync", true);
+        return;
+    }
+    float overall = (rpm / 60.0f) / wheel_rps;
+    float gearbox = overall / s.cfg.final_drive;
+    if (!isfinite(gearbox) || gearbox < 0.20f || gearbox > 6.0f) {
+        _show_status("Computed ratio out of range — recheck wheel/FD", true);
+        return;
+    }
+
+    s.cfg.ratios[slot] = gearbox;
+    _refresh_value_labels();
+
+    char msg[64];
+    snprintf(msg, sizeof(msg),
+             "Synced gear %d: %.2f  (RPM %.0f, %.0f km/h)",
+             slot, (double)gearbox, (double)rpm, (double)speed);
+    _show_status(msg, false);
+    ESP_LOGI(TAG, "%s", msg);
+}
+
 /* ── Close paths ──────────────────────────────────────────────────────── */
 
 static void _save_cb(lv_event_t *e) {
@@ -294,6 +396,10 @@ static void _cancel_cb(lv_event_t *e) {
 static void _close(bool saved) {
     ui_gear_setup_done_cb_t cb = s.cb;
     void *ctx = s.ctx;
+    if (s.status_timer) {
+        lv_timer_del(s.status_timer);
+        s.status_timer = NULL;
+    }
     if (s.overlay && lv_obj_is_valid(s.overlay)) lv_obj_del_async(s.overlay);
     memset(&s, 0, sizeof(s));
     if (cb) cb(saved, ctx);
@@ -356,6 +462,72 @@ static void _add_value_row(lv_obj_t *parent, const char *name,
 
     lv_obj_t *minus = _make_stepper_btn(row, "-", cb,
                                         _pack_step(kind, STEP_DOWN, idx));
+    lv_obj_align(minus, LV_ALIGN_RIGHT_MID, -110, 0);
+
+    if (out_value_lbl) *out_value_lbl = value_lbl;
+    if (out_row)       *out_row       = row;
+}
+
+/* Variant of _add_value_row that inserts a Sync button between the
+ * gear name and the stepper. Used only for the per-gear ratio rows.
+ *
+ *   [Gear N ratio]   [Sync]   [−]  [value]  [+]
+ *
+ * The Sync button's user_data carries the gear index so a single
+ * callback (_sync_btn_cb) services every gear. Press it while driving
+ * in that gear and the live RPM ÷ speed math fills in the ratio. */
+static void _add_gear_ratio_row(lv_obj_t *parent, int gear_idx,
+                                lv_obj_t **out_value_lbl,
+                                lv_obj_t **out_row) {
+    char name[16];
+    snprintf(name, sizeof(name), "Gear %u ratio", (unsigned)(gear_idx + 1));
+
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_size(row, lv_pct(100), ROW_H);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_left(row, 6, 0);
+    lv_obj_set_style_pad_right(row, 6, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *name_lbl = lv_label_create(row);
+    lv_label_set_text(name_lbl, name);
+    lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_text_font(name_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(name_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    /* Sync button — slightly larger than a stepper so the label fits. */
+    lv_obj_t *sync_btn = lv_btn_create(row);
+    lv_obj_set_size(sync_btn, 64, 26);
+    lv_obj_align(sync_btn, LV_ALIGN_RIGHT_MID, -150, 0);
+    lv_obj_set_style_bg_color(sync_btn, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(sync_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(sync_btn, 0, 0);
+    lv_obj_set_style_shadow_width(sync_btn, 0, 0);
+    lv_obj_set_style_pad_all(sync_btn, 0, 0);
+    lv_obj_t *sync_lbl = lv_label_create(sync_btn);
+    lv_label_set_text(sync_lbl, "Sync");
+    lv_obj_set_style_text_font(sync_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(sync_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_center(sync_lbl);
+    lv_obj_add_event_cb(sync_btn, _sync_btn_cb, LV_EVENT_CLICKED,
+                        _pack_step(0, 0, gear_idx));
+
+    lv_obj_t *plus = _make_stepper_btn(row, "+", _ratio_step_cb,
+                                       _pack_step(1, STEP_UP, gear_idx));
+    lv_obj_align(plus, LV_ALIGN_RIGHT_MID, 0, 0);
+
+    lv_obj_t *value_lbl = lv_label_create(row);
+    lv_label_set_text(value_lbl, "--");
+    lv_obj_align(value_lbl, LV_ALIGN_RIGHT_MID, -36, 0);
+    lv_obj_set_style_text_font(value_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_width(value_lbl, 70);
+    lv_obj_set_style_text_align(value_lbl, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *minus = _make_stepper_btn(row, "-", _ratio_step_cb,
+                                        _pack_step(1, STEP_DOWN, gear_idx));
     lv_obj_align(minus, LV_ALIGN_RIGHT_MID, -110, 0);
 
     if (out_value_lbl) *out_value_lbl = value_lbl;
@@ -507,13 +679,22 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     _add_value_row(s.list, "Forward gears",
                    _count_step_cb, 0, 0, &s.count_lbl, NULL);
 
-    /* Per-gear ratio rows. Always create all 8; show/hide by ratio_count. */
+    /* Per-gear ratio rows with Sync button. Always create all 8;
+     * show/hide via ratio_count. */
     for (uint8_t i = 0; i < MAX_RATIO_ROWS; i++) {
-        char name[16];
-        snprintf(name, sizeof(name), "Gear %u ratio", (unsigned)(i + 1));
-        _add_value_row(s.list, name, _ratio_step_cb, 1, i,
-                       &s.ratio_lbl[i], &s.ratio_row[i]);
+        _add_gear_ratio_row(s.list, i, &s.ratio_lbl[i], &s.ratio_row[i]);
     }
+
+    /* Status banner — sits below the scrollable list, above the buttons.
+     * One-line auto-clearing message shown by Sync results / errors. */
+    s.status_lbl = lv_label_create(s.card);
+    lv_label_set_text(s.status_lbl, "");
+    lv_obj_align(s.status_lbl, LV_ALIGN_BOTTOM_MID, 0, -58);
+    lv_obj_set_width(s.status_lbl, CARD_W - 32);
+    lv_obj_set_style_text_font(s.status_lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s.status_lbl, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_text_align(s.status_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s.status_lbl, LV_LABEL_LONG_DOT);
 
     /* Footer buttons — Cancel left, Save right (mirror ECU picker). */
     lv_obj_t *save_btn = lv_btn_create(s.card);
