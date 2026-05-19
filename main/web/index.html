@@ -3256,6 +3256,10 @@
 
             <!-- Quick-jump tiles into the other OBD2 modals. -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); openEcuPreset();">
+                    <span style="font-size:12px; font-weight:600; color:var(--text);">ECU Preset</span>
+                    <span style="font-size:10px; color:var(--text-muted);">Pick vehicle &middot; detected ones highlighted</span>
+                </button>
                 <button class="btn btn-secondary" style="padding:10px 12px; text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:3px;" onclick="closeObd2Setup(); openTroubleCodes();">
                     <span style="font-size:12px; font-weight:600; color:var(--text);">Trouble Codes</span>
                     <span style="font-size:10px; color:var(--text-muted);">Read &amp; clear DTCs</span>
@@ -3272,6 +3276,47 @@
                     <span style="font-size:12px; font-weight:600; color:var(--text);">Signal Dashboard</span>
                     <span style="font-size:10px; color:var(--text-muted);">Watch live values</span>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────────────────────────
+         ECU Preset picker modal — shows the firmware's ECU_PRESETS list
+         with a blue indicator on presets whose CAN IDs were detected in
+         the last bus scan. Auto/Manual toggle: Auto shows all + sorts
+         detected first; Manual hides presets below 30% match.
+
+         The "match score" comes from /api/ecu/list which now includes
+         a match_score field per preset (0..100) plus the current Auto
+         flag and the threshold.
+
+         If no scan has run yet (or the scan picked up no detectable
+         IDs) every preset reports match_score=0, the blue indicator
+         doesn't show, and Manual mode falls back to showing everything
+         so the user is never stuck with an empty list.
+         ──────────────────────────────────────────────────────────────── -->
+    <div id="ecuPresetModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeEcuPreset()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; width:560px; max-width:95vw; max-height:90vh; display:flex; flex-direction:column; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex:0 0 auto;">
+                <span style="font-weight:600; font-size:14px;">ECU Preset
+                    <span id="ecuPresetCount" style="color:var(--text-muted); font-weight:400; font-size:11px; margin-left:6px;"></span>
+                </span>
+                <button class="close-btn" onclick="closeEcuPreset()" style="font-size:18px;">&times;</button>
+            </div>
+
+            <!-- Auto/Manual toggle row -->
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); flex:0 0 auto;">
+                <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; user-select:none;">
+                    <input type="checkbox" id="ecuPresetAuto" onchange="onEcuPresetAutoChange(this.checked)" style="cursor:pointer;">
+                    <span>Auto</span>
+                </label>
+                <span id="ecuPresetAutoHint" style="font-size:10px; color:var(--text-muted); line-height:1.35;">Show every preset. Detected ones are marked.</span>
+            </div>
+
+            <div id="ecuPresetList" style="flex:1; overflow-y:auto; min-height:120px; border:1px solid var(--border); border-radius:var(--radius-md); padding:6px;"></div>
+
+            <div style="margin-top:10px; font-size:10px; color:var(--text-muted); line-height:1.45; flex:0 0 auto;">
+                Detected presets have a blue dot &mdash; their broadcast CAN IDs overlap with what the dash saw during the last <b>Scan Car</b>. Run a fresh scan from Device Settings if you've swapped vehicles.
             </div>
         </div>
     </div>
@@ -11903,71 +11948,168 @@
             } catch (e) { /* device offline */ }
         }
 
-        /* Device ECU selector - populates dropdown from /api/ecu/list and
-         * pre-selects the saved ECU from /api/ecu/current. */
-        async function populateEcuSelect() {
-            const sel = document.getElementById('ecuSelect');
-            if (!sel) return;
+        /* ── ECU Preset picker modal ─────────────────────────────────────
+         * Fetches /api/ecu/list (which now returns {presets[], match_threshold,
+         * auto_mode}) and renders a card list. Each preset card shows a blue
+         * dot prefix when its match_score >= threshold (=30 by default — the
+         * device's "Scan Car" found that preset's CAN IDs on the bus).
+         *
+         * Auto mode (default): shows every preset, sorts detected ones first.
+         * Manual mode: hides presets with match_score < threshold. Falls back
+         * to showing everything if no preset cleared the bar — never strands
+         * the user with an empty list.
+         *
+         * The Auto flag is persisted server-side at /api/ecu/picker_mode so
+         * the on-device picker and the web picker stay in sync. */
+
+        let _ecuPresetState = null;   /* last /api/ecu/list response */
+
+        async function openEcuPreset() {
+            const m = document.getElementById('ecuPresetModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            await _refreshEcuPreset();
+        }
+
+        function closeEcuPreset() {
+            const m = document.getElementById('ecuPresetModal');
+            if (m) m.style.display = 'none';
+        }
+
+        async function _refreshEcuPreset() {
+            const list = document.getElementById('ecuPresetList');
+            const auto = document.getElementById('ecuPresetAuto');
+            const cnt  = document.getElementById('ecuPresetCount');
+            if (!list) return;
+            list.innerHTML = '<div style="padding:14px; color:var(--text-muted); font-size:11px;">Loading...</div>';
             try {
                 const [listR, curR] = await Promise.all([
                     fetch('/api/ecu/list'), fetch('/api/ecu/current')
                 ]);
-                if (!listR.ok || !curR.ok) return;
-                const list = await listR.json();
-                const cur  = await curR.json();
-                /* Short label: "Make Version" - no "ECU:" prefix or verbose
-                 * bracketed text. The header is width-constrained on laptops. */
-                sel.innerHTML = '<option value="">None</option>' +
-                    list.map(e => `<option value="${e.make}||${e.version}">${e.make} ${e.version}</option>`).join('');
+                if (!listR.ok || !curR.ok) throw new Error('fetch failed');
+                _ecuPresetState = await listR.json();
+                const cur = await curR.json();
                 const curKey = cur.make ? `${cur.make}||${cur.version}` : '';
-                sel.value = curKey;
-            } catch (e) { /* silent - device may be offline */ }
+                if (auto) auto.checked = !!_ecuPresetState.auto_mode;
+                _renderEcuPresetList(curKey);
+                if (cnt) {
+                    const total = _ecuPresetState.presets.length;
+                    const detected = _ecuPresetState.presets.filter(
+                        p => p.match_score >= _ecuPresetState.match_threshold).length;
+                    cnt.textContent = detected
+                        ? `(${detected} detected of ${total})`
+                        : `(${total} presets)`;
+                }
+            } catch (e) {
+                list.innerHTML = '<div style="padding:14px; color:var(--text-muted); font-size:11px;">Failed to load presets.</div>';
+            }
         }
 
-        async function onEcuChange(val) {
-            /* RDM-7 Internal is a marker preset — it doesn't rewrite
-             * signals[], it just tags the layout and opens the Gear Setup
-             * modal so the user can configure the CALCULATED_GEAR
-             * ratios/wheel/final drive. */
-            const isRdmInternal = (val === 'RDM-7||Internal');
+        function _renderEcuPresetList(curKey) {
+            if (!_ecuPresetState) return;
+            const list = document.getElementById('ecuPresetList');
+            const autoEl = document.getElementById('ecuPresetAuto');
+            const hint = document.getElementById('ecuPresetAutoHint');
+            const isAuto = autoEl ? autoEl.checked : true;
+            const threshold = _ecuPresetState.match_threshold || 30;
+            let entries = _ecuPresetState.presets.slice();
+
+            /* Manual mode: filter to detected only — but if nothing
+             * was detected, show all so the user isn't stuck. */
+            if (!isAuto) {
+                const detected = entries.filter(p => p.match_score >= threshold);
+                if (detected.length > 0) entries = detected;
+            }
+
+            /* Sort: detected first (descending by score), then alphabetical. */
+            entries.sort((a, b) => {
+                const ad = a.match_score >= threshold ? 1 : 0;
+                const bd = b.match_score >= threshold ? 1 : 0;
+                if (ad !== bd) return bd - ad;
+                if (ad === 1 && a.match_score !== b.match_score) return b.match_score - a.match_score;
+                return `${a.make} ${a.version}`.localeCompare(`${b.make} ${b.version}`);
+            });
+
+            if (hint) {
+                hint.textContent = isAuto
+                    ? 'Show every preset. Detected ones are marked.'
+                    : (entries.length === _ecuPresetState.presets.length
+                        ? 'Manual mode · no presets detected yet, showing all.'
+                        : 'Manual mode · hiding presets the scan didn’t detect.');
+            }
+
+            list.innerHTML = entries.length === 0
+                ? '<div style="padding:14px; color:var(--text-muted); font-size:11px;">No presets to show.</div>'
+                : entries.map(p => {
+                    const key = `${p.make}||${p.version}`;
+                    const isCur = (key === curKey);
+                    const detected = p.match_score >= threshold;
+                    const dot = detected
+                        ? '<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#2d8ceb; margin-right:8px; flex-shrink:0;"></span>'
+                        : '<span style="display:inline-block; width:8px; height:8px; margin-right:8px; flex-shrink:0;"></span>';
+                    const scoreBadge = detected
+                        ? `<span style="font-size:10px; color:#2d8ceb; font-family:'JetBrains Mono', monospace; margin-left:8px;">${p.match_score}% match</span>`
+                        : '';
+                    const curBadge = isCur
+                        ? '<span style="font-size:10px; color:var(--text); background:var(--accent); padding:2px 6px; border-radius:4px; margin-left:8px;">Active</span>'
+                        : '';
+                    return `<div class="palette-item" data-make="${_attrEscape(p.make)}" data-version="${_attrEscape(p.version)}" style="display:flex; align-items:center; padding:8px 10px; cursor:pointer; border-radius:var(--radius-sm); margin-bottom:2px;" onclick="_ecuPresetPick(this)">${dot}<span style="flex:1; font-size:12px;">${_textEscape(p.display || (p.make + ' ' + p.version))}</span>${scoreBadge}${curBadge}</div>`;
+                }).join('');
+        }
+
+        function _attrEscape(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+        function _textEscape(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        async function onEcuPresetAutoChange(checked) {
+            try {
+                await fetch('/api/ecu/picker_mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto: !!checked })
+                });
+            } catch (e) { /* server may be offline; UI still re-renders */ }
+            if (_ecuPresetState) _ecuPresetState.auto_mode = !!checked;
+            /* Re-fetch the current ECU for the Active badge — cheap. */
+            try {
+                const cur = await (await fetch('/api/ecu/current')).json();
+                _renderEcuPresetList(cur.make ? `${cur.make}||${cur.version}` : '');
+            } catch (e) {
+                _renderEcuPresetList('');
+            }
+        }
+
+        async function _ecuPresetPick(el) {
+            const make = el.dataset.make;
+            const version = el.dataset.version;
+            const isRdmInternal = (make === 'RDM-7' && version === 'Internal');
             const confirmMsg = isRdmInternal
                 ? 'Switch to RDM-7 Internal? Your existing signals are preserved; the Gear Setup will open so you can configure ratios.'
-                : (val ? 'Apply this ECU preset? This will overwrite your layout signals with the ECU default decode.'
-                       : 'Clear ECU selection? Signal CAN IDs will remain but will not be auto-updated.');
-            if (!confirm(confirmMsg)) {
-                populateEcuSelect();
-                return;
-            }
-            let body;
-            if (val) {
-                const [make, version] = val.split('||');
-                body = JSON.stringify({ make, version });
-            } else {
-                body = JSON.stringify({ make: '', version: '' });
-            }
+                : `Apply ${make} ${version}? This overwrites your layout's signals with the ECU's default decode.`;
+            if (!confirm(confirmMsg)) return;
             try {
                 const r = await fetch('/api/ecu/set', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body
+                    body: JSON.stringify({ make, version })
                 });
                 if (!r.ok) throw new Error(await r.text());
-                updateStatus(val ? 'ECU preset applied - reloading layout...' : 'ECU cleared');
-                /* Layout reloads on device; refresh local layout copy. */
+                closeEcuPreset();
+                updateStatus(`ECU preset applied: ${make} ${version} — reloading layout...`);
                 setTimeout(() => {
                     fetchLayouts();
                     loadLayout();
                     if (isRdmInternal && typeof openGearSetup === 'function') {
-                        /* Give loadLayout a moment to refresh signal list so
-                         * the modal's RPM/Speed selects populate correctly. */
                         setTimeout(() => openGearSetup(), 400);
                     }
                 }, 800);
             } catch (e) {
-                updateStatus('ECU change failed: ' + e.message);
-                populateEcuSelect();
+                updateStatus('ECU change failed: ' + (e && e.message ? e.message : e));
             }
         }
+
+        /* Legacy entry point kept as a no-op so any cached/old caller doesn't
+         * throw. The real picker is openEcuPreset() above. */
+        async function populateEcuSelect() { /* deprecated */ }
 
         /* Start */
         initScreenSizeSelector();
