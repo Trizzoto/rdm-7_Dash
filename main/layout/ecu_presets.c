@@ -132,10 +132,17 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Haltech Nexus - base 0x360, Motorola BE
-     * Source: Haltech CAN Broadcast Protocol v2.
-     * Kelvin->degC via offset -273.15; PSI-abs->kPa-gauge via scale*6.895
-     * and offset -101.325.
+     * Haltech Nexus / Elite — base 0x360, Motorola BE (everything).
+     * Source: Haltech CAN Broadcast Protocol v2.35.0.
+     * Kelvin->degC via offset -273.15; kPa-abs->kPa-gauge via -101.325.
+     *
+     * GEAR was previously bound to 0x360 byte 6-7 — which is actually
+     * Coolant Pressure per the v2.35.0 spec. The real gear channel lives
+     * at 0x470 byte 7 as a single signed enum byte:
+     *   -1=Reverse, 0=Neutral, 1=1st, 2=2nd, 3=3rd, 4=4th, 5=5th, 6=6th
+     * (0x470 byte 6 is the gear-selector position, also signed, with a
+     * wider enum including Park/Drive/Sport/Manual/Low/Overdrive — that
+     * one lives on the layout's Signals modal if a user wants it.)
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Haltech",
@@ -155,8 +162,11 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_FUEL_PRESSURE]   = { 0x361,  0, 16, 0.1f,     -101.325f, false, 0, "kPa",    0 },
             [ECU_SIG_IGNITION]        = { 0x362, 32, 16, 0.1f,     0.0f,      true,  0, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x370,  0, 16, 0.1f,     0.0f,      false, 0, "km/h",   0 },
-            [ECU_SIG_GEAR]            = { 0x360, 48, 16, 1.0f,     0.0f,      false, 0, "",       0 },
+            /* GEAR: corrected from 0x360 byte 6-7 (Coolant Pressure) to
+             * 0x470 byte 7 (signed enum). See block comment above. */
+            [ECU_SIG_GEAR]            = { 0x470, 56,  8, 1.0f,     0.0f,      true,  0, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x372,  0, 16, 0.1f,     0.0f,      false, 0, "V",      1 },
+            /* Fuel Trim Short Term Bank 1: 0x3E3 byte 0-1, signed % */
             [ECU_SIG_FUEL_TRIM]       = { 0x3E3,  0, 16, 0.1f,     0.0f,      true,  0, "%",      1 },
             [ECU_SIG_EGT]             = { 0x373,  0, 16, 0.1f,     -273.15f,  false, 0, "degC",   0 },
         },
@@ -165,6 +175,15 @@ const ecu_preset_t ECU_PRESETS[] = {
     /* ══════════════════════════════════════════════════════════════════
      * MaxxECU 1.2 - base 0x520, Intel LE
      * Subset of 1.3 (no oil temp/pressure/fuel pressure broadcast).
+     *
+     * Sign conventions cross-checked against the official MaxxECU v1.3
+     * DBC file (the v1.2 DBC isn't published separately; 1.3 is a strict
+     * superset for the fields 1.2 supports). The DBC uses `@1+` (Intel
+     * unsigned) for every field at 0x520/0x521/0x530/0x531 except oil
+     * temperature on 0x536 (1.3 only). The four fields below were
+     * incorrectly flagged is_signed=true in an earlier revision — that
+     * read garbage for any raw value with bit 15 set (e.g. fuel trim
+     * raw ≥ 32768). Confirmed against MaxxECU MTune behaviour.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -174,17 +193,19 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,  /* not in 1.2 */
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
+            /* FuelTrimTotal: scale 0.1 unsigned (multiplier-style percentage
+             * where 100% = no correction, matching the MTune display). */
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
             [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },
@@ -282,8 +303,19 @@ const ecu_preset_t ECU_PRESETS[] = {
 
     /* ══════════════════════════════════════════════════════════════════
      * MaxxECU 1.3 - base 0x520, Intel LE
-     * Source: MaxxECU CAN reference manual.
-     * Matches existing preconfig_items[] scales.
+     * Source: MaxxECU_Default_CAN_protocol_v1.3.dbc (official download).
+     *
+     * DBC byte-order spec: every field is `@1+` (Intel unsigned) EXCEPT
+     * Engine_Oil_Temperature at 0x536 byte 48, which is `@1-` (signed).
+     * An earlier revision had four fields flagged is_signed=true that the
+     * DBC clearly marks unsigned (COOLANT_TEMP, INTAKE_AIR_TEMP, IGNITION,
+     * FUEL_TRIM) — corrected to match the DBC.
+     *
+     * FUEL_TRIM is "fraction:%" with offset 0 and range [0..6553.5]:
+     * MaxxECU encodes fuel trim as a multiplier where 100% = no
+     * correction (matching MTune's display). Keep offset 0 here so the
+     * dash mirrors MTune; users wanting OBD2 STFT/LTFT ±delta style can
+     * add an offset=-100 override in their layout's Signals modal.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -293,17 +325,19 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
+            /* Engine_Oil_Temperature: the one signed field in this block. */
             [ECU_SIG_OIL_TEMP]        = { 0x536, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_OIL_PRESSURE]    = { 0x536, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
             [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
-            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     true,  1, "%",      1 },
+            /* FuelTrimTotal: multiplier-style % (100% = no correction). */
+            [ECU_SIG_FUEL_TRIM]       = { 0x531,  0, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
             [ECU_SIG_EGT]             = { 0x533, 48, 16, 1.0f,       0.0f,     false, 1, "degC",   0 },
         },
     },

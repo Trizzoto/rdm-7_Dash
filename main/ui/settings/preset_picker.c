@@ -88,7 +88,10 @@ const preconfig_item_t preconfig_items[] = {
 { "Haltech", "Nexus", "FUEL TRIM LT B2",    "3E3", 0, 48, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "FUEL TRIM ST B1",    "3E3", 0, 0, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "FUEL TRIM ST B2",    "3E3", 0, 16, 16, 0.1, 0, 1, true },
-{ "Haltech", "Nexus", "GEAR",               "360", 0, 48, 16, 1.0, 0, 0, false },
+/* GEAR was previously bound to 0x360 byte 6-7 — but that's Coolant Pressure
+ * per the Haltech v2.35.0 spec. The real gear channel is 0x470 byte 7,
+ * an 8-bit signed enum (-1=Reverse, 0=Neutral, 1..6=gear). */
+{ "Haltech", "Nexus", "GEAR",               "470", 0, 56,  8, 1.0, 0, 0, true  },
 { "Haltech", "Nexus", "GEARBOX OIL TEMP",   "3E1", 0, 0, 16, 0.1, -273.15, 1, false },
 { "Haltech", "Nexus", "IGN ANGLE LEAD",     "362", 0, 32, 16, 0.1, 0, 1, true },
 { "Haltech", "Nexus", "INJ STG1 TIME",      "364", 0, 0, 16, 0.001, 0, 3, false },
