@@ -100,8 +100,8 @@ Walk this list before any "1.0 / GA / customer" release. Each item is independen
 
 ### New (post-v1.1.11)
 
-- [ ] **Fix portability bug in `web_server_name_is_safe`** (logged 2026-05-19): check `*p < 0x20` is implementation-defined for high-ASCII bytes. One-line fix: cast to `(unsigned char)`. Not a security hole — false-positive rejection is the safe direction — but two builds can disagree on whether a name is "safe." See `tests/native/test_web_path_safety.c::test_name_high_ascii_rejected_when_char_is_signed`.
-- [ ] **Wire `cargo audit` into desktop CI** so dependency CVE coverage runs automatically on each desktop PR.
+- [x] **Fix portability bug in `web_server_name_is_safe`** — Done 2026-05-19, same-day: cast to `(unsigned char)` before the `< 0x20` check in both `web_server_name_is_safe` and `web_server_filename_is_safe`. Test `test_name_utf8_is_accepted` flipped to assert TRUE for `éclair` and `日本` and locks the cast in. Will ship in v1.1.12 (currently `[Unreleased]`).
+- [x] **Wire `cargo audit` into desktop CI** — Done 2026-05-19 on rdm7-desktop@`84b4c47`. GitHub Actions workflow runs `cargo audit --deny warnings` on every push/PR touching `src-tauri/Cargo.{toml,lock}` plus a weekly Mon 08:00 UTC schedule. Prebuilt cargo-audit binary cached, sub-30 s runs after first cache hit.
 
 ## Reporting a vulnerability
 

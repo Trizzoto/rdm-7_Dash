@@ -15,7 +15,7 @@ Changes that have landed on `master` since the last tagged version.
 - _nothing yet_
 
 ### Fixed
-- _nothing yet_
+- **`web_server_name_is_safe` / `web_server_filename_is_safe` UTF-8 portability**: cast input byte to `(unsigned char)` before the `< 0x20` control-char check. Pins the signedness behaviour across host gcc and ARM toolchains so UTF-8 multi-byte sequences are consistently accepted everywhere. `tests/native/test_web_path_safety.c::test_name_utf8_is_accepted` (formerly `test_name_high_ascii_rejected_when_char_is_signed`) flipped to assert TRUE for `éclair` and `日本` and locks the cast in.
 
 ---
 
@@ -54,7 +54,7 @@ First release-tracked build and the **opening of the 2-week stabilisation window
 - **Factory layout safety**: factory default is compiled into `main/layout/default_layout.c` (widget positions only — no creds, no debug signal sources), not shipped as a JSON file.
 
 ### Found during audit (deferred fixes)
-- **`web_server_name_is_safe` portability bug**: deny check `*p < 0x20` is implementation-defined for high-ASCII bytes. Signed-char compilers (host gcc) reject UTF-8; unsigned-char compilers (some ARM toolchains) accept. Same input could be classified differently by two builds. Not a security hole — false-positive rejection is the safe direction. One-line fix in v1.2: `(unsigned char)*p < 0x20`. Locked in by `tests/native/test_web_path_safety.c::test_name_high_ascii_rejected_when_char_is_signed`.
+- _The portability bug logged here at v1.1.11 was fixed in the post-tag patch — see `[Unreleased] / Fixed` above._
 
 ### Internal
 - `feature/widget-sys` fast-forwarded to `master` at `c88a42c`. Both branches pushed to origin.

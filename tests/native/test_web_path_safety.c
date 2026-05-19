@@ -30,12 +30,21 @@
 #include <stdio.h>
 #include <string.h>
 
-/* ── Host mirror (verbatim from web_server.c, modulo formatting) ────────── */
+/* ── Host mirror (verbatim from web_server.c, modulo formatting) ──────────
+ *
+ * The `(unsigned char)` cast on every byte before comparing < 0x20 is the
+ * load-bearing detail: it makes the control-char check signedness-stable
+ * across host gcc (signed char) and ARM toolchains (often unsigned char).
+ * Without it, UTF-8 multi-byte sequences read as negative integers on
+ * signed-char compilers and get false-rejected. The mirror tracks the
+ * firmware verbatim so this test fails loudly if anyone removes the cast.
+ */
 
 static bool name_is_safe(const char *name) {
     if (!name || !name[0]) return false;
     for (const char *p = name; *p; p++) {
-        if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
+        unsigned char c = (unsigned char)*p;
+        if (c == '/' || c == '\\' || c == '.' || c < 0x20) return false;
     }
     return true;
 }
@@ -43,7 +52,8 @@ static bool name_is_safe(const char *name) {
 static bool filename_is_safe(const char *name) {
     if (!name || !name[0]) return false;
     for (const char *p = name; *p; p++) {
-        if (*p == '/' || *p == '\\' || *p < 0x20) return false;
+        unsigned char c = (unsigned char)*p;
+        if (c == '/' || c == '\\' || c < 0x20) return false;
     }
     if (strstr(name, "..")) return false;
     return true;
@@ -103,29 +113,18 @@ static void test_name_control_chars_unsafe(void) {
     TEST_ASSERT_FALSE(name_is_safe("\x1f"));
 }
 
-static void test_name_high_ascii_rejected_when_char_is_signed(void) {
-    /* Bytes > 0x7F are not in the deny list (the check is `< 0x20`).
-     * PORTABILITY FINDING (logged 2026-05-19):
+static void test_name_utf8_is_accepted(void) {
+    /* Cast `(unsigned char)*p` in name_is_safe makes the deny check
+     * `< 0x20` signedness-stable. Without it, signed-char compilers
+     * read `\xc3` as -61 (< 32 = true) and false-rejected UTF-8.
      *
-     * The check `*p < 0x20` is implementation-defined for high-ASCII bytes:
+     * This assertion locks the cast in. If anyone removes it, the test
+     * goes red and the regression is obvious.
      *
-     *   - On a signed-char compiler (host gcc on x86): `\xc3` reads as -61,
-     *     -61 < 32 is true, byte is REJECTED. UTF-8 sequences fail.
-     *   - On an unsigned-char compiler (some ARM toolchains): `\xc3` reads
-     *     as 195, 195 < 32 is false, byte PASSES. UTF-8 sequences accepted.
-     *
-     * Two builds against the same input could disagree on whether a name
-     * is "safe." Not a security hole (false-positive rejection is the safe
-     * direction) but a real consistency bug worth a one-line fix in v1.2:
-     *
-     *     if (*p == '/' || ... || (unsigned char)*p < 0x20) return false;
-     *
-     * For v1.1.11 this test locks in the host-observed behaviour. When
-     * the cast lands and the policy becomes unambiguous, flip this
-     * assertion to TRUE and rename the function. */
-    /* Adjacent string literal concatenation stops the \x escape after
+     * Adjacent string literal concatenation stops the \x escape after
      * two hex digits — `"\xc3\xa9clair"` alone would greedily over-read. */
-    TEST_ASSERT_FALSE(name_is_safe("\xc3\xa9" "clair"));  /* "éclair" UTF-8 */
+    TEST_ASSERT_TRUE(name_is_safe("\xc3\xa9" "clair"));    /* "éclair" UTF-8 */
+    TEST_ASSERT_TRUE(name_is_safe("\xe6\x97\xa5\xe6\x9c\xac"));  /* "日本" UTF-8 */
 }
 
 /* ── filename_is_safe: allows dots, rejects ".." sequences ─────────────── */
@@ -228,7 +227,7 @@ int main(void) {
     RUN_TEST(test_name_dot_unsafe);
     RUN_TEST(test_name_traversal_attempts_unsafe);
     RUN_TEST(test_name_control_chars_unsafe);
-    RUN_TEST(test_name_high_ascii_rejected_when_char_is_signed);
+    RUN_TEST(test_name_utf8_is_accepted);
 
     /* filename_is_safe (allows single dots, rejects ".." substring) */
     RUN_TEST(test_filename_null_is_unsafe);

@@ -44,12 +44,28 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
 	return ESP_FAIL;
 }
 
-/* â”€â”€ Path-safety check for user-supplied names (no traversal) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ── Path-safety check for user-supplied names (no traversal) ──────────── */
+
+/* The < 0x20 deny check needs an unsigned-char cast: the standard says
+ * `char`'s signedness is implementation-defined, so signed-char compilers
+ * (host gcc on x86) read high-ASCII bytes (0x80..0xFF, e.g. UTF-8
+ * continuation bytes) as negative ints, which are always < 0x20 → byte
+ * gets rejected. Unsigned-char compilers (some ARM toolchains) read them
+ * as 128..255 → byte passes. Without the cast, the same firmware compiled
+ * with two different `char` signedness settings would classify the same
+ * UTF-8 name as "safe" or "unsafe" depending on the build. Casting to
+ * `unsigned char` pins the behaviour: UTF-8 (and any other byte ≥ 0x20)
+ * passes the control-char check, lifecycle is then enforced by the
+ * caller's filesystem layer.
+ *
+ * Same fix applied to web_server_filename_is_safe below for the same
+ * reason. See tests/native/test_web_path_safety.c. */
 
 bool web_server_name_is_safe(const char *name) {
 	if (!name || !name[0]) return false;
 	for (const char *p = name; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p == '.' || *p < 0x20) return false;
+		unsigned char c = (unsigned char)*p;
+		if (c == '/' || c == '\\' || c == '.' || c < 0x20) return false;
 	}
 	return true;
 }
@@ -58,7 +74,8 @@ bool web_server_name_is_safe(const char *name) {
 bool web_server_filename_is_safe(const char *name) {
 	if (!name || !name[0]) return false;
 	for (const char *p = name; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p < 0x20) return false;
+		unsigned char c = (unsigned char)*p;
+		if (c == '/' || c == '\\' || c < 0x20) return false;
 	}
 	/* Reject ".." sequences */
 	if (strstr(name, "..")) return false;
