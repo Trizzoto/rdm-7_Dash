@@ -1,8 +1,9 @@
 #include "ecu_presets.h"
 
-#include "can/can_bus_test.h"
+#include "can/can_id_tracker.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "layout_manager.h"
 #include "obd2.h"
 
@@ -11,6 +12,14 @@
 #include <string.h>
 
 static const char *TAG = "ecu_presets";
+
+/* Threshold for "this CAN ID was seen recently." Pulled out as a constant so
+ * the match_score logic stays readable. Matches the signal staleness window
+ * loosely — if a CAN ID hasn't sent a frame in 2.5 seconds the bus is either
+ * off, the ECU has stopped broadcasting that message, or the user just
+ * disconnected the loom. Slightly longer than the 2-second signal stale
+ * window so a freshly-attached vehicle doesn't flicker the score. */
+#define LIVE_ID_FRESH_WINDOW_US ((int64_t)2500000)
 
 /* Sentinel ECU make/version for the OBD2 preset. ecu_preset_is_obd2()
  * checks these. The rows[] table is all SIG_UNSUPPORTED because OBD2
@@ -438,21 +447,29 @@ bool ecu_preset_is_obd2(const ecu_preset_t *preset) {
            strcmp(preset->version, OBD2_VERSION) == 0;
 }
 
-/* ── Bus-scan match scoring ─────────────────────────────────────────────
+/* ── Live preset match scoring ──────────────────────────────────────────
  *
- * Builds two sorted-de-duplicated ID lists at small cost:
- *   1. The preset's unique CAN IDs (walking rows[], skipping can_id == 0).
- *   2. The latest bus-scan's unique IDs at the recommended bitrate.
- * Then returns 100 * |intersection| / |preset_unique|.
+ * Score reflects how many of the preset's unique broadcast CAN IDs were
+ * seen on the bus within the last LIVE_ID_FRESH_WINDOW_US (≈2.5 s).
  *
- * Skipped corner cases (all return 0):
- *   - No preset, or preset is OBD2 (no native broadcast IDs to match against).
- *   - No bus scan run yet, or last scan didn't pick a bitrate.
- *   - Preset has zero non-zero CAN IDs (all SIG_UNSUPPORTED — placeholder).
+ *     score = 100 * |preset_ids ∩ recently_seen_ids| / |preset_ids|
  *
- * Implementation note: ECU_SIG__COUNT is small (~20) and bus_test caps at
- * 32 unique IDs, so the O(n*m) intersection runs in well under a microsecond
- * per call. No need for hashing.
+ * Data source: can_id_tracker continuously records every CAN ID with a
+ * `last_seen_us` timestamp. This is strictly better than the one-shot
+ * `can_bus_test` scan that the picker previously used because:
+ *
+ *   - The user gets live feedback in the picker — plug in the loom, watch
+ *     the blue dot light up next to their preset within a couple of seconds.
+ *   - No need to remember to "Scan Car" first; the tracker is always on.
+ *   - Disconnect the loom and the score returns to 0 within ~2.5 s as
+ *     entries time out. UI's periodic refresh reflects this without help.
+ *
+ * Returns 0 for: NULL preset, OBD2 placeholder preset (no native
+ * broadcast IDs), preset with all-unsupported slots, or no recent
+ * frames matching any of the preset's IDs.
+ *
+ * Implementation: O(N * M) over preset_ids (≤ ECU_SIG__COUNT, small)
+ * and tracker entries (≤ 64). Well under a microsecond per call.
  */
 int ecu_preset_match_score(const ecu_preset_t *preset) {
     if (!preset) return 0;
@@ -472,21 +489,23 @@ int ecu_preset_match_score(const ecu_preset_t *preset) {
     }
     if (preset_count == 0) return 0;  /* nothing to match against */
 
-    /* Pull the latest bus-scan result. NULL or no-bitrate-picked -> no scan
-     * has happened, score is 0 across the board (callers should treat 0 as
-     * "unknown" rather than "definitely not matching"). */
-    const can_scan_report_t *r = can_bus_test_get_report();
-    if (!r || r->recommended_bitrate < 0) return 0;
-    uint8_t bi = (uint8_t)r->recommended_bitrate;
-    if (bi >= 4) return 0;
-    const can_scan_bitrate_result_t *bres = &r->results[bi];
-    if (!bres->traffic_detected || bres->unique_id_count == 0) return 0;
+    /* Walk the tracker. For each preset ID, count it as a hit if the
+     * tracker has an entry for it that was seen within the freshness
+     * window. Tracker is single-writer / single-reader on the LVGL task
+     * but the call sites for match_score (web handler + LVGL UI) can
+     * read it freely — pointers are stable for the lifetime of the
+     * table per the tracker header. */
+    int64_t now_us = esp_timer_get_time();
+    int64_t cutoff = now_us - LIVE_ID_FRESH_WINDOW_US;
 
-    /* Intersection count. */
     int hits = 0;
+    uint16_t tracker_n = can_id_tracker_count();
     for (int i = 0; i < preset_count; i++) {
-        for (uint8_t j = 0; j < bres->unique_id_count; j++) {
-            if (preset_ids[i] == bres->unique_ids[j]) { hits++; break; }
+        for (uint16_t k = 0; k < tracker_n; k++) {
+            const can_id_entry_t *e = can_id_tracker_get(k);
+            if (!e) continue;
+            if (e->can_id != preset_ids[i]) continue;
+            if (e->last_seen_us >= cutoff) { hits++; break; }
         }
     }
 

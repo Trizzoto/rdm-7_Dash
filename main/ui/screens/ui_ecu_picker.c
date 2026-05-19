@@ -30,11 +30,12 @@ typedef struct {
     lv_obj_t *overlay;
     lv_obj_t *card;
     lv_obj_t *auto_sw;          /* Auto/Manual toggle */
-    lv_obj_t *match_lbl;        /* "★ Detected on bus" hint under version_dd */
+    lv_obj_t *match_lbl;        /* live "● Detected on bus" hint under version_dd */
     lv_obj_t *make_dd;
     lv_obj_t *version_dd;
     lv_obj_t *apply_btn;
     lv_obj_t *apply_label;
+    lv_timer_t *refresh_timer;  /* re-runs _refresh_match_lbl every ~500ms */
     char      layout_name[LAYOUT_MAX_NAME];
     bool      manual_mode;      /* true = filter to matched presets only */
     ecu_picker_done_cb_t cb;
@@ -220,9 +221,42 @@ static void _auto_sw_event_cb(lv_event_t *e) {
 static void _close(bool applied) {
     ecu_picker_done_cb_t cb = s.cb;
     void *ctx = s.ctx;
+    if (s.refresh_timer) {
+        lv_timer_del(s.refresh_timer);
+        s.refresh_timer = NULL;
+    }
     if (s.overlay && lv_obj_is_valid(s.overlay)) lv_obj_del_async(s.overlay);
     memset(&s, 0, sizeof(s));
     if (cb) cb(applied, ctx);
+}
+
+/* Periodic refresh while the picker is open. Every ~500ms re-evaluate the
+ * match label for the current selection (the underlying score is live, so
+ * it can change as the CAN bus appears / disappears / changes message mix).
+ * Also nudges Manual mode to re-filter so a preset that just started
+ * broadcasting appears in the list without the user having to toggle Auto. */
+static void _refresh_timer_cb(lv_timer_t *t) {
+    (void)t;
+    if (!s.match_lbl) return;
+    _refresh_match_lbl();
+    /* In Manual mode, the set of visible makes can change as live scores
+     * cross the threshold. Rebuild the make dropdown if its contents would
+     * differ from what's currently shown — keeps the picker live without
+     * a redundant rebuild every tick. */
+    if (s.manual_mode && s.make_dd) {
+        /* Compare current option string against a freshly-built one. */
+        char now_buf[256];
+        _build_make_options(now_buf, sizeof(now_buf), true);
+        const char *cur = lv_dropdown_get_options(s.make_dd);
+        if (cur && strcmp(cur, now_buf) != 0) {
+            char sel_make[48] = {0};
+            lv_dropdown_get_selected_str(s.make_dd, sel_make, sizeof(sel_make));
+            char sel_ver[48] = {0};
+            lv_dropdown_get_selected_str(s.version_dd, sel_ver, sizeof(sel_ver));
+            _rebuild_make_dd(sel_make[0] ? sel_make : NULL);
+            _refresh_version_dd(sel_ver[0] ? sel_ver : NULL);
+        }
+    }
 }
 
 static void _apply_cb(lv_event_t *e) {
@@ -451,4 +485,8 @@ void ecu_picker_open(const char *layout_name, bool allow_skip,
                   -130, _skip_cb, NULL);
     }
     _update_apply_state();
+
+    /* Kick off the live-refresh timer last so it can't fire before the
+     * widgets exist. Cleaned up in _close. */
+    s.refresh_timer = lv_timer_create(_refresh_timer_cb, 500, NULL);
 }

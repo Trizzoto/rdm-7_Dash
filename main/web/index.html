@@ -11962,18 +11962,30 @@
          * The Auto flag is persisted server-side at /api/ecu/picker_mode so
          * the on-device picker and the web picker stay in sync. */
 
-        let _ecuPresetState = null;   /* last /api/ecu/list response */
+        let _ecuPresetState   = null;  /* last /api/ecu/list response */
+        let _ecuPresetTimer   = null;  /* live-refresh interval handle */
+        const _ECU_REFRESH_MS = 1500;
 
         async function openEcuPreset() {
             const m = document.getElementById('ecuPresetModal');
             if (!m) return;
             m.style.display = 'flex';
             await _refreshEcuPreset();
+            /* Live refresh while open — match_score on the firmware side
+             * is live (driven by can_id_tracker), so re-polling every
+             * 1.5 s lights up blue dots as the bus produces frames and
+             * dims them when the loom is unplugged. Cleared on close. */
+            if (_ecuPresetTimer) clearInterval(_ecuPresetTimer);
+            _ecuPresetTimer = setInterval(_refreshEcuPreset, _ECU_REFRESH_MS);
         }
 
         function closeEcuPreset() {
             const m = document.getElementById('ecuPresetModal');
             if (m) m.style.display = 'none';
+            if (_ecuPresetTimer) {
+                clearInterval(_ecuPresetTimer);
+                _ecuPresetTimer = null;
+            }
         }
 
         async function _refreshEcuPreset() {

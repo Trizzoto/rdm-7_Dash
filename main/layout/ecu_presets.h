@@ -132,26 +132,31 @@ esp_err_t ecu_preset_read_obd2_pids(const char *layout_name,
                                     uint32_t *out, uint8_t max,
                                     uint8_t *out_count);
 
-/* ── Bus-scan match scoring ─────────────────────────────────────────────
+/* ── Live preset match scoring ──────────────────────────────────────────
  *
- * After can_bus_test_start() completes, every preset can be scored
- * against the IDs the scanner captured on the bus. The score is the
- * percentage of the preset's unique CAN IDs that also appear in the
- * scan result:
+ * Continuous "is this preset receiving data right now?" indicator.
  *
- *     score = 100 * (preset_ids ∩ detected_ids) / preset_id_count
+ * The score is the percentage of the preset's unique broadcast CAN IDs
+ * that the can_id_tracker has seen within the last ~2.5 seconds:
+ *
+ *     score = 100 * (preset_ids ∩ recently_seen_ids) / preset_id_count
  *
  * Returns 0..100. Returns 0 when:
  *   - The preset has no signals (e.g. the OBD2 placeholder), OR
- *   - No scan has been run yet (no detected_ids known), OR
- *   - The intersection is empty.
+ *   - No recent frames matched any of the preset's IDs, OR
+ *   - can_id_tracker is empty (no CAN traffic at all).
+ *
+ * Live, not snapshot: plug in the loom, watch the score climb within
+ * a couple of seconds; unplug, watch it fall back to 0. UIs that poll
+ * this every few hundred ms see live updates. No need to run a separate
+ * "Scan Car" first — the tracker is always on.
  *
  * Both UI sides (web /api/ecu/list and on-device ui_ecu_picker) use
- * this to highlight likely-correct presets and to filter manual-mode
- * dropdowns at the configurable threshold.
+ * this to draw the blue "detected" indicator and to gate Manual-mode
+ * filtering at the configurable threshold.
  *
  * @param preset  Preset to score (use ecu_preset_find first).
- * @return        0..100. 0 means "definitely not matching or unknown."
+ * @return        0..100. 0 means "no preset IDs currently broadcasting."
  */
 int ecu_preset_match_score(const ecu_preset_t *preset);
 
@@ -159,7 +164,8 @@ int ecu_preset_match_score(const ecu_preset_t *preset);
  * Threshold above which a preset is considered "detected on this bus."
  * Used by the picker UIs to draw the blue indicator and to gate the
  * Manual-mode filter. 30% is forgiving — typical broadcast presets
- * have 5-15 unique CAN IDs and not every ID is broadcast every cycle.
+ * have 5-15 unique CAN IDs and not every ID is broadcast every cycle,
+ * so a strict threshold (e.g. 100%) would false-negative real matches.
  */
 #define ECU_PRESET_MATCH_THRESHOLD 30
 
