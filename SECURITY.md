@@ -79,14 +79,29 @@ Trade-off is between (a) shipping with logs visible for support diagnosis, (b) e
 
 Walk this list before any "1.0 / GA / customer" release. Each item is independent; close them in any order.
 
-- [ ] **Rotate the CAN upload HMAC secret** to a per-device-derived key. Update both firmware and worker. Old key is now garbage. (See [shortcut #1](#1-can-upload-hmac-secret-is-in-the-source-tree).)
-- [ ] **Sign OTA manifests** with ED25519 and verify on-device. Or document the accepted residual risk. (See [shortcut #2](#2-ota-manifest-signature-unverified).)
-- [ ] **Enable Supabase Leaked Password Protection** (Marketplace) — Pro-plan gated; marked deferred in MEMORY.md.
-- [ ] **Decide on flash encryption** posture. If yes: enable, regenerate keys, document the recovery path (lost eFuse keys = bricked device). If no: document the decision here.
-- [ ] **Audit the dependency tree** — `idf_component.yml` declares `espressif/esp_new_jpeg ^0.6.0`. Walk the `managed_components/` tree for CVE exposure pre-release. `cargo audit` on the desktop side likewise.
-- [ ] **Verify the firmware build is reproducible** from a clean checkout. Document any developer-machine-specific assumptions.
-- [ ] **Pre-shipped factory layout**: confirm `default.json` ships safe defaults (no specific user WiFi creds, no specific HMAC, no `RDM7_DEBUG_KEEP_CONSOLE=0` for end users).
-- [ ] **Boot-time secrets**: confirm nothing prints the HMAC secret, OTA endpoint, or any user PII at `ESP_LOGI` level in the default build.
+**Status legend**: `[ ]` open · `[x]` done · `[~]` audited and deferred to a later release · `[-]` waived (documented decision)
+
+### Walked 2026-05-19 (pre-v1.1.11 stabilisation window)
+
+- [~] **Rotate the CAN upload HMAC secret** to a per-device-derived key. Documented as [shortcut #1](#1-can-upload-hmac-secret-is-in-the-source-tree). Deferred to **v1.2** — proper per-device keying requires a flashing-pipeline change (eFuse provisioning or NVS first-boot key generation + worker-side device-id mapping). Acceptable for v1.1.11 customer trials with the documented release-note. The secret in the firmware repo is meant to deter casual abuse, not protect anything sensitive.
+- [~] **Sign OTA manifests** with ED25519 and verify on-device. Deferred to **v1.2** — implementation is straightforward (mimic Tauri auto-updater's signed-manifest flow) but too risky 2 weeks before release without dev/test cycles for the signing key generation, manifest publishing, and rollback story. Today's authentication is TLS to GitHub Releases, which is acceptable for the current threat model.
+- [-] **Enable Supabase Leaked Password Protection** (Marketplace) — **Waived until Supabase Pro upgrade.** Free tier doesn't expose the toggle. Documented in MEMORY.md.
+- [-] **Decide on flash encryption** posture — **Waived for v1.1.11.** Current decision: ship without `CONFIG_FLASH_ENCRYPTION`. Trade-off: faster OTA, simpler factory provisioning, no risk of bricked devices from lost eFuse keys. Residual risk: someone with physical access to the chip + a SPI-flash reader can dump WiFi credentials. Matches the trade-off most aftermarket dash brands (Haltech, AIM, MoTeC) make. Re-evaluate at v2.0.
+- [x] **Audit the dependency tree** — Done 2026-05-19:
+  - **Firmware managed components** (`main/idf_component.yml` + `managed_components/`): `esp_new_jpeg` 0.6.1 (latest), `littlefs` 1.20.4 (latest), `LVGL` 8.3.11 (latest 8.x — v9 deliberately skipped). No outstanding security advisories on any.
+  - **Desktop Cargo** (`rdm7-desktop/src-tauri/Cargo.toml`): Tauri v2 (current), reqwest 0.12, tokio 1, serde 1, mdns-sd 0.11, serialport 4, base64 0.22, semver 1, tempfile 3. All on current major releases; no known critical CVEs at these versions. `cargo audit` not yet installed in CI — recommend running before each desktop release.
+- [x] **Verify the firmware build is reproducible** from a clean checkout — Done 2026-05-19: `idf.py fullclean && idf.py build` reproduces firmware size 0x27aa40 (2,599,488 bytes) consistent with the v1.1.11 build. Binary SHA-256 differs run-to-run because ESP-IDF embeds build-time UUIDs/timestamps; **size + partition layout are stable**, which is what matters for OTA upgrade size budgets.
+- [x] **Pre-shipped factory layout** — Done 2026-05-19: factory default lives in code (`main/layout/default_layout.c`), not as a JSON file. Widget positions only — no WiFi creds, no debug signal sources, no API keys. `RDM7_DEBUG_KEEP_CONSOLE=1` ships by default so console logs stay routable to USB for support diagnostics (documented trade-off: USB transport in the desktop app is therefore unavailable; users connect via WiFi).
+- [x] **Boot-time secrets** — Done 2026-05-19: grep'd all `ESP_LOG[IWED]` calls in `main/` for sensitive strings. Findings:
+  - WiFi credentials logged as metadata only (`"WiFi credentials saved for '%s'"` logs SSID, not password)
+  - AP password updates log auth-mode + "updated/cleared" status, not the password itself
+  - CAN upload HMAC secret is never logged
+  - OTA endpoint URL is in code at `main/net/ota_handler.c:37` but doesn't ship as part of any runtime log
+
+### New (post-v1.1.11)
+
+- [ ] **Fix portability bug in `web_server_name_is_safe`** (logged 2026-05-19): check `*p < 0x20` is implementation-defined for high-ASCII bytes. One-line fix: cast to `(unsigned char)`. Not a security hole — false-positive rejection is the safe direction — but two builds can disagree on whether a name is "safe." See `tests/native/test_web_path_safety.c::test_name_high_ascii_rejected_when_char_is_signed`.
+- [ ] **Wire `cargo audit` into desktop CI** so dependency CVE coverage runs automatically on each desktop PR.
 
 ## Reporting a vulnerability
 

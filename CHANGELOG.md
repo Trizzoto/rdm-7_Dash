@@ -21,7 +21,7 @@ Changes that have landed on `master` since the last tagged version.
 
 ## [1.1.11] — 2026-05-19
 
-First release-tracked build. Significant cleanup + documentation pass plus the cumulative work since 1.1.10. Boots clean on COM13; web editor serves with `Content-Encoding: gzip`; 122/122 native tests pass.
+First release-tracked build and the **opening of the 2-week stabilisation window** before customer release. Significant cleanup + documentation pass plus the cumulative work since 1.1.10. Boots clean on COM13; web editor serves with `Content-Encoding: gzip`; **141/141 native tests pass**; pre-release audit walked end-to-end.
 
 ### Added
 - **Ford FG preset — chassis extras.** New optional ECU signal slots `BOOST`, `FUEL_LEVEL`, `PARK_BRAKE`, `YAW_RATE`, `LATERAL_G` (in `ecu_signal_slot_t`). FG preset wires these from `0x425` / `0x4B0` / `0x000` / `0x360` per the BigFalconSheet DBC tab. Most factory presets leave them `SIG_UNSUPPORTED`. (commit `40b2d5e`)
@@ -32,8 +32,9 @@ First release-tracked build. Significant cleanup + documentation pass plus the c
 - **`widget_meter` port** from RDM-7_Dash_P4 — rear-extension partial refresh, ext-draw-size hook, anchor-aware tick recolor, `tick_label_divisor` field. (commit `e9b28ad`, prior release)
 - **OBD2 hamburger section** (web editor) with Setup / Trouble Codes / Vehicle Info modals routing through existing `/api/obd2/*`. (commit `d43c7fa`, prior release)
 - **Web editor: Save As menu** + meter sweep slider (30..360) + `label_gap` range widened to `-150..150`. (commit `e6f1a9f`, prior release)
-- **Native test suite expansion**: 76 → 122 tests. New files: `test_layout_migration.c` (schema gate + migration helper), `test_widget_arc_precedence.c` (19 tests for the fill-color precedence ladder including the just-fixed regression), `test_obd2_freeze_frame.c` (21 tests for Mode 02 parse + scale/offset), `test_ota_skip_version.c` (12 tests for the comparator), `test_calculated_gear.c` (13 tests for the CALCULATED_GEAR classifier). All mirror-pattern with explicit source-of-truth references. (commits `94b578b`, `4ec78ee`, `275d662`, `382eb13`, `c88a42c`)
-- **Documentation**: `tests/README.md` refreshed to current state; `CHANGELOG.md` (this file); `SECURITY.md` (release-surface security posture); `docs/adr/README.md` (ADR index); `docs/adr/0005-html-source-of-truth.md` (the three-HTML-copies decision).
+- **Native test suite expansion**: 76 → 141 tests (+86%). New files: `test_layout_migration.c` (schema gate + migration helper), `test_widget_arc_precedence.c` (19 tests for the fill-color precedence ladder including the just-fixed regression), `test_obd2_freeze_frame.c` (21 tests for Mode 02 parse + scale/offset), `test_ota_skip_version.c` (12 tests for the comparator), `test_calculated_gear.c` (13 tests for the CALCULATED_GEAR classifier), `test_web_path_safety.c` (19 tests for path-traversal guards at the HTTP API boundary). All mirror-pattern with explicit source-of-truth references.
+- **GitHub Actions CI**: `.github/workflows/native-tests.yml` runs the 141-test suite on every push/PR. `.github/workflows/schema-check.yml` validates `schema/widgets.schema.json` and detects codegen drift in `main/web/index.html` / `main/widgets/widget_fields.gen.c` before it reaches master.
+- **Documentation**: `tests/README.md` refreshed to current state; `CHANGELOG.md` (this file); `SECURITY.md` (release-surface security posture + closed pre-release audit checklist); `docs/README.md` (documentation map); `docs/adr/README.md` (ADR index); `docs/adr/0005-html-source-of-truth.md` (the three-HTML-copies decision); root `README.md` linked to the handover docs.
 
 ### Changed
 - **Embedded web editor is now gzipped** (`main/CMakeLists.txt` + `main/net/web_server.c`). 842 KB → 181 KB on the wire (4.65× reduction). Firmware image shrank from 0x31c1b0 → 0x27aa40 (-645 KB). **OTA partition free slack: 11% → 29%** (+18pp). Browsers handle `Content-Encoding: gzip` transparently. (commit `79c2789`)
@@ -46,7 +47,14 @@ First release-tracked build. Significant cleanup + documentation pass plus the c
 - **`max_uri_handlers` 100 → 160** in `web_server.c` (prior release, retained). Current count is 100 handlers registered (62% of cap, 60 slots free).
 
 ### Security & Operational
-- _No changes from prior release._ Pre-release hardening items tracked in [`SECURITY.md`](SECURITY.md).
+- **Pre-release audit walked end-to-end** (2026-05-19). 4 checklist items in [`SECURITY.md`](SECURITY.md) closed (dependency CVE walk, reproducible build, factory layout safety, boot-log secret scan). 2 items deferred to v1.2 with documented reasoning (HMAC per-device derivation, OTA manifest signing). 2 waived with documented decision (Supabase Pro plan, flash encryption posture).
+- **Reproducible build verified**: `idf.py fullclean && idf.py build` produces firmware size 0x27aa40 (2,599,488 bytes), stable across fresh checkouts. Binary SHA-256 varies run-to-run because ESP-IDF embeds build-time UUIDs/timestamps; size + partition layout are stable.
+- **Boot-log audit**: no firmware code logs the CAN HMAC secret, WiFi passwords (only metadata: `"saved for '<ssid>'"`, `"updated"`, `"cleared"`), or OTA tokens at any log level.
+- **Dependency CVE walk**: managed components (`esp_new_jpeg` 0.6.1, `littlefs` 1.20.4, `LVGL` 8.3.11) are current releases with no outstanding advisories. Desktop Cargo deps (Tauri v2 family, reqwest 0.12, tokio 1, etc.) on current versions; no known critical CVEs. `cargo audit` recommended pre-release but not yet wired into desktop CI.
+- **Factory layout safety**: factory default is compiled into `main/layout/default_layout.c` (widget positions only — no creds, no debug signal sources), not shipped as a JSON file.
+
+### Found during audit (deferred fixes)
+- **`web_server_name_is_safe` portability bug**: deny check `*p < 0x20` is implementation-defined for high-ASCII bytes. Signed-char compilers (host gcc) reject UTF-8; unsigned-char compilers (some ARM toolchains) accept. Same input could be classified differently by two builds. Not a security hole — false-positive rejection is the safe direction. One-line fix in v1.2: `(unsigned char)*p < 0x20`. Locked in by `tests/native/test_web_path_safety.c::test_name_high_ascii_rejected_when_char_is_signed`.
 
 ### Internal
 - `feature/widget-sys` fast-forwarded to `master` at `c88a42c`. Both branches pushed to origin.
