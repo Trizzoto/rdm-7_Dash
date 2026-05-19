@@ -14,14 +14,14 @@ Changes that have landed on `master` since the last tagged version.
   - **ECU preset picker (on-device + web)** — each preset row carries a live blue dot that lights up when the bus is broadcasting the preset's CAN IDs and dims when it isn't. Detected presets sort to the top with an "NN% match" badge. The on-device picker was rewritten from a two-dropdown UI to a scrollable card list to fit per-row dots. Auto/Manual switch at the header filters out non-detected presets when the user wants to declutter (falls back to showing all if nothing matched, so the user is never stranded).
   - **Signals screen (on-device `ui_peaks.c`)** — each signal row gets a small dot on its left edge: blue when `signal_t.is_stale == false`, grey otherwise. 100 ms cadence so a freshly arriving frame lights up within a tick.
   - **Web sidebar signal cards** — `.sig-dot` now gets a `.live` class toggled by the existing `/api/signals/values` poll loop (1.5 s cadence). Three states: blue + glow when live, green when bound-but-stale, grey when neither.
+  - **OBD2 Setup modal** — new "OBD2 Protocols responding" panel showing one chip per service (M01, M02, M03, M07, M09, M0A, M21, M22) with a live blue dot when the ECU has responded to that service within the last 5 s. Helps diagnose partial OBD2 connectivity ("Trouble Codes works but Vehicle Info times out — why?"). Title hover shows "responded N s ago" / "no response yet" for triage.
 
   Implementation pieces:
   - `ecu_preset_match_score(preset)` returns 0..100% based on the **live** `can_id_tracker` (continuous per-CAN-ID `last_seen_us` recording), not the static `can_bus_test` scan. Threshold `ECU_PRESET_MATCH_THRESHOLD = 30%`. Plug a loom in → dot lights within ~2 s. Unplug → fades within ~2.5 s.
   - `/api/ecu/list` response shape changed from a bare array to `{presets: [...], match_threshold: 30, auto_mode: bool}`. Each preset carries `match_score`. New endpoints `GET /api/ecu/picker_mode` and `POST /api/ecu/picker_mode` for the Auto flag (persisted in NVS namespace `ecu_pick`).
-  - On-device picker uses a 500 ms refresh timer; web modal polls `/api/ecu/list` every 1.5 s while open.
+  - `obd2.c` tracks per-service last-response timestamps in `s_last_resp_ms[]`, stamped from `_process_full_message` on every positive response (NRCs not counted). New `obd2_protocol_is_fresh(service)` + `obd2_protocol_age_ms(service)` public API. `GET /api/obd2/protocols` returns the per-service freshness array.
+  - On-device picker uses a 500 ms refresh timer; web modal polls `/api/ecu/list` every 1.5 s; OBD2 Setup polls `/api/obd2/protocols` every 2 s — same loop as the rest of its status grid.
   - **Tests**: `tests/native/test_ecu_preset_match.c` — 16 mirror-pattern tests covering degenerate inputs, intersection math, the 30% threshold boundary, rounding, de-duplication, and two realistic preset shapes. Suite now **157 tests, all green**.
-
-  Not done in this batch (deferred): protocol-level (OBD2 mode M01/M22/etc.) indicators in the OBD2 Setup modal.
 
 ### Changed
 - _nothing yet_
