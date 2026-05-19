@@ -30,6 +30,7 @@
 #include "../../layout/ecu_presets.h"
 #include "../../layout/layout_manager.h"
 #include "../../storage/config_store.h"
+#include "../settings/ui_gear_setup.h"
 
 static const char *TAG = "ecu_picker";
 
@@ -403,6 +404,15 @@ static void _refresh_timer_cb(lv_timer_t *t) {
     _refresh_dots();
 }
 
+/* lv_async_call shim — opens the Gear Setup overlay on the next LVGL tick.
+ * Used after the ECU picker closes itself when the user applies the
+ * RDM-7 / Internal marker preset. Async because we need the picker's
+ * destroy to finish before pushing a new overlay onto lv_layer_top. */
+static void _open_gear_setup_async(void *unused) {
+    (void)unused;
+    ui_gear_setup_open(NULL, NULL);
+}
+
 static void _apply_cb(lv_event_t *e) {
     (void)e;
     if (s.selected_row < 0 || s.selected_row >= s.row_count) {
@@ -412,6 +422,7 @@ static void _apply_cb(lv_event_t *e) {
     int preset_idx = s.rows[s.selected_row].preset_idx;
 
     bool applied = false;
+    bool is_rdm_internal = false;
     if (preset_idx == CUSTOM_IDX) {
         config_store_save_ecu("", "");
     } else {
@@ -421,9 +432,21 @@ static void _apply_cb(lv_event_t *e) {
         } else {
             config_store_save_ecu(p->make, p->version);
             applied = true;
+            /* RDM-7 / Internal is the marker preset that drives the
+             * CALCULATED_GEAR synthetic signal. After applying it the
+             * user still needs to configure RPM/Speed sources + gear
+             * ratios — auto-pop the Gear Setup modal so the dash-only
+             * user gets a working setup without a trip to the web
+             * editor. Same UX as the web side's openGearSetup() hook. */
+            if (p->make && p->version &&
+                strcmp(p->make, "RDM-7") == 0 &&
+                strcmp(p->version, "Internal") == 0) {
+                is_rdm_internal = true;
+            }
         }
     }
     _close(applied);
+    if (is_rdm_internal) lv_async_call(_open_gear_setup_async, NULL);
 }
 
 static void _skip_cb(lv_event_t *e) {

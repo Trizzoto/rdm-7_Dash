@@ -52,6 +52,7 @@ idf_component_register(
         "ui/settings/preset_picker.c"
         "ui/settings/device_settings.c"
         "ui/settings/settings_panel.c"
+        "ui/settings/ui_gear_setup.c"
         "ui/components/ui_comp.c"
         "ui/components/ui_comp_hook.c"
         "ui/components/ui_comp_slider2.c"
