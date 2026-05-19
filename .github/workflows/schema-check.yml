@@ -1,0 +1,72 @@
+name: Widget schema check
+
+# Validates schema/widgets.schema.json and confirms main/web/index.html
+# matches what codegen would emit from it. Catches schema-vs-HTML drift
+# before it lands on master.
+#
+# Exits 1 if drift is detected — the offending PR sees a red check and
+# can re-run codegen (`python tools/codegen_widget_inspector.py`) to fix.
+
+on:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+      - 'release/**'
+    paths:
+      - 'main/web/index.html'
+      - 'main/widgets/widget_fields.gen.c'
+      - 'schema/widgets.schema.json'
+      - 'schema/widgets.schema.meta.json'
+      - 'tools/codegen_*.py'
+      - 'tools/check_widget_codegen.py'
+      - 'tools/validate_widget_schema.py'
+      - 'tools/requirements.txt'
+
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'main/web/index.html'
+      - 'main/widgets/widget_fields.gen.c'
+      - 'schema/widgets.schema.json'
+      - 'schema/widgets.schema.meta.json'
+      - 'tools/codegen_*.py'
+      - 'tools/check_widget_codegen.py'
+      - 'tools/validate_widget_schema.py'
+      - 'tools/requirements.txt'
+
+  workflow_dispatch:
+
+jobs:
+  schema:
+    name: schema + codegen
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install tool dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tools/requirements.txt
+
+      - name: Validate schema + check codegen drift
+        run: python tools/check_widget_codegen.py
+
+      - name: Summarise on failure
+        if: failure()
+        run: |
+          echo "::error::Schema validation OR codegen drift failed."
+          echo "::error::To fix locally:"
+          echo "::error::  python tools/validate_widget_schema.py"
+          echo "::error::  python tools/codegen_widget_inspector.py"
+          echo "::error::Then commit the regenerated widget_fields.gen.c"
+          echo "::error::and the updated main/web/index.html."

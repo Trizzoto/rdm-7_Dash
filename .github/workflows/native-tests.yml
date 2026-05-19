@@ -1,0 +1,49 @@
+name: Native tests
+
+# Runs the native-host Unity test suite on every push and PR.
+#
+# The suite is pure-C with gcc + libm + a vendored cJSON. No ESP-IDF, no LVGL,
+# no hardware. Runs in seconds on a standard Ubuntu runner.
+#
+# See tests/README.md for what's covered.
+
+on:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+      - 'release/**'
+  pull_request:
+    branches:
+      - master
+
+  # Allow running manually from the Actions tab.
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: tests/native
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          gcc --version
+          make --version | head -1
+
+      - name: Build + run native test suite
+        working-directory: tests/native
+        run: |
+          # `make` builds every test_*.c in TESTS and runs each binary.
+          # Any test failure → non-zero exit → CI fails.
+          make
+
+      - name: Summarise on failure
+        if: failure()
+        run: |
+          echo "::error::Native test suite failed. See tests/README.md for"
+          echo "::error::how to reproduce locally:  cd tests/native && make"
