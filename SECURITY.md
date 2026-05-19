@@ -89,7 +89,14 @@ Walk this list before any "1.0 / GA / customer" release. Each item is independen
 - [-] **Decide on flash encryption** posture — **Waived for v1.1.11.** Current decision: ship without `CONFIG_FLASH_ENCRYPTION`. Trade-off: faster OTA, simpler factory provisioning, no risk of bricked devices from lost eFuse keys. Residual risk: someone with physical access to the chip + a SPI-flash reader can dump WiFi credentials. Matches the trade-off most aftermarket dash brands (Haltech, AIM, MoTeC) make. Re-evaluate at v2.0.
 - [x] **Audit the dependency tree** — Done 2026-05-19:
   - **Firmware managed components** (`main/idf_component.yml` + `managed_components/`): `esp_new_jpeg` 0.6.1 (latest), `littlefs` 1.20.4 (latest), `LVGL` 8.3.11 (latest 8.x — v9 deliberately skipped). No outstanding security advisories on any.
-  - **Desktop Cargo** (`rdm7-desktop/src-tauri/Cargo.toml`): Tauri v2 (current), reqwest 0.12, tokio 1, serde 1, mdns-sd 0.11, serialport 4, base64 0.22, semver 1, tempfile 3. All on current major releases; no known critical CVEs at these versions. `cargo audit` not yet installed in CI — recommend running before each desktop release.
+  - **Desktop Cargo** (`rdm7-desktop/src-tauri/Cargo.lock`): `cargo audit` walked the 566-crate dependency tree. Found **3 actual vulnerabilities** in `rustls-webpki 0.103.10`:
+    - RUSTSEC-2026-0098 — name constraints for URI names incorrectly accepted (TLS cert validation flaw)
+    - RUSTSEC-2026-0099 — name constraints accepted for wildcard cert names (TLS cert validation flaw)
+    - RUSTSEC-2026-0104 — reachable panic in CRL parsing (DoS on malformed CRL)
+
+    All three pull in via `reqwest → tauri-plugin-updater`, so they sit directly on the auto-updater TLS path. **Fixed same-day** by `cargo update -p rustls-webpki` → 0.103.13. Verified `cargo audit --deny warnings` returns clean exit 0 post-bump.
+
+    Plus 20 "no longer maintained" advisories (GTK3 transitives + build-time parsers + narrow-path unsoundness). All triaged and explicitly ignored in `src-tauri/.cargo/audit.toml` with per-entry rationale — none are exploitable in our deployment.
 - [x] **Verify the firmware build is reproducible** from a clean checkout — Done 2026-05-19: `idf.py fullclean && idf.py build` reproduces firmware size 0x27aa40 (2,599,488 bytes) consistent with the v1.1.11 build. Binary SHA-256 differs run-to-run because ESP-IDF embeds build-time UUIDs/timestamps; **size + partition layout are stable**, which is what matters for OTA upgrade size budgets.
 - [x] **Pre-shipped factory layout** — Done 2026-05-19: factory default lives in code (`main/layout/default_layout.c`), not as a JSON file. Widget positions only — no WiFi creds, no debug signal sources, no API keys. `RDM7_DEBUG_KEEP_CONSOLE=1` ships by default so console logs stay routable to USB for support diagnostics (documented trade-off: USB transport in the desktop app is therefore unavailable; users connect via WiFi).
 - [x] **Boot-time secrets** — Done 2026-05-19: grep'd all `ESP_LOG[IWED]` calls in `main/` for sensitive strings. Findings:
