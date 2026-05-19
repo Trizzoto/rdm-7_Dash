@@ -9,7 +9,11 @@ This file starts tracking from **1.1.11** (the first release-tracked build, 2026
 Changes that have landed on `master` since the last tagged version.
 
 ### Added
-- _nothing yet_
+- **ECU preset bus-match scoring + Auto/Manual picker filter.** New `ecu_preset_match_score(preset)` returns a 0..100% score representing how many of the preset's broadcast CAN IDs were captured during the last `can_bus_test_start()` ("Scan Car") run. Threshold `ECU_PRESET_MATCH_THRESHOLD = 30%` decides whether a preset is "detected on this bus."
+  - **Web modal**: new ECU Preset card in the OBD2 Setup quick-jump grid opens a list of all firmware presets. Detected presets get a blue dot + score badge. An Auto/Manual switch at the top filters the list — Manual hides presets that didn't match (falls back to showing all if nothing matched, so the user is never stranded with an empty list).
+  - **On-device picker**: `ui_ecu_picker.c` gets the same Auto/Manual switch + a "Detected on bus (N% match)" hint label under the version dropdown. Manual mode filters both make and version dropdowns.
+  - **API**: `/api/ecu/list` response shape changed from a bare array to `{presets: [...], match_threshold: 30, auto_mode: bool}`. Each preset object now carries `match_score`. New endpoints `GET /api/ecu/picker_mode` and `POST /api/ecu/picker_mode` for the Auto flag (persisted in NVS namespace `ecu_pick`).
+  - **Tests**: `tests/native/test_ecu_preset_match.c` — 16 mirror-pattern tests covering degenerate inputs, intersection math, the 30% threshold boundary, rounding, de-duplication, and two realistic preset shapes. Suite now 157 tests, all green.
 
 ### Changed
 - _nothing yet_
