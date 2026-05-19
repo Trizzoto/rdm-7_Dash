@@ -307,6 +307,28 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user);
 /** True while a scan is in progress. */
 bool obd2_discovery_in_progress(void);
 
+/* ── Per-service live "is the ECU answering this protocol?" indicator ───
+ *
+ * Tracks the wall-clock timestamp of the most recent positive response
+ * for each OBD2 service. Used by the OBD2 Setup UI to show a live blue
+ * dot per protocol (Mode 01 / 02 / 03 / 07 / 09 / 0A / 21 / 22) so the
+ * user can see at a glance which services the connected ECU supports.
+ *
+ * "Fresh" means: a response of that service arrived within the last
+ * OBD2_PROTOCOL_FRESH_WINDOW_MS milliseconds. Updates happen inside
+ * obd2_rx_handler / _process_full_message — no extra hot-path cost.
+ *
+ * Returns false for any service the firmware doesn't track (or never
+ * heard from).
+ */
+#define OBD2_PROTOCOL_FRESH_WINDOW_MS 5000u
+
+bool obd2_protocol_is_fresh(uint8_t service);
+
+/* Milliseconds since the last response of this service, or UINT32_MAX
+ * if never seen. Useful for the UI to render "2s ago" hints. */
+uint32_t obd2_protocol_age_ms(uint8_t service);
+
 /* ── Diagnostic Trouble Codes (Mode 03 / 07 / 0A) ───────────────────────
  *
  * Three DTC "buckets" defined by SAE J1979:

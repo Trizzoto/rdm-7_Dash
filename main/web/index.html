@@ -3264,6 +3264,19 @@
                 <span id="obd2SetupCustom" style="font-family:'JetBrains Mono', monospace;">…</span>
             </div>
 
+            <!-- Per-protocol live indicators. Each chip = one OBD2 service.
+                 Blue dot = the ECU responded to that service within the last
+                 5 s; grey = no recent response (could mean unsupported, the
+                 service hasn't been requested yet, or ECU offline).
+                 Populated by _refreshObd2Protocols (poll /api/obd2/protocols
+                 while modal is open). -->
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); padding:10px 12px; margin-bottom:14px;">
+                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;">OBD2 Protocols responding</div>
+                <div id="obd2SetupProtocols" style="display:flex; flex-wrap:wrap; gap:6px; font-size:11px;">
+                    <span style="color:var(--text-muted); font-style:italic;">Loading…</span>
+                </div>
+            </div>
+
             <div style="font-size:11px; color:var(--text-muted); line-height:1.5; margin-bottom:14px;">
                 <b style="color:var(--text);">1.</b> Pick your ECU in the header dropdown (vehicles use Mode 22 / KWP / standard OBD2 differently).<br>
                 <b style="color:var(--text);">2.</b> Bind OBD2 signals to widgets by selecting a widget and choosing a signal in the Properties tab.<br>
@@ -12713,6 +12726,39 @@
                            ? currentLayout.custom_pids : [];
                 setText('obd2SetupCustom', `${cp.length}`);
             } catch (e) {}
+
+            /* Per-protocol live indicators — blue dot when the ECU has
+             * responded to that service within OBD2_PROTOCOL_FRESH_WINDOW_MS
+             * (5 s by default; the API returns the value so the UI label
+             * stays in sync if the firmware ever tunes it). Grey otherwise.
+             *
+             * The label hint shows hover-friendly "responded N s ago" or
+             * "no response" so a user diagnosing partial connectivity can
+             * tell "M22 is unsupported" from "M22 is supported but the
+             * last query was a while ago." */
+            try {
+                const r = await fetch('/api/obd2/protocols');
+                if (r.ok) {
+                    const data = await r.json();
+                    const wrap = document.getElementById('obd2SetupProtocols');
+                    if (wrap && Array.isArray(data.protocols)) {
+                        wrap.innerHTML = data.protocols.map(p => {
+                            const fresh = !!p.fresh;
+                            const dot = fresh
+                                ? '<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#2d8ceb; box-shadow:0 0 6px rgba(45,140,235,0.5);"></span>'
+                                : '<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#404040;"></span>';
+                            const ageHint = (p.age_ms === null || p.age_ms === undefined)
+                                ? 'no response yet'
+                                : (p.age_ms < 1000 ? 'responded just now'
+                                   : `responded ${Math.round(p.age_ms / 1000)} s ago`);
+                            const nameStyle = fresh
+                                ? 'color:var(--text); font-weight:600;'
+                                : 'color:var(--text-muted);';
+                            return `<span title="${_textEscape(ageHint)}" style="display:inline-flex; align-items:center; gap:5px; padding:3px 8px; background:var(--panel-elevated); border:1px solid var(--border); border-radius:12px; font-family:'JetBrains Mono', monospace; ${nameStyle}">${dot}${_textEscape(p.name)}</span>`;
+                        }).join('');
+                    }
+                }
+            } catch (e) { /* leave whatever was last rendered */ }
         }
 
         function openObd2Setup() {

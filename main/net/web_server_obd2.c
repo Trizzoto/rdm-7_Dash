@@ -637,10 +637,70 @@ static const httpd_uri_t snapshot_uri = {
     .uri = "/api/obd2/snapshot", .method = HTTP_POST,
     .handler = _snapshot_handler, .user_ctx = NULL};
 
+/* GET /api/obd2/protocols — per-service live-response status.
+ *
+ * Returns the live "is the ECU answering this protocol?" state for the
+ * eight services the firmware tracks. Used by the OBD2 Setup modal to
+ * draw a blue dot next to each mode the ECU is currently responding to,
+ * helping users diagnose partial OBD2 connectivity ("Trouble Codes
+ * works but Vehicle Info times out — why?").
+ *
+ * Response:
+ *   {
+ *     "fresh_window_ms": 5000,
+ *     "protocols": [
+ *       {"service": 1,  "name": "M01", "fresh": true,  "age_ms": 320},
+ *       {"service": 2,  "name": "M02", "fresh": false, "age_ms": null},
+ *       {"service": 3,  "name": "M03", "fresh": false, "age_ms": null},
+ *       ...
+ *     ]
+ *   }
+ *
+ * age_ms is null when the service has never responded. */
+static esp_err_t _protocols_handler(httpd_req_t *req) {
+    /* Services tracked: 0x01 live data, 0x02 freeze frame, 0x03 stored DTCs,
+     * 0x07 pending DTCs, 0x09 vehicle info (VIN/ECUname), 0x0A permanent
+     * DTCs, 0x21 manufacturer-specific (Toyota etc.), 0x22 UDS read-by-id
+     * (Ford/GM/VW/newer Toyota). */
+    static const struct { uint8_t svc; const char *name; } SERVICES[] = {
+        {0x01, "M01"}, {0x02, "M02"}, {0x03, "M03"}, {0x07, "M07"},
+        {0x09, "M09"}, {0x0A, "M0A"}, {0x21, "M21"}, {0x22, "M22"},
+    };
+    const int n_services = (int)(sizeof(SERVICES) / sizeof(SERVICES[0]));
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "fresh_window_ms", OBD2_PROTOCOL_FRESH_WINDOW_MS);
+    cJSON *arr = cJSON_AddArrayToObject(root, "protocols");
+    for (int i = 0; i < n_services; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "service", SERVICES[i].svc);
+        cJSON_AddStringToObject(item, "name", SERVICES[i].name);
+        cJSON_AddBoolToObject  (item, "fresh", obd2_protocol_is_fresh(SERVICES[i].svc));
+        uint32_t age = obd2_protocol_age_ms(SERVICES[i].svc);
+        if (age == UINT32_MAX) cJSON_AddNullToObject(item, "age_ms");
+        else                   cJSON_AddNumberToObject(item, "age_ms", (double)age);
+        cJSON_AddItemToArray(arr, item);
+    }
+
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return r;
+}
+
+static const httpd_uri_t protocols_uri = {
+    .uri = "/api/obd2/protocols", .method = HTTP_GET,
+    .handler = _protocols_handler, .user_ctx = NULL};
+
 void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
     REGISTER_URI(server, &clear_uri);
     REGISTER_URI(server, &vin_uri);
     REGISTER_URI(server, &ecuname_uri);
     REGISTER_URI(server, &snapshot_uri);
+    REGISTER_URI(server, &protocols_uri);
 }

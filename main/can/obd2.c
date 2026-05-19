@@ -235,6 +235,21 @@ static obd2_scan_result_t s_scan_result        = {0};
 static obd2_scan_cb_t     s_scan_cb            = NULL;
 static void              *s_scan_user          = NULL;
 
+/* ── Per-service last-response timestamps ───────────────────────────────
+ *
+ * Indexed by request service (0x01, 0x02, 0x03, 0x07, 0x09, 0x0A, 0x21,
+ * 0x22). 0 == never seen. _process_full_message stamps `now` here whenever
+ * a positive response (resp_service = 0x40 + req_service) arrives.
+ *
+ * The UI uses obd2_protocol_is_fresh() to drive the live dot next to each
+ * mode in the OBD2 Setup modal. Tracking is single-writer (LVGL task) so
+ * no locking needed.
+ *
+ * Array is sized to cover service byte 0x00..0x22 (35 entries) — small
+ * enough that even sparse use is cheap on memory. */
+#define OBD2_LAST_RESP_TABLE_SZ 0x23  /* 0x00..0x22 inclusive */
+static uint64_t s_last_resp_ms[OBD2_LAST_RESP_TABLE_SZ] = {0};
+
 /* Forward decls */
 static void _poll_timer_cb(lv_timer_t *t);
 static void _try_dispatch(uint64_t now);
@@ -1269,6 +1284,20 @@ static void _process_full_message(uint8_t *msg, uint16_t len)
     if (len < 2) return;
     uint8_t resp_service = msg[0];
 
+    /* Per-service freshness stamp. Positive responses are 0x40 + request
+     * service (e.g. 0x41 = Mode 01 response). NRCs (0x7F) are NOT
+     * counted as positive responses — a rejection from the ECU still
+     * indicates protocol support, but it's not the kind of "working
+     * great" the UI dot is meant to communicate. Mode 02 freeze frame
+     * rejections in particular are common and don't mean the ECU is
+     * offline. */
+    if (resp_service >= 0x40 && resp_service <= 0x62) {
+        uint8_t req_service = (uint8_t)(resp_service - 0x40);
+        if (req_service < OBD2_LAST_RESP_TABLE_SZ) {
+            s_last_resp_ms[req_service] = (uint64_t)(esp_timer_get_time() / 1000ULL);
+        }
+    }
+
     /* ── Negative Response Code (NRC) — service rejected ─────────────
      * Format: 0x7F <requested_service> <NRC_byte>. Common NRCs:
      *   0x11 service not supported / 0x12 sub-function not supported
@@ -1661,6 +1690,34 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user)
 bool obd2_discovery_in_progress(void)
 {
     return s_scan_state != SCAN_IDLE;
+}
+
+/* ── Per-service liveness accessors ─────────────────────────────────────
+ *
+ * Backed by s_last_resp_ms[] which _process_full_message updates on every
+ * positive response. Used by /api/obd2/protocols + the OBD2 Setup modal
+ * to render live indicators per supported service.
+ */
+
+bool obd2_protocol_is_fresh(uint8_t service)
+{
+    if (service >= OBD2_LAST_RESP_TABLE_SZ) return false;
+    uint64_t t = s_last_resp_ms[service];
+    if (t == 0) return false;  /* never seen */
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    return (now - t) <= (uint64_t)OBD2_PROTOCOL_FRESH_WINDOW_MS;
+}
+
+uint32_t obd2_protocol_age_ms(uint8_t service)
+{
+    if (service >= OBD2_LAST_RESP_TABLE_SZ) return UINT32_MAX;
+    uint64_t t = s_last_resp_ms[service];
+    if (t == 0) return UINT32_MAX;
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    uint64_t age = now - t;
+    /* Clamp to UINT32_MAX-1 so callers can distinguish "very old" from
+     * "never seen" — UINT32_MAX is reserved for the never-seen sentinel. */
+    return (age >= (uint64_t)UINT32_MAX) ? (UINT32_MAX - 1) : (uint32_t)age;
 }
 
 static void _scan_send(uint8_t pid)
