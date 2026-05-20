@@ -300,6 +300,80 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 	}
 }
 
+/* ── Rule-driven overrides ─────────────────────────────────────────────────
+ *
+ * Lets the rules engine swap an image, dim it, or tint it based on a CAN
+ * signal. The image_name path is the headline use case: e.g. show a green
+ * battery icon while the battery is healthy and a red one when the
+ * voltage falls below a threshold, without having to stack two image
+ * widgets with mutually-exclusive visibility rules.
+ *
+ * On image_name override we free the old descriptor and load the new one
+ * into the same lv_img object — re-using the day/night sibling pair to
+ * keep night-mode swaps working. recolor / opacity / recolor_opa are
+ * style-only and apply in-place to whichever object is currently
+ * visible. */
+static void _image_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+	image_data_t *id = (image_data_t *)w->type_data;
+	if (!id) return;
+
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "image_name") == 0 && o->value_type == RULE_VAL_STRING) {
+			/* Swap the image source. If the override matches the
+			 * currently-loaded name (rule re-fired with the same value),
+			 * skip the work — saves a LittleFS hit + decode. */
+			if (strncmp(id->image_name, o->value.str, sizeof(id->image_name)) == 0) continue;
+			safe_strncpy(id->image_name, o->value.str, sizeof(id->image_name));
+			rdm_image_free(id->img_dsc);
+			id->img_dsc = NULL;
+			if (id->image_name[0] != '\0') {
+				id->img_dsc = rdm_image_load(id->image_name);
+			}
+			if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
+				/* Setting NULL when the new image fails to load clears
+				 * the previous tile rather than leaving stale pixels. */
+				lv_img_set_src(id->img_obj, id->img_dsc);
+				if (id->img_dsc) {
+					id->native_w = id->img_dsc->header.w;
+					id->native_h = id->img_dsc->header.h;
+					if (id->auto_size) {
+						uint16_t zoom = _fit_zoom(w->w, w->h, id->native_w, id->native_h);
+						if (zoom != 256) lv_img_set_zoom(id->img_obj, zoom);
+					}
+				}
+			}
+		} else if (strcmp(o->field_name, "opacity") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->opacity = (uint8_t)v;
+			if (id->img_obj && lv_obj_is_valid(id->img_obj))
+				lv_obj_set_style_img_opa(id->img_obj, id->opacity,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+			if (id->night_img_obj && lv_obj_is_valid(id->night_img_obj))
+				lv_obj_set_style_img_opa(id->night_img_obj, id->opacity,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+		} else if (strcmp(o->field_name, "recolor") == 0 && o->value_type == RULE_VAL_COLOR) {
+			id->recolor.full = (uint16_t)o->value.color;
+			if (id->img_obj && lv_obj_is_valid(id->img_obj) && id->recolor_opa > 0) {
+				lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
+		} else if (strcmp(o->field_name, "recolor_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->recolor_opa = (uint8_t)v;
+			if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
+				lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
+					LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
+		}
+	}
+}
+
 static void _image_destroy(widget_t *w) {
 	if (!w) return;
 	night_mode_unsubscribe(_image_night_cb, w);
@@ -463,6 +537,7 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	w->to_json = _image_to_json;
 	w->from_json = _image_from_json;
 	w->destroy = _image_destroy;
+	w->apply_overrides = _image_apply_overrides;
 	w->apply_night_mode = _image_apply_night_mode;
 	w->inspector_get = _image_inspector_get;
 	w->inspector_set = _image_inspector_set;

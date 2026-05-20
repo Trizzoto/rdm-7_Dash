@@ -4728,6 +4728,13 @@
                 renderSignals();
                 updateInspector();
                 if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                /* Without this the editor reverts but the device keeps the
+                 * post-delete state — so Ctrl+Z on a "deleted meter" only
+                 * brings the widget back in the editor, not on the dash.
+                 * Push the restored layout through the same debounced save
+                 * path that every other edit uses. */
+                try { localStorage.setItem('rdm7_draft', history[historyIndex]); } catch (e) { }
+                if (typeof _scheduleAutoSave === 'function') _scheduleAutoSave();
             }
         }
 
@@ -4741,6 +4748,9 @@
                 renderSignals();
                 updateInspector();
                 if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                /* Same as undo() — keep the device + editor in lockstep. */
+                try { localStorage.setItem('rdm7_draft', history[historyIndex]); } catch (e) { }
+                if (typeof _scheduleAutoSave === 'function') _scheduleAutoSave();
             }
         }
 
@@ -5455,7 +5465,7 @@
                     "image": {
                         displayName: "Image", defW: 100, defH: 100,
                         fields: [
-                            { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", nightOverridable: true },
+                            { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", nightOverridable: true, ruleOverridable: true },
                             { name: "auto_size", label: "Auto Size", type: "checkbox", def: true, cat: "appearance" },
                             { name: "image_scale", label: "Scale %", type: "stepper", def: 100, cat: "appearance", min: 10, max: 200, enabledBy: "!auto_size" },
                             { name: "opacity", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
@@ -5509,7 +5519,11 @@
                                   { v: "diagonal_fwd", l: "Diagonal /" },
                                   { v: "diagonal_bwd", l: "Diagonal \\" }
                               ] },
-                            { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 }
+                            { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 },
+                            /* Quadratic-bezier bow: positive pushes the midpoint along the
+                             * left-hand normal of the chord, negative the other way. 0 = the
+                             * existing straight line (no bezier sampling, zero cost). */
+                            { name: "curvature", label: "Curvature", type: "slider", def: 0, cat: "appearance", min: -200, max: 200 }
                         ]
                     },
                     "arc": {
@@ -5686,7 +5700,19 @@
         let clipboardWidget = null;
         try {
             const saved = localStorage.getItem('rdm7_clipboard');
-            if (saved) clipboardWidget = JSON.parse(saved);
+            if (saved) {
+                const obj = JSON.parse(saved);
+                /* Handle both the legacy single-widget payload and the new
+                 * multi-widget envelope. clipboardWidgets is initialised
+                 * later below; we hoist its assignment here via window so
+                 * the boot path works either way. */
+                if (obj && obj._multi && Array.isArray(obj.widgets)) {
+                    window.__bootClipboardWidgets = obj.widgets;
+                    clipboardWidget = obj.widgets[0] || null;
+                } else {
+                    clipboardWidget = obj;
+                }
+            }
         } catch (e) { }
         let clipboardProperties = null;
 
@@ -6268,7 +6294,7 @@
                     e.stopPropagation();
                     if (!selectedIndices.has(index)) {
                         selectedIndex = index;
-                        selectedIndices = new Set([index]);
+                        selectedIndices = _expandGroupSelection(index);
                     }
                     renderEditor();
                     updateInspector();
@@ -6353,7 +6379,20 @@
                 const iconColor = LAYER_TYPE_COLORS[w.type] || 'var(--text-muted)';
                 const typeInfo = document.createElement('span');
                 typeInfo.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center;';
-                typeInfo.innerHTML = `<span class="layer-icon" style="color:${iconColor}">${layerIcon}</span><span class="layer-type">${label}</span><span class="layer-id">${w.id}</span>`;
+                /* Grouped widgets get a compact "G" pill carrying the first 4
+                 * hex chars of the group id, so users can scan the Layers
+                 * panel and see at-a-glance which rows share a group. The
+                 * pill background is keyed off the group id hash so groups
+                 * stay visually distinct from each other. */
+                let groupBadge = '';
+                if (w.group) {
+                    const tag = String(w.group).replace(/^g_/, '').slice(0, 4);
+                    let hash = 0;
+                    for (let c = 0; c < w.group.length; c++) hash = (hash * 31 + w.group.charCodeAt(c)) & 0xffff;
+                    const hue = (hash * 67) % 360;
+                    groupBadge = `<span title="Group ${tag}" style="margin-right:4px; padding:1px 5px; border-radius:3px; font-size:9px; background:hsl(${hue}, 60%, 35%); color:#fff; flex-shrink:0;">G·${tag}</span>`;
+                }
+                typeInfo.innerHTML = `${groupBadge}<span class="layer-icon" style="color:${iconColor}">${layerIcon}</span><span class="layer-type">${label}</span><span class="layer-id">${w.id}</span>`;
 
                 const controls = document.createElement('div');
                 controls.className = 'layer-controls';
@@ -6405,12 +6444,17 @@
                         selectedIndex = i;
                     } else {
                         selectedIndex = i;
-                        selectedIndices = new Set([i]);
+                        selectedIndices = _expandGroupSelection(i);
                     }
                     renderEditor();
                     updateInspector();
                     renderSignals();
-                    _autoShowPropertiesTab();
+                    /* Intentionally no _autoShowPropertiesTab() here: when
+                     * the user picks a widget from the Layers panel they
+                     * almost always want to stay on Layers to tweak z-order
+                     * or visibility, not get yanked to Properties. The
+                     * canvas-click path still auto-switches because that
+                     * gesture really does signal "I want to edit this". */
                 };
                 layerTree.appendChild(item);
             }
@@ -6585,52 +6629,110 @@
         }
 
 
+        /* clipboardWidget is the legacy single-widget slot kept for backwards
+         * compatibility with old localStorage / system-clipboard payloads.
+         * Multi-select copy stores an array in clipboardWidgets[] and uses
+         * that when present. _isClipboardArray() returns true when we're
+         * in multi-widget mode so paste can branch cleanly. */
+        let clipboardWidgets = (typeof window !== 'undefined' && window.__bootClipboardWidgets) || null;
+        function _isClipboardArray() {
+            return Array.isArray(clipboardWidgets) && clipboardWidgets.length > 0;
+        }
+
         function copyToClipboard() {
-            if (selectedIndex === -1) return;
-            clipboardWidget = JSON.parse(JSON.stringify(currentLayout.widgets[selectedIndex]));
+            /* Build the set of selected widget indices, falling back to the
+             * single selectedIndex when no multi-selection is active. */
+            const indices = selectedIndices.size > 0
+                ? [...selectedIndices].sort((a, b) => a - b)
+                : (selectedIndex >= 0 ? [selectedIndex] : []);
+            if (indices.length === 0) return;
+
+            const widgets = indices.map(i => currentLayout.widgets[i]).filter(Boolean);
+            if (widgets.length === 0) return;
+
+            clipboardWidgets = JSON.parse(JSON.stringify(widgets));
+            /* Keep clipboardWidget pointing at the first item so any code that
+             * still checks the legacy global (e.g. context menu enable state)
+             * keeps working without us threading the array through it. */
+            clipboardWidget = clipboardWidgets[0];
+
             try {
-                localStorage.setItem('rdm7_clipboard', JSON.stringify(clipboardWidget));
-                // Optional: Attempt System Clipboard integration
+                const payload = clipboardWidgets.length > 1
+                    ? { _multi: true, widgets: clipboardWidgets }
+                    : clipboardWidgets[0];
+                localStorage.setItem('rdm7_clipboard', JSON.stringify(payload));
                 if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(JSON.stringify(clipboardWidget));
+                    navigator.clipboard.writeText(JSON.stringify(payload));
                 }
             } catch (e) { }
-            updateStatus(`Copied ${clipboardWidget.type} to clipboard`);
+
+            updateStatus(clipboardWidgets.length > 1
+                ? `Copied ${clipboardWidgets.length} widgets`
+                : `Copied ${clipboardWidget.type} to clipboard`);
         }
 
         async function pasteClipboard() {
-            // Priority 1: System Clipboard (if contains our JSON)
+            /* Priority 1: System Clipboard. Accept both the legacy single-
+             * widget JSON and the new {_multi:true, widgets:[...]} envelope. */
             try {
                 if (navigator.clipboard && navigator.clipboard.readText) {
                     const text = await navigator.clipboard.readText();
                     const obj = JSON.parse(text);
-                    if (obj.type && WIDGET_DEFS[obj.type]) {
+                    if (obj && obj._multi && Array.isArray(obj.widgets)) {
+                        const ok = obj.widgets.every(w => w && w.type && WIDGET_DEFS[w.type]);
+                        if (ok) {
+                            clipboardWidgets = obj.widgets;
+                            clipboardWidget = clipboardWidgets[0];
+                        }
+                    } else if (obj && obj.type && WIDGET_DEFS[obj.type]) {
                         clipboardWidget = obj;
+                        clipboardWidgets = [obj];
                     }
                 }
             } catch (e) { }
 
-            if (!clipboardWidget) return;
-            pushHistory();
-            const clone = JSON.parse(JSON.stringify(clipboardWidget));
-            clone.id = nextWidgetId(clone.type);
-            clone.x += 20;
-            clone.y += 20;
-            if (!sanitizeClone(clone)) {
-                showToast(`No available slots for ${clone.type}`, 'error');
-                return;
-            }
-            // update clipboard coordinates for consecutive pasting
-            clipboardWidget.x += 20;
-            clipboardWidget.y += 20;
-            try { localStorage.setItem('rdm7_clipboard', JSON.stringify(clipboardWidget)); } catch (e) { }
+            if (!_isClipboardArray() && !clipboardWidget) return;
+            const sources = _isClipboardArray() ? clipboardWidgets : [clipboardWidget];
 
-            currentLayout.widgets.push(clone);
-            selectedIndex = currentLayout.widgets.length - 1;
-            selectedIndices = new Set([selectedIndex]);
+            pushHistory();
+            const pasted = [];
+            const dropped = [];
+            sources.forEach(src => {
+                const clone = JSON.parse(JSON.stringify(src));
+                clone.id = nextWidgetId(clone.type);
+                clone.x += 20;
+                clone.y += 20;
+                if (!sanitizeClone(clone)) {
+                    dropped.push(clone.type);
+                    return;
+                }
+                currentLayout.widgets.push(clone);
+                pasted.push(currentLayout.widgets.length - 1);
+            });
+
+            if (dropped.length > 0) {
+                showToast(`No available slots for: ${[...new Set(dropped)].join(', ')}`, 'error');
+            }
+            if (pasted.length === 0) return;
+
+            /* Bump source coordinates so a second paste lands further along
+             * the diagonal — same behaviour as the original single-widget
+             * paste, just applied per-item. */
+            sources.forEach(src => { src.x += 20; src.y += 20; });
+            try {
+                const payload = sources.length > 1
+                    ? { _multi: true, widgets: sources }
+                    : sources[0];
+                localStorage.setItem('rdm7_clipboard', JSON.stringify(payload));
+            } catch (e) { }
+
+            selectedIndices = new Set(pasted);
+            selectedIndex = pasted[pasted.length - 1];
             renderEditor();
             updateInspector();
-            updateStatus(`Pasted ${clone.type}`);
+            updateStatus(pasted.length > 1
+                ? `Pasted ${pasted.length} widgets`
+                : `Pasted ${currentLayout.widgets[selectedIndex].type}`);
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
@@ -6853,9 +6955,13 @@
                     selectedIndex = index;
                 }
             } else if (!selectedIndices.has(index)) {
-                /* Normal click on unselected widget: single-select */
+                /* Normal click on unselected widget: select it. If the
+                 * widget belongs to a group, pull every member of that
+                 * group into the selection — Ctrl / Shift modifier paths
+                 * skipped this branch, so users still have an escape hatch
+                 * to edit a single group member. */
                 selectedIndex = index;
-                selectedIndices = new Set([index]);
+                selectedIndices = _expandGroupSelection(index);
             }
             /* If clicking a widget already in the multi-selection, keep the set and drag all */
 
@@ -7117,11 +7223,20 @@
                     if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copyToClipboard(); return; }
                     if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteClipboard(); return; }
                     if (e.key === 'd' || e.key === 'D') { e.preventDefault(); duplicateWidget(); return; }
-                    if (e.key === 'z') { e.preventDefault(); undo(); return; }
-                    if (e.key === 'y') { e.preventDefault(); redo(); return; }
+                    if (e.key === 'z' || e.key === 'Z') { e.preventDefault(); undo(); return; }
+                    if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); redo(); return; }
+                    /* Ctrl+G / Ctrl+Shift+G — group selected widgets / ungroup */
+                    if (e.key === 'g' || e.key === 'G') { e.preventDefault(); groupSelection(); return; }
                     /* Ctrl+] = bring forward, Ctrl+[ = send backward */
                     if (e.key === ']') { e.preventDefault(); bumpZOrder(1);  return; }
                     if (e.key === '[') { e.preventDefault(); bumpZOrder(-1); return; }
+                }
+                /* Ctrl+Shift+G — explicit ungroup, separate branch since the
+                 * outer `if (e.shiftKey)` already returned for Ctrl+Shift+C/V/S. */
+                if (e.shiftKey && (e.key === 'g' || e.key === 'G')) {
+                    e.preventDefault();
+                    ungroupSelection();
+                    return;
                 }
             }
 
@@ -7779,7 +7894,10 @@
             }
 
             /* ── Appearance Accordion (closed by default, with badge count) ── */
-            const appearFields = def.fields.filter(f => f.cat === 'appearance');
+            /* Rule overrides default to the Appearance category, but a field
+             * with ruleOverridable=true (e.g. the image widget's image_name,
+             * which conceptually belongs under Data) can opt in explicitly. */
+            const appearFields = def.fields.filter(f => f.cat === 'appearance' || f.ruleOverridable === true);
             if (appearFields.length) {
                 const changedCount = appearFields.filter(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
@@ -7854,7 +7972,11 @@
             }
 
             /* ── Rules Accordion (conditional overrides — only for types that support apply_overrides) ── */
-            const NO_RULES_TYPES = new Set(['meter', 'image', 'indicator']);
+            /* image dropped from NO_RULES_TYPES once the firmware grew an
+             * apply_overrides callback (signal-driven image swap + recolor /
+             * opacity rules). meter and indicator remain excluded — their
+             * type_data lacks an apply_overrides hook. */
+            const NO_RULES_TYPES = new Set(['meter', 'indicator']);
             const rules = w.config.rules || [];
             if (!NO_RULES_TYPES.has(w.type)) {
             html += `<details class="inspector-accordion" data-rules-group="1"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
@@ -9220,6 +9342,95 @@
             renderEditor();
             updateInspector();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* ── Group / Ungroup (Ctrl+G / Ctrl+Shift+G) ───────────────────────
+         *
+         * Storage: each grouped widget gets a `group` field carrying a short
+         * random id (8 hex chars — plenty for the ~100-widget cap). Widgets
+         * without a group field render exactly as before; the field is
+         * defaults-only emit so JSON size impact for ungrouped layouts is
+         * zero.
+         *
+         * Selection semantics:
+         *   - Clicking any widget in a group selects all members of that
+         *     group (handled in _expandGroupSelection).
+         *   - Shift / Ctrl modifier clicks bypass expansion so the user can
+         *     still pick individual members for fine-grained edits.
+         *   - Marquee drag selects whatever it touches without group-expand;
+         *     the marquee is already an explicit multi-select gesture.
+         *
+         * Why a single string id instead of nested containers: nested
+         * "group" objects in the layout JSON would require touching every
+         * spot that iterates currentLayout.widgets (renderEditor, save,
+         * pushHistory, drag, undo restore, etc.) — high risk of broken
+         * paths. A peer-id field stays out of the existing array shape. */
+        function _newGroupId() {
+            /* 32 bits of entropy stringified — fits in 8 hex chars and gives
+             * collision odds of ~1e-6 at 100 groups, well below "the user
+             * would actually notice". */
+            const r = (Math.random() * 0xffffffff) >>> 0;
+            return 'g_' + r.toString(16).padStart(8, '0');
+        }
+
+        function groupSelection() {
+            const indices = selectedIndices.size > 0
+                ? [...selectedIndices]
+                : (selectedIndex >= 0 ? [selectedIndex] : []);
+            if (indices.length < 2) {
+                showToast('Select 2+ widgets to group', 'error');
+                return;
+            }
+            pushHistory();
+            const gid = _newGroupId();
+            indices.forEach(i => {
+                const w = currentLayout.widgets[i];
+                if (w) w.group = gid;
+            });
+            renderEditor();
+            updateInspector();
+            if (typeof renderLayerTree === 'function') renderLayerTree();
+            showToast(`Grouped ${indices.length} widgets`, 'success');
+        }
+
+        function ungroupSelection() {
+            const indices = selectedIndices.size > 0
+                ? [...selectedIndices]
+                : (selectedIndex >= 0 ? [selectedIndex] : []);
+            if (indices.length === 0) return;
+            /* Gather every group id touched by the selection so users can
+             * ungroup without manually picking every member — Ctrl+Shift+G
+             * on a single grouped widget dissolves the whole group. */
+            const gids = new Set();
+            indices.forEach(i => {
+                const w = currentLayout.widgets[i];
+                if (w && w.group) gids.add(w.group);
+            });
+            if (gids.size === 0) return;
+            pushHistory();
+            let touched = 0;
+            currentLayout.widgets.forEach(w => {
+                if (w.group && gids.has(w.group)) { delete w.group; touched++; }
+            });
+            renderEditor();
+            updateInspector();
+            if (typeof renderLayerTree === 'function') renderLayerTree();
+            showToast(`Ungrouped ${touched} widgets`, 'success');
+        }
+
+        /* When a widget is selected via a plain (non-modifier) click, walk
+         * the array and pull in every widget that shares its group id. The
+         * shift/ctrl modifier paths skip this — those gestures are the
+         * escape hatch for editing a single group member. Returns the
+         * expanded Set so callers can install it on selectedIndices. */
+        function _expandGroupSelection(primaryIndex) {
+            const out = new Set([primaryIndex]);
+            const w = currentLayout.widgets[primaryIndex];
+            if (!w || !w.group) return out;
+            currentLayout.widgets.forEach((other, idx) => {
+                if (other && other.group === w.group) out.add(idx);
+            });
+            return out;
         }
 
         /* Draft Recovery Engine */

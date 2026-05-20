@@ -130,6 +130,10 @@ void widget_base_to_json(const widget_t *w, cJSON *out)
     cJSON_AddNumberToObject(out, "y",    w->y);
     cJSON_AddNumberToObject(out, "w",    w->w);
     cJSON_AddNumberToObject(out, "h",    w->h);
+    /* Defaults-only: only emit `group` when set, so ungrouped layouts
+     * pay no JSON-size penalty. */
+    if (w->group[0] != '\0')
+        cJSON_AddStringToObject(out, "group", w->group);
 }
 
 void widget_base_from_json(widget_t *w, const cJSON *in)
@@ -147,6 +151,10 @@ void widget_base_from_json(widget_t *w, const cJSON *in)
         w->h = (uint16_t)item->valuedouble;
     if ((item = cJSON_GetObjectItemCaseSensitive(in, "id")) && cJSON_IsString(item))
         safe_strncpy(w->id, item->valuestring, sizeof(w->id));
+    if ((item = cJSON_GetObjectItemCaseSensitive(in, "group")) && cJSON_IsString(item))
+        safe_strncpy(w->group, item->valuestring, sizeof(w->group));
+    else
+        w->group[0] = '\0';
 }
 
 /* ─── Widget capability queries ─────────────────────────────────────────── */

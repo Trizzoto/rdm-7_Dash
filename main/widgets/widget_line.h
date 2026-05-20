@@ -27,6 +27,12 @@ typedef struct {
     bool              rounded;       /* default: false */
     line_orientation_t orientation;  /* default: horizontal */
     uint8_t           dash_gap;      /* default: 0 (solid) */
+    /* Quadratic-bezier curvature, in pixels. 0 = straight (existing
+     * behaviour). Positive values bow the midpoint along the perpendicular
+     * to the chord (LVGL +Y for horizontal, +X for vertical); negative
+     * values bow the other way. Range −200..200 — bigger curves than the
+     * bounding box add nothing visually since the line gets clipped. */
+    int16_t           curvature;     /* default: 0 */
     line_night_overrides_t night;
 } line_data_t;
 

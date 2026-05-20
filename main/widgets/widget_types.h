@@ -169,6 +169,14 @@ struct widget_t {
     int16_t                 x, y;       /**< Layout position (pixels).         */
     uint16_t                w, h;       /**< Layout size (pixels).             */
     char                    id[16];     /**< Instance identifier string.       */
+    char                    group[12];  /**< Optional editor group id (e.g.
+                                          *  "g_a1b2c3d4"); empty if ungrouped.
+                                          *  Pure metadata — firmware never
+                                          *  reads it, only preserves it on
+                                          *  the layout round-trip so the
+                                          *  web editor's "Group Layers"
+                                          *  feature survives /api/layout/raw
+                                          *  → save again. */
     uint8_t                 slot;       /**< Slot index (e.g. panel 0-7).      */
     void                   *type_data;  /**< Per-instance type-specific data.  */
 
