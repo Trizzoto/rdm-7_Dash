@@ -5727,6 +5727,30 @@
         let _marquee = null;       /* { startX, startY, el } while active */
         let _marqueeDiv = null;
 
+        /* ── Bezel-area deselect ────────────────────────────────────────
+         * Clicking the dashboard bezel (the dark frame around the canvas)
+         * should clear the current selection — same UX as clicking empty
+         * canvas, just outside the interactionLayer. Targets the bezel
+         * specifically (not its children) so widget clicks inside still
+         * bubble through their own handlers. */
+        const _bezelEl = document.getElementById('canvasContainer');
+        if (_bezelEl) {
+            _bezelEl.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                /* Only when the user actually hit the bezel frame, not a
+                 * widget. The bezel element itself is a flex container; if
+                 * the click reached it directly (not a descendant), it's
+                 * outside the visible 800x480 canvas area. */
+                if (e.target !== _bezelEl) return;
+                if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+                selectedIndex = -1;
+                selectedIndices = new Set();
+                renderEditor();
+                updateInspector();
+                renderSignals();
+            });
+        }
+
         interactionLayer.onmousedown = (e) => {
             if (e.button !== 0 || e.target !== interactionLayer) return;
 
