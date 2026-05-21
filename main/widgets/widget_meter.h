@@ -101,6 +101,38 @@ typedef struct {
 	uint16_t   tick_label_divisor;  /* default: 1 */
 	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
+	/* Static-tick optimisation. When true, the meter snapshots its
+	 * tick / label / background / redline-arc layer ONCE at create
+	 * time, drops those parts off the live lv_meter (widths → 0,
+	 * label opa → transparent, bg opa → 0, redline arc removed), and
+	 * shows the snapshot as a sibling lv_img beneath the meter. The
+	 * lv_meter then redraws only the needle on each signal tick
+	 * instead of recomputing every tick that overlaps the needle
+	 * bbox, which is the perf cliff people hit on tick-heavy
+	 * dashboards.
+	 *
+	 * Trade-offs:
+	 *   • ~125 KB PSRAM per meter for the snapshot (200×200×2 bytes
+	 *     RGB565). Bounded — the firmware enforces a 4-meter cap.
+	 *   • Edits to tick / label / redline fields rebuild the
+	 *     snapshot inline (single-digit ms via lv_snapshot_take).
+	 *     Needle / signal_name edits don't touch the snapshot.
+	 *   • Night-mode meters get their own snapshot when built.
+	 *   • Resize tears the snapshot down and rebuilds on the next
+	 *     value tick.
+	 *
+	 * Default true because the perf win matters; flip off per-meter
+	 * if a snapshot edge-case shows up (e.g. fonts not yet loaded
+	 * when snapshot was taken). */
+	bool       static_ticks;        /* default: true */
+	/* Runtime snapshot state — both NULL when static_ticks is false
+	 * or the snapshot couldn't be taken (heap pressure, parent not
+	 * laid out yet). The image and the lv_img live as siblings of
+	 * `meter` under the same parent; destroy frees both. */
+	lv_img_dsc_t *tick_snapshot_dsc;
+	lv_obj_t     *tick_snapshot_obj;
+	lv_img_dsc_t *night_tick_snapshot_dsc;
+	lv_obj_t     *night_tick_snapshot_obj;
 	/* Redline zone — visual emphasis for "danger" range [threshold, max]. */
 	bool       redline_enabled;     /* default: false — master toggle */
 	int32_t    redline_threshold;   /* default: 80 — value at which the zone starts */

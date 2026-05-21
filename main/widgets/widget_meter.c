@@ -14,6 +14,7 @@
 #include "signal.h"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "extra/others/snapshot/lv_snapshot.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "widget_types.h"
@@ -487,7 +488,182 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
  * `*out_needle`, `*out_needle_scale`) receive the created LVGL handles.
  * `*out_needle_img_dsc` and `*out_bg_img_dsc` receive any loaded image
  * descriptors so the caller can free them on destroy. */
+/* Extracted needle-add block. Called from _meter_build_one at the
+ * end (the common path) OR from _meter_create after the static-tick
+ * snapshot has been taken — the snapshot needs the meter built WITHOUT
+ * the needle so the rendered image doesn't include a ghost needle line
+ * stamped at init_v that would then sit visibly behind the live one.
+ *
+ * angle_range is duplicated rather than hoisted onto meter_data_t
+ * because we only need it here and at scale-range setup, and the
+ * normalisation rule (0→360 when start!=end) is shared by both. */
+static uint32_t _meter_compute_angle_range(const meter_data_t *md) {
+	uint32_t r = (360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
+	if (r == 0 && md->start_angle != md->end_angle) r = 360;
+	return r;
+}
+
+static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
+                                         lv_meter_scale_t *scale, bool use_night,
+                                         uint32_t angle_range,
+                                         lv_meter_indicator_t **out_needle,
+                                         lv_meter_scale_t **out_needle_scale,
+                                         lv_img_dsc_t **out_needle_img_dsc) {
+	lv_color_t needle_c    = use_night ? NIGHT_PICK_COLOR(true, md->night, needle_color,      md->needle_color)      : md->needle_color;
+	lv_color_t ball_c      = use_night ? NIGHT_PICK_COLOR(true, md->night, needle_ball_color, md->needle_ball_color) : md->needle_ball_color;
+	const char *needle_img = (use_night && md->night.has_needle_image_name) ? md->night.needle_image_name : md->needle_image_name;
+
+	/* Needle */
+	lv_meter_indicator_t *needle;
+	lv_meter_scale_t *needle_target_scale = scale;
+	*out_needle_scale = NULL;
+	if (needle_img && needle_img[0] != '\0') {
+		lv_img_dsc_t *ndsc = rdm_image_load(needle_img);
+		if (ndsc) {
+			if (md->needle_angle_offset != 0) {
+				lv_meter_scale_t *ns = lv_meter_add_scale(m);
+				lv_meter_set_scale_range(m, ns, md->min, md->max, angle_range,
+				                         (int32_t)(md->start_angle + md->needle_angle_offset));
+				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
+				*out_needle_scale = ns;
+				needle_target_scale = ns;
+			}
+			needle = lv_meter_add_needle_img(m, needle_target_scale, ndsc,
+			                                  md->needle_pivot_x, md->needle_pivot_y);
+			*out_needle_img_dsc = ndsc;
+		} else {
+			needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
+		}
+	} else {
+		needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
+	}
+
+	/* Needle center ball */
+	if (md->needle_ball_size == 0) {
+		lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
+	} else {
+		lv_obj_set_style_size(m, md->needle_ball_size, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_color(m, ball_c, LV_PART_INDICATOR);
+		lv_obj_set_style_bg_opa(m, LV_OPA_COVER, LV_PART_INDICATOR);
+	}
+
+	/* Initial needle position. Pull the current signal value if one is
+	 * bound and fresh, otherwise fall back to md->min. Then apply the
+	 * same anchor + invert transforms _meter_on_signal does, so toggling
+	 * "Invert Direction" on a meter with no live signal still snaps the
+	 * needle to the correct end of the sweep. */
+	int32_t init_v = md->min;
+	if (md->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
+		if (sig && !sig->is_stale) {
+			float fv = sig->current_value;
+			if (fv < (float)md->min) fv = (float)md->min;
+			if (fv > (float)md->max) fv = (float)md->max;
+			init_v = (int32_t)fv;
+		}
+	}
+	init_v = _meter_apply_anchor(md, init_v);
+	if (md->reverse) init_v = md->max + md->min - init_v;
+	lv_meter_set_indicator_value(m, needle, init_v);
+
+	/* Custom needle-tip hook. Fires for every DRAW_PART. */
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, md);
+	lv_obj_refresh_ext_draw_size(m);
+
+	*out_needle = needle;
+}
+
+/* Snapshot the meter's tick/label/bg ring, drop a sibling lv_img
+ * carrying the snapshot under the meter, strip the static parts off
+ * the live meter, then add the needle. This is the heart of the
+ * static-ticks optimisation: from here on, only the needle redraws
+ * on signal updates — the ticks/labels/bg are blitted from the
+ * pre-rasterised image, which is dramatically cheaper than recomputing
+ * each tick line per frame.
+ *
+ * Caller must have already created the meter with include_needle=false,
+ * stored it on md->meter / md->scale, and laid out the parent so the
+ * meter has its real (w,h). use_night picks which snapshot slot we're
+ * writing — there's a separate pair for day and night so the night
+ * meter can flatten independently when it gets built on demand. */
+static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool use_night) {
+	if (!md) return;
+	lv_obj_t         *m     = use_night ? md->night_meter : md->meter;
+	lv_meter_scale_t *scale = use_night ? md->night_scale : md->scale;
+	if (!m || !scale || !lv_obj_is_valid(m)) return;
+
+	/* The meter has to have a realised position + size before snapshot
+	 * — otherwise lv_snapshot_take captures an empty canvas. The size
+	 * was set right after build, so update_layout flushes the layout
+	 * pass synchronously. */
+	lv_obj_update_layout(m);
+
+	lv_img_dsc_t *snap = lv_snapshot_take(m, LV_IMG_CF_TRUE_COLOR);
+	if (!snap) {
+		/* Snapshot can fail under heap pressure. Fall back to the
+		 * dynamic path: just add the needle, leave ticks live. */
+		ESP_LOGW(TAG, "lv_snapshot_take returned NULL — static_ticks falls back to dynamic");
+		uint32_t angle_range = _meter_compute_angle_range(md);
+		lv_meter_indicator_t **out_needle = use_night ? &md->night_needle : &md->needle;
+		lv_meter_scale_t     **out_ns     = use_night ? &md->night_needle_scale : &md->needle_scale;
+		lv_img_dsc_t         **out_ndsc   = use_night ? &md->night_needle_img_dsc : &md->needle_img_dsc;
+		_meter_add_needle_indicator(md, m, scale, use_night, angle_range,
+		                             out_needle, out_ns, out_ndsc);
+		return;
+	}
+
+	/* Create sibling lv_img and slot it behind the meter. Same align
+	 * + pos so it overlaps the meter exactly. lv_obj_move_to_index(0)
+	 * puts it at the bottom of the z-order under the same parent. */
+	lv_obj_t *img = lv_img_create(parent);
+	lv_img_set_src(img, snap);
+	lv_obj_set_size(img, lv_obj_get_width(m), lv_obj_get_height(m));
+	lv_obj_set_align(img, lv_obj_get_style_align(m, LV_PART_MAIN));
+	lv_obj_set_pos(img, lv_obj_get_x(m), lv_obj_get_y(m));
+	lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_move_to_index(img, lv_obj_get_index(m));   /* slot directly above current bottom */
+	lv_obj_move_background(img);                       /* then sink to the very back */
+
+	if (use_night) {
+		md->night_tick_snapshot_dsc = snap;
+		md->night_tick_snapshot_obj = img;
+	} else {
+		md->tick_snapshot_dsc = snap;
+		md->tick_snapshot_obj = img;
+	}
+
+	/* Strip the now-redundant static parts off the live meter:
+	 *   - Tick widths to 0 (range / count preserved so the scale's
+	 *     angle math keeps working for needle positioning).
+	 *   - Tick label opacity transparent.
+	 *   - Meter background opacity 0 (the snapshot has it baked in).
+	 *   - Border width 0 (snapshot has it).
+	 * Redline arc indicator and bg image source are LEFT IN PLACE —
+	 * LVGL v8 has no lv_meter_remove_indicator and the arc / bg-img
+	 * cost is dominated by the now-saved tick redraws anyway. */
+	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
+	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
+	lv_meter_set_scale_ticks(m, scale, mtc, 0, 0, lv_color_black());
+	lv_meter_set_scale_major_ticks(m, scale, mte, 0, 0, lv_color_black(), 0);
+	lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+	lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(m, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Now add the needle. It draws on top of the snapshot image and
+	 * is the only thing that redraws per frame. */
+	uint32_t angle_range = _meter_compute_angle_range(md);
+	lv_meter_indicator_t **out_needle = use_night ? &md->night_needle : &md->needle;
+	lv_meter_scale_t     **out_ns     = use_night ? &md->night_needle_scale : &md->needle_scale;
+	lv_img_dsc_t         **out_ndsc   = use_night ? &md->night_needle_img_dsc : &md->needle_img_dsc;
+	_meter_add_needle_indicator(md, m, scale, use_night, angle_range,
+	                             out_needle, out_ns, out_ndsc);
+}
+
 static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
+                             bool include_needle,
                              lv_obj_t **out_meter,
                              lv_meter_scale_t **out_scale,
                              lv_meter_indicator_t **out_needle,
@@ -499,10 +675,10 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	lv_color_t bdr_color   = use_night ? NIGHT_PICK_COLOR(true, md->night, border_color,      md->border_color)      : md->border_color;
 	lv_color_t mintc       = use_night ? NIGHT_PICK_COLOR(true, md->night, minor_tick_color,  md->minor_tick_color)  : md->minor_tick_color;
 	lv_color_t majtc       = use_night ? NIGHT_PICK_COLOR(true, md->night, major_tick_color,  md->major_tick_color)  : md->major_tick_color;
-	lv_color_t needle_c    = use_night ? NIGHT_PICK_COLOR(true, md->night, needle_color,      md->needle_color)      : md->needle_color;
-	lv_color_t ball_c      = use_night ? NIGHT_PICK_COLOR(true, md->night, needle_ball_color, md->needle_ball_color) : md->needle_ball_color;
+	/* needle_color / needle_ball_color / needle_image_name moved into
+	 * _meter_add_needle_indicator — only the static-layer colours are
+	 * needed here. */
 	lv_color_t tlc         = use_night ? NIGHT_PICK_COLOR(true, md->night, tick_label_color,  md->tick_label_color)  : md->tick_label_color;
-	const char *needle_img = (use_night && md->night.has_needle_image_name) ? md->night.needle_image_name : md->needle_image_name;
 	const char *bg_img     = (use_night && md->night.has_bg_image_name)     ? md->night.bg_image_name     : md->bg_image_name;
 
 	lv_obj_t *m = lv_meter_create(parent);
@@ -587,76 +763,20 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		}
 	}
 
-	/* Needle */
-	lv_meter_indicator_t *needle;
-	lv_meter_scale_t *needle_target_scale = scale;
-	*out_needle_scale = NULL;
-	if (needle_img && needle_img[0] != '\0') {
-		lv_img_dsc_t *ndsc = rdm_image_load(needle_img);
-		if (ndsc) {
-			if (md->needle_angle_offset != 0) {
-				lv_meter_scale_t *ns = lv_meter_add_scale(m);
-				lv_meter_set_scale_range(m, ns, md->min, md->max, angle_range,
-				                         (int32_t)(md->start_angle + md->needle_angle_offset));
-				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
-				*out_needle_scale = ns;
-				needle_target_scale = ns;
-			}
-			needle = lv_meter_add_needle_img(m, needle_target_scale, ndsc,
-			                                  md->needle_pivot_x, md->needle_pivot_y);
-			*out_needle_img_dsc = ndsc;
-		} else {
-			needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
-		}
+	/* Needle add — usually inline, but skipped when static_ticks mode
+	 * wants to snapshot the meter without the needle in it. Caller is
+	 * responsible for calling _meter_add_needle_indicator after the
+	 * snapshot if include_needle was false. */
+	if (include_needle) {
+		_meter_add_needle_indicator(md, m, scale, use_night, angle_range,
+		                             out_needle, out_needle_scale, out_needle_img_dsc);
 	} else {
-		needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
+		*out_needle       = NULL;
+		*out_needle_scale = NULL;
 	}
-
-	/* Needle center ball */
-	if (md->needle_ball_size == 0) {
-		lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
-		lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
-	} else {
-		lv_obj_set_style_size(m, md->needle_ball_size, LV_PART_INDICATOR);
-		lv_obj_set_style_bg_color(m, ball_c, LV_PART_INDICATOR);
-		lv_obj_set_style_bg_opa(m, LV_OPA_COVER, LV_PART_INDICATOR);
-	}
-
-	/* Initial needle position. Pull the current signal value if one is
-	 * bound and fresh, otherwise fall back to md->min. Then apply the
-	 * same anchor + invert transforms _meter_on_signal does, so toggling
-	 * "Invert Direction" on a meter with no live signal still snaps the
-	 * needle to the correct end of the sweep instead of leaving it stuck
-	 * at the start (where untransformed md->min would land) until the
-	 * next signal tick. */
-	int32_t init_v = md->min;
-	if (md->signal_index >= 0) {
-		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
-		if (sig && !sig->is_stale) {
-			float fv = sig->current_value;
-			if (fv < (float)md->min) fv = (float)md->min;
-			if (fv > (float)md->max) fv = (float)md->max;
-			init_v = (int32_t)fv;
-		}
-	}
-	init_v = _meter_apply_anchor(md, init_v);
-	if (md->reverse) init_v = md->max + md->min - init_v;
-	lv_meter_set_indicator_value(m, needle, init_v);
-
-	/* Custom needle-tip hook. Fires for every DRAW_PART — the callback gates
-	 * on style==0 so the fast path is just a couple of pointer loads when
-	 * the feature is off. Tip styles are ignored when drawing image needles
-	 * (different part type); line needles handle all 4 styles. */
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, md);
-	/* Force LVGL to query the ext draw size now so the initial clip area
-	 * accounts for the rear before the first frame renders. */
-	lv_obj_refresh_ext_draw_size(m);
 
 	*out_meter = m;
 	*out_scale = scale;
-	*out_needle = needle;
 }
 
 static void _meter_create(widget_t *w, lv_obj_t *parent) {
@@ -689,12 +809,18 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		meter_parent = parent;
 	}
 
-	/* Build day meter */
+	/* Build day meter. include_needle=false defers needle setup so we
+	 * can snapshot the meter without a ghost needle baked into the
+	 * static-tick image. The actual needle-add happens after the
+	 * snapshot in _meter_setup_static_ticks, or immediately below if
+	 * the user opted out of the flat-tick path. */
 	lv_obj_t *m = NULL;
 	lv_meter_scale_t *scale = NULL;
 	lv_meter_indicator_t *needle = NULL;
 	lv_meter_scale_t *needle_scale = NULL;
-	_meter_build_one(md, meter_parent, false, &m, &scale, &needle, &needle_scale,
+	bool defer_needle_day = md->static_ticks;
+	_meter_build_one(md, meter_parent, false, !defer_needle_day,
+	                 &m, &scale, &needle, &needle_scale,
 	                 &md->needle_img_dsc, &md->bg_img_dsc);
 	if (!m) {
 		ESP_LOGE(TAG, "_meter_create: lv_meter_create failed");
@@ -712,6 +838,16 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	md->scale = scale;
 	md->needle = needle;
 	md->needle_scale = needle_scale;
+
+	/* Static-tick path: snapshot the bare meter (no needle yet), drop
+	 * a sibling lv_img beneath it carrying that pixel data, and strip
+	 * the now-static parts off the live meter so only the needle
+	 * redraws on signal updates. _meter_flatten_static_ticks handles
+	 * the whole dance; needle_scale gets re-evaluated when the helper
+	 * adds the needle. */
+	if (defer_needle_day) {
+		_meter_flatten_static_ticks(md, meter_parent, false /*night*/);
+	}
 
 	/* Night meter build is deferred to _meter_apply_night_mode — see the
 	 * _meter_build_night_lazy helper below. Keeping two lv_meter objects
@@ -847,6 +983,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "show_ticks", false);
 	if (!md->show_tick_labels)
 		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
+	/* static_ticks defaults to TRUE — only emit when the user has
+	 * opted out, keeping the JSON quiet for the common path. */
+	if (!md->static_ticks)
+		cJSON_AddBoolToObject(cfg, "static_ticks", false);
 
 	/* Redline */
 	if (md->redline_enabled)
@@ -1016,6 +1156,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(ap)) md->show_ticks = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
 	if (cJSON_IsBool(ap)) md->show_tick_labels = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "static_ticks");
+	if (cJSON_IsBool(ap)) md->static_ticks = cJSON_IsTrue(ap);
 
 	/* Redline */
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
@@ -1082,6 +1224,17 @@ static void _meter_destroy(widget_t *w) {
 		rdm_image_free(md->bg_img_dsc);
 		rdm_image_free(md->night_needle_img_dsc);
 		rdm_image_free(md->night_bg_img_dsc);
+		/* Tick-snapshot image data is heap-allocated by LVGL inside
+		 * lv_snapshot_take — must be released with lv_snapshot_free
+		 * (frees both data buffer + descriptor). The lv_obj that
+		 * displayed it was a child of the meter's parent and was
+		 * cascade-deleted by the lv_obj_del above. */
+		if (md->tick_snapshot_dsc)       lv_snapshot_free(md->tick_snapshot_dsc);
+		if (md->night_tick_snapshot_dsc) lv_snapshot_free(md->night_tick_snapshot_dsc);
+		md->tick_snapshot_dsc       = NULL;
+		md->tick_snapshot_obj       = NULL;
+		md->night_tick_snapshot_dsc = NULL;
+		md->night_tick_snapshot_obj = NULL;
 		free(md);
 	}
 	free(w);
@@ -1156,7 +1309,12 @@ static void _meter_build_night_lazy(widget_t *w) {
 	lv_meter_scale_t *nscale = NULL;
 	lv_meter_indicator_t *nneedle = NULL;
 	lv_meter_scale_t *nneedle_scale = NULL;
-	_meter_build_one(md, parent, true, &nm, &nscale, &nneedle, &nneedle_scale,
+	/* Same defer-needle-for-snapshot dance as the day meter — the
+	 * static-tick flatten step runs after we size + position the
+	 * night meter so the snapshot captures the correct dimensions. */
+	bool defer_needle_night = md->static_ticks;
+	_meter_build_one(md, parent, true, !defer_needle_night,
+	                 &nm, &nscale, &nneedle, &nneedle_scale,
 	                 &md->night_needle_img_dsc, &md->night_bg_img_dsc);
 	if (!nm) return;
 
@@ -1169,6 +1327,12 @@ static void _meter_build_night_lazy(widget_t *w) {
 	md->night_scale        = nscale;
 	md->night_needle       = nneedle;
 	md->night_needle_scale = nneedle_scale;
+
+	if (defer_needle_night) {
+		_meter_flatten_static_ticks(md, parent, true /*night*/);
+		/* _meter_flatten_static_ticks writes md->night_needle and
+		 * md->night_needle_scale itself, so no extra assignments needed. */
+	}
 }
 
 /* Apply night-mode state. Two paths:
@@ -1313,6 +1477,7 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "scale_padding") == 0)      { out->i = md->scale_padding;       return true; }
 	if (strcmp(name, "show_ticks") == 0)         { out->b = md->show_ticks;          return true; }
 	if (strcmp(name, "show_tick_labels") == 0)   { out->b = md->show_tick_labels;    return true; }
+	if (strcmp(name, "static_ticks") == 0)       { out->b = md->static_ticks;        return true; }
 	if (strcmp(name, "label_gap") == 0)          { out->i = md->label_gap;           return true; }
 	if (strcmp(name, "tick_label_color") == 0)   { out->color = lv_color_to32(md->tick_label_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "minor_tick_width") == 0)   { out->i = md->minor_tick_width;    return true; }
@@ -1449,6 +1614,14 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "scale_padding") == 0)    { md->scale_padding = (uint8_t)in->i; return true; }
 	if (strcmp(name, "show_ticks") == 0)       { md->show_ticks = in->b;             return true; }
 	if (strcmp(name, "show_tick_labels") == 0) { md->show_tick_labels = in->b;       return true; }
+	if (strcmp(name, "static_ticks") == 0)     {
+		/* Toggling static_ticks live requires rebuilding the meter
+		 * (the snapshot path can't be retrofitted on a live needle).
+		 * Mark the value; the dashboard reloads on layout save and
+		 * the next create call honours the new setting. */
+		md->static_ticks = in->b;
+		return true;
+	}
 	if (strcmp(name, "label_gap") == 0)        { md->label_gap = (int16_t)in->i;     return true; }
 	if (strcmp(name, "tick_label_color") == 0) { md->tick_label_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "minor_tick_width") == 0)  { md->minor_tick_width = (uint8_t)in->i;  return true; }
@@ -1527,6 +1700,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->tick_label_divisor = 1;
 	md->show_ticks = true;
 	md->show_tick_labels = true;
+	md->static_ticks = true;     /* perf-win default; opt-out in inspector when actively tuning ticks */
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;

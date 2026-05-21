@@ -5396,6 +5396,11 @@
                             { name: "border_opa", label: "Border Opacity", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "scale_padding", label: "Scale Padding", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100 },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance" },
+                            /* Static-tick optimisation: snapshots the tick / label / bg layer
+                             * once at create time and lets the live LVGL meter redraw only the
+                             * needle. Default ON for the perf win; tooltip notes the trade-off
+                             * (~125 KB PSRAM, snapshot rebuilds on layout save). */
+                            { name: "static_ticks", label: "Static Ticks (faster)", type: "checkbox", def: true, cat: "appearance", enabledBy: "show_ticks" },
                             { name: "minor_tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
                             { name: "minor_tick_length", label: "Tick Length", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50, enabledBy: "show_ticks" },
                             { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
