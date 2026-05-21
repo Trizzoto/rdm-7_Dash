@@ -1,16 +1,18 @@
-/* web_server_touch.c — remote touch, indicator/warning test, screen switch
+/* web_server_touch.c — remote touch, indicator/warning/banner test, screen switch
  *
  * Endpoints:
  *   POST /api/touch             inject pointer event (x, y, state) or toggle enable
  *   GET  /api/touch             return current enabled state
  *   POST /api/indicator/test    force wire-mode indicator on/off by slot
  *   POST /api/warning/test      force alert (warning) widget on/off by slot
+ *   POST /api/banner/test       force alert-banner widget visible/hidden by id
  *   POST /api/screen/switch     switch between dashboard and splash screen */
 #include "web_server_internal.h"
 #include "cJSON.h"
 #include "system/remote_touch.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_warning.h"
+#include "widgets/widget_banner.h"
 #include "ui/screens/splash_screen.h"
 #include "lvgl.h"
 #include <string.h>
@@ -203,6 +205,75 @@ static esp_err_t api_warning_test_post_handler(httpd_req_t *req) {
 	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
 }
 
+/* ── /api/banner/test ────────────────────────────────────────────────────── */
+
+/* Banner has no slot concept (unlike warning) — multiple banners
+ * coexist freely under the 32 KB layout budget — so the test override
+ * is keyed by the widget's `id` string instead. The payload is bounded
+ * (id ≤ 16 chars per widget_t), so the body is well under 96 bytes. */
+typedef struct {
+	char id[24];
+	bool active;
+} banner_test_req_t;
+
+static void _banner_test_apply_cb(void *param) {
+	banner_test_req_t *req = (banner_test_req_t *)param;
+	if (req) {
+		widget_banner_apply_test_state(req->id, req->active);
+		free(req);
+	}
+}
+
+static esp_err_t api_banner_test_post_handler(httpd_req_t *req) {
+	char body[128];
+	int total = req->content_len;
+	if (total <= 0 || total >= (int)sizeof(body)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+		return ESP_FAIL;
+	}
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[got] = '\0';
+
+	cJSON *root = cJSON_Parse(body);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad JSON");
+		return ESP_FAIL;
+	}
+	cJSON *id_js     = cJSON_GetObjectItemCaseSensitive(root, "id");
+	cJSON *active_js = cJSON_GetObjectItemCaseSensitive(root, "active");
+	if (!cJSON_IsString(id_js) || !id_js->valuestring) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "id must be a non-empty string");
+		return ESP_FAIL;
+	}
+	bool active = cJSON_IsBool(active_js) ? cJSON_IsTrue(active_js) : false;
+
+	banner_test_req_t *payload = calloc(1, sizeof(*payload));
+	if (!payload) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+		return ESP_FAIL;
+	}
+	strncpy(payload->id, id_js->valuestring, sizeof(payload->id) - 1);
+	payload->id[sizeof(payload->id) - 1] = '\0';
+	payload->active = active;
+	cJSON_Delete(root);
+
+	lv_async_call(_banner_test_apply_cb, payload);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
 /* ── /api/screen/switch ──────────────────────────────────────────────────── */
 
 static void _deferred_screen_switch_splash(void *arg) {
@@ -262,6 +333,9 @@ static const httpd_uri_t api_indicator_test_post_uri = {
 static const httpd_uri_t api_warning_test_post_uri = {
     .uri = "/api/warning/test", .method = HTTP_POST,
     .handler = api_warning_test_post_handler, .user_ctx = NULL};
+static const httpd_uri_t api_banner_test_post_uri = {
+    .uri = "/api/banner/test", .method = HTTP_POST,
+    .handler = api_banner_test_post_handler, .user_ctx = NULL};
 static const httpd_uri_t screen_switch_uri = {
 	.uri = "/api/screen/switch", .method = HTTP_POST,
 	.handler = screen_switch_handler, .user_ctx = NULL
@@ -272,5 +346,6 @@ void web_server_touch_register(httpd_handle_t server) {
 	REGISTER_URI(server, &api_touch_get_uri);
 	REGISTER_URI(server, &api_indicator_test_post_uri);
 	REGISTER_URI(server, &api_warning_test_post_uri);
+	REGISTER_URI(server, &api_banner_test_post_uri);
 	REGISTER_URI(server, &screen_switch_uri);
 }

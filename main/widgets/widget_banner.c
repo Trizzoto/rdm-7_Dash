@@ -15,6 +15,7 @@
  * inspector.
  */
 #include "widget_banner.h"
+#include "widget_registry.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
 #include "ui/theme.h"
@@ -97,11 +98,25 @@ static void _banner_on_signal(float value, bool is_stale, void *user_data) {
 static void _banner_apply_visibility(widget_t *w) {
 	banner_data_t *bd = (banner_data_t *)w->type_data;
 	if (!bd || !bd->bar || !lv_obj_is_valid(bd->bar)) return;
-	if (bd->condition_active) {
+	/* test_override wins so the editor's "preview while selected"
+	 * path can show the banner regardless of the configured condition. */
+	bool show = bd->condition_active || bd->test_override;
+	if (show) {
 		lv_obj_clear_flag(bd->bar, LV_OBJ_FLAG_HIDDEN);
 	} else {
 		lv_obj_add_flag(bd->bar, LV_OBJ_FLAG_HIDDEN);
 	}
+}
+
+/* Public API — see widget_banner.h for contract. */
+void widget_banner_apply_test_state(const char *widget_id, bool active) {
+	if (!widget_id || !widget_id[0]) return;
+	widget_t *w = widget_registry_find_by_id(widget_id);
+	if (!w || w->type != WIDGET_BANNER || !w->type_data) return;
+	banner_data_t *bd = (banner_data_t *)w->type_data;
+	if (bd->test_override == active) return;
+	bd->test_override = active;
+	_banner_apply_visibility(w);
 }
 
 /* ── vtable: create ─────────────────────────────────────────────────────── */

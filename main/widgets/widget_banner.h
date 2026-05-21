@@ -67,6 +67,13 @@ typedef struct {
     uint8_t    radius;              /* default 0 — banner-flat by convention */
     /* Runtime — not serialised */
     bool       condition_active;
+    /* Editor-time visibility override: when true the banner is shown
+     * regardless of the configured condition. Lets the user style /
+     * position a banner without having to inject the threshold signal
+     * or flip the op to "always (test)". The override is per-widget
+     * (multiple banners can be tested independently) and is reset on
+     * every layout rebuild. */
+    bool       test_override;
     lv_obj_t  *bar;                 /* the bg container */
     lv_obj_t  *label;
     /* Night overrides */
@@ -78,6 +85,18 @@ typedef struct {
  * carry as many banners as fit under the 32 KB JSON budget).
  */
 widget_t *widget_banner_create_instance(uint8_t slot);
+
+/**
+ * Editor-time "force-visible" override for the banner identified by
+ * widget_id. Called by the /api/banner/test handler so Studio can show
+ * the banner while the user is styling it, without needing the bound
+ * signal to actually cross its threshold. active=false releases the
+ * override and returns the banner to condition-driven visibility.
+ *
+ * Safe to call from any context that already holds the LVGL mutex
+ * (the HTTP path dispatches via lv_async_call).
+ */
+void widget_banner_apply_test_state(const char *widget_id, bool active);
 
 #ifdef __cplusplus
 }

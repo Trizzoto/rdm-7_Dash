@@ -7771,10 +7771,50 @@
             el.textContent = w ? `(${w.x}, ${w.y})` : '(0, 0)';
         }
 
+        /* ── Banner preview override ─────────────────────────────────────
+         * Banners are visible only when their threshold condition is
+         * true — fine at runtime, useless when you're trying to style
+         * one. updateInspector() tracks the currently-selected banner
+         * and tells the device to force-show it via /api/banner/test,
+         * releasing the previous banner's override when the user moves
+         * on. Works hand-in-hand with the firmware's test_override
+         * flag on banner_data_t. */
+        let _bannerPreviewId = null;
+        function _setBannerPreview(newId) {
+            if (newId === _bannerPreviewId) return;
+            /* Release the previous banner if any. */
+            if (_bannerPreviewId) {
+                fetch('/api/banner/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: _bannerPreviewId, active: false })
+                }).catch(() => {});
+            }
+            _bannerPreviewId = newId;
+            if (newId) {
+                fetch('/api/banner/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: newId, active: true })
+                }).catch(() => {});
+            }
+        }
+
         function updateInspector() {
             updateWidgetCoords();
             _saveInspectorState();
             if (typeof updateMobileSelToolbar === 'function') updateMobileSelToolbar();
+            /* Drive the banner preview override based on the new
+             * selection. Called every refresh so things stay in sync
+             * across Ctrl-Z, layer-panel clicks, marquee select, etc. */
+            {
+                let activeBannerId = null;
+                if (selectedIndex >= 0 && selectedIndices.size <= 1) {
+                    const sel = currentLayout.widgets[selectedIndex];
+                    if (sel && sel.type === 'banner') activeBannerId = sel.id;
+                }
+                _setBannerPreview(activeBannerId);
+            }
             if (selectedIndex === -1) {
                 fuelCalStopPoll();
                 inspectorContent.innerHTML = '<div class="inspector-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><p>Click a widget on the canvas<br>or select from Layers panel</p></div>';
