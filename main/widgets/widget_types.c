@@ -93,6 +93,7 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_BUTTON    */ { .min_w =  40, .min_h =  20, .max_w = 300, .max_h = 100 },
     /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = SCREEN_W, .max_h =  60 },
     /* WIDGET_LINE        */ { .min_w =   2, .min_h =  2, .max_w = SCREEN_W, .max_h = SCREEN_H },
+    /* WIDGET_BANNER      */ { .min_w = 100, .min_h = 24, .max_w = SCREEN_W, .max_h = 160 },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -114,6 +115,7 @@ const char *widget_type_name(widget_type_t type)
         "button",
         "shift_light",
         "line",
+        "banner",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];

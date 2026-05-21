@@ -80,6 +80,7 @@ idf_component_register(
         "widgets/widget_button.c"
         "widgets/widget_shift_light.c"
         "widgets/widget_line.c"
+        "widgets/widget_banner.c"
         "widgets/widget_rules.c"
         "widgets/widget_fields.c"
         "widgets/widget_fields.gen.c"

@@ -19,6 +19,7 @@
 #include "widget_button.h"
 #include "widget_shift_light.h"
 #include "widget_line.h"
+#include "widget_banner.h"
 #include "widget_rules.h"
 
 #include "signal.h"
@@ -147,6 +148,8 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_SHIFT_LIGHT;
 	if (strcmp(s, "line") == 0)
 		return WIDGET_LINE;
+	if (strcmp(s, "banner") == 0)
+		return WIDGET_BANNER;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -211,6 +214,9 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_LINE:
 		w = widget_line_create_instance(slot);
+		break;
+	case WIDGET_BANNER:
+		w = widget_banner_create_instance(slot);
 		break;
 	default:
 		return NULL;
