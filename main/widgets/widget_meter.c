@@ -983,10 +983,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "show_ticks", false);
 	if (!md->show_tick_labels)
 		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
-	/* static_ticks defaults to TRUE — only emit when the user has
-	 * opted out, keeping the JSON quiet for the common path. */
-	if (!md->static_ticks)
-		cJSON_AddBoolToObject(cfg, "static_ticks", false);
+	/* static_ticks defaults to FALSE — only emit when the user has
+	 * opted in, keeping the JSON quiet for the common path. */
+	if (md->static_ticks)
+		cJSON_AddBoolToObject(cfg, "static_ticks", true);
 
 	/* Redline */
 	if (md->redline_enabled)
@@ -1700,7 +1700,11 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->tick_label_divisor = 1;
 	md->show_ticks = true;
 	md->show_tick_labels = true;
-	md->static_ticks = true;     /* perf-win default; opt-out in inspector when actively tuning ticks */
+	/* Static-tick optimisation is OFF by default for now — the snapshot
+	 * path needs more polish (sizing / z-order issues spotted in the
+	 * field with mid-size meters). Users can opt in per-meter through
+	 * the inspector once we've verified the rendering. */
+	md->static_ticks = false;
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;
