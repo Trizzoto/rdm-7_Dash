@@ -567,10 +567,14 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	if (md->reverse) init_v = md->max + md->min - init_v;
 	lv_meter_set_indicator_value(m, needle, init_v);
 
-	/* Custom needle-tip hook. Fires for every DRAW_PART. */
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
-	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, md);
+	/* Refresh ext_draw_size now that the needle's rear extension (if
+	 * any) needs to be reflected in the clip area. The DRAW_PART
+	 * callbacks themselves were registered earlier inside
+	 * _meter_build_one so they were already active for the
+	 * static-tick snapshot pass — moving them here would have meant
+	 * the snapshot ran with default LVGL tick rendering, losing
+	 * tick_label_divisor / redline_recolor_ticks / anchor / reverse
+	 * relabel customisations. */
 	lv_obj_refresh_ext_draw_size(m);
 
 	*out_needle = needle;
@@ -608,7 +612,13 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	 * pass synchronously. */
 	lv_obj_update_layout(m);
 
-	lv_img_dsc_t *snap = lv_snapshot_take(m, LV_IMG_CF_TRUE_COLOR);
+	/* Use TRUE_COLOR_ALPHA so meter_bg_opa < 255 round-trips correctly.
+	 * TRUE_COLOR would composite the translucent bg over a black
+	 * (zeroed) buffer and lose the alpha, leaving the user with a
+	 * darkish-red bg instead of the half-red they configured. The
+	 * cost is one extra byte per pixel (RGB565 + 8-bit alpha) which
+	 * works out to ~280 KB for a 240×240 meter — still bounded. */
+	lv_img_dsc_t *snap = lv_snapshot_take(m, LV_IMG_CF_TRUE_COLOR_ALPHA);
 	if (!snap) {
 		/* Snapshot can fail under heap pressure. Fall back to the
 		 * dynamic path: just add the needle, leave ticks live. */
@@ -771,6 +781,20 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 		if (use_night) md->night_redline_arc = arc;
 		else           md->redline_arc       = arc;
 	}
+
+	/* Register the tick + needle draw callback NOW, before either the
+	 * needle or the static-tick snapshot. The callback handles all of:
+	 *   - tick_label_divisor    (e.g. 6000 → "6" on a tach with x1000)
+	 *   - redline_recolor_ticks (paint ticks ≥ threshold red)
+	 *   - anchor curve relabel  (non-linear value→angle map)
+	 *   - reverse mode relabel  (max sits at start of sweep)
+	 *   - needle tip styles + rear extension (only fires after needle exists)
+	 * Registering it here means the static-tick snapshot pass captures
+	 * the customised tick labels / redline-recoloured ticks correctly;
+	 * the needle branch of the callback no-ops until a needle is added. */
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_BEGIN, md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_DRAW_PART_END,   md);
+	lv_obj_add_event_cb(m, _meter_needle_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, md);
 
 	/* Needle add — usually inline, but skipped when static_ticks mode
 	 * wants to snapshot the meter without the needle in it. Caller is
