@@ -7774,47 +7774,34 @@
         /* ── Banner preview override ─────────────────────────────────────
          * Banners are visible only when their threshold condition is
          * true — fine at runtime, useless when you're trying to style
-         * one. updateInspector() tracks the currently-selected banner
-         * and tells the device to force-show it via /api/banner/test,
-         * releasing the previous banner's override when the user moves
-         * on. Works hand-in-hand with the firmware's test_override
-         * flag on banner_data_t. */
-        let _bannerPreviewId = null;
-        function _setBannerPreview(newId) {
-            if (newId === _bannerPreviewId) return;
-            /* Release the previous banner if any. */
-            if (_bannerPreviewId) {
-                fetch('/api/banner/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: _bannerPreviewId, active: false })
-                }).catch(() => {});
-            }
-            _bannerPreviewId = newId;
-            if (newId) {
-                fetch('/api/banner/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: newId, active: true })
-                }).catch(() => {});
-            }
+         * one. Each banner gets a sticky "Show" toggle in its inspector
+         * Data block: click to force-show on the device, click again
+         * to release. The state persists across selection changes so
+         * the user can toggle a banner on, click around the dashboard
+         * to verify how it sits with the rest of the layout, then
+         * toggle off. Firmware-side the test_override flag on
+         * banner_data_t lives until the next layout rebuild — saving
+         * the layout naturally cleans up. */
+        const _bannerPreviewSticky = {};        /* widget id → bool (currently forced visible) */
+
+        function _toggleBannerPreview(widgetId) {
+            if (!widgetId) return;
+            const next = !_bannerPreviewSticky[widgetId];
+            if (next) _bannerPreviewSticky[widgetId] = true;
+            else      delete _bannerPreviewSticky[widgetId];
+            fetch('/api/banner/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: widgetId, active: next })
+            }).catch(() => {});
+            /* Re-render the inspector so the button label flips. */
+            if (typeof updateInspector === 'function') updateInspector();
         }
 
         function updateInspector() {
             updateWidgetCoords();
             _saveInspectorState();
             if (typeof updateMobileSelToolbar === 'function') updateMobileSelToolbar();
-            /* Drive the banner preview override based on the new
-             * selection. Called every refresh so things stay in sync
-             * across Ctrl-Z, layer-panel clicks, marquee select, etc. */
-            {
-                let activeBannerId = null;
-                if (selectedIndex >= 0 && selectedIndices.size <= 1) {
-                    const sel = currentLayout.widgets[selectedIndex];
-                    if (sel && sel.type === 'banner') activeBannerId = sel.id;
-                }
-                _setBannerPreview(activeBannerId);
-            }
             if (selectedIndex === -1) {
                 fuelCalStopPoll();
                 inspectorContent.innerHTML = '<div class="inspector-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><p>Click a widget on the canvas<br>or select from Layers panel</p></div>';
@@ -7902,6 +7889,29 @@
                  * bound, the press is still a valid UX affordance — it just
                  * doesn't propagate anywhere (no-op firmware side). */
                 const _testSig = _getWidgetSignalName(w);
+
+                /* ── Banner sticky preview ──
+                 * Banners get their own toggle because the live signal-
+                 * test-value slider is meaningless for a threshold-driven
+                 * visibility widget: you just want to see what it looks
+                 * like, then toggle it back off and verify the threshold
+                 * still fires correctly via the bound signal's regular
+                 * inject path (Signals sidebar). */
+                if (w.type === 'banner') {
+                    const isShowing = !!_bannerPreviewSticky[w.id];
+                    const lbl = isShowing ? 'Hide Preview' : 'Show Preview';
+                    const tip = isShowing
+                        ? 'Currently force-shown for editing. Click to release; the banner returns to its threshold condition.'
+                        : 'Force the banner visible on the device while you style it. Click again to release.';
+                    html += `<button type="button"
+                            class="props-test-momentary${isShowing ? ' pressed' : ''}"
+                            title="${tip}"
+                            onclick="_toggleBannerPreview('${w.id}')">${lbl}</button>`;
+                    html += `<div style="font-size:10px; color:var(--text-muted); margin-top:4px; line-height:1.4;">${isShowing
+                        ? 'Banner is forced visible. Toggle off, then drive the bound signal to verify the threshold triggers it for real.'
+                        : 'Toggle on to style the banner. Off = banner only shows when the threshold fires.'}</div>`;
+                }
+
                 if (isTestable) {
                     const activeVal = _testSig ? _testValues[_testSig] : undefined;
                     const isActive = activeVal !== undefined;
@@ -7947,7 +7957,13 @@
                                 ontouchcancel="${releaseHandler}">TEST ACTIVE</button>
                         ${isActive ? `<button class="btn btn-secondary" style="margin-top:4px; width:100%; font-size:11px;" onclick="clearTestValue('${_testSig}');updateInspector()">Stop test</button>` : ''}`;
                     }
-                } else if (_testSig) {
+                } else if (_testSig && w.type !== 'banner') {
+                    /* Banner uses the sticky preview toggle above instead
+                     * of the value-slider test affordance — the banner's
+                     * visibility is threshold-driven, so dragging a
+                     * slider through the threshold isn't really how the
+                     * user wants to validate it (they'd inject the
+                     * signal from the Signals sidebar instead). */
                     const activeVal = _testValues[_testSig];
                     const isActive = activeVal !== undefined;
                     const b = _getTestBounds(w);
