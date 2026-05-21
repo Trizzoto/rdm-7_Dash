@@ -576,13 +576,18 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	*out_needle = needle;
 }
 
-/* Snapshot the meter's tick/label/bg ring, drop a sibling lv_img
- * carrying the snapshot under the meter, strip the static parts off
- * the live meter, then add the needle. This is the heart of the
- * static-ticks optimisation: from here on, only the needle redraws
- * on signal updates — the ticks/labels/bg are blitted from the
- * pre-rasterised image, which is dramatically cheaper than recomputing
- * each tick line per frame.
+/* Snapshot the meter's tick / label / bg / redline-arc layer, apply
+ * that snapshot as the meter's own bg_img_src, strip the now-redundant
+ * static parts off the live meter, then add the needle. This is the
+ * heart of the static-ticks optimisation: from here on, only the
+ * needle redraws on signal updates — every other layer is a single
+ * pre-rasterised bg image blit, which is dramatically cheaper than
+ * recomputing each tick line per frame.
+ *
+ * The bg_img_src approach replaces an earlier sibling-lv_img design
+ * which had z-order + sizing problems when the meter's parent was the
+ * screen root. Using the meter's own bg_img keeps the snapshot
+ * locked to the meter's coords by construction.
  *
  * Caller must have already created the meter with include_needle=false,
  * stored it on md->meter / md->scale, and laid out the parent so the
@@ -590,9 +595,11 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
  * writing — there's a separate pair for day and night so the night
  * meter can flatten independently when it gets built on demand. */
 static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool use_night) {
+	(void)parent;   /* no longer needed — snapshot lives on the meter itself */
 	if (!md) return;
-	lv_obj_t         *m     = use_night ? md->night_meter : md->meter;
-	lv_meter_scale_t *scale = use_night ? md->night_scale : md->scale;
+	lv_obj_t             *m   = use_night ? md->night_meter        : md->meter;
+	lv_meter_scale_t     *scale = use_night ? md->night_scale      : md->scale;
+	lv_meter_indicator_t *arc = use_night ? md->night_redline_arc  : md->redline_arc;
 	if (!m || !scale || !lv_obj_is_valid(m)) return;
 
 	/* The meter has to have a realised position + size before snapshot
@@ -615,35 +622,21 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 		return;
 	}
 
-	/* Create sibling lv_img and slot it behind the meter. Same align
-	 * + pos so it overlaps the meter exactly. lv_obj_move_to_index(0)
-	 * puts it at the bottom of the z-order under the same parent. */
-	lv_obj_t *img = lv_img_create(parent);
-	lv_img_set_src(img, snap);
-	lv_obj_set_size(img, lv_obj_get_width(m), lv_obj_get_height(m));
-	lv_obj_set_align(img, lv_obj_get_style_align(m, LV_PART_MAIN));
-	lv_obj_set_pos(img, lv_obj_get_x(m), lv_obj_get_y(m));
-	lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-	lv_obj_move_to_index(img, lv_obj_get_index(m));   /* slot directly above current bottom */
-	lv_obj_move_background(img);                       /* then sink to the very back */
+	if (use_night) md->night_tick_snapshot_dsc = snap;
+	else           md->tick_snapshot_dsc       = snap;
 
-	if (use_night) {
-		md->night_tick_snapshot_dsc = snap;
-		md->night_tick_snapshot_obj = img;
-	} else {
-		md->tick_snapshot_dsc = snap;
-		md->tick_snapshot_obj = img;
-	}
-
-	/* Strip the now-redundant static parts off the live meter:
+	/* Strip the static parts off the live meter — they all live in
+	 * the snapshot now, redrawing them every frame would defeat the
+	 * whole point:
 	 *   - Tick widths to 0 (range / count preserved so the scale's
 	 *     angle math keeps working for needle positioning).
 	 *   - Tick label opacity transparent.
 	 *   - Meter background opacity 0 (the snapshot has it baked in).
 	 *   - Border width 0 (snapshot has it).
-	 * Redline arc indicator and bg image source are LEFT IN PLACE —
-	 * LVGL v8 has no lv_meter_remove_indicator and the arc / bg-img
-	 * cost is dominated by the now-saved tick redraws anyway. */
+	 *   - Redline arc collapsed to zero-length (lv_meter v8 has no
+	 *     remove_indicator API, so collapsing is the only way to
+	 *     stop it double-rendering against the snapshot).
+	 */
 	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 	lv_meter_set_scale_ticks(m, scale, mtc, 0, 0, lv_color_black());
@@ -651,9 +644,21 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
 	lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(m, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (arc) {
+		lv_meter_set_indicator_start_value(m, arc, md->min);
+		lv_meter_set_indicator_end_value(m, arc, md->min);
+	}
 
-	/* Now add the needle. It draws on top of the snapshot image and
-	 * is the only thing that redraws per frame. */
+	/* Snapshot becomes the meter's own bg image. LVGL anchors bg_img
+	 * to the centre of the obj's content area and (with tiled=false)
+	 * does not stretch — the snapshot is the same dimensions as the
+	 * meter by construction, so they overlap perfectly. */
+	lv_obj_set_style_bg_img_src(m, snap, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_img_opa(m, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_img_tiled(m, false, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Now add the needle. It draws on top of the bg image and is the
+	 * only thing that redraws per frame. */
 	uint32_t angle_range = _meter_compute_angle_range(md);
 	lv_meter_indicator_t **out_needle = use_night ? &md->night_needle : &md->needle;
 	lv_meter_scale_t     **out_ns     = use_night ? &md->night_needle_scale : &md->needle_scale;
@@ -761,6 +766,10 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 			lv_meter_set_indicator_start_value(m, arc, arc_start_v);
 			lv_meter_set_indicator_end_value(m, arc, arc_end_v);
 		}
+		/* Stash the arc pointer so the static-tick flatten path can
+		 * collapse it to zero-length after snapshot. */
+		if (use_night) md->night_redline_arc = arc;
+		else           md->redline_arc       = arc;
 	}
 
 	/* Needle add — usually inline, but skipped when static_ticks mode
@@ -1226,15 +1235,13 @@ static void _meter_destroy(widget_t *w) {
 		rdm_image_free(md->night_bg_img_dsc);
 		/* Tick-snapshot image data is heap-allocated by LVGL inside
 		 * lv_snapshot_take — must be released with lv_snapshot_free
-		 * (frees both data buffer + descriptor). The lv_obj that
-		 * displayed it was a child of the meter's parent and was
-		 * cascade-deleted by the lv_obj_del above. */
+		 * (frees both data buffer + descriptor). The meter object
+		 * that referenced it via bg_img_src was already deleted by
+		 * the lv_obj_del cascade above, so this is safe to free now. */
 		if (md->tick_snapshot_dsc)       lv_snapshot_free(md->tick_snapshot_dsc);
 		if (md->night_tick_snapshot_dsc) lv_snapshot_free(md->night_tick_snapshot_dsc);
 		md->tick_snapshot_dsc       = NULL;
-		md->tick_snapshot_obj       = NULL;
 		md->night_tick_snapshot_dsc = NULL;
-		md->night_tick_snapshot_obj = NULL;
 		free(md);
 	}
 	free(w);

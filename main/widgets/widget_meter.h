@@ -125,14 +125,20 @@ typedef struct {
 	 * if a snapshot edge-case shows up (e.g. fonts not yet loaded
 	 * when snapshot was taken). */
 	bool       static_ticks;        /* default: true */
-	/* Runtime snapshot state — both NULL when static_ticks is false
-	 * or the snapshot couldn't be taken (heap pressure, parent not
-	 * laid out yet). The image and the lv_img live as siblings of
-	 * `meter` under the same parent; destroy frees both. */
+	/* Runtime snapshot state. The snapshot image data is heap-
+	 * allocated by lv_snapshot_take and must be released with
+	 * lv_snapshot_free. The snapshot is applied as the meter's own
+	 * bg_img_src style — no sibling lv_img, no z-order problems. */
 	lv_img_dsc_t *tick_snapshot_dsc;
-	lv_obj_t     *tick_snapshot_obj;
 	lv_img_dsc_t *night_tick_snapshot_dsc;
-	lv_obj_t     *night_tick_snapshot_obj;
+	/* Stored pointers to the redline-arc indicators on the day and
+	 * night meters. Needed by the static-tick flatten path so we can
+	 * collapse them to zero-length AFTER taking the snapshot (lv_meter
+	 * v8 has no remove_indicator API, so leaving them alive would
+	 * double-render against the redline already baked into the
+	 * snapshot). NULL when no redline arc was added. */
+	lv_meter_indicator_t *redline_arc;
+	lv_meter_indicator_t *night_redline_arc;
 	/* Redline zone — visual emphasis for "danger" range [threshold, max]. */
 	bool       redline_enabled;     /* default: false — master toggle */
 	int32_t    redline_threshold;   /* default: 80 — value at which the zone starts */
