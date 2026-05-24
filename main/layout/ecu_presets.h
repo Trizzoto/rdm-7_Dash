@@ -54,7 +54,16 @@ typedef enum {
 /* Per-signal decode row. can_id==0 marks the slot as unsupported by the
  * ECU's default broadcast (e.g. Honda ECUs don't broadcast oil temp). The
  * apply function writes unsupported slots as unbound so the user can add
- * a custom signal later without collision. */
+ * a custom signal later without collision.
+ *
+ * value_map_csv: optional value→label table for enum-coded signals
+ *   (gear position, drive mode, cruise state, …). Format is
+ *   "v1=label1,v2=label2,…" — e.g. "0=N,1=1,2=2,3=3,4=4,5=5,6=6,7=P".
+ *   Labels are trimmed and capped at SIGNAL_VALUE_LABEL_MAX-1 chars.
+ *   NULL or empty = no map; widgets fall through to numeric formatting.
+ *   Applied at ecu_preset_apply_to_layout() time into the signal's
+ *   "value_map" JSON array, so every widget bound to the slot picks
+ *   up the labels automatically. */
 typedef struct {
     uint32_t can_id;       /* 0 = unsupported */
     uint8_t  bit_start;
@@ -65,6 +74,7 @@ typedef struct {
     uint8_t  endian;       /* 0 = Motorola (BE), 1 = Intel (LE) */
     const char *unit;      /* metric unit string, or "" */
     uint8_t  decimals;     /* display decimal places for panel/bar/text widgets */
+    const char *value_map_csv;  /* optional "v=label,v=label,…" enum map */
 } ecu_signal_row_t;
 
 typedef struct {

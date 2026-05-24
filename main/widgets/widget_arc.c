@@ -175,7 +175,14 @@ static void _arc_update_flash_state(widget_t *w) {
 static void _arc_update_value_label(arc_data_t *d, float value) {
     if (!d || !d->value_label || !lv_obj_is_valid(d->value_label)) return;
     char buf[32];
-    if (d->value_decimals == 0) {
+    /* Try the signal's value→label map first (gear positions, drive
+     * modes, etc.). On a hit we skip the unit suffix — labels like "N"
+     * or "Sport" stand alone. Numeric fallback keeps the existing unit
+     * concatenation behaviour. */
+    const char *lbl = signal_value_lookup_label(d->signal_index, value);
+    if (lbl) {
+        snprintf(buf, sizeof(buf), "%s", lbl);
+    } else if (d->value_decimals == 0) {
         snprintf(buf, sizeof(buf), "%d%s%s",
                  (int)value,
                  d->value_unit[0] ? " " : "",

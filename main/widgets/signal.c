@@ -55,6 +55,15 @@ void signal_registry_init(void)
 void signal_registry_reset(void)
 {
     if (!s_signals) return;
+    /* Free any per-signal value-label maps from the previous layout before
+     * zeroing the array — these are PSRAM allocations owned by the signal. */
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        if (s_signals[i].value_map) {
+            heap_caps_free(s_signals[i].value_map);
+            s_signals[i].value_map = NULL;
+            s_signals[i].value_map_count = 0;
+        }
+    }
     memset(s_signals, 0, MAX_SIGNALS * sizeof(signal_t));
     s_signal_count = 0;
 }
@@ -126,6 +135,79 @@ int16_t signal_find_by_name(const char *name)
             return (int16_t)i;
     }
     return -1;
+}
+
+/* ── Value-label map ───────────────────────────────────────────────────── */
+
+bool signal_set_value_map(int16_t signal_index,
+                          const signal_value_label_t *entries,
+                          uint8_t count)
+{
+    if (!s_signals || signal_index < 0 || signal_index >= (int16_t)s_signal_count)
+        return false;
+    signal_t *sig = &s_signals[signal_index];
+
+    /* Free any prior map. signal_registry_reset() zeroes the array so we
+     * don't free across resets — value_map ptrs live only while the layout
+     * is active. Layout reload calls reset before _load_signals so this is
+     * the only path that allocates them. */
+    if (sig->value_map) {
+        heap_caps_free(sig->value_map);
+        sig->value_map = NULL;
+        sig->value_map_count = 0;
+    }
+    if (!entries || count == 0) return true;
+
+    if (count > SIGNAL_VALUE_MAP_MAX) count = SIGNAL_VALUE_MAP_MAX;
+    sig->value_map = heap_caps_calloc(count, sizeof(signal_value_label_t),
+                                       MALLOC_CAP_SPIRAM);
+    if (!sig->value_map) {
+        ESP_LOGE(TAG, "value_map alloc failed for '%s' (%u entries)",
+                 sig->name, count);
+        return false;
+    }
+    memcpy(sig->value_map, entries, (size_t)count * sizeof(signal_value_label_t));
+    sig->value_map_count = count;
+    return true;
+}
+
+const char *signal_value_lookup_label(int16_t signal_index, float value)
+{
+    if (!s_signals || signal_index < 0 || signal_index >= (int16_t)s_signal_count)
+        return NULL;
+    signal_t *sig = &s_signals[signal_index];
+    if (!sig->value_map || sig->value_map_count == 0) return NULL;
+
+    /* Match on |decoded - entry| < epsilon so both integer-coded signals
+     * (gear 0..7) and decimal-coded signals (lambda 0.85 / 1.0 / 1.15)
+     * resolve cleanly. Epsilon also absorbs the tiny float drift that
+     * raw*scale+offset introduces — e.g. decoder returns 6.9999998f when
+     * the bit field is literally 7. */
+    for (uint8_t i = 0; i < sig->value_map_count; i++) {
+        float d = value - sig->value_map[i].value;
+        if (d < 0.0f) d = -d;
+        if (d < SIGNAL_VALUE_MAP_EPSILON) return sig->value_map[i].label;
+    }
+    return NULL;
+}
+
+void signal_format_value(int16_t signal_index, float value,
+                         uint8_t decimals, char *buf, size_t cap)
+{
+    if (!buf || cap == 0) return;
+    if (signal_index >= 0) {
+        const char *lbl = signal_value_lookup_label(signal_index, value);
+        if (lbl) {
+            /* Single-line copy; truncates safely if label is longer than buf. */
+            size_t n = strlen(lbl);
+            if (n >= cap) n = cap - 1;
+            memcpy(buf, lbl, n);
+            buf[n] = '\0';
+            return;
+        }
+    }
+    if (decimals == 0) snprintf(buf, cap, "%d", (int)value);
+    else               snprintf(buf, cap, "%.*f", decimals, (double)value);
 }
 
 signal_t *signal_get_by_index(uint16_t index)

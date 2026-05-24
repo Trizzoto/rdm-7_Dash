@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -43,6 +44,32 @@ typedef struct {
     void              *user_data;
 } signal_subscriber_t;
 
+/* ── Value-label map ───────────────────────────────────────────────────── */
+
+/* Maps a discrete decoded value to a display label. Lives on the signal so
+ * every widget rendering that signal picks up the labels for free (gear
+ * positions, drive modes, cruise state, boolean flags, lambda bands,
+ * threshold codes, …). Authored in the layout JSON as:
+ *
+ *   "value_map": [ { "v": 0,     "label": "N"      },
+ *                  { "v": 1,     "label": "1"      },
+ *                  { "v": 0.85,  "label": "Rich"   },
+ *                  { "v": 1.0,   "label": "Stoich" }, … ]
+ *
+ * Lookup matches on |value - entry.v| < SIGNAL_VALUE_MAP_EPSILON, which
+ * tolerates the float drift introduced by CAN decode (raw * scale +
+ * offset) while still cleanly distinguishing entries spaced >= 0.001
+ * apart. Signals whose physical values aren't enum-coded (RPM, temps,
+ * etc.) simply leave the map empty and fall through to numeric format. */
+#define SIGNAL_VALUE_LABEL_MAX   12      /* chars, incl. NUL */
+#define SIGNAL_VALUE_MAP_MAX     32      /* max entries per signal */
+#define SIGNAL_VALUE_MAP_EPSILON 0.001f  /* match tolerance */
+
+typedef struct {
+    float    value;
+    char     label[SIGNAL_VALUE_LABEL_MAX];
+} signal_value_label_t;
+
 /* ── Signal descriptor ─────────────────────────────────────────────────── */
 
 typedef struct {
@@ -56,6 +83,10 @@ typedef struct {
     uint8_t  endian;          /* 0 = Motorola (big), 1 = Intel (little) */
 
     char     unit[8];           /* Display unit (e.g., "kPa", "°C") */
+
+    /* Optional value→label map. NULL/empty = numeric display. */
+    signal_value_label_t *value_map;
+    uint8_t               value_map_count;
 
     /* Runtime state */
     float    current_value;
@@ -104,6 +135,41 @@ int16_t signal_register(const char *name, uint32_t can_id,
  * @return Signal index (>= 0) if found, -1 otherwise.
  */
 int16_t signal_find_by_name(const char *name);
+
+/**
+ * Attach a value→label map to a signal. Replaces any prior map. Pass
+ * @p count == 0 (or @p entries == NULL) to clear. Entries beyond
+ * SIGNAL_VALUE_MAP_MAX are dropped. The signal owns its copy after this
+ * call — caller is free to discard @p entries. Called once at layout
+ * load by the signals[] parser; safe to call again on re-load.
+ *
+ * @return true on success, false if signal_index is out of range.
+ */
+bool signal_set_value_map(int16_t signal_index,
+                          const signal_value_label_t *entries,
+                          uint8_t count);
+
+/**
+ * Look up a label for the given decoded value on this signal. Returns
+ * NULL if no map is attached or no entry matches (caller should fall
+ * back to numeric formatting). Lookup is exact integer-equality on
+ * roundf(value); useful for gear positions, mode codes, boolean flags.
+ */
+const char *signal_value_lookup_label(int16_t signal_index, float value);
+
+/**
+ * Format @p value into @p buf using either the signal's value-label map
+ * (if a matching entry exists) or numeric formatting `%.*f` with the
+ * supplied @p decimals. Pass @p signal_index < 0 to skip the map check.
+ *
+ *   no map / no match    -> "123.4"  (decimals respected)
+ *   map matches v=0      -> "N"
+ *
+ * Widget signal-callbacks should use this instead of inline snprintf so
+ * value-label maps work uniformly across panel / bar / text.
+ */
+void signal_format_value(int16_t signal_index, float value,
+                         uint8_t decimals, char *buf, size_t cap);
 
 /** Return a pointer to the signal at the given index, or NULL. */
 signal_t *signal_get_by_index(uint16_t index);

@@ -357,13 +357,70 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	 * overwrite-or-rename decision before sending the save. Firmware just
 	 * persists whatever name the client requests. */
 
+	/* ── Auto-apply ECU preset on first save of a new layout ─────────
+	 *
+	 * Rule: if the incoming layout names an ECU (ecu + ecu_version
+	 * strings) but its signals[] is absent or empty, treat that as a
+	 * declarative "use this preset" and fill signals[] from the preset
+	 * rows before persisting. Single source of truth: the firmware-side
+	 * preset table.
+	 *
+	 * Why here, not in /api/ecu/set: this covers every code path that
+	 * can create a layout (new layout flow, Save As of an empty doc,
+	 * DBC import that forgot to materialise signals, hand-rolled curl
+	 * calls). Putting it in one create endpoint would leak the
+	 * responsibility into N callers.
+	 *
+	 * Guard: only fires when signals is truly empty/absent, so once a
+	 * layout has been bound (or the user has manually authored signals)
+	 * subsequent saves are pure writes. A user who deliberately strips
+	 * all signals while keeping ECU metadata will trigger a re-apply on
+	 * next save, which we treat as desirable ("re-bind to the named
+	 * preset"). OBD2 preset is handled inside apply_to_layout by
+	 * writing polled_pids[] instead of signals[]. */
+	bool preset_applied = false;
+	if (!is_splash) {
+		const cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+		const cJSON *ver_item = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+		const cJSON *sig_arr  = cJSON_GetObjectItemCaseSensitive(root, "signals");
+		bool signals_empty = !sig_arr ||
+			(cJSON_IsArray(sig_arr) && cJSON_GetArraySize(sig_arr) == 0);
+		if (signals_empty &&
+		    cJSON_IsString(ecu_item) && ecu_item->valuestring[0] &&
+		    cJSON_IsString(ver_item) && ver_item->valuestring[0]) {
+			const ecu_preset_t *p = ecu_preset_find(ecu_item->valuestring,
+			                                        ver_item->valuestring);
+			if (p) preset_applied = true;  /* will run after the raw save */
+		}
+	}
+
 	// Persist raw JSON to LittleFS
 	esp_err_t err = layout_manager_save_raw(layout_name, root);
+	/* Capture ecu identity before freeing root for the deferred apply call. */
+	char preset_make[32] = {0}, preset_ver[32] = {0};
+	if (preset_applied) {
+		const cJSON *ei = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+		const cJSON *vi = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+		if (cJSON_IsString(ei)) snprintf(preset_make, sizeof(preset_make), "%s", ei->valuestring);
+		if (cJSON_IsString(vi)) snprintf(preset_ver,  sizeof(preset_ver),  "%s", vi->valuestring);
+	}
 	cJSON_Delete(root);
 	if (err != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to save layout to LittleFS");
 		return ESP_FAIL;
+	}
+
+	/* Reuse the existing apply path (handles OBD2 + decimals stamping). It
+	 * reads the just-written file, rewrites signals[], and saves back. The
+	 * double write only happens on this auto-apply path, not on every save. */
+	if (preset_applied && preset_make[0] && preset_ver[0]) {
+		const ecu_preset_t *p = ecu_preset_find(preset_make, preset_ver);
+		if (p && ecu_preset_apply_to_layout(layout_name, p) != ESP_OK) {
+			ESP_LOGW(TAG, "auto-apply of preset %s/%s to '%s' failed; "
+			              "layout saved without signal bindings",
+			         preset_make, preset_ver, layout_name);
+		}
 	}
 
 	if (apply_after_save) {

@@ -175,17 +175,15 @@ void update_bar_ui(void *param) {
 
 	bool show_val = bd ? bd->show_bar_value : false;
 	int decimals = bd ? bd->decimals : 0;
+	int16_t sig_idx = bd ? bd->signal_index : -1;
 	lv_obj_t *val_label = (upd->bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
 		if (upd->is_timeout) {
 			strcpy(value_str, "---");
 		} else {
-			if (decimals == 0) {
-				snprintf(value_str, sizeof(value_str), "%d", (int)upd->final_value);
-			} else {
-				snprintf(value_str, sizeof(value_str), "%.*f", decimals, upd->final_value);
-			}
+			signal_format_value(sig_idx, (float)upd->final_value,
+								(uint8_t)decimals, value_str, sizeof(value_str));
 		}
 		lv_label_set_text(val_label, value_str);
 	}
@@ -221,14 +219,12 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 
 	bool show_val = bd ? bd->show_bar_value : false;
 	int decimals = bd ? bd->decimals : 0;
+	int16_t sig_idx = bd ? bd->signal_index : -1;
 	lv_obj_t *val_label = (bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
-		if (decimals == 0) {
-			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
-		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", decimals, final_value);
-		}
+		signal_format_value(sig_idx, (float)final_value,
+							(uint8_t)decimals, value_str, sizeof(value_str));
 		lv_label_set_text(val_label, value_str);
 	}
 
@@ -420,10 +416,12 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		char value_str[16];
 		if (is_stale) {
 			strcpy(value_str, "---");
-		} else if (bd->decimals == 0) {
-			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
 		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", bd->decimals, final_value);
+			/* signal_format_value honours any value-label map on the
+			 * bound signal (gear positions, modes, etc.); falls back to
+			 * the existing decimals-aware numeric format otherwise. */
+			signal_format_value(bd->signal_index, (float)final_value,
+								bd->decimals, value_str, sizeof(value_str));
 		}
 		lv_label_set_text(bd->value_obj, value_str);
 	}

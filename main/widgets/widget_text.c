@@ -40,10 +40,12 @@ static void _text_on_signal(float value, bool is_stale, void *user_data) {
 		return;
 	}
 	char buf[32];
-	if (!td || td->decimals == 0)
-		snprintf(buf, sizeof(buf), "%d", (int)value);
-	else
-		snprintf(buf, sizeof(buf), "%.*f", td->decimals, (double)value);
+	/* Route through signal_format_value so an attached value→label map
+	 * on the bound signal renders here as the label (e.g. GEAR 0 -> "N")
+	 * rather than the raw integer. Falls back to decimals-aware numeric
+	 * formatting when no map / no match. */
+	signal_format_value(td ? td->signal_index : -1, value,
+						td ? td->decimals : 0, buf, sizeof(buf));
 	lv_label_set_text(w->root, buf);
 }
 

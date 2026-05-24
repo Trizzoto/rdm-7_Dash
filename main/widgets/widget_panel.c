@@ -345,10 +345,12 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	if (is_stale) {
 		display_str = "---";
 	} else {
-		if (pd->decimals == 0)
-			snprintf(buf, sizeof(buf), "%d", (int)value);
-		else
-			snprintf(buf, sizeof(buf), "%.*f", pd->decimals, (double)value);
+		/* Goes through signal_format_value so a value→label map on the
+		 * signal (gear positions, drive modes, etc.) renders here as the
+		 * label string instead of the raw integer. Falls back to the
+		 * decimals-aware numeric format when no map / no match. */
+		signal_format_value(pd->signal_index, value, pd->decimals,
+							buf, sizeof(buf));
 		display_str = buf;
 	}
 

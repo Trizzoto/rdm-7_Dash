@@ -410,6 +410,37 @@ static void _load_signals(const cJSON *root) {
 					 name_item->valuestring);
 		}
 
+		/* Optional value→label map: parse and attach so widgets that
+		 * render this signal can show "N" / "P" / "Sport" / etc. instead
+		 * of raw integer codes. Schema:
+		 *   "value_map": [ { "v": 0, "label": "N" }, ... ]
+		 * Missing/empty array = numeric formatting (existing behaviour). */
+		if (idx >= 0) {
+			const cJSON *vm_arr = cJSON_GetObjectItemCaseSensitive(sj, "value_map");
+			if (cJSON_IsArray(vm_arr) && cJSON_GetArraySize(vm_arr) > 0) {
+				int n = cJSON_GetArraySize(vm_arr);
+				if (n > SIGNAL_VALUE_MAP_MAX) n = SIGNAL_VALUE_MAP_MAX;
+				signal_value_label_t entries[SIGNAL_VALUE_MAP_MAX];
+				uint8_t count = 0;
+				for (int k = 0; k < n; k++) {
+					const cJSON *vm_obj = cJSON_GetArrayItem(vm_arr, k);
+					if (!cJSON_IsObject(vm_obj)) continue;
+					const cJSON *v_item = cJSON_GetObjectItemCaseSensitive(vm_obj, "v");
+					const cJSON *l_item = cJSON_GetObjectItemCaseSensitive(vm_obj, "label");
+					if (!cJSON_IsNumber(v_item) || !cJSON_IsString(l_item)) continue;
+					entries[count].value = (float)v_item->valuedouble;
+					safe_strncpy(entries[count].label, l_item->valuestring,
+								 sizeof(entries[count].label));
+					count++;
+				}
+				if (count > 0) {
+					signal_set_value_map(idx, entries, count);
+					ESP_LOGI(TAG, "value_map: '%s' got %u entries",
+							 name_item->valuestring, (unsigned)count);
+				}
+			}
+		}
+
 		/* Check for fuel_cal object on FUEL_SENDER_V signal */
 		if (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0) {
 			const cJSON *fc = cJSON_GetObjectItemCaseSensitive(sj, "fuel_cal");
@@ -551,6 +582,26 @@ static void _save_signals(cJSON *root) {
 		cJSON_AddNumberToObject(sj, "endian", sig->endian);
 		if (sig->unit[0] != '\0')
 			cJSON_AddStringToObject(sj, "unit", sig->unit);
+
+		/* Optional value→label map round-trip. Web /api/layout/save goes
+		 * through layout_manager_save_raw and preserves this field as-is
+		 * (the editor's JSON flows verbatim to disk); the path here is
+		 * the in-memory save used by serial commands and any internal
+		 * "snapshot current state" caller. */
+		if (sig->value_map && sig->value_map_count > 0) {
+			cJSON *vm_arr = cJSON_AddArrayToObject(sj, "value_map");
+			if (vm_arr) {
+				for (uint8_t k = 0; k < sig->value_map_count; k++) {
+					cJSON *vm_obj = cJSON_CreateObject();
+					if (!vm_obj) continue;
+					cJSON_AddNumberToObject(vm_obj, "v",
+						(double)sig->value_map[k].value);
+					cJSON_AddStringToObject(vm_obj, "label",
+						sig->value_map[k].label);
+					cJSON_AddItemToArray(vm_arr, vm_obj);
+				}
+			}
+		}
 
 		/* Attach fuel calibration to FUEL_SENDER_V signal */
 		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {

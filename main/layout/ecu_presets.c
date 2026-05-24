@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "layout_manager.h"
 #include "obd2.h"
+#include "widgets/signal.h"  /* SIGNAL_VALUE_LABEL_MAX */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +70,7 @@ const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
  */
 
 /* [0]=can_id, then bit_start, bit_length, scale, offset, is_signed, endian, unit, decimals */
-#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "", 0 }
+#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "", 0, NULL }
 
 const ecu_preset_t ECU_PRESETS[] = {
     /* ══════════════════════════════════════════════════════════════════
@@ -242,62 +243,113 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Ford FG — factory CAN broadcast. Inherits the BA/BF frame layout
-     * (FG keeps the same engine-side broadcasts: 0x12D / 0x207 / 0x427 /
-     * 0x44D / 0x437 / 0x353). The previous FG preset used CAN IDs that
-     * don't appear anywhere on the actual FG bus (0x109 / 0x204 / 0x156 /
-     * 0x171) — those were placeholder values from an early experiment
-     * and have been retired.
+     * Ford FG — factory hscan (500 kbps engine bus) only.
      *
-     * Sources cross-referenced 2026-05-18:
-     *   - BA/BF preset (verified in real BA/BF vehicles)
-     *   - jakka351/FG-Falcon "BigFalconSheet.xlsx" DBC tab
-     *   - jakka351/FG-Falcon resources/fg_controller_area.dbc
+     * Cross-referenced 2026-05-24 against BigFalconSheet.xlsx
+     * (FgControllerArea tab) and live canraw captures from an XR6T.
+     * The workbook's DBC tab is partly mis-parsed (overlapping
+     * length=1 rows); FgControllerArea is byte-accurate and is the
+     * authoritative source used below.
      *
-     * GEAR is new: FG broadcasts TransmissionMode on 0x210 byte 8 (bit 56,
-     * 8-bit). Value is an integer mode code (P=1/R=2/N=3/D=4 typical) —
-     * widget can map via a value table.
+     * Verification status of each row, against the canraw + decoded log:
      *
-     * Chassis extras enabled here based on the DBC tab in BigFalconSheet.xlsx
-     * (a more complete reverse-engineering than fg_controller_area.dbc).
-     * Bit positions sourced from the DBC `BO_/SG_` lines; scales are best
-     * guesses since the original DBC encodes them as raw=1.0 (the actual
-     * physical scaling isn't documented). The user can adjust scale/offset
-     * via the Signals modal after a live capture confirms the encoding:
+     *   VERIFIED (live values match expected physical range)
+     *     RPM, THROTTLE (idle..~63%), COOLANT_TEMP, OIL_TEMP,
+     *     BATTERY_VOLTAGE (alt charging visible at 13.6V)
      *
-     *   - BOOST       0x425 PCM_MSG_15  bit 31, 16-bit BE, kPa
-     *   - FUEL_LEVEL  0x425 PCM_MSG_15  bit 47, 8-bit BE  (raw -> 0.392% per cnt
-     *                                                     assumes 0..255 = 0..100%)
-     *   - LATERAL_G   0x4B0 PCM_WHEEL_SPEED bit 56, 8-bit BE (raw scaled 0.01 g)
-     *   - PARK_BRAKE  0x360 ReverseParkingSenseSystem bit 16, 8-bit LE (status flag)
-     *   - YAW_RATE    0x000 ABS broadcast bit 16, 8-bit LE (placeholder — ID 0x000
-     *                       and scaling are the least-confirmed bits in the sheet)
+     *   POSITION VERIFIED, MAGNITUDE NEEDS A DRIVING CAPTURE
+     *     VEHICLE_SPEED — bytes 4-5 of 0x207 read 0xFFFF sentinel
+     *       (= 511.99 km/h) whenever stationary. Scale 0.0078125
+     *       km/h/cnt (= raw 12800 -> 100 km/h) per spreadsheet.
+     *     GEAR — 0x230 byte 0 reads 0 in Park. Byte 2 (ActualGear-
+     *       Position) reads 0x68 = 104 in P; both bytes use an
+     *       encoded value table, not a literal gear number. Need a
+     *       full P->R->N->D->1..5 cycle to build the mapping.
+     *
+     *   UNVERIFIED — keeps current values pending more data
+     *     BOOST — 0x425 bytes 3-4 are stuck at 0xFFFF across every
+     *       captured frame, even on a turbo (engine made 510 Nm per
+     *       0x097 ActualEngineTorque in our log). Either the PCM
+     *       only updates this when actually positive-boost, or the
+     *       real boost signal lives elsewhere (0x425 byte 7 is the
+     *       only fast-varying engine byte and is a candidate — but
+     *       it could equally be InstantFuelConsumption). Needs a
+     *       WOT pull capture to disambiguate.
+     *     FUEL_LEVEL — current 0x425 bit 47 / scale 0.392 reads 75%
+     *       at 3/4 tank, but mathematically the result is driven by
+     *       byte 6 (fuel-consumption signal that happens to sit
+     *       around 0x80 at idle), not byte 5 (which is constant 0x03
+     *       = quarter-tank index). Real encoding is likely byte 5
+     *       with scale 25.0 %/cnt (4 quarters). Left as-is for now;
+     *       re-verify across a tank burn.
+     *     PARK_BRAKE — 0x437 byte 2 (HandbrakeStatus) is the right
+     *       per-spec position, but 0x437 didn't appear in our two
+     *       captures. Low broadcast rate or condition-gated. Verify
+     *       with a longer capture toggling the handbrake.
+     *
+     *   DROPPED (no factory broadcast on hscan, or prior row pointed
+     *   at the wrong thing)
+     *     MAP            -> SIG_UNSUPPORTED (FG factory doesn't
+     *                       broadcast manifold pressure; 0x44D byte 7
+     *                       is barometric, not MAP)
+     *     INTAKE_AIR_TEMP-> SIG_UNSUPPORTED (was reading HVAC cabin
+     *                       temp on mscan bus we can't even hear)
+     *     FUEL_TRIM      -> SIG_UNSUPPORTED (no STFT/LTFT broadcast)
+     *     LATERAL_G      -> SIG_UNSUPPORTED (0x4B0 byte 7 is wheel
+     *                       speed, not lat-G)
+     *     YAW_RATE       -> SIG_UNSUPPORTED (prior 0x000 was a
+     *                       placeholder, ID doesn't exist)
+     *
+     * Bit-position fixes vs the previous revision:
+     *   RPM   bit 39 -> 32  (off by 7 bits, was decoding ~15 000 rpm
+     *                        at idle by reading bytes 4-5 through a
+     *                        1-bit shift instead of as a clean 16-bit
+     *                        BE field)
+     *   GEAR  0x210 bit 56 -> 0x230 bit 0  (0x210 has no gear field;
+     *                        real gear data lives on 0x230)
+     *   PARK_BRAKE 0x360 bit 16 -> 0x437 bit 16  (0x360 is mscan;
+     *                        0x437 byte 2 is the right hscan source)
+     *
+     * Frames in this preset and the bus they live on (for reference
+     * when adding a second-channel transceiver later):
+     *   hscan: 0x12D, 0x207, 0x230, 0x425, 0x427, 0x437, 0x44D
+     *   mscan: 0x353 (HVAC), 0x360 (park sense), 0x4B0 (wheel speeds)
+     *
+     * Bonus signals visible on hscan but not yet wired to a standard
+     * ECU_SIG_* slot — users can expose via the Signals modal:
+     *   0x097 bytes 0-1 IndicatedEngineTorque (Nm, 16-bit BE signed)
+     *   0x097 bytes 2-3 FrictionLoss (Nm)
+     *   0x097 bytes 4-5 ActualEngineTorque (Nm)
+     *   0x097 bytes 6-7 DriverDemandedTorque (Nm)
+     *   0x120 bytes 0-1 EngineTorqueMinusReduction (Nm)
+     *   0x12D byte 1    AcceleratorPedalPosition (%, x0.5)
+     *   0x4C0 bytes 0-2 Odometer (24-bit LE, raw ~ km x 100)
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Ford",
         .version = "FG",
         .display = "Ford Falcon FG",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,       0.0f,   false, 0, "rpm",   0 },
-            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,        0.0f,   false, 0, "kPa",   0 },
+            [ECU_SIG_RPM]             = { 0x12D, 32, 16, 0.25f,       0.0f,   false, 0, "rpm",   0 },
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
             [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,        0.0f,   false, 0, "%",     1 },
             [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f,  -30.0f,  false, 0, "degC",  0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
             [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
             [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f,  0.0f,   false, 0, "km/h",  0 },
-            [ECU_SIG_GEAR]            = { 0x210, 56,  8, 1.0f,        0.0f,   false, 0, "",      0 },
+            [ECU_SIG_GEAR]            = { 0x230,  0,  8, 1.0f,        0.0f,   false, 0, "",      0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V",     1 },
-            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr",  1 },
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
             [ECU_SIG_BOOST]           = { 0x425, 31, 16, 1.0f,        0.0f,   false, 0, "kPa",   0 },
             [ECU_SIG_FUEL_LEVEL]      = { 0x425, 47,  8, 0.392157f,   0.0f,   false, 0, "%",     0 },
-            [ECU_SIG_PARK_BRAKE]      = { 0x360, 16,  8, 1.0f,        0.0f,   false, 1, "",      0 },
-            [ECU_SIG_YAW_RATE]        = { 0x000, 16,  8, 1.0f,        0.0f,   true,  1, "deg/s", 1 },
-            [ECU_SIG_LATERAL_G]       = { 0x4B0, 56,  8, 0.01f,       0.0f,   true,  0, "g",     2 },
+            [ECU_SIG_PARK_BRAKE]      = { 0x437, 16,  8, 1.0f,        0.0f,   false, 0, "",      0 },
+            [ECU_SIG_YAW_RATE]        = SIG_UNSUPPORTED,
+            [ECU_SIG_LATERAL_G]       = SIG_UNSUPPORTED,
         },
     },
 
@@ -458,6 +510,58 @@ const ecu_preset_t *ecu_preset_find(const char *make, const char *version) {
     return NULL;
 }
 
+/* Parse a CSV-style value→label table ("0=N,1=1,2=2,…") into a cJSON
+ * array of {v: int, label: str} objects. Returns NULL when csv is NULL
+ * or empty so the caller can skip emitting an empty array. Caller owns
+ * the returned cJSON; pass it via cJSON_AddItemToObject. */
+static cJSON *_value_map_csv_to_json(const char *csv) {
+    if (!csv || !csv[0]) return NULL;
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) return NULL;
+
+    const char *p = csv;
+    while (*p) {
+        /* skip leading whitespace/commas between entries */
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+
+        /* parse numeric value (optionally negative, optional decimal)
+         * up to '='. strtof handles ints, floats, and edge cases like
+         * "+0.85" / "-1" / "1." uniformly. */
+        const char *num_start = p;
+        char *end = NULL;
+        float v = strtof(num_start, &end);
+        if (end == num_start || !end || *end != '=') {
+            /* malformed entry — bail entirely rather than mis-parse */
+            cJSON_Delete(arr);
+            return NULL;
+        }
+        p = end + 1;  /* skip '=' */
+
+        /* label runs to next ',' or end-of-string */
+        const char *label_start = p;
+        while (*p && *p != ',') p++;
+        size_t len = (size_t)(p - label_start);
+        if (len == 0) continue;  /* empty label, skip */
+        if (len >= SIGNAL_VALUE_LABEL_MAX) len = SIGNAL_VALUE_LABEL_MAX - 1;
+        char lbl[SIGNAL_VALUE_LABEL_MAX];
+        memcpy(lbl, label_start, len);
+        lbl[len] = '\0';
+
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) continue;
+        cJSON_AddNumberToObject(entry, "v", (double)v);
+        cJSON_AddStringToObject(entry, "label", lbl);
+        cJSON_AddItemToArray(arr, entry);
+    }
+
+    if (cJSON_GetArraySize(arr) == 0) {
+        cJSON_Delete(arr);
+        return NULL;
+    }
+    return arr;
+}
+
 /* Build one signal JSON object from a preset row. can_id==0 rows produce
  * an unbound signal (can_id=0, retains name). */
 static cJSON *_build_signal_json(const char *name, const ecu_signal_row_t *row) {
@@ -472,6 +576,8 @@ static cJSON *_build_signal_json(const char *name, const ecu_signal_row_t *row) 
     cJSON_AddBoolToObject(s, "is_signed", row->is_signed);
     cJSON_AddStringToObject(s, "unit", row->unit ? row->unit : "");
     cJSON_AddNumberToObject(s, "endian", row->endian);
+    cJSON *vm = _value_map_csv_to_json(row->value_map_csv);
+    if (vm) cJSON_AddItemToObject(s, "value_map", vm);
     return s;
 }
 

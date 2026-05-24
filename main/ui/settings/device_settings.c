@@ -967,7 +967,26 @@ static void save_dimmer_config_cb(lv_event_t * e) {
 }
 
 static void refresh_can_diagnostics(void) {
-    if (!s_can_health_dot) return;
+    /* Defensive bail: any of these statics can be a stale pointer if the
+     * settings screen was torn down by a deferred dashboard reload (e.g.
+     * ECU picker apply) without close_menu_event_cb running first. The
+     * NULL check alone isn't enough — the pointer survives the screen
+     * delete; only lv_obj_is_valid catches the freed-but-non-NULL case.
+     * If anything is invalid, kill the timer too so we don't keep tripping
+     * the next tick. */
+    if (!s_can_health_dot   || !lv_obj_is_valid(s_can_health_dot)   ||
+        !s_can_health_label || !lv_obj_is_valid(s_can_health_label) ||
+        !s_can_summary_label|| !lv_obj_is_valid(s_can_summary_label)) {
+        if (s_can_diag_timer) {
+            lv_timer_del(s_can_diag_timer);
+            s_can_diag_timer = NULL;
+        }
+        s_can_health_dot   = NULL;
+        s_can_health_label = NULL;
+        s_can_summary_label= NULL;
+        memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
+        return;
+    }
 
     /* If scan is running, show "Scanning..." state */
     if (can_bus_test_is_running()) {
@@ -2255,6 +2274,32 @@ static void _ecu_label_compose(char *buf, size_t n) {
  * the first_run_wizard Finish flow). */
 static void _deferred_reload_after_ecu(void *arg) {
     (void)arg;
+    /* Tear down all menu-owned timers and NULL the static LVGL pointers
+     * BEFORE deleting the old screen. close_menu_event_cb only fires on
+     * the normal "back" button path; this reload bypasses that, and any
+     * surviving timer (CAN diag, WiFi status, odometer) would tick once
+     * more after the LVGL objects are freed and crash on a stale pointer.
+     * Cheaper than wiring an LV_EVENT_DELETE handler on the screen. */
+    if (s_can_diag_timer) {
+        lv_timer_del(s_can_diag_timer);
+        s_can_diag_timer = NULL;
+    }
+    if (s_wifi_status_timer) {
+        lv_timer_del(s_wifi_status_timer);
+        s_wifi_status_timer = NULL;
+    }
+    if (s_veh_odo_timer) {
+        lv_timer_del(s_veh_odo_timer);
+        s_veh_odo_timer = NULL;
+    }
+    s_veh_odo_value_lbl  = NULL;
+    s_can_health_dot     = NULL;
+    s_can_health_label   = NULL;
+    s_can_summary_label  = NULL;
+    s_can_details_grid   = NULL;
+    s_can_details_toggle = NULL;
+    memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
+
     lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
     ui_Screen3_screen_init();
     lv_scr_load(ui_Screen3);

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "../theme.h"
+#include "../ui.h"                 /* LV_FONT_DECLARE(ui_font_fugaz_14) */
 #include "../../layout/ecu_presets.h"
 #include "../../layout/layout_manager.h"
 #include "../../storage/config_store.h"
@@ -75,6 +76,11 @@ typedef struct {
     bool         manual_mode;
     ecu_picker_done_cb_t cb;
     void        *ctx;
+    /* Confirmation overlay (lives above the picker on lv_layer_top while
+     * the user decides whether the chosen preset should rewrite signals).
+     * pending_preset_idx is the row index they tapped Apply on. */
+    lv_obj_t   *confirm_overlay;
+    int         pending_preset_idx;
 } ecu_picker_state_t;
 
 static ecu_picker_state_t s;
@@ -88,6 +94,15 @@ static void _auto_sw_event_cb(lv_event_t *e);
 static void _refresh_timer_cb(lv_timer_t *t);
 static void _rebuild_list(int preselect_preset_idx);
 static void _refresh_dots(void);
+static void _show_apply_confirm(int preset_idx);
+static void _confirm_close_overlay(void);
+static void _confirm_cancel_cb(lv_event_t *e);
+static void _confirm_identity_only_cb(lv_event_t *e);
+static void _confirm_replace_cb(lv_event_t *e);
+static void _do_apply_preset(int preset_idx, bool replace_signals);
+static lv_obj_t *_make_btn(lv_obj_t *parent, const char *text,
+                           lv_color_t bg, lv_color_t fg, lv_coord_t x_ofs,
+                           lv_event_cb_t cb, lv_obj_t **out_label);
 static void _update_row_visual(picker_row_t *r, int score);
 static void _set_selected(int row_index);
 
@@ -421,32 +436,167 @@ static void _apply_cb(lv_event_t *e) {
     }
     int preset_idx = s.rows[s.selected_row].preset_idx;
 
-    bool applied = false;
-    bool is_rdm_internal = false;
+    /* "Custom / None" row has no preset to apply — just clear the saved
+     * ECU identity and close. No confirmation needed: nothing to lose. */
     if (preset_idx == CUSTOM_IDX) {
         config_store_save_ecu("", "");
-    } else {
-        const ecu_preset_t *p = &ECU_PRESETS[preset_idx];
+        _close(false);
+        return;
+    }
+
+    /* Real preset: ask the user whether to rewrite their signal table.
+     * Doing it automatically (the old behaviour) is destructive if the
+     * user has already hand-tuned signals or imported a DBC — the apply
+     * wipes those out. The confirmation modal explains the trade-off and
+     * offers a "save identity only" middle ground. */
+    _show_apply_confirm(preset_idx);
+}
+
+/* Shared apply path. replace_signals=true rewrites the layout's signals[]
+ * (and obd2_pids for OBD2 preset) from the preset rows; false saves only
+ * the ECU identity in NVS so it shows up in Vehicle Settings + match
+ * scoring without touching the user's current signal definitions. */
+static void _do_apply_preset(int preset_idx, bool replace_signals) {
+    bool reload_dashboard = false;
+    bool is_rdm_internal  = false;
+    const ecu_preset_t *p = &ECU_PRESETS[preset_idx];
+
+    if (replace_signals) {
         if (ecu_preset_apply_to_layout(s.layout_name, p) != ESP_OK) {
             ESP_LOGE(TAG, "apply failed for %s / %s", p->make, p->version);
         } else {
             config_store_save_ecu(p->make, p->version);
-            applied = true;
+            reload_dashboard = true;
             /* RDM-7 / Internal is the marker preset that drives the
              * CALCULATED_GEAR synthetic signal. After applying it the
              * user still needs to configure RPM/Speed sources + gear
              * ratios — auto-pop the Gear Setup modal so the dash-only
              * user gets a working setup without a trip to the web
-             * editor. Same UX as the web side's openGearSetup() hook. */
+             * editor. */
             if (p->make && p->version &&
                 strcmp(p->make, "RDM-7") == 0 &&
                 strcmp(p->version, "Internal") == 0) {
                 is_rdm_internal = true;
             }
         }
+    } else {
+        /* Identity-only path: persist make/version in NVS so the picker,
+         * Vehicle Settings label, and ECU match scoring see the chosen
+         * ECU. Signals[] is left untouched. */
+        config_store_save_ecu(p->make, p->version);
     }
-    _close(applied);
+
+    _close(reload_dashboard);
     if (is_rdm_internal) lv_async_call(_open_gear_setup_async, NULL);
+}
+
+/* ── Confirmation overlay ────────────────────────────────────────────
+ *
+ * Shown after the user taps Apply in the picker. Asks whether to
+ * actually rewrite the layout's signal table, or just remember the
+ * chosen ECU. Sits on lv_layer_top above the picker so cancelling
+ * returns the user to the picker with their row still selected. */
+
+static void _confirm_close_overlay(void) {
+    if (s.confirm_overlay && lv_obj_is_valid(s.confirm_overlay)) {
+        lv_obj_del(s.confirm_overlay);
+    }
+    s.confirm_overlay = NULL;
+    s.pending_preset_idx = CUSTOM_IDX;
+}
+
+static void _confirm_cancel_cb(lv_event_t *e) {
+    (void)e;
+    _confirm_close_overlay();  /* picker stays open, user can rechoose */
+}
+
+static void _confirm_identity_only_cb(lv_event_t *e) {
+    (void)e;
+    int idx = s.pending_preset_idx;
+    _confirm_close_overlay();
+    if (idx >= 0) _do_apply_preset(idx, /*replace_signals=*/false);
+}
+
+static void _confirm_replace_cb(lv_event_t *e) {
+    (void)e;
+    int idx = s.pending_preset_idx;
+    _confirm_close_overlay();
+    if (idx >= 0) _do_apply_preset(idx, /*replace_signals=*/true);
+}
+
+static void _show_apply_confirm(int preset_idx) {
+    if (preset_idx < 0) return;
+    if (s.confirm_overlay && lv_obj_is_valid(s.confirm_overlay)) return;
+    const ecu_preset_t *p = &ECU_PRESETS[preset_idx];
+    s.pending_preset_idx = preset_idx;
+
+    /* Full-screen scrim on lv_layer_top so taps outside the card don't
+     * leak through to the picker. */
+    lv_obj_t *scrim = lv_obj_create(lv_layer_top());
+    s.confirm_overlay = scrim;
+    lv_obj_remove_style_all(scrim);
+    lv_obj_set_size(scrim, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(scrim, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_60, 0);
+    lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Centered card. Sized so the body text wraps to ~3 lines on the
+     * 800×480 display without scrollbars. */
+    lv_obj_t *card = lv_obj_create(scrim);
+    lv_obj_set_size(card, 560, 320);
+    lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Title. */
+    lv_obj_t *title = lv_label_create(card);
+    char title_buf[80];
+    snprintf(title_buf, sizeof(title_buf), "Apply %s %s preset?",
+             p->make ? p->make : "", p->version ? p->version : "");
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_font(title, THEME_FONT_DASH_LABEL, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Body — explains what each button will do. Kept short so it fits
+     * three lines at the default body font; uses LV_LABEL_LONG_WRAP so
+     * the user's display scale doesn't clip it. */
+    lv_obj_t *body = lv_label_create(card);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(body,
+        "Replace your layout's CAN signal table with this ECU's defaults?\n\n"
+        "\xEF\x83\xA6  Replace Signals — overwrites every signal's CAN ID, "
+        "bit position, scale and unit with the preset's values. Widgets keep "
+        "their bound signal names. Use this for a fresh setup.\n\n"
+        "\xEF\x80\x82  Save ECU Only — remembers the chosen ECU for match "
+        "scoring and the Vehicle Settings label, but leaves your existing "
+        "signal definitions untouched. Use this if you've hand-tuned signals "
+        "or imported a DBC.");
+    lv_obj_set_width(body, 528);
+    lv_obj_set_style_text_font(body, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(body, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_line_space(body, 4, 0);
+    lv_obj_align_to(body, title, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 12);
+
+    /* Buttons row across the bottom. */
+    lv_obj_t *cancel_btn   = _make_btn(card, "Cancel",
+        THEME_COLOR_PANEL, THEME_COLOR_TEXT_PRIMARY,
+        -200, _confirm_cancel_cb, NULL);
+    lv_obj_set_style_border_width(cancel_btn, 1, 0);
+    lv_obj_set_style_border_color(cancel_btn, THEME_COLOR_BORDER, 0);
+
+    _make_btn(card, "Save ECU Only",
+        THEME_COLOR_BORDER, THEME_COLOR_TEXT_PRIMARY,
+        0, _confirm_identity_only_cb, NULL);
+
+    _make_btn(card, "Replace Signals",
+        THEME_COLOR_ACCENT_BLUE, THEME_COLOR_TEXT_PRIMARY,
+        200, _confirm_replace_cb, NULL);
 }
 
 static void _skip_cb(lv_event_t *e) {
@@ -461,9 +611,16 @@ static void _close(bool applied) {
         lv_timer_del(s.refresh_timer);
         s.refresh_timer = NULL;
     }
+    /* Tear down the confirmation overlay if still present (e.g. caller
+     * killed the picker programmatically while the confirm card was up). */
+    if (s.confirm_overlay && lv_obj_is_valid(s.confirm_overlay)) {
+        lv_obj_del(s.confirm_overlay);
+    }
+    s.confirm_overlay = NULL;
     if (s.overlay && lv_obj_is_valid(s.overlay)) lv_obj_del_async(s.overlay);
     memset(&s, 0, sizeof(s));
     s.selected_row = -1;
+    s.pending_preset_idx = CUSTOM_IDX;
     if (cb) cb(applied, ctx);
 }
 

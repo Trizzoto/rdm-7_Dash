@@ -7474,12 +7474,22 @@
                     });
                 }
             });
-            /* Convert web is_little_endian (bool) back to firmware endian (int) */
+            /* Convert web is_little_endian (bool) back to firmware endian (int).
+             * Also strip empty value_map arrays so the layout JSON stays
+             * lean — firmware treats absent and empty identically. */
             if (payload.signals) {
                 payload.signals.forEach(s => {
                     if ('is_little_endian' in s) {
                         s.endian = s.is_little_endian ? 1 : 0;
                         delete s.is_little_endian;
+                    }
+                    if (Array.isArray(s.value_map)) {
+                        /* Drop entries with empty labels — the user
+                         * added a row but never filled it in. */
+                        s.value_map = s.value_map.filter(e =>
+                            e && typeof e.v === 'number' &&
+                            typeof e.label === 'string' && e.label.length > 0);
+                        if (s.value_map.length === 0) delete s.value_map;
                     }
                 });
             }
@@ -7871,6 +7881,40 @@
                                     <button class="btn btn-secondary" style="border-color:hsl(0, 100%, 63%); color:hsl(0, 100%, 63%);" onclick="unbindSignal()">Unbind</button>
                                 </div>
                             </div>`;
+
+                            /* ── Value Labels (signal-level, surfaced here for
+                             * discoverability) ─────────────────────────────────
+                             * Lets the user map raw decoded values to display
+                             * strings (e.g. GEAR 0→"N", 7→"P"; MODE 0→"Eco",
+                             * 1→"Sport"; on/off flags; cruise state; …). The
+                             * data lives on the signal, not the widget — so
+                             * every widget bound to the same signal stays in
+                             * sync. Edit it here for inline workflow, or via
+                             * the signal sidebar's matching section. */
+                            const vmap = Array.isArray(sig.value_map) ? sig.value_map : [];
+                            const vmapOpen = vmap.length > 0;
+                            html += `<details class="inspector-accordion" ${vmapOpen ? 'open' : ''} style="margin-top:8px;"><summary>Value Labels${vmap.length ? ` <span class="badge" style="background:var(--accent);">${vmap.length}</span>` : ''}</summary><div class="accordion-body">`;
+                            html += `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Map raw decoded values to labels (e.g. <code>0 → N</code>, <code>1 → Sport</code>). Unmapped values fall through to numeric display. Applies to every widget bound to <b>${w.signal}</b>.</div>`;
+                            if (vmap.length) {
+                                html += `<div style="display:flex; flex-direction:column; gap:4px;">`;
+                                vmap.forEach((entry, ei) => {
+                                    const ev = (entry && entry.v !== undefined) ? entry.v : 0;
+                                    const el = (entry && entry.label !== undefined) ? entry.label : '';
+                                    const escLbl = String(el).replace(/"/g, '&quot;');
+                                    html += `<div style="display:flex; gap:4px; align-items:center;">`;
+                                    /* step="any" lets the browser accept decimals (0.85, 1.0, etc.)
+                                     * not just integers — same field works for gear codes and
+                                     * lambda bands. parseFloat handles both in the helper. */
+                                    html += `<input type="number" step="any" value="${ev}" onchange="updateValueMapEntry(${sigIdx},${ei},'v',this.value); updateInspector();" style="width:72px; font-family:monospace;" title="Raw decoded value (integer or decimal)" ${disabledAttr}>`;
+                                    html += `<span style="color:var(--text-muted); font-size:14px;">→</span>`;
+                                    html += `<input type="text" value="${escLbl}" maxlength="11" onchange="updateValueMapEntry(${sigIdx},${ei},'label',this.value)" placeholder="Label" style="flex:1; font-weight:600;" ${disabledAttr}>`;
+                                    html += `<button class="btn btn-secondary" style="padding:2px 8px; font-size:11px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%);" onclick="removeValueMapEntry(${sigIdx},${ei}); updateInspector();" title="Remove" ${disabledAttr}>×</button>`;
+                                    html += `</div>`;
+                                });
+                                html += `</div>`;
+                            }
+                            html += `<button class="btn btn-secondary" style="margin-top:6px; font-size:11px; width:100%;" onclick="addValueMapEntry(${sigIdx}); updateInspector();" ${disabledAttr}>+ Add Label</button>`;
+                            html += `</div></details>`;
                         } else {
                             html += `<div style="font-size:11px; color:hsl(0, 100%, 63%); margin-bottom:4px;">Signal "${w.signal}" not found!</div>`;
                             html += `<button class="btn-assign-data" onclick="openDataSourcePicker()" ${disabledAttr}>Assign Data Source</button>`;
@@ -9709,6 +9753,13 @@
                 html += `<span class="sig-toggle ${s.is_little_endian ? 'on' : 'off'}" onclick="${sIsInternal ? '' : `toggleSignalBool(${i},'is_little_endian'); renderSignals();`}" title="${s.is_little_endian ? 'Little-Endian' : 'Big-Endian'}">${s.is_little_endian ? 'LE' : 'BE'}</span>`;
                 html += `</div>`;
 
+                /* Value Labels live on the widget inspector's Data
+                 * accordion, not here — keeps the signal sidebar focused
+                 * on CAN-layer fields (bit position, scale, endian, …)
+                 * and surfaces value-label authoring on the widget you're
+                 * actually editing. The data still lives on the signal so
+                 * every widget bound to it stays in sync. */
+
                 /* Bound widgets */
                 html += `<div class="sig-card-bound">`;
                 if (bound.length) {
@@ -9948,6 +9999,59 @@
                 renderEditor();
                 updateInspector();
             }
+        }
+
+        /* ── Value-label map editors (per-signal) ──────────────────────
+         * The signal's `value_map` array contains `{v: int, label: str}`
+         * objects matching the firmware's signal_value_label_t. Empty
+         * arrays are stripped at save time by buildFirmwarePayload (so
+         * we don't waste layout-JSON budget on an empty field). */
+        function addValueMapEntry(sigIdx) {
+            const sigs = currentLayout.signals || [];
+            if (sigIdx < 0 || sigIdx >= sigs.length) return;
+            pushHistory();
+            if (!Array.isArray(sigs[sigIdx].value_map)) sigs[sigIdx].value_map = [];
+            /* Default new entry value: one above the current max, or 0 for
+             * the first row. floor()+1 keeps integer codes (gear, mode)
+             * walking 0, 1, 2, … even when prior decimal entries are
+             * present; user can edit it to whatever they actually need. */
+            const used = sigs[sigIdx].value_map.map(e => (e && typeof e.v === 'number') ? e.v : 0);
+            const nextV = used.length ? (Math.floor(Math.max.apply(null, used)) + 1) : 0;
+            sigs[sigIdx].value_map.push({ v: nextV, label: '' });
+            renderSignals();
+        }
+
+        function removeValueMapEntry(sigIdx, entryIdx) {
+            const sigs = currentLayout.signals || [];
+            if (sigIdx < 0 || sigIdx >= sigs.length) return;
+            const vm = sigs[sigIdx].value_map;
+            if (!Array.isArray(vm) || entryIdx < 0 || entryIdx >= vm.length) return;
+            pushHistory();
+            vm.splice(entryIdx, 1);
+            if (vm.length === 0) delete sigs[sigIdx].value_map;
+            renderSignals();
+        }
+
+        function updateValueMapEntry(sigIdx, entryIdx, field, val) {
+            const sigs = currentLayout.signals || [];
+            if (sigIdx < 0 || sigIdx >= sigs.length) return;
+            const vm = sigs[sigIdx].value_map;
+            if (!Array.isArray(vm) || entryIdx < 0 || entryIdx >= vm.length) return;
+            if (field === 'label') {
+                /* Mirror firmware SIGNAL_VALUE_LABEL_MAX (12 chars incl NUL). */
+                val = String(val || '').slice(0, 11);
+            } else if (field === 'v') {
+                /* parseFloat accepts ints AND decimals (lambda bands like
+                 * 0.85, 1.0, 1.15, …). Fall back to 0 on NaN / empty. */
+                val = parseFloat(val);
+                if (!isFinite(val)) val = 0;
+            }
+            pushHistory();
+            vm[entryIdx][field] = val;
+            /* Don't re-render — the user is mid-typing in an input. The
+             * value is already captured in the model, and the next
+             * renderSignals (triggered by some other action) will reflect
+             * it. Avoids tearing the input focus on every keystroke. */
         }
 
         function deleteSignal(idx) {
@@ -12140,7 +12244,14 @@
             }
         }
 
-        /* Override layoutEditorNew to show ECU modal and save immediately */
+        /* Override layoutEditorNew to show ECU modal and save immediately.
+         *
+         * The empty layout is saved with just the chosen ECU's metadata
+         * (ecu + ecu_version) and signals=[]. Firmware-side, /api/layout/save
+         * sees the empty-signals + ecu-named combination and auto-applies
+         * the matching preset (see layout_save_handler). We then re-fetch
+         * the raw file so the editor reflects the populated signals
+         * instead of every slot showing as "Internal". */
         const _origLayoutEditorNew = layoutEditorNew;
         layoutEditorNew = async function() {
             const name = prompt('New layout name:', '');
@@ -12159,7 +12270,6 @@
             renderEditor();
             renderSignals();
             updateInspector();
-            /* Save empty layout to device immediately */
             try {
                 const payload = buildFirmwarePayload();
                 await fetch('/api/layout/save', {
@@ -12167,8 +12277,24 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
+                /* Pull the file back so signals auto-populated by the
+                 * firmware show up in the editor. Skip when no ECU was
+                 * picked (nothing to populate). */
+                if (ecuChoice.ecu && ecuChoice.version) {
+                    const r = await fetch('/api/layout/raw?name=' + encodeURIComponent(safeName));
+                    if (r.ok) {
+                        const fresh = await r.json();
+                        firmwareToWebFormat(fresh);
+                        currentLayout.signals = fresh.signals || [];
+                        if (Array.isArray(fresh.polled_pids)) {
+                            currentLayout.polled_pids = fresh.polled_pids;
+                        }
+                        renderSignals();
+                        updateInspector();
+                    }
+                }
                 _editingActive = false;
-                _lastDeviceSnapshot = JSON.stringify(payload);
+                _lastDeviceSnapshot = JSON.stringify(buildFirmwarePayload());
                 history = [JSON.stringify(currentLayout)];
                 historyIndex = 0;
                 await fetchLayoutsKeepCurrent();
