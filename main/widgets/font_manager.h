@@ -47,8 +47,15 @@ void font_manager_shutdown(void);
  * Returns a cached lv_font_t* or creates one via lv_tiny_ttf.
  *
  * @param family  Font family name (matches filename without .ttf extension)
- * @param size    Desired font height in pixels (8-128)
+ * @param size    Desired font height in pixels (8-200)
  * @return        lv_font_t* or NULL if family not found / cache full
+ *
+ * Sizes 129..200 are supported for huge value displays (e.g. an
+ * oversized gear indicator). lv_tiny_ttf rasterises glyphs on demand
+ * so the marginal PSRAM cost is per-glyph-actually-used, not per-size.
+ * Keep the practical use to a handful of glyphs at the very high end
+ * (a gear letter, an RPM number) — using a 200px font for full
+ * latin-1 text would burn through the rasteriser cache fast.
  */
 const lv_font_t *font_manager_get(const char *family, uint16_t size);
 
@@ -62,6 +69,14 @@ uint8_t font_manager_family_count(void);
  * @return  Family name string, or NULL if index out of range.
  */
 const char *font_manager_family_name(uint8_t index);
+
+/**
+ * Get the loaded TTF byte size for the family at @p index.
+ * Returns 0 if index is out of range — useful for file-manager UIs
+ * that want to display per-font storage usage. Reads from the PSRAM
+ * cache so doesn't touch LittleFS.
+ */
+size_t font_manager_family_size(uint8_t index);
 
 /**
  * Load a new font family from a TTF data buffer (e.g. after upload).

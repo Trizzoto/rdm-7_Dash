@@ -2891,6 +2891,8 @@
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import .rdm</div>
                     <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export .rdm</div>
+                    <div class="layout-menu-item" onclick="downloadScreenshot(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export Screenshot</div>
+                    <div class="layout-menu-item" onclick="openStorageManager(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager...</div>
                     <div class="layout-menu-sep"></div>
                     <div class="layout-menu-item" onclick="openDeviceInfo(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device Info...</div>
                     <div class="layout-menu-item" onclick="openSignalDashboard(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Signal Dashboard...</div>
@@ -7665,7 +7667,7 @@
                     });
                     html += `</select>`;
                 } else if (selFamily) {
-                    html += `<input type="number" id="fontSize_${uid}" value="${selSize}" min="8" max="128" style="width:58px;" onchange="_onFontSizeChange('${uid}', '${f.name}')" ${disabledAttr}>`;
+                    html += `<input type="number" id="fontSize_${uid}" value="${selSize}" min="8" max="200" style="width:58px;" title="Pixel height (8–200). 130+ is meant for single-glyph displays like a giant gear letter." onchange="_onFontSizeChange('${uid}', '${f.name}')" ${disabledAttr}>`;
                 } else {
                     html += `<span id="fontSize_${uid}"></span>`;
                 }
@@ -8248,7 +8250,7 @@
                             });
                             html += `</select>`;
                         } else if (selFamily) {
-                            html += `<input type="number" id="fontSize_${ruid}" value="${selSize}" min="8" max="128" style="width:58px;" onchange="_onRuleFontSizeChange('${ruid}', ${ri}, '${f.name}')" ${disabledAttr}>`;
+                            html += `<input type="number" id="fontSize_${ruid}" value="${selSize}" min="8" max="200" style="width:58px;" title="Pixel height (8–200)." onchange="_onRuleFontSizeChange('${ruid}', ${ri}, '${f.name}')" ${disabledAttr}>`;
                         } else {
                             html += `<span id="fontSize_${ruid}"></span>`;
                         }
@@ -10701,6 +10703,38 @@
             } catch (e) { console.error('Screenshot failed', e); }
         }
 
+        /* Full-resolution screenshot download for the File menu. Pulls
+         * ?full=1 (native 800x480) and saves to disk via a synthetic
+         * anchor — keeps everything client-side, no extra server work. */
+        async function downloadScreenshot() {
+            try {
+                updateStatus('Capturing screenshot...');
+                const r = await fetch('/api/screenshot?full=1&q=92&t=' + Date.now(),
+                                      { cache: 'no-store' });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const blob = await r.blob();
+                const url  = URL.createObjectURL(blob);
+                const a    = document.createElement('a');
+                const name = (currentLayout && currentLayout.name) || 'dash';
+                const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                a.href     = url;
+                a.download = `rdm7_${name}_${ts}.jpg`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                /* Revoke after a tick so the click actually picks it up
+                 * — some browsers fail download if the URL is gone before
+                 * the network task ferries the blob across. */
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                updateStatus('Screenshot saved');
+                if (typeof showToast === 'function') showToast('Screenshot saved', 'success');
+            } catch (e) {
+                console.error('Screenshot export failed', e);
+                updateStatus('Screenshot export failed', true);
+                if (typeof showToast === 'function') showToast('Screenshot failed: ' + e.message, 'error');
+            }
+        }
+
         /* ═══ Background canvas auto-refresh ═══
          * Keeps the edit-mode canvas backdrop in sync with the device even
          * when LIVE is off, so users don't have to hit Sync to see the
@@ -11122,11 +11156,16 @@
             body.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted); grid-column:1/-1;">Loading...</div>';
 
             try {
+                /* ?details=1 makes /api/layout/list and /api/font/list
+                 * return [{name, size}, ...] instead of just names — so the
+                 * Storage Manager can show actual per-file KB instead of
+                 * everything reading "0 B" (the old shape forced the JS to
+                 * fake size:0). Image list always returned size. */
                 const [storageResp, layoutsResp, imagesResp, fontsResp] = await Promise.all([
                     fetch('/api/storage/info'),
-                    fetch('/api/layout/list'),
+                    fetch('/api/layout/list?details=1'),
                     fetch('/api/image/list'),
-                    fetch('/api/font/list')
+                    fetch('/api/font/list?details=1')
                 ]);
 
                 if (!storageResp.ok) throw new Error(`Storage info failed: ${storageResp.status}`);
@@ -11139,9 +11178,13 @@
                 const images = await imagesResp.json();
                 const fonts = await fontsResp.json();
 
-                const intLayouts = (layoutData.layouts || []).map(n => ({name: n, size: 0}));
-                const intImages = images || [];
-                const intFonts = (fonts || []).map(n => ({name: n, size: 0}));
+                /* Normalise: details=1 returns objects, but defensively
+                 * tolerate the legacy string shape in case an older firmware
+                 * is on the device (rolling deploys). */
+                const _toEntry = x => (typeof x === 'string') ? { name: x, size: 0 } : x;
+                const intLayouts = (layoutData.layouts || []).map(_toEntry);
+                const intImages  = images || [];
+                const intFonts   = (fonts || []).map(_toEntry);
 
                 let sdFiles = null;
                 let sdMounted = storage.sd && storage.sd.mounted;
@@ -14641,7 +14684,9 @@
             settings:    '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
             alert:       '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
             car:         '<path d="M5 11l1.5-4.5a2 2 0 0 1 1.9-1.5h7.2a2 2 0 0 1 1.9 1.5L19 11"/><path d="M5 11h14v6a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H8v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-6z"/><circle cx="7.5" cy="14.5" r="0.8" fill="currentColor"/><circle cx="16.5" cy="14.5" r="0.8" fill="currentColor"/>',
-            chip:        '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 7v4M9 13v4M15 7v10"/><circle cx="15" cy="7" r="1.5" fill="currentColor"/>'
+            chip:        '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 7v4M9 13v4M15 7v10"/><circle cx="15" cy="7" r="1.5" fill="currentColor"/>',
+            camera:      '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+            folder:      '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
         };
         function _iconSvg(name) {
             const path = _menuIcons[name];
@@ -14674,8 +14719,10 @@
                     { type: 'select', id: 'screenModeSelect' }
                 ]},
                 { heading: 'File', items: [
-                    { type: 'button', label: 'Import .rdm',   icon: 'upload',   onclick: 'importRdm()' },
-                    { type: 'button', label: 'Export .rdm',   icon: 'download', onclick: 'exportRdm()' }
+                    { type: 'button', label: 'Import .rdm',         icon: 'upload',   onclick: 'importRdm()' },
+                    { type: 'button', label: 'Export .rdm',         icon: 'download', onclick: 'exportRdm()' },
+                    { type: 'button', label: 'Export Screenshot',   icon: 'camera',   onclick: 'downloadScreenshot()' },
+                    { type: 'button', label: 'File Manager…',  icon: 'folder',   onclick: 'openStorageManager()' }
                 ]},
                 { heading: 'Edit', items: [
                     { type: 'button', label: 'Undo',  icon: 'undo', onclick: 'undo()' },

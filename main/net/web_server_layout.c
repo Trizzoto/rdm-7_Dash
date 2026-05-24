@@ -525,6 +525,11 @@ static const httpd_uri_t layout_preview_uri = {.uri = "/api/layout/preview",
 												   layout_preview_handler,
 											   .user_ctx = NULL};
 
+/* GET /api/layout/list
+ *   default:        {"active":"foo", "layouts":["name1","name2",...]}
+ *                   (legacy shape — used by layout-picker dropdowns)
+ *   ?details=1:     {"active":"foo", "layouts":[{"name":"name1","size":N},...]}
+ *                   (file-manager shape — sized for Storage Manager) */
 static esp_err_t layout_list_handler(httpd_req_t *req) {
 	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 	int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
@@ -532,6 +537,16 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to list layouts");
 		return ESP_FAIL;
+	}
+
+	bool details = false;
+	char query[32];
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+		char v[8];
+		if (httpd_query_key_value(query, "details", v, sizeof(v)) == ESP_OK &&
+		    (v[0] == '1' || v[0] == 't' || v[0] == 'T')) {
+			details = true;
+		}
 	}
 
 	char active_name[LAYOUT_MAX_NAME];
@@ -545,7 +560,22 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	for (int i = 0; i < count; i++) {
 		/* Hide system layouts (prefixed with _) from the layout list */
 		if (names[i][0] == '_') continue;
-		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+		if (details) {
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", names[i]);
+			/* Stat the file on LittleFS. Small layouts are <2 KB, default
+			 * is a few KB; stat is cheap so doing it for the file-manager
+			 * view (typically a handful of layouts) is fine. */
+			/* "/lfs/layouts/" + LAYOUT_MAX_NAME (32) + ".json" + NUL — round up. */
+			char path[64];
+			snprintf(path, sizeof(path), "%s/%s.json", LFS_LAYOUT_DIR, names[i]);
+			struct stat st;
+			cJSON_AddNumberToObject(obj, "size",
+			    (stat(path, &st) == 0) ? (double)st.st_size : 0.0);
+			cJSON_AddItemToArray(arr, obj);
+		} else {
+			cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+		}
 	}
 
 	char *json_str = cJSON_PrintUnformatted(root);

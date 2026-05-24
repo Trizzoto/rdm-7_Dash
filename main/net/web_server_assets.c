@@ -413,14 +413,36 @@ static const httpd_uri_t font_upload_uri = {.uri = "/api/font/upload",
                                              .handler = font_upload_handler,
                                              .user_ctx = NULL};
 
-/* GET /api/font/list — returns JSON array of font family names */
+/* GET /api/font/list
+ *   default:        ["Family1", "Family2", ...]    (legacy shape, used by
+ *                   font pickers / DBC import that only need names)
+ *   ?details=1:     [{"name":"Family1","size":12345}, ...]  (file-manager
+ *                   shape, lets the Storage Manager show per-font KB) */
 static esp_err_t font_list_handler(httpd_req_t *req) {
+	bool details = false;
+	char query[32];
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+		char v[8];
+		if (httpd_query_key_value(query, "details", v, sizeof(v)) == ESP_OK &&
+		    (v[0] == '1' || v[0] == 't' || v[0] == 'T')) {
+			details = true;
+		}
+	}
+
 	cJSON *arr = cJSON_CreateArray();
 	uint8_t count = font_manager_family_count();
 	for (uint8_t i = 0; i < count; i++) {
 		const char *fname = font_manager_family_name(i);
-		if (fname)
+		if (!fname) continue;
+		if (details) {
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", fname);
+			cJSON_AddNumberToObject(obj, "size",
+			    (double)font_manager_family_size(i));
+			cJSON_AddItemToArray(arr, obj);
+		} else {
 			cJSON_AddItemToArray(arr, cJSON_CreateString(fname));
+		}
 	}
 
 	char *json_str = cJSON_PrintUnformatted(arr);

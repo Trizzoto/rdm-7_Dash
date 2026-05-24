@@ -41,7 +41,7 @@ const lv_font_t *widget_resolve_font(const char *name) {
 		memcpy(family, name, flen);
 		family[flen] = '\0';
 		uint16_t size = (uint16_t)atoi(colon + 1);
-		if (size >= 8 && size <= 128) {
+		if (size >= 8 && size <= 200) {
 			const lv_font_t *f = font_manager_get(family, size);
 			if (f) return f;
 		}
