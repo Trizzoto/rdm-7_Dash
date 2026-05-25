@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "gradient_stops.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -24,16 +25,20 @@ typedef struct {
     uint8_t    arc_width;       /* default: 10 */
     lv_color_t arc_color;       /* default: 0x00FF00 — fill color (used when not in redline/limiter) */
     lv_color_t bg_arc_color;    /* default: 0x333333 */
-    /* Optional 2-stop value-interpolated colour. When enabled, the
-     * indicator stroke is lerp(arc_color, grad_end_color, t) where
-     * t = (value - signal_min) / (signal_max - signal_min). Effectively
-     * a gradient that walks with the value instead of being painted
-     * across the full angular sweep (LVGL v8 doesn't expose arc-stroke
-     * gradients natively — angular-sweep would need custom draw). The
-     * redline / limiter zones still override with their own colours so
-     * danger visibility isn't lost. */
-    bool       grad_enabled;
-    lv_color_t grad_end_color;
+    /* Optional N-stop value-interpolated colour. When grad_stops.count
+     * is ≥2, the indicator stroke samples the stops at
+     * t = (value - signal_min) / (signal_max - signal_min) — effectively
+     * a gradient that walks with the value, lerping between whichever
+     * two stops bracket t. LVGL v8 doesn't expose arc-stroke gradients
+     * natively (angular sweep would need a custom draw), so this
+     * value-walked colour change is the closest visual equivalent.
+     *
+     * Redline / limiter still override with their own colours so
+     * danger visibility isn't lost. Stops are absolute colours — they
+     * don't inherit from arc_color or its night override (legacy
+     * 2-stop layouts get migrated to [{0, arc_color}, {100, end}] at
+     * load time to preserve prior visuals). */
+    gradient_stops_t grad_stops;
     uint8_t    bg_arc_width;    /* default: 10 */
     bool       rounded_ends;    /* default: false */
     lv_obj_t  *arc_obj;         /* runtime only */

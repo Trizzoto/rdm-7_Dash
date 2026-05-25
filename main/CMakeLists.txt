@@ -88,6 +88,8 @@ idf_component_register(
         "widgets/signal_internal.c"
         "widgets/signal.c"
         "widgets/signal_sim.c"
+        "widgets/gradient_stops.c"
+        "widgets/gradient_image.c"
         "layout/layout_manager.c"
         "layout/default_layout.c"
         "layout/layout_loader.c"

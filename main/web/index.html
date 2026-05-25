@@ -2310,6 +2310,80 @@
         }
         .color-field-wrap input[type="text"] { flex: 1; }
 
+        /* ── Multi-stop gradient editor (Photoshop-style) ──────────────── */
+        .grad-editor { display:flex; flex-direction:column; gap:6px; }
+        .grad-editor .ge-strip-wrap {
+            position: relative;
+            height: 36px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background:
+              repeating-conic-gradient(#444 0 25%, #555 0 50%) 0 0 / 12px 12px;
+            cursor: copy;
+            user-select: none;
+        }
+        .grad-editor .ge-strip {
+            position: absolute; inset: 0;
+            border-radius: var(--radius-sm);
+        }
+        .grad-editor .ge-markers {
+            position: relative;
+            height: 18px;
+            margin-top: 4px;
+        }
+        .grad-editor .ge-marker {
+            position: absolute;
+            top: 0;
+            width: 14px; height: 18px;
+            transform: translateX(-50%);
+            cursor: grab;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .grad-editor .ge-marker:active { cursor: grabbing; }
+        .grad-editor .ge-marker .ge-mtri {
+            width: 0; height: 0;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 7px solid var(--text-muted);
+        }
+        .grad-editor .ge-marker .ge-mbox {
+            width: 12px; height: 11px;
+            border: 1px solid var(--text-muted);
+            border-top: 0;
+            background: #000;
+        }
+        .grad-editor .ge-marker.selected .ge-mtri { border-bottom-color: var(--accent); }
+        .grad-editor .ge-marker.selected .ge-mbox { border-color: var(--accent); border-width: 2px; }
+        .grad-editor .ge-controls {
+            display: flex; gap: 8px; align-items: center;
+            font-size: 11px;
+            padding: 4px 0;
+        }
+        .grad-editor .ge-controls input[type="color"] {
+            width: 28px; height: 24px; padding: 0;
+            border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer;
+        }
+        .grad-editor .ge-controls input[type="text"],
+        .grad-editor .ge-controls input[type="number"] {
+            background: var(--bg); border: 1px solid var(--border);
+            color: var(--text); border-radius: var(--radius-sm);
+            padding: 3px 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+        }
+        .grad-editor .ge-controls .ge-pos { width: 56px; }
+        .grad-editor .ge-controls .ge-hex { width: 80px; }
+        .grad-editor .ge-controls .ge-del {
+            background: none; border: 1px solid hsl(0,70%,60%);
+            color: hsl(0,70%,60%);
+            padding: 2px 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 11px;
+        }
+        .grad-editor .ge-controls .ge-del[disabled] { opacity: 0.4; cursor: not-allowed; }
+        .grad-editor .ge-empty {
+            text-align: center; padding: 10px; font-size: 11px;
+            color: var(--text-muted);
+        }
+
         .image-picker-wrap {
             display: flex; gap: 6px; align-items: center;
         }
@@ -4928,6 +5002,43 @@
                 if (w.type === 'image' && w.config && w.config.image_scale !== undefined && !w.config.auto_size) {
                     w.config.image_scale = Math.round(w.config.image_scale * 100 / 256);
                 }
+                /* Migrate legacy 2-stop gradient (grad_enabled + grad_end_color
+                 * for arc/rpm_bar, bar_grad_enabled + bar_grad_end_color for
+                 * bar) into the new grad_stops array. Skipped when the layout
+                 * already has grad_stops — the new schema wins. Old fields
+                 * are then deleted so they don't round-trip back to disk on
+                 * the next save. Colour values are still in firmware RGB565
+                 * at this point — convertWidgetColors will rescale them
+                 * alongside the rest of the widget's colours immediately
+                 * below. */
+                if (w.config && !Array.isArray(w.config.grad_stops)) {
+                    const enabled = (w.type === 'bar')
+                        ? !!w.config.bar_grad_enabled
+                        : !!w.config.grad_enabled;
+                    const endCol = (w.type === 'bar')
+                        ? w.config.bar_grad_end_color
+                        : w.config.grad_end_color;
+                    if (enabled && typeof endCol === 'number') {
+                        const baseKey = (w.type === 'arc')     ? 'arc_color'
+                                      : (w.type === 'rpm_bar') ? 'bar_color'
+                                      :                          'bar_in_range_color';
+                        const baseCol = (typeof w.config[baseKey] === 'number')
+                            ? w.config[baseKey] : 0x000000;
+                        w.config.grad_stops = [
+                            { pos: 0,   color: baseCol },
+                            { pos: 100, color: endCol  }
+                        ];
+                    }
+                }
+                /* Always drop the legacy fields so a save doesn't preserve
+                 * them and confuse the inspector (the field-type for these
+                 * has been removed from WIDGET_DEFS). */
+                if (w.config) {
+                    delete w.config.grad_enabled;
+                    delete w.config.grad_end_color;
+                    delete w.config.bar_grad_enabled;
+                    delete w.config.bar_grad_end_color;
+                }
             });
             /* Convert firmware RGB565 colors → RGB888 for editor (after rule overrides are in object format) */
             convertWidgetColors(data.widgets, rgb565to888);
@@ -5004,6 +5115,16 @@
                 def.fields.forEach(f => {
                     if (f.type === 'color' && w.config[f.name] !== undefined) {
                         w.config[f.name] = convertFn(w.config[f.name]);
+                    }
+                    /* gradient_stops carries an array of {pos, color}; convert
+                     * each stop's colour so the editor's CSS swatches end up
+                     * matching whatever rgb space the calling pass wants. */
+                    if (f.type === 'gradient_stops' && Array.isArray(w.config[f.name])) {
+                        w.config[f.name].forEach(s => {
+                            if (s && typeof s.color === 'number') {
+                                s.color = convertFn(s.color);
+                            }
+                        });
                     }
                 });
                 /* Convert colors in rule overrides (object format: {fieldName: value}) */
@@ -5224,12 +5345,11 @@
                             { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
-                            /* 2-stop horizontal gradient: lerps from Bar Color
-                             * (left) to Gradient End (right). Suppressed
-                             * during limiter flash/solid so the alert visual
-                             * stays solid and unmissable. */
-                            { name: "grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
-                            { name: "grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "grad_enabled" },
+                            /* N-stop horizontal gradient. 2 stops use a native
+                             * LVGL gradient on the indicator; 3+ are baked into
+                             * an RGB565 image. Suppressed during limiter
+                             * flash/solid so the alert visual stays unambiguous. */
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance" },
                             { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "appearance",
                               options: [
                                   { v: 0, l: "None" },
@@ -5301,11 +5421,11 @@
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                             { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
-                            /* 2-stop horizontal gradient across the in-range
-                             * fill. Low/high alert states keep their solid
-                             * colours so warning visibility isn't lost. */
-                            { name: "bar_grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
-                            { name: "bar_grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "bar_grad_enabled" },
+                            /* N-stop horizontal gradient across the in-range fill.
+                             * Low/high alert states keep their solid colours so
+                             * warning visibility isn't lost. 2 stops use native
+                             * LVGL gradient, 3+ uses a baked image. */
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance" },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                             { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -5612,13 +5732,13 @@
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
-                            /* 2-stop value-interpolated gradient. The arc
-                             * stroke colour lerps between Arc Color (at
-                             * signal_min) and Gradient End (at signal_max)
-                             * as the signal changes. Redline / limiter
-                             * still override with their own colours. */
-                            { name: "grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
-                            { name: "grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "grad_enabled" },
+                            /* N-stop value-walked gradient. As the signal moves
+                             * between signal_min and signal_max, the arc stroke
+                             * colour walks through the stops (sampling the
+                             * bracket containing the normalised value).
+                             * Redline / limiter still override with their own
+                             * colours. */
+                            { name: "grad_stops", label: "Gradient", type: "gradient_stops", def: [], cat: "appearance" },
                             { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
@@ -7642,6 +7762,18 @@
                            "
                            ${disabledAttr}>
                 </div>`;
+            } else if (f.type === 'gradient_stops') {
+                /* Photoshop-style multi-stop gradient editor. The actual
+                 * draggable markers + color picker are wired up in a
+                 * deferred setup so the DOM is ready first; here we just
+                 * emit the container and the setup() schedule. */
+                const uid = f.name + '_' + Math.random().toString(36).substring(2, 7);
+                const stops = Array.isArray(val) ? val : [];
+                /* Stash stops on a per-inspector-render scratch so the
+                 * deferred setup can read the source-of-truth array
+                 * regardless of whether the field's default was passed. */
+                html += `<div id="gradEdit_${uid}" class="grad-editor" data-field="${f.name}"></div>`;
+                setTimeout(() => _setupGradientEditor('gradEdit_' + uid, f.name, stops, disabledAttr.length > 0), 0);
             } else if (f.type === 'can_id') {
                 const hexVal = val ? '0x' + Number(val).toString(16).toUpperCase().padStart(3, '0') : '0x';
                 html += `<input type="text" value="${hexVal}" placeholder="0x" spellcheck="false" style="font-family:'JetBrains Mono',monospace; width:90px;"
@@ -9005,6 +9137,280 @@
             }
             pushHistory();
             if (preview && document.getElementById('livePreviewToggle').checked) triggerPreview();
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+         *  Multi-stop gradient editor
+         *  ─────────────────────────
+         *  Photoshop-style: horizontal preview strip + draggable house-
+         *  icon markers + per-stop controls (color + position + delete).
+         *  Click empty strip to add a stop at that position. Click marker
+         *  to select. Selected color picker writes back to that stop.
+         *
+         *  Backing model: the field on the widget config is an array of
+         *  { pos: 0..100, color: rgb888 } objects. Editor manages a
+         *  selected-stop index in DOM data attrs (no global state).
+         *  Persists back via updateWidgetConfigField on every mutation
+         *  so undo/redo + auto-save catch each edit naturally. */
+
+        function _gradGetStops(fieldName) {
+            if (selectedIndex < 0) return [];
+            const w = currentLayout.widgets[selectedIndex];
+            const v = w && w.config ? w.config[fieldName] : null;
+            return Array.isArray(v) ? v : [];
+        }
+
+        function _gradSaveStops(fieldName, stops) {
+            /* Normalise: sort by pos ascending, clamp positions, dedupe NaN. */
+            const clean = stops
+                .filter(s => s && typeof s.color === 'number')
+                .map(s => ({
+                    pos: Math.max(0, Math.min(100, Math.round(Number(s.pos) || 0))),
+                    color: s.color | 0
+                }))
+                .sort((a, b) => a.pos - b.pos);
+            updateWidgetConfigField(fieldName, clean, false);
+        }
+
+        function _gradStopsToCss(stops) {
+            /* Render to CSS linear-gradient for the preview strip. */
+            if (!stops || stops.length === 0) return 'transparent';
+            if (stops.length === 1) {
+                return '#' + (stops[0].color & 0xFFFFFF).toString(16).padStart(6, '0');
+            }
+            const parts = stops.map(s =>
+                '#' + (s.color & 0xFFFFFF).toString(16).padStart(6, '0') + ' ' + s.pos + '%'
+            );
+            return 'linear-gradient(to right, ' + parts.join(', ') + ')';
+        }
+
+        function _setupGradientEditor(containerId, fieldName, initialStops, disabled) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            /* Selection state lives on the element so multiple gradient
+             * editors on the page don't fight each other. -1 = no selection. */
+            el.dataset.sel = '-1';
+            _gradRender(el, fieldName, disabled);
+        }
+
+        function _gradRender(el, fieldName, disabled) {
+            const stops = _gradGetStops(fieldName);
+            const sel = parseInt(el.dataset.sel, 10);
+            const validSel = (sel >= 0 && sel < stops.length) ? sel : -1;
+            const css = _gradStopsToCss(stops);
+            const disAttr = disabled ? 'disabled' : '';
+
+            /* Strip + markers. If no stops, prompt to add. */
+            let html = '';
+            if (stops.length === 0) {
+                html += `<div class="ge-empty">No gradient. Click the strip below to add a stop.</div>`;
+            }
+            html += `<div class="ge-strip-wrap" data-field="${fieldName}">
+                <div class="ge-strip" style="background:${css}"></div>
+            </div>
+            <div class="ge-markers">`;
+            stops.forEach((s, i) => {
+                const cls = (i === validSel) ? 'ge-marker selected' : 'ge-marker';
+                const hex = '#' + (s.color & 0xFFFFFF).toString(16).padStart(6, '0');
+                html += `<div class="${cls}" data-idx="${i}" style="left:${s.pos}%">
+                    <div class="ge-mtri"></div>
+                    <div class="ge-mbox" style="background:${hex}"></div>
+                </div>`;
+            });
+            html += `</div>`;
+
+            /* Selected-stop controls. Hidden when nothing is selected. */
+            if (validSel >= 0) {
+                const s = stops[validSel];
+                const hex = (s.color & 0xFFFFFF).toString(16).toUpperCase().padStart(6, '0');
+                html += `<div class="ge-controls">
+                    <input type="color" value="#${hex}" ${disAttr}
+                        oninput="_gradOnColorChange('${el.id}', '${fieldName}', this.value)">
+                    <input type="text" class="ge-hex" value="0x${hex}" ${disAttr}
+                        oninput="_gradOnHexChange('${el.id}', '${fieldName}', this.value)">
+                    <span style="color:var(--text-muted);">@</span>
+                    <input type="number" class="ge-pos" min="0" max="100" value="${s.pos}" ${disAttr}
+                        oninput="_gradOnPosChange('${el.id}', '${fieldName}', this.value)">
+                    <span style="color:var(--text-muted);">%</span>
+                    <button class="ge-del" ${disAttr} ${stops.length <= 2 ? 'disabled title="At least 2 stops are required"' : 'title="Delete stop"'}
+                        onclick="_gradOnDelete('${el.id}', '${fieldName}')">Delete</button>
+                </div>`;
+            }
+
+            el.innerHTML = html;
+
+            if (disabled) return;
+
+            /* Wire interactions. Click strip to add; click marker to
+             * select; drag marker to reposition. */
+            const stripWrap = el.querySelector('.ge-strip-wrap');
+            if (stripWrap) {
+                stripWrap.addEventListener('click', (evt) => {
+                    /* Ignore clicks that originate from a marker — those
+                     * are handled by the marker's own pointerdown / select
+                     * flow. */
+                    if (evt.target.closest('.ge-marker')) return;
+                    const rect = stripWrap.getBoundingClientRect();
+                    const pos = Math.round(((evt.clientX - rect.left) / rect.width) * 100);
+                    _gradOnAddAtPos(el.id, fieldName, pos);
+                });
+            }
+
+            el.querySelectorAll('.ge-marker').forEach(m => {
+                const idx = parseInt(m.dataset.idx, 10);
+                m.addEventListener('pointerdown', (evt) => {
+                    evt.preventDefault();
+                    el.dataset.sel = String(idx);
+                    _gradRender(el, fieldName, disabled);
+                    _gradStartDrag(el, fieldName, idx, evt);
+                });
+            });
+        }
+
+        function _gradStartDrag(el, fieldName, idx, downEvt) {
+            const stripWrap = el.querySelector('.ge-strip-wrap');
+            if (!stripWrap) return;
+            const rect = stripWrap.getBoundingClientRect();
+            /* Capture the original pos so the drag handler can compute
+             * with the click-offset accounted for. */
+            let lastPos = -1;
+            const onMove = (evt) => {
+                let pos = Math.round(((evt.clientX - rect.left) / rect.width) * 100);
+                if (pos < 0) pos = 0;
+                if (pos > 100) pos = 100;
+                if (pos === lastPos) return;
+                lastPos = pos;
+                const stops = _gradGetStops(fieldName).slice();
+                if (idx < 0 || idx >= stops.length) return;
+                stops[idx] = { pos, color: stops[idx].color };
+                _gradSaveStops(fieldName, stops);
+                /* Re-find the index in the now-sorted array so selection
+                 * follows the marker through reorderings. */
+                const sortedIdx = _gradGetStops(fieldName).findIndex(
+                    s => s.pos === pos && s.color === stops[idx].color);
+                if (sortedIdx >= 0) {
+                    el.dataset.sel = String(sortedIdx);
+                    idx = sortedIdx;
+                }
+                _gradRender(el, fieldName, false);
+            };
+            const onUp = () => {
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+            };
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+        }
+
+        function _gradOnAddAtPos(containerId, fieldName, pos) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const stops = _gradGetStops(fieldName).slice();
+            /* Cap at GRADIENT_MAX_STOPS (matches firmware). */
+            if (stops.length >= 8) return;
+            /* Default colour: sample the existing gradient at the click
+             * position so the new stop blends in visually. Empty list
+             * defaults to mid-grey. */
+            let color = 0x808080;
+            if (stops.length >= 2) {
+                color = _gradSampleColor(stops, pos / 100);
+            } else if (stops.length === 1) {
+                color = stops[0].color;
+            }
+            stops.push({ pos, color });
+            _gradSaveStops(fieldName, stops);
+            /* Find the just-added stop in the freshly-sorted array so
+             * we can select it. Match by pos+color (good enough — we
+             * just inserted that pair). */
+            const fresh = _gradGetStops(fieldName);
+            const newIdx = fresh.findIndex(s => s.pos === pos && s.color === color);
+            if (newIdx >= 0) el.dataset.sel = String(newIdx);
+            _gradRender(el, fieldName, false);
+        }
+
+        function _gradSampleColor(stops, t) {
+            /* JS mirror of the firmware's gradient_stops_sample —
+             * lerp between the two stops that bracket t (0..1). */
+            if (!stops || stops.length === 0) return 0;
+            if (t <= 0) return stops[0].color;
+            if (t >= 1) return stops[stops.length - 1].color;
+            const tPct = t * 100;
+            let i = 1;
+            for (; i < stops.length; i++) {
+                if (stops[i].pos >= tPct) break;
+            }
+            if (i >= stops.length) i = stops.length - 1;
+            const a = stops[i - 1], b = stops[i];
+            const span = b.pos - a.pos;
+            const local = span > 0 ? (tPct - a.pos) / span : 0;
+            const ar = (a.color >> 16) & 0xFF, ag = (a.color >> 8) & 0xFF, ab = a.color & 0xFF;
+            const br = (b.color >> 16) & 0xFF, bg = (b.color >> 8) & 0xFF, bb = b.color & 0xFF;
+            const mr = Math.round(ar + (br - ar) * local);
+            const mg = Math.round(ag + (bg - ag) * local);
+            const mb = Math.round(ab + (bb - ab) * local);
+            return (mr << 16) | (mg << 8) | mb;
+        }
+
+        function _gradOnColorChange(containerId, fieldName, hexInput) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const sel = parseInt(el.dataset.sel, 10);
+            const stops = _gradGetStops(fieldName).slice();
+            if (sel < 0 || sel >= stops.length) return;
+            const v = parseInt(hexInput.replace('#', ''), 16);
+            if (isNaN(v)) return;
+            /* Snap to RGB565 for parity with the rest of the widget colours. */
+            const snapped = snapToRgb565(v);
+            stops[sel] = { pos: stops[sel].pos, color: snapped };
+            _gradSaveStops(fieldName, stops);
+            _gradRender(el, fieldName, false);
+        }
+
+        function _gradOnHexChange(containerId, fieldName, hexInput) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const sel = parseInt(el.dataset.sel, 10);
+            const stops = _gradGetStops(fieldName).slice();
+            if (sel < 0 || sel >= stops.length) return;
+            const v = parseInt(hexInput, 16);
+            if (isNaN(v)) return;
+            const snapped = snapToRgb565(v);
+            stops[sel] = { pos: stops[sel].pos, color: snapped };
+            _gradSaveStops(fieldName, stops);
+            /* Skip the full re-render on every keystroke so the user
+             * isn't fighting input focus; the live preview comes back
+             * on the next render trigger (drag end, color picker, etc.). */
+        }
+
+        function _gradOnPosChange(containerId, fieldName, posInput) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const sel = parseInt(el.dataset.sel, 10);
+            const stops = _gradGetStops(fieldName).slice();
+            if (sel < 0 || sel >= stops.length) return;
+            let p = parseInt(posInput, 10);
+            if (isNaN(p)) return;
+            if (p < 0) p = 0; if (p > 100) p = 100;
+            stops[sel] = { pos: p, color: stops[sel].color };
+            _gradSaveStops(fieldName, stops);
+            /* After save the array is re-sorted; chase the moved stop
+             * so the selection sticks visually. */
+            const fresh = _gradGetStops(fieldName);
+            const newIdx = fresh.findIndex(s => s.pos === p && s.color === stops[sel].color);
+            if (newIdx >= 0) el.dataset.sel = String(newIdx);
+            _gradRender(el, fieldName, false);
+        }
+
+        function _gradOnDelete(containerId, fieldName) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            const sel = parseInt(el.dataset.sel, 10);
+            const stops = _gradGetStops(fieldName).slice();
+            if (sel < 0 || sel >= stops.length || stops.length <= 2) return;
+            stops.splice(sel, 1);
+            el.dataset.sel = '-1';
+            _gradSaveStops(fieldName, stops);
+            _gradRender(el, fieldName, false);
         }
 
         function updateWidgetConfigField(field, val, isNumeric) {

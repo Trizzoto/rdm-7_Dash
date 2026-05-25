@@ -1,5 +1,6 @@
 #pragma once
 #include "lvgl.h"
+#include "gradient_stops.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
 #include <stdbool.h>
@@ -18,13 +19,16 @@ typedef struct {
 	int32_t  gauge_max;
 	int32_t  redline;
 	lv_color_t bar_color;
-	/* Optional 2-stop horizontal gradient on the fill. Applies only
-	 * outside redline/limiter — those states keep solid colour so the
-	 * "you're about to break something" visual stays unambiguous.
-	 * Default disabled with end colour matching bar_color (toggling on
-	 * without setting an end colour is a no-op visually). */
-	bool       grad_enabled;
-	lv_color_t grad_end_color;
+	/* Optional N-stop horizontal gradient on the fill. 2 stops use
+	 * native LVGL bg_grad; 3+ are baked into an RGB565 image in PSRAM
+	 * and applied as the indicator's bg_img (LVGL clips to fill width
+	 * as the bar rises). Suppressed during redline / limiter so the
+	 * "you're about to break something" alert visual stays solid and
+	 * unambiguous. Legacy 2-stop layouts (grad_enabled + grad_end_color)
+	 * are migrated to a 2-stop array at load time. */
+	gradient_stops_t grad_stops;
+	lv_img_dsc_t    *grad_image;
+	uint16_t         grad_image_width;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color

@@ -1,5 +1,6 @@
 #include "widget_rpm_bar.h"
 #include "widget_rules.h"
+#include "gradient_image.h"
 #include "screen_config.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -599,21 +600,60 @@ static void _apply_limiter_effect(void) {
 
 	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
 	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	/* Gradient: only active when not flashing/over-limiter, so the alert
-	 * visual stays unambiguous. Start = bar_color (or limiter colour
-	 * mid-flash), end = grad_end_color. Setting GRAD_DIR_NONE clears any
-	 * prior gradient when the user toggles the feature off. */
-	bool grad_on = (rd && rd->grad_enabled && !over_limiter);
-	if (grad_on) {
-		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, rd->grad_end_color,
+	/* Multi-stop gradient — suppressed while flashing or over-limiter so
+	 * the alert visual stays solid. 2 stops use the native LVGL gradient
+	 * path; 3+ are baked into an RGB565 image (regenerated on first
+	 * render and on width change). Falls back to first+last stops as a
+	 * 2-stop if the PSRAM bake fails. */
+	bool grad_active = (rd && rd->grad_stops.count >= 2 && !over_limiter);
+	if (grad_active && rd->grad_stops.count == 2) {
+		lv_color_t start = { .full = rd->grad_stops.stops[0].color };
+		lv_color_t end   = { .full = rd->grad_stops.stops[1].color };
+		lv_obj_set_style_bg_color(rpm_bar_gauge, start,
+		                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, end,
 		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_HOR,
 		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_img_src(rpm_bar_gauge, NULL,
+		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	} else if (grad_active) {
+		uint16_t w = (uint16_t)lv_obj_get_width(rpm_bar_gauge);
+		uint16_t h = (uint16_t)lv_obj_get_height(rpm_bar_gauge);
+		if (rd->grad_image && rd->grad_image_width != w) {
+			gradient_image_free(rd->grad_image);
+			rd->grad_image = NULL;
+			rd->grad_image_width = 0;
+		}
+		if (!rd->grad_image && w > 0 && h > 0) {
+			rd->grad_image = gradient_image_create(w, h, &rd->grad_stops);
+			if (rd->grad_image) rd->grad_image_width = w;
+		}
+		if (rd->grad_image) {
+			lv_obj_set_style_bg_img_src(rpm_bar_gauge, rd->grad_image,
+			                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_img_opa(rpm_bar_gauge, LV_OPA_COVER,
+			                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
+			                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		} else {
+			/* Image bake failed — degrade to first+last 2-stop gradient. */
+			lv_color_t start = { .full = rd->grad_stops.stops[0].color };
+			lv_color_t end   = { .full = rd->grad_stops.stops[rd->grad_stops.count - 1].color };
+			lv_obj_set_style_bg_color(rpm_bar_gauge, start,
+			                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_grad_color(rpm_bar_gauge, end,
+			                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_HOR,
+			                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		}
 	} else {
 		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
 		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_img_src(rpm_bar_gauge, NULL,
+		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
 
 	/* PART_MAIN is the empty (unfilled) portion of the track. Keep it at
@@ -1092,10 +1132,13 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "rpm_max", rd->gauge_max);
 	cJSON_AddNumberToObject(cfg, "redline", rd->redline);
 	cJSON_AddNumberToObject(cfg, "bar_color", (int)rd->bar_color.full);
-	if (rd->grad_enabled)
-		cJSON_AddBoolToObject(cfg, "grad_enabled", true);
-	if (rd->grad_enabled || rd->grad_end_color.full != rd->bar_color.full)
-		cJSON_AddNumberToObject(cfg, "grad_end_color", (int)rd->grad_end_color.full);
+	{
+		/* Multi-stop gradient. Old grad_enabled/grad_end_color fields
+		 * are dropped on save — _rpm_bar_from_json still reads them
+		 * for legacy-layout migration. */
+		cJSON *gs = gradient_stops_to_json(&rd->grad_stops);
+		if (gs) cJSON_AddItemToObject(cfg, "grad_stops", gs);
+	}
 	cJSON_AddNumberToObject(cfg, "limiter_effect", rd->limiter_effect);
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
@@ -1130,10 +1173,16 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_color");
 	if (cJSON_IsNumber(item)) rd->bar_color.full = (uint32_t)item->valueint;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
-	if (cJSON_IsBool(item)) rd->grad_enabled = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
-	if (cJSON_IsNumber(item)) rd->grad_end_color.full = (uint32_t)item->valueint;
+	/* Multi-stop gradient with legacy-2stop fallback. */
+	const cJSON *gs_arr = cJSON_GetObjectItemCaseSensitive(cfg, "grad_stops");
+	if (!gradient_stops_from_json(gs_arr, &rd->grad_stops)) {
+		const cJSON *ge  = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
+		const cJSON *gec = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
+		if (cJSON_IsBool(ge) && cJSON_IsTrue(ge) && cJSON_IsNumber(gec)) {
+			gradient_stops_install_legacy_2stop(&rd->grad_stops,
+				rd->bar_color.full, (uint16_t)gec->valueint);
+		}
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_effect");
 	if (cJSON_IsNumber(item)) rd->limiter_effect = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_value");
@@ -1217,6 +1266,12 @@ static void _rpm_bar_destroy(widget_t *w) {
 		/* Tear down the shared limiter flash timer — it references nothing
 		 * widget-specific but there's no point running it without a bar. */
 		_ensure_flash_timer(0);
+		if (rbd) {
+			/* PSRAM-backed baked gradient image — NULL for ≤2-stop and
+			 * plain solid bars. */
+			gradient_image_free(rbd->grad_image);
+			rbd->grad_image = NULL;
+		}
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;
@@ -1372,8 +1427,8 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->gauge_max = 8000;
 	rd->redline = 6500;
 	rd->bar_color = lv_color_hex(0x00FF00);  /* green */
-	rd->grad_enabled = false;
-	rd->grad_end_color = rd->bar_color;
+	/* grad_stops zero-initialised by calloc — count=0 means no gradient,
+	 * render path falls back to solid bar_color. */
 	rd->limiter_effect = 0;
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */

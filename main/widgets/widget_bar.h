@@ -3,6 +3,7 @@
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "gradient_stops.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
@@ -32,13 +33,18 @@ typedef struct {
 	lv_color_t bar_low_color;
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
-	/* Optional 2-stop horizontal gradient across the fill. Only applies
-	 * while the bar is in-range; low/high alert states keep solid
-	 * bar_low_color / bar_high_color so warning colour isn't lost.
-	 * Default: enabled=false, grad_end_color same as bar_in_range_color
-	 * (so toggling on without setting an end colour is a no-op). */
-	bool       bar_grad_enabled;
-	lv_color_t bar_grad_end_color;
+	/* Optional N-stop horizontal gradient across the fill (LVGL v8
+	 * gradient is 2-stop only; we bake an RGB565 image at bar width ×
+	 * height and assign it as the indicator's bg_img for 3+ stops, fall
+	 * back to native bg_grad for exactly 2 stops). The image lives in
+	 * grad_image and is regenerated when stops change or on resize;
+	 * grad_image_width tracks the width it was baked for so we can
+	 * skip pointless rebakes. Low/high alert states still paint solid
+	 * bar_low_color / bar_high_color over the top so warning visuals
+	 * stay unambiguous. */
+	gradient_stops_t grad_stops;
+	lv_img_dsc_t    *grad_image;
+	uint16_t         grad_image_width;
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;

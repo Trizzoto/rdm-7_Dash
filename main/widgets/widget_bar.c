@@ -23,6 +23,7 @@
 #include "ui/ui.h"
 #include "ui/dashboard.h"
 #include "widget_registry.h"
+#include "gradient_image.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -30,6 +31,23 @@
 #include <string.h>
 
 static const char *TAG = "widget_bar";
+
+/* Bake (or rebake) the gradient image when stops + width have changed
+ * since the last bake. Stops count < 3 returns NULL — the 2-stop path
+ * uses native bg_grad_color which is cheaper than carrying an RGB565
+ * image around. Owner is bd; _bar_destroy frees the dsc + buffer. */
+static lv_img_dsc_t *_bar_ensure_grad_image(bar_data_t *bd, uint16_t w, uint16_t h) {
+	if (!bd || bd->grad_stops.count < 3 || w == 0 || h == 0) return NULL;
+	if (bd->grad_image && bd->grad_image_width == w) return bd->grad_image;
+	if (bd->grad_image) {
+		gradient_image_free(bd->grad_image);
+		bd->grad_image = NULL;
+		bd->grad_image_width = 0;
+	}
+	bd->grad_image = gradient_image_create(w, h, &bd->grad_stops);
+	if (bd->grad_image) bd->grad_image_width = w;
+	return bd->grad_image;
+}
 
 /* Default x offsets from screen centre for BAR1 and BAR2 (60% of half-width) */
 static const int16_t s_bar_default_x[2] = {
@@ -409,18 +427,53 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		else { new_color = in_col; in_range = true; }
 		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		/* 2-stop horizontal gradient on the fill, in-range only. Low/high
-		 * alert states keep solid colour so warning visibility isn't lost.
-		 * GRAD_DIR_NONE on the non-gradient branch clears any prior gradient
-		 * style (e.g. after the user toggles gradient off without reload). */
-		if (in_range && bd->bar_grad_enabled) {
-			lv_obj_set_style_bg_grad_color(bd->bar_obj, bd->bar_grad_end_color,
+		/* Multi-stop horizontal gradient on the fill, in-range only.
+		 * Three branches:
+		 *   count == 2: native LVGL bg_grad (cheap, no image alloc)
+		 *   count ≥ 3: baked RGB565 image set as bg_img on the indicator
+		 *              (LVGL clips to fill width as the bar value rises)
+		 *   count < 2 or out-of-range: clear both so a prior gradient
+		 *              doesn't linger after toggling stops off / hitting
+		 *              an alert threshold. */
+		bool grad_active = in_range && bd->grad_stops.count >= 2;
+		if (grad_active && bd->grad_stops.count == 2) {
+			lv_color_t end = { .full = bd->grad_stops.stops[1].color };
+			lv_color_t start = { .full = bd->grad_stops.stops[0].color };
+			lv_obj_set_style_bg_color(bd->bar_obj, start,
+									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_grad_color(bd->bar_obj, end,
 										   LV_PART_INDICATOR | LV_STATE_DEFAULT);
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_HOR,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_img_src(bd->bar_obj, NULL,
+										LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		} else if (grad_active) {
+			lv_img_dsc_t *img = _bar_ensure_grad_image(bd,
+				(uint16_t)lv_obj_get_width(bd->bar_obj),
+				(uint16_t)lv_obj_get_height(bd->bar_obj));
+			if (img) {
+				lv_obj_set_style_bg_img_src(bd->bar_obj, img,
+											LV_PART_INDICATOR | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_img_opa(bd->bar_obj, LV_OPA_COVER,
+											LV_PART_INDICATOR | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
+											 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			} else {
+				/* PSRAM alloc fail — fall back to first+last stop as a 2-stop. */
+				lv_color_t start = { .full = bd->grad_stops.stops[0].color };
+				lv_color_t end   = { .full = bd->grad_stops.stops[bd->grad_stops.count - 1].color };
+				lv_obj_set_style_bg_color(bd->bar_obj, start,
+										  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_grad_color(bd->bar_obj, end,
+											   LV_PART_INDICATOR | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_HOR,
+											 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			}
 		} else {
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_img_src(bd->bar_obj, NULL,
+										LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
 	}
 
@@ -691,11 +744,13 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
-		/* Gradient — defaults-only emission keeps existing layouts byte-identical. */
-		if (bd->bar_grad_enabled)
-			cJSON_AddBoolToObject(cfg, "bar_grad_enabled", true);
-		if (bd->bar_grad_enabled || bd->bar_grad_end_color.full != bd->bar_in_range_color.full)
-			cJSON_AddNumberToObject(cfg, "bar_grad_end_color", (int)bd->bar_grad_end_color.full);
+		/* Multi-stop gradient. Old 2-stop fields (bar_grad_enabled /
+		 * bar_grad_end_color) are dropped on save — they're only read
+		 * back in _bar_from_json for legacy-layout migration. */
+		{
+			cJSON *gs = gradient_stops_to_json(&bd->grad_stops);
+			if (gs) cJSON_AddItemToObject(cfg, "grad_stops", gs);
+		}
 		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
 		/* Defaults-only: emit show_bar_label only when the user has hidden it.
 		 * Saves a few bytes in the common path (default true). */
@@ -788,10 +843,17 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->bar_high_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_in_range_color");
 	if (cJSON_IsNumber(item)) bd->bar_in_range_color.full = (uint32_t)item->valueint;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_enabled");
-	if (cJSON_IsBool(item)) bd->bar_grad_enabled = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_end_color");
-	if (cJSON_IsNumber(item)) bd->bar_grad_end_color.full = (uint32_t)item->valueint;
+	/* Prefer new N-stop array; fall back to the legacy 2-stop fields
+	 * so layouts saved before this revision keep their gradient. */
+	const cJSON *gs_arr = cJSON_GetObjectItemCaseSensitive(cfg, "grad_stops");
+	if (!gradient_stops_from_json(gs_arr, &bd->grad_stops)) {
+		const cJSON *ge  = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_enabled");
+		const cJSON *gec = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_end_color");
+		if (cJSON_IsBool(ge) && cJSON_IsTrue(ge) && cJSON_IsNumber(gec)) {
+			gradient_stops_install_legacy_2stop(&bd->grad_stops,
+				bd->bar_in_range_color.full, (uint16_t)gec->valueint);
+		}
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_value");
 	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_label");
@@ -894,6 +956,11 @@ static void _bar_destroy(widget_t *w) {
 		bd->bar_obj = NULL;
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
+		/* PSRAM-backed baked gradient image; bd->grad_image is NULL
+		 * for ≤2-stop gradients (native LVGL path) and for plain
+		 * solid-colour bars. */
+		gradient_image_free(bd->grad_image);
+		bd->grad_image = NULL;
 	}
 	free(w->type_data);
 	free(w);
@@ -1289,10 +1356,8 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
 	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
 	bd->bar_high_color = THEME_COLOR_RED;
-	/* Gradient starts off and mirrors the solid colour so enabling it with
-	 * no end-colour pick still renders something sensible (solid green). */
-	bd->bar_grad_enabled = false;
-	bd->bar_grad_end_color = THEME_COLOR_GREEN_BRIGHT;
+	/* grad_stops zero-initialised by calloc — count=0 means no gradient,
+	 * render path falls back to the solid bar_in_range_color. */
 	bd->signal_index = -1;
 	bd->bar_bg_color = THEME_COLOR_PANEL;
 	bd->bar_bg_opa = 255;

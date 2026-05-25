@@ -113,19 +113,17 @@ static void _arc_apply_fill_color(arc_data_t *d, bool active) {
     lv_color_t normal = d->_rule_arc_color_set
         ? d->_rule_arc_color
         : NIGHT_PICK_COLOR(active, d->night, arc_color, d->arc_color);
-    /* Optional 2-stop gradient: lerp(normal, grad_end_color, t) where
-     * t walks from 0 at signal_min to 1 at signal_max. Rule and night
-     * overrides keep the START colour intact; the END is the user's
-     * grad_end_color (we don't try to recolour both stops independently
-     * — adding two more night-override fields per widget for an edge
-     * case isn't worth the schema bloat). */
-    if (d->grad_enabled && d->signal_max > d->signal_min) {
+    /* Multi-stop value-walked gradient: sample stops at t and replace
+     * the normal colour wholesale. Stops are absolute (don't inherit
+     * from arc_color / rule overrides / night) — see widget_arc.h
+     * for rationale. Rule overrides and night-mode still apply when
+     * no gradient is configured (count == 0). */
+    if (d->grad_stops.count >= 2 && d->signal_max > d->signal_min) {
         float t = (d->_cached_value - d->signal_min) /
                   (d->signal_max - d->signal_min);
         if (t < 0.0f) t = 0.0f;
         if (t > 1.0f) t = 1.0f;
-        normal = lv_color_mix(d->grad_end_color, normal,
-                              (uint8_t)(t * 255.0f + 0.5f));
+        normal.full = gradient_stops_sample(&d->grad_stops, t);
     }
     lv_color_t redline = NIGHT_PICK_COLOR(active, d->night, redline_color, d->redline_color);
     lv_color_t fill = normal;
@@ -535,10 +533,13 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "arc_width", d->arc_width);
     if (d->arc_color.full != lv_color_hex(ARC_DEFAULT_COLOR).full)
         cJSON_AddNumberToObject(cfg, "arc_color", (int)d->arc_color.full);
-    if (d->grad_enabled)
-        cJSON_AddBoolToObject(cfg, "grad_enabled", true);
-    if (d->grad_enabled || d->grad_end_color.full != d->arc_color.full)
-        cJSON_AddNumberToObject(cfg, "grad_end_color", (int)d->grad_end_color.full);
+    {
+        /* Multi-stop gradient. Emitted only when ≥2 stops are configured —
+         * mirrors the defaults-only pattern used elsewhere. Old layouts'
+         * grad_enabled/grad_end_color fields are dropped on save. */
+        cJSON *gs = gradient_stops_to_json(&d->grad_stops);
+        if (gs) cJSON_AddItemToObject(cfg, "grad_stops", gs);
+    }
     if (d->bg_arc_color.full != lv_color_hex(ARC_DEFAULT_BG_COLOR).full)
         cJSON_AddNumberToObject(cfg, "bg_arc_color", (int)d->bg_arc_color.full);
     if (d->bg_arc_width != ARC_DEFAULT_BG_WIDTH)
@@ -636,10 +637,18 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_color");
     if (cJSON_IsNumber(item)) d->arc_color.full = (uint16_t)item->valueint;
 
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
-    if (cJSON_IsBool(item)) d->grad_enabled = cJSON_IsTrue(item);
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
-    if (cJSON_IsNumber(item)) d->grad_end_color.full = (uint16_t)item->valueint;
+    /* Multi-stop gradient: prefer the new grad_stops array; fall back to
+     * the legacy 2-stop schema (grad_enabled + grad_end_color) so layouts
+     * saved before this revision keep rendering with the same visual. */
+    const cJSON *gs_arr = cJSON_GetObjectItemCaseSensitive(cfg, "grad_stops");
+    if (!gradient_stops_from_json(gs_arr, &d->grad_stops)) {
+        const cJSON *ge  = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
+        const cJSON *gec = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
+        if (cJSON_IsBool(ge) && cJSON_IsTrue(ge) && cJSON_IsNumber(gec)) {
+            gradient_stops_install_legacy_2stop(&d->grad_stops,
+                d->arc_color.full, (uint16_t)gec->valueint);
+        }
+    }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_arc_color");
     if (cJSON_IsNumber(item)) d->bg_arc_color.full = (uint16_t)item->valueint;
@@ -998,8 +1007,8 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->end_angle     = ARC_DEFAULT_END;
     d->arc_width     = ARC_DEFAULT_WIDTH;
     d->arc_color     = lv_color_hex(ARC_DEFAULT_COLOR);
-    d->grad_enabled  = false;
-    d->grad_end_color= lv_color_hex(ARC_DEFAULT_COLOR);
+    /* grad_stops zero-initialised by calloc — count=0 means no
+     * gradient, render path falls back to arc_color. */
     d->bg_arc_color  = lv_color_hex(ARC_DEFAULT_BG_COLOR);
     d->bg_arc_width  = ARC_DEFAULT_BG_WIDTH;
     d->rounded_ends  = ARC_DEFAULT_ROUNDED;
