@@ -401,14 +401,27 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		lv_color_t high_col = NIGHT_PICK_COLOR(night_active, bd->night, bar_high_color,     bd->bar_high_color);
 		lv_color_t in_col   = NIGHT_PICK_COLOR(night_active, bd->night, bar_in_range_color, bd->bar_in_range_color);
 		lv_color_t new_color;
+		bool in_range = false;
 		if (final_value < bd->bar_low)
 			new_color = low_col;
 		else if (final_value > bd->bar_high)
 			new_color = high_col;
-		else
-			new_color = in_col;
+		else { new_color = in_col; in_range = true; }
 		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		/* 2-stop horizontal gradient on the fill, in-range only. Low/high
+		 * alert states keep solid colour so warning visibility isn't lost.
+		 * GRAD_DIR_NONE on the non-gradient branch clears any prior gradient
+		 * style (e.g. after the user toggles gradient off without reload). */
+		if (in_range && bd->bar_grad_enabled) {
+			lv_obj_set_style_bg_grad_color(bd->bar_obj, bd->bar_grad_end_color,
+										   LV_PART_INDICATOR | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_HOR,
+										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		} else {
+			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
+										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		}
 	}
 
 	/* Update this widget's own value label */
@@ -678,6 +691,11 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
+		/* Gradient — defaults-only emission keeps existing layouts byte-identical. */
+		if (bd->bar_grad_enabled)
+			cJSON_AddBoolToObject(cfg, "bar_grad_enabled", true);
+		if (bd->bar_grad_enabled || bd->bar_grad_end_color.full != bd->bar_in_range_color.full)
+			cJSON_AddNumberToObject(cfg, "bar_grad_end_color", (int)bd->bar_grad_end_color.full);
 		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
 		/* Defaults-only: emit show_bar_label only when the user has hidden it.
 		 * Saves a few bytes in the common path (default true). */
@@ -770,6 +788,10 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->bar_high_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_in_range_color");
 	if (cJSON_IsNumber(item)) bd->bar_in_range_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_enabled");
+	if (cJSON_IsBool(item)) bd->bar_grad_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_end_color");
+	if (cJSON_IsNumber(item)) bd->bar_grad_end_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_value");
 	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_label");
@@ -1267,6 +1289,10 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
 	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
 	bd->bar_high_color = THEME_COLOR_RED;
+	/* Gradient starts off and mirrors the solid colour so enabling it with
+	 * no end-colour pick still renders something sensible (solid green). */
+	bd->bar_grad_enabled = false;
+	bd->bar_grad_end_color = THEME_COLOR_GREEN_BRIGHT;
 	bd->signal_index = -1;
 	bd->bar_bg_color = THEME_COLOR_PANEL;
 	bd->bar_bg_opa = 255;

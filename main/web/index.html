@@ -5203,6 +5203,12 @@
                             { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                            /* 2-stop horizontal gradient: lerps from Bar Color
+                             * (left) to Gradient End (right). Suppressed
+                             * during limiter flash/solid so the alert visual
+                             * stays solid and unmissable. */
+                            { name: "grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "grad_enabled" },
                             { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "appearance",
                               options: [
                                   { v: 0, l: "None" },
@@ -5274,6 +5280,11 @@
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                             { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                            /* 2-stop horizontal gradient across the in-range
+                             * fill. Low/high alert states keep their solid
+                             * colours so warning visibility isn't lost. */
+                            { name: "bar_grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "bar_grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "bar_grad_enabled" },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                             { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -5580,6 +5591,13 @@
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                            /* 2-stop value-interpolated gradient. The arc
+                             * stroke colour lerps between Arc Color (at
+                             * signal_min) and Gradient End (at signal_max)
+                             * as the signal changes. Redline / limiter
+                             * still override with their own colours. */
+                            { name: "grad_enabled", label: "Gradient", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "grad_end_color", label: "Gradient End", type: "color", def: 0x00FF00, cat: "appearance", enabledBy: "grad_enabled" },
                             { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },

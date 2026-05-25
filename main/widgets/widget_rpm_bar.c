@@ -599,8 +599,22 @@ static void _apply_limiter_effect(void) {
 
 	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
 	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
-	                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	/* Gradient: only active when not flashing/over-limiter, so the alert
+	 * visual stays unambiguous. Start = bar_color (or limiter colour
+	 * mid-flash), end = grad_end_color. Setting GRAD_DIR_NONE clears any
+	 * prior gradient when the user toggles the feature off. */
+	bool grad_on = (rd && rd->grad_enabled && !over_limiter);
+	if (grad_on) {
+		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, rd->grad_end_color,
+		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_HOR,
+		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	} else {
+		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
+		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
+		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
 
 	/* PART_MAIN is the empty (unfilled) portion of the track. Keep it at
 	 * the normal background so the fill-vs-empty boundary stays visible
@@ -1078,6 +1092,10 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "rpm_max", rd->gauge_max);
 	cJSON_AddNumberToObject(cfg, "redline", rd->redline);
 	cJSON_AddNumberToObject(cfg, "bar_color", (int)rd->bar_color.full);
+	if (rd->grad_enabled)
+		cJSON_AddBoolToObject(cfg, "grad_enabled", true);
+	if (rd->grad_enabled || rd->grad_end_color.full != rd->bar_color.full)
+		cJSON_AddNumberToObject(cfg, "grad_end_color", (int)rd->grad_end_color.full);
 	cJSON_AddNumberToObject(cfg, "limiter_effect", rd->limiter_effect);
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
@@ -1112,6 +1130,10 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_color");
 	if (cJSON_IsNumber(item)) rd->bar_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
+	if (cJSON_IsBool(item)) rd->grad_enabled = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
+	if (cJSON_IsNumber(item)) rd->grad_end_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_effect");
 	if (cJSON_IsNumber(item)) rd->limiter_effect = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_value");
@@ -1350,6 +1372,8 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->gauge_max = 8000;
 	rd->redline = 6500;
 	rd->bar_color = lv_color_hex(0x00FF00);  /* green */
+	rd->grad_enabled = false;
+	rd->grad_end_color = rd->bar_color;
 	rd->limiter_effect = 0;
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */

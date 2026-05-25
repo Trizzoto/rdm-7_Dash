@@ -113,6 +113,20 @@ static void _arc_apply_fill_color(arc_data_t *d, bool active) {
     lv_color_t normal = d->_rule_arc_color_set
         ? d->_rule_arc_color
         : NIGHT_PICK_COLOR(active, d->night, arc_color, d->arc_color);
+    /* Optional 2-stop gradient: lerp(normal, grad_end_color, t) where
+     * t walks from 0 at signal_min to 1 at signal_max. Rule and night
+     * overrides keep the START colour intact; the END is the user's
+     * grad_end_color (we don't try to recolour both stops independently
+     * — adding two more night-override fields per widget for an edge
+     * case isn't worth the schema bloat). */
+    if (d->grad_enabled && d->signal_max > d->signal_min) {
+        float t = (d->_cached_value - d->signal_min) /
+                  (d->signal_max - d->signal_min);
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        normal = lv_color_mix(d->grad_end_color, normal,
+                              (uint8_t)(t * 255.0f + 0.5f));
+    }
     lv_color_t redline = NIGHT_PICK_COLOR(active, d->night, redline_color, d->redline_color);
     lv_color_t fill = normal;
 
@@ -521,6 +535,10 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "arc_width", d->arc_width);
     if (d->arc_color.full != lv_color_hex(ARC_DEFAULT_COLOR).full)
         cJSON_AddNumberToObject(cfg, "arc_color", (int)d->arc_color.full);
+    if (d->grad_enabled)
+        cJSON_AddBoolToObject(cfg, "grad_enabled", true);
+    if (d->grad_enabled || d->grad_end_color.full != d->arc_color.full)
+        cJSON_AddNumberToObject(cfg, "grad_end_color", (int)d->grad_end_color.full);
     if (d->bg_arc_color.full != lv_color_hex(ARC_DEFAULT_BG_COLOR).full)
         cJSON_AddNumberToObject(cfg, "bg_arc_color", (int)d->bg_arc_color.full);
     if (d->bg_arc_width != ARC_DEFAULT_BG_WIDTH)
@@ -617,6 +635,11 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_color");
     if (cJSON_IsNumber(item)) d->arc_color.full = (uint16_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_enabled");
+    if (cJSON_IsBool(item)) d->grad_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "grad_end_color");
+    if (cJSON_IsNumber(item)) d->grad_end_color.full = (uint16_t)item->valueint;
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_arc_color");
     if (cJSON_IsNumber(item)) d->bg_arc_color.full = (uint16_t)item->valueint;
@@ -975,6 +998,8 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->end_angle     = ARC_DEFAULT_END;
     d->arc_width     = ARC_DEFAULT_WIDTH;
     d->arc_color     = lv_color_hex(ARC_DEFAULT_COLOR);
+    d->grad_enabled  = false;
+    d->grad_end_color= lv_color_hex(ARC_DEFAULT_COLOR);
     d->bg_arc_color  = lv_color_hex(ARC_DEFAULT_BG_COLOR);
     d->bg_arc_width  = ARC_DEFAULT_BG_WIDTH;
     d->rounded_ends  = ARC_DEFAULT_ROUNDED;

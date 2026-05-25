@@ -32,6 +32,13 @@ typedef struct {
 	lv_color_t bar_low_color;
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
+	/* Optional 2-stop horizontal gradient across the fill. Only applies
+	 * while the bar is in-range; low/high alert states keep solid
+	 * bar_low_color / bar_high_color so warning colour isn't lost.
+	 * Default: enabled=false, grad_end_color same as bar_in_range_color
+	 * (so toggling on without setting an end colour is a no-op). */
+	bool       bar_grad_enabled;
+	lv_color_t bar_grad_end_color;
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;

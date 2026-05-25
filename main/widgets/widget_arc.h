@@ -24,6 +24,16 @@ typedef struct {
     uint8_t    arc_width;       /* default: 10 */
     lv_color_t arc_color;       /* default: 0x00FF00 — fill color (used when not in redline/limiter) */
     lv_color_t bg_arc_color;    /* default: 0x333333 */
+    /* Optional 2-stop value-interpolated colour. When enabled, the
+     * indicator stroke is lerp(arc_color, grad_end_color, t) where
+     * t = (value - signal_min) / (signal_max - signal_min). Effectively
+     * a gradient that walks with the value instead of being painted
+     * across the full angular sweep (LVGL v8 doesn't expose arc-stroke
+     * gradients natively — angular-sweep would need custom draw). The
+     * redline / limiter zones still override with their own colours so
+     * danger visibility isn't lost. */
+    bool       grad_enabled;
+    lv_color_t grad_end_color;
     uint8_t    bg_arc_width;    /* default: 10 */
     bool       rounded_ends;    /* default: false */
     lv_obj_t  *arc_obj;         /* runtime only */

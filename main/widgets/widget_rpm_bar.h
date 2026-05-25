@@ -18,6 +18,13 @@ typedef struct {
 	int32_t  gauge_max;
 	int32_t  redline;
 	lv_color_t bar_color;
+	/* Optional 2-stop horizontal gradient on the fill. Applies only
+	 * outside redline/limiter — those states keep solid colour so the
+	 * "you're about to break something" visual stays unambiguous.
+	 * Default disabled with end colour matching bar_color (toggling on
+	 * without setting an end colour is a no-op visually). */
+	bool       grad_enabled;
+	lv_color_t grad_end_color;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color
