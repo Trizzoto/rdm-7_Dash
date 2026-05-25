@@ -20,6 +20,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "layout/layout_manager.h"
+#include "layout/layout_switcher.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
@@ -40,6 +41,11 @@ lv_obj_t *keyboard = NULL;
 lv_obj_t *rpm_bar_gauge = NULL;
 lv_obj_t *rpm_redline_zone = NULL;
 lv_timer_t *menu_button_hide_timer = NULL;
+/* Dash switcher arrows — declared in ui.h, defined here so they're
+ * accessible from the show/hide path and click handlers. Created in
+ * the same block as ui_Menu_Button at the bottom of ui_Screen3_screen_init. */
+lv_obj_t *ui_Layout_Prev_Button = NULL;
+lv_obj_t *ui_Layout_Next_Button = NULL;
 
 int rpm_gauge_max = 7000;
 int rpm_redline_value = 6000;
@@ -64,6 +70,10 @@ void keyboard_ready_event_cb(lv_event_t *e) {
 static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
 		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+	if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
+		lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
+	if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
+		lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
 	/* Hide the Edit Mode pill in lockstep — no-op when armed (pinned). */
 	edit_mode_hide_pill();
 	if (menu_button_hide_timer) {
@@ -79,9 +89,17 @@ void screen3_touch_event_cb(lv_event_t *e) {
 	} else if (code == LV_EVENT_RELEASED) {
 		uint32_t dur = lv_tick_get() - touch_press_time;
 		if (dur < 300) {
-			/* Show Menu button only in live mode — it has no role while armed. */
+			/* Show Menu button only in live mode — it has no role while armed.
+			 * Layout arrows tag along, but only when the switcher cycle has
+			 * something to walk through (≥2 entries). */
 			if (!edit_mode_is_armed() && ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
 				lv_obj_clear_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+			if (!edit_mode_is_armed() && layout_switcher_count() >= 2) {
+				if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
+					lv_obj_clear_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
+				if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
+					lv_obj_clear_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
+			}
 			/* Always reveal the Edit Mode pill so the user can exit / enter. */
 			edit_mode_show_pill();
 			if (menu_button_hide_timer)
@@ -187,11 +205,41 @@ static void _style_dropdown(lv_obj_t *dd) {
 	lv_obj_set_style_text_color(dd, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
 }
 
+/* Arrow click → resolve next/prev pinned layout, swap to it. Uses the
+ * existing _deferred_layout_reload so the screen rebuild path is shared
+ * with the Layout dropdown in the menu. */
+static void _layout_arrow_step(int direction) {
+	char active[LAYOUT_MAX_NAME] = {0};
+	layout_manager_get_active(active, sizeof(active));
+	char next[LAYOUT_MAX_NAME];
+	bool ok = (direction > 0)
+		? layout_switcher_get_next(active, next, sizeof(next))
+		: layout_switcher_get_prev(active, next, sizeof(next));
+	if (!ok) return;
+	if (strcmp(next, active) == 0) return;
+	layout_manager_set_active(next);
+	lv_async_call(_deferred_layout_reload, NULL);
+}
+static void _layout_prev_clicked_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+	_layout_arrow_step(-1);
+}
+static void _layout_next_clicked_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+	_layout_arrow_step(+1);
+}
+
 static void menu_button_clicked_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED)
 		return;
 	if (ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
 		lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
+	/* Tear down the switcher arrows alongside so they don't linger when
+	 * the user enters the menu. */
+	if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
+		lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
+	if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
+		lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
 	/* Hide the Edit Mode pill in lockstep — the pills appear together on
 	 * a dashboard short-tap and should disappear together when the user
 	 * commits to opening the menu. Otherwise the orange/grey pill remains
@@ -586,6 +634,62 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_text_font(ml, THEME_FONT_SMALL, 0);
 	lv_obj_center(ml);
 	lv_obj_add_event_cb(ui_Menu_Button, menu_button_clicked_cb,
+						LV_EVENT_CLICKED, NULL);
+
+	/* Layout switcher arrows — flank the Menu button when the user taps
+	 * the dash. Same blue accent so they read as a related cluster, but
+	 * narrower (44 px) since they're symbol-only. Both hidden by default
+	 * and tied to the same show/hide timer as the Menu button — the
+	 * screen3_touch_event_cb only unhides them when the switcher cycle
+	 * has ≥2 entries (otherwise they wouldn't do anything useful). */
+	const int arrow_w = 44, arrow_h = 36;
+	/* Geometry: Menu_Button is 100 wide aligned top-right at -12. The
+	 * arrows sit to its LEFT (so the menu pill stays in the corner).
+	 * Prev = leftmost, Next = between Prev and Menu. 6px gaps. */
+	ui_Layout_Next_Button = lv_btn_create(ui_Screen3);
+	lv_obj_set_size(ui_Layout_Next_Button, arrow_w, arrow_h);
+	lv_obj_align(ui_Layout_Next_Button, LV_ALIGN_TOP_RIGHT,
+				 -(12 + 100 + 6), 12);
+	lv_obj_add_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_set_style_bg_color(ui_Layout_Next_Button, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_bg_color(ui_Layout_Next_Button,
+							  THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_opa(ui_Layout_Next_Button, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_width(ui_Layout_Next_Button, 0, 0);
+	lv_obj_set_style_radius(ui_Layout_Next_Button, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_shadow_width(ui_Layout_Next_Button, 12, 0);
+	lv_obj_set_style_shadow_color(ui_Layout_Next_Button, lv_color_black(), 0);
+	lv_obj_set_style_shadow_opa(ui_Layout_Next_Button, LV_OPA_50, 0);
+	lv_obj_set_style_shadow_ofs_y(ui_Layout_Next_Button, 2, 0);
+	lv_obj_t *nl = lv_label_create(ui_Layout_Next_Button);
+	lv_label_set_text(nl, LV_SYMBOL_RIGHT);
+	lv_obj_set_style_text_color(nl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+	lv_obj_set_style_text_font(nl, THEME_FONT_SMALL, 0);
+	lv_obj_center(nl);
+	lv_obj_add_event_cb(ui_Layout_Next_Button, _layout_next_clicked_cb,
+						LV_EVENT_CLICKED, NULL);
+
+	ui_Layout_Prev_Button = lv_btn_create(ui_Screen3);
+	lv_obj_set_size(ui_Layout_Prev_Button, arrow_w, arrow_h);
+	lv_obj_align(ui_Layout_Prev_Button, LV_ALIGN_TOP_RIGHT,
+				 -(12 + 100 + 6 + arrow_w + 6), 12);
+	lv_obj_add_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_set_style_bg_color(ui_Layout_Prev_Button, THEME_COLOR_ACCENT_BLUE, 0);
+	lv_obj_set_style_bg_color(ui_Layout_Prev_Button,
+							  THEME_COLOR_ACCENT_BLUE_PRESSED, LV_STATE_PRESSED);
+	lv_obj_set_style_bg_opa(ui_Layout_Prev_Button, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_width(ui_Layout_Prev_Button, 0, 0);
+	lv_obj_set_style_radius(ui_Layout_Prev_Button, THEME_RADIUS_NORMAL, 0);
+	lv_obj_set_style_shadow_width(ui_Layout_Prev_Button, 12, 0);
+	lv_obj_set_style_shadow_color(ui_Layout_Prev_Button, lv_color_black(), 0);
+	lv_obj_set_style_shadow_opa(ui_Layout_Prev_Button, LV_OPA_50, 0);
+	lv_obj_set_style_shadow_ofs_y(ui_Layout_Prev_Button, 2, 0);
+	lv_obj_t *pl = lv_label_create(ui_Layout_Prev_Button);
+	lv_label_set_text(pl, LV_SYMBOL_LEFT);
+	lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_ON_ACCENT, 0);
+	lv_obj_set_style_text_font(pl, THEME_FONT_SMALL, 0);
+	lv_obj_center(pl);
+	lv_obj_add_event_cb(ui_Layout_Prev_Button, _layout_prev_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
 
 	/* Edit Mode pill — grey-translucent sibling to the Menu button. Created

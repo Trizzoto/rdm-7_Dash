@@ -129,6 +129,17 @@ esp_err_t config_store_save_ecu(const char *make, const char *version);
 esp_err_t config_store_load_ecu(char *make, size_t m_len,
                                 char *version, size_t v_len);
 
+/* ── Dashboard switcher — ordered "pinned" layout cycle ─────────────────
+ * Comma-separated layout name list (e.g. "sport,track,economy") set by
+ * Device Settings. The on-dash arrow buttons walk this list. When NVS
+ * has no entry, the dash falls back to "all non-system layouts in
+ * filesystem order" so the arrows still do something useful out of the
+ * box. Cap mirrors what fits in a typical CSV: 8 names * 32 chars +
+ * 7 commas + NUL = 264; we round up to 320 for slack. */
+#define LAYOUT_SWITCHER_CSV_MAX 320
+esp_err_t config_store_save_layout_switcher(const char *csv);
+esp_err_t config_store_load_layout_switcher(char *buf, size_t cap);
+
 /* ── Calculated gear — compute current gear from RPM / SPEED ─────────────
  * With a known wheel circumference, final drive, and per-gear ratios, the
  * firmware can back-compute the currently engaged gear and inject it as

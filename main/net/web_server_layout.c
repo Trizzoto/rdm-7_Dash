@@ -1160,6 +1160,60 @@ static const httpd_uri_t layout_list_uri = {.uri = "/api/layout/list",
 											.handler = layout_list_handler,
 											.user_ctx = NULL};
 
+/* GET /api/layout/switcher → {"csv":"name1,name2,name3"}
+ * Empty csv means "use the filesystem default cycle". */
+static esp_err_t layout_switcher_get_handler(httpd_req_t *req) {
+	char csv[LAYOUT_SWITCHER_CSV_MAX];
+	(void)config_store_load_layout_switcher(csv, sizeof(csv));
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "csv", csv);
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t r = httpd_resp_send(req, s ? s : "{}", HTTPD_RESP_USE_STRLEN);
+	free(s);
+	return r;
+}
+
+/* POST /api/layout/switcher  body: {"csv":"name1,name2,name3"}
+ * An empty csv erases the NVS key and reverts to filesystem-order cycling. */
+static esp_err_t layout_switcher_post_handler(httpd_req_t *req) {
+	char buf[LAYOUT_SWITCHER_CSV_MAX + 32];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
+	buf[n] = '\0';
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
+	const cJSON *jc = cJSON_GetObjectItemCaseSensitive(root, "csv");
+	const char *csv = cJSON_IsString(jc) ? jc->valuestring : "";
+	if (strlen(csv) >= LAYOUT_SWITCHER_CSV_MAX) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "csv too long");
+		return ESP_FAIL;
+	}
+	esp_err_t err = config_store_save_layout_switcher(csv);
+	cJSON_Delete(root);
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t layout_switcher_get_uri = {
+	.uri = "/api/layout/switcher", .method = HTTP_GET,
+	.handler = layout_switcher_get_handler, .user_ctx = NULL};
+static const httpd_uri_t layout_switcher_post_uri = {
+	.uri = "/api/layout/switcher", .method = HTTP_POST,
+	.handler = layout_switcher_post_handler, .user_ctx = NULL};
+
 static esp_err_t layout_set_handler(httpd_req_t *req) {
 	char buf[128];
 	if (req->content_len >= sizeof(buf)) {
@@ -1653,6 +1707,8 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &layout_save_uri);
     REGISTER_URI(server, &layout_preview_uri);
     REGISTER_URI(server, &layout_list_uri);
+    REGISTER_URI(server, &layout_switcher_get_uri);
+    REGISTER_URI(server, &layout_switcher_post_uri);
     REGISTER_URI(server, &presets_list_uri);
     REGISTER_URI(server, &ecu_list_uri);
     REGISTER_URI(server, &ecu_current_uri);

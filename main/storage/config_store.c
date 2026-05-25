@@ -529,6 +529,44 @@ esp_err_t config_store_load_ecu(char *make, size_t m_len,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  DASHBOARD SWITCHER (ordered pinned-layout cycle for the dash arrows)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_LAYOUT_SWITCHER "layswit"
+
+esp_err_t config_store_save_layout_switcher(const char *csv)
+{
+    if (!csv) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS_LAYOUT_SWITCHER, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    /* Empty string deletes the key — caller's "use default cycle" signal. */
+    if (csv[0] == '\0') {
+        esp_err_t del = nvs_erase_key(h, "csv");
+        if (del == ESP_ERR_NVS_NOT_FOUND) del = ESP_OK;
+        if (del == ESP_OK) err = nvs_commit(h); else err = del;
+    } else {
+        err = nvs_set_str(h, "csv", csv);
+        if (err == ESP_OK) err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_store_load_layout_switcher(char *buf, size_t cap)
+{
+    if (!buf || cap == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+    nvs_handle_t h;
+    if (nvs_open(NS_LAYOUT_SWITCHER, NVS_READONLY, &h) != ESP_OK)
+        return ESP_ERR_NOT_FOUND;
+    size_t n = cap;
+    esp_err_t err = nvs_get_str(h, "csv", buf, &n);
+    nvs_close(h);
+    if (err != ESP_OK) buf[0] = '\0';
+    return err;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  GEAR CALCULATION (ratios + wheel circumference + final drive)
  *  Stored as a single blob. Used by signal_internal to compute
  *  CALCULATED_GEAR from RPM / VEHICLE_SPEED each LVGL tick.

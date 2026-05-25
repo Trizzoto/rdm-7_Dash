@@ -92,6 +92,7 @@ idf_component_register(
         "layout/default_layout.c"
         "layout/layout_loader.c"
         "layout/ecu_presets.c"
+        "layout/layout_switcher.c"
         "ui/screens/splash_screen.c"
         "ui/screens/ui_wifi.c"
         "ui/screens/ui_diagnostics.c"

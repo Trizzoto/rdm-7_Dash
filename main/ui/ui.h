@@ -30,6 +30,11 @@ extern lv_obj_t *ui____initial_actions0;
 extern lv_obj_t *ui_Menu_Button;
 extern lv_obj_t *ui_Menu_Label;
 
+// Dashboard switcher arrows — flank the Menu button when the user taps
+// the dash. Both follow the same show/hide timer as Menu_Button.
+extern lv_obj_t *ui_Layout_Prev_Button;
+extern lv_obj_t *ui_Layout_Next_Button;
+
 LV_IMG_DECLARE(ui__temporary_image);
 LV_IMG_DECLARE(ui_img_daihatsu_logo_png); // assets/daihatsu logo.png
 LV_IMG_DECLARE(ui_img_rdm_logo_dash_png);
