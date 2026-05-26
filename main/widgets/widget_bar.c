@@ -23,7 +23,6 @@
 #include "ui/ui.h"
 #include "ui/dashboard.h"
 #include "widget_registry.h"
-#include "gradient_image.h"
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -31,23 +30,6 @@
 #include <string.h>
 
 static const char *TAG = "widget_bar";
-
-/* Bake (or rebake) the gradient image when stops + width have changed
- * since the last bake. Stops count < 3 returns NULL — the 2-stop path
- * uses native bg_grad_color which is cheaper than carrying an RGB565
- * image around. Owner is bd; _bar_destroy frees the dsc + buffer. */
-static lv_img_dsc_t *_bar_ensure_grad_image(bar_data_t *bd, uint16_t w, uint16_t h) {
-	if (!bd || bd->grad_stops.count < 3 || w == 0 || h == 0) return NULL;
-	if (bd->grad_image && bd->grad_image_width == w) return bd->grad_image;
-	if (bd->grad_image) {
-		gradient_image_free(bd->grad_image);
-		bd->grad_image = NULL;
-		bd->grad_image_width = 0;
-	}
-	bd->grad_image = gradient_image_create(w, h, &bd->grad_stops);
-	if (bd->grad_image) bd->grad_image_width = w;
-	return bd->grad_image;
-}
 
 /* Default x offsets from screen centre for BAR1 and BAR2 (60% of half-width) */
 static const int16_t s_bar_default_x[2] = {
@@ -427,53 +409,28 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		else { new_color = in_col; in_range = true; }
 		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		/* Multi-stop horizontal gradient on the fill, in-range only.
-		 * Three branches:
-		 *   count == 2: native LVGL bg_grad (cheap, no image alloc)
-		 *   count ≥ 3: baked RGB565 image set as bg_img on the indicator
-		 *              (LVGL clips to fill width as the bar value rises)
-		 *   count < 2 or out-of-range: clear both so a prior gradient
-		 *              doesn't linger after toggling stops off / hitting
-		 *              an alert threshold. */
-		bool grad_active = in_range && bd->grad_stops.count >= 2;
-		if (grad_active && bd->grad_stops.count == 2) {
-			lv_color_t end = { .full = bd->grad_stops.stops[1].color };
-			lv_color_t start = { .full = bd->grad_stops.stops[0].color };
-			lv_obj_set_style_bg_color(bd->bar_obj, start,
-									  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_grad_color(bd->bar_obj, end,
-										   LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_HOR,
-										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_img_src(bd->bar_obj, NULL,
-										LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		} else if (grad_active) {
-			lv_img_dsc_t *img = _bar_ensure_grad_image(bd,
-				(uint16_t)lv_obj_get_width(bd->bar_obj),
-				(uint16_t)lv_obj_get_height(bd->bar_obj));
-			if (img) {
-				lv_obj_set_style_bg_img_src(bd->bar_obj, img,
-											LV_PART_INDICATOR | LV_STATE_DEFAULT);
-				lv_obj_set_style_bg_img_opa(bd->bar_obj, LV_OPA_COVER,
-											LV_PART_INDICATOR | LV_STATE_DEFAULT);
-				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
-											 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		/* Multi-stop horizontal gradient on the indicator, in-range only.
+		 * Uses LVGL's native lv_grad_dsc_t (cap raised to 8 stops in
+		 * sdkconfig) — LVGL renders the gradient INTO the indicator
+		 * rectangle directly, so as the bar fills from 0 → 100 % the
+		 * gradient grows with it without the centering/tiling artifacts
+		 * that bg_img has. Low/high alert states still paint solid over
+		 * the top via the bg_color set just above. */
+		if (in_range && bd->grad_stops.count >= 2) {
+			lv_grad_dsc_t dsc;
+			if (gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &dsc, LV_GRAD_DIR_HOR)) {
+				lv_obj_set_style_bg_grad(bd->bar_obj, &dsc,
+				                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 			} else {
-				/* PSRAM alloc fail — fall back to first+last stop as a 2-stop. */
-				lv_color_t start = { .full = bd->grad_stops.stops[0].color };
-				lv_color_t end   = { .full = bd->grad_stops.stops[bd->grad_stops.count - 1].color };
-				lv_obj_set_style_bg_color(bd->bar_obj, start,
-										  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-				lv_obj_set_style_bg_grad_color(bd->bar_obj, end,
-											   LV_PART_INDICATOR | LV_STATE_DEFAULT);
-				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_HOR,
-											 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+				/* Couldn't build the descriptor (LV_GRADIENT_MAX_STOPS
+				 * mis-configured or empty array) — clear so no stale
+				 * gradient lingers. */
+				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
+				                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
 			}
 		} else {
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_img_src(bd->bar_obj, NULL,
-										LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
 	}
 
@@ -956,11 +913,6 @@ static void _bar_destroy(widget_t *w) {
 		bd->bar_obj = NULL;
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
-		/* PSRAM-backed baked gradient image; bd->grad_image is NULL
-		 * for ≤2-stop gradients (native LVGL path) and for plain
-		 * solid-colour bars. */
-		gradient_image_free(bd->grad_image);
-		bd->grad_image = NULL;
 	}
 	free(w->type_data);
 	free(w);

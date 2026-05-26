@@ -1,6 +1,5 @@
 #include "widget_rpm_bar.h"
 #include "widget_rules.h"
-#include "gradient_image.h"
 #include "screen_config.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -600,51 +599,19 @@ static void _apply_limiter_effect(void) {
 
 	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
 	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	/* Multi-stop gradient — suppressed while flashing or over-limiter so
-	 * the alert visual stays solid. 2 stops use the native LVGL gradient
-	 * path; 3+ are baked into an RGB565 image (regenerated on first
-	 * render and on width change). Falls back to first+last stops as a
-	 * 2-stop if the PSRAM bake fails. */
-	bool grad_active = (rd && rd->grad_stops.count >= 2 && !over_limiter);
-	if (grad_active && rd->grad_stops.count == 2) {
-		lv_color_t start = { .full = rd->grad_stops.stops[0].color };
-		lv_color_t end   = { .full = rd->grad_stops.stops[1].color };
-		lv_obj_set_style_bg_color(rpm_bar_gauge, start,
-		                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, end,
-		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_HOR,
-		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_img_src(rpm_bar_gauge, NULL,
-		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	} else if (grad_active) {
-		uint16_t w = (uint16_t)lv_obj_get_width(rpm_bar_gauge);
-		uint16_t h = (uint16_t)lv_obj_get_height(rpm_bar_gauge);
-		if (rd->grad_image && rd->grad_image_width != w) {
-			gradient_image_free(rd->grad_image);
-			rd->grad_image = NULL;
-			rd->grad_image_width = 0;
-		}
-		if (!rd->grad_image && w > 0 && h > 0) {
-			rd->grad_image = gradient_image_create(w, h, &rd->grad_stops);
-			if (rd->grad_image) rd->grad_image_width = w;
-		}
-		if (rd->grad_image) {
-			lv_obj_set_style_bg_img_src(rpm_bar_gauge, rd->grad_image,
-			                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_img_opa(rpm_bar_gauge, LV_OPA_COVER,
-			                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-			                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	/* Multi-stop gradient via LVGL's native lv_grad_dsc_t — suppressed
+	 * while flashing or over-limiter so the alert visual stays solid
+	 * and unambiguous. sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8 so a
+	 * full Photoshop-authored stops array passes through untruncated.
+	 * Renders directly into the indicator rect, so as the fill grows
+	 * the gradient grows with it (no bg_img centering artifact). */
+	if (rd && rd->grad_stops.count >= 2 && !over_limiter) {
+		lv_grad_dsc_t dsc;
+		if (gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &dsc, LV_GRAD_DIR_HOR)) {
+			lv_obj_set_style_bg_grad(rpm_bar_gauge, &dsc,
+			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else {
-			/* Image bake failed — degrade to first+last 2-stop gradient. */
-			lv_color_t start = { .full = rd->grad_stops.stops[0].color };
-			lv_color_t end   = { .full = rd->grad_stops.stops[rd->grad_stops.count - 1].color };
-			lv_obj_set_style_bg_color(rpm_bar_gauge, start,
-			                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_grad_color(rpm_bar_gauge, end,
-			                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_HOR,
+			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 			                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
 	} else {
@@ -652,8 +619,6 @@ static void _apply_limiter_effect(void) {
 		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_img_src(rpm_bar_gauge, NULL,
-		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
 
 	/* PART_MAIN is the empty (unfilled) portion of the track. Keep it at
@@ -1266,12 +1231,6 @@ static void _rpm_bar_destroy(widget_t *w) {
 		/* Tear down the shared limiter flash timer — it references nothing
 		 * widget-specific but there's no point running it without a bar. */
 		_ensure_flash_timer(0);
-		if (rbd) {
-			/* PSRAM-backed baked gradient image — NULL for ≤2-stop and
-			 * plain solid bars. */
-			gradient_image_free(rbd->grad_image);
-			rbd->grad_image = NULL;
-		}
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;

@@ -57,10 +57,21 @@ static gear_cal_config_t s_gear_cal = {0};
 #define ODOMETER_SAVE_PERIOD_US      ((int64_t)300000000)  /* 5 min */
 #define INTERNAL_TIMER_PERIOD_S      0.5f                   /* mirrors lv_timer_create() */
 
+/* Upper sanity cap on integrated speed. No production passenger car does
+ * 400+ km/h, so any sample above this is provably sensor garbage — most
+ * commonly an OEM-defined "no data" sentinel (Falcon FG's 0x207 bytes 4-5
+ * read 0xFFFF when stationary, which the preset's scale of 1/128 turns
+ * into 511.99 km/h) but also raw-bit decode errors with a wrong
+ * scale/offset. Without this cap a sentinel-broadcasting frame quietly
+ * adds ~8 km/min to the odometer while parked. Logged-once warning so the
+ * user can see something's wrong with the speed signal without spamming. */
+#define ODOMETER_MAX_VALID_KMH       400.0f
+
 static float   s_odometer_km        = 0.0f;
 static float   s_odo_unsaved_km     = 0.0f;
 static int64_t s_odo_last_save_us   = 0;
 static bool    s_odo_speed_warned   = false;
+static bool    s_odo_speed_capped_warned = false;
 
 /* Simple FPS counter — incremented by the flush callback, read and
  * reset every timer period (~500 ms) to derive frames per second. */
@@ -245,10 +256,22 @@ static void _internal_timer_cb(lv_timer_t *timer)
         if (sig && !sig->is_stale) {
             s_odo_speed_warned = false;
             float speed = sig->current_value;
-            if (speed > 0.0f) {
+            /* Sanity cap: anything ≥ 400 km/h is treated as a sentinel /
+             * decode error, not a real speed. See ODOMETER_MAX_VALID_KMH
+             * comment. We warn once so the user knows their speed signal
+             * is mis-decoded without spamming the log every 500 ms. */
+            if (speed > 0.0f && speed < ODOMETER_MAX_VALID_KMH) {
                 float km_per_tick = speed * INTERNAL_TIMER_PERIOD_S / 3600.0f;
                 s_odometer_km    += km_per_tick;
                 s_odo_unsaved_km += km_per_tick;
+            } else if (speed >= ODOMETER_MAX_VALID_KMH && !s_odo_speed_capped_warned) {
+                ESP_LOGW(TAG, "ODOMETER: '%s' = %.1f km/h exceeds %.0f cap; "
+                              "treating as sentinel/decode error (will not "
+                              "integrate). Fix the signal's bit position or "
+                              "scale to silence this.",
+                         speed_name, (double)speed,
+                         (double)ODOMETER_MAX_VALID_KMH);
+                s_odo_speed_capped_warned = true;
             }
         } else if (!s_odo_speed_warned) {
             ESP_LOGI(TAG, "ODOMETER: speed signal '%s' not in registry — "

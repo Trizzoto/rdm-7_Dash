@@ -79,6 +79,19 @@ cJSON *gradient_stops_to_json(const gradient_stops_t *in);
  */
 uint16_t gradient_stops_sample(const gradient_stops_t *g, float t);
 
+/**
+ * Populate an LVGL gradient descriptor from our stops. Sets dir to
+ * LV_GRAD_DIR_HOR and dither to LV_DITHER_NONE. Caller passes the
+ * descriptor by pointer (typically a stack local) and a direction —
+ * lv_obj_set_style_bg_grad copies the struct into LVGL's local style
+ * storage so a stack-allocated dsc is fine. Returns true when @p src
+ * has ≥2 stops (and the LVGL build's LV_GRADIENT_MAX_STOPS supports
+ * the count); false otherwise. When false, the descriptor is zeroed.
+ */
+bool gradient_stops_to_lv_grad_dsc(const gradient_stops_t *src,
+                                   lv_grad_dsc_t *out,
+                                   lv_grad_dir_t dir);
+
 #ifdef __cplusplus
 }
 #endif

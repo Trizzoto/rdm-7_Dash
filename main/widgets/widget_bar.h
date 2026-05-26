@@ -33,18 +33,15 @@ typedef struct {
 	lv_color_t bar_low_color;
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
-	/* Optional N-stop horizontal gradient across the fill (LVGL v8
-	 * gradient is 2-stop only; we bake an RGB565 image at bar width ×
-	 * height and assign it as the indicator's bg_img for 3+ stops, fall
-	 * back to native bg_grad for exactly 2 stops). The image lives in
-	 * grad_image and is regenerated when stops change or on resize;
-	 * grad_image_width tracks the width it was baked for so we can
-	 * skip pointless rebakes. Low/high alert states still paint solid
+	/* Optional N-stop horizontal gradient on the indicator. Rendered
+	 * through LVGL's native lv_grad_dsc_t (sdkconfig bumps
+	 * LV_GRADIENT_MAX_STOPS from the default 2 to 8 so multi-stop
+	 * gradients work without bg_img hacks — LVGL paints the gradient
+	 * directly into the indicator rect so it grows correctly with the
+	 * fill). Low/high alert states still paint solid
 	 * bar_low_color / bar_high_color over the top so warning visuals
 	 * stay unambiguous. */
 	gradient_stops_t grad_stops;
-	lv_img_dsc_t    *grad_image;
-	uint16_t         grad_image_width;
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;

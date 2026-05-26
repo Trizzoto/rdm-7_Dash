@@ -19,16 +19,15 @@ typedef struct {
 	int32_t  gauge_max;
 	int32_t  redline;
 	lv_color_t bar_color;
-	/* Optional N-stop horizontal gradient on the fill. 2 stops use
-	 * native LVGL bg_grad; 3+ are baked into an RGB565 image in PSRAM
-	 * and applied as the indicator's bg_img (LVGL clips to fill width
-	 * as the bar rises). Suppressed during redline / limiter so the
-	 * "you're about to break something" alert visual stays solid and
-	 * unambiguous. Legacy 2-stop layouts (grad_enabled + grad_end_color)
+	/* Optional N-stop horizontal gradient on the fill. Uses LVGL's
+	 * native lv_grad_dsc_t (sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8
+	 * so the full Photoshop-authored stops array passes through). LVGL
+	 * paints into the indicator rect directly so the gradient grows
+	 * with the fill — no centering artifact. Suppressed during redline
+	 * and limiter so the "you're about to break something" alert
+	 * stays solid. Legacy 2-stop layouts (grad_enabled + grad_end_color)
 	 * are migrated to a 2-stop array at load time. */
 	gradient_stops_t grad_stops;
-	lv_img_dsc_t    *grad_image;
-	uint16_t         grad_image_width;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color

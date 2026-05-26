@@ -80,6 +80,35 @@ cJSON *gradient_stops_to_json(const gradient_stops_t *in)
     return arr;
 }
 
+bool gradient_stops_to_lv_grad_dsc(const gradient_stops_t *src,
+                                   lv_grad_dsc_t *out,
+                                   lv_grad_dir_t dir)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!src || src->count < 2) return false;
+
+    /* LVGL caps the array at LV_GRADIENT_MAX_STOPS at compile time; we
+     * cap our own at GRADIENT_MAX_STOPS. If the LVGL build was compiled
+     * with a smaller cap than the user's stops array, truncate so we
+     * don't overflow LVGL's struct. */
+    uint8_t n = src->count;
+    if (n > LV_GRADIENT_MAX_STOPS) n = LV_GRADIENT_MAX_STOPS;
+
+    for (uint8_t i = 0; i < n; i++) {
+        out->stops[i].color = (lv_color_t){.full = src->stops[i].color};
+        /* LVGL's frac is 0..255 across the gradient axis; our pos is
+         * 0..100 percent. Scale and clamp. */
+        uint32_t frac = ((uint32_t)src->stops[i].pos * 255 + 50) / 100;
+        if (frac > 255) frac = 255;
+        out->stops[i].frac = (uint8_t)frac;
+    }
+    out->stops_count = n;
+    out->dir         = dir;
+    out->dither      = LV_DITHER_NONE;
+    return true;
+}
+
 uint16_t gradient_stops_sample(const gradient_stops_t *g, float t)
 {
     if (!g || g->count < 2) return 0;

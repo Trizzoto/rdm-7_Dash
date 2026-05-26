@@ -8,6 +8,12 @@ CONFIG_LV_USE_USER_DATA=y
 CONFIG_LV_USE_CHART=y
 CONFIG_LV_USE_PERF_MONITOR=y
 
+# Multi-stop gradients for bar / rpm_bar widgets. Default is 2 (single
+# start→end). 8 matches GRADIENT_MAX_STOPS in widgets/gradient_stops.h
+# so the firmware can pass a full Photoshop-authored stops array
+# straight into lv_obj_set_style_bg_grad without truncation.
+CONFIG_LV_GRADIENT_MAX_STOPS=8
+
 # Task watchdog — 15 s instead of the 5 s default. First-boot layout load
 # with many widgets, custom TTF font instances, and 1+ MB image widgets
 # can legitimately hold the LVGL task on CPU 1 for several seconds of
