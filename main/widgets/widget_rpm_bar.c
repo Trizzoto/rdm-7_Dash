@@ -604,16 +604,16 @@ static void _apply_limiter_effect(void) {
 	 * and unambiguous. sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8 so a
 	 * full Photoshop-authored stops array passes through untruncated.
 	 * Renders directly into the indicator rect, so as the fill grows
-	 * the gradient grows with it (no bg_img centering artifact). */
-	if (rd && rd->grad_stops.count >= 2 && !over_limiter) {
-		lv_grad_dsc_t dsc;
-		if (gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &dsc, LV_GRAD_DIR_HOR)) {
-			lv_obj_set_style_bg_grad(rpm_bar_gauge, &dsc,
-			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		} else {
-			lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-			                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		}
+	 * the gradient grows with it (no bg_img centering artifact).
+	 *
+	 * lv_obj_set_style_bg_grad stores the dsc POINTER, not a copy — the
+	 * descriptor must outlive the style. rpm_bar_data_t.grad_lv_dsc
+	 * lives as long as the widget. */
+	if (rd && rd->grad_stops.count >= 2 && !over_limiter &&
+	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
+	                                  LV_GRAD_DIR_HOR)) {
+		lv_obj_set_style_bg_grad(rpm_bar_gauge, &rd->grad_lv_dsc,
+		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	} else {
 		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
 		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);

@@ -415,19 +415,16 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		 * rectangle directly, so as the bar fills from 0 → 100 % the
 		 * gradient grows with it without the centering/tiling artifacts
 		 * that bg_img has. Low/high alert states still paint solid over
-		 * the top via the bg_color set just above. */
-		if (in_range && bd->grad_stops.count >= 2) {
-			lv_grad_dsc_t dsc;
-			if (gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &dsc, LV_GRAD_DIR_HOR)) {
-				lv_obj_set_style_bg_grad(bd->bar_obj, &dsc,
-				                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			} else {
-				/* Couldn't build the descriptor (LV_GRADIENT_MAX_STOPS
-				 * mis-configured or empty array) — clear so no stale
-				 * gradient lingers. */
-				lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
-				                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
-			}
+		 * the top via the bg_color set just above.
+		 *
+		 * lv_obj_set_style_bg_grad stores the dsc POINTER, not a copy —
+		 * the descriptor must outlive the style. We keep it in
+		 * bar_data_t.grad_lv_dsc so it survives every redraw. */
+		if (in_range && bd->grad_stops.count >= 2 &&
+		    gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &bd->grad_lv_dsc,
+		                                  LV_GRAD_DIR_HOR)) {
+			lv_obj_set_style_bg_grad(bd->bar_obj, &bd->grad_lv_dsc,
+			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else {
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);

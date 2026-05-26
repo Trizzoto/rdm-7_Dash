@@ -9200,11 +9200,21 @@
             const css = _gradStopsToCss(stops);
             const disAttr = disabled ? 'disabled' : '';
 
-            /* Strip + markers. If no stops, prompt to add. */
             let html = '';
             if (stops.length === 0) {
-                html += `<div class="ge-empty">No gradient. Click the strip below to add a stop.</div>`;
+                /* Off state: explicit Enable button instead of "click the
+                 * strip to add a stop" — clearer affordance than the strip
+                 * which doesn't visibly exist yet. */
+                html += `<div class="ge-empty" style="display:flex; gap:8px; align-items:center; justify-content:space-between;">
+                    <span>Gradient off — solid bar colour in use.</span>
+                    <button class="btn btn-secondary" style="font-size:11px; padding:4px 10px;" ${disAttr}
+                        onclick="_gradEnable('${el.id}', '${fieldName}')">Enable</button>
+                </div>`;
+                el.innerHTML = html;
+                return;
             }
+
+            /* Strip + markers (when stops exist). */
             html += `<div class="ge-strip-wrap" data-field="${fieldName}">
                 <div class="ge-strip" style="background:${css}"></div>
             </div>
@@ -9219,7 +9229,7 @@
             });
             html += `</div>`;
 
-            /* Selected-stop controls. Hidden when nothing is selected. */
+            /* Selected-stop controls (when a marker is selected). */
             if (validSel >= 0) {
                 const s = stops[validSel];
                 const hex = (s.color & 0xFFFFFF).toString(16).toUpperCase().padStart(6, '0');
@@ -9236,6 +9246,13 @@
                         onclick="_gradOnDelete('${el.id}', '${fieldName}')">Delete</button>
                 </div>`;
             }
+
+            /* Whole-gradient controls row: hint + Disable. */
+            html += `<div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted); padding-top:2px;">
+                <span>Click the strip to add a stop. Drag a marker to move it.</span>
+                <button class="btn btn-secondary" style="font-size:11px; padding:2px 8px; border-color:hsl(0,70%,60%); color:hsl(0,70%,60%);" ${disAttr}
+                    onclick="_gradDisable('${el.id}', '${fieldName}')">Disable</button>
+            </div>`;
 
             el.innerHTML = html;
 
@@ -9398,6 +9415,38 @@
             const fresh = _gradGetStops(fieldName);
             const newIdx = fresh.findIndex(s => s.pos === p && s.color === stops[sel].color);
             if (newIdx >= 0) el.dataset.sel = String(newIdx);
+            _gradRender(el, fieldName, false);
+        }
+
+        /* Enable from scratch: seed two default stops so the user gets a
+         * visible gradient immediately. Start colour mirrors the widget's
+         * base bar colour for continuity; end is a neutral white so the
+         * user sees the gradient without having to colour-pick first. */
+        function _gradEnable(containerId, fieldName) {
+            const el = document.getElementById(containerId);
+            if (!el || selectedIndex < 0) return;
+            const w = currentLayout.widgets[selectedIndex];
+            const baseKey = (w.type === 'arc')     ? 'arc_color'
+                          : (w.type === 'rpm_bar') ? 'bar_color'
+                          :                          'bar_in_range_color';
+            const baseCol = (w.config && typeof w.config[baseKey] === 'number')
+                ? w.config[baseKey] : 0x00FF00;
+            const stops = [
+                { pos: 0,   color: baseCol  },
+                { pos: 100, color: 0xFFFFFF }
+            ];
+            _gradSaveStops(fieldName, stops);
+            el.dataset.sel = '-1';
+            _gradRender(el, fieldName, false);
+        }
+
+        /* Disable: clear the stops array — render falls back to the widget's
+         * solid colour. The empty-state view appears, with an Enable button. */
+        function _gradDisable(containerId, fieldName) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            _gradSaveStops(fieldName, []);
+            el.dataset.sel = '-1';
             _gradRender(el, fieldName, false);
         }
 

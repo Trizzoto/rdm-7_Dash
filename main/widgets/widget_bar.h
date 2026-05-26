@@ -38,10 +38,13 @@ typedef struct {
 	 * LV_GRADIENT_MAX_STOPS from the default 2 to 8 so multi-stop
 	 * gradients work without bg_img hacks — LVGL paints the gradient
 	 * directly into the indicator rect so it grows correctly with the
-	 * fill). Low/high alert states still paint solid
-	 * bar_low_color / bar_high_color over the top so warning visuals
-	 * stay unambiguous. */
+	 * fill). grad_lv_dsc is the LVGL-format mirror of grad_stops and
+	 * MUST outlive the lv_obj_set_style_bg_grad call (LVGL stores
+	 * the pointer, not a copy). Low/high alert states still paint
+	 * solid bar_low_color / bar_high_color over the top so warning
+	 * visuals stay unambiguous. */
 	gradient_stops_t grad_stops;
+	lv_grad_dsc_t    grad_lv_dsc;
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;

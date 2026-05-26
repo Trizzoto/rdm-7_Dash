@@ -23,11 +23,15 @@ typedef struct {
 	 * native lv_grad_dsc_t (sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8
 	 * so the full Photoshop-authored stops array passes through). LVGL
 	 * paints into the indicator rect directly so the gradient grows
-	 * with the fill — no centering artifact. Suppressed during redline
-	 * and limiter so the "you're about to break something" alert
-	 * stays solid. Legacy 2-stop layouts (grad_enabled + grad_end_color)
-	 * are migrated to a 2-stop array at load time. */
+	 * with the fill — no centering artifact. grad_lv_dsc is the LVGL-
+	 * format mirror of grad_stops and must outlive every
+	 * lv_obj_set_style_bg_grad call (LVGL stores the pointer, not a
+	 * copy). Suppressed during redline and limiter so the "you're about
+	 * to break something" alert stays solid. Legacy 2-stop layouts
+	 * (grad_enabled + grad_end_color) are migrated to a 2-stop array
+	 * at load time. */
 	gradient_stops_t grad_stops;
+	lv_grad_dsc_t    grad_lv_dsc;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color
