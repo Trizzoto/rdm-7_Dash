@@ -426,6 +426,11 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			lv_obj_set_style_bg_grad(bd->bar_obj, &bd->grad_lv_dsc,
 			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		} else {
+			/* MUST clear dsc.dir as well — LVGL's draw_dsc init checks
+			 * grad->dir on the descriptor before falling back to the
+			 * bg_grad_dir property, so leaving HOR here would keep the
+			 * gradient painting over the alert colour. */
+			bd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}

@@ -608,13 +608,22 @@ static void _apply_limiter_effect(void) {
 	 *
 	 * lv_obj_set_style_bg_grad stores the dsc POINTER, not a copy — the
 	 * descriptor must outlive the style. rpm_bar_data_t.grad_lv_dsc
-	 * lives as long as the widget. */
-	if (rd && rd->grad_stops.count >= 2 && !over_limiter &&
+	 * lives as long as the widget.
+	 *
+	 * LVGL's draw_dsc init (lv_obj_draw.c) checks `grad->dir != NONE`
+	 * on the descriptor itself before falling back to bg_grad_dir, so
+	 * we MUST zero dsc.dir on the off-path; setting only the separate
+	 * bg_grad_dir style property would leave the descriptor's internal
+	 * HOR active from the previous render and the limiter override
+	 * would never take effect. */
+	bool grad_active = rd && rd->grad_stops.count >= 2 && !over_limiter;
+	if (grad_active &&
 	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
 	                                  LV_GRAD_DIR_HOR)) {
 		lv_obj_set_style_bg_grad(rpm_bar_gauge, &rd->grad_lv_dsc,
 		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	} else {
+		if (rd) rd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
 		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
 		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
@@ -628,13 +637,18 @@ static void _apply_limiter_effect(void) {
 	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
 	                           LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Panel9 — the square colour swatch on the left edge of the RPM bar —
-	 * follows the same fill colour the bar is painting. In steady state it
-	 * stays at the bar colour; when the limiter trips it flashes
-	 * (effect 1) or goes solid limiter colour (effect 2) so the driver
-	 * has a peripheral-vision cue even if the bar is off-screen. */
+	/* Panel9 — the square colour swatch on the left edge of the RPM bar.
+	 * Tracks the bar's visible "starting" colour: when a gradient is
+	 * active, that's the gradient's first stop (matches what the user
+	 * sees painted at the leftmost pixel of the fill); otherwise it's
+	 * the solid bar_color. Limiter state still wins regardless so the
+	 * peripheral-vision warning cue stays unambiguous. */
+	lv_color_t panel9_color = fill;
+	if (grad_active && rd->grad_stops.count >= 1) {
+		panel9_color.full = rd->grad_stops.stops[0].color;
+	}
 	if (ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
-		lv_obj_set_style_bg_color(ui_Panel9, fill,
+		lv_obj_set_style_bg_color(ui_Panel9, panel9_color,
 		                           LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 }
