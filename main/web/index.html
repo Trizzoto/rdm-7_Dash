@@ -5619,7 +5619,18 @@
                                   }
                               } },
                             { name: "needle_ball_size", label: "Needle Ball Size", type: "stepper", def: 10, cat: "appearance", min: 0, max: 80 },
-                            { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true }
+                            { name: "needle_ball_color", label: "Needle Ball Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
+                            /* Needle drop shadow. Line needles only — disabled fields collapse for image needles via the enabledBy chain. */
+                            { name: "shadow_enabled", label: "Needle Shadow", type: "checkbox", def: false, cat: "appearance" },
+                            /* Dynamic shadow: scales offset by sin(angle_from_vertical).
+                             * Top (12 o'clock) + bottom (6 o'clock) = invisible (sun directly above).
+                             * Sides (3 / 9 o'clock) = full offset. */
+                            { name: "shadow_dynamic", label: "Dynamic (Sun Overhead)", type: "checkbox", def: true, cat: "appearance", enabledBy: "shadow_enabled" },
+                            { name: "shadow_offset_x", label: "Shadow Offset X", type: "stepper", def: 3, cat: "appearance", min: -32, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_offset_y", label: "Shadow Offset Y", type: "stepper", def: 4, cat: "appearance", min: -32, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 120, cat: "appearance", min: 0, max: 255, enabledBy: "shadow_enabled" },
+                            { name: "shadow_width_extra", label: "Shadow Extra Width", type: "stepper", def: 2, cat: "appearance", min: 0, max: 32, enabledBy: "shadow_enabled" },
+                            { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", enabledBy: "shadow_enabled" }
                         ]
                     },
                     "image": {

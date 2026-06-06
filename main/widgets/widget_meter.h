@@ -68,6 +68,25 @@ typedef struct {
 	uint8_t    needle_tip_base_w;    /* default: 0 (auto) */
 	uint8_t    needle_tip_point_w;   /* default: 0 (auto) */
 	uint8_t    needle_tip_taper;     /* default: 0 (auto), range 1-100 */
+	/* Needle drop shadow. Renders a colored, offset copy of the needle
+	 * silhouette BEHIND the main needle. Works for all line-needle tip
+	 * styles (Flat / Rounded / Lance / Dagger / Spade / Diamond) and
+	 * picks up the rear-extension when set. Image needles do NOT receive
+	 * a shadow (LVGL v8 can't easily tint a rotated img). The shadow is
+	 * a real lv_meter indicator added before the main needle so it
+	 * rotates and updates in lockstep. */
+	bool       shadow_enabled;       /* default: false */
+	/* When true, shadow offset magnitude scales with sin(angle_from_vertical)
+	 * — invisible when needle is vertical (12 or 6 o'clock), full at 3 / 9.
+	 * Mimics an overhead light source casting the needle's silhouette
+	 * sideways as it tilts off-axis. When false, the offset is constant
+	 * (classic drop shadow). Default true. */
+	bool       shadow_dynamic;       /* default: true */
+	int8_t     shadow_offset_x;      /* default: 3 (positive = right) */
+	int8_t     shadow_offset_y;      /* default: 4 (positive = down) */
+	uint8_t    shadow_opa;           /* default: 120 (0..255) */
+	uint8_t    shadow_width_extra;   /* default: 2 (added to needle_width) */
+	lv_color_t shadow_color;         /* default: 0x000000 */
 	/* Needle center ball (LV_PART_INDICATOR) */
 	uint8_t    needle_ball_size;     /* default: 10 (diameter in px, 0 = hidden) */
 	lv_color_t needle_ball_color;    /* default: white (0xFFFFFF) */
@@ -173,6 +192,10 @@ typedef struct {
 	lv_meter_scale_t    *night_needle_scale; /* for offset-rotated needle */
 	lv_img_dsc_t        *night_needle_img_dsc;
 	lv_img_dsc_t        *night_bg_img_dsc;
+	/* Shadow indicators — created when shadow_enabled and the needle is a
+	 * line (not image). Drawn under the main needle by linked-list order. */
+	lv_meter_indicator_t *shadow_needle;
+	lv_meter_indicator_t *night_shadow_needle;
 } meter_data_t;
 
 /**

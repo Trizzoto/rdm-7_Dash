@@ -63,6 +63,81 @@ static void _meter_inv_rear(lv_obj_t *m, lv_meter_scale_t *scale,
 	lv_obj_invalidate_area(m, &a);
 }
 
+/* Invalidate the bbox the shadow needle covers at `value`. Mirrors what LVGL's
+ * inv_line does for a needle_line indicator, but shifted by (offset_x,
+ * offset_y) and padded for the extra shadow width + rear extension. Without
+ * this, partial-refresh leaves shadow trails because LVGL's built-in
+ * invalidation for the shadow indicator only covers the unshifted bbox. */
+static void _meter_inv_shadow(lv_obj_t *m, lv_meter_scale_t *scale,
+                               int32_t value, const meter_data_t *md) {
+	if (!m || !scale || !md) return;
+
+	lv_area_t scale_area;
+	lv_obj_get_content_coords(m, &scale_area);
+	lv_coord_t r_edge = LV_MIN(lv_area_get_width(&scale_area),
+	                            lv_area_get_height(&scale_area)) / 2;
+	lv_point_t scale_center;
+	scale_center.x = scale_area.x1 + r_edge;
+	scale_center.y = scale_area.y1 + r_edge;
+
+	int32_t r_out = r_edge + scale->r_mod + md->needle_r_mod;
+	int32_t angle = lv_map(value, scale->min, scale->max,
+	                        scale->rotation, scale->rotation + scale->angle_range);
+	lv_point_t p_end;
+	p_end.x = (lv_trigo_cos(angle) * r_out) / LV_TRIGO_SIN_MAX + scale_center.x;
+	p_end.y = (lv_trigo_sin(angle) * r_out) / LV_TRIGO_SIN_MAX + scale_center.y;
+
+	/* Rear endpoint is bounded by scale_center ± rear_len in the bbox
+	 * calc below (no need to compute the exact direction — over-
+	 * invalidation by a few pixels is harmless). */
+
+	int32_t width = (int32_t)md->needle_width + (int32_t)md->shadow_width_extra;
+	int32_t pad   = width / 2 + 2;
+
+	/* Apply the same dynamic-mode scaling the draw path uses, so the dirty
+	 * rect tracks where the shadow is ACTUALLY drawn. Without this match,
+	 * dynamic mode would over-invalidate (offset_x/y full magnitude) while
+	 * the visible shadow has collapsed near the vertical — wasted redraw
+	 * work, but harmless. Same scale math as _meter_draw_shadow_needle. */
+	int32_t ox = md->shadow_offset_x;
+	int32_t oy = md->shadow_offset_y;
+	if (md->shadow_dynamic) {
+		int32_t dx = p_end.x - scale_center.x;
+		int32_t dy = p_end.y - scale_center.y;
+		uint32_t lsq = (uint32_t)(dx * dx + dy * dy);
+		if (lsq > 0) {
+			lv_sqrt_res_t sres;
+			lv_sqrt(lsq, &sres, 0x800);
+			int32_t l = sres.i;
+			if (l > 0) {
+				int32_t abs_dx = dx < 0 ? -dx : dx;
+				int32_t scale_q8 = (abs_dx * 256) / l;
+				ox = (ox * scale_q8) / 256;
+				oy = (oy * scale_q8) / 256;
+			} else {
+				ox = 0; oy = 0;
+			}
+		} else {
+			ox = 0; oy = 0;
+		}
+	}
+
+	/* Pivot-anchored bbox: pivot stays at scale_center; only the tip is
+	 * displaced by (ox, oy). The rear extends BEHIND the pivot in the
+	 * shadow direction by up to rear_len — bound it loosely by padding
+	 * the pivot side by rear_len (over-invalidation is harmless; missed
+	 * pixels would leave trails). */
+	lv_coord_t tip_x = (lv_coord_t)(p_end.x + ox);
+	lv_coord_t tip_y = (lv_coord_t)(p_end.y + oy);
+	int32_t rear_pad = (int32_t)md->needle_rear_length;
+	lv_area_t a;
+	a.x1 = LV_MIN(scale_center.x - rear_pad, tip_x) - pad;
+	a.y1 = LV_MIN(scale_center.y - rear_pad, tip_y) - pad;
+	a.x2 = LV_MAX(scale_center.x + rear_pad, tip_x) + pad;
+	a.y2 = LV_MAX(scale_center.y + rear_pad, tip_y) + pad;
+	lv_obj_invalidate_area(m, &a);
+}
+
 /* Inverse of _meter_apply_anchor. Given an angular position 0..100% along
  * the sweep, return the data value the user should see at that point.
  * Used to relabel major tick texts so the numbers shown match the warped
@@ -147,7 +222,7 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	 * does on fast signals. */
 	if (md->night_meter && md->night_needle && lv_obj_is_valid(md->night_meter) &&
 	    !lv_obj_has_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN)) {
-		int32_t old_v = (md->needle_rear_length > 0) ? md->night_needle->end_value : 0;
+		int32_t old_v = md->night_needle->end_value;
 		lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
 		if (md->needle_rear_length > 0) {
 			_meter_inv_rear(md->night_meter, md->night_scale, old_v,
@@ -155,15 +230,25 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 			_meter_inv_rear(md->night_meter, md->night_scale, v,
 			                md->needle_rear_length, md->needle_width);
 		}
+		if (md->shadow_enabled && md->night_shadow_needle) {
+			lv_meter_set_indicator_value(md->night_meter, md->night_shadow_needle, v);
+			_meter_inv_shadow(md->night_meter, md->night_scale, old_v, md);
+			_meter_inv_shadow(md->night_meter, md->night_scale, v,     md);
+		}
 	} else if (md->meter && md->needle &&
 	           !lv_obj_has_flag(md->meter, LV_OBJ_FLAG_HIDDEN)) {
-		int32_t old_v = (md->needle_rear_length > 0) ? md->needle->end_value : 0;
+		int32_t old_v = md->needle->end_value;
 		lv_meter_set_indicator_value(md->meter, md->needle, v);
 		if (md->needle_rear_length > 0) {
 			_meter_inv_rear(md->meter, md->scale, old_v,
 			                md->needle_rear_length, md->needle_width);
 			_meter_inv_rear(md->meter, md->scale, v,
 			                md->needle_rear_length, md->needle_width);
+		}
+		if (md->shadow_enabled && md->shadow_needle) {
+			lv_meter_set_indicator_value(md->meter, md->shadow_needle, v);
+			_meter_inv_shadow(md->meter, md->scale, old_v, md);
+			_meter_inv_shadow(md->meter, md->scale, v,     md);
 		}
 	}
 }
@@ -202,6 +287,193 @@ static inline lv_point_t _tip_pt(const lv_point_t *p1, int32_t dx, int32_t dy,
 	return p;
 }
 
+/* Drop-shadow renderer. Drawn from inside DRAW_PART_BEGIN of the shadow
+ * indicator (before the main needle), so it lands UNDER the main needle in
+ * z-order. Mirrors the same tip-style + rear-extension geometry the main
+ * needle uses, just shifted by (shadow_offset_x, shadow_offset_y), in
+ * shadow_color, with shadow_opa and a width of needle_width +
+ * shadow_width_extra. After this returns the caller sets the LVGL line's
+ * own opa to TRANSP so the original-position line draw is suppressed. */
+static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
+                                       const lv_point_t *orig_p1,
+                                       const lv_point_t *orig_p2) {
+	if (!ctx || !md) return;
+
+	/* Compute needle direction vector & length up front. Used both for the
+	 * dynamic-offset scaling and for the polygon/rear geometry below. */
+	int32_t raw_dx = orig_p2->x - orig_p1->x;
+	int32_t raw_dy = orig_p2->y - orig_p1->y;
+	uint32_t raw_len_sq = (uint32_t)(raw_dx * raw_dx + raw_dy * raw_dy);
+	int32_t raw_len = 0;
+	if (raw_len_sq > 0) {
+		lv_sqrt_res_t sres;
+		lv_sqrt(raw_len_sq, &sres, 0x800);
+		raw_len = sres.i;
+	}
+
+	/* Dynamic mode: scale the user's configured offsets by |dx|/len so the
+	 * shadow fades out as the needle approaches vertical (12 or 6 o'clock).
+	 * Integer math in Q8 — no float, no libm. At needle horizontal:
+	 *   |dx|/len = 1.0 → full offset.
+	 * At needle vertical:
+	 *   |dx|/len = 0   → zero offset → shadow draws on top of the needle
+	 *                    and disappears. */
+	int32_t ox = md->shadow_offset_x;
+	int32_t oy = md->shadow_offset_y;
+	if (md->shadow_dynamic && raw_len > 0) {
+		int32_t abs_dx = raw_dx < 0 ? -raw_dx : raw_dx;
+		int32_t scale_q8 = (abs_dx * 256) / raw_len;   /* 0..256 */
+		ox = (ox * scale_q8) / 256;
+		oy = (oy * scale_q8) / 256;
+	}
+
+	/* Pivot-anchored geometry: shadow's BASE stays at the needle's base
+	 * (scale_center) and only the TIP is offset. Visually the shadow fans
+	 * out from the same pivot — same point of contact with the dial face,
+	 * like a real cast shadow on a flat surface. Translating both p1 AND
+	 * p2 the same way (older code) made the shadow appear to lift off the
+	 * pivot, which read as "off" on horizontal needles. */
+	lv_point_t p1 = *orig_p1;
+	lv_point_t p2 = { (lv_coord_t)(orig_p2->x + ox), (lv_coord_t)(orig_p2->y + oy) };
+
+	int32_t width  = (int32_t)md->needle_width + (int32_t)md->shadow_width_extra;
+	if (width < 1) width = 1;
+	uint8_t style    = md->needle_tip_style;
+	uint8_t rear_len = md->needle_rear_length;
+	lv_color_t color = md->shadow_color;
+	lv_opa_t   opa   = md->shadow_opa;
+
+	/* Recompute the shadow direction vector + length. With pivot anchored
+	 * and only the tip offset, the shadow's axis is slightly skewed from
+	 * the main needle (which is exactly the visual effect we want — a fan).
+	 * The polygon-tip and rear-extension helpers below build geometry
+	 * along this shadow vector. */
+	int32_t dx = p2.x - p1.x;
+	int32_t dy = p2.y - p1.y;
+	int32_t len;
+	if (dx == raw_dx && dy == raw_dy) {
+		len = raw_len;   /* dynamic zeroed the offset — reuse precomputed length */
+	} else {
+		uint32_t lsq = (uint32_t)(dx * dx + dy * dy);
+		if (lsq == 0) { len = 0; }
+		else {
+			lv_sqrt_res_t sres;
+			lv_sqrt(lsq, &sres, 0x800);
+			len = sres.i;
+		}
+	}
+
+	lv_draw_line_dsc_t sline;
+	lv_draw_line_dsc_init(&sline);
+	sline.color = color;
+	sline.opa   = opa;
+	sline.width = (lv_coord_t)width;
+	if (style == 1) {
+		sline.round_start = 1;
+		sline.round_end   = 1;
+	}
+
+	/* Flat / Rounded — single line draw, optionally extending behind pivot
+	 * for rear. Matches the BEGIN-time p1-mutation path on the main needle. */
+	if (style <= 1) {
+		lv_point_t draw_p1 = p1;
+		if (rear_len > 0 && len > 0) {
+			draw_p1.x = (lv_coord_t)(p1.x - (dx * (int32_t)rear_len) / len);
+			draw_p1.y = (lv_coord_t)(p1.y - (dy * (int32_t)rear_len) / len);
+		}
+		lv_draw_line(ctx, &sline, &draw_p1, &p2);
+		return;
+	}
+
+	/* Polygon styles 2-5 — duplicate the same geometry the main END block
+	 * builds, in shadow color/opa. */
+	if (len == 0) return;
+	lv_draw_rect_dsc_t rdsc;
+	lv_draw_rect_dsc_init(&rdsc);
+	rdsc.bg_color     = color;
+	rdsc.bg_opa       = opa;
+	rdsc.border_width = 0;
+
+	lv_point_t pts[6];
+	uint16_t   npts = 0;
+	int32_t ov_base  = md->needle_tip_base_w;
+	int32_t ov_point = md->needle_tip_point_w;
+	int32_t ov_taper = md->needle_tip_taper;
+	if (ov_taper > 100) ov_taper = 100;
+
+	switch (style) {
+	case 2: {
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 1);
+		int32_t shaft   = ov_taper > 0 ? ov_taper : 90;
+		int32_t cap_w   = ov_point;
+		pts[0] = _tip_pt(&p1, dx, dy, len, 0,     100,  half_w);
+		pts[1] = _tip_pt(&p1, dx, dy, len, shaft, 100,  half_w);
+		if (cap_w > 0) {
+			pts[2] = _tip_pt(&p1, dx, dy, len, 100, 100,  cap_w);
+			pts[3] = _tip_pt(&p1, dx, dy, len, 100, 100, -cap_w);
+			pts[4] = _tip_pt(&p1, dx, dy, len, shaft, 100, -half_w);
+			pts[5] = _tip_pt(&p1, dx, dy, len, 0,     100, -half_w);
+			npts = 6;
+		} else {
+			pts[2] = p2;
+			pts[3] = _tip_pt(&p1, dx, dy, len, shaft, 100, -half_w);
+			pts[4] = _tip_pt(&p1, dx, dy, len, 0,     100, -half_w);
+			npts = 5;
+		}
+		break;
+	}
+	case 3: {
+		int32_t half_w = ov_base > 0 ? ov_base : (width / 2 + 2);
+		if (ov_point > 0 || (ov_taper > 0 && ov_taper < 100)) {
+			int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+			int32_t cap_w   = ov_point > 0 ? ov_point : 1;
+			pts[0] = _tip_pt(&p1, dx, dy, len, 0,       100,  half_w);
+			pts[1] = _tip_pt(&p1, dx, dy, len, cap_pos, 100,  cap_w);
+			pts[2] = _tip_pt(&p1, dx, dy, len, cap_pos, 100, -cap_w);
+			pts[3] = _tip_pt(&p1, dx, dy, len, 0,       100, -half_w);
+			npts = 4;
+		} else {
+			pts[0] = _tip_pt(&p1, dx, dy, len, 0, 1,  half_w);
+			pts[1] = p2;
+			pts[2] = _tip_pt(&p1, dx, dy, len, 0, 1, -half_w);
+			npts = 3;
+		}
+		break;
+	}
+	case 4: {
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 2);
+		int32_t cap_pos = ov_taper > 0 ? ov_taper : 97;
+		int32_t cap_w   = ov_point > 0 ? ov_point : 1;
+		pts[0] = _tip_pt(&p1, dx, dy, len, 0,       100,  half_w);
+		pts[1] = _tip_pt(&p1, dx, dy, len, cap_pos, 100,  cap_w);
+		pts[2] = _tip_pt(&p1, dx, dy, len, cap_pos, 100, -cap_w);
+		pts[3] = _tip_pt(&p1, dx, dy, len, 0,       100, -half_w);
+		npts = 4;
+		break;
+	}
+	case 5: {
+		int32_t half_w  = ov_base  > 0 ? ov_base  : (width / 2 + 3);
+		int32_t mid_pos = ov_taper > 0 ? ov_taper : 50;
+		pts[0] = p1;
+		pts[1] = _tip_pt(&p1, dx, dy, len, mid_pos, 100,  half_w);
+		pts[2] = p2;
+		pts[3] = _tip_pt(&p1, dx, dy, len, mid_pos, 100, -half_w);
+		npts = 4;
+		break;
+	}
+	default: break;
+	}
+	if (npts > 0) lv_draw_polygon(ctx, &rdsc, pts, npts);
+
+	/* Polygon rear — same opa/width as the polygon body. */
+	if (rear_len > 0) {
+		int32_t rx = p1.x - (dx * (int32_t)rear_len) / len;
+		int32_t ry = p1.y - (dy * (int32_t)rear_len) / len;
+		lv_point_t rear_start = { (lv_coord_t)rx, (lv_coord_t)ry };
+		lv_draw_line(ctx, &sline, &rear_start, &p1);
+	}
+}
+
 /* Custom needle tip renderer. Hooks LV_EVENT_DRAW_PART_BEGIN / _END on the
  * meter; LVGL fires DRAW_PART_NEEDLE_LINE for each line-needle indicator with
  * the pivot (p1), tip (p2), and line_dsc already populated.
@@ -235,11 +507,24 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	 * expand the clip region (up to the parent's bounds) so the rear can
 	 * draw past the meter without being chopped. */
 	if (code == LV_EVENT_REFR_EXT_DRAW_SIZE) {
+		lv_coord_t pad = 0;
 		if (md->needle_rear_length > 0) {
-			lv_coord_t pad = (lv_coord_t)md->needle_rear_length +
-			                 (lv_coord_t)(md->needle_width / 2 + 2);
-			lv_event_set_ext_draw_size(e, pad);
+			pad = (lv_coord_t)md->needle_rear_length +
+			      (lv_coord_t)(md->needle_width / 2 + 2);
 		}
+		/* Shadow may render outside the meter rect by (offset, width_extra).
+		 * Pad the ext_draw_size so lv_obj_invalidate_area can reach those
+		 * pixels — otherwise the shifted dirty rect clips at the meter edge
+		 * and the shadow lingers when the needle sweeps off the side. */
+		if (md->shadow_enabled) {
+			int32_t ax = md->shadow_offset_x < 0 ? -md->shadow_offset_x : md->shadow_offset_x;
+			int32_t ay = md->shadow_offset_y < 0 ? -md->shadow_offset_y : md->shadow_offset_y;
+			lv_coord_t shadow_pad = (lv_coord_t)(LV_MAX(ax, ay) +
+			                                     md->needle_width / 2 +
+			                                     md->shadow_width_extra + 2);
+			if (shadow_pad > pad) pad = shadow_pad;
+		}
+		if (pad > 0) lv_event_set_ext_draw_size(e, pad);
 		return;
 	}
 
@@ -303,6 +588,24 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 
 	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
 	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
+
+	/* Shadow needle path. The shadow is a real lv_meter indicator added in
+	 * front of the main needle in the linked list (drawn first by READ_BACK
+	 * iteration), so LVGL fires DRAW_PART_NEEDLE_LINE for it before the main
+	 * needle. We draw the offset shadow ourselves at BEGIN and then hide
+	 * LVGL's own line-at-origin draw via line_dsc->opa. END is a no-op for
+	 * the shadow — the main needle's BEGIN/END pair runs after this and
+	 * uses its own statics, so no cross-talk. */
+	bool is_shadow = md->shadow_enabled &&
+	                 ((dsc->sub_part_ptr == md->shadow_needle && md->shadow_needle != NULL) ||
+	                  (dsc->sub_part_ptr == md->night_shadow_needle && md->night_shadow_needle != NULL));
+	if (is_shadow) {
+		if (code == LV_EVENT_DRAW_PART_BEGIN) {
+			_meter_draw_shadow_needle(dsc->draw_ctx, md, dsc->p1, dsc->p2);
+			dsc->line_dsc->opa = LV_OPA_TRANSP;
+		}
+		return;
+	}
 
 	uint8_t style    = md->needle_tip_style;
 	uint8_t rear_len = md->needle_rear_length;
@@ -513,6 +816,20 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	lv_color_t ball_c      = use_night ? NIGHT_PICK_COLOR(true, md->night, needle_ball_color, md->needle_ball_color) : md->needle_ball_color;
 	const char *needle_img = (use_night && md->night.has_needle_image_name) ? md->night.needle_image_name : md->needle_image_name;
 
+	bool needle_is_image = (needle_img && needle_img[0] != '\0');
+
+	/* Shadow indicator — only for line needles. Added BEFORE the main needle
+	 * so READ_BACK iteration draws it first (under the real needle). Width
+	 * + color set here serve no visual purpose because _meter_needle_draw_cb
+	 * draws the shadow geometry itself, but we still need a real indicator
+	 * for LVGL to emit DRAW_PART_NEEDLE_LINE events that we can intercept. */
+	if (md->shadow_enabled && !needle_is_image) {
+		lv_meter_indicator_t *sh = lv_meter_add_needle_line(m, scale, md->needle_width,
+		                                                     md->shadow_color, md->needle_r_mod);
+		if (use_night) md->night_shadow_needle = sh;
+		else           md->shadow_needle       = sh;
+	}
+
 	/* Needle */
 	lv_meter_indicator_t *needle;
 	lv_meter_scale_t *needle_target_scale = scale;
@@ -566,6 +883,11 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	init_v = _meter_apply_anchor(md, init_v);
 	if (md->reverse) init_v = md->max + md->min - init_v;
 	lv_meter_set_indicator_value(m, needle, init_v);
+
+	/* Snap the shadow indicator (if present) to the same initial value so
+	 * frame-1 already has the shadow underneath the needle. */
+	lv_meter_indicator_t *sh = use_night ? md->night_shadow_needle : md->shadow_needle;
+	if (sh) lv_meter_set_indicator_value(m, sh, init_v);
 
 	/* Refresh ext_draw_size now that the needle's rear extension (if
 	 * any) needs to be reflected in the clip area. The DRAW_PART
@@ -982,6 +1304,21 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_ball_size", md->needle_ball_size);
 	if (md->needle_ball_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "needle_ball_color", (int)md->needle_ball_color.full);
+	/* Shadow — defaults-only emit */
+	if (md->shadow_enabled)
+		cJSON_AddBoolToObject(cfg, "shadow_enabled", true);
+	if (!md->shadow_dynamic)
+		cJSON_AddBoolToObject(cfg, "shadow_dynamic", false);
+	if (md->shadow_offset_x != 3)
+		cJSON_AddNumberToObject(cfg, "shadow_offset_x", md->shadow_offset_x);
+	if (md->shadow_offset_y != 4)
+		cJSON_AddNumberToObject(cfg, "shadow_offset_y", md->shadow_offset_y);
+	if (md->shadow_opa != 120)
+		cJSON_AddNumberToObject(cfg, "shadow_opa", md->shadow_opa);
+	if (md->shadow_width_extra != 2)
+		cJSON_AddNumberToObject(cfg, "shadow_width_extra", md->shadow_width_extra);
+	if (md->shadow_color.full != lv_color_black().full)
+		cJSON_AddNumberToObject(cfg, "shadow_color", (int)md->shadow_color.full);
 	if (md->needle_image_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "needle_image_name", md->needle_image_name);
 	if (md->needle_pivot_x != 0)
@@ -1144,6 +1481,21 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_ball_size = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_ball_color");
 	if (cJSON_IsNumber(ap)) md->needle_ball_color.full = (uint32_t)ap->valueint;
+	/* Shadow */
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_enabled");
+	if (cJSON_IsBool(ap)) md->shadow_enabled = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_dynamic");
+	if (cJSON_IsBool(ap)) md->shadow_dynamic = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_offset_x");
+	if (cJSON_IsNumber(ap)) md->shadow_offset_x = (int8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_offset_y");
+	if (cJSON_IsNumber(ap)) md->shadow_offset_y = (int8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_opa");
+	if (cJSON_IsNumber(ap)) md->shadow_opa = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_width_extra");
+	if (cJSON_IsNumber(ap)) md->shadow_width_extra = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_color");
+	if (cJSON_IsNumber(ap)) md->shadow_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_image_name");
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->needle_image_name, ap->valuestring, sizeof(md->needle_image_name));
@@ -1530,6 +1882,13 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "needle_pivot_x") == 0)     { out->i = md->needle_pivot_x;      return true; }
 	if (strcmp(name, "needle_pivot_y") == 0)     { out->i = md->needle_pivot_y;      return true; }
 	if (strcmp(name, "needle_angle_offset") == 0){ out->i = md->needle_angle_offset; return true; }
+	if (strcmp(name, "shadow_enabled") == 0)     { out->b = md->shadow_enabled;      return true; }
+	if (strcmp(name, "shadow_dynamic") == 0)     { out->b = md->shadow_dynamic;      return true; }
+	if (strcmp(name, "shadow_offset_x") == 0)    { out->i = md->shadow_offset_x;     return true; }
+	if (strcmp(name, "shadow_offset_y") == 0)    { out->i = md->shadow_offset_y;     return true; }
+	if (strcmp(name, "shadow_opa") == 0)         { out->i = md->shadow_opa;          return true; }
+	if (strcmp(name, "shadow_width_extra") == 0) { out->i = md->shadow_width_extra;  return true; }
+	if (strcmp(name, "shadow_color") == 0)       { out->color = lv_color_to32(md->shadow_color) & 0xFFFFFF; return true; }
 	return false;
 }
 
@@ -1679,6 +2038,46 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "needle_pivot_x") == 0)      { md->needle_pivot_x = (int16_t)in->i;     return true; }
 	if (strcmp(name, "needle_pivot_y") == 0)      { md->needle_pivot_y = (int16_t)in->i;     return true; }
 	if (strcmp(name, "needle_angle_offset") == 0) { md->needle_angle_offset = (int16_t)in->i; return true; }
+	/* Shadow — toggling shadow_enabled needs a meter rebuild because the
+	 * shadow indicator is created at meter-build time. The other knobs
+	 * (offset/opa/width/color) take effect on the next redraw because the
+	 * draw hook reads md directly. Layouts reload on save, so the toggle
+	 * reaches the live meter that way. */
+	if (strcmp(name, "shadow_enabled") == 0)      { md->shadow_enabled = in->b;              return true; }
+	if (strcmp(name, "shadow_dynamic") == 0) {
+		md->shadow_dynamic = in->b;
+		if (LV_VALID(m)) lv_obj_invalidate(m);
+		return true;
+	}
+	if (strcmp(name, "shadow_offset_x") == 0) {
+		int v = in->i; if (v < -32) v = -32; if (v > 32) v = 32;
+		md->shadow_offset_x = (int8_t)v;
+		if (LV_VALID(m)) lv_obj_refresh_ext_draw_size(m);
+		return true;
+	}
+	if (strcmp(name, "shadow_offset_y") == 0) {
+		int v = in->i; if (v < -32) v = -32; if (v > 32) v = 32;
+		md->shadow_offset_y = (int8_t)v;
+		if (LV_VALID(m)) lv_obj_refresh_ext_draw_size(m);
+		return true;
+	}
+	if (strcmp(name, "shadow_opa") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
+		md->shadow_opa = (uint8_t)v;
+		if (LV_VALID(m)) lv_obj_invalidate(m);
+		return true;
+	}
+	if (strcmp(name, "shadow_width_extra") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 32) v = 32;
+		md->shadow_width_extra = (uint8_t)v;
+		if (LV_VALID(m)) lv_obj_refresh_ext_draw_size(m);
+		return true;
+	}
+	if (strcmp(name, "shadow_color") == 0) {
+		md->shadow_color = lv_color_hex(in->color);
+		if (LV_VALID(m)) lv_obj_invalidate(m);
+		return true;
+	}
 	#undef LV_VALID
 	return false;
 }
@@ -1726,6 +2125,15 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_tip_taper   = 0;
 	md->needle_ball_size = 10;
 	md->needle_ball_color = lv_color_white();
+	/* Drop shadow defaults — disabled, modest offset + half-transparency
+	 * for a soft drop look without overpowering the needle once enabled. */
+	md->shadow_enabled     = false;
+	md->shadow_dynamic     = true;
+	md->shadow_offset_x    = 3;
+	md->shadow_offset_y    = 4;
+	md->shadow_opa         = 120;
+	md->shadow_width_extra = 2;
+	md->shadow_color       = lv_color_black();
 	/* Tick label defaults */
 	md->tick_label_color = lv_color_white();
 	md->tick_label_divisor = 1;
