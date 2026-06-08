@@ -15,6 +15,11 @@ typedef struct {
     NIGHT_FIELD_COLOR(bg_arc_color)
     NIGHT_FIELD_COLOR(value_color)
     NIGHT_FIELD_COLOR(redline_color)
+    /* Low/high alert fill colours — applied DYNAMICALLY on LV_PART_INDICATOR in
+     * _arc_apply_fill_color (not baked), so a night override just triggers a
+     * re-apply of the fill, no overlay rebuild. */
+    NIGHT_FIELD_COLOR(arc_low_color)
+    NIGHT_FIELD_COLOR(arc_high_color)
     /* Tick + value-line colours are baked into the overlay lv_meter at
      * create time (LVGL v8 has no live tick/needle recolor API), so the
      * overlay is rebuilt on night apply when one of these is set. See
@@ -83,6 +88,18 @@ typedef struct {
     uint8_t    redline_arc_width;       /* default: 0 (= use arc_width) */
     bool       redline_recolor_fill;    /* default: true — also recolor the moving indicator when in zone */
     lv_obj_t  *redline_arc_obj;         /* runtime: the red zone marker arc */
+
+    /* ── Color alerts — recolor the moving fill below arc_low (low_color) or
+     *   above arc_high (high_color). Mirrors the bar widget's alert system.
+     *   Thresholds are owned by the bound CHANNEL (low_warn/high_warn) and are
+     *   NOT persisted on the widget (omitted from to_json); colours ARE widget-
+     *   owned styling and round-trip. Applied in _arc_apply_fill_color with
+     *   precedence rule > limiter > alerts > redline > normal. */
+    bool       arc_alerts_enabled;      /* default: false — master toggle */
+    float      arc_low;                 /* default: 0   — low alert threshold (from channel.low_warn) */
+    float      arc_high;                /* default: 100 — high alert threshold (from channel.high_warn) */
+    lv_color_t arc_low_color;           /* default: 0x0000FF */
+    lv_color_t arc_high_color;          /* default: 0xFF0000 */
 
     /* ── Limiter effect — applied when value >= limiter_value.
      *   0 = None       — no visual change (redline still applies if enabled)

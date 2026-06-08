@@ -7234,7 +7234,12 @@
                             { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data" },
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", min: 0, max: 100, enabledBy: "anchor_enabled" },
-                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data" }
+                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data" },
+                            { name: "arc_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "arc_alerts" },
+                            { name: "arc_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "arc_alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "arc_alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true },
+                            { name: "arc_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "arc_alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "arc_alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true }
                         ]
                     },
                     "toggle": {
@@ -8997,6 +9002,12 @@
                 if (w.type === 'bar') {
                     delete w.config.bar_low;
                     delete w.config.bar_high;
+                }
+                if (w.type === 'arc') {
+                    /* arc_low/arc_high live on the channel (low_warn/high_warn);
+                     * arc_alerts_enabled IS widget-owned and ships to firmware. */
+                    delete w.config.arc_low;
+                    delete w.config.arc_high;
                 }
                 /* Image: convert scale percentage (10-200) to LVGL zoom (256 = 100%);
                  * skip when auto_size is set (firmware computes zoom from container size). */
@@ -16741,6 +16752,8 @@
                          low:  'warning_low_threshold',  lowEn:  'warning_low_enabled' };
             if (w.type === 'bar')
                 return { high: 'bar_high', low: 'bar_low', en: 'bar_alerts_enabled' };
+            if (w.type === 'arc')
+                return { high: 'arc_high', low: 'arc_low', en: 'arc_alerts_enabled' };
             return null;
         }
 

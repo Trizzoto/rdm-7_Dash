@@ -436,7 +436,12 @@
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear." },
         { "name": "anchor_value",     "label": "Anchor Value", "type": "number",  "default": 50,   "category": "data", "enabled_by": "anchor_enabled" },
         { "name": "anchor_position",  "label": "Anchor Position (%)", "type": "slider", "default": 50, "category": "data", "min": 0, "max": 100, "enabled_by": "anchor_enabled" },
-        { "name": "reverse",          "label": "Reverse Direction", "type": "checkbox", "default": false, "category": "data" }
+        { "name": "reverse",          "label": "Reverse Direction", "type": "checkbox", "default": false, "category": "data" },
+        { "name": "arc_alerts_enabled", "label": "Color Alerts", "type": "checkbox", "default": false, "category": "alerts", "group": "arc_alerts" },
+        { "name": "arc_low",          "label": "Low Threshold",  "type": "stepper", "default": 0,   "category": "alerts", "group": "arc_alerts", "min": -99999, "max": 99999, "enabled_by": "arc_alerts_enabled" },
+        { "name": "arc_low_color",    "label": "Low Color",      "type": "color",   "default": "#0000FF", "category": "alerts", "group": "arc_alerts", "enabled_by": "arc_alerts_enabled", "night_overridable": true },
+        { "name": "arc_high",         "label": "High Threshold", "type": "stepper", "default": 100, "category": "alerts", "group": "arc_alerts", "min": -99999, "max": 99999, "enabled_by": "arc_alerts_enabled" },
+        { "name": "arc_high_color",   "label": "High Color",     "type": "color",   "default": "#FF0000", "category": "alerts", "group": "arc_alerts", "enabled_by": "arc_alerts_enabled", "night_overridable": true }
       ]
     },
     {

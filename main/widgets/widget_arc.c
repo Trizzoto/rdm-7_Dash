@@ -52,6 +52,14 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_FLASH_MS        200
 #define ARC_DEFAULT_VALUE_COLOR    0xFFFFFF
 
+/* ── Color-alert defaults (mirror widget_bar). Alerts OFF by default so
+ * existing layouts are unaffected. Thresholds come from the bound channel. */
+#define ARC_DEFAULT_ALERTS_ENABLED  false
+#define ARC_DEFAULT_ALERT_LOW       0.0f
+#define ARC_DEFAULT_ALERT_HIGH      100.0f
+#define ARC_DEFAULT_LOW_COLOR      0x0000FF
+#define ARC_DEFAULT_HIGH_COLOR     0xFF0000
+
 /* ── Tick / value-line / anchor / reverse defaults (meter-parity). All
  * default so existing layouts/perf are unchanged: ticks + value-line OFF,
  * anchor + reverse OFF. The numeric tick defaults mirror widget_meter. */
@@ -235,16 +243,29 @@ static void _arc_apply_fill_color(arc_data_t *d, bool active) {
     lv_color_t redline = NIGHT_PICK_COLOR(active, d->night, redline_color, d->redline_color);
     lv_color_t fill = normal;
 
-    /* Order of precedence:
+    /* Order of precedence (highest first):
      *   1. Limiter Solid  → limiter_color overrides everything
      *   2. Limiter Flash  → toggle between normal and limiter_color
-     *   3. Redline zone   → recolor with redline_color (if recolor_fill on)
-     *   4. Default        → normal arc_color
-     * Whichever wins gets applied to LV_PART_INDICATOR. */
+     *   3. Color alerts   → arc_low_color below arc_low / arc_high_color above
+     *                       arc_high (thresholds owned by the bound channel)
+     *   4. Redline zone   → recolor with redline_color (if recolor_fill on)
+     *   5. Default        → normal arc_color
+     * (A rule-overridden arc_color is already folded into `normal` above, so it
+     *  outranks redline/normal but yields to limiter/alerts — same as the
+     *  rule-fg behaviour the rest of this function assumes.)
+     * Alerts sit ABOVE redline so a configured low/high alert wins on the high
+     * side instead of the redline fill-recolor. Whichever branch wins gets
+     * applied to LV_PART_INDICATOR. */
     if (d->in_limiter && d->limiter_effect == 2) {
         fill = d->limiter_color;
     } else if (d->in_limiter && d->limiter_effect == 1) {
         fill = d->flash_phase ? d->limiter_color : normal;
+    } else if (d->arc_alerts_enabled &&
+               (d->_cached_value <= d->arc_low || d->_cached_value >= d->arc_high)) {
+        if (d->_cached_value <= d->arc_low)
+            fill = NIGHT_PICK_COLOR(active, d->night, arc_low_color, d->arc_low_color);
+        else
+            fill = NIGHT_PICK_COLOR(active, d->night, arc_high_color, d->arc_high_color);
     } else if (d->redline_enabled && d->redline_recolor_fill) {
         /* "In zone" detection re-uses the in_limiter result when limiter
          * is at the same threshold; otherwise check threshold directly. */
@@ -403,7 +424,16 @@ static void _arc_on_channel_changed(channel_t *c, void *user_data) {
     } else {
         d->redline_enabled = false;
     }
+    /* Channel owns the alert thresholds (same as the bar). When a side has no
+     * warn set, park it at the range edge so that alert can never fire
+     * (reverts to inactive) instead of leaving a stale value mid-range. Alert
+     * COLOURS stay widget-owned — never driven by the channel. */
+    d->arc_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)c->low_warn  : d->signal_min;
+    d->arc_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)c->high_warn : d->signal_max;
     /* Redline colour is widget-owned — never driven by the channel. */
+    /* Thresholds moved → re-apply the fill so the alert recolor reflects the
+     * new buckets immediately (a parked signal produces no further tick). */
+    _arc_apply_fill_color(d, night_mode_is_active());
     if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
@@ -864,6 +894,7 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
      * was created while night-mode is already active. */
     if (d->night.has_arc_color || d->night.has_bg_arc_color ||
         d->night.has_value_color || d->night.has_redline_color ||
+        d->night.has_arc_low_color || d->night.has_arc_high_color ||
         d->night.has_minor_tick_color || d->night.has_major_tick_color ||
         d->night.has_tick_label_color ||
         d->night.has_value_line_color ||
@@ -970,6 +1001,18 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     if (!d->redline_recolor_fill)
         cJSON_AddBoolToObject(cfg, "redline_recolor_fill", false);
 
+    /* Color alerts — defaults-only. arc_low / arc_high (the THRESHOLDS) live on
+     * the bound channel (channels.json) and are intentionally NOT persisted
+     * here, so they stick to the channel setup and don't travel when a layout
+     * is shared (same as the bar's bar_low / bar_high). Alert COLOURS are
+     * widget-owned styling and DO round-trip. */
+    if (d->arc_alerts_enabled)
+        cJSON_AddBoolToObject(cfg, "arc_alerts_enabled", true);
+    if (d->arc_low_color.full != lv_color_hex(ARC_DEFAULT_LOW_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "arc_low_color", (int)d->arc_low_color.full);
+    if (d->arc_high_color.full != lv_color_hex(ARC_DEFAULT_HIGH_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "arc_high_color", (int)d->arc_high_color.full);
+
     /* Limiter */
     if (d->limiter_effect != 0)
         cJSON_AddNumberToObject(cfg, "limiter_effect", d->limiter_effect);
@@ -1060,6 +1103,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         NIGHT_SERIALIZE_COLOR(n, d->night, bg_arc_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, value_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, redline_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, arc_low_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, arc_high_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, minor_tick_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, major_tick_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, tick_label_color);
@@ -1147,6 +1192,16 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->redline_arc_width = (uint8_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_recolor_fill");
     if (cJSON_IsBool(item)) d->redline_recolor_fill = cJSON_IsTrue(item);
+
+    /* Color alerts — enable flag + colours only. Thresholds (arc_low /
+     * arc_high) are NOT read here; they're adopted from the bound channel
+     * below (single source of truth, same as the bar). */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_alerts_enabled");
+    if (cJSON_IsBool(item)) d->arc_alerts_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_low_color");
+    if (cJSON_IsNumber(item)) d->arc_low_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_high_color");
+    if (cJSON_IsNumber(item)) d->arc_high_color.full = (uint16_t)item->valueint;
 
     /* Limiter */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "limiter_effect");
@@ -1268,6 +1323,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         NIGHT_PARSE_COLOR(night, d->night, bg_arc_color);
         NIGHT_PARSE_COLOR(night, d->night, value_color);
         NIGHT_PARSE_COLOR(night, d->night, redline_color);
+        NIGHT_PARSE_COLOR(night, d->night, arc_low_color);
+        NIGHT_PARSE_COLOR(night, d->night, arc_high_color);
         NIGHT_PARSE_COLOR(night, d->night, minor_tick_color);
         NIGHT_PARSE_COLOR(night, d->night, major_tick_color);
         NIGHT_PARSE_COLOR(night, d->night, tick_label_color);
@@ -1295,6 +1352,11 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         } else {
             d->redline_enabled = false;
         }
+        /* Channel owns the alert thresholds (single source of truth). A side
+         * with no channel warn parks at the range edge = alert inactive. Same
+         * pattern as the bar. Alert colours stay widget-owned. */
+        d->arc_low  = (bound_c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)bound_c->low_warn  : d->signal_min;
+        d->arc_high = (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)bound_c->high_warn : d->signal_max;
         /* Redline colour stays widget-owned — never overridden by the channel. */
     } else if (d->signal_name[0] != '\0') {
         legacy_widget_data_t legacy = {
@@ -1307,7 +1369,13 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
                 (lv_color_to32(d->redline_color) & 0xFFFFFF) : CHANNEL_USE_DEFAULT_COLOR,
         };
         channel_t *c = channel_manager_record_legacy_widget(&legacy);
-        if (c) d->channel = c;
+        if (c) {
+            d->channel = c;
+            /* Adopt the channel's alert thresholds (single source of truth); a
+             * side with no channel warn parks at the range edge = inactive. */
+            d->arc_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? (float)c->low_warn  : d->signal_min;
+            d->arc_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? (float)c->high_warn : d->signal_max;
+        }
     }
 }
 
@@ -1508,6 +1576,14 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "rounded_ends") == 0)   { out->b = d->rounded_ends;     return true; }
 	if (strcmp(name, "arc_color") == 0)      { out->color = lv_color_to32(d->arc_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "bg_arc_color") == 0)   { out->color = lv_color_to32(d->bg_arc_color) & 0xFFFFFF; return true; }
+	/* Color alerts. Thresholds (arc_low / arc_high) are channel-owned and the
+	 * web edits them through the channel API, but expose them read-back here so
+	 * the inspector can display the current values (mirrors the bar). */
+	if (strcmp(name, "arc_alerts_enabled") == 0) { out->b = d->arc_alerts_enabled; return true; }
+	if (strcmp(name, "arc_low") == 0)        { out->i = (int32_t)d->arc_low;  return true; }
+	if (strcmp(name, "arc_high") == 0)       { out->i = (int32_t)d->arc_high; return true; }
+	if (strcmp(name, "arc_low_color") == 0)  { out->color = lv_color_to32(d->arc_low_color)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "arc_high_color") == 0) { out->color = lv_color_to32(d->arc_high_color) & 0xFFFFFF; return true; }
 	/* Tick spacing is stored count-based (minor_tick_count / major_tick_every)
 	 * but exposed to the inspector as VALUE-SPACING to match the meter. Derive
 	 * the per-tick value step from the signal range and tick count. */
@@ -1677,6 +1753,41 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
+	/* Color alerts. Colours re-run the full fill precedence so the edit lands
+	 * immediately (even on an unbound arc with no signal ticks) and the paint
+	 * memo stays coherent — _arc_apply_fill_color updates _last_fill itself.
+	 * Thresholds are channel-owned; the web edits them through the channel API,
+	 * but accept a direct write here too (mirrors the bar). */
+	if (strcmp(name, "arc_alerts_enabled") == 0) {
+		d->arc_alerts_enabled = in->b;
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "arc_low") == 0) {
+		d->arc_low = (float)in->i;
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "arc_high") == 0) {
+		d->arc_high = (float)in->i;
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "arc_low_color") == 0) {
+		d->arc_low_color = lv_color_hex(in->color);
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "arc_high_color") == 0) {
+		d->arc_high_color = lv_color_hex(in->color);
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
 	return false;
 }
 
@@ -1710,6 +1821,14 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->redline_color         = lv_color_hex(ARC_DEFAULT_REDLINE_COLOR);
     d->redline_arc_width     = 0;     /* 0 = follow arc_width */
     d->redline_recolor_fill  = true;
+
+    /* Color-alert defaults — OFF by default. Thresholds come from the bound
+     * channel; the defaults here only matter for an unbound arc. */
+    d->arc_alerts_enabled    = ARC_DEFAULT_ALERTS_ENABLED;
+    d->arc_low               = ARC_DEFAULT_ALERT_LOW;
+    d->arc_high              = ARC_DEFAULT_ALERT_HIGH;
+    d->arc_low_color         = lv_color_hex(ARC_DEFAULT_LOW_COLOR);
+    d->arc_high_color        = lv_color_hex(ARC_DEFAULT_HIGH_COLOR);
 
     /* Limiter defaults */
     d->limiter_effect = 0;
