@@ -187,7 +187,13 @@ static void _flash_timer_cb(lv_timer_t *timer) {
 
     if (should_flash) {
         d->flash_state = !d->flash_state;
-        lv_color_t c = d->flash_state ? d->color_high : d->color_off;
+        /* Resolve night-mode colors so the flash matches the rest of the strip
+         * (the other paint paths night-pick; the flash timer must too, or it
+         * would paint raw day colors over a night-applied strip). */
+        bool night = night_mode_is_active();
+        lv_color_t c_high = NIGHT_PICK_COLOR(night, d->night, color_high, d->color_high);
+        lv_color_t c_off  = NIGHT_PICK_COLOR(night, d->night, color_off,  d->color_off);
+        lv_color_t c = d->flash_state ? c_high : c_off;
         for (int i = 0; i < d->led_count; i++)
             _shl_set_led(d, i, c);
     }

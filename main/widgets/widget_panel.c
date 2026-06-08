@@ -444,7 +444,13 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	bool text_changed  = (strncmp(pd->last_display, display_str,
 	                              sizeof(pd->last_display)) != 0);
 	bool state_changed = (pd->last_warn_state != warn_state);
-	if (!text_changed && !state_changed) {
+	/* Early-out collapses the per-tick restyle storm — BUT only when there is
+	 * no peak line to maintain. With show_peak on we must fall through to the
+	 * peak block below so a session-peak reset (which doesn't notify us) or a
+	 * just-enabled peak label still re-renders; the value/warn writes stay
+	 * individually gated on text_changed/state_changed, and the peak block has
+	 * its own strcmp gate, so falling through stays cheap. */
+	if (!text_changed && !state_changed && pd->show_peak == 0) {
 		return;
 	}
 	/* Cache the display string. Use memcpy(size-1) + manual null terminator

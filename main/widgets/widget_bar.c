@@ -84,13 +84,29 @@ static float _bar_apply_anchor(const bar_data_t *bd, float v) {
 	return mn + (pct / 100.0f) * (mx - mn);
 }
 
+/* Forward decl — used by widget_bar_sync_range to re-push the current value. */
+static void _bar_on_signal(float value, bool is_stale, void *user_data);
+
 void widget_bar_sync_range(bar_data_t *bd) {
-	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
-	int32_t scale = _bar_resolution_scale(bd);
-	int32_t lo = lroundf(bd->bar_min * (float)scale);
-	int32_t hi = lroundf(bd->bar_max * (float)scale);
-	if (hi <= lo) { lo = 0; hi = 100 * scale; }
-	lv_bar_set_range(bd->bar_obj, lo, hi);
+	if (!bd) return;
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+		int32_t scale = _bar_resolution_scale(bd);
+		int32_t lo = lroundf(bd->bar_min * (float)scale);
+		int32_t hi = lroundf(bd->bar_max * (float)scale);
+		if (hi <= lo) { lo = 0; hi = 100 * scale; }
+		lv_bar_set_range(bd->bar_obj, lo, hi);
+	}
+	/* Range / decimals just changed → the cached scaled value (standard mode)
+	 * or clip width (image mode) no longer maps to the right fill. Drop the
+	 * paint memo and re-push the current value NOW: a parked/steady signal
+	 * produces no further tick to self-heal (signal.c only notifies on a value
+	 * change), so without this the fill would freeze at the old scale. */
+	bd->_pc_valid = false;
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_BAR, bd->slot);
+	if (w && bd->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)bd->signal_index);
+		if (sig) _bar_on_signal(sig->current_value, sig->is_stale, w);
+	}
 }
 
 /* ── Helpers: look up bar_data_t by slot or value_id via registry ──────── */

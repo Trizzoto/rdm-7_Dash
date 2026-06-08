@@ -504,6 +504,8 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     d->flash_phase     = false;
     d->in_limiter      = false;
     d->_cached_value   = d->signal_min;
+    d->_last_fill_valid  = false;  /* paint memo must not gate the first paint */
+    d->_last_label_valid = false;  /* of a freshly (re)built arc_obj/value_label */
 
     if (_is_image_mode(d)) {
         _arc_create_image_mode(w, parent);
@@ -1069,11 +1071,12 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "arc_color") == 0) {
 		d->arc_color = lv_color_hex(in->color);
-		if (a && lv_obj_is_valid(a) && !d->in_limiter)
-			lv_obj_set_style_arc_color(a, d->arc_color, LV_PART_INDICATOR);
-		/* Direct write bypasses _arc_apply_fill_color's memo — force the
-		 * next computed paint to actually write. */
-		d->_last_fill_valid = false;
+		/* Re-run the full fill precedence (gradient sample / rule / night /
+		 * limiter / redline) so the edit lands correctly and immediately even
+		 * on an unbound arc (no signal ticks to self-heal), and the memo stays
+		 * coherent — _arc_apply_fill_color updates _last_fill itself. */
+		if (a && lv_obj_is_valid(a))
+			_arc_apply_fill_color(d, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "bg_arc_color") == 0) {
