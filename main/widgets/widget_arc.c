@@ -64,6 +64,7 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_MAJOR_TICK_WIDTH   4
 #define ARC_DEFAULT_MINOR_TICK_COLOR   0x9E9E9E
 #define ARC_DEFAULT_MAJOR_TICK_COLOR   0xFFFFFF
+#define ARC_DEFAULT_TICKS_OUTSIDE      false
 #define ARC_DEFAULT_SHOW_TICK_LABELS   true
 #define ARC_DEFAULT_LABEL_GAP          10
 #define ARC_DEFAULT_TICK_LABEL_COLOR   0xFFFFFF
@@ -96,6 +97,28 @@ static bool _is_image_mode(const arc_data_t *d) {
 
 static bool _is_static_image_mode(const arc_data_t *d) {
     return d->arc_image[0] != '\0' && d->arc_image_full[0] == '\0';
+}
+
+/* ── Helper: track inset for "ticks outside" mode ───────────────────────────
+ * When show_ticks AND ticks_outside are both set, the tick overlay stays at the
+ * full rim and the arc track is pushed INWARD by this many px on every side so
+ * the track sits inside the tick ring. Returns 0 (no inset = current behavior)
+ * otherwise. The inset is the longer tick length plus a gap (with extra room
+ * for numeric labels when they're shown). STANDARD mode only — the inset is
+ * applied to the arc + redline arc, never to the overlay meter. */
+static int _arc_track_inset(const arc_data_t *d) {
+    if (!d->show_ticks || !d->ticks_outside) return 0;
+    int tl = d->major_tick_length > d->minor_tick_length
+             ? d->major_tick_length : d->minor_tick_length;
+    return tl + (d->show_tick_labels ? 16 : 4);   /* tick length + gap (+ label room) */
+}
+
+/* Clamp an inset arc dimension so a tiny widget never gets a non-positive
+ * (or absurdly small) size — keep at least 20 px after the 2*inset subtract. */
+static lv_coord_t _arc_inset_dim(lv_coord_t full, int inset) {
+    lv_coord_t v = (lv_coord_t)(full - 2 * inset);
+    if (v < 20) v = 20;
+    return v;
 }
 
 /* ── Helpers: anchor + reverse value transform (ported from widget_meter) ──
@@ -730,9 +753,15 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
     lv_obj_set_style_border_width(cont, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(cont, 0, LV_PART_MAIN);
 
+    /* Inset for "ticks outside" mode: the overlay meter stays at the full rim
+     * (w->w × w->h) while the arc + redline arc are pushed inward so the track
+     * sits inside the tick ring. 0 = current behavior. */
+    int ins = _arc_track_inset(d);
+
     /* Main moving arc. */
     lv_obj_t *obj = lv_arc_create(cont);
-    lv_obj_set_size(obj, w->w, w->h);
+    lv_obj_set_size(obj, _arc_inset_dim((lv_coord_t)w->w, ins),
+                         _arc_inset_dim((lv_coord_t)w->h, ins));
     lv_obj_set_align(obj, LV_ALIGN_CENTER);
     _configure_arc(obj, d->start_angle, d->end_angle,
                     d->bg_arc_width, d->bg_arc_color,
@@ -752,7 +781,8 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
         uint8_t rw     = d->redline_arc_width > 0 ? d->redline_arc_width
                                                   : d->arc_width;
         lv_obj_t *robj = lv_arc_create(cont);
-        lv_obj_set_size(robj, w->w, w->h);
+        lv_obj_set_size(robj, _arc_inset_dim((lv_coord_t)w->w, ins),
+                              _arc_inset_dim((lv_coord_t)w->h, ins));
         lv_obj_set_align(robj, LV_ALIGN_CENTER);
         _configure_arc(robj, rstart, rend,
                         0, lv_color_black(),
@@ -857,15 +887,21 @@ static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_set_size(w->root, nw, nh);
-    /* Also resize the arc child(ren) so they fill the new container. */
+    /* Also resize the arc child(ren) so they fill the new container. The arc +
+     * redline arc get the "ticks outside" inset; the overlay meter stays full
+     * size so ticks remain at the rim. */
     if (d) {
+        int ins = _arc_track_inset(d);
+        lv_coord_t aw = _arc_inset_dim((lv_coord_t)nw, ins);
+        lv_coord_t ah = _arc_inset_dim((lv_coord_t)nh, ins);
         if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
-            lv_obj_set_size(d->arc_obj, nw, nh);
+            lv_obj_set_size(d->arc_obj, aw, ah);
         if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
-            lv_obj_set_size(d->redline_arc_obj, nw, nh);
-        /* Overlay tick/value-line meter tracks the arc size so ticks stay on
-         * the same radius as the (resized) arc fill. The scale's angle math
-         * is size-independent, so just resizing is enough — no rebuild. */
+            lv_obj_set_size(d->redline_arc_obj, aw, ah);
+        /* Overlay tick/value-line meter tracks the FULL container size so ticks
+         * stay at the rim (radius is independent of the inset arc). The scale's
+         * angle math is size-independent, so just resizing is enough — no
+         * rebuild. */
         if (d->tick_meter && lv_obj_is_valid(d->tick_meter))
             lv_obj_set_size(d->tick_meter, nw, nh);
     }
@@ -977,6 +1013,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)d->minor_tick_color.full);
     if (d->major_tick_color.full != lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR).full)
         cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
+    if (d->ticks_outside != ARC_DEFAULT_TICKS_OUTSIDE)
+        cJSON_AddBoolToObject(cfg, "ticks_outside", d->ticks_outside);
 
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
@@ -1165,6 +1203,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->minor_tick_color.full = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
     if (cJSON_IsNumber(item)) d->major_tick_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "ticks_outside");
+    if (cJSON_IsBool(item)) d->ticks_outside = cJSON_IsTrue(item);
 
     /* Numeric tick labels */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
@@ -1455,6 +1495,7 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "arc_image_full") == 0) { out->str = d->arc_image_full; return true; }
 	if (strcmp(name, "tick_label_font") == 0) { out->str = d->tick_label_font; return true; }
 	if (strcmp(name, "show_tick_labels") == 0) { out->b = d->show_tick_labels; return true; }
+	if (strcmp(name, "ticks_outside") == 0)  { out->b = d->ticks_outside;    return true; }
 	if (strcmp(name, "label_gap") == 0)      { out->i = d->label_gap;        return true; }
 	if (strcmp(name, "tick_label_divisor") == 0) { out->i = d->tick_label_divisor; return true; }
 	if (strcmp(name, "tick_label_color") == 0) { out->color = lv_color_to32(d->tick_label_color) & 0xFFFFFF; return true; }
@@ -1571,6 +1612,22 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
+	/* "Ticks outside track": the overlay (ticks) stays at the full rim, but the
+	 * arc + redline arc must be re-inset live. Recompute the inset and resize
+	 * both arcs (guard validity), then rebuild the overlay so everything
+	 * refreshes — same path the other tick setters use. */
+	if (strcmp(name, "ticks_outside") == 0) {
+		d->ticks_outside = in->b;
+		int ins = _arc_track_inset(d);
+		lv_coord_t aw = _arc_inset_dim((lv_coord_t)w->w, ins);
+		lv_coord_t ah = _arc_inset_dim((lv_coord_t)w->h, ins);
+		if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+			lv_obj_set_size(d->arc_obj, aw, ah);
+		if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
+			lv_obj_set_size(d->redline_arc_obj, aw, ah);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
 	if (strcmp(name, "label_gap") == 0) {
 		int v = in->i; if (v < -150) v = -150; if (v > 150) v = 150;
 		d->label_gap = (int16_t)v;
@@ -1681,6 +1738,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->major_tick_width   = ARC_DEFAULT_MAJOR_TICK_WIDTH;
     d->minor_tick_color   = lv_color_hex(ARC_DEFAULT_MINOR_TICK_COLOR);
     d->major_tick_color   = lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR);
+    d->ticks_outside      = ARC_DEFAULT_TICKS_OUTSIDE;
 
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;

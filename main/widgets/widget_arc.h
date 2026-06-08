@@ -125,6 +125,12 @@ typedef struct {
     uint8_t    major_tick_width;        /* default: 4  */
     lv_color_t minor_tick_color;        /* default: 0x9E9E9E */
     lv_color_t major_tick_color;        /* default: 0xFFFFFF */
+    /* When true, render ticks ABOVE/OUTSIDE the arc track instead of at/inside
+     * it. The overlay lv_meter (which draws the ticks) stays at the full rim;
+     * the arc + redline arc are inset inward so the track sits inside the
+     * ticks. Default false = current behavior (ticks coincide with the track).
+     * STANDARD mode only. See _arc_track_inset / _arc_create_standard. */
+    bool       ticks_outside;           /* default: false */
 
     /* ── Numeric tick labels (meter-parity). Drawn by the OVERLAY lv_meter at
      * its major ticks. lv_meter bakes the label colour/font into LV_PART_TICKS
