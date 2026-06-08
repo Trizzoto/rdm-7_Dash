@@ -225,15 +225,17 @@
         { "name": "label_gap",         "label": "Label Gap",     "type": "stepper", "default": 10, "category": "appearance", "min": -150, "max": 150, "enabled_by": "show_tick_labels" },
         { "name": "tick_label_font",   "label": "Tick Label Font","type": "font", "default": "", "category": "appearance", "enabled_by": "show_tick_labels" },
         { "name": "tick_label_color",  "label": "Tick Label Color","type": "color", "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_tick_labels", "night_overridable": true },
-        { "name": "needle_image_name", "label": "Needle Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "show_needle",       "label": "Show Needle",   "type": "checkbox", "default": true, "category": "appearance",
+          "_doc": "Master toggle for the value needle. When off, the meter\nrenders ticks / labels / ball only — no needle line, image,\nor needle shadow. Independent of Show Needle Ball." },
+        { "name": "needle_image_name", "label": "Needle Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true, "enabled_by": "show_needle" },
         { "name": "needle_pivot_x",    "label": "Needle Pivot X","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
         { "name": "needle_pivot_y",    "label": "Needle Pivot Y","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
         { "name": "needle_angle_offset","label": "Needle Angle Offset","type": "stepper", "default": 0, "category": "appearance", "min": -180, "max": 180, "enabled_by": "needle_image_name" },
-        { "name": "needle_width",      "label": "Needle Width",  "type": "stepper", "default": 4, "category": "appearance", "min": 1, "max": 20 },
-        { "name": "needle_color",      "label": "Needle Color",  "type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
-        { "name": "needle_r_mod",      "label": "Needle Length Trim","type": "stepper", "default": -10, "category": "appearance", "min": -100, "max": 100 },
-        { "name": "needle_rear_length","label": "Needle Rear Length","type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 100 },
-        { "name": "needle_tip_style",  "label": "Needle Tip Style","type": "select", "default": 0, "category": "appearance",
+        { "name": "needle_width",      "label": "Needle Width",  "type": "stepper", "default": 4, "category": "appearance", "min": 1, "max": 20, "enabled_by": "show_needle" },
+        { "name": "needle_color",      "label": "Needle Color",  "type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true, "enabled_by": "show_needle" },
+        { "name": "needle_r_mod",      "label": "Needle Length Trim","type": "stepper", "default": -10, "category": "appearance", "min": -100, "max": 100, "enabled_by": "show_needle" },
+        { "name": "needle_rear_length","label": "Needle Rear Length","type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 100, "enabled_by": "show_needle" },
+        { "name": "needle_tip_style",  "label": "Needle Tip Style","type": "select", "default": 0, "category": "appearance", "enabled_by": "show_needle",
           "options": [
             { "value": 0, "label": "Flat" },
             { "value": 1, "label": "Rounded" },
@@ -255,8 +257,10 @@
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
           } },
-        { "name": "needle_ball_size", "label": "Needle Ball Size", "type": "stepper", "default": 10, "category": "appearance", "min": 0, "max": 40 },
-        { "name": "needle_ball_color","label": "Needle Ball Color","type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true }
+        { "name": "show_needle_ball", "label": "Show Needle Ball", "type": "checkbox", "default": true, "category": "appearance",
+          "_doc": "Toggle the center pivot ball. When off, the ball is hidden\nregardless of size. Independent of Show Needle." },
+        { "name": "needle_ball_size", "label": "Needle Ball Size", "type": "stepper", "default": 10, "category": "appearance", "min": 0, "max": 40, "enabled_by": "show_needle_ball" },
+        { "name": "needle_ball_color","label": "Needle Ball Color","type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true, "enabled_by": "show_needle_ball" }
       ]
     },
     {
@@ -286,19 +290,12 @@
           "options": [
             { "value": "rectangle",     "label": "Rectangle"     },
             { "value": "circle",        "label": "Circle"        },
-            { "value": "trapezoid",     "label": "Trapezoid"     },
             { "value": "triangle",      "label": "Triangle"      },
             { "value": "diamond",       "label": "Diamond"       },
             { "value": "arrow_right",   "label": "Arrow ▶"  },
             { "value": "arrow_left",    "label": "Arrow ◀"  },
             { "value": "chevron_right", "label": "Chevron ❯" },
             { "value": "chevron_left",  "label": "Chevron ❮" }
-          ] },
-        { "name": "taper",          "label": "Taper % (trapezoid)", "type": "stepper", "default": 20,  "category": "appearance", "min": 0, "max": 50 },
-        { "name": "taper_side",     "label": "Narrow Side",      "type": "select",  "default": "top", "category": "appearance",
-          "options": [
-            { "value": "top",    "label": "Top (wider at bottom)" },
-            { "value": "bottom", "label": "Bottom (wider at top)" }
           ] },
         { "name": "bg_color",       "label": "Background",       "type": "color",   "default": "#1A1A1A", "category": "appearance", "night_overridable": true },
         { "name": "bg_opa",         "label": "Opacity (0-255)",  "type": "stepper", "default": 255, "category": "appearance", "min": 0, "max": 255 },

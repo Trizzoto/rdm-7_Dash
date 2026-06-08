@@ -147,7 +147,12 @@ static void _arc_apply_fill_color(arc_data_t *d, bool active) {
         }
     }
 
+    /* Skip the write when the computed fill is unchanged — LVGL v8
+     * set_style_arc_color invalidates the whole arc ring every call. */
+    if (d->_last_fill_valid && d->_last_fill.full == fill.full) return;
     lv_obj_set_style_arc_color(d->arc_obj, fill, LV_PART_INDICATOR);
+    d->_last_fill = fill;
+    d->_last_fill_valid = true;
 }
 
 /* Flash timer fires every flash_speed_ms while value >= limiter_value AND
@@ -206,7 +211,12 @@ static void _arc_update_value_label(arc_data_t *d, float value) {
                  d->value_unit[0] ? " " : "",
                  d->value_unit);
     }
+    /* Skip the realloc + invalidate when the rendered string is unchanged —
+     * lv_label_set_text invalidates the label bbox before any content diff. */
+    if (d->_last_label_valid && strcmp(d->_last_label, buf) == 0) return;
     lv_label_set_text(d->value_label, buf);
+    safe_strncpy(d->_last_label, buf, sizeof(d->_last_label));
+    d->_last_label_valid = true;
 }
 
 /* Central per-tick logic. Cache value, update LVGL arc, update label,
@@ -1061,6 +1071,9 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		d->arc_color = lv_color_hex(in->color);
 		if (a && lv_obj_is_valid(a) && !d->in_limiter)
 			lv_obj_set_style_arc_color(a, d->arc_color, LV_PART_INDICATOR);
+		/* Direct write bypasses _arc_apply_fill_color's memo — force the
+		 * next computed paint to actually write. */
+		d->_last_fill_valid = false;
 		return true;
 	}
 	if (strcmp(name, "bg_arc_color") == 0) {

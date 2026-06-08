@@ -546,7 +546,12 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 				default: pk_buf[0] = '\0';
 			}
 		}
-		lv_label_set_text(pd->peak_label, pk_buf);
+		/* Session peaks move rarely — skip the realloc + label invalidate
+		 * when the rendered peak string is unchanged. */
+		if (strcmp(pd->last_peak, pk_buf) != 0) {
+			lv_label_set_text(pd->peak_label, pk_buf);
+			safe_strncpy(pd->last_peak, pk_buf, sizeof(pd->last_peak));
+		}
 	}
 }
 
@@ -1151,10 +1156,12 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 
 	if (strcmp(name, "decimals") == 0) {
 		pd->decimals = (uint8_t)in->i;
+		pd->last_peak[0] = '\0';  /* re-render peak with new precision */
 		return true;
 	}
 	if (strcmp(name, "show_peak") == 0) {
 		pd->show_peak = (uint8_t)in->i;
+		pd->last_peak[0] = '\0';  /* re-render peak in the new mode */
 		if (pd->peak_label && lv_obj_is_valid(pd->peak_label)) {
 			if (pd->show_peak == 0)
 				lv_obj_add_flag(pd->peak_label, LV_OBJ_FLAG_HIDDEN);

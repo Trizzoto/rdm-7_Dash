@@ -113,6 +113,18 @@ typedef struct {
     lv_color_t _rule_arc_color;
     bool       _rule_arc_color_set;
 
+    /* Paint memo — skip redundant per-tick style writes (LVGL v8
+     * set_style/set_text always invalidate). _arc_apply_fill_color is the
+     * sole writer of the indicator color and _arc_update_value_label the sole
+     * writer of the label text, so comparing the FINAL fill / formatted
+     * string keeps these coherent across all paths (signal/flash/night/
+     * overrides/stale). Inspector arc_color writes the indicator directly, so
+     * it must clear _last_fill_valid. Mirrors widget_rpm_bar.c s_paint_cache. */
+    lv_color_t _last_fill;
+    bool       _last_fill_valid;
+    char       _last_label[32];
+    bool       _last_label_valid;
+
     /* Night-mode appearance overrides (only applied when night_mode active) */
     arc_night_overrides_t night;
 } arc_data_t;

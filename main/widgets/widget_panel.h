@@ -77,6 +77,10 @@ typedef struct {
 	 * Collapses a 60 Hz restyle storm to just the visible transitions. */
 	char       last_display[32];
 	uint8_t    last_warn_state;  /* bit0=label bit1=value bit2=panel bit7=stale */
+	char       last_peak[40];    /* last peak-label string painted; skips the
+	                              * redundant lv_label_set_text when the session
+	                              * peak/min hasn't moved. Reset on decimals /
+	                              * show_peak change. */
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	panel_night_overrides_t night;
 } panel_data_t;

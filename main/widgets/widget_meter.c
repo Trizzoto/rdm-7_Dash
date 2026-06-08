@@ -916,47 +916,52 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 
 	bool needle_is_image = (needle_img && needle_img[0] != '\0');
 
-	/* Shadow indicator — only for line needles. Added BEFORE the main needle
-	 * so READ_BACK iteration draws it first (under the real needle). Width
-	 * + color set here serve no visual purpose because _meter_needle_draw_cb
-	 * draws the shadow geometry itself, but we still need a real indicator
-	 * for LVGL to emit DRAW_PART_NEEDLE_LINE events that we can intercept. */
-	if (md->shadow_enabled && !needle_is_image) {
-		lv_meter_indicator_t *sh = lv_meter_add_needle_line(m, scale, md->needle_width,
-		                                                     md->shadow_color, md->needle_r_mod);
-		if (use_night) md->night_shadow_needle = sh;
-		else           md->shadow_needle       = sh;
-	}
-
-	/* Needle */
-	lv_meter_indicator_t *needle;
+	/* Needle (skipped entirely when show_needle is off — the meter then
+	 * renders ticks / labels / ball only, with no needle line, image, or
+	 * shadow). needle stays NULL so the signal callback's md->needle guard
+	 * short-circuits and nothing tries to move a missing indicator. */
+	lv_meter_indicator_t *needle = NULL;
 	lv_meter_scale_t *needle_target_scale = scale;
 	*out_needle_scale = NULL;
-	if (needle_img && needle_img[0] != '\0') {
-		lv_img_dsc_t *ndsc = rdm_image_load(needle_img);
-		if (ndsc) {
-			if (md->needle_angle_offset != 0) {
-				lv_meter_scale_t *ns = lv_meter_add_scale(m);
-				lv_meter_set_scale_range(m, ns,
-				                         lroundf(md->min * (float)md->value_scale),
-				                         lroundf(md->max * (float)md->value_scale), angle_range,
-				                         (int32_t)(md->start_angle + md->needle_angle_offset));
-				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
-				*out_needle_scale = ns;
-				needle_target_scale = ns;
+	if (md->show_needle) {
+		/* Shadow indicator — only for line needles. Added BEFORE the main needle
+		 * so READ_BACK iteration draws it first (under the real needle). Width
+		 * + color set here serve no visual purpose because _meter_needle_draw_cb
+		 * draws the shadow geometry itself, but we still need a real indicator
+		 * for LVGL to emit DRAW_PART_NEEDLE_LINE events that we can intercept. */
+		if (md->shadow_enabled && !needle_is_image) {
+			lv_meter_indicator_t *sh = lv_meter_add_needle_line(m, scale, md->needle_width,
+			                                                     md->shadow_color, md->needle_r_mod);
+			if (use_night) md->night_shadow_needle = sh;
+			else           md->shadow_needle       = sh;
+		}
+
+		if (needle_img && needle_img[0] != '\0') {
+			lv_img_dsc_t *ndsc = rdm_image_load(needle_img);
+			if (ndsc) {
+				if (md->needle_angle_offset != 0) {
+					lv_meter_scale_t *ns = lv_meter_add_scale(m);
+					lv_meter_set_scale_range(m, ns,
+					                         lroundf(md->min * (float)md->value_scale),
+					                         lroundf(md->max * (float)md->value_scale), angle_range,
+					                         (int32_t)(md->start_angle + md->needle_angle_offset));
+					lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
+					*out_needle_scale = ns;
+					needle_target_scale = ns;
+				}
+				needle = lv_meter_add_needle_img(m, needle_target_scale, ndsc,
+				                                  md->needle_pivot_x, md->needle_pivot_y);
+				*out_needle_img_dsc = ndsc;
+			} else {
+				needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
 			}
-			needle = lv_meter_add_needle_img(m, needle_target_scale, ndsc,
-			                                  md->needle_pivot_x, md->needle_pivot_y);
-			*out_needle_img_dsc = ndsc;
 		} else {
 			needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
 		}
-	} else {
-		needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
 	}
 
 	/* Needle center ball */
-	if (md->needle_ball_size == 0) {
+	if (!md->show_needle_ball || md->needle_ball_size == 0) {
 		lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
 		lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
 	} else {
@@ -983,7 +988,7 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	init_f = _meter_apply_anchor(md, init_f);
 	if (md->reverse) init_f = md->max + md->min - init_f;
 	int32_t init_v = lroundf(init_f * (float)md->value_scale);
-	lv_meter_set_indicator_value(m, needle, init_v);
+	if (needle) lv_meter_set_indicator_value(m, needle, init_v);
 
 	/* Snap the shadow indicator (if present) to the same initial value so
 	 * frame-1 already has the shadow underneath the needle. */
@@ -1403,6 +1408,10 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)md->minor_tick_color.full);
 	if (md->major_tick_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "major_tick_color", (int)md->major_tick_color.full);
+	if (!md->show_needle)
+		cJSON_AddBoolToObject(cfg, "show_needle", false);
+	if (!md->show_needle_ball)
+		cJSON_AddBoolToObject(cfg, "show_needle_ball", false);
 	if (md->needle_width != 4)
 		cJSON_AddNumberToObject(cfg, "needle_width", md->needle_width);
 	if (md->needle_color.full != lv_color_white().full)
@@ -1586,6 +1595,10 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->minor_tick_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
 	if (cJSON_IsNumber(ap)) md->major_tick_color.full = (uint32_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_needle");
+	if (cJSON_IsBool(ap)) md->show_needle = cJSON_IsTrue(ap);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_needle_ball");
+	if (cJSON_IsBool(ap)) md->show_needle_ball = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_width");
 	if (cJSON_IsNumber(ap)) md->needle_width = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_color");
@@ -1962,7 +1975,7 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 		lv_obj_set_style_border_color(md->meter, bdr,
 			LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
-	if (md->needle_ball_size > 0) {
+	if (md->show_needle_ball && md->needle_ball_size > 0) {
 		lv_obj_set_style_bg_color(md->meter, nbc, LV_PART_INDICATOR);
 	}
 	lv_obj_set_style_text_color(md->meter, tlc, LV_PART_TICKS);
@@ -2048,6 +2061,8 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_length") == 0)  { out->i = md->major_tick_length;   return true; }
 	if (strcmp(name, "minor_tick_color") == 0)   { out->color = lv_color_to32(md->minor_tick_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "major_tick_color") == 0)   { out->color = lv_color_to32(md->major_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "show_needle") == 0)        { out->b = md->show_needle;         return true; }
+	if (strcmp(name, "show_needle_ball") == 0)   { out->b = md->show_needle_ball;    return true; }
 	if (strcmp(name, "needle_width") == 0)       { out->i = md->needle_width;        return true; }
 	if (strcmp(name, "needle_color") == 0)       { out->color = lv_color_to32(md->needle_color)     & 0xFFFFFF; return true; }
 	if (strcmp(name, "needle_r_mod") == 0)       { out->i = md->needle_r_mod;        return true; }
@@ -2199,6 +2214,12 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_length") == 0) { md->major_tick_length = (uint8_t)in->i; return true; }
 	if (strcmp(name, "minor_tick_color") == 0)  { md->minor_tick_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "major_tick_color") == 0)  { md->major_tick_color = lv_color_hex(in->color); return true; }
+	/* show_needle / show_needle_ball create or skip indicators at meter-build
+	 * time (LVGL v8 has no remove-indicator API), so toggling them needs a
+	 * meter rebuild. Store the value; the dashboard reloads on layout save and
+	 * the next create call honours it — same approach as static_ticks/shadow. */
+	if (strcmp(name, "show_needle") == 0)         { md->show_needle = in->b;                return true; }
+	if (strcmp(name, "show_needle_ball") == 0)    { md->show_needle_ball = in->b;           return true; }
 	if (strcmp(name, "needle_width") == 0)        { md->needle_width = (uint8_t)in->i;      return true; }
 	if (strcmp(name, "needle_color") == 0)        { md->needle_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "needle_r_mod") == 0)        { md->needle_r_mod = (int16_t)in->i;      return true; }
@@ -2304,6 +2325,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;
 	md->needle_tip_taper   = 0;
+	md->show_needle = true;
+	md->show_needle_ball = true;
 	md->needle_ball_size = 10;
 	md->needle_ball_color = lv_color_white();
 	/* Drop shadow defaults — disabled, modest offset + half-transparency

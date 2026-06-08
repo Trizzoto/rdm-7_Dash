@@ -54,6 +54,14 @@ uint8_t current_value_id;
 /* ── Coordinator-local state ────────────────────────────────────────────── */
 static lv_obj_t *ui_Setup_Menu_Screen = NULL;
 
+/* Cached count of switchable layouts. Computed ONCE per screen build (in
+ * ui_Screen3_screen_init, i.e. on every layout reload) — NOT on every tap.
+ * layout_switcher_count() reads NVS + stat()s each layout file on LittleFS;
+ * calling it from the per-tap chrome reveal blocked the LVGL render task long
+ * enough to hitch the live gauges (the "glitch on tap"). The reveal now reads
+ * this cache instead. */
+static int s_layout_count = 0;
+
 /* How long the chrome (Menu / arrows / Edit pill) stays visible after a
  * background tap. Bumped from 6 s -> 10 s so the user has time to actually
  * find what they need without the menu pulling a vanishing act mid-reach. */
@@ -112,7 +120,7 @@ static void _chrome_show_cb(void *arg) {
 
 	_chrome_fade_in(ui_Menu_Button);
 
-	if (layout_switcher_count() >= 2) {
+	if (s_layout_count >= 2) {   /* cached — no filesystem on the tap path */
 		_chrome_fade_in(ui_Layout_Next_Button);
 		_chrome_fade_in(ui_Layout_Prev_Button);
 	}
@@ -664,6 +672,10 @@ void ui_Screen3_screen_init(void) {
 	/* Initialise widget layer via layout manager (loads from LittleFS JSON,
 	 * falls back to direct widget_X_create() if the file is unavailable). */
 	dashboard_init(ui_Screen3);
+
+	/* Cache the switchable-layout count once, here — the chrome reveal reads
+	 * the cache so a tap never touches the filesystem (see s_layout_count). */
+	s_layout_count = layout_switcher_count();
 
 	/* Menu button — floating top-right pill, blue accent with settings
 	 * icon. Replaces the former centre-dash glassmorphism style; the

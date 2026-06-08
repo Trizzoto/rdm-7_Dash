@@ -94,6 +94,13 @@ typedef struct {
 	uint8_t    shadow_opa;           /* default: 120 (0..255) */
 	uint8_t    shadow_width_extra;   /* default: 2 (added to needle_width) */
 	lv_color_t shadow_color;         /* default: 0x000000 */
+	/* Visibility toggles. Both default true; independent of each other so a
+	 * meter can show the ball with no needle, the needle with no ball, or
+	 * neither. show_needle off skips the needle line/image (and its shadow)
+	 * entirely; show_needle_ball off hides the center pivot ball regardless
+	 * of needle_ball_size. */
+	bool       show_needle;          /* default: true */
+	bool       show_needle_ball;     /* default: true */
 	/* Needle center ball (LV_PART_INDICATOR) */
 	uint8_t    needle_ball_size;     /* default: 10 (diameter in px, 0 = hidden) */
 	lv_color_t needle_ball_color;    /* default: white (0xFFFFFF) */

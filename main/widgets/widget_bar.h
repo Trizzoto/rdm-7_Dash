@@ -97,6 +97,20 @@ typedef struct {
 	char     current_bar_image_full[64];
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	bar_night_overrides_t night;
+	/* Paint memo — skip redundant per-tick writes. _bar_on_signal is the only
+	 * per-tick writer of the bar value / indicator color / gradient / value
+	 * label, so a value-compare here suppresses the whole-bar invalidate that
+	 * lv_bar_set_value fires every frame (LV_ANIM_OFF) plus the redundant
+	 * style writes. Reset by _bar_invalidate_paint_cache on resize / channel
+	 * rebind / night / overrides (anything that changes bounds or palette out
+	 * of band). Mirrors widget_rpm_bar.c s_paint_cache. */
+	bool       _pc_valid;
+	int32_t    _pc_display_value;
+	lv_coord_t _pc_clip_w;
+	lv_color_t _pc_bg;
+	bool       _pc_grad_active;
+	uint16_t   _pc_grad_first;
+	char       _pc_value_str[16];
 } bar_data_t;
 
 /** Create BAR1 and BAR2 horizontal bar widgets and their labels on parent. */

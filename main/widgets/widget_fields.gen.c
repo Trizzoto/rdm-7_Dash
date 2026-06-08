@@ -1326,13 +1326,23 @@ static const widget_field_t meter_fields[] = {
         .night_overridable = true,
     },
     {
+        .name = "show_needle", .label = "Show Needle",
+        .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "needle_image_name", .label = "Needle Image",
         .type = WF_TYPE_IMAGE_PICKER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 0, .step_int = 0,
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = true,
     },
     {
@@ -1372,7 +1382,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 4, .default_float = 4.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1382,7 +1392,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0xFFFFFF,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = true,
     },
     {
@@ -1392,7 +1402,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = -10, .default_float = -10.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1402,7 +1412,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1412,7 +1422,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = meter_needle_tip_style_opts, .option_count = 6,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1446,13 +1456,23 @@ static const widget_field_t meter_fields[] = {
         .night_overridable = false,
     },
     {
+        .name = "show_needle_ball", .label = "Show Needle Ball",
+        .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "needle_ball_size", .label = "Needle Ball Size",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 40, .step_int = 0,
         .default_int = 10, .default_float = 10.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle_ball", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1462,7 +1482,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0xFFFFFF,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .enabled_by = "show_needle_ball", .group = NULL, .inline_key = NULL,
         .night_overridable = true,
     },
 };
@@ -1523,18 +1543,12 @@ static const widget_field_t image_fields[] = {
 static const widget_field_option_t shape_panel_shape_type_opts[] = {
     { 0, "Rectangle" },
     { 0, "Circle" },
-    { 0, "Trapezoid" },
     { 0, "Triangle" },
     { 0, "Diamond" },
     { 0, "Arrow \342\226\266" },
     { 0, "Arrow \342\227\200" },
     { 0, "Chevron \342\235\257" },
     { 0, "Chevron \342\235\256" },
-};
-
-static const widget_field_option_t shape_panel_taper_side_opts[] = {
-    { 0, "Top (wider at bottom)" },
-    { 0, "Bottom (wider at top)" },
 };
 
 static const widget_field_t shape_panel_fields[] = {
@@ -1544,27 +1558,7 @@ static const widget_field_t shape_panel_fields[] = {
         .min_int = 0, .max_int = 0, .step_int = 0,
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
-        .options = shape_panel_shape_type_opts, .option_count = 9,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
-        .night_overridable = false,
-    },
-    {
-        .name = "taper", .label = "Taper % (trapezoid)",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
-        .min_int = 0, .max_int = 50, .step_int = 0,
-        .default_int = 20, .default_float = 20.000000f, .default_color = 0x000000,
-        .default_str = NULL,
-        .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
-        .night_overridable = false,
-    },
-    {
-        .name = "taper_side", .label = "Narrow Side",
-        .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
-        .min_int = 0, .max_int = 0, .step_int = 0,
-        .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
-        .default_str = NULL,
-        .options = shape_panel_taper_side_opts, .option_count = 2,
+        .options = shape_panel_shape_type_opts, .option_count = 8,
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },

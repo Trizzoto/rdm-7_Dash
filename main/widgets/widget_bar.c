@@ -386,6 +386,9 @@ static void _bar_on_channel_changed(channel_t *c, void *user_data) {
 	/* Bar zone colours are widget-owned (Widget settings → ALERTS) — never
 	 * driven by the channel. Only range/thresholds/signal sync above. */
 
+	/* Bounds changed → the cached scaled display value / color buckets are
+	 * stale; force the next tick to re-apply everything. */
+	bd->_pc_valid = false;
 	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
 		lv_obj_invalidate(bd->bar_obj);
 }
@@ -420,7 +423,10 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 				pct = (int32_t)(((clamped - bd->bar_min) * 100.0) / range);
 		}
 		lv_coord_t clip_w = (lv_coord_t)((pct * w->w) / 100);
-		lv_obj_set_width(bd->img_clip_obj, clip_w);
+		if (!bd->_pc_valid || bd->_pc_clip_w != clip_w) {
+			lv_obj_set_width(bd->img_clip_obj, clip_w);
+			bd->_pc_clip_w = clip_w;
+		}
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
 		/* Invert is implemented by reflecting the value about the midpoint:
@@ -434,7 +440,14 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			int32_t scaled_max = lroundf(bd->bar_max * (float)scale);
 			display_value = scaled_min + scaled_max - bar_value;
 		}
-		lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
+		/* Value-gate: lv_bar_set_value (LV_ANIM_OFF) invalidates the WHOLE
+		 * bar bbox every call — the dominant per-frame cost. Skip it when the
+		 * scaled display value is unchanged (common for slow / low-decimal
+		 * signals), which removes the whole-bar dirty rect entirely. */
+		if (!bd->_pc_valid || bd->_pc_display_value != display_value) {
+			lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
+			bd->_pc_display_value = display_value;
+		}
 		bool night_active = night_mode_is_active();
 		lv_color_t low_col  = NIGHT_PICK_COLOR(night_active, bd->night, bar_low_color,      bd->bar_low_color);
 		lv_color_t high_col = NIGHT_PICK_COLOR(night_active, bd->night, bar_high_color,     bd->bar_high_color);
@@ -446,6 +459,14 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		else if (final_value > bd->bar_high)
 			new_color = high_col;
 		else { new_color = in_col; in_range = true; }
+		/* Color + gradient memo: new_color is night-resolved, so a night
+		 * toggle that changes the resolved color re-fires here on the next
+		 * tick. grad identity = (active flag, first-stop color). */
+		bool grad_now = in_range && bd->grad_stops.count >= 2;
+		uint16_t grad_first_now =
+			(bd->grad_stops.count >= 1) ? bd->grad_stops.stops[0].color : 0;
+		if (!bd->_pc_valid || bd->_pc_bg.full != new_color.full ||
+		    bd->_pc_grad_active != grad_now || bd->_pc_grad_first != grad_first_now) {
 		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		/* Multi-stop horizontal gradient on the indicator, in-range only.
@@ -473,6 +494,10 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
 										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		}
+			bd->_pc_bg = new_color;
+			bd->_pc_grad_active = grad_now;
+			bd->_pc_grad_first = grad_first_now;
+		}
 	}
 
 	/* Update this widget's own value label */
@@ -487,8 +512,15 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			signal_format_value(bd->signal_index, (float)final_value,
 								bd->decimals, value_str, sizeof(value_str));
 		}
-		lv_label_set_text(bd->value_obj, value_str);
+		/* Skip the realloc + label invalidate when the string is unchanged. */
+		if (!bd->_pc_valid || strcmp(bd->_pc_value_str, value_str) != 0) {
+			lv_label_set_text(bd->value_obj, value_str);
+			safe_strncpy(bd->_pc_value_str, value_str, sizeof(bd->_pc_value_str));
+		}
 	}
+
+	/* All gated writes for this tick are done — trust the memo next frame. */
+	bd->_pc_valid = true;
 
 	/* Update menu bar preview if visible */
 	uint8_t bar_index = bd->slot;
@@ -723,6 +755,8 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_pos(bd->value_obj,
 			w->x + (w->w / 2) - 33,   /* BAR_VALUE_W/2 + BAR_VALUE_PAD_R */
 			w->y);
+	/* Geometry changed — repaint cleanly on the next tick. */
+	if (bd) bd->_pc_valid = false;
 }
 static void _bar_open_settings(widget_t *w) { (void)w; }
 static void _bar_to_json(widget_t *w, cJSON *out) {
@@ -1122,6 +1156,10 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
+
+	/* Night palette changed — the per-value indicator color is night-resolved
+	 * inside _bar_on_signal, so drop the memo to guarantee it re-applies. */
+	bd->_pc_valid = false;
 
 	lv_color_t bar_bg  = NIGHT_PICK_COLOR(active, bd->night, bar_bg_color,     bd->bar_bg_color);
 	lv_color_t bar_bdr = NIGHT_PICK_COLOR(active, bd->night, bar_border_color, bd->bar_border_color);

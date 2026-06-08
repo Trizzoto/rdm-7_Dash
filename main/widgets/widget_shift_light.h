@@ -46,6 +46,11 @@ typedef struct {
     bool     flash_state;      /* Runtime: current flash on/off */
     uint8_t  active_count;     /* Runtime: how many LEDs are active */
     lv_obj_t *leds[16];        /* Runtime: LVGL rectangle objects */
+    lv_color_t last_led_color[16]; /* Runtime: last color painted per LED, so
+                                    * unchanged per-tick writes are skipped
+                                    * (LVGL v8 set_style always invalidates).
+                                    * Every LED color write routes through
+                                    * _shl_set_led, keeping this coherent. */
     lv_timer_t *flash_timer;   /* Runtime: flash animation timer */
     /* Night-mode appearance overrides (only applied when night_mode active) */
     shift_light_night_overrides_t night;

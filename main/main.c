@@ -185,21 +185,34 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
   return high_task_awoken == pdTRUE;
 }
 
+/* Flush instrumentation — written in rdm_lvgl_flush_cb, drained once/sec by
+ * rdm7_lvgl_monitor_cb. Cheap (2 esp_timer reads + 2 adds per flush) so it
+ * stays always-on. It separates the per-flush full-framebuffer cache-sync
+ * tax (esp_cache_msync of the whole 768 KB FB on every esp_lcd_panel_draw_
+ * bitmap) from the per-pixel draw cost folded into LVGL's elaps. A
+ * flushes/frame count climbing toward V_RES/buf_lines (~80 with 6-line SRAM
+ * buffers) is the signature of a full-screen redraw — i.e. the 32-rect
+ * invalidation cliff or a join cascade to near-full-screen. Same-task as the
+ * monitor (both run on the LVGL refresh, core 1), so no locking needed. */
+static uint64_t s_flush_us_sum = 0;
+static uint32_t s_flush_count = 0;
+
 /* Dirty-rect-topology diagnostic. LVGL calls this once per refresh where
  * anything was drawn; `px_num` is the sum of unjoined dirty-rect areas for
  * the frame (see lv_refr.c:620), i.e. the real on-screen invalidation load
- * *after* the join cascade has run. Aggregate over ~1s and log average
- * px/frame as a % of the full screen: sustained near-100% with sim on
- * confirms the join cascade is merging everything to near-full-screen,
- * while a drop to low double digits when a couple of widgets stop ticking
- * would confirm the topology cliff.
- * Safe to leave in: one ESP_LOGI per second, no work on hot path. */
+ * *after* the join cascade has run. Aggregate over ~1s and log avg + worst
+ * px/frame as a % of the full screen, plus flush count + flush time: a
+ * sustained avg near-100% (or a worst-frame at 100% with ~80 flushes)
+ * confirms the join cascade / 32-rect cliff is forcing full-screen redraws,
+ * while a drop when a couple of widgets stop ticking confirms the cliff.
+ * Safe to leave in: one ESP_LOGW per second, negligible hot-path work. */
 static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
                                  uint32_t px_num) {
   static uint32_t s_start_ms = 0;
   static uint32_t s_frame_cnt = 0;
   static uint64_t s_px_sum = 0;
   static uint64_t s_elaps_sum = 0;
+  static uint32_t s_px_max = 0;
 
   uint32_t now = lv_tick_get();
   if (s_start_ms == 0)
@@ -208,6 +221,8 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
   s_frame_cnt++;
   s_px_sum += px_num;
   s_elaps_sum += elaps_ms;
+  if (px_num > s_px_max)
+    s_px_max = px_num;
 
   uint32_t window = now - s_start_ms;
   if (window >= 1000 && s_frame_cnt > 0) {
@@ -218,17 +233,33 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
                            ? (uint32_t)((s_px_sum * 100ULL) /
                                         ((uint64_t)screen_px * s_frame_cnt))
                            : 0;
+    uint32_t max_pct =
+        screen_px ? (uint32_t)((uint64_t)s_px_max * 100ULL / screen_px) : 0;
     uint32_t fps_x10 = (s_frame_cnt * 10000U) / window;
-    ESP_LOGD("refr_diag",
-             "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% of screen) "
-             "avg_render=%lu ms",
+
+    /* Drain flush instrumentation over the same window (same task — no race). */
+    uint32_t fcount = s_flush_count;
+    uint64_t fus = s_flush_us_sum;
+    s_flush_count = 0;
+    s_flush_us_sum = 0;
+    uint32_t flush_per_frame_x10 = (uint32_t)((uint64_t)fcount * 10U / s_frame_cnt);
+    uint32_t flush_us_per_frame = (uint32_t)(fus / s_frame_cnt);
+
+    ESP_LOGW("refr_diag",
+             "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% scr) max=%lu%% "
+             "render=%lu ms flush=%lu.%lu/frame (%lu us/frame)",
              (unsigned long)(fps_x10 / 10), (unsigned long)(fps_x10 % 10),
              (unsigned long)s_frame_cnt, (unsigned long)avg_px,
-             (unsigned long)avg_pct, (unsigned long)avg_elaps);
+             (unsigned long)avg_pct, (unsigned long)max_pct,
+             (unsigned long)avg_elaps,
+             (unsigned long)(flush_per_frame_x10 / 10),
+             (unsigned long)(flush_per_frame_x10 % 10),
+             (unsigned long)flush_us_per_frame);
     s_start_ms = now;
     s_frame_cnt = 0;
     s_px_sum = 0;
     s_elaps_sum = 0;
+    s_px_max = 0;
   }
 }
 
@@ -308,8 +339,15 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
   s_last_flush_us = now_us;
 #endif
 
+  int64_t _flush_t0 = esp_timer_get_time();
   esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
                             offsety2 + 1, color_map);
+  /* Per-flush cost = memcpy of the dirty rect into the PSRAM FB + (under the
+   * current DOUBLE_FB / no-bounce config) an esp_cache_msync of the WHOLE
+   * 768 KB framebuffer. Accumulate so the monitor can report flush time and
+   * count per frame — the lever for deciding draw-cost vs flush-cost fixes. */
+  s_flush_us_sum += (uint64_t)(esp_timer_get_time() - _flush_t0);
+  s_flush_count++;
 
   /* Lazily cache the panel FB pointer on first flush. Use fb_num=1 so the
    * variadic call only needs one pointer argument — we always read the
