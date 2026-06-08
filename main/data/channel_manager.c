@@ -673,6 +673,33 @@ void channel_manager_resolve_signals(void) {
 		 * "same layout reloaded" both. */
 		int16_t idx = signal_find_by_name(c->signal_name);
 
+		/* Canonical-vocabulary fallback. On an exact-name miss for a
+		 * canonical channel, map each registered signal through the curated
+		 * ECU dictionary (ecu_signal_name_to_canonical) and bind the one
+		 * whose canonical id equals this channel's id. This is the same
+		 * mapping the first-run wizard's force-rebind uses — doing it here
+		 * lets a channel light up on a plain reboot (or when a layout from a
+		 * different ECU vocabulary is loaded) WITHOUT re-running the wizard.
+		 * Miss-only (never overrides an exact match) and dictionary-based
+		 * (not fuzzy string matching), so it can't silently mis-bind. The
+		 * stored signal_name is left unchanged so the channel keeps
+		 * re-mapping per layout rather than pinning to one ECU's name. */
+		if (idx < 0 && c->is_canonical && c->id[0] != '\0') {
+			uint16_t scount = signal_get_count();
+			for (uint16_t s = 0; s < scount; ++s) {
+				signal_t *sig = signal_get_by_index(s);
+				if (!sig) continue;
+				const char *canon = ecu_signal_name_to_canonical(sig->name);
+				if (canon && strcmp(canon, c->id) == 0) {
+					idx = (int16_t)s;
+					ESP_LOGI(TAG, "channel '%s': '%s' not in registry — "
+					         "bound via canonical map to layout signal '%s'",
+					         c->id, c->signal_name, sig->name);
+					break;
+				}
+			}
+		}
+
 		if (idx >= 0) {
 			c->signal_index = idx;
 			signal_subscribe(idx, chm_signal_cb, c);
