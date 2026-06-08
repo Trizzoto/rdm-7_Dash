@@ -927,7 +927,11 @@ void app_main(void) {
   void *buf1 = NULL, *buf2 = NULL;
   size_t buf_size = 0;
 
-  /* Primary: PSRAM, V_RES/4 = 120 lines per buffer, shrinking on failure. */
+  /* Primary: PSRAM, V_RES/4 = 120 lines per buffer, shrinking on failure.
+   * Measured sweet spot: going larger (full-screen, 1 band) gave no further
+   * draw reduction — at 120 lines the per-band re-execution penalty is already
+   * gone and the remaining draw cost is overdraw-bound (overlapping layers),
+   * not band-bound. */
   buf_size = (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
   buf_size = (buf_size + 31) & ~31;
   {
