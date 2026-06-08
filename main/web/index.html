@@ -9462,13 +9462,11 @@
              *   - button / warning: may run without an assigned signal (test
              *     button works locally). Still render the assign UI so the
              *     user can attach one if they want CAN-driven behaviour.
-             *   - indicator with input_source=0 (Wire): GPIO-driven, no
-             *     signal needed → hide the assign UI
+             *   - indicator: always show the assign UI. Binding a channel
+             *     implicitly flips Input Source to CAN (see _widgetAssignChannel)
+             *     so the channel actually drives it; Wire mode ignores it.
              *   - everything else: normal signal assign flow */
-            const isIndicatorWired = (w.type === 'indicator' &&
-                                       (w.config?.input_source ?? 0) === 0);
-            const hasSignalBinding = !['shape_panel', 'image', 'button', 'toggle'].includes(w.type)
-                                      && !isIndicatorWired;
+            const hasSignalBinding = !['shape_panel', 'image', 'button', 'toggle'].includes(w.type);
             const isTestable = TOGGLE_TEST_TYPES.has(w.type);
             if (dataFields.length || hasSignalBinding || isTestable) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
@@ -9660,7 +9658,7 @@
                              * w.config.slot (the firmware-side slot). */
                             mode = 'warning';
                             arg  = String(w.config?.slot ?? 0);
-                        } else if (w.type === 'indicator' && isIndicatorWired) {
+                        } else if (w.type === 'indicator' && (w.config?.input_source ?? 0) === 0) {
                             mode = 'indicator';
                             /* Indicator slot is stored on w.config.slot
                              * (web UI JSON convention), NOT on w.slot —
@@ -17077,6 +17075,13 @@
             pushHistory();
             w.channel = channelId;
             w.signal = ch.signal || '';
+            /* Assigning a channel to an indicator implies CAN-driven: flip its
+             * Input Source to CAN, else firmware keeps reading the GPIO wire and
+             * ignores the channel. */
+            if (w.type === 'indicator') {
+                if (!w.config) w.config = {};
+                w.config.input_source = 1;
+            }
             _closeWidgetChannelPicker();
             renderEditor();
             updateInspector();
