@@ -6757,6 +6757,28 @@
             if (!c) return;
             if (c.start_angle_user == null) c.start_angle_user = 225;
             if (c.sweep_degrees == null)    c.sweep_degrees    = 270;
+            if (c.auto_ticks == null)       c.auto_ticks       = true;
+
+            /* Tick spacing in DATA units (mirrors the meter): derive the LVGL
+             * minor_tick_count / major_tick_every the firmware reads from the
+             * value-spacing fields + the arc's signal range. */
+            const tmin = (typeof c.signal_min === 'number') ? c.signal_min : 0;
+            const tmax = (typeof c.signal_max === 'number') ? c.signal_max : 100;
+            const trange = Math.max(0, tmax - tmin);
+            if (c.auto_ticks) {
+                c.minor_tick_step = _meterNiceStep(trange, 10);
+                c.major_tick_step = c.minor_tick_step * 5;
+            } else {
+                if (!(typeof c.minor_tick_step === 'number') || c.minor_tick_step <= 0)
+                    c.minor_tick_step = _meterNiceStep(trange, 10);
+                if (!(typeof c.major_tick_step === 'number') || c.major_tick_step <= 0)
+                    c.major_tick_step = c.minor_tick_step * 5;
+            }
+            const minorStep = Math.max(1e-6, c.minor_tick_step);
+            const majorStep = Math.max(minorStep, c.major_tick_step);
+            c.minor_tick_count = Math.min(100, Math.max(2, Math.round(trange / minorStep) + 1));
+            c.major_tick_every = Math.min(50, Math.max(1, Math.round(majorStep / minorStep)));
+
             /* User: 0° = 12 o'clock, CW positive.
              * LVGL: 0° = 3 o'clock, CW. → lvgl = (user + 270) % 360. */
             const userStart = (((c.start_angle_user | 0) % 360) + 360) % 360;
@@ -6779,6 +6801,17 @@
                 const e = ((c.end_angle   % 360) + 360) % 360;
                 const sweep = (e - s + 360) % 360;
                 c.sweep_degrees = sweep === 0 ? 360 : sweep;
+            }
+            /* Back-compute value-spacing from any legacy count/every fields. */
+            if (c.auto_ticks == null) c.auto_ticks = (c.minor_tick_count == null);
+            if (c.minor_tick_step == null && typeof c.minor_tick_count === 'number') {
+                const tmin = (typeof c.signal_min === 'number') ? c.signal_min : 0;
+                const tmax = (typeof c.signal_max === 'number') ? c.signal_max : 100;
+                c.minor_tick_step = (tmax - tmin) / Math.max(1, c.minor_tick_count - 1);
+            }
+            if (c.major_tick_step == null && typeof c.minor_tick_step === 'number'
+                && typeof c.major_tick_every === 'number') {
+                c.major_tick_step = c.minor_tick_step * c.major_tick_every;
             }
         }
 
@@ -7174,8 +7207,8 @@
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance" },
-                            { name: "minor_tick_count", label: "Minor Tick Count", type: "stepper", def: 21, cat: "appearance", min: 0, max: 100, enabledBy: "show_ticks" },
-                            { name: "major_tick_every", label: "Major Tick Every", type: "stepper", def: 5, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", enabledBy: "show_ticks" },
                             { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", min: 0, max: 50, enabledBy: "show_ticks" },
                             { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
                             { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", min: 0, max: 50, enabledBy: "show_ticks" },
@@ -11019,8 +11052,9 @@
             /* Arc: editing Start Angle / Sweep re-derives the legacy LVGL
              * start_angle/end_angle that the firmware actually consumes,
              * mirroring the meter. */
-            const ARC_TRIGGERS = new Set(['start_angle_user', 'sweep_degrees']);
+            const ARC_TRIGGERS = new Set(['start_angle_user', 'sweep_degrees', 'minor_tick_step', 'major_tick_step', 'signal_min', 'signal_max']);
             if (w.type === 'arc' && ARC_TRIGGERS.has(field)) {
+                if (field === 'minor_tick_step' || field === 'major_tick_step') w.config.auto_ticks = false;
                 _arcSyncDerived(w.config);
             }
 

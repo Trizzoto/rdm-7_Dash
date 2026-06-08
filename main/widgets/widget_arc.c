@@ -1467,6 +1467,22 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "rounded_ends") == 0)   { out->b = d->rounded_ends;     return true; }
 	if (strcmp(name, "arc_color") == 0)      { out->color = lv_color_to32(d->arc_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "bg_arc_color") == 0)   { out->color = lv_color_to32(d->bg_arc_color) & 0xFFFFFF; return true; }
+	/* Tick spacing is stored count-based (minor_tick_count / major_tick_every)
+	 * but exposed to the inspector as VALUE-SPACING to match the meter. Derive
+	 * the per-tick value step from the signal range and tick count. */
+	if (strcmp(name, "minor_tick_step") == 0) {
+		float range = d->signal_max - d->signal_min;
+		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
+		out->i = (int32_t)lroundf(range / (float)denom);
+		return true;
+	}
+	if (strcmp(name, "major_tick_step") == 0) {
+		float range = d->signal_max - d->signal_min;
+		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
+		float mstep = range / (float)denom;
+		out->i = (int32_t)lroundf(mstep * (float)d->major_tick_every);
+		return true;
+	}
 	return false;
 }
 
@@ -1574,6 +1590,33 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "tick_label_divisor") == 0) {
 		int v = in->i; if (v < 1) v = 1; if (v > 65535) v = 65535;
 		d->tick_label_divisor = (uint16_t)v;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	/* VALUE-SPACING tick fields (mirror the meter). The struct stores
+	 * minor_tick_count / major_tick_every; derive those from the entered
+	 * value step and the signal range, then rebuild the overlay live. */
+	if (strcmp(name, "minor_tick_step") == 0) {
+		float step = (float)in->i;
+		if (step <= 0) step = 1;
+		float range = d->signal_max - d->signal_min;
+		int32_t cnt = (int32_t)lroundf(range / step) + 1;
+		if (cnt < 2) cnt = 2;
+		if (cnt > 100) cnt = 100;
+		d->minor_tick_count = (uint8_t)cnt;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "major_tick_step") == 0) {
+		float majstep = (float)in->i;
+		float range = d->signal_max - d->signal_min;
+		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
+		float minstep = range / (float)denom;
+		if (minstep <= 0) minstep = 1;
+		int32_t every = (int32_t)lroundf(majstep / minstep);
+		if (every < 1) every = 1;
+		if (every > 50) every = 50;
+		d->major_tick_every = (uint8_t)every;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
