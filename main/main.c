@@ -908,67 +908,67 @@ void app_main(void) {
   ESP_LOGI(TAG, "Initialize LVGL library");
   lv_init();
 
-  /* Try internal SRAM first — faster writes than PSRAM since the LCD
-   * DMA is constantly reading the PSRAM framebuffer. Internal SRAM
-   * avoids the SPI bus contention bottleneck.
+  /* Draw buffers — PSRAM primary, large.
    *
-   * SIZING: kept INTENTIONALLY SMALL after diagnostics (heap_monitor)
-   * caught us running with int_free < 200 BYTES post-boot. The previous
-   * sizing (20 lines = 64 KB total) ate the entire margin available for
-   * WiFi's esp_phy esp_timer_create + esf_buf_setup_static and produced
-   * recurring ESP_ERR_NO_MEM crashes inside phy_track_pll_init the
-   * moment any auth attempt cycled the radio.
+   * Measured on a heavy live layout (450px meter + 3 arcs + text, driven off
+   * CAN): a LARGE PSRAM buffer beats the previous tiny internal-SRAM buffer for
+   * this draw-heavy workload. LVGL redraws every object intersecting each
+   * draw-buffer-sized band, and lv_meter's tick/label draw is NOT clip-culled,
+   * so a 6-line buffer made the tall meter's draw run ~75x per refresh. A
+   * 120-line PSRAM buffer (V_RES/4 → ~20x fewer bands) cut render ~78→58 ms and
+   * lifted typical fps ~13→~19, even though PSRAM is slower per-flush than
+   * internal SRAM — the band-count win dominates the bus-contention cost.
    *
-   * With 6 lines × 2 buffers = ~19 KB internal we leave ~45 KB more
-   * internal headroom for the WiFi/PHY stack. LVGL flushes more often
-   * (480 / 6 = 80 partial flushes per full screen redraw) but on this
-   * dash that's still well above visual refresh — most renders only
-   * touch a sub-region anyway. If a particular widget feels janky we
-   * can re-tune this cap downward; bigger is only worth it once we
-   * have real internal-heap profiling that shows we can afford it. */
+   * It also FREES the ~19 KB of internal SRAM the old buffers used, RESTORING
+   * the WiFi/PHY heap headroom that the tiny internal buffer existed to protect
+   * (20-line internal once caused phy_track_pll_init OOM crashes). So PSRAM
+   * primary is both faster AND safer for the radio. Tiny internal SRAM remains
+   * as a last-resort fallback if PSRAM alloc ever fails (shouldn't on 8 MB). */
   void *buf1 = NULL, *buf2 = NULL;
   size_t buf_size = 0;
 
-  /* Internal SRAM: try 8, 6, then 4 lines. All small enough to leave
-   * the WiFi/PHY headroom; smallest still gives a usable flush size. */
-  static const int try_lines[] = {8, 6, 4};
-  for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
-    int lines = try_lines[i];
-    buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
-    buf_size = (buf_size + 31) & ~31;
-    buf1 = heap_caps_aligned_alloc(32, buf_size,
-                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (buf1) {
-      buf2 = heap_caps_aligned_alloc(32, buf_size,
-                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-      if (buf2) {
-        ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
-        break;
-      }
-      heap_caps_free(buf1);
-      buf1 = NULL;
-    }
-  }
-
-  /* Fallback: PSRAM buffers (slower due to bus contention with LCD DMA) */
-  if (!buf1 || !buf2) {
-    ESP_LOGW(TAG, "Internal SRAM insufficient, falling back to PSRAM buffers");
-    buf_size =
-        (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
-    buf_size = (buf_size + 31) & ~31;
+  /* Primary: PSRAM, V_RES/4 = 120 lines per buffer, shrinking on failure. */
+  buf_size = (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
+  buf_size = (buf_size + 31) & ~31;
+  {
     const size_t min_buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
-
     while (buf_size >= min_buf_size) {
       buf1 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
       if (buf1) {
         buf2 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
-        if (buf2)
+        if (buf2) {
+          ESP_LOGI(TAG, "Using PSRAM draw buffers (%u lines)",
+                   (unsigned)(buf_size / sizeof(lv_color_t) / EXAMPLE_LCD_H_RES));
           break;
+        }
         heap_caps_free(buf1);
         buf1 = NULL;
       }
       buf_size = (buf_size * 3) / 4;
       buf_size = (buf_size + 31) & ~31;
+    }
+  }
+
+  /* Last-resort fallback: tiny internal SRAM (8/6/4 lines). */
+  if (!buf1 || !buf2) {
+    ESP_LOGW(TAG, "PSRAM draw buffers unavailable, falling back to internal SRAM");
+    static const int try_lines[] = {8, 6, 4};
+    for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
+      int lines = try_lines[i];
+      buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
+      buf_size = (buf_size + 31) & ~31;
+      buf1 = heap_caps_aligned_alloc(32, buf_size,
+                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      if (buf1) {
+        buf2 = heap_caps_aligned_alloc(32, buf_size,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (buf2) {
+          ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
+          break;
+        }
+        heap_caps_free(buf1);
+        buf1 = NULL;
+      }
     }
   }
 
