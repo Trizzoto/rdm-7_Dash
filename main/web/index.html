@@ -394,6 +394,29 @@
             padding: 14px 4px 6px;
         }
 
+        /* ── Mobile widget-palette bottom-sheet ─────────────────────────
+         * Slides up from the bottom; shares the dim backdrop (#mobileSheetBackdrop)
+         * with the right-sidebar sheet. Tile list reuses the desktop .palette-item
+         * styling via the shared _fillPalette helper. */
+        #mobilePaletteSheet {
+            display: none; position: fixed; left: 0; right: 0; bottom: 0;
+            max-height: 70vh;
+            background: var(--bg); border-top: 1px solid var(--border);
+            border-top-left-radius: 14px; border-top-right-radius: 14px;
+            z-index: 9999; overflow-y: auto;
+            padding: 12px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+            transform: translateY(100%);
+            transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+            box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
+        }
+        #mobilePaletteSheet.active { display: block; transform: translateY(0); }
+        #mobilePaletteSheet .mobile-palette-header {
+            display: flex; align-items: center; gap: 8px;
+            padding: 4px 16px 10px; margin-bottom: 4px;
+            border-bottom: 1px solid var(--border);
+        }
+        #mobilePaletteSheet .palette-item { min-height: 48px; }
+
         /* ── Mobile/tablet responsive layout ────────────────────────
          * Tablet: left sidebar collapses by default.
          * Phone: both sidebars overlay the canvas instead of taking
@@ -469,8 +492,13 @@
          *
          * #splashMenuWrap shares the .layout-menu-wrap class but lives
          * behind splash mode and is JS-toggled — left alone so splash
-         * authoring still has its menu. */
-        #layoutMenuWrap { display: none !important; }
+         * authoring still has its menu.
+         *
+         * UPDATE: the full tools hamburger is gone. #layoutMenuWrap now hosts
+         * a slim "layout actions" caret (New / Save As / Rename / Delete) that
+         * lives next to the layout <select>. All tools/settings live in the
+         * Setup studio panel. The wrap is shown again (the JS-side
+         * setSplashUIVisibility still hides it in splash mode). */
 
         /* Hamburger menu — ALWAYS visible across phone/tablet/laptop/desktop.
          * Previously hidden at >=1400px (desktop full-inline header), but the
@@ -1020,6 +1048,23 @@
         .widget-box[data-type="button"]   { border-color: hsl(45, 80%, 50%); }
         .widget-box[data-type="shift_light"] { border-color: hsl(5, 90%, 60%); }
 
+        /* Shape widgets (shape_panel, line) render on the DEVICE only — the
+         * editor never draws their geometry (see renderEditor). Dashed border
+         * + a "device" badge in the label make that obvious so a blank box
+         * doesn't read as "broken". Selection still flips to solid via the
+         * .widget-box.selected rule above, preserving the normal selected look. */
+        .widget-box[data-type="shape_panel"],
+        .widget-box[data-type="line"] { border-style: dashed; }
+        .widget-box .device-badge {
+            font-size: 8px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--accent, #4a90e2);
+            margin-left: 5px;
+            opacity: 0.85;
+        }
+
         .widget-box .id-label {
             position: absolute;
             top: -17px;
@@ -1489,11 +1534,11 @@
             background: #363636;
         }
 
-        /* ── Studio mode switcher (Setup / Design / Live) ──
+        /* ── Studio mode switcher (Setup / Design) ──
          * Segmented control in the header. Each mode swaps the visible
          * body region: Design (default) shows canvas+sidebars, Setup
-         * shows the Setup panel of config cards, Live shows the
-         * full-screen capture stream. */
+         * shows the Setup panel of config cards. (A former "Live" mode
+         * was removed — the CONTROL pill covers live device mirroring.) */
         .studio-mode-switcher {
             display: inline-flex;
             gap: 0;
@@ -1536,13 +1581,10 @@
             padding: 30px;
         }
         body.studio-setup .studio-mode-panel.setup-panel { display: block; }
-        body.studio-live  .studio-mode-panel.live-panel  { display: flex; flex-direction: column; padding: 0; }
-        /* When in Setup or Live, hide the workspace + the design-only
-         * header pills (Bezel/Widgets toggles only matter in Design). */
-        body.studio-setup #workspaceGrid,
-        body.studio-live  #workspaceGrid { display: none; }
-        body.studio-setup .header-toggles,
-        body.studio-live  .header-toggles { display: none; }
+        /* When in Setup, hide the workspace + the design-only header pills
+         * (Bezel/Widgets toggles only matter in Design). */
+        body.studio-setup #workspaceGrid { display: none; }
+        body.studio-setup .header-toggles { display: none; }
 
         /* Setup-mode card grid */
         .setup-grid {
@@ -1603,50 +1645,6 @@
             margin: 0 auto 12px;
             max-width: 1100px;
             padding-left: 4px;
-        }
-
-        /* Live-mode: capture stream centered + toolbar */
-        .live-toolbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 16px;
-            background: rgba(20,20,20,0.6);
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-        .live-toolbar .live-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 11px;
-            color: var(--text-muted);
-        }
-        .live-toolbar .live-dot {
-            width: 8px; height: 8px; border-radius: 50%;
-            background: hsl(140,60%,55%);
-            box-shadow: 0 0 6px rgba(70,209,98,0.5);
-            animation: livePulse 1.5s infinite;
-        }
-        @keyframes livePulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.35; }
-        }
-        .live-stage {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 16px;
-            min-height: 0;
-        }
-        .live-stage img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
         }
 
         /* ── Channels modal — refined UX ──
@@ -4035,15 +4033,15 @@
              pushed it to the middle/right of the header next to the save
              button, which looked like it was floating in the center. -->
         <button class="mobile-burger" onclick="openMobileMenu()" title="Menu">&#9776;</button>
-        <!-- Studio mode switcher: Setup / Design / Live.
+        <!-- Studio mode switcher: Setup / Design.
              Setup    = car-level configuration (Channels, Signals, ECU, WiFi, Device)
              Design   = layout authoring (canvas + widget palette + inspector)
-             Live     = runtime observation (full-screen capture stream)
-             Default = Design. Persisted in localStorage under 'rdm7_studio_mode'. -->
+             Default = Design. Persisted in localStorage under 'rdm7_studio_mode'.
+             (A former "Live" runtime-observation mode was removed; the CONTROL
+              pill provides live device mirroring + remote touch instead.) -->
         <div class="studio-mode-switcher" id="studioModeSwitcher">
             <button class="studio-mode-btn" data-mode="setup"  onclick="setStudioMode('setup')">Setup</button>
             <button class="studio-mode-btn active" data-mode="design" onclick="setStudioMode('design')">Design</button>
-            <button class="studio-mode-btn" data-mode="live"   onclick="setStudioMode('live')">Live</button>
         </div>
         <div class="top-controls">
             <div class="header-toggles">
@@ -4065,39 +4063,19 @@
             <div class="header-divider"></div>
             <select id="layoutSelect"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;"></select>
+            <!-- Slim "layout actions" caret next to the layout <select>. The
+                 former tools hamburger (Channels / Data Logger / OBD2 / DBC /
+                 Marketplace / etc.) has been removed — every one of those now
+                 lives as a card in the Setup studio panel. Only the
+                 layout-file ops that don't belong in the car-config grid stay
+                 here: New / Save As / Rename / Delete. -->
             <div class="layout-menu-wrap" id="layoutMenuWrap">
-                <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions">&#9776;</button>
+                <button class="btn btn-secondary btn-icon" onclick="toggleLayoutMenu()" title="Layout actions" aria-label="Layout actions">&#9662;</button>
                 <div class="layout-menu" id="layoutMenu">
                     <div class="layout-menu-item" onclick="layoutEditorNew(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New Layout...</div>
                     <div class="layout-menu-item" onclick="layoutEditorSaveAs(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Save As...</div>
                     <div class="layout-menu-item" onclick="renameCurrentLayout(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Rename...</div>
                     <div class="layout-menu-item" onclick="deleteCurrentLayout(); closeLayoutMenu()" style="color:hsl(0,70%,60%)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete Layout</div>
-                    <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="importRdm(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import .rdm</div>
-                    <div class="layout-menu-item" onclick="exportRdm(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export .rdm</div>
-                    <div class="layout-menu-item" onclick="downloadScreenshot(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export Screenshot</div>
-                    <div class="layout-menu-item" onclick="openStorageManager(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager...</div>
-                    <div class="layout-menu-item" onclick="openSwitcherSetup(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/><polyline points="9 18 3 12 9 6" transform="translate(15 0)"/></svg>Dashboard Switcher...</div>
-                    <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="openDeviceInfo(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="0.8" fill="currentColor" stroke="none"/></svg>Device Info...</div>
-                    <div class="layout-menu-item" onclick="openSignalDashboard(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>Signal Dashboard...</div>
-                    <div class="layout-menu-item" onclick="openChannelsModal(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18"/><path d="M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>Channels...</div>
-                    <div class="layout-menu-item" onclick="openDataLogger(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Data Logger...</div>
-                    <div class="layout-menu-item" onclick="openDimmerSettings(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Dimmer Settings...</div>
-                    <div class="layout-menu-sep"></div>
-                    <!-- OBD2 diagnostics section — vehicle-side tools that talk
-                         to the ECU. Setup is the entry point; Trouble Codes is
-                         the DTC reader; Vehicle Info shows VIN/ECU name;
-                         Custom PIDs is the forum-PID editor. -->
-                    <div class="layout-menu-label">OBD2</div>
-                    <div class="layout-menu-item" onclick="openObd2Setup(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Setup...</div>
-                    <div class="layout-menu-item" onclick="openTroubleCodes(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>Trouble Codes...</div>
-                    <div class="layout-menu-item" onclick="openVehicleInfo(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M5 11l1.5-4.5a2 2 0 011.9-1.5h7.2a2 2 0 011.9 1.5L19 11"/><path d="M5 11h14v6a1 1 0 01-1 1h-1a1 1 0 01-1-1v-1H8v1a1 1 0 01-1 1H6a1 1 0 01-1-1v-6z"/><circle cx="7.5" cy="14.5" r="0.8" fill="currentColor" stroke="none"/><circle cx="16.5" cy="14.5" r="0.8" fill="currentColor" stroke="none"/></svg>Vehicle Info...</div>
-                    <div class="layout-menu-item" onclick="openCustomPids(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 7v4M9 13v4M15 7v10"/><circle cx="15" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>Custom PIDs...</div>
-                    <div class="layout-menu-sep"></div>
-                    <div class="layout-menu-item" onclick="openDbcImportModal(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import DBC...</div>
-                    <div class="layout-menu-item" onclick="openPresetAuthorModal(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Create Preset...</div>
-                    <div class="layout-menu-item" onclick="openMarketplace(); closeLayoutMenu()"><svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Marketplace</div>
                 </div>
             </div>
             <select id="splashSelect" style="display:none; background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace;" onchange="switchSplash(this.value)"></select>
@@ -4213,37 +4191,48 @@
                 <div class="card-stat">Calibrate</div>
             </div>
         </div>
-    </div>
 
-    <!-- Studio Live mode panel — full-screen capture stream + status
-         strip. Reuses /api/screenshot polled at 1 Hz (same path as the
-         existing CONTROL mode, but without the touch routing — Live is
-         observation-only). -->
-    <div class="studio-mode-panel live-panel" id="studioLivePanel">
-        <div class="live-toolbar">
-            <div class="live-status">
-                <span class="live-dot"></span>
-                <span id="liveStatusText">Live view — polling /api/screenshot</span>
+        <div class="setup-section-title" style="margin-top:30px;">Logging &amp; dashboards</div>
+        <div class="setup-grid">
+            <div class="setup-card" onclick="openDataLogger && openDataLogger()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Data Logger</div>
+                <div class="card-body">Record CAN signals to SD card. Selectable rate, replay, and share raw traces.</div>
+                <div class="card-stat">CSV / SD card</div>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-                <select id="liveRefreshRate" onchange="_liveSetRate(this.value)" style="padding:4px 8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:11px;">
-                    <option value="500">2 Hz</option>
-                    <option value="1000" selected>1 Hz</option>
-                    <option value="2000">0.5 Hz</option>
-                    <option value="5000">0.2 Hz</option>
-                </select>
-                <button class="btn btn-secondary" style="padding:4px 12px; font-size:11px;" onclick="openSignalDashboard()">Signals…</button>
-                <button class="btn btn-secondary" style="padding:4px 12px; font-size:11px;" onclick="openDataLogger()">Logger…</button>
+            <div class="setup-card" onclick="openSwitcherSetup && openSwitcherSetup()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><polyline points="7 17 2 12 7 7"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="17 7 22 12 17 17"/></svg>Dashboard Switcher</div>
+                <div class="card-body">Map a CAN signal or button to cycle through saved layouts while driving.</div>
+                <div class="card-stat">Configurable</div>
+            </div>
+            <div class="setup-card" onclick="openMarketplace && openMarketplace()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Marketplace</div>
+                <div class="card-body">Browse and download community layouts and presets.</div>
+                <div class="card-stat">Community</div>
             </div>
         </div>
-        <div class="live-stage">
-            <!-- Renamed from `liveStreamImg` to avoid a duplicate-ID
-                 collision with the canvas-overlay img used by CONTROL
-                 mode. With the same ID present twice,
-                 document.getElementById() returned this (hidden)
-                 element, so CONTROL frames were drawn into an
-                 off-screen node and the workspace went black. -->
-            <img id="studioLiveStreamImg" alt="Live dash" src="" />
+
+        <div class="setup-section-title" style="margin-top:30px;">Files &amp; storage</div>
+        <div class="setup-grid">
+            <div class="setup-card" onclick="importRdm && importRdm()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import .rdm</div>
+                <div class="card-body">Load a layout bundle (.rdm) from a file into the editor.</div>
+                <div class="card-stat">Bundle import</div>
+            </div>
+            <div class="setup-card" onclick="exportRdm && exportRdm()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export .rdm</div>
+                <div class="card-body">Save the current layout (plus assets) as a portable .rdm bundle.</div>
+                <div class="card-stat">Bundle export</div>
+            </div>
+            <div class="setup-card" onclick="downloadScreenshot && downloadScreenshot()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Export Screenshot</div>
+                <div class="card-body">Grab a still of the live dash screen as a JPEG.</div>
+                <div class="card-stat">JPEG</div>
+            </div>
+            <div class="setup-card" onclick="openStorageManager && openStorageManager()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager</div>
+                <div class="card-body">Browse layouts, images and fonts on the device and SD card.</div>
+                <div class="card-stat">/lfs · /sdcard</div>
+            </div>
         </div>
     </div>
 
@@ -5156,6 +5145,10 @@
 
     <!-- Mobile bottom nav (icons open slide-up sheets for Widgets / Properties / Layers / More) -->
     <nav id="mobileActionBar" role="toolbar" aria-label="Primary actions">
+        <button data-action="widgets" aria-label="Add Widget">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Widgets</span>
+        </button>
         <button data-action="properties" aria-label="Properties" aria-disabled="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="8.01"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
             <span>Properties</span>
@@ -5176,6 +5169,17 @@
 
     <!-- Dim overlay behind an open mobile sheet -->
     <div id="mobileSheetBackdrop" aria-hidden="true"></div>
+
+    <!-- Mobile widget palette bottom-sheet (opened from the bottom-nav "Widgets"
+         button). Populated by openMobilePalette() via the shared _fillPalette
+         helper so it always matches the desktop palette. -->
+    <div id="mobilePaletteSheet" aria-hidden="true">
+        <div class="mobile-palette-header">
+            <span style="font-weight:700;font-size:15px;color:var(--text);">Add Widget</span>
+            <button onclick="closeMobilePalette()" style="background:none;border:none;color:var(--text);font-size:28px;line-height:1;cursor:pointer;padding:4px 8px;margin-left:auto;margin-right:-4px;" aria-label="Close widget palette">&times;</button>
+        </div>
+        <div id="mobilePaletteList"></div>
+    </div>
 
     <footer>
         <div><span id="connectionStatus" class="status-dot"></span> <span id="statusText">Connecting...</span></div>
@@ -6336,8 +6340,10 @@
                     });
                     if (!response.ok) throw new Error();
                     updateStatus('Saved as ' + safeName);
-                    history = [JSON.stringify(currentLayout)];
-                    historyIndex = 0;
+                    /* TASK 14: keep undo/redo history across a Save As. The
+                     * layout content is unchanged (only the name differs), so
+                     * collapsing the history stack here just discards the
+                     * user's undo timeline for no reason. */
                     _lastDeviceSnapshot = JSON.stringify(payload);
                     try { localStorage.removeItem('rdm7_draft'); } catch (e) { }
                     await fetchLayoutsKeepCurrent();
@@ -6737,6 +6743,42 @@
             if (c.major_tick_step == null && typeof c.minor_tick_step === 'number'
                 && typeof c.major_tick_every === 'number') {
                 c.major_tick_step = c.minor_tick_step * c.major_tick_every;
+            }
+        }
+
+        /* Arc shares the meter's gap-at-bottom angle convention. The inspector
+         * exposes start_angle_user (0 = 12 o'clock, CW positive) + sweep_degrees,
+         * but the firmware still reads raw LVGL start_angle/end_angle from config.
+         * These two helpers derive the legacy angles forward (_arcSyncDerived) and
+         * back-compute the user-friendly fields from an old config that only has
+         * the raw angles (_arcDeriveNewFromLegacy) — mirroring the meter exactly.
+         * Defaults start_angle_user=225, sweep=270 reproduce LVGL start=135/end=45. */
+        function _arcSyncDerived(c) {
+            if (!c) return;
+            if (c.start_angle_user == null) c.start_angle_user = 225;
+            if (c.sweep_degrees == null)    c.sweep_degrees    = 270;
+            /* User: 0° = 12 o'clock, CW positive.
+             * LVGL: 0° = 3 o'clock, CW. → lvgl = (user + 270) % 360. */
+            const userStart = (((c.start_angle_user | 0) % 360) + 360) % 360;
+            const sweep     = Math.max(1, Math.min(360, c.sweep_degrees | 0));
+            const lvglStart = (userStart + 270) % 360;
+            c.start_angle = lvglStart;
+            c.end_angle   = (lvglStart + sweep) % 360;
+        }
+        function _arcDeriveNewFromLegacy(c) {
+            if (!c) return;
+            /* Only raw LVGL start_angle persisted → back-compute user start. */
+            if (c.start_angle_user == null && typeof c.start_angle === 'number') {
+                const a = ((c.start_angle % 360) + 360) % 360;
+                c.start_angle_user = (a - 270 + 360) % 360;
+            }
+            if (c.sweep_degrees == null &&
+                typeof c.start_angle === 'number' &&
+                typeof c.end_angle === 'number') {
+                const s = ((c.start_angle % 360) + 360) % 360;
+                const e = ((c.end_angle   % 360) + 360) % 360;
+                const sweep = (e - s + 360) % 360;
+                c.sweep_degrees = sweep === 0 ? 360 : sweep;
             }
         }
 
@@ -7584,9 +7626,20 @@
                     if (s === data.active) opt.selected = true;
                     sel.appendChild(opt);
                 });
+                /* TASK 9: "Disable" lets the user boot straight to the
+                 * dashboard (skips the splash screen entirely). Maps to
+                 * POST /api/splash/enabled {enabled:false}. */
+                const disOpt = document.createElement('option');
+                disOpt.value = '__disable__';
+                disOpt.textContent = 'Disable (boot straight to dashboard)';
+                sel.appendChild(disOpt);
                 const fadeToggle = document.getElementById('splashFadeToggle');
                 if (fadeToggle) fadeToggle.checked = data.fade_enabled !== false;
-                const active = sel.value || data.active || 'Default';
+                /* If the splash is disabled on-device, reflect that in the
+                 * picker instead of preselecting an active splash. */
+                const splashDisabled = data.enabled === false;
+                if (splashDisabled) sel.value = '__disable__';
+                const active = (splashDisabled ? null : sel.value) || data.active || 'Default';
                 await loadLayout('_splash_' + active);
             } catch (e) {
                 updateStatus('Error loading splash list', true);
@@ -7597,7 +7650,29 @@
 
         async function switchSplash(name) {
             try {
+                /* TASK 9: the synthetic "__disable__" option turns the splash
+                 * screen off entirely (boot straight to the dashboard). It does
+                 * NOT select a splash file, so skip /api/splash/set. */
+                if (name === '__disable__') {
+                    updateStatus('Disabling splash...');
+                    const r = await fetch('/api/splash/enabled', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: false })
+                    });
+                    if (!r.ok) throw new Error();
+                    updateStatus('Splash disabled — boots to dashboard');
+                    showToast('Splash disabled', 'success');
+                    return;
+                }
                 updateStatus('Switching splash...');
+                /* Re-enable the splash whenever a real splash is chosen — the
+                 * user may be coming back from the "Disable" option. */
+                await fetch('/api/splash/enabled', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true })
+                });
                 const resp = await fetch('/api/splash/set', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -7682,18 +7757,34 @@
             );
         }
 
-        function initPalette() {
-            paletteList.innerHTML = '';
-            Object.entries(WIDGET_DEFS).forEach(([type, def]) => {
-                if (currentScreenMode === 'splash' && !SPLASH_WIDGET_TYPES.includes(type)) return;
+        /* Shared palette helpers — used by both the desktop sidebar palette
+         * (initPalette) and the mobile bottom-sheet palette (openMobilePalette)
+         * so the two never drift. _paletteTileTypes honors the splash-mode
+         * filter; _paletteTileHtml renders one tile's inner markup. */
+        function _paletteTileTypes() {
+            return Object.entries(WIDGET_DEFS).filter(([type]) =>
+                !(currentScreenMode === 'splash' && !SPLASH_WIDGET_TYPES.includes(type)));
+        }
+        function _paletteTileHtml(type, def) {
+            const icon = PALETTE_ICONS[type] || '';
+            const sizeHint = `${def.defW}x${def.defH}`;
+            return `<span class="palette-icon" style="color:var(--text-muted)">${icon}</span><span>${def.displayName || type}</span><span class="palette-size-hint">${sizeHint}</span>`;
+        }
+        /* Fill an arbitrary container with palette tiles. Each tile calls
+         * addWidget(type) on tap (which centers + selects), then runs the
+         * optional afterAdd callback (the mobile sheet uses it to self-close). */
+        function _fillPalette(container, afterAdd) {
+            container.innerHTML = '';
+            _paletteTileTypes().forEach(([type, def]) => {
                 const item = document.createElement('div');
                 item.className = 'palette-item';
-                const icon = PALETTE_ICONS[type] || '';
-                const sizeHint = `${def.defW}x${def.defH}`;
-                item.innerHTML = `<span class="palette-icon" style="color:var(--text-muted)">${icon}</span><span>${def.displayName || type}</span><span class="palette-size-hint">${sizeHint}</span>`;
-                item.onclick = () => addWidget(type);
-                paletteList.appendChild(item);
+                item.innerHTML = _paletteTileHtml(type, def);
+                item.onclick = () => { addWidget(type); if (afterAdd) afterAdd(); };
+                container.appendChild(item);
             });
+        }
+        function initPalette() {
+            _fillPalette(paletteList, null);
         }
 
         /* Render Logic */
@@ -7760,7 +7851,12 @@
 
                 const sigTag = w.signal ? ` <span style="color:hsl(120, 100%, 50%);font-size:9px;">\u2192 ${w.signal}</span>` : '';
                 const typeIcon = PALETTE_ICONS[w.type] ? `<div class="type-icon">${PALETTE_ICONS[w.type]}</div>` : '';
-                box.innerHTML = `${shapePreview}<div class="id-label">${w.id}${sigTag}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
+                /* shape_panel + line draw on the device only (their geometry is
+                 * never rendered on this canvas) \u2014 flag the box so the empty
+                 * outline reads as intentional, not broken. */
+                const deviceBadge = (w.type === 'shape_panel' || w.type === 'line')
+                    ? `<span class="device-badge" title="Rendered on the device only \u2014 geometry isn't drawn in the editor">device</span>` : '';
+                box.innerHTML = `${shapePreview}<div class="id-label">${w.id}${sigTag}${deviceBadge}</div>${typeIcon}${customHtml}`; if (selectedIndices.size === 1 && selectedIndices.has(index) && !w.locked) {
                     const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
                     handles.forEach(h => {
                         const hDiv = document.createElement('div');
@@ -9372,6 +9468,44 @@
                         <button onclick="_inspectorEditChannel('${_effCh.id}')">Edit channel</button>
                         <button class="danger" onclick="_widgetUnbindChannel()">Unbind</button>
                     </div>`;
+
+                    /* ── Value Labels for CHANNEL-BOUND widgets (TASK 15) ──
+                     * The value→label map lives on the backing SIGNAL (the
+                     * same field the legacy raw-signal branch below edits) and
+                     * is applied in firmware via signal_format_value. It was
+                     * previously only surfaced for legacy raw-signal widgets;
+                     * surface the identical editor here so channel-bound text/
+                     * value widgets (e.g. GEAR 0→"N") can map values too.
+                     * Resolve the signal from the channel and reuse the same
+                     * addValueMapEntry / updateValueMapEntry / removeValueMapEntry
+                     * helpers (keyed by signal index). */
+                    if (_effCh.signal) {
+                        const csig = (currentLayout.signals || []).find(s => s.name === _effCh.signal);
+                        if (csig) {
+                            const csigIdx = (currentLayout.signals || []).indexOf(csig);
+                            const cvmap = Array.isArray(csig.value_map) ? csig.value_map : [];
+                            const cvmapOpen = cvmap.length > 0;
+                            html += `<details class="inspector-accordion" ${cvmapOpen ? 'open' : ''} style="margin-top:8px;"><summary>Value Labels${cvmap.length ? ` <span class="badge" style="background:var(--accent);">${cvmap.length}</span>` : ''}</summary><div class="accordion-body">`;
+                            html += `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Map raw decoded values to labels (e.g. <code>0 → N</code>, <code>1 → Sport</code>). Unmapped values fall through to numeric display. Applies to every widget bound to <b>${_effCh.signal}</b>.</div>`;
+                            if (cvmap.length) {
+                                html += `<div style="display:flex; flex-direction:column; gap:4px;">`;
+                                cvmap.forEach((entry, ei) => {
+                                    const ev = (entry && entry.v !== undefined) ? entry.v : 0;
+                                    const el = (entry && entry.label !== undefined) ? entry.label : '';
+                                    const escLbl = String(el).replace(/"/g, '&quot;');
+                                    html += `<div style="display:flex; gap:4px; align-items:center;">`;
+                                    html += `<input type="number" step="any" value="${ev}" onchange="updateValueMapEntry(${csigIdx},${ei},'v',this.value); updateInspector();" style="width:72px; font-family:monospace;" title="Raw decoded value (integer or decimal)" ${disabledAttr}>`;
+                                    html += `<span style="color:var(--text-muted); font-size:14px;">→</span>`;
+                                    html += `<input type="text" value="${escLbl}" maxlength="11" onchange="updateValueMapEntry(${csigIdx},${ei},'label',this.value)" placeholder="Label" style="flex:1; font-weight:600;" ${disabledAttr}>`;
+                                    html += `<button class="btn btn-secondary" style="padding:2px 8px; font-size:11px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%);" onclick="removeValueMapEntry(${csigIdx},${ei}); updateInspector();" title="Remove" ${disabledAttr}>×</button>`;
+                                    html += `</div>`;
+                                });
+                                html += `</div>`;
+                            }
+                            html += `<button class="btn btn-secondary" style="margin-top:6px; font-size:11px; width:100%;" onclick="addValueMapEntry(${csigIdx}); updateInspector();" ${disabledAttr}>+ Add Label</button>`;
+                            html += `</div></details>`;
+                        }
+                    }
                 }
 
                 /* Signal binding UI — kept only for widgets bound to a
@@ -10423,6 +10557,9 @@
             }
 
             assignSignal(name);
+            /* Auto-create / extend the "Custom" preset (version "1") so this
+             * one-off signal is reusable from the source picker. */
+            if (typeof _upsertCustomPreset === 'function') _upsertCustomPreset(sigObj);
             closeAssignModal();
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
             updateStatus(`Created custom signal "${name}"`);
@@ -10872,6 +11009,14 @@
                 }
                 _meterSyncDerived(w.config);
                 if (field === 'min' || field === 'max') updateInspector();
+            }
+
+            /* Arc: editing Start Angle / Sweep re-derives the legacy LVGL
+             * start_angle/end_angle that the firmware actually consumes,
+             * mirroring the meter. */
+            const ARC_TRIGGERS = new Set(['start_angle_user', 'sweep_degrees']);
+            if (w.type === 'arc' && ARC_TRIGGERS.has(field)) {
+                _arcSyncDerived(w.config);
             }
 
             /* If this field is a toggle that controls sub-fields, re-render inspector */
@@ -11361,6 +11506,7 @@
              * inspector-friendly fields so the firmware payload has what it
              * expects from the moment the widget is created. */
             if (type === 'meter') _meterSyncDerived(config);
+            if (type === 'arc') _arcSyncDerived(config);
             const widgetId = nextWidgetId(type);
             const newWidget = {
                 type: type,
@@ -12337,6 +12483,13 @@
                         _meterDeriveNewFromLegacy(w.config);
                         _meterSyncDerived(w.config);
                     }
+                    /* Arc: same dual-representation round-trip as the meter —
+                     * back-fill the inspector-friendly fields from the raw
+                     * LVGL angles, then re-sync so both stay in agreement. */
+                    if (w.type === 'arc' && w.config) {
+                        _arcDeriveNewFromLegacy(w.config);
+                        _arcSyncDerived(w.config);
+                    }
                 });
                 /* Bridge firmware→web */
                 (currentLayout.widgets || []).forEach(w => {
@@ -12576,8 +12729,15 @@
                     showToast(isSplash ? 'Splash saved' : 'Saved to device', 'success');
                 }
                 _editingActive = false;
-                history = [JSON.stringify(currentLayout)];
-                historyIndex = 0;
+                /* TASK 14: do NOT wipe the undo/redo history on a silent
+                 * auto-save. The 1s debounced auto-save fires constantly while
+                 * editing; resetting history here collapsed the stack on every
+                 * tick, breaking Ctrl+Z. Only a manual (non-silent) save — an
+                 * explicit "I'm done" action — resets the timeline. */
+                if (!silent) {
+                    history = [JSON.stringify(currentLayout)];
+                    historyIndex = 0;
+                }
                 _lastDeviceSnapshot = JSON.stringify(payload);
                 /* After a successful save the on-disk state matches what's
                  * in the editor — reset the baseline so further widget edits
@@ -16347,13 +16507,15 @@
         }
 
         /* ── Studio mode switcher ──────────────────────────────────────
-         * Setup / Design / Live. Persisted in localStorage. */
-        let _liveStreamTimer = null;
-        let _liveStreamRate = 1000;
-
+         * Setup / Design. Persisted in localStorage. (The former third
+         * "Live" mode — a full-screen /api/screenshot poll — was removed
+         * as redundant with Design; the CONTROL pill still provides live
+         * remote view + touch.) */
         function setStudioMode(mode) {
-            if (!['setup','design','live'].includes(mode)) mode = 'design';
-            document.body.classList.remove('studio-setup','studio-design','studio-live');
+            /* Coerce any unknown/legacy value (e.g. a persisted 'live'
+             * from before the Live mode was removed) back to Design. */
+            if (!['setup','design'].includes(mode)) mode = 'design';
+            document.body.classList.remove('studio-setup','studio-design');
             document.body.classList.add('studio-' + mode);
             document.querySelectorAll('.studio-mode-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.mode === mode);
@@ -16361,11 +16523,6 @@
             try { localStorage.setItem('rdm7_studio_mode', mode); } catch(e) {}
 
             /* Mode-specific side-effects */
-            if (mode === 'live') {
-                _liveStartStream();
-            } else {
-                _liveStopStream();
-            }
             if (mode === 'setup') {
                 _refreshSetupStats();
             }
@@ -16374,29 +16531,6 @@
             if (mode === 'design' && typeof fitCanvasToScreen === 'function') {
                 setTimeout(fitCanvasToScreen, 50);
             }
-        }
-
-        function _liveStartStream() {
-            _liveStopStream();
-            /* Studio Live mode targets its own img element — the
-             * canvas-overlay one (also id="liveStreamImg" before the
-             * rename) belongs to CONTROL mode. Sharing the ID hid the
-             * canvas under a 0×0 node. */
-            const img = document.getElementById('studioLiveStreamImg');
-            if (!img) return;
-            const tick = () => {
-                /* Cache-bust + low-quality JPEG for snappy refresh */
-                img.src = '/api/screenshot?q=70&t=' + Date.now();
-            };
-            tick();
-            _liveStreamTimer = setInterval(tick, _liveStreamRate);
-        }
-        function _liveStopStream() {
-            if (_liveStreamTimer) { clearInterval(_liveStreamTimer); _liveStreamTimer = null; }
-        }
-        function _liveSetRate(ms) {
-            _liveStreamRate = Number(ms) || 1000;
-            if (document.body.classList.contains('studio-live')) _liveStartStream();
         }
 
         /* Populate Setup-mode card stat lines (live counts).
@@ -17295,7 +17429,7 @@
 
                 ${_renderSourceSection(c)}
                 ${c.signal ? _renderRangeSection(c, def) : ''}
-                ${c.signal ? _renderMoreSection(c, def) : ''}
+                ${_renderMoreSection(c, def)}
 
                 <div class="ch2-detail-footer">
                     ${def && c.is_canonical ? `<button class="ch2-link-btn" onclick="_chResetDefaults('${c.id}')">Reset to defaults</button>` : ''}
@@ -17856,15 +17990,6 @@
         }
 
         function _renderMoreSection(c, def) {
-            const colorCell = (key, lbl) => {
-                const v = (c[key] != null) ? c[key] : (_CH_ZONE_COLORS_DEFAULT[key] || 0xFFFFFF);
-                const hex = '#' + (v & 0xFFFFFF).toString(16).padStart(6, '0');
-                return `<div class="ch2-color-cell">
-                    <input type="color" value="${hex}" onchange="_chEdit('${c.id}','${key}',parseInt(this.value.slice(1),16))">
-                    <span>${lbl}</span>
-                </div>`;
-            };
-
             /* CAN decode section — only render for channels bound to a
              * CAN-source signal. OBD2 + internal signals have no user-
              * editable decode params (can_id=0, decode happens in firmware
@@ -17880,7 +18005,19 @@
              * (legacy registrations) but skip when the bound signal is OBD2
              * or INTERNAL — those don't have user-editable CAN decode. */
             const isCanSignal = sig && (!liveSrc || liveSrc === 'can');
-            if (isCanSignal) {
+            if (!sig && !c.signal) {
+                /* Unbound channel: offer a one-tap "Add CAN signal" so the
+                 * user can author a raw CAN decode without first hunting for
+                 * a preset. Creates a layout signal + binds the channel to it,
+                 * then re-renders so the editable decode inputs below appear. */
+                canSection = `
+                    <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+                        <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px; line-height:1.4;">
+                            No source bound yet. Add a custom CAN signal to enter a CAN ID, bit range, scale and endianness directly.
+                        </div>
+                        <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chAddCanSignal('${c.id}')">+ Add CAN signal</button>
+                    </div>`;
+            } else if (isCanSignal) {
                 const hexCanId = '0x' + (sig.can_id|0).toString(16).toUpperCase().padStart(3,'0');
                 const _shareN = (typeof _chSignalShareCount === 'function') ? _chSignalShareCount(c.signal, c.id) : 0;
                 const _shareWarn = _shareN > 0 ? `
@@ -17934,9 +18071,15 @@
                     </div>`;
             }
 
+            /* Auto-expand "More" when there's a CAN-decode block to show
+             * (either the "+ Add CAN signal" prompt for an unbound channel,
+             * or the editable decode inputs after one is created) so the
+             * controls are immediately visible instead of hidden behind a
+             * collapsed disclosure. */
+            const moreOpen = canSection ? ' open' : '';
             return `
                 <div class="ch2-section">
-                    <details class="ch2-more">
+                    <details class="ch2-more"${moreOpen}>
                         <summary>More</summary>
                         <div class="ch2-more-body">
                             <div>
@@ -17951,10 +18094,6 @@
                                 <div class="ch2-num" style="margin-top:10px;">
                                     <span class="ch2-num-label">Decimals</span>
                                     <input type="number" min="0" max="3" value="${c.decimals||0}" onchange="_chEdit('${c.id}','decimals', Number(this.value))">
-                                </div>
-                                <div class="ch2-num" style="margin-top:10px;">
-                                    <span class="ch2-num-label">Normal color</span>
-                                    <input type="color" style="height:30px; padding:2px; cursor:pointer;" value="${(() => { const v=(c.color_normal!=null)?c.color_normal:(_CH_ZONE_COLORS_DEFAULT.color_normal||0xFFFFFF); return '#'+(v&0xFFFFFF).toString(16).padStart(6,'0'); })()}" onchange="_chEdit('${c.id}','color_normal',parseInt(this.value.slice(1),16))">
                                 </div>
                             </div>
                             ${canSection}
@@ -18036,6 +18175,98 @@
             if (typeof _renderChannelDetail === 'function') _renderChannelDetail();
             if (typeof _refreshChannelsList === 'function') _refreshChannelsList();
         }
+
+        /* Create a brand-new custom CAN signal for an unbound channel.
+         * Builds a layout signal, registers it live, binds the channel to it,
+         * auto-upserts the "Custom"/"1" preset, then re-renders so the inline
+         * CAN-decode inputs (handled by _chEditSignal/_chEditSignalCanId) show
+         * up immediately and are editable. */
+        async function _chAddCanSignal(channelId) {
+            if (!currentLayout) return;
+            if (!Array.isArray(currentLayout.signals)) currentLayout.signals = [];
+            const ch = (_chCache || []).find(c => c.id === channelId);
+            /* Derive a unique, firmware-safe signal name from the channel id. */
+            const base = String(channelId || 'SIG').replace(/[^A-Za-z0-9_]/g, '_').toUpperCase().slice(0, 28) || 'SIG';
+            let name = base, n = 1;
+            while (currentLayout.signals.some(s => s.name === name)) name = (base.slice(0, 26) + '_' + (++n)).slice(0, 31);
+            const sig = {
+                name: name,
+                can_id: 0,
+                bit_start: 0,
+                bit_length: 16,
+                scale: 1,
+                offset: 0,
+                is_signed: false,
+                is_little_endian: true,
+                unit: (ch && (ch.units_native || ch.units_display)) || '',
+                is_custom: true
+            };
+            currentLayout.signals.push(sig);
+            _pushSignalDecodeLive(sig);
+            try {
+                await fetch('/api/channels/bind-source', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channel_id: channelId, source_type: 'custom', signal_name: name })
+                });
+            } catch (_) {}
+            if (ch) ch.signal = name;
+            if (typeof pushHistory === 'function') pushHistory();
+            /* Auto-create / extend the "Custom" preset (version "1") so this
+             * one-off signal is reusable from the source picker. Fire-and-forget. */
+            _upsertCustomPreset(sig);
+            try { await _fetchChannelsActive(); } catch (_) {}
+            if (typeof updateStatus === 'function') updateStatus(`Added custom CAN signal "${name}"`);
+            if (typeof _renderChannelDetail === 'function') _renderChannelDetail();
+            if (typeof _refreshChannelsList === 'function') _refreshChannelsList();
+        }
+
+        /* Upsert a one-off custom signal into the "Custom"/"1" preset so it
+         * shows up in the source picker like any other preset signal. Maps the
+         * layout-signal shape into the preset storage shape (can_id as hex
+         * string, endianess 0/1), de-dupes by label, and re-fetches presets.
+         * Fire-and-forget — preset persistence is best-effort, identical to
+         * saveCustomSignal's error posture. */
+        async function _upsertCustomPreset(sig) {
+            if (!sig || !sig.name) return;
+            try {
+                const ECU = 'Custom', VER = '1';
+                const canIdInt = (typeof sig.can_id === 'string')
+                    ? (parseInt(sig.can_id, 16) || 0)
+                    : (sig.can_id || 0);
+                const endianess = (sig.endian != null)
+                    ? Number(sig.endian)
+                    : (sig.is_little_endian === false ? 0 : 1);
+                const newEntry = {
+                    label: sig.name,
+                    can_id: (canIdInt | 0).toString(16).toUpperCase(),
+                    bit_start: sig.bit_start | 0,
+                    bit_length: sig.bit_length | 0 || 16,
+                    scale: (sig.scale != null) ? sig.scale : 1,
+                    offset: (sig.offset != null) ? sig.offset : 0,
+                    endianess: endianess,
+                    is_signed: !!sig.is_signed,
+                    decimals: 0
+                };
+                /* Gather existing Custom/1 signals from the cached presets. */
+                const existing = (Array.isArray(customPresets) ? customPresets : [])
+                    .filter(p => p.ecu === ECU && p.version === VER && p.label)
+                    .map(p => ({
+                        label: p.label, can_id: p.can_id, bit_start: p.bit_start,
+                        bit_length: p.bit_length, scale: p.scale, offset: p.offset,
+                        endianess: p.endianess, is_signed: p.is_signed, decimals: p.decimals
+                    }));
+                /* De-dupe by label: replace any same-label entry with the new one. */
+                const merged = existing.filter(s => s.label !== newEntry.label);
+                merged.push(newEntry);
+                const resp = await fetch('/api/presets/custom/save', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+                    body: JSON.stringify({ ecu: ECU, version: VER, signals: merged })
+                });
+                if (!resp.ok) { console.warn('custom preset upsert failed', resp.status); return; }
+                if (typeof fetchPresets === 'function') await fetchPresets();
+            } catch (e) { console.warn('custom preset upsert error', e); }
+        }
+
         function _chEditSignalCanId(signalName, inputEl) {
             const raw = (inputEl.value || '').trim();
             let val;
@@ -18674,17 +18905,47 @@
             const backdrop = document.getElementById('mobileSheetBackdrop');
             if (sidebar) sidebar.classList.remove('mobile-open', 'sheet-full');
             if (backdrop) backdrop.classList.remove('active');
+            /* Also dismiss the widget-palette sheet if it's open — it shares
+             * this backdrop, so a backdrop tap should close it too. */
+            const pal = document.getElementById('mobilePaletteSheet');
+            if (pal) { pal.classList.remove('active'); pal.setAttribute('aria-hidden', 'true'); }
             closeLayoutMenu();  /* kill any open hamburger menu */
         }
 
         /* Bottom-nav icon dispatcher */
         function mobileAction(action) {
             switch (action) {
+                case 'widgets':    openMobilePalette(); break;
                 case 'properties': openSidebarTab('properties'); break;
                 case 'layers':     openSidebarTab('layers'); break;
                 case 'sim':        if (typeof toggleSimulation === 'function') toggleSimulation(); break;
                 case 'more':       openMobileMenu(); break;
             }
+        }
+
+        /* Mobile widget palette bottom-sheet. Populates from the shared
+         * _fillPalette helper (same tiles + splash filtering as the desktop
+         * palette); tapping a tile adds the widget via addWidget (which
+         * centers + selects it) then closes the sheet so the user can
+         * immediately touch-drag it into place. */
+        function openMobilePalette() {
+            const sheet = document.getElementById('mobilePaletteSheet');
+            const list  = document.getElementById('mobilePaletteList');
+            const backdrop = document.getElementById('mobileSheetBackdrop');
+            if (!sheet || !list) return;
+            _fillPalette(list, closeMobilePalette);
+            sheet.classList.add('active');
+            sheet.setAttribute('aria-hidden', 'false');
+            if (backdrop) backdrop.classList.add('active');
+        }
+        function closeMobilePalette() {
+            const sheet = document.getElementById('mobilePaletteSheet');
+            const backdrop = document.getElementById('mobileSheetBackdrop');
+            if (sheet) {
+                sheet.classList.remove('active');
+                sheet.setAttribute('aria-hidden', 'true');
+            }
+            if (backdrop) backdrop.classList.remove('active');
         }
 
         /* Event delegation for the bottom nav */
@@ -18753,6 +19014,13 @@
             content.innerHTML = '';
 
             const sections = [
+                /* Tools & settings all live in the Setup studio panel now \u2014
+                 * one tap jumps there. This menu keeps only the things Setup
+                 * doesn't host: Edit (undo/redo), Arrange (z-order), Stream &
+                 * View, and the layout-file ops. */
+                { heading: 'Configuration', items: [
+                    { type: 'button', label: 'Open Setup (Channels, Logger, OBD2\u2026)', icon: 'settings', onclick: "setStudioMode('setup')" }
+                ]},
                 { heading: 'Layout', items: [
                     { type: 'select', id: 'layoutSelect' },
                     { type: 'button', label: 'Save',        icon: 'save',   onclick: 'saveActiveLayout()' },
@@ -18782,28 +19050,13 @@
                     { type: 'button', label: 'Send Backward',    icon: 'arrowDown',    onclick: 'bumpZOrder(-1)' },
                     { type: 'button', label: 'Send to Back',     icon: 'chevronsDown', onclick: "bumpZOrder('back')" }
                 ]},
-                { heading: 'Tools', items: [
-                    { type: 'button', label: 'Signal Dashboard\u2026', icon: 'activity', onclick: 'openSignalDashboard()' },
-                    { type: 'button', label: 'Channels\u2026',         icon: 'gauge',    onclick: 'openChannelsModal()' },
-                    { type: 'button', label: 'Data Logger\u2026',      icon: 'database', onclick: 'openDataLogger()' },
-                    { type: 'button', label: 'Fuel Sender Setup\u2026', icon: 'gauge',      onclick: 'openFuelSenderSetup()' },
-                    { type: 'button', label: 'Dimmer Settings\u2026', icon: 'brightness', onclick: 'openDimmerSettings()' },
-                    { type: 'button', label: 'Gear Setup\u2026',       icon: 'gauge',      onclick: 'openGearSetup()' },
-                    { type: 'button', label: 'Dashboard Switcher\u2026', icon: 'arrowSwap',  onclick: 'openSwitcherSetup()' },
-                    { type: 'button', label: 'Import DBC\u2026',       icon: 'upload',   onclick: 'openDbcImportModal()' },
-                    { type: 'button', label: 'Create Preset\u2026',    icon: 'plus',     onclick: 'openPresetAuthorModal()' },
-                    { type: 'button', label: 'Device Info\u2026',      icon: 'monitor',  onclick: 'openDeviceInfo()' },
-                    { type: 'button', label: 'Marketplace',            icon: 'shop',     onclick: 'openMarketplace()' }
-                ]},
-                /* OBD2 diagnostics \u2014 vehicle-side tools that talk to the
-                 * ECU. Mirrors the OBD2 section in the desktop dropdown so
-                 * mobile/tablet users have the same entry points. */
-                { heading: 'OBD2', items: [
-                    { type: 'button', label: 'Setup\u2026',          icon: 'settings', onclick: 'openObd2Setup()' },
-                    { type: 'button', label: 'Trouble Codes\u2026',  icon: 'alert',    onclick: 'openTroubleCodes()' },
-                    { type: 'button', label: 'Vehicle Info\u2026',   icon: 'car',      onclick: 'openVehicleInfo()' },
-                    { type: 'button', label: 'Custom PIDs\u2026',    icon: 'chip',     onclick: 'openCustomPids()' }
-                ]},
+                /* Tools (Signal Dashboard, Channels, Data Logger, Fuel, Dimmer,
+                 * Gear, Switcher, DBC, Create Preset, Device Info, Marketplace)
+                 * and OBD2 (Setup, Trouble Codes, Vehicle Info, Custom PIDs)
+                 * sections were removed from this menu \u2014 they all now live
+                 * as cards in the Setup studio panel, reached via "Open Setup"
+                 * above. The OBD2 sub-items (Trouble Codes / Vehicle Info /
+                 * Custom PIDs) stay reachable from inside the OBD2 Setup modal. */
                 /* Stream & View — replicates the header pills/dropdown that
                  * disappear at narrow widths so phone/tablet users still
                  * control simulation + preview stream + remote control. */
