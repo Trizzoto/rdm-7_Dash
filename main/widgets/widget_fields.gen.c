@@ -1948,6 +1948,16 @@ static const widget_field_t arc_fields[] = {
         .night_overridable = false,
     },
     {
+        .name = "arc_offset", .label = "Arc Offset",
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 120, .step_int = 0,
+        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "arc_color", .label = "Arc Color",
         .type = WF_TYPE_COLOR, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 0, .step_int = 0,
@@ -2099,6 +2109,16 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "ticks_outside", .label = "Ticks Outside Track",
+        .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = "show_ticks", .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "tick_recolor_alert", .label = "Recolor Ticks at Value",
         .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 0, .step_int = 0,
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,

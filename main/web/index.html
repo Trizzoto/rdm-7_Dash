@@ -5453,7 +5453,7 @@
                     `</div>`;
             }).join('') +
             (isCustom && channels.length === 0 ? `<div style="padding:20px 12px; text-align:center; color:var(--text-muted); font-size:12px;">No signals yet</div>` : '') +
-            (isCustom ? `<div class="preset-col-actions"><button class="btn btn-secondary" onclick="showAddSignalForm()">+ Add Signal</button></div>` : '');
+            (isCustom ? `<div class="preset-col-actions"><button class="btn btn-secondary" onclick="showAddSignalForm()">+ Add Signal</button><button class="btn btn-secondary" onclick="exportPresetDbc('${selEcu.replace(/'/g, "\\'")}','${version.replace(/'/g, "\\'")}')" title="Download this preset as a .dbc file">Export .dbc</button></div>` : '');
             document.getElementById('presetApplyBtn').disabled = true;
             const selText = document.getElementById('presetSelText');
             selText.textContent = `${_presetPickerSelection.ecu} \u203A ${version}`;
@@ -5815,6 +5815,52 @@
         /* ── DBC File Import ──────────────────────────────────── */
 
         let _parsedDbcSignals = [];
+
+        /* Export a custom preset (ecu+version) as a .dbc file, fully client-side.
+         * Signals are the flattened globalPresets entries for that ecu+version
+         * (label / can_id hex / bit_start / bit_length / scale / offset /
+         * endianess / is_signed). Emits the same BO_/SG_ form parseDbcFile()
+         * reads, so an exported file re-imports cleanly into RDM. (DBC Motorola
+         * bit numbering differs in some external tools — bit_start is emitted
+         * as-stored, which round-trips here.) */
+        function _presetToDbc(ecu, version, sigs) {
+            const san = (n) => (String(n == null ? 'Sig' : n).replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'Sig');
+            const byId = {};
+            sigs.forEach(s => {
+                const id = parseInt(s.can_id, 16) || 0;
+                if (!id) return; /* skip internal signals (no CAN id) */
+                (byId[id] = byId[id] || []).push(s);
+            });
+            let out = 'VERSION "' + ecu + ' ' + version + '"\n\nNS_ :\n\nBS_:\n\nBU_: RDM7\n\n';
+            Object.keys(byId).forEach(id => {
+                out += `BO_ ${id} ${san(ecu + '_' + id)}: 8 RDM7\n`;
+                byId[id].forEach(s => {
+                    const bs = s.bit_start || 0, bl = s.bit_length || 16;
+                    const bo = (s.endianess === 0 || s.is_little_endian === false) ? 0 : 1; /* 0=Motorola/BE, 1=Intel/LE */
+                    const vt = s.is_signed ? '-' : '+';
+                    const scale = (s.scale != null) ? s.scale : 1;
+                    const offset = (s.offset != null) ? s.offset : 0;
+                    const min = (s.min != null) ? s.min : 0, max = (s.max != null) ? s.max : 0;
+                    const unit = String(s.unit || s.units || '').replace(/"/g, '');
+                    out += ` SG_ ${san(s.label)} : ${bs}|${bl}@${bo}${vt} (${scale},${offset}) [${min}|${max}] "${unit}" Vector__XXX\n`;
+                });
+                out += '\n';
+            });
+            return out;
+        }
+        function exportPresetDbc(ecu, version) {
+            const sigs = (typeof globalPresets !== 'undefined' ? globalPresets : []).filter(p => p.ecu === ecu && p.version === version);
+            if (!sigs.length) { if (typeof updateStatus === 'function') updateStatus('No CAN signals to export'); return; }
+            const dbc = _presetToDbc(ecu, version, sigs);
+            const blob = new Blob([dbc], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${ecu}_${version}.dbc`.replace(/[^A-Za-z0-9._-]/g, '_');
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            if (typeof updateStatus === 'function') updateStatus(`Exported ${ecu} ${version} as .dbc`);
+        }
 
         function openDbcImportModal() {
             /* Stack-cleanup: close the Signal Manager (which hosts one entry
@@ -7200,6 +7246,7 @@
                             { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data" },
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
+                            { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", min: 0, max: 120 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                             { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
@@ -7216,6 +7263,7 @@
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "ticks_outside", label: "Ticks Outside Track", type: "checkbox", def: false, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "tick_recolor_alert", label: "Recolor Ticks at Value", type: "checkbox", def: false, cat: "appearance", enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
@@ -17062,6 +17110,10 @@
         async function _widgetAssignChannel(channelId) {
             if (selectedIndex < 0) return;
             const w = currentLayout.widgets[selectedIndex];
+            /* Capture the previously-bound channel's label so we only auto-fill
+             * the widget label when it's empty or still the old channel's name. */
+            const _prevCh = _widgetEffectiveChannel(w);
+            const _prevChLabel = _prevCh ? (_prevCh.label || _prevCh.id || '') : '';
 
             let ch = _chCache.find(c => c.id === channelId);
             if (!ch && _chCanonical.find(d => d.id === channelId)) {
@@ -17089,6 +17141,18 @@
             pushHistory();
             w.channel = channelId;
             w.signal = ch.signal || '';
+            /* Auto-fill the widget's header label from the channel when it's
+             * empty (or still the previously-bound channel's auto label), so a
+             * panel/bar shows the channel name without manual typing. A
+             * user-customized label is preserved. */
+            const _wdef = WIDGET_DEFS[w.type];
+            if (_wdef && _wdef.fields && _wdef.fields.some(f => f.name === 'label')) {
+                w.config = w.config || {};
+                const _curLbl = (w.config.label || '').trim();
+                if (_curLbl === '' || _curLbl === _prevChLabel) {
+                    w.config.label = ch.label || ch.id || '';
+                }
+            }
             /* Assigning a channel to an indicator implies CAN-driven: flip its
              * Input Source to CAN, else firmware keeps reading the GPIO wire and
              * ignores the channel. */
