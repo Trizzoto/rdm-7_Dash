@@ -12,6 +12,9 @@ extern "C" {
 typedef struct {
 	NIGHT_FIELD_COLOR(bar_color)
 	NIGHT_FIELD_COLOR(limiter_color)
+	NIGHT_FIELD_COLOR(tick_color)
+	NIGHT_FIELD_COLOR(bar_bg_color)
+	NIGHT_FIELD_COLOR(rpm_value_color)
 } rpm_bar_night_overrides_t;
 
 /* ── Per-instance state for RPM bar widget ─────────────────────────────── */
@@ -43,6 +46,22 @@ typedef struct {
 	uint16_t flash_speed_ms;   /* default 200, range 50..1000 — flash period for effect=1 */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── Appearance customization (v-compatible, all defaults match the
+	 * previously-hardcoded look so to_json stays empty for untouched
+	 * widgets) ───────────────────────────────────────────────────────── */
+	/* Tick marks (the 500/1000-RPM rectangles + thousands labels). */
+	bool       show_ticks;     /* default true — current behaviour is always-on */
+	uint8_t    tick_side;      /* 0=Top, 1=Bottom, 2=Both (default 2) */
+	uint8_t    tick_length;    /* nominal main-tick length px (default 12) */
+	uint8_t    tick_width;     /* nominal main-tick width px (default 3) */
+	lv_color_t tick_color;     /* default THEME_COLOR_BG (0x000000) */
+	/* Bar track background (the unfilled portion, PART_MAIN). */
+	lv_color_t bar_bg_color;   /* default THEME_COLOR_RPM_BAR_BG (0xF0F0F0) */
+	/* Numeric RPM readout overlaid on the bar. */
+	bool       show_rpm_value;      /* default false — no number historically */
+	char       rpm_value_font[32];  /* "Family:size" or legacy; empty → THEME font */
+	lv_color_t rpm_value_color;     /* default THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	lv_obj_t  *rpm_value_obj;        /* runtime label (child of container) */
 	/* ── v14 channel binding ─────────────────────────────────────
 	 * RPM bar maps gauge_max → channel.max, redline → channel.high_warn,
 	 * limiter_value → unused (RPM-specific concept, stays widget-owned). */
@@ -89,6 +108,13 @@ void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e);
 void rpm_flash_speed_dropdown_event_cb(lv_event_t *e);
+/* Appearance callbacks (on-device STYLE editing parity). */
+void rpm_show_ticks_switch_event_cb(lv_event_t *e);
+void rpm_tick_side_dropdown_event_cb(lv_event_t *e);
+void rpm_tick_color_dropdown_event_cb(lv_event_t *e);
+void rpm_bar_bg_color_dropdown_event_cb(lv_event_t *e);
+void rpm_show_value_switch_event_cb(lv_event_t *e);
+void rpm_value_color_dropdown_event_cb(lv_event_t *e);
 /** Color-wheel popup creators. */
 void create_rpm_color_wheel_popup(void);
 void create_limiter_color_wheel_popup(void);

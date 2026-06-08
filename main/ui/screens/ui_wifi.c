@@ -4,6 +4,7 @@
 #include "net/wifi_manager.h"
 #include "storage/config_store.h"
 #include "web_server.h"
+#include "splash_screen.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -1382,6 +1383,24 @@ static void _wifi_mgr_event_cb(wifi_mgr_state_t new_state, void *user_data)
 {
     (void)user_data;
     ESP_LOGI(TAG, "WiFi manager state change: %d", (int)new_state);
+
+    /* Detect a genuine connection LOSS: a transition out of CONNECTED into a
+     * disconnected/failed state. We track the previous state here so benign
+     * churn (scanning, connecting, AP-only onboarding which never reaches
+     * CONNECTED) does not trigger the splash fallback. The splash handler
+     * itself no-ops when no splash is showing, so this is doubly safe. */
+    static wifi_mgr_state_t s_prev_state = WIFI_MGR_STATE_OFF;
+    bool was_connected = (s_prev_state == WIFI_MGR_STATE_CONNECTED);
+    bool now_disconnected = (new_state == WIFI_MGR_STATE_IDLE ||
+                             new_state == WIFI_MGR_STATE_FAILED ||
+                             new_state == WIFI_MGR_STATE_OFF);
+    if (was_connected && now_disconnected) {
+        /* If a splash (boot or edit-mode) is still up, fall through to the
+         * dashboard instead of staying stuck. No-op during normal driving. */
+        splash_screen_handle_wifi_lost();
+    }
+    s_prev_state = new_state;
+
     /* _set_state already defers via lv_async_call, so this callback
      * runs on the LVGL task — safe to call lv_async_call directly. */
     lv_async_call(_async_refresh, NULL);

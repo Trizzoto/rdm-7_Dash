@@ -18,6 +18,7 @@ typedef struct {
 	NIGHT_FIELD_COLOR(bar_border_color)
 	NIGHT_FIELD_COLOR(label_color)
 	NIGHT_FIELD_COLOR(value_color)
+	NIGHT_FIELD_COLOR(tick_color)
 	NIGHT_FIELD_IMAGE(bar_image, 64)
 	NIGHT_FIELD_IMAGE(bar_image_full, 64)
 } bar_night_overrides_t;
@@ -63,6 +64,17 @@ typedef struct {
 	uint8_t    indicator_radius;     /* default: 5 */
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	/* ── Tick marks (optional) ──
+	 * Small rectangles overlaid as siblings of the bar, evenly spaced across
+	 * the bar width. tick_side: 0=Top, 1=Bottom, 2=Both. Default off so
+	 * existing layouts are unaffected. Drawn manually (lv_scale doesn't exist
+	 * in LVGL v8) following the update_rpm_lines() pattern. */
+	bool       show_ticks;           /* default: false */
+	uint8_t    tick_count;           /* default: 5  — ticks evenly across width */
+	uint8_t    tick_length;          /* default: 6  — tick length in px */
+	uint8_t    tick_width;           /* default: 2  — tick thickness in px */
+	lv_color_t tick_color;           /* default: THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	uint8_t    tick_side;            /* 0=Top,1=Bottom,2=Both, default: 2 */
 	/* ── Image-based bar (optional) ── */
 	/* Anchor-based non-linear scale. Maps a single DATA value to a specific
 	 * position along the bar fill, splitting the range into two linear
@@ -91,6 +103,12 @@ typedef struct {
 	lv_obj_t *bar_obj;
 	lv_obj_t *label_obj;
 	lv_obj_t *value_obj;
+	/* Tick-mark objects — siblings of the bar (children of the same parent),
+	 * rebuilt only on create / resize / edit (never per signal tick). Both
+	 * sides ("Both") draw up to 2*tick_count objects, so cap at 60 (30 per
+	 * side); tick_obj_count is the number currently live in tick_objs[]. */
+	lv_obj_t *tick_objs[60];
+	uint8_t   tick_obj_count;
 	/* Runtime tracking for night-mode image swap — name currently loaded
 	 * into bar_img_dsc / bar_img_full_dsc, so we only reload on a change. */
 	char     current_bar_image[64];

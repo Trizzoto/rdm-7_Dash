@@ -38,6 +38,13 @@ typedef struct {
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
 	lv_meter_indicator_t *needle;
+	/* Paint memo: value-gate the signal callback so a steady (or, in sim
+	 * mode, sub-pixel-stepping) value doesn't repaint the needle every
+	 * render window. _last_needle_v is the last integer value pushed to
+	 * lv_meter; _last_needle_valid=false forces the next paint (first
+	 * post-create paint, after a rebuild, or after a forced repaint). */
+	int32_t  _last_needle_v;     /* paint memo: last value pushed to lv_meter */
+	bool     _last_needle_valid; /* false => force next paint */
 	/* ── Appearance overrides ── */
 	/* Ticks */
 	uint8_t    minor_tick_count;     /* default: 21 */

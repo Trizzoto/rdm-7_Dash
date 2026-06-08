@@ -9,6 +9,8 @@
 #include "core/lv_event.h"
 #include "ui_helpers.h"
 #include "screens/splash_screen.h"
+#include "ui_Screen3.h"
+#include "storage/config_store.h"
 #include "ui_styles.h"
 
 ///////////////////// VARIABLES ////////////////////
@@ -131,5 +133,18 @@ void ui_init(void)
     lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
                                              true, LV_FONT_DEFAULT);
     lv_disp_set_theme(dispp, theme);
-    show_splash_screen();
+
+    /* Splash-enabled gate: when disabled, skip the 900 ms boot splash entirely
+     * and build the dashboard directly for a faster boot. dashboard_init()
+     * (called from ui_Screen3_screen_init) handles all font/signal/widget
+     * registry setup itself, so skipping the splash is safe. This mirrors the
+     * no-fade branch of splash_screen.c's _splash_transition_cb. */
+    bool splash_enabled = true;
+    config_store_load_splash_enabled(&splash_enabled);
+    if (splash_enabled) {
+        show_splash_screen();
+    } else {
+        ui_Screen3_screen_init();
+        lv_scr_load(ui_Screen3);
+    }
 }

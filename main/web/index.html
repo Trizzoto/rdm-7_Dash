@@ -6758,7 +6758,21 @@
                               ] },
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data" },
                             { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
-                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", min: 50, max: 1000, step: 50 }
+                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", min: 50, max: 1000, step: 50 },
+                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance" },
+                            { name: "tick_side", label: "Tick Side", type: "select", def: 2, cat: "appearance", enabledBy: "show_ticks",
+                              options: [
+                                  { v: 0, l: "Top" },
+                                  { v: 1, l: "Bottom" },
+                                  { v: 2, l: "Both" }
+                              ] },
+                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 12, cat: "appearance", min: 1, max: 40, enabledBy: "show_ticks" },
+                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 3, cat: "appearance", min: 1, max: 12, enabledBy: "show_ticks" },
+                            { name: "tick_color", label: "Tick Color", type: "color", def: 0x000000, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "bar_bg_color", label: "Background", type: "color", def: 0xF0F0F0, cat: "appearance", nightOverridable: true },
+                            { name: "show_rpm_value", label: "Show RPM Number", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "rpm_value_font", label: "RPM Number Font", type: "font", def: "", cat: "appearance", enabledBy: "show_rpm_value" },
+                            { name: "rpm_value_color", label: "RPM Number Color", type: "color", def: 0xE8E8E8, cat: "appearance", enabledBy: "show_rpm_value", nightOverridable: true }
                         ]
                     },
                     "panel": {
@@ -6835,7 +6849,18 @@
                             { name: "bar_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "bar_alerts", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
                             { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true },
                             { name: "bar_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "bar_alerts", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
-                            { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true }
+                            { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true },
+                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "tick_count", label: "Tick Count", type: "stepper", def: 5, cat: "appearance", min: 2, max: 30, enabledBy: "show_ticks" },
+                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 6, cat: "appearance", min: 1, max: 40, enabledBy: "show_ticks" },
+                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", min: 1, max: 10, enabledBy: "show_ticks" },
+                            { name: "tick_color", label: "Tick Color", type: "color", def: 0xE8E8E8, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "tick_side", label: "Tick Side", type: "select", def: 2, cat: "appearance", enabledBy: "show_ticks",
+                              options: [
+                                  { v: 0, l: "Top" },
+                                  { v: 1, l: "Bottom" },
+                                  { v: 2, l: "Both" }
+                              ] }
                         ]
                     },
                     "indicator": {
@@ -7059,11 +7084,44 @@
                             { name: "dash_gap", label: "Dash Gap (0 = solid)", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 }
                         ]
                     },
+                    "banner": {
+                        displayName: "Alert Banner", defW: 800, defH: 80,
+                        fields: [
+                            { name: "text", label: "Message", type: "text", def: "WARNING", cat: "data" },
+                            { name: "op", label: "Operator", type: "select", def: 0, cat: "data",
+                              options: [
+                                  { v: 0, l: ">" },
+                                  { v: 1, l: "<" },
+                                  { v: 2, l: ">=" },
+                                  { v: 3, l: "<=" },
+                                  { v: 4, l: "==" },
+                                  { v: 5, l: "!=" },
+                                  { v: 6, l: "range" },
+                                  { v: 7, l: "always (test)" }
+                              ] },
+                            { name: "threshold", label: "Threshold", type: "number", def: 0, cat: "data" },
+                            { name: "range_min", label: "Range Min", type: "number", def: 0, cat: "data" },
+                            { name: "range_max", label: "Range Max", type: "number", def: 0, cat: "data" },
+                            { name: "bg_color", label: "Background", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
+                            { name: "bg_opa", label: "Opacity", type: "slider", def: 128, cat: "appearance", min: 0, max: 255 },
+                            { name: "text_color", label: "Text Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
+                            { name: "font", label: "Font", type: "font", def: "", cat: "appearance" },
+                            { name: "text_align", label: "Text Align", type: "select", def: 1, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Left" },
+                                  { v: 1, l: "Center" },
+                                  { v: 2, l: "Right" }
+                              ] },
+                            { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 20 },
+                            { name: "border_color", label: "Border Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
+                            { name: "radius", label: "Corner Radius", type: "stepper", def: 0, cat: "appearance", min: 0, max: 100 }
+                        ]
+                    },
                     "arc": {
                         displayName: "Arc Shape", defW: 200, defH: 200,
                         fields: [
-                            { name: "start_angle", label: "Start Angle", type: "number", def: 135, cat: "data" },
-                            { name: "end_angle", label: "End Angle", type: "number", def: 45, cat: "data" },
+                            { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", min: 0, max: 359, step: 5 },
+                            { name: "sweep_degrees", label: "Sweep (°)", type: "slider", def: 270, cat: "data", min: 30, max: 360, step: 5 },
                             { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data" },
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
@@ -7072,7 +7130,30 @@
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
-                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true }
+                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "minor_tick_count", label: "Minor Tick Count", type: "stepper", def: 21, cat: "appearance", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "major_tick_every", label: "Major Tick Every", type: "stepper", def: 5, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "show_value_line", label: "Show Value Line", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "value_line_width", label: "Value Line Width", type: "stepper", def: 4, cat: "appearance", min: 1, max: 20, enabledBy: "show_value_line" },
+                            { name: "value_line_color", label: "Value Line Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_value_line", nightOverridable: true },
+                            { name: "value_line_r_mod", label: "Value Line Length Trim", type: "stepper", def: -10, cat: "appearance", min: -50, max: 50, enabledBy: "show_value_line" },
+                            /* Anchor-based non-linear scale. "Pin THIS data value to
+                             * THIS position on the bar" - splits the range into two
+                             * linear segments. e.g. coolant 0-110, anchor=90,
+                             * position=50 makes 0-90 cover the first half, 90-110
+                             * cover the second half. anchor_enabled=false (default)
+                             * = pure linear. */
+                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data" },
+                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", enabledBy: "anchor_enabled" },
+                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", min: 0, max: 100, enabledBy: "anchor_enabled" },
+                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data" }
                         ]
                     },
                     "toggle": {

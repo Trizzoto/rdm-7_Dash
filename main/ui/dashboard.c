@@ -212,7 +212,6 @@ void dashboard_init(lv_obj_t *parent) {
 	font_manager_reset_instances();
 	font_manager_init();
 	signal_registry_init();
-	signal_peaks_start_autosave();
 	/* DTC monitor exposes DTC_COUNT as a synthetic signal so warning
 	 * widgets can bind it directly. Re-asserted on every dashboard_init:
 	 * the signal registry MERGES across layout loads (the happy path does

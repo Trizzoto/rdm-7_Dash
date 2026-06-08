@@ -3,7 +3,7 @@
  * Layout:   GET/POST /api/layout/version|current|raw|save|preview|list|set|delete|rename
  * Presets:  GET /api/presets   GET /api/ecu/list|current  POST /api/ecu/set
  *           GET/POST /api/presets/custom/list|save|delete
- * Splash:   GET/POST /api/splash/list|set|delete|fade
+ * Splash:   GET/POST /api/splash/list|set|delete|fade|enabled
  *
  * Also owns the debounced LVGL screen-reload helpers used by save/preview. */
 #include "web_server_internal.h"
@@ -1511,9 +1511,13 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 	bool fade_enabled = true;
 	config_store_load_splash_fade(&fade_enabled);
 
+	bool splash_enabled = true;
+	config_store_load_splash_enabled(&splash_enabled);
+
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "active", active);
 	cJSON_AddBoolToObject(root, "fade_enabled", fade_enabled);
+	cJSON_AddBoolToObject(root, "enabled", splash_enabled);
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
@@ -1699,6 +1703,49 @@ static const httpd_uri_t splash_fade_uri = {
 	.handler = splash_fade_handler, .user_ctx = NULL
 };
 
+/* POST /api/splash/enabled — enable/disable the boot splash screen */
+static esp_err_t splash_enabled_handler(httpd_req_t *req) {
+	char buf[64];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (!cJSON_IsBool(enabled)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' bool");
+		return ESP_FAIL;
+	}
+
+	bool val = cJSON_IsTrue(enabled);
+	cJSON_Delete(root);
+
+	config_store_save_splash_enabled(val);
+	ESP_LOGI(TAG, "Splash enabled set to %s", val ? "enabled" : "disabled");
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_enabled_uri = {
+	.uri = "/api/splash/enabled", .method = HTTP_POST,
+	.handler = splash_enabled_handler, .user_ctx = NULL
+};
+
 
 void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &layout_version_uri);
@@ -1725,4 +1772,5 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &splash_set_uri);
     REGISTER_URI(server, &splash_delete_uri);
     REGISTER_URI(server, &splash_fade_uri);
+    REGISTER_URI(server, &splash_enabled_uri);
 }

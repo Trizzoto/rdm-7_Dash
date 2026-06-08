@@ -203,6 +203,37 @@ void show_splash_screen(void)
 	esp_timer_start_once(splash_timer, 900000);
 }
 
+/* ── WiFi-loss fallback ──────────────────────────────────────────────────
+ * If WiFi drops while a splash screen is still showing (boot splash OR
+ * splash edit-mode), transition to the dashboard so the user isn't stuck
+ * looking at the splash. A WiFi drop during normal driving (dashboard
+ * already up) is a no-op. Runs on the LVGL task (the ui_wifi event callback
+ * is already dispatched there via lv_async_call), so it may call lv_* and
+ * the splash transition helpers directly. */
+void splash_screen_handle_wifi_lost(void)
+{
+	if (s_edit_mode) {
+		/* Editing a splash over WiFi — the connection is gone, so rebuild
+		 * and load the dashboard. */
+		ESP_LOGI(TAG, "WiFi lost in splash edit mode — exiting to dashboard");
+		splash_screen_exit_edit_mode();
+		return;
+	}
+
+	if (splash_screen != NULL && splash_timer != NULL) {
+		/* Boot splash still up — cancel the auto-transition timer and run
+		 * the same transition immediately. */
+		ESP_LOGI(TAG, "WiFi lost during boot splash — jumping to dashboard");
+		esp_timer_stop(splash_timer);
+		esp_timer_delete(splash_timer);
+		splash_timer = NULL;
+		_splash_transition_cb(NULL);
+		return;
+	}
+
+	/* Dashboard already showing (or transition already in flight) — no-op. */
+}
+
 /* ── Edit mode API ───────────────────────────────────────────────────── */
 
 bool splash_screen_is_edit_mode(void) { return s_edit_mode; }

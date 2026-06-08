@@ -203,6 +203,11 @@ static void _meter_apply_channel(widget_t *w) {
 	}
 	/* Redline colour is widget-owned (Widget settings) — never driven by the
 	 * channel. Only threshold/range/signal sync from the channel. */
+
+	/* Range / decimals / signal just changed, so the value→needle-integer
+	 * mapping changed too — invalidate the paint memo so the next signal
+	 * tick repaints instead of being gated against a now-stale memo. */
+	md->_last_needle_valid = false;
 }
 
 static void _meter_on_channel_changed(channel_t *c, void *user_data) {
@@ -293,6 +298,17 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	fv = _meter_apply_anchor(md, fv);
 	if (md->reverse) fv = md->max + md->min - fv;
 	int32_t v = lroundf(fv * (float)md->value_scale);
+	/* Value-gate: suppress redundant repaints when the integer needle value
+	 * hasn't moved. This is the only ticking widget without a value-gate, so
+	 * the sim's continuous triangle-wave sweep used to repaint the (large,
+	 * centerpiece) meter every render window even when v was unchanged. Real
+	 * CAN holds steady decoded values, so this also equalises sim vs CAN.
+	 * The stale path forces fv=md->min, which changes v and flows through.
+	 * The memo starts invalid (calloc) so the first post-create paint runs,
+	 * and is reset to invalid on every rebuild / forced-repaint path. */
+	if (md->_last_needle_valid && md->_last_needle_v == v) return;
+	md->_last_needle_v = v;
+	md->_last_needle_valid = true;
 	/* Only drive whichever meter is currently visible. Updating the hidden
 	 * sibling costs an LVGL indicator recompute + invalidation-mark that
 	 * nobody ever sees — with meters bound to fast-moving sim signals
@@ -1324,6 +1340,9 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 
 	w->root = cont ? cont : m;
 
+	/* Fresh meter objects — force the first signal callback to paint. */
+	md->_last_needle_valid = false;
+
 	/* Subscribe to signal if bound */
 	if (md->signal_index >= 0)
 		signal_subscribe(md->signal_index, _meter_on_signal, w);
@@ -1363,6 +1382,9 @@ static void _meter_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_size(md->meter, (lv_coord_t)nw, (lv_coord_t)nh);
 	if (md && md->night_meter && lv_obj_is_valid(md->night_meter))
 		lv_obj_set_size(md->night_meter, (lv_coord_t)nw, (lv_coord_t)nh);
+	/* Geometry moved (scale center / radius) — force the next tick to repaint
+	 * the needle even if the bound value hasn't changed. */
+	if (md) md->_last_needle_valid = false;
 	w->w = nw;
 	w->h = nh;
 }
@@ -1949,6 +1971,12 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 		fv = _meter_apply_anchor(md, fv);
 		if (md->reverse) fv = md->max + md->min - fv;
 		int32_t v = lroundf(fv * (float)md->value_scale);
+
+		/* The meter we're about to reveal hasn't been driven while hidden
+		 * (the signal callback only touches the visible one). Reset the memo
+		 * BEFORE catching it up + un-hiding so the next live signal tick is
+		 * never suppressed against a stale memo from the other state. */
+		md->_last_needle_valid = false;
 
 		if (active) {
 			if (md->night_needle)

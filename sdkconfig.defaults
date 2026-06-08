@@ -27,6 +27,18 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
 # extra internal heap. SPIRAM_TRY_ALLOCATE_WIFI_LWIP covers higher layers.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
 
+# FPS: bounce buffer was TRIED 2026-06-09 and ABANDONED — it crashed on-device
+# (abort() on core 1 mid-render with single-FB+bounce) AND the flush instrumentation
+# showed NO improvement (~7.7 ms/frame at 21% dirty, same as the DOUBLE_FB baseline:
+# the dirty-rect memcpy into PSRAM dominates, the skipped full-FB msync nets ~zero).
+# Keep DOUBLE_FB (the known-good 120-line PSRAM draw-buffer render path is unchanged).
+
+# FPS: confine the lwIP TCP/IP task (prio 18) to core 0 alongside WiFi/CAN-RX/
+# esp_timer so it can't preempt the prio-8 LVGL renderer on core 1 mid-frame.
+# Helps specifically while the web editor / CONTROL live-preview is polling.
+# CONFIG_LWIP_TCPIP_TASK_AFFINITY_NO_AFFINITY is not set
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
 # LittleFS
 CONFIG_LITTLEFS_MAX_PARTITIONS=1
 CONFIG_LITTLEFS_PAGE_SIZE=256

@@ -15,6 +15,13 @@ typedef struct {
     NIGHT_FIELD_COLOR(bg_arc_color)
     NIGHT_FIELD_COLOR(value_color)
     NIGHT_FIELD_COLOR(redline_color)
+    /* Tick + value-line colours are baked into the overlay lv_meter at
+     * create time (LVGL v8 has no live tick/needle recolor API), so the
+     * overlay is rebuilt on night apply when one of these is set. See
+     * _arc_apply_night_mode. */
+    NIGHT_FIELD_COLOR(minor_tick_color)
+    NIGHT_FIELD_COLOR(major_tick_color)
+    NIGHT_FIELD_COLOR(value_line_color)
     NIGHT_FIELD_IMAGE(arc_image, 64)
     NIGHT_FIELD_IMAGE(arc_image_full, 64)
 } arc_night_overrides_t;
@@ -99,6 +106,53 @@ typedef struct {
     uint8_t    value_decimals;          /* default: 0 — decimals shown */
     char       value_unit[16];          /* default: "" — suffix string (e.g. "RPM") */
     lv_obj_t  *value_label;             /* runtime: the center label */
+
+    /* ── Ticks (meter-parity) — rendered via an OVERLAY lv_meter sibling.
+     * lv_arc has no tick API in LVGL v8, but lv_meter does, so when
+     * show_ticks (or show_value_line) is set we drop a transparent
+     * lv_meter behind the arc fill that draws the tick ring. The meter's
+     * scale spans signal_min..signal_max over the SAME angle span the arc
+     * fill uses (start_angle/end_angle), so ticks line up with the fill.
+     * Default OFF so existing layouts pay no overhead. STANDARD mode only —
+     * the overlay is never created in image modes. */
+    bool       show_ticks;              /* default: false */
+    uint8_t    minor_tick_count;        /* default: 21 */
+    uint8_t    major_tick_every;        /* default: 5  */
+    uint8_t    minor_tick_length;       /* default: 10 */
+    uint8_t    minor_tick_width;        /* default: 2  */
+    uint8_t    major_tick_length;       /* default: 15 */
+    uint8_t    major_tick_width;        /* default: 4  */
+    lv_color_t minor_tick_color;        /* default: 0x9E9E9E */
+    lv_color_t major_tick_color;        /* default: 0xFFFFFF */
+
+    /* ── Value line (needle) — reuses the SAME overlay lv_meter. When set
+     * (even if show_ticks is off) the overlay meter is created and an
+     * lv_meter needle-line indicator is added; it's driven wherever the
+     * arc recomputes its value (anchor + reverse applied first, same as
+     * the meter). Default OFF. */
+    bool       show_value_line;         /* default: false */
+    uint8_t    value_line_width;        /* default: 4 */
+    lv_color_t value_line_color;        /* default: 0xFFFFFF */
+    int16_t    value_line_r_mod;        /* default: -10 (radius offset, like meter needle_r_mod) */
+
+    /* Overlay lv_meter runtime handles (STANDARD mode only). The meter is a
+     * child of the arc container, drawn UNDER the arc fill so the fill sits
+     * on top. Freed by the w->root delete cascade. */
+    lv_obj_t             *tick_meter;   /* runtime: overlay lv_meter, or NULL */
+    lv_meter_scale_t     *tick_scale;   /* runtime: its scale */
+    lv_meter_indicator_t *value_needle; /* runtime: the value-line needle, or NULL */
+
+    /* ── Anchor curve (data) — piecewise-linear value mapping, ported from
+     * widget_meter. Applied to the value BEFORE pct is computed (fill,
+     * image-clip, and value-needle drive all go through it). */
+    bool       anchor_enabled;          /* default: false */
+    float      anchor_value;            /* default: 50 */
+    uint8_t    anchor_position;         /* default: 50 — percent of sweep */
+
+    /* ── Reverse (data) — flip the value axis. Applied AFTER anchor (same
+     * order as the meter): v = signal_min + signal_max - v. Also folded into
+     * _value_to_angle so the redline marker lands at the right end. */
+    bool       reverse;                 /* default: false */
 
     /* Cached current value — used by redraws (resize, night swap) so they
      * don't have to wait for the next signal tick to look right. */

@@ -428,6 +428,30 @@ esp_err_t config_store_load_splash_fade(bool *enabled)
     return ESP_OK;
 }
 
+esp_err_t config_store_save_splash_enabled(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "enabled", enabled ? 1 : 0);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_splash_enabled(bool *enabled)
+{
+    if (!enabled) return ESP_ERR_INVALID_ARG;
+    *enabled = true; /* default: splash enabled */
+    nvs_handle_t handle;
+    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8;
+    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  DATA LOGGER RATE
  * ═══════════════════════════════════════════════════════════════════════ */

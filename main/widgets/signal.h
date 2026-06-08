@@ -318,27 +318,15 @@ float signal_get_peak(int16_t signal_index);
 /** Get the min value recorded for a signal. Returns FLT_MAX if none. */
 float signal_get_min(int16_t signal_index);
 
-/** Session peak/min — same as above but only since the last boot (never
- * loaded from NVS). Used by panel widgets so a "Peak Hold" reading shows
- * what's happened during this drive, not the all-time history that the
- * Peaks screen displays. */
+/** Session peak/min — used by panel widgets so a "Peak Hold" reading shows
+ * what's happened during this drive. NOTE: peaks are session-only — all
+ * peak/min state (including signal_get_peak/min below) resets every boot and
+ * is NOT persisted to NVS. The "all-time" vs "session" distinction is now
+ * purely about reset granularity within a single boot. */
 float signal_get_session_peak(int16_t signal_index);
 float signal_get_session_min(int16_t signal_index);
 void  signal_reset_session_peak(int16_t signal_index);
 void  signal_reset_all_session_peaks(void);
-
-/* ── Persistence ──────────────────────────────────────────────────────────
- * Peak/min values persist across reboot in NVS until the user hits "Reset All".
- * Call signal_peaks_load() ONCE after all signals have been registered for the
- * active layout — stale records (signals not in this layout) are silently
- * dropped. Call signal_peaks_save_now() to flush immediately (e.g. from the
- * Reset-All button, to erase persisted peaks). signal_peaks_start_autosave()
- * launches a background timer that flushes every ~30s when the peaks have
- * changed since the last save.
- */
-void signal_peaks_load(void);
-void signal_peaks_save_now(void);
-void signal_peaks_start_autosave(void);
 
 #ifdef __cplusplus
 }

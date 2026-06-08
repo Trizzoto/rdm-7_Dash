@@ -45,6 +45,111 @@ static inline bool _bar_has_fill_image(const bar_data_t *bd) {
 	return bd && bd->bar_image_full[0] != '\0';
 }
 
+/* Max tick objects we can hold (must match bar_data_t::tick_objs[60]). With
+ * tick_side == Both we draw two per logical tick, so the per-side count is
+ * clamped to 30. */
+#define BAR_MAX_TICK_OBJS  60
+
+/* Delete every live tick sibling and reset the bookkeeping. Tick objects are
+ * children of the bar's parent (siblings of root / label / value), so they are
+ * deleted explicitly here exactly like the label/value siblings in
+ * _bar_destroy — lv_obj_clean(screen) on a rebuild already frees them, but any
+ * in-place rebuild (resize / inspector edit) must tear down the old set first
+ * to avoid orphaned objects. */
+static void _bar_free_ticks(bar_data_t *bd) {
+	if (!bd) return;
+	for (uint8_t i = 0; i < bd->tick_obj_count; i++) {
+		if (bd->tick_objs[i] && lv_obj_is_valid(bd->tick_objs[i]))
+			lv_obj_del(bd->tick_objs[i]);
+		bd->tick_objs[i] = NULL;
+	}
+	bd->tick_obj_count = 0;
+}
+
+/* Create one tick rectangle at center-origin (x,y), pushed to the foreground so
+ * the bar fill never paints over it. Mirrors update_rpm_lines() tick styling:
+ * radius 0, solid bg, no border, no padding, non-interactive. Returns the new
+ * object (or NULL on alloc / cap failure). */
+static lv_obj_t *_bar_make_tick(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                                lv_coord_t tw, lv_coord_t th, lv_color_t col) {
+	lv_obj_t *t = lv_obj_create(parent);
+	if (!t) return NULL;
+	lv_obj_set_size(t, tw, th);
+	lv_obj_set_align(t, LV_ALIGN_CENTER);
+	lv_obj_set_pos(t, x, y);
+	lv_obj_set_style_radius(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(t, col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(t, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_all(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_clear_flag(t, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_move_foreground(t);
+	return t;
+}
+
+/* (Re)build the tick marks for a bar widget. Tears down any existing ticks,
+ * then — if show_ticks — lays tick_count rectangles evenly across the bar
+ * width (w->w) in center-origin coordinates. tick_side controls vertical
+ * placement above (Top), below (Bottom), or both edges (Both) of the bar
+ * body. Called only on create / resize / inspector edit (NOT per signal tick),
+ * respecting the paint-memo pattern. */
+static void _bar_build_ticks(widget_t *w) {
+	if (!w) return;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	_bar_free_ticks(bd);
+
+	if (!bd->show_ticks || bd->tick_count == 0) return;
+
+	/* Parent of the bar = parent the siblings live on. Fall back to the bar
+	 * object's parent (image-mode bars may not have bd->bar_obj). */
+	lv_obj_t *anchor = bd->bar_obj ? bd->bar_obj
+	                 : (bd->img_bg_obj ? bd->img_bg_obj : w->root);
+	if (!anchor || !lv_obj_is_valid(anchor)) return;
+	lv_obj_t *parent = lv_obj_get_parent(anchor);
+	if (!parent || !lv_obj_is_valid(parent)) return;
+
+	lv_coord_t tw = (lv_coord_t)(bd->tick_width  ? bd->tick_width  : 1);
+	lv_coord_t th = (lv_coord_t)(bd->tick_length ? bd->tick_length : 1);
+	uint8_t count = bd->tick_count;
+
+	/* Per-side cap so "Both" (2 objects per tick) can't overflow tick_objs[60]. */
+	bool both = (bd->tick_side == 2);
+	uint8_t per_side_cap = both ? (BAR_MAX_TICK_OBJS / 2) : BAR_MAX_TICK_OBJS;
+	if (count > per_side_cap) count = per_side_cap;
+
+	/* Even spacing across the full bar width: tick i sits at
+	 * left_edge + i/(count-1) * width. A single tick is centered. */
+	lv_coord_t left = w->x - (w->w / 2);
+	lv_coord_t span = w->w;
+	/* Vertical placement: half the bar height plus half the tick height puts
+	 * the tick flush against the top / bottom edge of the bar body. */
+	lv_coord_t y_top = w->y - (w->h / 2) - (th / 2);
+	lv_coord_t y_bot = w->y + (w->h / 2) + (th / 2);
+
+	for (uint8_t i = 0; i < count; i++) {
+		lv_coord_t x;
+		if (count == 1)
+			x = w->x;
+		else
+			x = left + (lv_coord_t)(((int32_t)i * span) / (count - 1));
+
+		if (bd->tick_side == 0 || bd->tick_side == 2) {   /* Top / Both */
+			if (bd->tick_obj_count < BAR_MAX_TICK_OBJS) {
+				lv_obj_t *t = _bar_make_tick(parent, x, y_top, tw, th, bd->tick_color);
+				if (t) bd->tick_objs[bd->tick_obj_count++] = t;
+			}
+		}
+		if (bd->tick_side == 1 || bd->tick_side == 2) {   /* Bottom / Both */
+			if (bd->tick_obj_count < BAR_MAX_TICK_OBJS) {
+				lv_obj_t *t = _bar_make_tick(parent, x, y_bot, tw, th, bd->tick_color);
+				if (t) bd->tick_objs[bd->tick_obj_count++] = t;
+			}
+		}
+	}
+}
+
 /* Decimals drive the bar's *internal* resolution. A user bar_min/bar_max of
  * 0..1 with decimals=2 yields an internal LVGL range of 0..100, so a live
  * value of 0.85 fills 85% of the bar instead of snapping to the 0 or 1 end.
@@ -724,6 +829,12 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		bd->value_obj = val;
 	}
 
+	/* Tick marks (optional) — siblings overlaid on the bar, built once here
+	 * and only rebuilt on resize / inspector edit (never per signal tick). */
+	bd->tick_obj_count = 0;
+	if (bd->show_ticks)
+		_bar_build_ticks(w);
+
 	/* Assign to slot globals so existing code (RPM limiter, callbacks) works */
 	if (slot == 0) {
 		ui_Bar_1 = bd ? bd->bar_obj : NULL;
@@ -750,8 +861,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	if (bd && (bd->night.has_bar_low_color      || bd->night.has_bar_high_color    ||
 	           bd->night.has_bar_in_range_color || bd->night.has_bar_bg_color      ||
 	           bd->night.has_bar_border_color   || bd->night.has_label_color       ||
-	           bd->night.has_value_color        || bd->night.has_bar_image         ||
-	           bd->night.has_bar_image_full)) {
+	           bd->night.has_value_color        || bd->night.has_tick_color        ||
+	           bd->night.has_bar_image          || bd->night.has_bar_image_full)) {
 		night_mode_subscribe(_bar_night_cb, w);
 		_bar_apply_night_mode(w, night_mode_is_active());
 	}
@@ -771,6 +882,12 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_pos(bd->value_obj,
 			w->x + (w->w / 2) - 33,   /* BAR_VALUE_W/2 + BAR_VALUE_PAD_R */
 			w->y);
+	/* Tick spacing/placement depends on w->w / w->h — rebuild against the new
+	 * geometry (free + recreate, so spacing recomputes cleanly). */
+	if (bd && bd->show_ticks)
+		_bar_build_ticks(w);
+	else if (bd)
+		_bar_free_ticks(bd);
 	/* Geometry changed — repaint cleanly on the next tick. */
 	if (bd) bd->_pc_valid = false;
 }
@@ -841,6 +958,20 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "label_color", (int)bd->label_color.full);
 		if (bd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "value_color", (int)bd->value_color.full);
+		/* Tick marks — defaults-only. Defaults: show_ticks=false, tick_count=5,
+		 * tick_length=6, tick_width=2, tick_color=TEXT_PRIMARY, tick_side=2. */
+		if (bd->show_ticks)
+			cJSON_AddBoolToObject(cfg, "show_ticks", true);
+		if (bd->tick_count != 5)
+			cJSON_AddNumberToObject(cfg, "tick_count", bd->tick_count);
+		if (bd->tick_length != 6)
+			cJSON_AddNumberToObject(cfg, "tick_length", bd->tick_length);
+		if (bd->tick_width != 2)
+			cJSON_AddNumberToObject(cfg, "tick_width", bd->tick_width);
+		if (bd->tick_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+			cJSON_AddNumberToObject(cfg, "tick_color", (int)bd->tick_color.full);
+		if (bd->tick_side != 2)
+			cJSON_AddNumberToObject(cfg, "tick_side", bd->tick_side);
 		/* Image-based bar fields — only serialize if set */
 		if (bd->bar_image[0] != '\0')
 			cJSON_AddStringToObject(cfg, "bar_image", bd->bar_image);
@@ -855,6 +986,7 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_border_color);
 		NIGHT_SERIALIZE_COLOR(n, bd->night, label_color);
 		NIGHT_SERIALIZE_COLOR(n, bd->night, value_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, tick_color);
 		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image);
 		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image_full);
 		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
@@ -954,6 +1086,25 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
 	if (cJSON_IsNumber(item)) bd->value_color.full = (uint32_t)item->valueint;
 
+	/* Tick marks */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+	if (cJSON_IsBool(item)) bd->show_ticks = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_count");
+	if (cJSON_IsNumber(item)) bd->tick_count = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_length");
+	if (cJSON_IsNumber(item)) bd->tick_length = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_width");
+	if (cJSON_IsNumber(item)) bd->tick_width = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_color");
+	if (cJSON_IsNumber(item)) bd->tick_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_side");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0) v = 0;
+		if (v > 2) v = 2;
+		bd->tick_side = (uint8_t)v;
+	}
+
 	/* Image-based bar fields */
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_image");
 	if (cJSON_IsString(item) && item->valuestring)
@@ -972,6 +1123,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		NIGHT_PARSE_COLOR(night, bd->night, bar_border_color);
 		NIGHT_PARSE_COLOR(night, bd->night, label_color);
 		NIGHT_PARSE_COLOR(night, bd->night, value_color);
+		NIGHT_PARSE_COLOR(night, bd->night, tick_color);
 		NIGHT_PARSE_IMAGE(night, bd->night, bar_image);
 		NIGHT_PARSE_IMAGE(night, bd->night, bar_image_full);
 	}
@@ -1074,6 +1226,8 @@ static void _bar_destroy(widget_t *w) {
 		lv_obj_del(bd->label_obj);
 	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
 		lv_obj_del(bd->value_obj);
+	/* Tick marks are siblings of root too — delete explicitly + NULL them. */
+	if (bd) _bar_free_ticks(bd);
 	/* Clip container is always a sibling of root — delete explicitly */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
@@ -1181,6 +1335,7 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	lv_color_t bar_bdr = NIGHT_PICK_COLOR(active, bd->night, bar_border_color, bd->bar_border_color);
 	lv_color_t lbl_col = NIGHT_PICK_COLOR(active, bd->night, label_color,      bd->label_color);
 	lv_color_t val_col = NIGHT_PICK_COLOR(active, bd->night, value_color,      bd->value_color);
+	lv_color_t tick_col = NIGHT_PICK_COLOR(active, bd->night, tick_color,      bd->tick_color);
 
 	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1195,6 +1350,13 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	}
 	if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
 		lv_obj_set_style_text_color(bd->value_obj, val_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Ticks are plain bg_color objects — a normal style write recolours them
+	 * (no dual-object pattern needed). */
+	for (uint8_t i = 0; i < bd->tick_obj_count; i++) {
+		if (bd->tick_objs[i] && lv_obj_is_valid(bd->tick_objs[i]))
+			lv_obj_set_style_bg_color(bd->tick_objs[i], tick_col,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
 	/* Image swap — only if in image mode and the desired name differs from
@@ -1274,6 +1436,12 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "bar_border_color") == 0)   { out->color = lv_color_to32(bd->bar_border_color)   & 0xFFFFFF; return true; }
 	if (strcmp(name, "label_color") == 0)        { out->color = lv_color_to32(bd->label_color)        & 0xFFFFFF; return true; }
 	if (strcmp(name, "value_color") == 0)        { out->color = lv_color_to32(bd->value_color)        & 0xFFFFFF; return true; }
+	if (strcmp(name, "show_ticks") == 0)         { out->b = bd->show_ticks;           return true; }
+	if (strcmp(name, "tick_count") == 0)         { out->i = bd->tick_count;           return true; }
+	if (strcmp(name, "tick_length") == 0)        { out->i = bd->tick_length;          return true; }
+	if (strcmp(name, "tick_width") == 0)         { out->i = bd->tick_width;           return true; }
+	if (strcmp(name, "tick_side") == 0)          { out->i = bd->tick_side;            return true; }
+	if (strcmp(name, "tick_color") == 0)         { out->color = lv_color_to32(bd->tick_color)         & 0xFFFFFF; return true; }
 	if (strcmp(name, "bar_low") == 0)            { out->i = bd->bar_low;              return true; }
 	if (strcmp(name, "bar_high") == 0)           { out->i = bd->bar_high;             return true; }
 	if (strcmp(name, "bar_low_color") == 0)      { out->color = lv_color_to32(bd->bar_low_color)      & 0xFFFFFF; return true; }
@@ -1450,6 +1618,43 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 		return true;
 	}
+	/* Tick edits all rebuild the tick objects so spacing / geometry / colour
+	 * land live. _bar_build_ticks tears down the old set and recreates from
+	 * the current fields; a no-show_ticks state just frees them. */
+	if (strcmp(name, "show_ticks") == 0) {
+		bd->show_ticks = in->b;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		else                _bar_free_ticks(bd);
+		return true;
+	}
+	if (strcmp(name, "tick_count") == 0) {
+		bd->tick_count = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_length") == 0) {
+		bd->tick_length = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_width") == 0) {
+		bd->tick_width = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_side") == 0) {
+		int v = in->i;
+		if (v < 0) v = 0;
+		if (v > 2) v = 2;
+		bd->tick_side = (uint8_t)v;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_color") == 0) {
+		bd->tick_color = lv_color_hex(in->color);
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
 	if (strcmp(name, "bar_low") == 0) {
 		bd->bar_low = (int32_t)in->i;
 		return true;
@@ -1510,6 +1715,13 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->show_bar_label = true;        /* show the text label above the bar by default */
+	/* Tick-mark defaults (off by default so existing layouts are unaffected) */
+	bd->show_ticks  = false;
+	bd->tick_count  = 5;
+	bd->tick_length = 6;
+	bd->tick_width  = 2;
+	bd->tick_color  = THEME_COLOR_TEXT_PRIMARY;   /* 0xE8E8E8 */
+	bd->tick_side   = 2;                            /* Both */
 
 	w->type = WIDGET_BAR;
 	w->slot = slot & 1;

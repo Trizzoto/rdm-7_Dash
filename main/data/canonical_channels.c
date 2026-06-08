@@ -170,6 +170,55 @@ const canonical_channel_def_t CANONICAL_CHANNELS[] = {
 	.color_normal=0xA0FFA0, .notes="What the ECU is aiming for."
 },
 {
+	.id="target_lambda", .label="Target Lambda",
+	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
+	.units_native="λ", .units_display_def="λ", .decimals=3,
+	.min_default=600, .max_default=1300,   /* λ × 1000 stored as int */
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xA0FFA0,
+	.notes="Lambda × 1000 internal. Closed-loop target the ECU is aiming for."
+},
+{
+	.id="lambda_correction", .label="Lambda Correction",
+	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="%", .units_display_def="%", .decimals=1,
+	.min_default=-25, .max_default=25,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xC0C0C0, .notes="Closed-loop fuel correction from O2 feedback."
+},
+{
+	.id="absolute_load", .label="Absolute Load",
+	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="%", .units_display_def="%", .decimals=0,
+	.min_default=0, .max_default=300,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFFD000, .notes="OBD2 PID 0x43. Normalised cylinder air mass."
+},
+{
+	.id="fuel_rail_pressure", .label="Fuel Rail Pressure",
+	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="kPa", .units_display_def="bar", .decimals=1,
+	.min_default=0, .max_default=20000,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFFAA00, .notes="OBD2 PID 0x23. Direct-injection rail."
+},
+{
+	.id="fuel_pressure_diff", .label="Fuel Pressure Diff",
+	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="kPa", .units_display_def="bar", .decimals=2,
+	.min_default=0, .max_default=700,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFFAA00, .notes="Rail-to-manifold delta. Stuck regulator detection."
+},
+{
+	.id="coolant_pressure", .label="Coolant Pressure",
+	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="kPa", .units_display_def="bar", .decimals=2,
+	.min_default=0, .max_default=400,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFF8040, .notes="Cooling system pressure. Head-gasket / cap fault."
+},
+{
 	.id="knock_count", .label="Knock Events",
 	.group=CHGRP_ENGINE_CORE, .tier=3, .card=CHCARD_SCALAR,
 	.units_native="count", .units_display_def="count", .decimals=0,
@@ -262,6 +311,14 @@ EGT_ENTRY(5), EGT_ENTRY(6), EGT_ENTRY(7), EGT_ENTRY(8),
 	.min_default=0, .max_default=100,
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0xFFD000, .notes=NULL
+},
+{
+	.id="egr_command", .label="EGR Command",
+	.group=CHGRP_ENGINE_EXHAUST, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="%", .units_display_def="%", .decimals=0,
+	.min_default=0, .max_default=100,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xFFD000, .notes="OBD2 PID 0x2C. Commanded EGR valve position."
 },
 
 /* ── Drivetrain ───────────────────────────────────────────────────── */
@@ -582,6 +639,22 @@ RIDE_HEIGHT_ENTRY(rl, "RL"), RIDE_HEIGHT_ENTRY(rr, "RR"),
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0xFFFFFF, .notes=NULL
 },
+{
+	.id="ethanol_pct", .label="Ethanol %",
+	.group=CHGRP_FUEL_DISTANCE, .tier=2, .card=CHCARD_SCALAR,
+	.units_native="%", .units_display_def="%", .decimals=0,
+	.min_default=0, .max_default=100,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x40C040, .notes="OBD2 PID 0x52. Flex-fuel blend (E85 etc.)."
+},
+{
+	.id="fuel_rate", .label="Fuel Rate",
+	.group=CHGRP_FUEL_DISTANCE, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="L/h", .units_display_def="L/h", .decimals=1,
+	.min_default=0, .max_default=60,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xC0C0C0, .notes="OBD2 PID 0x5E. Engine fuel flow rate."
+},
 
 /* ── Environment ──────────────────────────────────────────────────── */
 {
@@ -749,6 +822,14 @@ RIDE_HEIGHT_ENTRY(rl, "RL"), RIDE_HEIGHT_ENTRY(rr, "RR"),
 	.min_default=0, .max_default=99999,
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0xC0C0C0, .notes="OBD2 PID 0x21."
+},
+{
+	.id="runtime", .label="Engine Run Time",
+	.group=CHGRP_DIAGNOSTIC, .tier=3, .card=CHCARD_SCALAR,
+	.units_native="s", .units_display_def="s", .decimals=0,
+	.min_default=0, .max_default=99999,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0xC0C0C0, .notes="OBD2 PID 0x1F. Seconds since engine start."
 },
 
 /* ── Dash internals (CHGRP_DASH_SYSTEM) ────────────────────────────
@@ -951,7 +1032,7 @@ const canonical_obd2_map_t CANONICAL_OBD2_MAP[] = {
 	{ "fuel_level",           "FUEL_LEVEL",           0x01, 0x2F },
 	{ "ignition_timing",      "TIMING_ADVANCE",       0x01, 0x0E },
 	{ "manifold_pressure",    "MAP",                  0x01, 0x0B },
-	{ "maf",                  "MAF",                  0x01, 0x10 },
+	{ "mass_air_flow",        "MAF",                  0x01, 0x10 },
 	{ "fuel_pressure",        "FUEL_PRESSURE",        0x01, 0x0A },
 	{ "oil_temp",             "OIL_TEMP",             0x01, 0x5C },
 	{ "short_term_fuel_trim", "SHORT_FUEL_TRIM_1",    0x01, 0x06 },
@@ -960,13 +1041,13 @@ const canonical_obd2_map_t CANONICAL_OBD2_MAP[] = {
 	{ "lambda_bank1",         "LAMBDA",               0x01, 0x44 },
 	{ "barometric_pressure",  "BAROMETRIC_PRESSURE",  0x01, 0x33 },
 	{ "runtime",              "RUN_TIME",             0x01, 0x1F },
-	{ "accelerator_position", "PEDAL_POSITION",       0x01, 0x5A },
+	{ "accel_pedal_position", "PEDAL_POSITION",       0x01, 0x5A },
 	{ "ethanol_pct",          "ETHANOL_PCT",          0x01, 0x52 },
 	{ "egr_command",          "EGR_CMD",              0x01, 0x2C },
 	{ "absolute_load",        "ABSOLUTE_LOAD",        0x01, 0x43 },
 	{ "fuel_rate",            "FUEL_RATE",            0x01, 0x5E },
 	{ "fuel_rail_pressure",   "FUEL_RAIL_PRESSURE",   0x01, 0x23 },
-	{ "distance_with_mil",    "DTC_DISTANCE",         0x01, 0x21 },
+	{ "distance_with_mil_on", "DTC_DISTANCE",         0x01, 0x21 },
 };
 const size_t CANONICAL_OBD2_MAP_COUNT =
 	sizeof(CANONICAL_OBD2_MAP) / sizeof(CANONICAL_OBD2_MAP[0]);

@@ -27,6 +27,7 @@
 #include "lvgl.h"
 #include "widget_types.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,25 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_FLASH_MS        200
 #define ARC_DEFAULT_VALUE_COLOR    0xFFFFFF
 
+/* ── Tick / value-line / anchor / reverse defaults (meter-parity). All
+ * default so existing layouts/perf are unchanged: ticks + value-line OFF,
+ * anchor + reverse OFF. The numeric tick defaults mirror widget_meter. */
+#define ARC_DEFAULT_SHOW_TICKS         false
+#define ARC_DEFAULT_MINOR_TICK_COUNT   21
+#define ARC_DEFAULT_MAJOR_TICK_EVERY   5
+#define ARC_DEFAULT_MINOR_TICK_LENGTH  10
+#define ARC_DEFAULT_MINOR_TICK_WIDTH   2
+#define ARC_DEFAULT_MAJOR_TICK_LENGTH  15
+#define ARC_DEFAULT_MAJOR_TICK_WIDTH   4
+#define ARC_DEFAULT_MINOR_TICK_COLOR   0x9E9E9E
+#define ARC_DEFAULT_MAJOR_TICK_COLOR   0xFFFFFF
+#define ARC_DEFAULT_SHOW_VALUE_LINE    false
+#define ARC_DEFAULT_VALUE_LINE_WIDTH   4
+#define ARC_DEFAULT_VALUE_LINE_COLOR   0xFFFFFF
+#define ARC_DEFAULT_VALUE_LINE_R_MOD   (-10)
+#define ARC_DEFAULT_ANCHOR_VALUE       50.0f
+#define ARC_DEFAULT_ANCHOR_POSITION    50
+
 /* Forward declarations */
 static void _arc_on_signal(float value, bool is_stale, void *user_data);
 static void _arc_apply_night_mode(widget_t *w, bool active);
@@ -59,6 +79,9 @@ static void _arc_apply_fill_color(arc_data_t *d, bool active);
 static void _arc_flash_timer_cb(lv_timer_t *t);
 static void _arc_update_value_label(arc_data_t *d, float value);
 static void _arc_recompute_value(widget_t *w, float value, bool is_stale);
+static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
+                               lv_coord_t ow, lv_coord_t oh, bool night_active);
+static void _arc_drive_value_needle(arc_data_t *d, float value);
 
 /* ── Helpers: mode detection ───────────────────────────────────────────── */
 
@@ -70,15 +93,56 @@ static bool _is_static_image_mode(const arc_data_t *d) {
     return d->arc_image[0] != '\0' && d->arc_image_full[0] == '\0';
 }
 
+/* ── Helpers: anchor + reverse value transform (ported from widget_meter) ──
+ * Apply the anchor curve to a value, returning a value on a LINEAR
+ * [signal_min, signal_max] axis whose pct lands `anchor_value` at
+ * `anchor_position`% of the sweep — two linear segments. No-op when
+ * anchor_enabled is false. Identical math to _meter_apply_anchor. */
+static float _arc_apply_anchor(const arc_data_t *d, float v) {
+    if (!d->anchor_enabled) return v;
+    float lo = d->signal_min;
+    float hi = d->signal_max;
+    if (hi <= lo) return v;
+    float a = d->anchor_value;
+    if (a <= lo || a >= hi) return v;
+    int32_t pos = d->anchor_position;
+    if (pos <= 0)   pos = 0;
+    if (pos >= 100) pos = 100;
+    float range = hi - lo;
+    float pivot = lo + (range * (float)pos) / 100.0f;
+    if (v <= a) {
+        float span = a - lo;
+        if (span <= 0.0f) return lo;
+        return lo + (v - lo) * (pivot - lo) / span;
+    } else {
+        float span = hi - a;
+        if (span <= 0.0f) return hi;
+        return pivot + (v - a) * (hi - pivot) / span;
+    }
+}
+
+/* Apply anchor THEN reverse (same order as the meter) to a clamped value,
+ * yielding the value to feed to the linear fill / image-clip / value-needle.
+ * Clamps to [signal_min, signal_max] on the way out. */
+static float _arc_transform_value(const arc_data_t *d, float v) {
+    if (v < d->signal_min) v = d->signal_min;
+    if (v > d->signal_max) v = d->signal_max;
+    v = _arc_apply_anchor(d, v);
+    if (d->reverse) v = d->signal_min + d->signal_max - v;
+    return v;
+}
+
 /* ── Helpers: image-mode clip width update ─────────────────────────────── */
 
 static void _update_image_clip(widget_t *w, float value) {
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (!d || !d->img_clip_obj) return;
 
+    /* Anchor + reverse first, then linear pct. */
+    float tv = _arc_transform_value(d, value);
     float range = d->signal_max - d->signal_min;
     if (range <= 0.0f) range = 100.0f;
-    float pct = (value - d->signal_min) / range;
+    float pct = (tv - d->signal_min) / range;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;
 
@@ -91,13 +155,27 @@ static void _update_image_clip(widget_t *w, float value) {
 static void _update_arc_value(arc_data_t *d, float value) {
     if (!d || !d->arc_obj) return;
 
+    /* Anchor + reverse first, then linear pct over the configured range. */
+    float tv = _arc_transform_value(d, value);
     float range = d->signal_max - d->signal_min;
     if (range <= 0.0f) range = 100.0f;
-    float pct = (value - d->signal_min) / range;
+    float pct = (tv - d->signal_min) / range;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;
 
     lv_arc_set_value(d->arc_obj, (int16_t)(pct * 100.0f));
+}
+
+/* Drive the overlay value-line needle to `value`. Applies the SAME anchor +
+ * reverse transform as the fill so the needle and fill agree, then clamps and
+ * pushes the (integer) value into the overlay meter. No-op when the overlay /
+ * needle don't exist (ticks-only overlay, image mode, or feature off). */
+static void _arc_drive_value_needle(arc_data_t *d, float value) {
+    if (!d || !d->tick_meter || !d->value_needle) return;
+    if (!lv_obj_is_valid(d->tick_meter)) return;
+    float tv = _arc_transform_value(d, value);
+    lv_meter_set_indicator_value(d->tick_meter, d->value_needle,
+                                  (int32_t)lroundf(tv));
 }
 
 /* Recolor the indicator arc based on whether we're in the redline / limiter
@@ -235,6 +313,7 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
         } else {
             _update_arc_value(d, d->signal_min);
         }
+        _arc_drive_value_needle(d, d->signal_min);
         _arc_update_value_label(d, d->signal_min);
         _arc_update_flash_state(w);
         _arc_apply_fill_color(d, night_mode_is_active());
@@ -248,6 +327,7 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
     } else {
         _update_arc_value(d, value);
     }
+    _arc_drive_value_needle(d, value);
 
     /* Update limiter latch + flash timer. */
     bool new_in_limiter = (d->limiter_effect != 0) && (value >= d->limiter_value);
@@ -406,19 +486,134 @@ static void _configure_arc(lv_obj_t *obj, int16_t start, int16_t end,
 }
 
 /* Convert a value-domain threshold to an angle along the sweep, used to
- * position the redline zone marker. */
+ * position the redline zone marker. Honours reverse: with reverse on, high
+ * values sit at the START of the sweep, so the pct is mirrored (1-pct) to
+ * keep the marker aligned with the (mirrored) fill. Anchor is intentionally
+ * NOT applied here — the redline marker arc spans a fixed angular slice and
+ * we only need the threshold's angular position; threshold compares elsewhere
+ * use the raw value. */
 static int16_t _value_to_angle(const arc_data_t *d, float value) {
     float range = d->signal_max - d->signal_min;
     if (range <= 0.0f) range = 100.0f;
     float pct = (value - d->signal_min) / range;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;
+    if (d->reverse) pct = 1.0f - pct;
 
     /* Sweep is from start_angle to end_angle going clockwise (LVGL
      * convention). Wrap if end < start. */
     int32_t sweep = (360 + d->end_angle - d->start_angle) % 360;
     if (sweep == 0 && d->start_angle != d->end_angle) sweep = 360;
     return (int16_t)(d->start_angle + (int32_t)(pct * (float)sweep));
+}
+
+/* ── Overlay meter: ticks + value-line needle ──────────────────────────────
+ * lv_arc has no tick API in LVGL v8, so when show_ticks and/or
+ * show_value_line are set in STANDARD mode we drop a transparent lv_meter
+ * sibling into the arc container. Its scale spans signal_min..signal_max over
+ * the SAME angle span as the arc fill (computed from start_angle/end_angle the
+ * same way the fill does), so ticks and the value-line align with the fill.
+ *
+ * The overlay is created sized + centered to match the arc, with its bg +
+ * border transparent and its center indicator ball hidden. It's moved to the
+ * BACK of the container (child index 0) so the arc fill renders ON TOP.
+ *
+ * Tick + value-line colours are baked into lv_meter at create time (v8
+ * limitation), so night-mode picks the night colour here based on
+ * `night_active`; _arc_apply_night_mode rebuilds the overlay when one of those
+ * night overrides is set.
+ *
+ * Frees: the overlay is a child of `cont`, so the w->root delete cascade frees
+ * it. Rebuild paths delete the old overlay first (see _arc_rebuild_overlay). */
+static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
+                               lv_coord_t ow, lv_coord_t oh, bool night_active) {
+    if (!d || !cont) return;
+    if (!d->show_ticks && !d->show_value_line) return;
+
+    lv_obj_t *m = lv_meter_create(cont);
+    if (!m) return;
+    lv_obj_set_size(m, ow, oh);
+    lv_obj_set_align(m, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(m, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(m, LV_OBJ_FLAG_SCROLLABLE);
+    /* Transparent shell — only the tick ring (+ optional needle) shows. */
+    lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(m, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(m, 0, LV_PART_MAIN);
+    /* Hide the meter's center indicator ball. */
+    lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
+
+    lv_meter_scale_t *scale = lv_meter_add_scale(m);
+    /* Angle span: identical computation to _value_to_angle's sweep. */
+    int32_t angle_range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
+    if (angle_range == 0 && d->start_angle != d->end_angle) angle_range = 360;
+    lv_meter_set_scale_range(m, scale,
+                             (int32_t)lroundf(d->signal_min),
+                             (int32_t)lroundf(d->signal_max),
+                             angle_range, (int32_t)d->start_angle);
+
+    /* Tick marks. When show_ticks is off but a value-line is wanted, the
+     * scale still needs a (zero-width) tick setup so the needle's angle math
+     * works — mirror the meter's "zero the widths" approach. */
+    uint8_t mtc = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
+    uint8_t mte = d->major_tick_every < 1 ? 1 : d->major_tick_every;
+    lv_color_t mintc = NIGHT_PICK_COLOR(night_active, d->night, minor_tick_color, d->minor_tick_color);
+    lv_color_t majtc = NIGHT_PICK_COLOR(night_active, d->night, major_tick_color, d->major_tick_color);
+    uint8_t minor_w = d->show_ticks ? d->minor_tick_width  : 0;
+    uint8_t minor_l = d->show_ticks ? d->minor_tick_length : 0;
+    uint8_t major_w = d->show_ticks ? d->major_tick_width  : 0;
+    uint8_t major_l = d->show_ticks ? d->major_tick_length : 0;
+    lv_meter_set_scale_ticks(m, scale, mtc, minor_w, minor_l, mintc);
+    /* label_gap 0 + no tick-label font — the arc has its own value label;
+     * the overlay draws tick MARKS only, not numeric labels. */
+    lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc, 0);
+    /* Suppress numeric tick labels entirely. */
+    lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+
+    /* Value-line needle. */
+    if (d->show_value_line) {
+        lv_color_t vlc = NIGHT_PICK_COLOR(night_active, d->night, value_line_color, d->value_line_color);
+        d->value_needle = lv_meter_add_needle_line(m, scale,
+                                                    d->value_line_width,
+                                                    vlc, d->value_line_r_mod);
+        /* Snap to the bound signal's current value (anchor+reverse applied
+         * inside _arc_drive_value_needle); fall back to signal_min. */
+        float init = d->signal_min;
+        if (d->signal_index >= 0) {
+            signal_t *sig = signal_get_by_index((uint16_t)d->signal_index);
+            if (sig && !sig->is_stale) init = sig->current_value;
+        }
+        float tv = _arc_transform_value(d, init);
+        lv_meter_set_indicator_value(m, d->value_needle, (int32_t)lroundf(tv));
+    }
+
+    d->tick_meter = m;
+    d->tick_scale = scale;
+
+    /* Draw UNDER the arc fill: move the overlay to the back of the container
+     * so the (later-created or already-created) arc renders on top. */
+    lv_obj_move_background(m);
+}
+
+/* Tear down + rebuild the overlay meter in place. Used by the night-apply
+ * path because tick / value-line colours are baked in at create time
+ * (LVGL v8 has no live tick/needle recolor). The overlay is a single cheap
+ * child, so a full delete + rebuild is fine. Re-asserts back-of-container
+ * z-order so the arc fill stays on top. */
+static void _arc_rebuild_overlay(widget_t *w, bool night_active) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d || !w->root || !lv_obj_is_valid(w->root)) return;
+    /* Only meaningful in standard mode (overlay never built in image modes). */
+    if (!d->arc_obj) return;
+    if (d->tick_meter && lv_obj_is_valid(d->tick_meter))
+        lv_obj_del(d->tick_meter);
+    d->tick_meter   = NULL;
+    d->tick_scale   = NULL;
+    d->value_needle = NULL;
+    _arc_build_overlay(d, w->root, (lv_coord_t)w->w, (lv_coord_t)w->h, night_active);
+    /* Push the freshly-built value-needle to the cached value. */
+    _arc_drive_value_needle(d, d->_cached_value);
 }
 
 /* ── Create: standard arc mode (now with redline + value text) ────────── */
@@ -487,6 +682,14 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
         d->value_label = lbl;
     }
 
+    /* Overlay meter for ticks + value-line needle. Built AFTER the arc/redline/
+     * label and then moved to the back (inside _arc_build_overlay) so the arc
+     * fill renders on top of the tick ring. Night colour is picked here so a
+     * widget created while night mode is already active bakes the right tick /
+     * value-line colours. */
+    _arc_build_overlay(d, cont, (lv_coord_t)w->w, (lv_coord_t)w->h,
+                       night_mode_is_active());
+
     w->root = cont;
 }
 
@@ -500,6 +703,9 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     d->arc_obj         = NULL;
     d->redline_arc_obj = NULL;
     d->value_label     = NULL;
+    d->tick_meter      = NULL;
+    d->tick_scale      = NULL;
+    d->value_needle    = NULL;
     d->flash_timer     = NULL;
     d->flash_phase     = false;
     d->in_limiter      = false;
@@ -531,6 +737,8 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
      * was created while night-mode is already active. */
     if (d->night.has_arc_color || d->night.has_bg_arc_color ||
         d->night.has_value_color || d->night.has_redline_color ||
+        d->night.has_minor_tick_color || d->night.has_major_tick_color ||
+        d->night.has_value_line_color ||
         d->night.has_arc_image || d->night.has_arc_image_full) {
         night_mode_subscribe(_arc_night_cb, w);
         _arc_apply_night_mode(w, night_mode_is_active());
@@ -557,6 +765,11 @@ static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
             lv_obj_set_size(d->arc_obj, nw, nh);
         if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
             lv_obj_set_size(d->redline_arc_obj, nw, nh);
+        /* Overlay tick/value-line meter tracks the arc size so ticks stay on
+         * the same radius as the (resized) arc fill. The scale's angle math
+         * is size-independent, so just resizing is enough — no rebuild. */
+        if (d->tick_meter && lv_obj_is_valid(d->tick_meter))
+            lv_obj_set_size(d->tick_meter, nw, nh);
     }
     w->w = nw;
     w->h = nh;
@@ -647,6 +860,48 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     if (d->value_unit[0] != '\0')
         cJSON_AddStringToObject(cfg, "value_unit", d->value_unit);
 
+    /* Ticks (overlay meter) — defaults-only; bool only when true. */
+    if (d->show_ticks)
+        cJSON_AddBoolToObject(cfg, "show_ticks", true);
+    if (d->minor_tick_count != ARC_DEFAULT_MINOR_TICK_COUNT)
+        cJSON_AddNumberToObject(cfg, "minor_tick_count", d->minor_tick_count);
+    if (d->major_tick_every != ARC_DEFAULT_MAJOR_TICK_EVERY)
+        cJSON_AddNumberToObject(cfg, "major_tick_every", d->major_tick_every);
+    if (d->minor_tick_length != ARC_DEFAULT_MINOR_TICK_LENGTH)
+        cJSON_AddNumberToObject(cfg, "minor_tick_length", d->minor_tick_length);
+    if (d->minor_tick_width != ARC_DEFAULT_MINOR_TICK_WIDTH)
+        cJSON_AddNumberToObject(cfg, "minor_tick_width", d->minor_tick_width);
+    if (d->major_tick_length != ARC_DEFAULT_MAJOR_TICK_LENGTH)
+        cJSON_AddNumberToObject(cfg, "major_tick_length", d->major_tick_length);
+    if (d->major_tick_width != ARC_DEFAULT_MAJOR_TICK_WIDTH)
+        cJSON_AddNumberToObject(cfg, "major_tick_width", d->major_tick_width);
+    if (d->minor_tick_color.full != lv_color_hex(ARC_DEFAULT_MINOR_TICK_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)d->minor_tick_color.full);
+    if (d->major_tick_color.full != lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
+
+    /* Value line (overlay needle) */
+    if (d->show_value_line)
+        cJSON_AddBoolToObject(cfg, "show_value_line", true);
+    if (d->value_line_width != ARC_DEFAULT_VALUE_LINE_WIDTH)
+        cJSON_AddNumberToObject(cfg, "value_line_width", d->value_line_width);
+    if (d->value_line_color.full != lv_color_hex(ARC_DEFAULT_VALUE_LINE_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "value_line_color", (int)d->value_line_color.full);
+    if (d->value_line_r_mod != ARC_DEFAULT_VALUE_LINE_R_MOD)
+        cJSON_AddNumberToObject(cfg, "value_line_r_mod", d->value_line_r_mod);
+
+    /* Anchor curve */
+    if (d->anchor_enabled)
+        cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
+    if (d->anchor_value != ARC_DEFAULT_ANCHOR_VALUE)
+        cJSON_AddNumberToObject(cfg, "anchor_value", (double)d->anchor_value);
+    if (d->anchor_position != ARC_DEFAULT_ANCHOR_POSITION)
+        cJSON_AddNumberToObject(cfg, "anchor_position", d->anchor_position);
+
+    /* Reverse */
+    if (d->reverse)
+        cJSON_AddBoolToObject(cfg, "reverse", true);
+
     /* Rules */
     widget_rules_to_json(w, cfg);
 
@@ -657,6 +912,9 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         NIGHT_SERIALIZE_COLOR(n, d->night, bg_arc_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, value_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, redline_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, minor_tick_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, major_tick_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, value_line_color);
         NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image);
         NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image_full);
         if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
@@ -777,6 +1035,53 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->value_unit, item->valuestring, sizeof(d->value_unit));
 
+    /* Ticks (overlay lv_meter) */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+    if (cJSON_IsBool(item)) d->show_ticks = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_count");
+    if (cJSON_IsNumber(item)) d->minor_tick_count = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_every");
+    if (cJSON_IsNumber(item)) d->major_tick_every = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_length");
+    if (cJSON_IsNumber(item)) d->minor_tick_length = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_width");
+    if (cJSON_IsNumber(item)) d->minor_tick_width = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_length");
+    if (cJSON_IsNumber(item)) d->major_tick_length = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_width");
+    if (cJSON_IsNumber(item)) d->major_tick_width = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_color");
+    if (cJSON_IsNumber(item)) d->minor_tick_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
+    if (cJSON_IsNumber(item)) d->major_tick_color.full = (uint16_t)item->valueint;
+
+    /* Value line (needle on the overlay meter) */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_value_line");
+    if (cJSON_IsBool(item)) d->show_value_line = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "value_line_width");
+    if (cJSON_IsNumber(item)) d->value_line_width = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "value_line_color");
+    if (cJSON_IsNumber(item)) d->value_line_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "value_line_r_mod");
+    if (cJSON_IsNumber(item)) d->value_line_r_mod = (int16_t)item->valueint;
+
+    /* Anchor curve */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
+    if (cJSON_IsBool(item)) d->anchor_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
+    if (cJSON_IsNumber(item)) d->anchor_value = (float)item->valuedouble;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
+    if (cJSON_IsNumber(item)) {
+        int v = item->valueint;
+        if (v < 0)   v = 0;
+        if (v > 100) v = 100;
+        d->anchor_position = (uint8_t)v;
+    }
+
+    /* Reverse */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "reverse");
+    if (cJSON_IsBool(item)) d->reverse = cJSON_IsTrue(item);
+
     /* Resolve signal name to index */
     if (d->signal_name[0] != '\0')
         d->signal_index = signal_find_by_name(d->signal_name);
@@ -791,6 +1096,9 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         NIGHT_PARSE_COLOR(night, d->night, bg_arc_color);
         NIGHT_PARSE_COLOR(night, d->night, value_color);
         NIGHT_PARSE_COLOR(night, d->night, redline_color);
+        NIGHT_PARSE_COLOR(night, d->night, minor_tick_color);
+        NIGHT_PARSE_COLOR(night, d->night, major_tick_color);
+        NIGHT_PARSE_COLOR(night, d->night, value_line_color);
         NIGHT_PARSE_IMAGE(night, d->night, arc_image);
         NIGHT_PARSE_IMAGE(night, d->night, arc_image_full);
     }
@@ -974,6 +1282,20 @@ static void _arc_apply_night_mode(widget_t *w, bool active) {
             }
         }
     }
+
+    /* Overlay tick / value-line colours are baked into the overlay lv_meter at
+     * create time (LVGL v8 has no live tick/needle recolor API). When a night
+     * override touches one of those colours, rebuild the overlay with the
+     * night-picked colours. The overlay is a single cheap child, so a full
+     * delete + rebuild is acceptable here. Only runs when the overlay exists
+     * (standard mode, ticks or value-line enabled) AND a baked night colour is
+     * actually set — so plain day/night colour-less layouts pay nothing. */
+    if (d->tick_meter &&
+        (d->night.has_minor_tick_color ||
+         d->night.has_major_tick_color ||
+         d->night.has_value_line_color)) {
+        _arc_rebuild_overlay(w, active);
+    }
 }
 
 /* night_mode_subscribe callback shim — extracts widget_t* from user_data. */
@@ -1135,6 +1457,32 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->value_decimals = 0;
     /* arc_image, arc_image_full, signal_name, value_font, value_unit
      * zeroed by calloc */
+
+    /* Ticks (overlay meter) defaults — OFF by default. */
+    d->show_ticks         = ARC_DEFAULT_SHOW_TICKS;
+    d->minor_tick_count   = ARC_DEFAULT_MINOR_TICK_COUNT;
+    d->major_tick_every   = ARC_DEFAULT_MAJOR_TICK_EVERY;
+    d->minor_tick_length  = ARC_DEFAULT_MINOR_TICK_LENGTH;
+    d->minor_tick_width   = ARC_DEFAULT_MINOR_TICK_WIDTH;
+    d->major_tick_length  = ARC_DEFAULT_MAJOR_TICK_LENGTH;
+    d->major_tick_width   = ARC_DEFAULT_MAJOR_TICK_WIDTH;
+    d->minor_tick_color   = lv_color_hex(ARC_DEFAULT_MINOR_TICK_COLOR);
+    d->major_tick_color   = lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR);
+
+    /* Value-line (overlay needle) defaults — OFF by default. */
+    d->show_value_line    = ARC_DEFAULT_SHOW_VALUE_LINE;
+    d->value_line_width   = ARC_DEFAULT_VALUE_LINE_WIDTH;
+    d->value_line_color   = lv_color_hex(ARC_DEFAULT_VALUE_LINE_COLOR);
+    d->value_line_r_mod   = ARC_DEFAULT_VALUE_LINE_R_MOD;
+
+    /* Anchor + reverse defaults — OFF by default. */
+    d->anchor_enabled     = false;
+    d->anchor_value       = ARC_DEFAULT_ANCHOR_VALUE;
+    d->anchor_position    = ARC_DEFAULT_ANCHOR_POSITION;
+    d->reverse            = false;
+
+    /* Overlay runtime handles zeroed by calloc (tick_meter / tick_scale /
+     * value_needle). */
 
     w->type      = WIDGET_ARC;
     w->slot      = slot;

@@ -825,10 +825,8 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	 * first-wins bug where a stale/boot-snapshot definition could shadow the
 	 * dashboard's correct decode and make the signal decode garbage. */
 	_load_signals(root);
-	/* Restore persisted peak/min values for any signal name that made it
-	 * into the new layout. Stale records (signal no longer present) are
-	 * silently dropped on the next autosave. */
-	signal_peaks_load();
+	/* Peak/min values are session-only (reset every boot, no NVS
+	 * persistence), so there's nothing to restore here on layout load. */
 	/* Re-bind channels to signals now that the layout's signals are
 	 * registered. Channels in /lfs/channels.json carry signal_name strings;
 	 * they couldn't resolve at channel_manager_init time because the signal

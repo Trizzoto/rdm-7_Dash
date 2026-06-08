@@ -822,8 +822,9 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, (lv_coord_t)(20.0f * sx + 0.5f), 0);
 	lv_obj_clear_flag(rpm_bar_gauge, LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
 
+	lv_color_t track_bg = rd_bar ? rd_bar->bar_bg_color : THEME_COLOR_RPM_BAR_BG;
 	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
+	lv_obj_set_style_bg_color(rpm_bar_gauge, track_bg,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
 							LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -857,6 +858,152 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_set_style_border_width(rpm_redline_zone, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
+	/* Numeric RPM readout — historically the dashboard never created
+	 * ui_RPM_Value (Screen3 only NULLs it), so the bar showed no number.
+	 * When show_rpm_value is enabled we create the label here and assign it
+	 * to ui_RPM_Value so the existing update_rpm_ui / update_rpm_ui_immediate
+	 * paths populate it. It's a child of the container, so the layout
+	 * teardown cascade frees it; _rpm_bar_destroy NULLs the global to match
+	 * how ui_Screen3.c clears it. */
+	if (rd_bar && rd_bar->show_rpm_value) {
+		ui_RPM_Value = lv_label_create(container);
+		const lv_font_t *vfont = widget_resolve_font(rd_bar->rpm_value_font);
+		if (!vfont) vfont = THEME_FONT_DASH_RPM;
+		lv_obj_set_style_text_font(ui_RPM_Value, vfont,
+								   LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_color(ui_RPM_Value, rd_bar->rpm_value_color,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_text_opa(ui_RPM_Value, LV_OPA_COVER,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_label_set_text(ui_RPM_Value, "---");
+		/* Centre the readout over the bar; pass touch through to the
+		 * container so the chrome-reveal tap still works. */
+		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
+		lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
+		lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_CLICKABLE);
+		rd_bar->rpm_value_obj = ui_RPM_Value;
+	}
+}
+
+/* Create-or-update the numeric RPM readout to match the current rd fields.
+ * Used by the inspector when show_rpm_value / rpm_value_font / rpm_value_color
+ * change at runtime. Creates the label lazily inside the rpm container the
+ * first time it's enabled; hides it (keeps the object) when disabled so a
+ * later re-enable is cheap. Safe to call only on the LVGL task. */
+static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
+	if (!rd) return;
+	if (!rd->show_rpm_value) {
+		if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+			lv_obj_add_flag(ui_RPM_Value, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	if (!s_rpm_container || !lv_obj_is_valid(s_rpm_container)) return;
+
+	float sx = (float)s_container_w / 800.0f;
+
+	if (!ui_RPM_Value || !lv_obj_is_valid(ui_RPM_Value)) {
+		ui_RPM_Value = lv_label_create(s_rpm_container);
+		lv_label_set_text(ui_RPM_Value, "---");
+		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
+		lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_CLICKABLE);
+		rd->rpm_value_obj = ui_RPM_Value;
+	}
+	lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_HIDDEN);
+
+	const lv_font_t *vfont = widget_resolve_font(rd->rpm_value_font);
+	if (!vfont) vfont = THEME_FONT_DASH_RPM;
+	lv_obj_set_style_text_font(ui_RPM_Value, vfont,
+							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(ui_RPM_Value, rd->rpm_value_color,
+								LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_text_opa(ui_RPM_Value, LV_OPA_COVER,
+							  LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
+}
+
+/* ── On-device appearance config callbacks ─────────────────────────────────
+ * rpm_bar's STYLE editing is a hand-written tab (build_rpm_settings_tab in
+ * config_modal.c), NOT the schema-driven generated STYLE tab, so the new
+ * appearance fields don't auto-appear on-device — these callbacks wire the
+ * extra rows. Each mirrors the matching inspector_set branch so web + device
+ * stay in lockstep. COLOR_OPTS dropdown layout: Green0 Cyan1 Yellow2 Orange3
+ * Red4 Blue5 Purple6 Magenta7 Pink8 Custom9 (last opens nothing here — the
+ * on-device flow has no per-field colour wheel for these, so Custom is a
+ * no-op that leaves the current colour unchanged). */
+static bool _rpm_color_from_opts_idx(uint16_t idx, lv_color_t *out) {
+	switch (idx) {
+	case 0: *out = THEME_COLOR_GREEN;   return true;
+	case 1: *out = THEME_COLOR_CYAN;    return true;
+	case 2: *out = THEME_COLOR_YELLOW;  return true;
+	case 3: *out = THEME_COLOR_ORANGE;  return true;
+	case 4: *out = THEME_COLOR_RED;     return true;
+	case 5: *out = THEME_COLOR_BLUE;    return true;
+	case 6: *out = THEME_COLOR_PURPLE;  return true;
+	case 7: *out = THEME_COLOR_MAGENTA; return true;
+	case 8: *out = THEME_COLOR_PINK;    return true;
+	default: return false; /* Custom / out-of-range — leave unchanged */
+	}
+}
+
+void rpm_show_ticks_switch_event_cb(lv_event_t *e) {
+	bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	rd->show_ticks = on;
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
+		update_rpm_lines(s_rpm_container);
+}
+
+void rpm_tick_side_dropdown_event_cb(lv_event_t *e) {
+	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	rd->tick_side = (uint8_t)(sel > 2 ? 2 : sel);
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
+		update_rpm_lines(s_rpm_container);
+}
+
+void rpm_tick_color_dropdown_event_cb(lv_event_t *e) {
+	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	lv_color_t c;
+	if (!_rpm_color_from_opts_idx(sel, &c)) return;
+	rd->tick_color = c;
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
+		update_rpm_lines(s_rpm_container);
+}
+
+void rpm_bar_bg_color_dropdown_event_cb(lv_event_t *e) {
+	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	lv_color_t c;
+	if (!_rpm_color_from_opts_idx(sel, &c)) return;
+	rd->bar_bg_color = c;
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
+		lv_obj_set_style_bg_color(rpm_bar_gauge, rd->bar_bg_color,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+void rpm_show_value_switch_event_cb(lv_event_t *e) {
+	bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	rd->show_rpm_value = on;
+	_rpm_bar_sync_value_label(rd);
+}
+
+void rpm_value_color_dropdown_event_cb(lv_event_t *e) {
+	uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	if (!rd) return;
+	lv_color_t c;
+	if (!_rpm_color_from_opts_idx(sel, &c)) return;
+	rd->rpm_value_color = c;
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+		lv_obj_set_style_text_color(ui_RPM_Value, rd->rpm_value_color,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 int num_rpm_lines = 0;
@@ -893,6 +1040,28 @@ void update_rpm_lines(lv_obj_t *parent) {
 		num_rpm_lines = 0;
 	}
 
+	/* Per-instance appearance (colour / length / width / side / visibility).
+	 * Falls back to the historical hardcoded look if the data struct can't be
+	 * found (e.g. very early boot before the widget is registered). */
+	rpm_bar_data_t *rd_ticks = _lookup_rpm_bar_data();
+	bool       show_ticks  = rd_ticks ? rd_ticks->show_ticks  : true;
+	uint8_t    tick_side   = rd_ticks ? rd_ticks->tick_side   : 2;
+	uint8_t    tick_len_n  = rd_ticks ? rd_ticks->tick_length : 12;
+	uint8_t    tick_wid_n  = rd_ticks ? rd_ticks->tick_width  : 3;
+	/* Night-aware tick colour: a wholesale rebuild (which is how tick colour
+	 * changes are applied, including on night-mode transitions) picks the
+	 * night override when night mode is active and an override is set. */
+	lv_color_t tick_color  = rd_ticks ? rd_ticks->tick_color  : THEME_COLOR_BG;
+	if (rd_ticks)
+		tick_color = NIGHT_PICK_COLOR(night_mode_is_active(), rd_ticks->night,
+		                              tick_color, rd_ticks->tick_color);
+	if (tick_len_n < 1) tick_len_n = 1;
+	if (tick_wid_n < 1) tick_wid_n = 1;
+
+	/* Ticks hidden: bookkeeping already cleared above (old objects deleted),
+	 * so just leave the parent free of tick marks. */
+	if (!show_ticks) return;
+
 	// Step in increments of 500 RPM for medium and main ticks
 	int increments = 500;
 	int num_lines = (rpm_gauge_max / increments) + 1; // Include 0 RPM
@@ -914,8 +1083,9 @@ void update_rpm_lines(lv_obj_t *parent) {
 	lv_coord_t span_px     = (lv_coord_t)(765.0f * sx + 0.5f);
 
 	/* Tallest tick (main) sets the bottom-row baseline so all bottom ticks end
-	 * flush with the container's bottom edge. */
-	lv_coord_t main_h = (lv_coord_t)(12.0f * sy + 0.5f);
+	 * flush with the container's bottom edge. Main length is user-driven
+	 * (tick_len_n, nominal 12) and still scaled by sy for taller bars. */
+	lv_coord_t main_h = (lv_coord_t)((float)tick_len_n * sy + 0.5f);
 	if (main_h < 1) main_h = 1;
 
 	/* Tick label font: scale 17px nominal by sy, then snap to nearest preloaded face. */
@@ -938,84 +1108,111 @@ void update_rpm_lines(lv_obj_t *parent) {
 		bool add_label = false; // Only label the 1000s in the first set
 
 		if ((rpm_value % 1000) == 0) {
-			// Main tick
-			line_width  = (lv_coord_t)(3.0f * sy + 0.5f);
+			// Main tick — full user width/length
+			line_width  = (lv_coord_t)((float)tick_wid_n * sy + 0.5f);
 			line_height = main_h;
 			add_label = true;
 		} else {
-			// Medium tick (500 RPM)
-			line_width  = (lv_coord_t)(2.0f * sy + 0.5f);
-			line_height = (lv_coord_t)(8.0f * sy + 0.5f);
+			// Medium tick (500 RPM) — keep the original 2:3 width / 8:12 length
+			// proportion relative to the main tick so user sizing scales both.
+			line_width  = (lv_coord_t)((float)tick_wid_n * (2.0f / 3.0f) * sy + 0.5f);
+			line_height = (lv_coord_t)((float)tick_len_n * (8.0f / 12.0f) * sy + 0.5f);
 		}
 		if (line_width  < 1) line_width  = 1;
 		if (line_height < 1) line_height = 1;
 
-		// Create the first set of lines (top row)
-		lv_obj_t *line_top = lv_obj_create(parent);
-		lv_obj_set_size(line_top, line_width, line_height);
-		lv_obj_set_style_radius(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(line_top, THEME_COLOR_BG,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(line_top, LV_OPA_COVER,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(line_top, 0,
-									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_pad_all(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_clear_flag(line_top, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-		// Position the line so it's centered horizontally on x_pos
 		lv_coord_t adjusted_x = x_pos - (line_width / 2);
-		lv_obj_set_pos(line_top, adjusted_x, bar_y_set1);
 
-		rpm_lines[num_rpm_lines] = line_top;
+		/* tick_side: 0=Top, 1=Bottom, 2=Both.
+		 *   - Top row drawn when tick_side != 1 (Bottom-only).
+		 *   - Bottom row drawn when tick_side != 0 (Top-only).
+		 * The thousands label always anchors to whichever row exists (top
+		 * preferred for the historical look), and is suppressed only when both
+		 * rows are off — which can't happen for a valid tick_side. */
+		bool draw_top    = (tick_side != 1);
+		bool draw_bottom = (tick_side != 0);
 
-		// Add a label for 1000 RPM ticks in the first set
-		if (add_label) {
-			lv_obj_t *label = lv_label_create(parent);
+		lv_obj_t *label_anchor = NULL;
+		bool      anchor_is_top = false;
 
-			// Display the "thousands" place (e.g., "7" for 7000)
-			char rpm_str[8];
-			snprintf(rpm_str, sizeof(rpm_str), "%d", rpm_value / 1000);
-			lv_label_set_text(label, rpm_str);
+		// Create the first set of lines (top row)
+		if (draw_top) {
+			lv_obj_t *line_top = lv_obj_create(parent);
+			lv_obj_set_size(line_top, line_width, line_height);
+			lv_obj_set_style_radius(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_color(line_top, tick_color,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_opa(line_top, LV_OPA_COVER,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_width(line_top, 0,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_pad_all(line_top, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_clear_flag(line_top, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-			// Style the label (font scales with container height)
-			lv_obj_set_style_text_color(label, THEME_COLOR_BG, LV_PART_MAIN);
-			lv_obj_set_style_text_opa(label, LV_OPA_COVER, LV_PART_MAIN);
-			lv_obj_set_style_text_font(label, tick_font,
-									   LV_PART_MAIN | LV_STATE_DEFAULT);
+			// Position the line so it's centered horizontally on x_pos
+			lv_obj_set_pos(line_top, adjusted_x, bar_y_set1);
 
-			// Position the label below the line (offset scales with sy)
-			lv_obj_align_to(label, line_top, LV_ALIGN_OUT_BOTTOM_MID, 0, label_off);
+			rpm_lines[num_rpm_lines] = line_top;
+			num_rpm_lines++;
 
-			rpm_labels[num_rpm_lines] = label;
+			label_anchor  = line_top;
+			anchor_is_top = true;
+			if (num_rpm_lines >= MAX_RPM_LINES * 2) break;
 		}
 
-		num_rpm_lines++;
-
 		// Create the second set of lines (bottom row, flipped height)
-		lv_obj_t *line_bottom = lv_obj_create(parent);
-		lv_obj_set_size(line_bottom, line_width, line_height);
-		lv_obj_set_style_radius(line_bottom, 0,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(line_bottom, THEME_COLOR_BG,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(line_bottom, LV_OPA_COVER,
-								LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_border_width(line_bottom, 0,
+		if (draw_bottom) {
+			lv_obj_t *line_bottom = lv_obj_create(parent);
+			lv_obj_set_size(line_bottom, line_width, line_height);
+			lv_obj_set_style_radius(line_bottom, 0,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_bg_color(line_bottom, tick_color,
 									  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_pad_all(line_bottom, 0,
-								 LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_clear_flag(line_bottom, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+			lv_obj_set_style_bg_opa(line_bottom, LV_OPA_COVER,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_border_width(line_bottom, 0,
+										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_pad_all(line_bottom, 0,
+									 LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_clear_flag(line_bottom, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-		// Bottom row: anchor each tick to the container's bottom edge so
-		// shorter ticks slide down — matches the original 55px layout where
-		// every bottom tick ended at y=55.
-		lv_obj_set_pos(line_bottom, adjusted_x,
-					   s_container_h - line_height);
+			// Bottom row: anchor each tick to the container's bottom edge so
+			// shorter ticks slide down — matches the original 55px layout where
+			// every bottom tick ended at y=55.
+			lv_obj_set_pos(line_bottom, adjusted_x,
+						   s_container_h - line_height);
 
-		rpm_lines[num_rpm_lines] = line_bottom;
+			rpm_lines[num_rpm_lines] = line_bottom;
+			if (!label_anchor) label_anchor = line_bottom;
+			num_rpm_lines++;
+		}
 
-		num_rpm_lines++;
+		// Add a label for 1000 RPM ticks. Stored at the slot index of its
+		// anchor tick so update_rpm_lines's delete loop frees it (rpm_labels[]
+		// is indexed by line slot, only valid for i < MAX_RPM_LINES).
+		if (add_label && label_anchor) {
+			int label_slot = num_rpm_lines - 1; /* last pushed tick's slot */
+			if (anchor_is_top) label_slot = num_rpm_lines - (draw_bottom ? 2 : 1);
+			if (label_slot >= 0 && label_slot < MAX_RPM_LINES) {
+				lv_obj_t *label = lv_label_create(parent);
+
+				// Display the "thousands" place (e.g., "7" for 7000)
+				char rpm_str[8];
+				snprintf(rpm_str, sizeof(rpm_str), "%d", rpm_value / 1000);
+				lv_label_set_text(label, rpm_str);
+
+				// Style the label (font scales with container height)
+				lv_obj_set_style_text_color(label, tick_color, LV_PART_MAIN);
+				lv_obj_set_style_text_opa(label, LV_OPA_COVER, LV_PART_MAIN);
+				lv_obj_set_style_text_font(label, tick_font,
+										   LV_PART_MAIN | LV_STATE_DEFAULT);
+
+				// Position the label below the anchor tick (offset scales with sy)
+				lv_obj_align_to(label, label_anchor, LV_ALIGN_OUT_BOTTOM_MID, 0, label_off);
+
+				rpm_labels[label_slot] = label;
+			}
+		}
 
 		// Stop if we exceed the maximum number of lines
 		if (num_rpm_lines >= MAX_RPM_LINES * 2) {
@@ -1148,7 +1345,9 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
 	 * was created while night-mode is already active. */
-	if (rbd && (rbd->night.has_bar_color || rbd->night.has_limiter_color)) {
+	if (rbd && (rbd->night.has_bar_color || rbd->night.has_limiter_color ||
+	            rbd->night.has_tick_color || rbd->night.has_bar_bg_color ||
+	            rbd->night.has_rpm_value_color)) {
 		night_mode_subscribe(_rpm_bar_night_cb, w);
 		_rpm_bar_apply_night_mode(w, night_mode_is_active());
 	}
@@ -1195,6 +1394,12 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		lv_obj_set_y(rpm_redline_zone, (lv_coord_t)(22.0f * sy + 0.5f));
 	}
 
+	/* Numeric RPM readout — keep it centred over the bar (same +20*sx nudge
+	 * as the bar gauge alignment so it tracks the fill region's centre). */
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
+		lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
+	}
+
 	/* Rebuild tick marks + labels at the new scale. */
 	if (s_rpm_container && lv_obj_is_valid(s_rpm_container))
 		update_rpm_lines(s_rpm_container);
@@ -1222,6 +1427,29 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
 	cJSON_AddNumberToObject(cfg, "flash_speed", rd->flash_speed_ms);
+
+	/* ── Appearance — defaults-only emit (keeps untouched widgets empty so
+	 * the 32 KB layout budget isn't burned). Defaults mirror the historical
+	 * hardcoded look. ─────────────────────────────────────────────────── */
+	if (!rd->show_ticks)            /* default true */
+		cJSON_AddBoolToObject(cfg, "show_ticks", false);
+	if (rd->tick_side != 2)         /* default 2 (Both) */
+		cJSON_AddNumberToObject(cfg, "tick_side", rd->tick_side);
+	if (rd->tick_length != 12)      /* default 12 */
+		cJSON_AddNumberToObject(cfg, "tick_length", rd->tick_length);
+	if (rd->tick_width != 3)        /* default 3 */
+		cJSON_AddNumberToObject(cfg, "tick_width", rd->tick_width);
+	if (rd->tick_color.full != THEME_COLOR_BG.full)
+		cJSON_AddNumberToObject(cfg, "tick_color", (int)rd->tick_color.full);
+	if (rd->bar_bg_color.full != THEME_COLOR_RPM_BAR_BG.full)
+		cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)rd->bar_bg_color.full);
+	if (rd->show_rpm_value)         /* default false */
+		cJSON_AddBoolToObject(cfg, "show_rpm_value", true);
+	if (rd->rpm_value_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "rpm_value_font", rd->rpm_value_font);
+	if (rd->rpm_value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		cJSON_AddNumberToObject(cfg, "rpm_value_color", (int)rd->rpm_value_color.full);
+
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
 	if (rd->channel_id[0] != '\0')
@@ -1231,6 +1459,9 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON *n = cJSON_CreateObject();
 		NIGHT_SERIALIZE_COLOR(n, rd->night, bar_color);
 		NIGHT_SERIALIZE_COLOR(n, rd->night, limiter_color);
+		NIGHT_SERIALIZE_COLOR(n, rd->night, tick_color);
+		NIGHT_SERIALIZE_COLOR(n, rd->night, bar_bg_color);
+		NIGHT_SERIALIZE_COLOR(n, rd->night, rpm_value_color);
 		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
 		else cJSON_Delete(n);
 	}
@@ -1277,6 +1508,42 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 		if (v > 1000) v = 1000;
 		rd->flash_speed_ms = (uint16_t)v;
 	}
+
+	/* ── Appearance — all default to the historical hardcoded look, so an
+	 * older layout that omits these reproduces the previous render. ────── */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+	if (cJSON_IsBool(item)) rd->show_ticks = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_side");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0 || v > 2) v = 2;
+		rd->tick_side = (uint8_t)v;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_length");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 1)   v = 1;
+		if (v > 255) v = 255;
+		rd->tick_length = (uint8_t)v;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_width");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 1)   v = 1;
+		if (v > 255) v = 255;
+		rd->tick_width = (uint8_t)v;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_color");
+	if (cJSON_IsNumber(item)) rd->tick_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_color");
+	if (cJSON_IsNumber(item)) rd->bar_bg_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_rpm_value");
+	if (cJSON_IsBool(item)) rd->show_rpm_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_font");
+	if (cJSON_IsString(item) && item->valuestring)
+		safe_strncpy(rd->rpm_value_font, item->valuestring, sizeof(rd->rpm_value_font));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_color");
+	if (cJSON_IsNumber(item)) rd->rpm_value_color.full = (uint32_t)item->valueint;
 	/* Clamp to the current 3-value enum. Older firmware versions had a
 	 * 7-value enum that included "circles" modes (now removed); the legacy
 	 * migration ladder lived here until 2026-04-27 and was deleted because
@@ -1293,6 +1560,9 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsObject(night)) {
 		NIGHT_PARSE_COLOR(night, rd->night, bar_color);
 		NIGHT_PARSE_COLOR(night, rd->night, limiter_color);
+		NIGHT_PARSE_COLOR(night, rd->night, tick_color);
+		NIGHT_PARSE_COLOR(night, rd->night, bar_bg_color);
+		NIGHT_PARSE_COLOR(night, rd->night, rpm_value_color);
 	}
 
 	/* Resolve signal name → index */
@@ -1388,6 +1658,12 @@ static void _rpm_bar_destroy(widget_t *w) {
 		/* Reset the per-frame paint cache — the next rpm_bar instance
 		 * (different colors / gradient) must repaint at least once. */
 		_invalidate_paint_cache();
+		/* The numeric RPM readout is a child of w->root (the container), so
+		 * lv_obj_del below frees it via the cascade. NULL the global +
+		 * per-instance pointer so the update_rpm_ui paths don't touch a freed
+		 * object — mirrors how ui_Screen3.c NULLs ui_RPM_Value on rebuild. */
+		if (rbd) rbd->rpm_value_obj = NULL;
+		ui_RPM_Value = NULL;
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;
@@ -1406,6 +1682,8 @@ static void _rpm_bar_apply_night_mode(widget_t *w, bool active) {
 
 	lv_color_t bar_col = NIGHT_PICK_COLOR(active, rd->night, bar_color,     rd->bar_color);
 	lv_color_t lim_col = NIGHT_PICK_COLOR(active, rd->night, limiter_color, rd->limiter_color);
+	lv_color_t bg_col  = NIGHT_PICK_COLOR(active, rd->night, bar_bg_color,  rd->bar_bg_color);
+	lv_color_t val_col = NIGHT_PICK_COLOR(active, rd->night, rpm_value_color, rd->rpm_value_color);
 
 	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
 		lv_obj_set_style_bg_color(rpm_bar_gauge, bar_col,
@@ -1414,10 +1692,27 @@ static void _rpm_bar_apply_night_mode(widget_t *w, bool active) {
 									   LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
 									 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		/* Track background (unfilled portion) — plain style write. */
+		lv_obj_set_style_bg_color(rpm_bar_gauge, bg_col,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
 		lv_obj_set_style_bg_color(rpm_redline_zone, lim_col,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Numeric readout colour — plain style write. */
+	if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value)) {
+		lv_obj_set_style_text_color(ui_RPM_Value, val_col,
+									LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Tick colour is baked into the per-tick objects at create, so a colour
+	 * change requires a wholesale rebuild. update_rpm_lines() reads the
+	 * night-picked tick colour itself, so just rebuild here if a tick
+	 * override exists (skip the rebuild otherwise to avoid the per-transition
+	 * teardown cost). */
+	if (rd->night.has_tick_color && s_rpm_container &&
+	    lv_obj_is_valid(s_rpm_container)) {
+		update_rpm_lines(s_rpm_container);
 	}
 }
 
@@ -1449,6 +1744,16 @@ static bool _rpm_bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "flash_speed") == 0)    { out->i = rd->flash_speed_ms;  return true; }
 	if (strcmp(name, "bar_color") == 0)      { out->color = lv_color_to32(rd->bar_color)     & 0xFFFFFF; return true; }
 	if (strcmp(name, "limiter_color") == 0)  { out->color = lv_color_to32(rd->limiter_color) & 0xFFFFFF; return true; }
+	/* Appearance fields */
+	if (strcmp(name, "show_ticks") == 0)     { out->b = rd->show_ticks;       return true; }
+	if (strcmp(name, "tick_side") == 0)      { out->i = rd->tick_side;        return true; }
+	if (strcmp(name, "tick_length") == 0)    { out->i = rd->tick_length;      return true; }
+	if (strcmp(name, "tick_width") == 0)     { out->i = rd->tick_width;       return true; }
+	if (strcmp(name, "tick_color") == 0)     { out->color = lv_color_to32(rd->tick_color)      & 0xFFFFFF; return true; }
+	if (strcmp(name, "bar_bg_color") == 0)   { out->color = lv_color_to32(rd->bar_bg_color)    & 0xFFFFFF; return true; }
+	if (strcmp(name, "show_rpm_value") == 0) { out->b = rd->show_rpm_value;   return true; }
+	if (strcmp(name, "rpm_value_font") == 0) { out->str = rd->rpm_value_font; return true; }
+	if (strcmp(name, "rpm_value_color") == 0){ out->color = lv_color_to32(rd->rpm_value_color) & 0xFFFFFF; return true; }
 	return false;
 }
 
@@ -1521,6 +1826,69 @@ static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
 		if (rd->limiter_effect == 1) _ensure_flash_timer(rd->flash_speed_ms);
 		return true;
 	}
+
+	/* ── Appearance fields ────────────────────────────────────────────── */
+	/* Tick visibility / geometry / colour all require a wholesale tick
+	 * rebuild — update_rpm_lines reads rd->* directly. */
+	if (strcmp(name, "show_ticks") == 0) {
+		rd->show_ticks = in->b;
+		if (w->root && lv_obj_is_valid(w->root)) update_rpm_lines(w->root);
+		return true;
+	}
+	if (strcmp(name, "tick_side") == 0) {
+		int v = in->i;
+		if (v < 0 || v > 2) v = 2;
+		rd->tick_side = (uint8_t)v;
+		if (w->root && lv_obj_is_valid(w->root)) update_rpm_lines(w->root);
+		return true;
+	}
+	if (strcmp(name, "tick_length") == 0) {
+		int v = in->i;
+		if (v < 1)   v = 1;
+		if (v > 255) v = 255;
+		rd->tick_length = (uint8_t)v;
+		if (w->root && lv_obj_is_valid(w->root)) update_rpm_lines(w->root);
+		return true;
+	}
+	if (strcmp(name, "tick_width") == 0) {
+		int v = in->i;
+		if (v < 1)   v = 1;
+		if (v > 255) v = 255;
+		rd->tick_width = (uint8_t)v;
+		if (w->root && lv_obj_is_valid(w->root)) update_rpm_lines(w->root);
+		return true;
+	}
+	if (strcmp(name, "tick_color") == 0) {
+		rd->tick_color = lv_color_hex(in->color);
+		if (w->root && lv_obj_is_valid(w->root)) update_rpm_lines(w->root);
+		return true;
+	}
+	/* Bar track background — live style write on PART_MAIN. */
+	if (strcmp(name, "bar_bg_color") == 0) {
+		rd->bar_bg_color = lv_color_hex(in->color);
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
+			lv_obj_set_style_bg_color(rpm_bar_gauge, rd->bar_bg_color,
+									  LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
+	/* Numeric readout — create-or-show/hide + restyle. */
+	if (strcmp(name, "show_rpm_value") == 0) {
+		rd->show_rpm_value = in->b;
+		_rpm_bar_sync_value_label(rd);
+		return true;
+	}
+	if (strcmp(name, "rpm_value_font") == 0 && in->str) {
+		safe_strncpy(rd->rpm_value_font, in->str, sizeof(rd->rpm_value_font));
+		_rpm_bar_sync_value_label(rd);
+		return true;
+	}
+	if (strcmp(name, "rpm_value_color") == 0) {
+		rd->rpm_value_color = lv_color_hex(in->color);
+		if (ui_RPM_Value && lv_obj_is_valid(ui_RPM_Value))
+			lv_obj_set_style_text_color(ui_RPM_Value, rd->rpm_value_color,
+										LV_PART_MAIN | LV_STATE_DEFAULT);
+		return true;
+	}
 	return false;
 }
 
@@ -1553,6 +1921,19 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */
 	rd->flash_speed_ms = 200;
+
+	/* Appearance defaults — chosen so they reproduce the previously-hardcoded
+	 * look exactly, keeping to_json empty for untouched widgets. */
+	rd->show_ticks   = true;            /* ticks were always drawn before */
+	rd->tick_side    = 2;               /* Both rows (top + bottom) */
+	rd->tick_length  = 12;              /* matches the old 12px main-tick height */
+	rd->tick_width   = 3;               /* matches the old 3px main-tick width */
+	rd->tick_color   = THEME_COLOR_BG;  /* old hardcoded tick/label colour */
+	rd->bar_bg_color = THEME_COLOR_RPM_BAR_BG; /* old hardcoded track bg */
+	rd->show_rpm_value = false;         /* no numeric readout historically */
+	rd->rpm_value_font[0] = '\0';       /* empty → THEME_FONT_DASH_RPM fallback */
+	rd->rpm_value_color   = THEME_COLOR_TEXT_PRIMARY;
+	rd->rpm_value_obj     = NULL;
 
 	w->type_data = rd;
 	w->type = WIDGET_RPM_BAR;

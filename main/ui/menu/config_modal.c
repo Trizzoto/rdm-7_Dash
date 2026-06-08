@@ -892,6 +892,26 @@ static uint16_t _flash_speed_to_idx(uint16_t ms) {
     return (uint16_t)((ms - 50) / 50);
 }
 
+/** Map a theme colour to the COLOR_OPTS dropdown index (10-entry list:
+ *  Green0 Cyan1 Yellow2 Orange3 Red4 Blue5 Purple6 Magenta7 Pink8 Custom9).
+ *  Unknown colours fall back to Custom (9). Distinct from _theme_color_idx,
+ *  which targets an 11-entry list that includes Grey. */
+static uint16_t _color_opts_idx(lv_color_t c) {
+    if (c.full == THEME_COLOR_GREEN.full)   return 0;
+    if (c.full == THEME_COLOR_CYAN.full)    return 1;
+    if (c.full == THEME_COLOR_YELLOW.full)  return 2;
+    if (c.full == THEME_COLOR_ORANGE.full)  return 3;
+    if (c.full == THEME_COLOR_RED.full)     return 4;
+    if (c.full == THEME_COLOR_BLUE.full)    return 5;
+    if (c.full == THEME_COLOR_PURPLE.full)  return 6;
+    if (c.full == THEME_COLOR_MAGENTA.full) return 7;
+    if (c.full == THEME_COLOR_PINK.full)    return 8;
+    return 9; /* Custom — colour not in the preset list */
+}
+
+/* Tick-side dropdown labels — index maps 1:1 to rd->tick_side. */
+static const char *TICK_SIDE_OPTS = "Top\nBottom\nBoth";
+
 static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     rpm_bar_data_t *rd = (rpm_bar_data_t *)ctx->widget->type_data;
@@ -910,6 +930,49 @@ static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
                                               COLOR_OPTS, 0);
     lv_dropdown_set_selected(col_dd, _theme_color_idx(rd->bar_color));
     lv_obj_add_event_cb(col_dd, rpm_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* Bar track background colour (unfilled portion). */
+    lv_obj_t *bg_dd = settings_add_dropdown(gauge_sec, "Background:",
+                                            COLOR_OPTS, 0);
+    lv_dropdown_set_selected(bg_dd, _color_opts_idx(rd->bar_bg_color));
+    lv_obj_add_event_cb(bg_dd, rpm_bar_bg_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ── Ticks section ─────────────────────────────────────────────── */
+    settings_section_t *tick_sec =
+        settings_add_section(tab, "TICKS", THEME_COLOR_ACCENT_TEAL);
+
+    lv_obj_t *tick_sw = settings_add_switch(tick_sec, "Show Ticks:",
+                                            rd->show_ticks);
+    lv_obj_add_event_cb(tick_sw, rpm_show_ticks_switch_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *tside_dd = settings_add_dropdown(tick_sec, "Side:",
+                                               TICK_SIDE_OPTS, 0);
+    lv_dropdown_set_selected(tside_dd, rd->tick_side > 2 ? 2 : rd->tick_side);
+    lv_obj_add_event_cb(tside_dd, rpm_tick_side_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *tcol_dd = settings_add_dropdown(tick_sec, "Tick Colour:",
+                                              COLOR_OPTS, 0);
+    lv_dropdown_set_selected(tcol_dd, _color_opts_idx(rd->tick_color));
+    lv_obj_add_event_cb(tcol_dd, rpm_tick_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ── RPM number readout section ────────────────────────────────── */
+    settings_section_t *num_sec =
+        settings_add_section(tab, "RPM NUMBER", THEME_COLOR_ACCENT_BLUE);
+
+    lv_obj_t *num_sw = settings_add_switch(num_sec, "Show Number:",
+                                           rd->show_rpm_value);
+    lv_obj_add_event_cb(num_sw, rpm_show_value_switch_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *ncol_dd = settings_add_dropdown(num_sec, "Number Colour:",
+                                              COLOR_OPTS, 0);
+    lv_dropdown_set_selected(ncol_dd, _color_opts_idx(rd->rpm_value_color));
+    lv_obj_add_event_cb(ncol_dd, rpm_value_color_dropdown_event_cb,
                          LV_EVENT_VALUE_CHANGED, NULL);
 
     /* ── Limiter section ───────────────────────────────────────────── */

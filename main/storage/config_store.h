@@ -69,6 +69,12 @@ esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg);
 esp_err_t config_store_save_splash_fade(bool enabled);
 esp_err_t config_store_load_splash_fade(bool *enabled);
 
+/* ── Splash enabled setting ───────────────────────────────────────────────
+   When false, boot skips the splash screen entirely and loads the dashboard
+   directly for a faster boot. Default: true (splash shown). */
+esp_err_t config_store_save_splash_enabled(bool enabled);
+esp_err_t config_store_load_splash_enabled(bool *enabled);
+
 /* ── First-run flag (#17) ───────────────────────────────────────────────
    Set to true once the first-run wizard has been dismissed or completed.
    On a fresh NVS or after factory reset, this is false and the dash boots

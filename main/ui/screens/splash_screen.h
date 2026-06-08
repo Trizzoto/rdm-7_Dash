@@ -45,6 +45,11 @@ const char *splash_screen_get_active_name(void);
 /** Set the active splash name in the module's memory (does NOT write NVS). */
 void splash_screen_set_active_name(const char *name);
 
+/** Handle a WiFi-connection loss. If a splash is still showing (boot splash
+ *  or edit-mode), transition to the dashboard; otherwise a no-op. Must be
+ *  called on the LVGL task. */
+void splash_screen_handle_wifi_lost(void);
+
 #ifdef __cplusplus
 }
 #endif
