@@ -64,6 +64,10 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_MAJOR_TICK_WIDTH   4
 #define ARC_DEFAULT_MINOR_TICK_COLOR   0x9E9E9E
 #define ARC_DEFAULT_MAJOR_TICK_COLOR   0xFFFFFF
+#define ARC_DEFAULT_SHOW_TICK_LABELS   true
+#define ARC_DEFAULT_LABEL_GAP          10
+#define ARC_DEFAULT_TICK_LABEL_COLOR   0xFFFFFF
+#define ARC_DEFAULT_TICK_LABEL_DIVISOR 1
 #define ARC_DEFAULT_SHOW_VALUE_LINE    false
 #define ARC_DEFAULT_VALUE_LINE_WIDTH   4
 #define ARC_DEFAULT_VALUE_LINE_COLOR   0xFFFFFF
@@ -82,6 +86,7 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale);
 static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
                                lv_coord_t ow, lv_coord_t oh, bool night_active);
 static void _arc_drive_value_needle(arc_data_t *d, float value);
+static void _arc_tick_draw_cb(lv_event_t *e);
 
 /* ── Helpers: mode detection ───────────────────────────────────────────── */
 
@@ -507,6 +512,77 @@ static int16_t _value_to_angle(const arc_data_t *d, float value) {
     return (int16_t)(d->start_angle + (int32_t)(pct * (float)sweep));
 }
 
+/* Compute the value to DISPLAY at a major tick whose linear (LVGL) value is
+ * `linear_v`, given the tick's fractional position `pct` (0..100) along the
+ * sweep. Ported from widget_meter's relabel logic:
+ *   - No anchor / no reverse → the linear value is already what we want.
+ *   - Anchor and/or reverse on → recompute from pct so the printed number
+ *     matches the WARPED fill. The overlay scale is laid out linearly by
+ *     LVGL, but the fill / needle are driven through _arc_transform_value
+ *     (anchor THEN reverse). To label the warped axis we invert that order:
+ *     mirror pct first when reverse is on, then run the (forward) anchor
+ *     curve over the pct to get the value the user would read at that spot.
+ * The anchor curve here mirrors _meter_value_for_angle_pct. */
+static float _arc_value_for_tick(const arc_data_t *d, float linear_v, int32_t pct) {
+    if (!d->anchor_enabled && !d->reverse) return linear_v;
+    if (d->signal_max <= d->signal_min) return d->signal_min;
+    if (d->reverse) pct = 100 - pct;
+    if (pct <= 0)   return d->signal_min;
+    if (pct >= 100) return d->signal_max;
+    if (!d->anchor_enabled) {
+        return d->signal_min +
+               (d->signal_max - d->signal_min) * (float)pct / 100.0f;
+    }
+    int32_t ap = d->anchor_position;
+    if (ap < 0)   ap = 0;
+    if (ap > 100) ap = 100;
+    if (pct <= ap) {
+        if (ap == 0) return d->signal_min;
+        return d->signal_min +
+               (d->anchor_value - d->signal_min) * (float)pct / (float)ap;
+    }
+    int32_t hp = 100 - ap;
+    if (hp == 0) return d->signal_max;
+    return d->anchor_value +
+           (d->signal_max - d->anchor_value) * (float)(pct - ap) / (float)hp;
+}
+
+/* DRAW_PART_BEGIN hook on the overlay lv_meter — relabels the major-tick
+ * numeric labels using tick_label_divisor / value_decimals and the same
+ * anchor / reverse warp the fill uses, so the printed numbers line up with the
+ * warped fill (mirrors widget_meter's LV_METER_DRAW_PART_TICK relabel). Only
+ * touches TICK parts that carry a label; everything else passes through.
+ *
+ * The overlay scale range is the RAW signal_min..signal_max (no value_scale),
+ * so dsc->value is already the real value at the tick — no /value_scale needed
+ * (unlike the meter, whose scale is value*10^decimals). */
+static void _arc_tick_draw_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_PART_BEGIN) return;
+    arc_data_t *d = (arc_data_t *)lv_event_get_user_data(e);
+    if (!d) return;
+    lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
+    if (!dsc || dsc->type != LV_METER_DRAW_PART_TICK) return;
+    /* Only major ticks carry a label_dsc + text buffer; minor ticks have none. */
+    if (dsc->label_dsc == NULL || dsc->text == NULL) return;
+
+    /* Value the user should read at this tick (anchor / reverse aware). */
+    float shown = dsc->value;
+    if (d->anchor_enabled || d->reverse) {
+        uint16_t total = (d->minor_tick_count > 1)
+                         ? (uint16_t)(d->minor_tick_count - 1) : 1;
+        int32_t pct = (int32_t)(((int64_t)dsc->id * 100) / (int64_t)total);
+        shown = _arc_value_for_tick(d, (float)dsc->value, pct);
+    }
+
+    uint16_t div = d->tick_label_divisor > 0 ? d->tick_label_divisor : 1;
+    float display = shown / (float)div;
+    if (d->value_decimals > 0) {
+        lv_snprintf(dsc->text, 16, "%.*f", (int)d->value_decimals, display);
+    } else {
+        lv_snprintf(dsc->text, 16, "%d", (int)lroundf(display));
+    }
+}
+
 /* ── Overlay meter: ticks + value-line needle ──────────────────────────────
  * lv_arc has no tick API in LVGL v8, so when show_ticks and/or
  * show_value_line are set in STANDARD mode we drop a transparent lv_meter
@@ -565,11 +641,32 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     uint8_t major_w = d->show_ticks ? d->major_tick_width  : 0;
     uint8_t major_l = d->show_ticks ? d->major_tick_length : 0;
     lv_meter_set_scale_ticks(m, scale, mtc, minor_w, minor_l, mintc);
-    /* label_gap 0 + no tick-label font — the arc has its own value label;
-     * the overlay draws tick MARKS only, not numeric labels. */
-    lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc, 0);
-    /* Suppress numeric tick labels entirely. */
-    lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+    /* Numeric tick labels (meter-parity). When ticks AND labels are both on,
+     * draw the labels: pass the real label_gap, bake the label colour/font
+     * into LV_PART_TICKS, and register a DRAW_PART_BEGIN relabel hook that
+     * applies the divisor / decimals / anchor / reverse. Otherwise keep the
+     * marks-only behaviour: gap 0 + transparent label opacity so the overlay
+     * draws tick MARKS only (the arc has its own centered value label). */
+    bool want_labels = d->show_ticks && d->show_tick_labels;
+    if (want_labels) {
+        lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc,
+                                       d->label_gap);
+        lv_color_t tlc = NIGHT_PICK_COLOR(night_active, d->night,
+                                          tick_label_color, d->tick_label_color);
+        lv_obj_set_style_text_color(m, tlc, LV_PART_TICKS);
+        if (d->tick_label_font[0] != '\0') {
+            const lv_font_t *tfont = widget_resolve_font(d->tick_label_font);
+            if (tfont) lv_obj_set_style_text_font(m, tfont, LV_PART_TICKS);
+        }
+        /* Relabel hook — fires per tick at DRAW_PART_BEGIN. Pass the
+         * arc_data_t* so the cb can read divisor / decimals / anchor /
+         * reverse without a widget_t round-trip. */
+        lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
+    } else {
+        lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc, 0);
+        /* Suppress numeric tick labels entirely. */
+        lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+    }
 
     /* Value-line needle. */
     if (d->show_value_line) {
@@ -738,6 +835,7 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     if (d->night.has_arc_color || d->night.has_bg_arc_color ||
         d->night.has_value_color || d->night.has_redline_color ||
         d->night.has_minor_tick_color || d->night.has_major_tick_color ||
+        d->night.has_tick_label_color ||
         d->night.has_value_line_color ||
         d->night.has_arc_image || d->night.has_arc_image_full) {
         night_mode_subscribe(_arc_night_cb, w);
@@ -880,6 +978,18 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     if (d->major_tick_color.full != lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR).full)
         cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
 
+    /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
+    if (!d->show_tick_labels)
+        cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
+    if (d->label_gap != ARC_DEFAULT_LABEL_GAP)
+        cJSON_AddNumberToObject(cfg, "label_gap", d->label_gap);
+    if (d->tick_label_font[0] != '\0')
+        cJSON_AddStringToObject(cfg, "tick_label_font", d->tick_label_font);
+    if (d->tick_label_color.full != lv_color_hex(ARC_DEFAULT_TICK_LABEL_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "tick_label_color", (int)d->tick_label_color.full);
+    if (d->tick_label_divisor != ARC_DEFAULT_TICK_LABEL_DIVISOR)
+        cJSON_AddNumberToObject(cfg, "tick_label_divisor", d->tick_label_divisor);
+
     /* Value line (overlay needle) */
     if (d->show_value_line)
         cJSON_AddBoolToObject(cfg, "show_value_line", true);
@@ -914,6 +1024,7 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         NIGHT_SERIALIZE_COLOR(n, d->night, redline_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, minor_tick_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, major_tick_color);
+        NIGHT_SERIALIZE_COLOR(n, d->night, tick_label_color);
         NIGHT_SERIALIZE_COLOR(n, d->night, value_line_color);
         NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image);
         NIGHT_SERIALIZE_IMAGE(n, d->night, arc_image_full);
@@ -1055,6 +1166,27 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
     if (cJSON_IsNumber(item)) d->major_tick_color.full = (uint16_t)item->valueint;
 
+    /* Numeric tick labels */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
+    if (cJSON_IsBool(item)) d->show_tick_labels = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
+    if (cJSON_IsNumber(item)) d->label_gap = (int16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->tick_label_font, item->valuestring, sizeof(d->tick_label_font));
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_color");
+    if (cJSON_IsNumber(item)) d->tick_label_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_divisor");
+    if (cJSON_IsNumber(item)) {
+        /* tick_label_divisor is stored as uint16_t. The schema advertises a
+         * max of 100000, but that overflows uint16_t (65535) — clamp to the
+         * storage range so a too-large value can't wrap to a tiny divisor. */
+        int v = item->valueint;
+        if (v < 1)     v = 1;
+        if (v > 65535) v = 65535;
+        d->tick_label_divisor = (uint16_t)v;
+    }
+
     /* Value line (needle on the overlay meter) */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_value_line");
     if (cJSON_IsBool(item)) d->show_value_line = cJSON_IsTrue(item);
@@ -1098,6 +1230,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         NIGHT_PARSE_COLOR(night, d->night, redline_color);
         NIGHT_PARSE_COLOR(night, d->night, minor_tick_color);
         NIGHT_PARSE_COLOR(night, d->night, major_tick_color);
+        NIGHT_PARSE_COLOR(night, d->night, tick_label_color);
         NIGHT_PARSE_COLOR(night, d->night, value_line_color);
         NIGHT_PARSE_IMAGE(night, d->night, arc_image);
         NIGHT_PARSE_IMAGE(night, d->night, arc_image_full);
@@ -1293,6 +1426,7 @@ static void _arc_apply_night_mode(widget_t *w, bool active) {
     if (d->tick_meter &&
         (d->night.has_minor_tick_color ||
          d->night.has_major_tick_color ||
+         d->night.has_tick_label_color ||
          d->night.has_value_line_color)) {
         _arc_rebuild_overlay(w, active);
     }
@@ -1319,6 +1453,11 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "signal_name") == 0)    { out->str = d->signal_name;    return true; }
 	if (strcmp(name, "arc_image") == 0)      { out->str = d->arc_image;      return true; }
 	if (strcmp(name, "arc_image_full") == 0) { out->str = d->arc_image_full; return true; }
+	if (strcmp(name, "tick_label_font") == 0) { out->str = d->tick_label_font; return true; }
+	if (strcmp(name, "show_tick_labels") == 0) { out->b = d->show_tick_labels; return true; }
+	if (strcmp(name, "label_gap") == 0)      { out->i = d->label_gap;        return true; }
+	if (strcmp(name, "tick_label_divisor") == 0) { out->i = d->tick_label_divisor; return true; }
+	if (strcmp(name, "tick_label_color") == 0) { out->color = lv_color_to32(d->tick_label_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "start_angle") == 0)    { out->i = d->start_angle;      return true; }
 	if (strcmp(name, "end_angle") == 0)      { out->i = d->end_angle;        return true; }
 	if (strcmp(name, "signal_min") == 0)     { out->i = (int32_t)d->signal_min; return true; }
@@ -1407,6 +1546,37 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_arc_color(a, d->bg_arc_color, LV_PART_MAIN);
 		return true;
 	}
+	/* Tick-label fields. The label colour/font/gap are baked into the overlay
+	 * lv_meter at create time and the relabel hook reads divisor straight off
+	 * arc_data_t, so any edit rebuilds the overlay (cheap single child) to take
+	 * effect live — same path night mode uses. */
+	if (strcmp(name, "show_tick_labels") == 0) {
+		d->show_tick_labels = in->b;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "label_gap") == 0) {
+		int v = in->i; if (v < -150) v = -150; if (v > 150) v = 150;
+		d->label_gap = (int16_t)v;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_label_font") == 0 && in->str) {
+		safe_strncpy(d->tick_label_font, in->str, sizeof(d->tick_label_font));
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_label_color") == 0) {
+		d->tick_label_color = lv_color_hex(in->color);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_label_divisor") == 0) {
+		int v = in->i; if (v < 1) v = 1; if (v > 65535) v = 65535;
+		d->tick_label_divisor = (uint16_t)v;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
 	return false;
 }
 
@@ -1468,6 +1638,13 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->major_tick_width   = ARC_DEFAULT_MAJOR_TICK_WIDTH;
     d->minor_tick_color   = lv_color_hex(ARC_DEFAULT_MINOR_TICK_COLOR);
     d->major_tick_color   = lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR);
+
+    /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
+    d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
+    d->label_gap          = ARC_DEFAULT_LABEL_GAP;
+    d->tick_label_color   = lv_color_hex(ARC_DEFAULT_TICK_LABEL_COLOR);
+    d->tick_label_divisor = ARC_DEFAULT_TICK_LABEL_DIVISOR;
+    /* tick_label_font zeroed by calloc. */
 
     /* Value-line (overlay needle) defaults — OFF by default. */
     d->show_value_line    = ARC_DEFAULT_SHOW_VALUE_LINE;

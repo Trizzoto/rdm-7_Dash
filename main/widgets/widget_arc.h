@@ -21,6 +21,7 @@ typedef struct {
      * _arc_apply_night_mode. */
     NIGHT_FIELD_COLOR(minor_tick_color)
     NIGHT_FIELD_COLOR(major_tick_color)
+    NIGHT_FIELD_COLOR(tick_label_color)
     NIGHT_FIELD_COLOR(value_line_color)
     NIGHT_FIELD_IMAGE(arc_image, 64)
     NIGHT_FIELD_IMAGE(arc_image_full, 64)
@@ -124,6 +125,21 @@ typedef struct {
     uint8_t    major_tick_width;        /* default: 4  */
     lv_color_t minor_tick_color;        /* default: 0x9E9E9E */
     lv_color_t major_tick_color;        /* default: 0xFFFFFF */
+
+    /* ── Numeric tick labels (meter-parity). Drawn by the OVERLAY lv_meter at
+     * its major ticks. lv_meter bakes the label colour/font into LV_PART_TICKS
+     * at create time, so a label-colour night override rebuilds the overlay
+     * (same as the tick-mark colours). label_gap is the major-tick→label
+     * distance passed to lv_meter_set_scale_major_ticks. The relabel hook
+     * (_arc_tick_draw_cb) rewrites the major-tick text using tick_label_divisor
+     * + value_decimals (REUSED from the value-text overlay) and the same
+     * anchor/reverse warp the fill uses. Default ON (matches the meter), so
+     * an arc that enables ticks gets labels unless they're explicitly hidden. */
+    bool       show_tick_labels;        /* default: true */
+    int16_t    label_gap;               /* default: 10  (range −150..+150) */
+    char       tick_label_font[32];     /* default: "" — empty = LVGL default */
+    lv_color_t tick_label_color;        /* default: 0xFFFFFF */
+    uint16_t   tick_label_divisor;      /* default: 1 — divides displayed value */
 
     /* ── Value line (needle) — reuses the SAME overlay lv_meter. When set
      * (even if show_ticks is off) the overlay meter is created and an

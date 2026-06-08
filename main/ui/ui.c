@@ -12,6 +12,7 @@
 #include "ui_Screen3.h"
 #include "storage/config_store.h"
 #include "ui_styles.h"
+#include "driver/ledc.h"   /* LEDC backlight PWM fade for the splash-disabled boot path */
 
 ///////////////////// VARIABLES ////////////////////
 
@@ -144,7 +145,54 @@ void ui_init(void)
     if (splash_enabled) {
         show_splash_screen();
     } else {
+        /* Graceful backlight fade-in for the disabled-splash boot path.
+         *
+         * We want the dashboard to ease in rather than pop on at full
+         * brightness, but a full-screen LVGL alpha fade over a real layout
+         * (many widgets, meters, etc.) is far too laggy. Instead we fade the
+         * LCD BACKLIGHT (hardware LEDC PWM on GPIO16) up from black: the panel
+         * renders its first frame while dark, then the PWM duty ramps to the
+         * target over ~450 ms. This is essentially free — the GPU/compositor
+         * does nothing extra, the LEDC peripheral handles the ramp in hardware.
+         *
+         * main.c sets the backlight to full (8191, 13-bit) at boot, and
+         * device_settings.c later writes the user's brightness with plain
+         * ledc_set_duty(). Those instant writes still win after this animation
+         * (they overwrite the duty directly), so this only affects the boot ramp.
+         */
+
+        /* 1) Capture the intended brightness, then clamp defensively. A read
+         *    error (LEDC_ERR_DUTY == -1, i.e. 0xFFFFFFFF as uint32) or any
+         *    out-of-range value falls back to full duty. */
+        uint32_t bl_target = ledc_get_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        if (bl_target == 0 || bl_target > 8191) {
+            bl_target = 8191;
+        }
+
+        /* 2) Go dark instantly so the first frame is painted unseen. */
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+        /* 3) Build and show the dashboard. */
         ui_Screen3_screen_init();
         lv_scr_load(ui_Screen3);
+
+        /* 4) Render the first frame WHILE still dark. ui_init runs on the LVGL
+         *    context (same as the splash path, which already renders here), so
+         *    a synchronous refresh is safe. */
+        lv_refr_now(NULL);
+
+        /* 5) Install the LEDC fade service exactly once (guarded so a second
+         *    boot-path entry can't double-install the ISR/service). */
+        static bool s_bl_fade_installed = false;
+        if (!s_bl_fade_installed) {
+            ledc_fade_func_install(0);
+            s_bl_fade_installed = true;
+        }
+
+        /* 6) Ramp up over ~450 ms, non-blocking: LEDC_FADE_NO_WAIT returns
+         *    immediately so boot continues while the hardware finishes the fade. */
+        ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, bl_target, 450);
+        ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_NO_WAIT);
     }
 }
