@@ -696,6 +696,46 @@ static const httpd_uri_t protocols_uri = {
     .uri = "/api/obd2/protocols", .method = HTTP_GET,
     .handler = _protocols_handler, .user_ctx = NULL};
 
+/* GET /api/obd2/pids — current polled-PID set.
+ *
+ * Returns the live "what is OBD2 actively polling right now?" list so the
+ * web Setup-mode OBD2 stat ("3 PIDs polled" / "Not configured") doesn't
+ * silently 404 and read as Not Configured even when polling is on.
+ *
+ * Response:
+ *   { "pids": [
+ *       {"service": 1,  "pid": 12},   // M01 PID 0x0C (RPM)
+ *       {"service": 33, "pid": 128},  // M21 PID 0x80 (Toyota engine block)
+ *       ...
+ *   ] }
+ */
+static esp_err_t _pids_handler(httpd_req_t *req) {
+    uint32_t enabled[OBD2_MAX_ENABLED];
+    uint8_t  n = obd2_get_enabled(enabled, OBD2_MAX_ENABLED);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_AddArrayToObject(root, "pids");
+    for (uint8_t i = 0; i < n; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "service", obd2_decode_service(enabled[i]));
+        cJSON_AddNumberToObject(item, "pid",     obd2_decode_pid(enabled[i]));
+        cJSON_AddItemToArray(arr, item);
+    }
+
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return r;
+}
+
+static const httpd_uri_t pids_uri = {
+    .uri = "/api/obd2/pids", .method = HTTP_GET,
+    .handler = _pids_handler, .user_ctx = NULL};
+
 void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
     REGISTER_URI(server, &clear_uri);
@@ -703,4 +743,5 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &ecuname_uri);
     REGISTER_URI(server, &snapshot_uri);
     REGISTER_URI(server, &protocols_uri);
+    REGISTER_URI(server, &pids_uri);
 }

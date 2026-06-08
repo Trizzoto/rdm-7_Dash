@@ -11,6 +11,7 @@
 #include "system/night_mode.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
+#include <math.h>
 #include "signal.h"
 #include "esp_log.h"
 #include "lvgl.h"
@@ -18,6 +19,7 @@
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "widget_types.h"
+#include "data/channel_manager.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -138,57 +140,137 @@ static void _meter_inv_shadow(lv_obj_t *m, lv_meter_scale_t *scale,
 	lv_obj_invalidate_area(m, &a);
 }
 
+/* Forward decl: _meter_apply_channel re-subscribes this callback when a
+ * channel's source index changes; the definition lives further down. */
+static void _meter_on_signal(float value, bool is_stale, void *user_data);
+
+/* ── v14 Channel binding ─────────────────────────────────────────────
+ * When md->channel_id is non-empty, the meter pulls signal_name, min,
+ * max, redline_threshold, and redline_color from the bound channel.
+ * The widget continues to use its own LIVE FIELDS at render time
+ * (md->min, md->max, etc.) — _meter_apply_channel() just copies values
+ * from channel into widget fields before signal subscription happens.
+ *
+ * Per-widget overrides for these fields are stored as md->X_override
+ * (Phase 2 work; for v1 the channel value always wins when bound).
+ *
+ * On channel-changed events (user edits in Channels tab), we re-apply
+ * and invalidate. */
+static void _meter_apply_channel(widget_t *w) {
+	if (!w) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md) return;
+	channel_t *c = (channel_t *)md->channel;
+	if (!c) return;
+
+	/* Pull data semantics from the channel. */
+	safe_strncpy(md->signal_name, c->signal_name, sizeof(md->signal_name));
+	/* Re-point the live signal subscription when the channel's source index
+	 * changes. The signal registry keys subscribers by the index they attached
+	 * to, so a bare index swap would leave _meter_on_signal bound to the OLD
+	 * signal and the needle would freeze when a channel source is re-bound at
+	 * runtime. Mirror the inspector rebind path (unsubscribe old → subscribe
+	 * new); safe here because channel-changed runs under the LVGL mutex.
+	 * Guarded on w->root: pre-create (from_json) this just records the index
+	 * and lets _meter_create do the single create-time subscribe — re-subscribe
+	 * only matters once the widget is live, and signal_subscribe does not dedupe
+	 * so subscribing here too would double-bind the callback. */
+	int16_t new_idx = c->signal_index;
+	if (w->root && new_idx != md->signal_index) {
+		if (md->signal_index >= 0)
+			signal_unsubscribe(md->signal_index, _meter_on_signal, w);
+		md->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _meter_on_signal, w);
+	} else {
+		md->signal_index = new_idx;
+	}
+	md->min = c->min;
+	md->max = c->max;
+	/* Decimals drive the integer LVGL scale factor: a 0.0..2.0 boost channel
+	 * with decimals=1 maps to an internal 0..20 meter scale, giving 21 needle
+	 * steps instead of 3. Tick labels divide back by value_scale. */
+	md->value_decimals = (c->decimals > 3) ? 3 : c->decimals;
+	md->value_scale = 1;
+	for (uint8_t k = 0; k < md->value_decimals; k++) md->value_scale *= 10;
+	/* Channel high_warn → widget redline (the meter's "redline" concept
+	 * maps to "danger zone above the high threshold"). */
+	if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+		md->redline_enabled = true;
+		md->redline_threshold = c->high_warn;
+	} else {
+		md->redline_enabled = false;
+	}
+	/* Redline colour is widget-owned (Widget settings) — never driven by the
+	 * channel. Only threshold/range/signal sync from the channel. */
+}
+
+static void _meter_on_channel_changed(channel_t *c, void *user_data) {
+	(void)c;
+	widget_t *w = (widget_t *)user_data;
+	if (!w) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md) return;
+
+	_meter_apply_channel(w);
+
+	/* Threshold/range edits invalidate the entire meter (cheap relative
+	 * to a user edit — happens at human speed, not per-frame). */
+	if (md->meter && lv_obj_is_valid(md->meter)) lv_obj_invalidate(md->meter);
+	if (md->night_meter && lv_obj_is_valid(md->night_meter))
+		lv_obj_invalidate(md->night_meter);
+}
+
 /* Inverse of _meter_apply_anchor. Given an angular position 0..100% along
  * the sweep, return the data value the user should see at that point.
  * Used to relabel major tick texts so the numbers shown match the warped
  * needle position. (Linear pass-through when anchor is disabled.) */
-static int32_t _meter_value_for_angle_pct(const meter_data_t *md, int32_t pct) {
+static float _meter_value_for_angle_pct(const meter_data_t *md, int32_t pct) {
 	if (md->max <= md->min) return md->min;
 	if (pct <= 0)   return md->min;
 	if (pct >= 100) return md->max;
 	if (!md->anchor_enabled) {
-		return md->min + (int32_t)(((int64_t)(md->max - md->min) * pct) / 100);
+		return md->min + (md->max - md->min) * (float)pct / 100.0f;
 	}
 	int32_t ap = md->anchor_position;
 	if (ap < 0)   ap = 0;
 	if (ap > 100) ap = 100;
 	if (pct <= ap) {
 		if (ap == 0) return md->min;
-		return md->min + (int32_t)(((int64_t)(md->anchor_value - md->min)
-		                  * pct) / ap);
+		return md->min + (md->anchor_value - md->min) * (float)pct / (float)ap;
 	}
 	int32_t hp = 100 - ap;
 	if (hp == 0) return md->max;
-	return md->anchor_value + (int32_t)(((int64_t)(md->max - md->anchor_value)
-	                          * (pct - ap)) / hp);
+	return md->anchor_value + (md->max - md->anchor_value)
+	       * (float)(pct - ap) / (float)hp;
 }
 
 /* Apply the anchor curve to a clamped raw value, returning the value to feed
  * to lv_meter_set_indicator_value on a linear scale spanning [min, max].
  * Maps raw `v` so that `anchor_value` lands at `anchor_position`% of the
  * sweep — two linear segments. No-op when anchor_enabled is false. */
-static int32_t _meter_apply_anchor(const meter_data_t *md, int32_t v) {
+static float _meter_apply_anchor(const meter_data_t *md, float v) {
 	if (!md->anchor_enabled) return v;
-	int32_t lo = md->min;
-	int32_t hi = md->max;
+	float lo = md->min;
+	float hi = md->max;
 	if (hi <= lo) return v;
-	int32_t a = md->anchor_value;
+	float a = md->anchor_value;
 	if (a <= lo || a >= hi) return v;
 	int32_t pos = md->anchor_position;
 	if (pos <= 0)   pos = 0;
 	if (pos >= 100) pos = 100;
-	int32_t range  = hi - lo;
-	int32_t pivot  = lo + (range * pos) / 100;
+	float range  = hi - lo;
+	float pivot  = lo + (range * (float)pos) / 100.0f;
 	if (v <= a) {
 		/* Map [lo, a] -> [lo, pivot] linearly. */
-		int32_t span = a - lo;
-		if (span <= 0) return lo;
-		return lo + ((int64_t)(v - lo) * (pivot - lo)) / span;
+		float span = a - lo;
+		if (span <= 0.0f) return lo;
+		return lo + (v - lo) * (pivot - lo) / span;
 	} else {
 		/* Map [a, hi] -> [pivot, hi] linearly. */
-		int32_t span = hi - a;
-		if (span <= 0) return hi;
-		return pivot + ((int64_t)(v - a) * (hi - pivot)) / span;
+		float span = hi - a;
+		if (span <= 0.0f) return hi;
+		return pivot + (v - a) * (hi - pivot) / span;
 	}
 }
 
@@ -197,16 +279,20 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (!md || !w->root || !lv_obj_is_valid(w->root)) return;
 	if (!md->meter || !md->needle) return;
-	int32_t v;
+	/* Work in float display units, then scale to the meter's integer LVGL
+	 * domain (value_scale = 10^decimals) at the very end so fractional ranges
+	 * keep a smooth needle. */
+	float fv;
 	if (is_stale) {
-		v = md->min;
+		fv = md->min;
 	} else {
-		v = (int32_t)value;
-		if (v < md->min) v = md->min;
-		if (v > md->max) v = md->max;
+		fv = value;
+		if (fv < md->min) fv = md->min;
+		if (fv > md->max) fv = md->max;
 	}
-	v = _meter_apply_anchor(md, v);
-	if (md->reverse) v = md->max + md->min - v;
+	fv = _meter_apply_anchor(md, fv);
+	if (md->reverse) fv = md->max + md->min - fv;
+	int32_t v = lroundf(fv * (float)md->value_scale);
 	/* Only drive whichever meter is currently visible. Updating the hidden
 	 * sibling costs an LVGL indicator recompute + invalidation-mark that
 	 * nobody ever sees — with meters bound to fast-moving sim signals
@@ -556,30 +642,42 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 		 * reverse, then run through _meter_value_for_angle_pct (which
 		 * handles the anchor curve, falling back to linear pass-through
 		 * when anchor is off). */
-		int32_t shown_value = dsc->value;
+		/* shown_display is the value in REAL display units. LVGL's dsc->value
+		 * lives in the scaled integer domain (scale range = min*value_scale),
+		 * so divide it back; the anchor/reverse relabel path already returns
+		 * display units. */
 		bool needs_relabel = md->anchor_enabled || md->reverse;
+		float shown_display;
 		if (needs_relabel) {
 			uint16_t total = (md->minor_tick_count > 1)
 			                 ? (uint16_t)(md->minor_tick_count - 1) : 1;
 			int32_t pct = (int32_t)(((int64_t)dsc->id * 100) / (int64_t)total);
 			if (md->reverse) pct = 100 - pct;
-			shown_value = _meter_value_for_angle_pct(md, pct);
+			shown_display = _meter_value_for_angle_pct(md, pct);
+		} else {
+			shown_display = (float)dsc->value / (float)md->value_scale;
 		}
 		/* Compose the label text. Rewrite when:
+		 *   - the scale carries decimals (value_scale > 1), OR
 		 *   - anchor/reverse warped the linear LVGL value, OR
 		 *   - tick_label_divisor scales the display (e.g. 1000 → "6"
 		 *     instead of "6000" on a tach).
-		 * Tick recolor below uses the un-divided shown_value because
-		 * redline_threshold is in real value space. */
+		 * Tick recolor below uses shown_display because redline_threshold is
+		 * in real value space. */
 		uint16_t div = md->tick_label_divisor > 0 ? md->tick_label_divisor : 1;
-		if ((needs_relabel || div > 1) &&
-		    dsc->label_dsc != NULL && dsc->text != NULL) {
-			int32_t display_v = (div > 1) ? (shown_value / (int32_t)div)
-			                              : shown_value;
-			lv_snprintf(dsc->text, 16, "%d", (int)display_v);
+		if (dsc->label_dsc != NULL && dsc->text != NULL) {
+			if (md->value_scale > 1) {
+				/* Fractional scale → print the real value with its decimals. */
+				lv_snprintf(dsc->text, 16, "%.*f", md->value_decimals,
+				            shown_display / (float)div);
+			} else if (needs_relabel || div > 1) {
+				int32_t iv = (int32_t)lroundf(shown_display);
+				int32_t display_v = (div > 1) ? (iv / (int32_t)div) : iv;
+				lv_snprintf(dsc->text, 16, "%d", (int)display_v);
+			}
 		}
 		if (md->redline_enabled && md->redline_recolor_ticks &&
-		    shown_value >= md->redline_threshold) {
+		    shown_display >= md->redline_threshold) {
 			if (dsc->line_dsc)  dsc->line_dsc->color  = md->redline_color;
 			if (dsc->label_dsc) dsc->label_dsc->color = md->redline_color;
 		}
@@ -839,7 +937,9 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 		if (ndsc) {
 			if (md->needle_angle_offset != 0) {
 				lv_meter_scale_t *ns = lv_meter_add_scale(m);
-				lv_meter_set_scale_range(m, ns, md->min, md->max, angle_range,
+				lv_meter_set_scale_range(m, ns,
+				                         lroundf(md->min * (float)md->value_scale),
+				                         lroundf(md->max * (float)md->value_scale), angle_range,
 				                         (int32_t)(md->start_angle + md->needle_angle_offset));
 				lv_meter_set_scale_ticks(m, ns, 0, 0, 0, lv_color_black());
 				*out_needle_scale = ns;
@@ -870,18 +970,19 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	 * same anchor + invert transforms _meter_on_signal does, so toggling
 	 * "Invert Direction" on a meter with no live signal still snaps the
 	 * needle to the correct end of the sweep. */
-	int32_t init_v = md->min;
+	float init_f = md->min;
 	if (md->signal_index >= 0) {
 		signal_t *sig = signal_get_by_index((uint16_t)md->signal_index);
 		if (sig && !sig->is_stale) {
 			float fv = sig->current_value;
-			if (fv < (float)md->min) fv = (float)md->min;
-			if (fv > (float)md->max) fv = (float)md->max;
-			init_v = (int32_t)fv;
+			if (fv < md->min) fv = md->min;
+			if (fv > md->max) fv = md->max;
+			init_f = fv;
 		}
 	}
-	init_v = _meter_apply_anchor(md, init_v);
-	if (md->reverse) init_v = md->max + md->min - init_v;
+	init_f = _meter_apply_anchor(md, init_f);
+	if (md->reverse) init_f = md->max + md->min - init_f;
+	int32_t init_v = lroundf(init_f * (float)md->value_scale);
 	lv_meter_set_indicator_value(m, needle, init_v);
 
 	/* Snap the shadow indicator (if present) to the same initial value so
@@ -977,8 +1078,8 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(m, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (arc) {
-		lv_meter_set_indicator_start_value(m, arc, md->min);
-		lv_meter_set_indicator_end_value(m, arc, md->min);
+		lv_meter_set_indicator_start_value(m, arc, lroundf(md->min * (float)md->value_scale));
+		lv_meter_set_indicator_end_value(m, arc, lroundf(md->min * (float)md->value_scale));
 	}
 
 	/* Snapshot becomes the meter's own bg image. LVGL anchors bg_img
@@ -1052,7 +1153,10 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	 * land at the start position and min land at the end of the sweep, so
 	 * a Top-start meter with reverse=true ends up with 0 at the bottom and
 	 * max at the top. Mirrors a Bottom-start meter to face it. */
-	lv_meter_set_scale_range(m, scale, md->min, md->max, angle_range, (int32_t)md->start_angle);
+	lv_meter_set_scale_range(m, scale,
+	                         lroundf(md->min * (float)md->value_scale),
+	                         lroundf(md->max * (float)md->value_scale),
+	                         angle_range, (int32_t)md->start_angle);
 	uint8_t mtc = md->minor_tick_count < 2 ? 2 : md->minor_tick_count;
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 	/* show_ticks=false zeroes the widths so LVGL draws no tick marks. Range
@@ -1082,21 +1186,21 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	 * needle goes through. With reverse on the high real values land at
 	 * low LVGL values, so the arc covers [min, mirror_of(threshold)]. */
 	if (md->redline_enabled && md->redline_show_arc) {
-		int32_t arc_thresh = _meter_apply_anchor(md, md->redline_threshold);
+		float arc_thresh = _meter_apply_anchor(md, md->redline_threshold);
 		if (arc_thresh < md->min) arc_thresh = md->min;
 		if (arc_thresh > md->max) arc_thresh = md->max;
-		int32_t arc_start_v = arc_thresh;
-		int32_t arc_end_v   = md->max;
+		float arc_start_f = arc_thresh;
+		float arc_end_f   = md->max;
 		if (md->reverse) {
-			arc_start_v = md->min;
-			arc_end_v   = md->max + md->min - arc_thresh;
+			arc_start_f = md->min;
+			arc_end_f   = md->max + md->min - arc_thresh;
 		}
 		lv_meter_indicator_t *arc = lv_meter_add_arc(m, scale,
 			md->redline_arc_width > 0 ? md->redline_arc_width : 6,
 			md->redline_color, md->redline_arc_r_mod);
 		if (arc) {
-			lv_meter_set_indicator_start_value(m, arc, arc_start_v);
-			lv_meter_set_indicator_end_value(m, arc, arc_end_v);
+			lv_meter_set_indicator_start_value(m, arc, lroundf(arc_start_f * (float)md->value_scale));
+			lv_meter_set_indicator_end_value(m, arc, lroundf(arc_end_f * (float)md->value_scale));
 		}
 		/* Stash the arc pointer so the static-tick flatten path can
 		 * collapse it to zero-length after snapshot. */
@@ -1219,6 +1323,15 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	if (md->signal_index >= 0)
 		signal_subscribe(md->signal_index, _meter_on_signal, w);
 
+	/* Subscribe to channel-changed events when bound. Fires on user
+	 * edits in the Channels tab (threshold tweaks, range changes,
+	 * signal rebinding). Listener pattern works for both v14-bound
+	 * widgets and legacy widgets that recorded themselves at load. */
+	if (md->channel) {
+		channel_manager_subscribe((channel_t *)md->channel,
+		                           _meter_on_channel_changed, w);
+	}
+
 	/* Subscribe rules (safe no-op if no rules defined) */
 	widget_rules_subscribe(w);
 
@@ -1266,6 +1379,12 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "end_angle", md->end_angle);
 	if (md->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", md->signal_name);
+	/* v14 channel binding — only emit when the widget loaded with an
+	 * explicit `channel` field. Legacy widgets keep emitting just
+	 * signal_name + min/max/redline so a downgrade to v13 firmware
+	 * still reads them correctly. */
+	if (md->channel_id[0] != '\0')
+		cJSON_AddStringToObject(cfg, "channel", md->channel_id);
 
 	/* Appearance overrides — only serialize non-default values */
 	if (md->minor_tick_count != 21)
@@ -1425,9 +1544,9 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 			md->value_idx = idx;
 	}
 	if (cJSON_IsNumber(min_item))
-		md->min = (int32_t)min_item->valueint;
+		md->min = (float)min_item->valuedouble;
 	if (cJSON_IsNumber(max_item))
-		md->max = (int32_t)max_item->valueint;
+		md->max = (float)max_item->valuedouble;
 	if (cJSON_IsNumber(sa_item))
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
@@ -1436,6 +1555,12 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(sig_item) && sig_item->valuestring) {
 		safe_strncpy(md->signal_name, sig_item->valuestring, sizeof(md->signal_name));
 	}
+
+	/* ── v14 channel binding (deferred until after all other fields
+	 * are parsed below, so the legacy-widget migrator sees the full
+	 * widget config before populating the channel). The handler block
+	 * is placed after _meter_from_json's redline parse so we can pull
+	 * redline_threshold/redline_color into the channel correctly. */
 
 	/* Resolve signal name → index */
 	if (md->signal_name[0] != '\0')
@@ -1548,7 +1673,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
 	if (cJSON_IsBool(ap)) md->redline_enabled = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_threshold");
-	if (cJSON_IsNumber(ap)) md->redline_threshold = (int32_t)ap->valueint;
+	if (cJSON_IsNumber(ap)) md->redline_threshold = (float)ap->valuedouble;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_color");
 	if (cJSON_IsNumber(ap)) md->redline_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "redline_show_arc");
@@ -1564,7 +1689,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
 	if (cJSON_IsBool(ap)) md->anchor_enabled = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
-	if (cJSON_IsNumber(ap)) md->anchor_value = (int32_t)ap->valueint;
+	if (cJSON_IsNumber(ap)) md->anchor_value = (float)ap->valuedouble;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
 	if (cJSON_IsNumber(ap)) md->anchor_position = (uint8_t)ap->valueint;
 
@@ -1588,6 +1713,55 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		NIGHT_PARSE_IMAGE(night, md->night, needle_image_name);
 		NIGHT_PARSE_IMAGE(night, md->night, bg_image_name);
 	}
+
+	/* ── v14 channel binding ──────────────────────────────────────
+	 * Two cases:
+	 *   1. Layout has a `channel` field — v14 layout. Look up the
+	 *      channel and snapshot its values into the widget's live
+	 *      fields. Listener subscription happens later in _meter_create
+	 *      once w->root exists.
+	 *   2. No `channel` field but signal_name + min/max/redline are
+	 *      present — v13 layout. Self-report the widget's data to the
+	 *      channel registry via channel_manager_record_legacy_widget()
+	 *      so the user's existing redlines and ranges auto-populate the
+	 *      channels.json on first v14 boot. Widget continues running on
+	 *      its legacy fields. */
+	/* Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal
+	 * field — handles the cross-layout-switch case where resolve_signals
+	 * cleared a stale binding before widgets load. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(md->channel_id, ch_item->valuestring, sizeof(md->channel_id));
+	channel_t *bound_c = md->channel_id[0] ? channel_manager_get(md->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		md->channel = bound_c;
+		/* Apply channel values (signal, range, redline, decimal scale) to the
+		 * widget's live fields via the shared helper so value_scale/decimals
+		 * are snapshotted too. Redline colour stays widget-owned. */
+		_meter_apply_channel(w);
+	} else if (md->signal_name[0] != '\0') {
+		/* v13 legacy path — self-report data to populate the channel
+		 * registry. First-write-wins inside channel_manager so later
+		 * widgets don't clobber earlier ones. */
+		legacy_widget_data_t legacy = {
+			.signal_name = md->signal_name,
+			.min = md->min,
+			.max = md->max,
+			.high_warn = md->redline_enabled ? md->redline_threshold : INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = md->redline_enabled ? lv_color_to32(md->redline_color) & 0xFFFFFF
+			                                       : CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) {
+			/* Cache the pointer so user edits in Channels tab can
+			 * propagate even though the widget loaded legacy. The
+			 * channel_id field stays empty — to_json keeps emitting
+			 * legacy format on save so a v13 dash can still read it. */
+			md->channel = c;
+		}
+	}
 }
 
 static void _meter_destroy(widget_t *w) {
@@ -1596,6 +1770,11 @@ static void _meter_destroy(widget_t *w) {
 	meter_data_t *md = (meter_data_t *)w->type_data;
 	if (md && md->signal_index >= 0)
 		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
+	if (md && md->channel) {
+		channel_manager_unsubscribe((channel_t *)md->channel,
+		                             _meter_on_channel_changed, w);
+		md->channel = NULL;
+	}
 	night_mode_unsubscribe(_meter_night_cb, w);
 	widget_rules_free(w);
 	/* Deleting w->root cascades to children (container case kills both day +
@@ -1748,15 +1927,15 @@ static void _meter_apply_night_mode(widget_t *w, bool active) {
 		 * swap is visually seamless. */
 		signal_t *sig = (md->signal_index >= 0)
 			? signal_get_by_index((uint16_t)md->signal_index) : NULL;
-		int32_t v = md->min;
+		float fv = md->min;
 		if (sig && !sig->is_stale) {
-			float fv = sig->current_value;
-			if (fv < (float)md->min) fv = (float)md->min;
-			if (fv > (float)md->max) fv = (float)md->max;
-			v = (int32_t)fv;
+			fv = sig->current_value;
+			if (fv < md->min) fv = md->min;
+			if (fv > md->max) fv = md->max;
 		}
-		v = _meter_apply_anchor(md, v);
-		if (md->reverse) v = md->max + md->min - v;
+		fv = _meter_apply_anchor(md, fv);
+		if (md->reverse) fv = md->max + md->min - fv;
+		int32_t v = lroundf(fv * (float)md->value_scale);
 
 		if (active) {
 			if (md->night_needle)
@@ -2097,6 +2276,8 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->value_idx = (value_idx < 13) ? value_idx : 0;
 	md->min = 0;
 	md->max = 100;
+	md->value_scale = 1;        /* 10^decimals; overridden when a channel binds */
+	md->value_decimals = 0;
 
 	md->start_angle = 135;
 	md->end_angle = 45;

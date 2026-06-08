@@ -53,9 +53,150 @@ static const char *const ECU_SIGNAL_NAMES[ECU_SIG__COUNT] = {
     "LATERAL_G",
 };
 
+/* Parallel table: which canonical channel each ECU signal slot feeds.
+ * This is the bridge between the dash's legacy signal-name vocabulary
+ * (RPM, MAP, THROTTLE, …) and the v14 canonical channel registry
+ * (rpm, manifold_pressure, throttle_position, …). NULL = no canonical
+ * mapping (signal isn't represented in the canonical list yet).
+ *
+ * Used by channel_manager_record_legacy_widget() to auto-bind widgets
+ * whose signal_name doesn't case-match a canonical id directly.
+ *
+ * Order matches ECU_SIGNAL_NAMES exactly. */
+static const char *const ECU_SIGNAL_CANONICAL[ECU_SIG__COUNT] = {
+    "rpm",                        /* RPM */
+    "manifold_pressure",          /* MAP — absolute pressure */
+    "throttle_position",          /* THROTTLE */
+    "coolant_temp",               /* COOLANT_TEMP */
+    "intake_air_temp",            /* INTAKE_AIR_TEMP */
+    "lambda_bank1",               /* LAMBDA — primary O2 sensor */
+    "oil_temp",                   /* OIL_TEMP */
+    "oil_pressure",               /* OIL_PRESSURE */
+    "fuel_pressure",              /* FUEL_PRESSURE */
+    "ignition_timing",            /* IGNITION */
+    "vehicle_speed",              /* VEHICLE_SPEED */
+    "gear",                       /* GEAR */
+    "battery_voltage",            /* BATTERY_VOLTAGE */
+    "short_term_fuel_trim",       /* FUEL_TRIM — short-term by convention */
+    "exhaust_gas_temp_avg",       /* EGT — single-probe avg */
+    "boost_pressure",             /* BOOST */
+    "fuel_level",                 /* FUEL_LEVEL */
+    "handbrake",                  /* PARK_BRAKE */
+    "yaw_rate",                   /* YAW_RATE */
+    "lateral_g",                  /* LATERAL_G */
+};
+
+/* Explicit alias table: derived preset signal names that are NOT an exact
+ * ECU slot name but unambiguously denote a canonical channel. This
+ * REPLACES the old fuzzy "_<SLOT>" suffix matcher, which produced
+ * data-corrupting false positives — e.g. "REV-LIMIT RPM" → "REV_LIMIT_RPM"
+ * suffix-matched "_RPM" and got renamed to "RPM", clobbering the real
+ * engine-RPM signal's decode (last-write-wins). The suffix heuristic
+ * could not distinguish "ENGINE_RPM" (a qualified engine RPM, correct)
+ * from "REV_LIMIT_RPM" / "LAUNCH_END_RPM" (setpoints, wrong) from string
+ * shape alone — so every alias is now spelled out.
+ *
+ * Keys are the UPPER_SNAKE form produced by the web editor's / wizard's
+ * label→signal-name converter (uppercase, runs of non-alnum → single "_",
+ * trailing "_" trimmed). Matched against the underscore-normalized name.
+ *
+ * EXHAUSTIVE across the current preconfig catalog (verified per-ECU). When
+ * adding a new ECU/DBC, add its non-exact signal names here rather than
+ * relying on any heuristic. Anything NOT listed (and not an exact slot
+ * name) is intentionally left unmapped — better an unbound channel the
+ * user can assign than a confidently-wrong auto-binding. */
+typedef struct { const char *derived; const char *canonical; } ecu_alias_t;
+static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
+    /* RPM — only these qualified forms; rev-limit/launch-end RPM are
+     * deliberately excluded (they are setpoints, not live engine RPM). */
+    { "ENGINE_RPM",        "rpm" },                 /* Ford BA/BF, Ford FG, Toyota GT86 */
+    { "ENGINE_SPEED",      "rpm" },                 /* Link ECU — its only RPM label */
+
+    /* Ignition advance/timing — slot is bare "IGNITION", these are the
+     * common descriptive forms. */
+    { "IGNITION_ANGLE",    "ignition_timing" },     /* ECU Master, MegaSquirt, MaxxECU */
+    { "IGNITION_TIMING",   "ignition_timing" },     /* Link ECU */
+
+    /* Manifold pressure — slot is "MAP". */
+    { "MANIFOLD_PRESSURE", "manifold_pressure" },   /* Haltech */
+    { "MAP_KPA",           "manifold_pressure" },   /* ECU Master, MegaSquirt "MAP (kPa)" */
+
+    /* Throttle — slot is bare "THROTTLE". */
+    { "THROTTLE_POSITION", "throttle_position" },   /* Haltech */
+
+    /* Battery — slot is "BATTERY_VOLTAGE"; "VOLT" is the common short form. */
+    { "BATTERY_VOLT",      "battery_voltage" },      /* Haltech, ECU Master, MegaSquirt */
+
+    /* Gear — slot is bare "GEAR". */
+    { "GEAR_POSITION",     "gear" },                 /* Link ECU */
+    { "GEAR_BITMASK",      "gear" },                 /* Ford FG */
+
+    /* Pressures carried with a unit suffix block the bare-slot exact match. */
+    { "OIL_PRESSURE_KPA",  "oil_pressure" },         /* ECU Master */
+    { "FUEL_PRESSURE_KPA", "fuel_pressure" },        /* ECU Master */
+
+    /* MaxxECU's "Total Fuel Trim" is the fuel-trim quantity its preset
+     * binds to the FUEL_TRIM slot. Explicit so we don't have to whitelist
+     * the ambiguous "TOTAL" prefix globally. */
+    { "TOTAL_FUEL_TRIM",   "short_term_fuel_trim" }, /* MaxxECU 1.2 / 1.3 */
+
+    /* Barometric — no ECU slot exists; binds the canonical channel
+     * directly (no rename, since there's no legacy slot name). */
+    { "BARO_PRESSURE",     "barometric_pressure" },  /* Ford, MaxxECU, Link */
+};
+static const size_t ECU_SIGNAL_ALIASES_COUNT =
+    sizeof(ECU_SIGNAL_ALIASES) / sizeof(ECU_SIGNAL_ALIASES[0]);
+
+const char *ecu_signal_name_to_canonical(const char *signal_name) {
+    if (!signal_name || signal_name[0] == '\0') return NULL;
+
+    /* 1. Direct case-sensitive match — fast path for standard preset names. */
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_NAMES[i], signal_name) == 0)
+            return ECU_SIGNAL_CANONICAL[i];
+    }
+
+    /* 2. Normalized match — strip leading and trailing underscores. Catches
+     *    user-typed labels normalized to signal names by the web editor's
+     *    label-to-signal converter, which leaves trailing underscores when
+     *    the label has trailing whitespace/punctuation (e.g. "Fuel Level "
+     *    → "FUEL_LEVEL_" and "Fuel Level - " → "FUEL_LEVEL__"). */
+    char norm[64];
+    size_t ni = 0, si = 0;
+    while (signal_name[si] == '_') si++;
+    while (signal_name[si] && ni + 1 < sizeof(norm)) norm[ni++] = signal_name[si++];
+    while (ni > 0 && norm[ni - 1] == '_') ni--;
+    norm[ni] = '\0';
+    if (ni == 0) return NULL;
+
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_NAMES[i], norm) == 0)
+            return ECU_SIGNAL_CANONICAL[i];
+    }
+
+    /* 3. Explicit alias lookup (replaces the old suffix heuristic).
+     *    EXACT match only — no fuzzy prefixes/suffixes, so collisions and
+     *    false positives are impossible. */
+    for (size_t i = 0; i < ECU_SIGNAL_ALIASES_COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_ALIASES[i].derived, norm) == 0)
+            return ECU_SIGNAL_ALIASES[i].canonical;
+    }
+
+    return NULL;
+}
+
 const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
     if (slot >= ECU_SIG__COUNT) return "";
     return ECU_SIGNAL_NAMES[slot];
+}
+
+ecu_signal_slot_t ecu_slot_from_canonical_id(const char *canonical_id) {
+    if (!canonical_id || !canonical_id[0]) return ECU_SIG__COUNT;
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        const char *c = ECU_SIGNAL_CANONICAL[i];
+        if (c && strcmp(c, canonical_id) == 0) return (ecu_signal_slot_t)i;
+    }
+    return ECU_SIG__COUNT;
 }
 
 /* ── Preset tables ─────────────────────────────────────────────────────
@@ -423,6 +564,41 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
+     * Toyota 86 / Subaru BRZ (2012-2020) — HS-CAN @ 500 kbps.
+     * Source: community-documented (FT86Club / openbsd / wireshark caps).
+     * These come from the vehicle bus, not a standalone ECU. RPM and a
+     * handful of other channels broadcast continuously; many slots have
+     * no native broadcast (use OBD2 PIDs for those — coolant, fuel level,
+     * battery voltage, lambda, ignition timing all come via Mode 01).
+     *
+     * If your specific year/region differs, switch this to a custom
+     * preset by editing the CAN ids in Signal Manager. Values verified
+     * on a 2014 86 GT (Australian market) — let us know corrections.
+     * ══════════════════════════════════════════════════════════════════ */
+    {
+        .make = "Toyota / Subaru",
+        .version = "86 / BRZ",
+        .display = "Toyota 86 / Subaru BRZ (2012-2020)",
+        .rows = {
+            [ECU_SIG_RPM]             = { 0x140, 16, 16, 1.0f,  0.0f,    false, 0, "rpm",    0 },
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,  /* OBD2 PID 0x0B */
+            [ECU_SIG_THROTTLE]        = { 0x143,  0,  8, 0.39215f, 0.0f, false, 0, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = SIG_UNSUPPORTED,  /* OBD2 PID 0x05 */
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,  /* OBD2 PID 0x0F */
+            [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,  /* OBD2 PID 0x44 */
+            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
+            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,  /* OBD2 PID 0x0E */
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x141,  0, 16, 0.01f, 0.0f,    false, 0, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x161,  0,  8, 1.0f,  0.0f,    false, 0, "",       0 }, /* manual only */
+            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,  /* OBD2 PID 0x42 */
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
+        },
+    },
+
+    /* ══════════════════════════════════════════════════════════════════
      * RDM-7 Internal - marker preset for the built-in CALCULATED_GEAR
      * flow (gear back-computed from RPM + VEHICLE_SPEED + user ratios;
      * see signal_internal.c). Name matches the "RDM-7" / "Internal"
@@ -764,6 +940,123 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Applied preset '%s %s' to layout '%s'",
                  preset->make, preset->version, layout_name);
+    }
+    return err;
+}
+
+/* ── Per-slot preset application ──────────────────────────────────────
+ *
+ * The bulk ecu_preset_apply_to_layout rewrites every supported slot's
+ * signal row to match the chosen preset. The per-slot variant below is
+ * what the source picker uses when the user picks "Haltech RPM" for
+ * just the rpm channel — it rewrites ONE entry in signals[] without
+ * disturbing the others. The layout's overall `ecu`/`ecu_version`
+ * fields are intentionally left alone (they describe the bulk preset).
+ */
+/* Shared helper: write a single signal row into the named layout's
+ * signals[] array. Both the per-slot ECU bulk apply path AND the web
+ * channels source-picker preconfig path funnel through here so the
+ * cJSON allocation + disk-save story stays in ONE place.
+ *
+ * unit == NULL omits the unit field. decimals < 0 omits the decimals
+ * field. This matters because the preconfig flow doesn't carry a unit
+ * but the ECU preset flow does. */
+esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
+                                            const char *signal_name,
+                                            uint32_t can_id,
+                                            uint8_t bit_start,
+                                            uint8_t bit_length,
+                                            float scale, float offset,
+                                            bool is_signed, uint8_t endian,
+                                            const char *unit,
+                                            int decimals) {
+    if (!layout_name || !signal_name || !signal_name[0])
+        return ESP_ERR_INVALID_ARG;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return ESP_ERR_NO_MEM;
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) { free(buf); return err; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+
+    /* Find or create the signals[] array, then find or create the entry
+     * for the canonical signal name. */
+    cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+    if (!cJSON_IsArray(signals)) {
+        signals = cJSON_AddArrayToObject(root, "signals");
+    }
+
+    cJSON *entry = NULL;
+    cJSON *sig;
+    cJSON_ArrayForEach(sig, signals) {
+        cJSON *jname = cJSON_GetObjectItemCaseSensitive(sig, "name");
+        if (cJSON_IsString(jname) && strcmp(jname->valuestring, signal_name) == 0) {
+            entry = sig; break;
+        }
+    }
+    if (!entry) {
+        entry = cJSON_CreateObject();
+        cJSON_AddStringToObject(entry, "name", signal_name);
+        cJSON_AddItemToArray(signals, entry);
+    } else {
+        /* Wipe stale decode params before re-adding. value_map is
+         * also wiped since it's keyed to specific raw values; a new
+         * decode means previous mappings may not match. */
+        cJSON_DeleteItemFromObject(entry, "can_id");
+        cJSON_DeleteItemFromObject(entry, "bit_start");
+        cJSON_DeleteItemFromObject(entry, "bit_length");
+        cJSON_DeleteItemFromObject(entry, "scale");
+        cJSON_DeleteItemFromObject(entry, "offset");
+        cJSON_DeleteItemFromObject(entry, "is_signed");
+        cJSON_DeleteItemFromObject(entry, "endian");
+        cJSON_DeleteItemFromObject(entry, "unit");
+        cJSON_DeleteItemFromObject(entry, "decimals");
+        cJSON_DeleteItemFromObject(entry, "value_map");
+    }
+
+    cJSON_AddNumberToObject(entry, "can_id",     (double)can_id);
+    cJSON_AddNumberToObject(entry, "bit_start",  bit_start);
+    cJSON_AddNumberToObject(entry, "bit_length", bit_length);
+    cJSON_AddNumberToObject(entry, "scale",      scale);
+    cJSON_AddNumberToObject(entry, "offset",     offset);
+    cJSON_AddBoolToObject  (entry, "is_signed",  is_signed);
+    cJSON_AddNumberToObject(entry, "endian",     endian);
+    if (unit)              cJSON_AddStringToObject(entry, "unit",     unit);
+    if (decimals >= 0)     cJSON_AddNumberToObject(entry, "decimals", decimals);
+
+    err = layout_manager_save_raw(layout_name, root);
+    cJSON_Delete(root);
+    return err;
+}
+
+esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,
+                                          const ecu_preset_t *preset,
+                                          ecu_signal_slot_t slot) {
+    if (!layout_name || !preset || slot >= ECU_SIG__COUNT)
+        return ESP_ERR_INVALID_ARG;
+
+    const ecu_signal_row_t *row = &preset->rows[slot];
+    if (row->can_id == 0) return ESP_ERR_INVALID_ARG;
+
+    const char *signal_name = ECU_SIGNAL_NAMES[slot];
+    if (!signal_name || !signal_name[0]) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t err = ecu_preset_write_signal_to_layout(
+        layout_name, signal_name,
+        row->can_id, row->bit_start, row->bit_length,
+        row->scale, row->offset,
+        row->is_signed, row->endian,
+        row->unit ? row->unit : "",
+        row->decimals);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Slot %s ← %s %s (CAN 0x%lx) in layout '%s'",
+                 signal_name, preset->make, preset->version,
+                 (unsigned long)row->can_id, layout_name);
     }
     return err;
 }

@@ -62,6 +62,12 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	if (boot_assets_is_protected_image(name)) {
+		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+		                    "Cannot overwrite the built-in image — choose another name");
+		return ESP_FAIL;
+	}
+
 	size_t content_len = req->content_len;
 	if (content_len < 12 || content_len > IMAGE_MAX_SIZE) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
@@ -338,6 +344,12 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	if (boot_assets_is_protected_font(name)) {
+		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+		                    "Cannot overwrite a built-in font — choose another name");
+		return ESP_FAIL;
+	}
+
 	size_t content_len = req->content_len;
 	if (content_len < 12 || content_len > FONT_MAX_FILE_SIZE) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
@@ -475,6 +487,12 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
+		return ESP_FAIL;
+	}
+
+	if (boot_assets_is_protected_font(name)) {
+		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+		                    "Built-in font cannot be deleted");
 		return ESP_FAIL;
 	}
 
@@ -856,6 +874,17 @@ static esp_err_t sd_copy_handler(httpd_req_t *req) {
 	} else {
 		cJSON_Delete(root);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid type");
+		return ESP_FAIL;
+	}
+
+	/* Built-in assets are locked — never copy them to or from SD (a copy back
+	 * from SD could overwrite the intact original with a corrupt one). */
+	if ((strcmp(type, "font")   == 0 && boot_assets_is_protected_font(name)) ||
+	    (strcmp(type, "layout") == 0 && boot_assets_is_protected_layout(name)) ||
+	    (strcmp(type, "image")  == 0 && boot_assets_is_protected_image(name))) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+		                    "Built-in asset cannot be moved to/from SD");
 		return ESP_FAIL;
 	}
 

@@ -1,0 +1,1139 @@
+/*
+ * channel_manager.c — runtime channel state, listener pattern, persistence.
+ *
+ * Phase 1 implementation. Focused on the path that unblocks widget binding:
+ *   - activate canonical channels
+ *   - track current_value via signal subscription
+ *   - emit metadata-change events on edits
+ *   - load/save /lfs/channels.json (defaults-only emit)
+ *
+ * Deferred to later phases:
+ *   - Custom channel creation (Phase 2)
+ *   - Per-zone color overrides (Phase 2)
+ *   - Calculated channel hook fires (Phase 3)
+ *   - Resolve-on-signal-registry-change reseat (Phase 2)
+ *
+ * See docs/v2_channel_architecture.md §1.3 for the C API contract.
+ */
+
+#include "channel_manager.h"
+#include "canonical_channels.h"
+#include "signal.h"
+#include "layout/ecu_presets.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_system.h"    /* esp_register_shutdown_handler */
+#include "cJSON.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>        /* fsync, fileno */
+#include <sys/stat.h>
+#include "esp_heap_caps.h"
+
+static const char *TAG = "channel_mgr";
+
+/* ── Storage ──────────────────────────────────────────────────────── */
+
+#define CHM_INITIAL_CAP 32
+#define CHM_GROW_CHUNK  16
+#define CHM_MAX         128
+
+#define CHM_FILE_PATH    "/lfs/channels.json"
+#define CHM_TMP_PATH     CHM_FILE_PATH ".tmp"      /* atomic-write staging file */
+#define CHM_BAK_PATH     CHM_FILE_PATH ".bak"      /* previous-good recovery copy */
+#define CHM_CORRUPT_PATH CHM_FILE_PATH ".corrupt"  /* preserved unparseable file */
+#define CHM_SAVE_DEBOUNCE_US (500 * 1000)   /* 500 ms */
+
+static channel_t **s_channels = NULL;
+static size_t s_count = 0;
+static size_t s_cap = 0;
+static bool s_initialised = false;
+static bool s_dirty = false;
+static esp_timer_handle_t s_save_timer = NULL;
+/* Guard so esp_register_shutdown_handler(channel_manager_flush) only ever
+ * runs once even if init() is entered again after a shutdown/re-init. */
+static bool s_shutdown_handler_registered = false;
+
+/* Helper to safely copy strings to fixed-size buffers. */
+static void safe_strcpy(char *dst, const char *src, size_t cap) {
+	if (!dst || cap == 0) return;
+	if (!src) { dst[0] = '\0'; return; }
+	strncpy(dst, src, cap - 1);
+	dst[cap - 1] = '\0';
+}
+
+/* ── Internal: grow channel array if needed ──────────────────────── */
+static bool ensure_capacity(size_t needed) {
+	if (needed <= s_cap) return true;
+	if (needed > CHM_MAX) {
+		ESP_LOGE(TAG, "channel cap %d exceeded", CHM_MAX);
+		return false;
+	}
+	size_t new_cap = s_cap ? s_cap : CHM_INITIAL_CAP;
+	while (new_cap < needed) new_cap += CHM_GROW_CHUNK;
+	channel_t **nb = heap_caps_realloc(s_channels,
+		new_cap * sizeof(channel_t *), MALLOC_CAP_SPIRAM);
+	if (!nb) nb = realloc(s_channels, new_cap * sizeof(channel_t *));
+	if (!nb) return false;
+	s_channels = nb;
+	s_cap = new_cap;
+	return true;
+}
+
+/* Forward decls */
+static void chm_signal_cb(float value, bool is_stale, void *user_data);
+static void chm_save_timer_cb(void *arg);
+
+/* ── Channel allocation ───────────────────────────────────────────── */
+
+static channel_t *channel_alloc(void) {
+	channel_t *c = heap_caps_calloc(1, sizeof(channel_t), MALLOC_CAP_SPIRAM);
+	if (!c) c = calloc(1, sizeof(channel_t));
+	if (!c) return NULL;
+	c->signal_index = -1;
+	c->low_warn      = CHANNEL_THRESHOLD_UNSET_LOW;
+	c->high_warn     = CHANNEL_THRESHOLD_UNSET_HIGH;
+	c->color_normal        = CHANNEL_USE_DEFAULT_COLOR;
+	c->color_low_warn      = CHANNEL_USE_DEFAULT_COLOR;
+	c->color_high_warn     = CHANNEL_USE_DEFAULT_COLOR;
+	c->is_stale = true;
+	c->last_zone = CHZONE_NORMAL;
+	return c;
+}
+
+static void channel_free(channel_t *c) {
+	if (!c) return;
+	/* Drop signal subscription if any */
+	if (c->signal_index >= 0) {
+		signal_unsubscribe(c->signal_index, chm_signal_cb, c);
+		c->signal_index = -1;
+	}
+	/* Drop all listeners */
+	channel_listener_t *l = c->listeners;
+	while (l) {
+		channel_listener_t *next = l->next;
+		free(l);
+		l = next;
+	}
+	free(c);
+}
+
+/* Populate a channel struct from a canonical definition. */
+static void channel_apply_canonical_defaults(channel_t *c,
+	const canonical_channel_def_t *def)
+{
+	safe_strcpy(c->id, def->id, sizeof(c->id));
+	safe_strcpy(c->label, def->label, sizeof(c->label));
+	c->tier = def->tier;
+	c->group = def->group;
+	c->card = def->card;
+	c->is_canonical = true;
+
+	safe_strcpy(c->units_native, def->units_native, sizeof(c->units_native));
+	safe_strcpy(c->units_display, def->units_display_def, sizeof(c->units_display));
+	c->decimals = def->decimals;
+
+	c->min = def->min_default;
+	c->max = def->max_default;
+	c->sanity_min = CHANNEL_SANITY_UNSET_LOW;
+	c->sanity_max = CHANNEL_SANITY_UNSET_HIGH;
+
+	c->low_warn = def->low_warn;
+	c->high_warn = def->high_warn;
+
+	/* Per-zone colors stay at CHANNEL_USE_DEFAULT_COLOR by default —
+	 * normal-zone gets its canonical hint. */
+	c->color_normal = def->color_normal;
+}
+
+/* ── Fire listeners on metadata change ───────────────────────────── */
+
+static void chm_notify_listeners(channel_t *c) {
+	if (!c) return;
+	for (channel_listener_t *l = c->listeners; l; l = l->next) {
+		if (l->cb) l->cb(c, l->user_data);
+	}
+}
+
+/* ── Listener add / remove ───────────────────────────────────────── */
+
+void channel_manager_subscribe(channel_t *c, channel_changed_cb cb, void *user) {
+	if (!c || !cb) return;
+	/* Skip duplicate */
+	for (channel_listener_t *l = c->listeners; l; l = l->next)
+		if (l->cb == cb && l->user_data == user) return;
+	channel_listener_t *l = calloc(1, sizeof(channel_listener_t));
+	if (!l) return;
+	l->cb = cb;
+	l->user_data = user;
+	l->next = c->listeners;
+	c->listeners = l;
+	c->listener_count++;
+}
+
+void channel_manager_unsubscribe(channel_t *c, channel_changed_cb cb, void *user) {
+	if (!c) return;
+	channel_listener_t **pp = &c->listeners;
+	while (*pp) {
+		if ((*pp)->cb == cb && (*pp)->user_data == user) {
+			channel_listener_t *gone = *pp;
+			*pp = gone->next;
+			free(gone);
+			c->listener_count--;
+			return;
+		}
+		pp = &(*pp)->next;
+	}
+}
+
+/* ── Signal callback — channel value tracking ────────────────────── */
+
+static void chm_signal_cb(float value, bool is_stale, void *user_data) {
+	channel_t *c = (channel_t *)user_data;
+	if (!c) return;
+
+	/* Sanity-bounds gate: drop values outside [sanity_min, sanity_max].
+	 * Unset sentinels never trigger. */
+	if (!is_stale) {
+		if (c->sanity_min != CHANNEL_SANITY_UNSET_LOW && value < c->sanity_min) is_stale = true;
+		if (c->sanity_max != CHANNEL_SANITY_UNSET_HIGH && value > c->sanity_max) is_stale = true;
+	}
+
+	c->is_stale = is_stale;
+	if (!is_stale) {
+		c->current_value = value;
+		c->last_update_ms = (uint32_t)(esp_timer_get_time() / 1000);
+	}
+
+	/* Track zone for the future shared-threshold-eval optimisation, but
+	 * DO NOT fire listeners on zone transitions. Widgets already handle
+	 * their own per-value rendering via the direct signal callback —
+	 * firing channel listeners from this hot path caused panel flicker
+	 * (widget re-snapshots + invalidates mid-render every time the value
+	 * crossed a threshold). Listeners are reserved for METADATA edits
+	 * (range, threshold, signal binding changes from the Channels tab),
+	 * which is what chm_notify_listeners is called from in the set_*
+	 * mutation functions. */
+	channel_zone_t new_zone = CHZONE_NORMAL;
+	if (!is_stale) {
+		canonical_channel_def_t view = {
+			.low_warn = c->low_warn,
+			.high_warn = c->high_warn,
+		};
+		new_zone = canonical_channel_value_zone(&view, value);
+	}
+	c->last_zone = new_zone;
+}
+
+/* ── Lookup ───────────────────────────────────────────────────────── */
+
+channel_t *channel_manager_get(const char *id) {
+	if (!id || id[0] == '\0' || !s_initialised) return NULL;
+	for (size_t i = 0; i < s_count; ++i)
+		if (strcmp(s_channels[i]->id, id) == 0) return s_channels[i];
+	return NULL;
+}
+
+size_t channel_manager_count(void) {
+	return s_count;
+}
+
+channel_t *channel_manager_at(size_t idx) {
+	if (idx >= s_count) return NULL;
+	return s_channels[idx];
+}
+
+/* ── Activate canonical channel ───────────────────────────────────── */
+
+channel_t *channel_manager_activate(const char *canonical_id) {
+	if (!s_initialised || !canonical_id) return NULL;
+
+	channel_t *existing = channel_manager_get(canonical_id);
+	if (existing) return existing;
+
+	const canonical_channel_def_t *def = canonical_channel_find(canonical_id);
+	if (!def) {
+		ESP_LOGW(TAG, "activate: unknown canonical id '%s'", canonical_id);
+		return NULL;
+	}
+
+	if (!ensure_capacity(s_count + 1)) return NULL;
+
+	channel_t *c = channel_alloc();
+	if (!c) return NULL;
+	channel_apply_canonical_defaults(c, def);
+
+	s_channels[s_count++] = c;
+	channel_manager_mark_dirty();
+	return c;
+}
+
+channel_t *channel_manager_create_custom(
+	const char *id, const char *label, channel_group_t group,
+	channel_cardinality_t card,
+	const char *units_native, const char *units_display, uint8_t decimals,
+	float min, float max)
+{
+	if (!s_initialised || !id) return NULL;
+
+	/* Enforce the custom_ prefix convention. The "custom_" prefix is
+	 * how the firmware + UI distinguish user-defined channels from the
+	 * canonical catalog (see channel_id_is_custom()). Refuse to coin a
+	 * canonical id here. */
+	if (!channel_id_is_custom(id)) {
+		ESP_LOGW(TAG, "create_custom: id '%s' missing 'custom_' prefix", id);
+		return NULL;
+	}
+	if (channel_manager_get(id)) {
+		ESP_LOGW(TAG, "create_custom: id '%s' already exists", id);
+		return NULL;
+	}
+	if (!ensure_capacity(s_count + 1)) return NULL;
+
+	channel_t *c = channel_alloc();
+	if (!c) return NULL;
+
+	safe_strcpy(c->id,    id,    sizeof(c->id));
+	safe_strcpy(c->label, label ? label : id, sizeof(c->label));
+	c->tier  = 2;                /* mid priority — same as most canonicals */
+	c->group = group;
+	c->card  = card;
+	c->is_canonical = false;
+
+	safe_strcpy(c->units_native,
+	            units_native  ? units_native  : "", sizeof(c->units_native));
+	safe_strcpy(c->units_display,
+	            units_display ? units_display : "", sizeof(c->units_display));
+	c->decimals = (decimals > 3) ? 3 : decimals;
+
+	c->min = min;
+	c->max = max;
+	c->sanity_min = CHANNEL_SANITY_UNSET_LOW;
+	c->sanity_max = CHANNEL_SANITY_UNSET_HIGH;
+
+	/* Thresholds + colors stay at sentinel-unset; user can dial them
+	 * in later via the wizard / web modal. */
+
+	s_channels[s_count++] = c;
+	channel_manager_mark_dirty();
+	ESP_LOGI(TAG, "create_custom: '%s' (label='%s') in group %d",
+	         c->id, c->label, (int)group);
+	return c;
+}
+
+bool channel_manager_delete(const char *id) {
+	for (size_t i = 0; i < s_count; ++i) {
+		if (strcmp(s_channels[i]->id, id) == 0) {
+			channel_free(s_channels[i]);
+			/* swap-remove to keep array tight */
+			s_channels[i] = s_channels[--s_count];
+			channel_manager_mark_dirty();
+			return true;
+		}
+	}
+	return false;
+}
+
+/* ── Field mutators ──────────────────────────────────────────────── */
+
+bool channel_manager_set_label(channel_t *c, const char *label) {
+	if (!c || !label) return false;
+	safe_strcpy(c->label, label, sizeof(c->label));
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_signal(channel_t *c, const char *signal_name) {
+	if (!c) return false;
+	/* Drop old subscription */
+	if (c->signal_index >= 0) {
+		signal_unsubscribe(c->signal_index, chm_signal_cb, c);
+		c->signal_index = -1;
+	}
+	if (signal_name && signal_name[0] != '\0') {
+		safe_strcpy(c->signal_name, signal_name, sizeof(c->signal_name));
+		int16_t idx = signal_find_by_name(signal_name);
+		if (idx >= 0) {
+			c->signal_index = idx;
+			signal_subscribe(idx, chm_signal_cb, c);
+		}
+	} else {
+		c->signal_name[0] = '\0';
+	}
+	c->is_stale = true;
+	chm_notify_listeners(c);
+	/* Signal bindings are rare, high-value edits — and an automotive dash
+	 * can lose 12V abruptly at key-off with no graceful shutdown, so a
+	 * 500 ms debounce window can drop a just-made binding. Persist the
+	 * binding synchronously NOW (flash-endurance cost is negligible for
+	 * such an infrequent edit) instead of only marking dirty. */
+	s_dirty = true;
+	channel_manager_flush();
+	return true;
+}
+
+bool channel_manager_set_units_display(channel_t *c, const char *units) {
+	if (!c || !units) return false;
+	safe_strcpy(c->units_display, units, sizeof(c->units_display));
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_decimals(channel_t *c, uint8_t decimals) {
+	if (!c) return false;
+	c->decimals = decimals;
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_range(channel_t *c, float min, float max) {
+	if (!c || max <= min) return false;
+	c->min = min;
+	c->max = max;
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_sanity(channel_t *c, float smin, float smax) {
+	if (!c) return false;
+	c->sanity_min = smin;
+	c->sanity_max = smax;
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_threshold(channel_t *c, channel_zone_t zone, float value) {
+	if (!c) return false;
+	switch (zone) {
+	case CHZONE_LOW_WARN:      c->low_warn = value;      break;
+	case CHZONE_HIGH_WARN:     c->high_warn = value;     break;
+	default: return false;
+	}
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_clear_threshold(channel_t *c, channel_zone_t zone) {
+	if (!c) return false;
+	switch (zone) {
+	case CHZONE_LOW_WARN:      c->low_warn      = CHANNEL_THRESHOLD_UNSET_LOW;  break;
+	case CHZONE_HIGH_WARN:     c->high_warn     = CHANNEL_THRESHOLD_UNSET_HIGH; break;
+	default: return false;
+	}
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_set_zone_color(channel_t *c, channel_zone_t zone, uint32_t color) {
+	if (!c) return false;
+	switch (zone) {
+	case CHZONE_LOW_WARN:      c->color_low_warn = color;      break;
+	case CHZONE_NORMAL:        c->color_normal = color;        break;
+	case CHZONE_HIGH_WARN:     c->color_high_warn = color;     break;
+	default: return false;
+	}
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+bool channel_manager_reset_to_defaults(channel_t *c) {
+	if (!c || !c->is_canonical) return false;
+	const canonical_channel_def_t *def = canonical_channel_find(c->id);
+	if (!def) return false;
+	/* Preserve signal_name + signal subscription across reset — they're
+	 * user-specific even on a canonical channel. */
+	char saved_signal[32];
+	int16_t saved_idx = c->signal_index;
+	safe_strcpy(saved_signal, c->signal_name, sizeof(saved_signal));
+
+	channel_apply_canonical_defaults(c, def);
+
+	safe_strcpy(c->signal_name, saved_signal, sizeof(c->signal_name));
+	c->signal_index = saved_idx;
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
+/* ── Backwards-compat migration: legacy widget → channel auto-populate ── */
+
+channel_t *channel_manager_record_legacy_widget(const legacy_widget_data_t *data) {
+	if (!s_initialised || !data || !data->signal_name || data->signal_name[0] == '\0')
+		return NULL;
+
+	/* Two-step canonical lookup:
+	 *   1. Case-insensitive direct match against canonical IDs. Catches
+	 *      users whose signal names happen to match (rpm/RPM,
+	 *      coolant_temp/COOLANT_TEMP, etc.).
+	 *   2. ECU normalized-name map fallback. Maps the dash's own
+	 *      standard ECU vocabulary (RPM, MAP, THROTTLE, IGNITION, …)
+	 *      to canonical channels (rpm, manifold_pressure,
+	 *      throttle_position, ignition_timing, …). Catches the
+	 *      majority of widgets in real layouts because the dash
+	 *      already normalizes signal names via the ECU preset
+	 *      apply path.
+	 * If both miss, no auto-bind happens — widget keeps using its
+	 * legacy fields. Users can manually bind via the Channels tab. */
+	const canonical_channel_def_t *def = canonical_channel_find_ci(data->signal_name);
+	if (!def) {
+		const char *canonical_id = ecu_signal_name_to_canonical(data->signal_name);
+		if (canonical_id) def = canonical_channel_find(canonical_id);
+	}
+	if (!def) {
+		/* No mapping for this signal — widget falls back to its own
+		 * legacy values (still renders correctly via the backwards-compat
+		 * path). Users with unusual signal names can manually bind via
+		 * the Channels tab once that UI lands. */
+		return NULL;
+	}
+
+	/* Activate the canonical channel if not yet active. */
+	channel_t *c = channel_manager_get(def->id);
+	bool newly_activated = false;
+	if (!c) {
+		c = channel_manager_activate(def->id);
+		newly_activated = true;
+	}
+	if (!c) return NULL;
+
+	/* Populate when the channel is newly activated OR when it exists
+	 * but has no signal binding yet. The "no signal yet" case covers
+	 * the first-v14-boot sequence:
+	 *   1. channel_manager_init seeds OBD2 defaults with empty
+	 *      signal_name → saves channels.json
+	 *   2. layout loads → widgets call record_legacy_widget → the
+	 *      OBD2 defaults exist but have no signal binding, so we
+	 *      populate them with the widget's signal + values
+	 *   3. next save persists the user's bindings
+	 * Subsequent boots: channels have signal bindings → first-write-
+	 * wins skips so user edits aren't clobbered. */
+	bool can_populate = newly_activated || (c->signal_name[0] == '\0');
+	if (can_populate) {
+		/* Signal binding */
+		safe_strcpy(c->signal_name, data->signal_name, sizeof(c->signal_name));
+		int16_t idx = signal_find_by_name(data->signal_name);
+		if (idx >= 0) {
+			c->signal_index = idx;
+			signal_subscribe(idx, chm_signal_cb, c);
+		}
+		/* Range — apply only if non-unset and differs from canonical default */
+		if (data->min != INT32_MIN && data->min != def->min_default)
+			c->min = data->min;
+		if (data->max != INT32_MIN && data->max != def->max_default)
+			c->max = data->max;
+		/* Thresholds — apply only if non-unset */
+		if (data->high_warn != INT32_MIN)
+			c->high_warn = data->high_warn;
+		/* Color hints — apply only if non-default */
+		if (data->color_normal != CHANNEL_USE_DEFAULT_COLOR &&
+		    data->color_normal != def->color_normal)
+			c->color_normal = data->color_normal;
+		if (data->color_high_warn != CHANNEL_USE_DEFAULT_COLOR)
+			c->color_high_warn = data->color_high_warn;
+
+		channel_manager_mark_dirty();
+		ESP_LOGI(TAG, "migrated legacy widget signal='%s' → channel '%s'",
+		         data->signal_name, def->id);
+	}
+
+	return c;
+}
+
+/* ── Signal pipeline (placeholder — actual dispatch happens via the ──
+ * signal_subscribe callback we attach in set_signal). The exposed
+ * dispatch helper is for explicit poking from tests / replay. */
+size_t channel_manager_dispatch_signal(uint16_t signal_index, float value, bool stale) {
+	size_t n = 0;
+	for (size_t i = 0; i < s_count; ++i) {
+		channel_t *c = s_channels[i];
+		if (c->signal_index == (int16_t)signal_index) {
+			chm_signal_cb(value, stale, c);
+			n++;
+		}
+	}
+	return n;
+}
+
+/* The firmware-side strict matcher used to live here. It was used by
+ * channel_manager_resolve_signals as a fallback when a channel's stored
+ * signal_name didn't resolve in the freshly-loaded layout's signal
+ * registry. That auto-match locked in whatever signal the matcher picked
+ * first, which broke reverse-compat when the user loaded a layout
+ * authored against a different ECU vocabulary — the channel would stay
+ * pointing at a strict-matched signal that didn't necessarily reflect
+ * the new layout's actual widget bindings.
+ *
+ * Now `resolve_signals` clears the binding on miss instead, and the
+ * widget-driven `record_legacy_widget` path rebuilds the channel from
+ * the actual widget data as widgets load. The web UI still does
+ * strict-matching client-side (`_strictSignalMatch` in index.html) for
+ * its activate-and-suggest flow.
+ *
+ * Helpers kept removed to satisfy -Werror=unused-function. Reach for
+ * git history if a firmware-side strict matcher is needed again. */
+#if 0  /* retired — see comment above */
+static int16_t _chm_strict_match(const char *channel_id) {
+	if (!channel_id || !channel_id[0]) return -1;
+
+	char chan_norm[32];
+	_chm_normalize_name(channel_id, chan_norm, sizeof(chan_norm));
+	if (chan_norm[0] == '\0') return -1;
+
+	uint16_t n = signal_get_count();
+
+	/* Pass 1: exact normalized match. */
+	for (uint16_t i = 0; i < n; i++) {
+		signal_t *s = signal_get_by_index(i);
+		if (!s) continue;
+		char sig_norm[32];
+		_chm_normalize_name(s->name, sig_norm, sizeof(sig_norm));
+		if (strcmp(sig_norm, chan_norm) == 0) return (int16_t)i;
+	}
+
+	/* Pass 2: channel id is a component of exactly one signal name. */
+	int comp_hits = 0;
+	int16_t comp_hit_idx = -1;
+	for (uint16_t i = 0; i < n; i++) {
+		signal_t *s = signal_get_by_index(i);
+		if (!s) continue;
+		char sig_norm[32];
+		_chm_normalize_name(s->name, sig_norm, sizeof(sig_norm));
+		if (_chm_has_component(sig_norm, chan_norm)) {
+			comp_hits++;
+			comp_hit_idx = (int16_t)i;
+			if (comp_hits > 1) break;
+		}
+	}
+	if (comp_hits == 1) return comp_hit_idx;
+
+	/* Pass 3: a channel-id component matches exactly one signal name. */
+	const char *p = chan_norm;
+	while (*p) {
+		const char *next = strchr(p, '_');
+		size_t len = next ? (size_t)(next - p) : strlen(p);
+		if (len > 2) {
+			char part[32];
+			if (len >= sizeof(part)) len = sizeof(part) - 1;
+			memcpy(part, p, len);
+			part[len] = '\0';
+
+			int hits = 0;
+			int16_t hit_idx = -1;
+			for (uint16_t i = 0; i < n; i++) {
+				signal_t *s = signal_get_by_index(i);
+				if (!s) continue;
+				char sig_norm[32];
+				_chm_normalize_name(s->name, sig_norm, sizeof(sig_norm));
+				if (strcmp(sig_norm, part) == 0) {
+					hits++;
+					hit_idx = (int16_t)i;
+					if (hits > 1) break;
+				}
+			}
+			if (hits == 1) return hit_idx;
+		}
+		if (!next) break;
+		p = next + 1;
+	}
+
+	return -1;
+}
+#endif  /* retired _chm_strict_match block */
+
+void channel_manager_resolve_signals(void) {
+	bool dirty = false;
+	for (size_t i = 0; i < s_count; ++i) {
+		channel_t *c = s_channels[i];
+
+		/* Drop any existing subscription before re-resolving. */
+		if (c->signal_index >= 0) {
+			signal_unsubscribe(c->signal_index, chm_signal_cb, c);
+			c->signal_index = -1;
+		}
+
+		/* Empty signal_name = user explicitly unbound. Don't auto-rebind
+		 * here — let the explicit picker action set the next binding. */
+		if (c->signal_name[0] == '\0') {
+			c->is_stale = true;
+			continue;
+		}
+
+		/* Try the stored signal name first (case-sensitive exact). If it
+		 * resolves, the user's previous binding is preserved across the
+		 * reload — that handles "user manually picked a source" and
+		 * "same layout reloaded" both. */
+		int16_t idx = signal_find_by_name(c->signal_name);
+
+		if (idx >= 0) {
+			c->signal_index = idx;
+			signal_subscribe(idx, chm_signal_cb, c);
+		} else {
+			/* Stored signal isn't in the current registry — usually
+			 * because the user just loaded a layout that uses a
+			 * different ECU vocabulary (MaxxECU "RPM" vs Ford FG
+			 * "ENGINE_RPM"). PRESERVE signal_name so the user's
+			 * manually-configured channel survives the round trip and
+			 * lights up again when they return to a compatible layout.
+			 * The widget can still display live data on the current
+			 * layout because each widget falls back to its own
+			 * `signal:` field when the bound channel isn't resolvable
+			 * (see widget from_json — channel branch is gated on
+			 * signal_index >= 0). */
+			ESP_LOGI(TAG,
+			         "channel '%s': stored signal '%s' not in current "
+			         "registry — keeping binding stale until a compatible "
+			         "layout is loaded",
+			         c->id, c->signal_name);
+		}
+		c->is_stale = true;
+	}
+	if (dirty) channel_manager_mark_dirty();
+}
+
+/* ── JSON I/O ─────────────────────────────────────────────────────── */
+
+/* Helper: only emit if differs from canonical default. Exact == is fine —
+ * both sides originate from the same float literal / round-tripped JSON. */
+static bool field_eq_default_float(const channel_t *c, float v, float def_v) {
+	(void)c; return v == def_v;
+}
+
+static cJSON *channel_to_json(const channel_t *c) {
+	if (!c) return NULL;
+	cJSON *j = cJSON_CreateObject();
+	if (!j) return NULL;
+
+	cJSON_AddStringToObject(j, "id", c->id);
+
+	/* For canonical channels, only emit fields that DIFFER from the
+	 * canonical default. For custom channels, emit everything. */
+	const canonical_channel_def_t *def = c->is_canonical ?
+		canonical_channel_find(c->id) : NULL;
+
+	if (!def || strcmp(c->label, def->label) != 0)
+		cJSON_AddStringToObject(j, "label", c->label);
+
+	if (c->signal_name[0] != '\0')
+		cJSON_AddStringToObject(j, "signal", c->signal_name);
+
+	if (!def || strcmp(c->units_display, def->units_display_def) != 0)
+		cJSON_AddStringToObject(j, "units_display", c->units_display);
+
+	if (!def || c->decimals != def->decimals)
+		cJSON_AddNumberToObject(j, "decimals", c->decimals);
+
+	if (!def || !field_eq_default_float(c, c->min, def->min_default))
+		cJSON_AddNumberToObject(j, "min", c->min);
+	if (!def || !field_eq_default_float(c, c->max, def->max_default))
+		cJSON_AddNumberToObject(j, "max", c->max);
+
+	if (c->sanity_min != CHANNEL_SANITY_UNSET_LOW)
+		cJSON_AddNumberToObject(j, "sanity_min", c->sanity_min);
+	if (c->sanity_max != CHANNEL_SANITY_UNSET_HIGH)
+		cJSON_AddNumberToObject(j, "sanity_max", c->sanity_max);
+
+	if (!def || c->low_warn != def->low_warn) {
+		if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
+			cJSON_AddNumberToObject(j, "low_warn", c->low_warn);
+	}
+	if (!def || c->high_warn != def->high_warn) {
+		if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+			cJSON_AddNumberToObject(j, "high_warn", c->high_warn);
+	}
+
+	/* Zone color overrides — emit only when explicitly customized */
+	if (c->color_normal != CHANNEL_USE_DEFAULT_COLOR &&
+	    (!def || c->color_normal != def->color_normal))
+		cJSON_AddNumberToObject(j, "color", (int)c->color_normal);
+	if (c->color_low_warn != CHANNEL_USE_DEFAULT_COLOR)
+		cJSON_AddNumberToObject(j, "color_low_warn", (int)c->color_low_warn);
+	if (c->color_high_warn != CHANNEL_USE_DEFAULT_COLOR)
+		cJSON_AddNumberToObject(j, "color_high_warn", (int)c->color_high_warn);
+
+	return j;
+}
+
+static bool channel_from_json(channel_t *c, cJSON *j) {
+	if (!c || !j) return false;
+
+	cJSON *it;
+	it = cJSON_GetObjectItemCaseSensitive(j, "label");
+	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->label, it->valuestring, sizeof(c->label));
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "signal");
+	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->signal_name, it->valuestring, sizeof(c->signal_name));
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "units_display");
+	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->units_display, it->valuestring, sizeof(c->units_display));
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "decimals");
+	if (cJSON_IsNumber(it)) c->decimals = (uint8_t)it->valueint;
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "min");
+	if (cJSON_IsNumber(it)) c->min = (float)it->valuedouble;
+	it = cJSON_GetObjectItemCaseSensitive(j, "max");
+	if (cJSON_IsNumber(it)) c->max = (float)it->valuedouble;
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "sanity_min");
+	if (cJSON_IsNumber(it)) c->sanity_min = (float)it->valuedouble;
+	it = cJSON_GetObjectItemCaseSensitive(j, "sanity_max");
+	if (cJSON_IsNumber(it)) c->sanity_max = (float)it->valuedouble;
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "low_warn");
+	if (cJSON_IsNumber(it)) c->low_warn = (float)it->valuedouble;
+	it = cJSON_GetObjectItemCaseSensitive(j, "high_warn");
+	if (cJSON_IsNumber(it)) c->high_warn = (float)it->valuedouble;
+
+	it = cJSON_GetObjectItemCaseSensitive(j, "color");
+	if (cJSON_IsNumber(it)) c->color_normal = (uint32_t)it->valueint;
+	it = cJSON_GetObjectItemCaseSensitive(j, "color_low_warn");
+	if (cJSON_IsNumber(it)) c->color_low_warn = (uint32_t)it->valueint;
+	it = cJSON_GetObjectItemCaseSensitive(j, "color_high_warn");
+	if (cJSON_IsNumber(it)) c->color_high_warn = (uint32_t)it->valueint;
+
+	/* Sanity / self-heal: a high_warn at or below the channel min (or a
+	 * low_warn at or above max) can never be a meaningful alert — it would
+	 * fire on every in-range value ("always red"). Older data / a bad
+	 * migration could leave a stray 0; treat it as unset so it heals on load. */
+	if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH && c->high_warn <= c->min)
+		c->high_warn = CHANNEL_THRESHOLD_UNSET_HIGH;
+	if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW && c->low_warn >= c->max)
+		c->low_warn = CHANNEL_THRESHOLD_UNSET_LOW;
+
+	return true;
+}
+
+/* Read + parse one channels-file path. Returns the cJSON root (caller
+ * deletes) or NULL if the file is missing / unreadable / unparseable.
+ * out_existed distinguishes "file not present" from "present but bad" so
+ * the caller can preserve a corrupt file for diagnostics. */
+static cJSON *chm_read_and_parse(const char *path, bool *out_existed) {
+	if (out_existed) *out_existed = false;
+	struct stat st;
+	if (stat(path, &st) != 0) return NULL;
+	if (out_existed) *out_existed = true;
+
+	FILE *f = fopen(path, "r");
+	if (!f) return NULL;
+	char *buf = malloc(st.st_size + 1);
+	if (!buf) { fclose(f); return NULL; }
+	size_t n = fread(buf, 1, st.st_size, f);
+	buf[n] = '\0';
+	fclose(f);
+
+	cJSON *root = cJSON_Parse(buf);
+	free(buf);
+	return root;   /* NULL if parse failed */
+}
+
+esp_err_t channel_manager_load_from_lfs(void) {
+	bool existed = false;
+	cJSON *root = chm_read_and_parse(CHM_FILE_PATH, &existed);
+
+	if (!root && !existed) {
+		/* Genuinely no live file — caller seeds defaults. */
+		return ESP_ERR_NOT_FOUND;
+	}
+
+	if (!root && existed) {
+		/* Live file is present but failed to parse — a power loss mid-write
+		 * (pre-atomic-write data) or flash corruption. Do NOT let init()
+		 * reseed-and-overwrite it: preserve the bad copy for diagnostics,
+		 * then try to recover from the staged .tmp or previous-good .bak so
+		 * the user's bindings survive. */
+		ESP_LOGW(TAG, "%s failed to parse — preserving as %s and attempting recovery",
+		         CHM_FILE_PATH, CHM_CORRUPT_PATH);
+		remove(CHM_CORRUPT_PATH);                 /* drop any stale copy */
+		rename(CHM_FILE_PATH, CHM_CORRUPT_PATH);  /* preserve the bad file */
+
+		const char *recover_from[] = { CHM_TMP_PATH, CHM_BAK_PATH };
+		for (size_t i = 0; i < sizeof(recover_from) / sizeof(recover_from[0]); ++i) {
+			bool rexist = false;
+			cJSON *rroot = chm_read_and_parse(recover_from[i], &rexist);
+			if (rroot) {
+				ESP_LOGW(TAG, "recovered channels from %s", recover_from[i]);
+				/* Republish the recovered copy as the live file so the next
+				 * boot is clean (best-effort; recovery already succeeded). */
+				rename(recover_from[i], CHM_FILE_PATH);
+				root = rroot;
+				break;
+			}
+			if (rexist) remove(recover_from[i]);  /* recovery file also bad */
+		}
+
+		if (!root) {
+			/* No recoverable copy. Return ESP_FAIL; init() may reseed now
+			 * that the corrupt file has been moved out of the way (so it
+			 * can't be silently re-saved over with defaults). */
+			ESP_LOGE(TAG, "no recoverable channels file — defaults will be seeded");
+			return ESP_FAIL;
+		}
+	}
+
+	cJSON *chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
+	if (!cJSON_IsArray(chans)) { cJSON_Delete(root); return ESP_OK; }
+
+	int sz = cJSON_GetArraySize(chans);
+	for (int i = 0; i < sz; ++i) {
+		cJSON *jc = cJSON_GetArrayItem(chans, i);
+		cJSON *jid = cJSON_GetObjectItemCaseSensitive(jc, "id");
+		if (!cJSON_IsString(jid) || !jid->valuestring) continue;
+
+		channel_t *c = NULL;
+		if (canonical_channel_exists(jid->valuestring)) {
+			c = channel_manager_activate(jid->valuestring);
+		}
+		/* Custom channels (Phase 2) — skipped for now. */
+		if (!c) continue;
+		channel_from_json(c, jc);
+		/* Re-subscribe to signal if name was set in JSON */
+		if (c->signal_name[0] != '\0') {
+			int16_t idx = signal_find_by_name(c->signal_name);
+			if (idx >= 0) {
+				c->signal_index = idx;
+				signal_subscribe(idx, chm_signal_cb, c);
+			}
+		}
+	}
+
+	cJSON_Delete(root);
+	s_dirty = false;
+	ESP_LOGI(TAG, "loaded %zu channels from %s", s_count, CHM_FILE_PATH);
+	return ESP_OK;
+}
+
+esp_err_t channel_manager_save_to_lfs(void) {
+	cJSON *root = cJSON_CreateObject();
+	if (!root) return ESP_ERR_NO_MEM;
+	cJSON_AddNumberToObject(root, "schema_version", 1);
+
+	cJSON *arr = cJSON_AddArrayToObject(root, "channels");
+	for (size_t i = 0; i < s_count; ++i) {
+		cJSON *jc = channel_to_json(s_channels[i]);
+		if (jc) cJSON_AddItemToArray(arr, jc);
+	}
+
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json) return ESP_ERR_NO_MEM;
+
+	size_t len = strlen(json);
+
+	/* Atomic write: stage into CHM_TMP_PATH, fsync it to flash, then
+	 * rename() over the live file. rename() is atomic on LittleFS, so a
+	 * power loss mid-write leaves either the old file or the new file
+	 * intact — never a half-written channels.json. On any failure we
+	 * remove the temp file and return WITHOUT having touched the live
+	 * file. (Layouts already have this guarantee; channels.json did not,
+	 * so a crash mid-fwrite could corrupt it and wipe all user bindings
+	 * on the next boot reseed.) */
+	FILE *f = fopen(CHM_TMP_PATH, "w");
+	if (!f) { cJSON_free(json); return ESP_FAIL; }
+	size_t w = fwrite(json, 1, len, f);
+	cJSON_free(json);
+	if (w != len) {
+		fclose(f);
+		remove(CHM_TMP_PATH);
+		ESP_LOGE(TAG, "save: short write (%zu/%zu) to %s", w, len, CHM_TMP_PATH);
+		return ESP_FAIL;
+	}
+	/* fflush drains stdio's userspace buffer, fsync commits to flash —
+	 * both before the close/rename so the renamed file is durable. */
+	if (fflush(f) != 0 || fsync(fileno(f)) != 0) {
+		fclose(f);
+		remove(CHM_TMP_PATH);
+		ESP_LOGE(TAG, "save: flush/fsync failed for %s", CHM_TMP_PATH);
+		return ESP_FAIL;
+	}
+	if (fclose(f) != 0) {
+		remove(CHM_TMP_PATH);
+		ESP_LOGE(TAG, "save: close failed for %s", CHM_TMP_PATH);
+		return ESP_FAIL;
+	}
+
+	/* Keep a previous-good copy (best-effort) so load_from_lfs can recover
+	 * if the live file later fails to parse. Ignore the rename result —
+	 * a missing live file (first save) simply means no .bak yet. */
+	rename(CHM_FILE_PATH, CHM_BAK_PATH);
+
+	/* Atomic publish. If this fails the live file may be gone but the
+	 * .bak still holds the previous good copy and the .tmp holds the new
+	 * one, so the recovery path on next load can still find valid data. */
+	if (rename(CHM_TMP_PATH, CHM_FILE_PATH) != 0) {
+		ESP_LOGE(TAG, "save: rename %s -> %s failed", CHM_TMP_PATH, CHM_FILE_PATH);
+		remove(CHM_TMP_PATH);
+		return ESP_FAIL;
+	}
+
+	s_dirty = false;
+	ESP_LOGI(TAG, "saved %zu channels to %s", s_count, CHM_FILE_PATH);
+	return ESP_OK;
+}
+
+static void chm_save_timer_cb(void *arg) {
+	(void)arg;
+	if (s_dirty) channel_manager_save_to_lfs();
+}
+
+void channel_manager_mark_dirty(void) {
+	s_dirty = true;
+	if (s_save_timer) {
+		esp_timer_stop(s_save_timer);
+		esp_timer_start_once(s_save_timer, CHM_SAVE_DEBOUNCE_US);
+	}
+}
+
+void channel_manager_flush(void) {
+	/* Cancel any pending debounced save so we don't double-write, then
+	 * commit synchronously if there's anything outstanding. Registered as
+	 * an esp_register_shutdown_handler so clean reboots persist; also
+	 * called directly from set_signal for immediate binding durability
+	 * (abrupt 12V loss at key-off gives no graceful shutdown window). */
+	if (s_save_timer) esp_timer_stop(s_save_timer);
+	if (s_dirty) channel_manager_save_to_lfs();
+}
+
+/* ── Default OBD2 channel set for a brand-new dash ────────────────── */
+
+static const char *DEFAULT_OBD2_CHANNELS[] = {
+	"rpm",
+	"coolant_temp",
+	"vehicle_speed",
+	"throttle_position",
+	"engine_load",
+	"intake_air_temp",
+	"battery_voltage",
+	"fuel_level",
+	"gear",
+	"ambient_temp",
+};
+
+static void seed_default_obd2_set(void) {
+	size_t n = sizeof(DEFAULT_OBD2_CHANNELS) / sizeof(DEFAULT_OBD2_CHANNELS[0]);
+	for (size_t i = 0; i < n; ++i) {
+		channel_manager_activate(DEFAULT_OBD2_CHANNELS[i]);
+	}
+	ESP_LOGI(TAG, "seeded %zu default OBD2 channels", n);
+}
+
+/* ── Dash-system channels — fed by signal_internal.c ────────────────
+ *
+ * These are RDM-7's own runtime stats (FPS, free heap, wifi rssi…).
+ * The signals are always running on every dash regardless of vehicle
+ * or ECU, so the matching canonical channels should be active +
+ * bound out of the box — no separate activation step in the UI.
+ *
+ * ensure_dash_system_channels() runs on every boot AFTER the
+ * channels.json load, so it idempotently adds any missing dash
+ * channels on existing devices (e.g. after a firmware update
+ * that introduces a new dash channel). */
+static const struct {
+	const char *channel_id;
+	const char *signal_name;
+} DEFAULT_DASH_SYSTEM_CHANNELS[] = {
+	{"dash_fps",        "FPS"},
+	{"dash_cpu",        "CPU_PERCENT"},
+	{"dash_free_heap",  "FREE_HEAP_KB"},
+	{"dash_free_psram", "FREE_PSRAM_KB"},
+	{"dash_uptime",     "UPTIME_S"},
+	{"dash_chip_temp",  "CHIP_TEMP"},
+	{"dash_wifi_rssi",  "WIFI_RSSI"},
+};
+
+static void ensure_dash_system_channels(void) {
+	size_t n = sizeof(DEFAULT_DASH_SYSTEM_CHANNELS) /
+	           sizeof(DEFAULT_DASH_SYSTEM_CHANNELS[0]);
+	int added = 0;
+	for (size_t i = 0; i < n; ++i) {
+		const char *cid  = DEFAULT_DASH_SYSTEM_CHANNELS[i].channel_id;
+		const char *sname = DEFAULT_DASH_SYSTEM_CHANNELS[i].signal_name;
+		if (channel_manager_get(cid)) continue;   /* already active */
+
+		channel_t *c = channel_manager_activate(cid);
+		if (!c) {
+			ESP_LOGW(TAG, "failed to activate dash channel '%s'", cid);
+			continue;
+		}
+		channel_manager_set_signal(c, sname);
+		added++;
+	}
+	if (added > 0) {
+		ESP_LOGI(TAG, "auto-activated %d dash-system channel(s)", added);
+		channel_manager_save_to_lfs();
+	}
+}
+
+/* ── Lifecycle ────────────────────────────────────────────────────── */
+
+esp_err_t channel_manager_init(void) {
+	if (s_initialised) return ESP_OK;
+
+	const esp_timer_create_args_t timer_args = {
+		.callback = chm_save_timer_cb,
+		.arg = NULL,
+		.name = "chm_save",
+	};
+	esp_err_t terr = esp_timer_create(&timer_args, &s_save_timer);
+	if (terr != ESP_OK) {
+		ESP_LOGW(TAG, "save timer create failed: %d (saves will be synchronous)", terr);
+		s_save_timer = NULL;
+	}
+
+	s_initialised = true;
+
+	/* Persist pending edits on every clean reboot/restart path. Guarded so
+	 * a shutdown()+init() cycle doesn't double-register the handler. */
+	if (!s_shutdown_handler_registered) {
+		if (esp_register_shutdown_handler(channel_manager_flush) == ESP_OK) {
+			s_shutdown_handler_registered = true;
+		} else {
+			ESP_LOGW(TAG, "could not register shutdown flush handler");
+		}
+	}
+
+	esp_err_t err = channel_manager_load_from_lfs();
+	if (err == ESP_ERR_NOT_FOUND) {
+		ESP_LOGI(TAG, "no /lfs/channels.json — seeding default OBD2 set");
+		seed_default_obd2_set();
+		channel_manager_save_to_lfs();
+	} else if (err != ESP_OK) {
+		/* Reseed only reaches here AFTER load_from_lfs has already moved any
+		 * unparseable live file aside to *.corrupt and exhausted .tmp/.bak
+		 * recovery — so seeding defaults (and the save below) can no longer
+		 * silently overwrite a present-but-corrupt user file before a
+		 * recovery attempt. */
+		ESP_LOGW(TAG, "load failed (%d) — seeding default OBD2 set", err);
+		seed_default_obd2_set();
+	}
+
+	/* Run on every boot, not just fresh installs — keeps dash-system
+	 * channels up to date when a firmware update adds new ones. */
+	ensure_dash_system_channels();
+
+	return ESP_OK;
+}
+
+void channel_manager_shutdown(void) {
+	if (!s_initialised) return;
+	if (s_dirty) channel_manager_save_to_lfs();
+	if (s_save_timer) {
+		esp_timer_stop(s_save_timer);
+		esp_timer_delete(s_save_timer);
+		s_save_timer = NULL;
+	}
+	for (size_t i = 0; i < s_count; ++i) channel_free(s_channels[i]);
+	free(s_channels);
+	s_channels = NULL;
+	s_count = 0;
+	s_cap = 0;
+	s_initialised = false;
+}

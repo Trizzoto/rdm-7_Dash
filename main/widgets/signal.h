@@ -21,7 +21,15 @@ extern "C" {
 
 /* ── Limits ────────────────────────────────────────────────────────────── */
 
-#define MAX_SIGNALS            128
+/* Bumped 128 → 200. The signal array is PSRAM-backed so the extra ~14 KB
+ * is free, and the headroom matters: signals MERGE across ECU/layout
+ * switches (see layout_manager.c), so a user who tries several ECU
+ * presets accumulates their unique signal names. At 128 the registry
+ * could fill, which silently broke OBD2 gap-fill (no slot left to
+ * register FUEL_LEVEL etc.). The wizard now also registers only
+ * canonical-mapped ECU signals to keep accumulation small, but the
+ * cap raise gives margin for layouts authored with many raw signals. */
+#define MAX_SIGNALS            200
 #define MAX_SIGNAL_SUBSCRIBERS   16
 #define SIGNAL_TIMEOUT_MS     2000
 
@@ -72,6 +80,25 @@ typedef struct {
 
 /* ── Signal descriptor ─────────────────────────────────────────────────── */
 
+/* Provenance of a signal — what kind of source produces its value.
+ *
+ *   CAN      — ECU broadcasts the value on the bus. Most layout-loaded
+ *              signals fall here. can_id/bit_start/length are meaningful.
+ *   OBD2     — We poll the value via Mode 01 / Mode 21 / Mode 22. Polled
+ *              by obd2.c, NOT received as a broadcast frame. can_id is 0.
+ *   INTERNAL — Synthesized on-device (CALCULATED_GEAR, FUEL_SENDER_V,
+ *              DTC_COUNT, dimmer wire input, etc). No CAN traffic at all.
+ *
+ * Drives the on-device OBD2 picker's "in preset" logic without name
+ * heuristics, lets the web Channels source picker classify Bound signals,
+ * and lets the Custom Signals editor filter out ECU-preset rows by
+ * provenance instead of name matching. */
+typedef enum {
+    SIGNAL_SOURCE_CAN      = 0,
+    SIGNAL_SOURCE_OBD2     = 1,
+    SIGNAL_SOURCE_INTERNAL = 2,
+} signal_source_t;
+
 typedef struct {
     char     name[32];
     uint32_t can_id;
@@ -81,6 +108,7 @@ typedef struct {
     float    offset;
     bool     is_signed;
     uint8_t  endian;          /* 0 = Motorola (big), 1 = Intel (little) */
+    uint8_t  source;          /* signal_source_t — provenance, NOT decoder */
 
     char     unit[8];           /* Display unit (e.g., "kPa", "°C") */
 
@@ -119,7 +147,15 @@ void signal_registry_reset(void);
 /* ── Registration ──────────────────────────────────────────────────────── */
 
 /**
- * Register a new signal.  Duplicate names are rejected.
+ * Register a signal. If a signal with the same name already exists (signals
+ * MERGE across layout loads — the registry is not reset on the happy path),
+ * its decode params are UPDATED in place and the existing index is returned
+ * (latest-layout-wins); subscribers and peak/min stats on that slot are
+ * preserved.
+ *
+ * Defaults source to SIGNAL_SOURCE_CAN. Callers that produce values
+ * via OBD2 polling or on-device synthesis should call the _with_source
+ * variant below instead.
  *
  * @return Signal index (>= 0) on success, -1 on failure.
  */
@@ -128,6 +164,21 @@ int16_t signal_register(const char *name, uint32_t can_id,
                         float scale, float offset,
                         bool is_signed, uint8_t endian,
                         const char *unit);
+
+/**
+ * Register a signal with explicit provenance. Same as signal_register()
+ * but tags the registry entry's source field. Re-registering an existing
+ * name updates that slot's decode params in place (latest-layout-wins,
+ * subscribers/stats preserved) and returns the existing index.
+ *
+ * @return Signal index (>= 0) on success, -1 on failure.
+ */
+int16_t signal_register_with_source(const char *name, uint32_t can_id,
+                                    uint8_t start, uint8_t len,
+                                    float scale, float offset,
+                                    bool is_signed, uint8_t endian,
+                                    const char *unit,
+                                    signal_source_t source);
 
 /**
  * Look up a signal by name.

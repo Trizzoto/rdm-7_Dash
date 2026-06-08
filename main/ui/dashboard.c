@@ -16,6 +16,7 @@
 
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
+#include "ui/screens/first_run_wizard.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "can/can_manager.h"
@@ -77,7 +78,16 @@ static void _widget_long_press_cb(lv_event_t *e) {
 	if (edit_mode_is_armed()) return;
 	widget_t *w = (widget_t *)lv_event_get_user_data(e);
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
-	load_menu_screen_for_widget(w);
+	/* Channels-first: a channel-capable widget opens the channels editor
+	 * targeting this widget (pick a channel → Apply to widget). Widgets
+	 * with no channel binding (shift_light, decorations) fall back to the
+	 * legacy per-widget config modal, which is also still reachable from
+	 * the editor's "Widget settings" button during the phase-out. */
+	if (widget_get_channel_id_buf(w)) {
+		first_run_wizard_open_channels_for_widget(w);
+	} else {
+		load_menu_screen_for_widget(w);
+	}
 }
 
 /** Register touch events on all widgets so the MENU button always appears
@@ -101,6 +111,19 @@ static void _register_widget_long_press(void) {
 			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 		} else {
 			lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+			/* Bubble tap events up to ui_Screen3's SHORT_CLICKED handler so a
+			 * tap ANYWHERE on the dashboard reveals the chrome — not just on
+			 * empty background. LVGL does NOT bubble by default; without this
+			 * flag a clickable widget absorbs the tap and the screen handler
+			 * never fires, which is why the menu "sometimes didn't show".
+			 *
+			 * EXCEPT button/toggle widgets: those are interactive momentary
+			 * controls (press = TX 1, release = TX 0). A press on them is a
+			 * deliberate control action and must NOT also pop the chrome — they
+			 * are a no-go zone for the tap-to-reveal gesture. */
+			if (w->type != WIDGET_BUTTON && w->type != WIDGET_TOGGLE) {
+				lv_obj_add_flag(w->root, LV_OBJ_FLAG_EVENT_BUBBLE);
+			}
 		}
 
 		/* All event callbacks are attached unconditionally — they're no-ops
@@ -108,11 +131,13 @@ static void _register_widget_long_press(void) {
 		 * events to non-CLICKABLE objects) or when not armed. This lets the
 		 * armed-state toggle flip CLICKABLE alone, without re-wiring events. */
 
-		/* Short-tap → reveal toolbar pills (Menu / Edit Mode) */
-		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
-							LV_EVENT_PRESSED, NULL);
-		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
-							LV_EVENT_RELEASED, NULL);
+		/* Short-tap → reveal chrome (Menu / arrows / Edit pill) is handled at
+		 * the SCREEN level (SHORT_CLICKED on ui_Screen3). It fires on widget
+		 * taps via the LV_OBJ_FLAG_EVENT_BUBBLE set above — one screen handler,
+		 * not a per-widget callback (per-widget multiplied dispatch work by
+		 * widget-count on every tap). The bubble flag is what makes it actually
+		 * propagate; earlier this was assumed-but-unset, so only background
+		 * taps worked. */
 
 		/* Edit Mode select + drag handlers. Bail when not armed. */
 		lv_obj_add_event_cb(w->root, edit_mode_widget_pressed_cb,
@@ -189,10 +214,13 @@ void dashboard_init(lv_obj_t *parent) {
 	signal_registry_init();
 	signal_peaks_start_autosave();
 	/* DTC monitor exposes DTC_COUNT as a synthetic signal so warning
-	 * widgets can bind it directly. Re-asserted on every dashboard_init
-	 * because signal_registry_reset() (called inside layout_manager_load)
-	 * wipes the signal table; the dtc_monitor_start path re-registers
-	 * DTC_COUNT and re-primes it with the cached count. */
+	 * widgets can bind it directly. Re-asserted on every dashboard_init:
+	 * the signal registry MERGES across layout loads (the happy path does
+	 * NOT call signal_registry_reset()), so DTC_COUNT usually survives a
+	 * reload and re-registration just updates its decode params. It only
+	 * needs (re-)registering when genuinely absent — first boot, or after
+	 * an explicit registry reset on ECU switch. dtc_monitor_start handles
+	 * both cases (register-if-missing) and re-primes the cached count. */
 	dtc_monitor_start();
 	widget_registry_reset();
 	widget_warning_reset();

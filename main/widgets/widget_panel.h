@@ -59,6 +59,13 @@ typedef struct {
 	uint8_t    show_peak;
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * When `channel_id` is set, this panel pulls data semantics from
+	 * the named channel. Backwards-compat: empty `channel_id` falls
+	 * through to legacy signal_name + warning_*_threshold path.
+	 * See widget_meter.h for the full pattern documentation. */
+	char       channel_id[32];
+	void      *channel;     /* channel_t* — opaque to avoid header dep */
 	/* LVGL object pointers (runtime only) */
 	lv_obj_t  *box;
 	lv_obj_t  *header_label;

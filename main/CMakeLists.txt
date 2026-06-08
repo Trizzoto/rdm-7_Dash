@@ -9,6 +9,9 @@ idf_component_register(
         "can/obd2_pids.c"
         "can/obd2_dtc_db.c"
         "can/dtc_monitor.c"
+        "data/canonical_channels.c"
+        "data/channel_manager.c"
+        "data/channel_source_apply.c"
         "storage/boot_assets.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
@@ -33,6 +36,7 @@ idf_component_register(
         "net/web_server_logger.c"
         "net/web_server_layout.c"
         "net/web_server_obd2.c"
+        "net/web_server_channels.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
@@ -100,7 +104,6 @@ idf_component_register(
         "ui/screens/ui_peaks.c"
         "ui/screens/ui_can_list.c"
         "ui/screens/first_run_wizard.c"
-        "ui/screens/ui_ecu_picker.c"
         "ui/fonts/ui_font_fugaz_14.c"
         "ui/fonts/ui_font_fugaz_17.c"
         "ui/fonts/ui_font_fugaz_28.c"
@@ -125,6 +128,7 @@ idf_component_register(
         "."
         "./include"
         "can"
+        "data"
         "net"
         "storage"
         "io"
@@ -160,6 +164,7 @@ idf_component_register(
         "esp_http_server"
         "joltwallet__littlefs"
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
+                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf"
 )
 
 # ─── Gzip the web editor at configure time ─────────────────────────────────

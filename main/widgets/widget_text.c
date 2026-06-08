@@ -9,6 +9,7 @@
 #include "widget_rules.h"
 #include "widget_types.h"
 #include "system/night_mode.h"
+#include "data/channel_manager.h"
 #include "ui/theme.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -47,6 +48,17 @@ static void _text_on_signal(float value, bool is_stale, void *user_data) {
 	signal_format_value(td ? td->signal_index : -1, value,
 						td ? td->decimals : 0, buf, sizeof(buf));
 	lv_label_set_text(w->root, buf);
+}
+
+/* Channel-changed listener for text widget. */
+static void _text_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (!td) return;
+	safe_strncpy(td->signal_name, c->signal_name, sizeof(td->signal_name));
+	td->signal_index = c->signal_index;
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
 static void _text_create(widget_t *w, lv_obj_t *parent) {
@@ -89,6 +101,10 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	if (td && td->signal_index >= 0)
 		signal_subscribe(td->signal_index, _text_on_signal, w);
 
+	if (td && td->channel)
+		channel_manager_subscribe((channel_t *)td->channel,
+		                           _text_on_channel_changed, w);
+
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
 	 * was created while night-mode is already active. */
@@ -123,6 +139,8 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "static_text", td->static_text);
 		if (td->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", td->signal_name);
+		if (td->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", td->channel_id);
 		if (td->font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "font", td->font);
 		if (td->text_color.full != TEXT_DEFAULT_COLOR.full)
@@ -180,6 +198,30 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (td->signal_name[0] != '\0')
 		td->signal_index = signal_find_by_name(td->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Channel with empty signal_name (e.g. cleared by resolve_signals
+	 * after a cross-layout switch) falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(td->channel_id, ch_item->valuestring, sizeof(td->channel_id));
+	channel_t *bound_c = td->channel_id[0] ? channel_manager_get(td->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		td->channel = bound_c;
+		safe_strncpy(td->signal_name, bound_c->signal_name, sizeof(td->signal_name));
+		td->signal_index = bound_c->signal_index;
+	} else if (td->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = td->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) td->channel = c;
+	}
 }
 
 static void _text_destroy(widget_t *w) {
@@ -187,6 +229,11 @@ static void _text_destroy(widget_t *w) {
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (td && td->signal_index >= 0)
 		signal_unsubscribe(td->signal_index, _text_on_signal, w);
+	if (td && td->channel) {
+		channel_manager_unsubscribe((channel_t *)td->channel,
+		                             _text_on_channel_changed, w);
+		td->channel = NULL;
+	}
 	night_mode_unsubscribe(_text_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))

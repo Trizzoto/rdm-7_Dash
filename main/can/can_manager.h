@@ -129,8 +129,29 @@ bool can_is_suspended(void);
  * Device Settings CAN diagnostics card when it sees twai_get_status_info
  * fail. Re-runs whichever path is appropriate:
  *   - if suspended: retries can_resume() (e.g. previous resume failed)
+ *   - else if driver reports TWAI_STATE_BUS_OFF: initiates bus-off recovery
+ *     (twai_initiate_recovery -> wait for STOPPED -> twai_start)
  *   - else if driver is uninstalled: does a fresh install + start + RX task
  * Self-rate-limited to one attempt per 5 seconds so a stuck failure mode
  * doesn't burn CPU. Returns true if recovery was attempted this call.
  */
 bool can_recover(void);
+
+/**
+ * Force the TWAI acceptance filter to ACCEPT_ALL so the CAN ID tracker
+ * sees every frame regardless of what's in the current signal registry.
+ * Pair with can_set_promiscuous_mode(false) to restore a
+ * signal-registry-derived filter.
+ *
+ * Used by the first-run wizard's ECU auto-detect probe so we can score
+ * the live bus against the entire preconfig catalog rather than just
+ * whatever signals the previous layout left in the filter mask.
+ *
+ * No-op when the requested state already matches the current one.
+ */
+void can_set_promiscuous_mode(bool enable);
+
+/**
+ * True iff promiscuous mode is currently active.
+ */
+bool can_is_promiscuous(void);

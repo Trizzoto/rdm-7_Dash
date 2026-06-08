@@ -19,6 +19,7 @@
 #include "widget_image.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include "data/channel_manager.h"
 #include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -257,6 +258,37 @@ static void _arc_on_signal(float value, bool is_stale, void *user_data) {
     _arc_recompute_value(w, value, is_stale);
 }
 
+/* Channel-changed listener — snapshot channel fields and invalidate. */
+static void _arc_on_channel_changed(channel_t *c, void *user_data) {
+    if (!c || !user_data) return;
+    widget_t *w = (widget_t *)user_data;
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d) return;
+    safe_strncpy(d->signal_name, c->signal_name, sizeof(d->signal_name));
+    /* Re-point our own signal subscription when the channel re-binds to a new
+       source — copying the index alone leaves _arc_on_signal attached to the
+       OLD index, so the gauge would freeze on its last value. Mirrors the
+       inspector signal_name rebind path. Safe: runs under the LVGL mutex. */
+    int16_t new_idx = c->signal_index;
+    if (new_idx != d->signal_index) {
+        if (d->signal_index >= 0)
+            signal_unsubscribe(d->signal_index, _arc_on_signal, w);
+        d->signal_index = new_idx;
+        if (new_idx >= 0)
+            signal_subscribe(new_idx, _arc_on_signal, w);
+    }
+    d->signal_min = (float)c->min;
+    d->signal_max = (float)c->max;
+    if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+        d->redline_enabled = true;
+        d->redline_threshold = (float)c->high_warn;
+    } else {
+        d->redline_enabled = false;
+    }
+    /* Redline colour is widget-owned — never driven by the channel. */
+    if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+}
+
 /* ── Create: image mode ────────────────────────────────────────────────── */
 
 static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
@@ -475,6 +507,10 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     if (d->signal_index >= 0)
         signal_subscribe(d->signal_index, _arc_on_signal, w);
 
+    if (d->channel)
+        channel_manager_subscribe((channel_t *)d->channel,
+                                   _arc_on_channel_changed, w);
+
     /* Subscribe rules (safe no-op if no rules defined) */
     widget_rules_subscribe(w);
 
@@ -550,6 +586,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Signal binding */
     if (d->signal_name[0] != '\0')
         cJSON_AddStringToObject(cfg, "signal_name", d->signal_name);
+    if (d->channel_id[0] != '\0')
+        cJSON_AddStringToObject(cfg, "channel", d->channel_id);
     if (d->signal_min != ARC_DEFAULT_SIG_MIN)
         cJSON_AddNumberToObject(cfg, "signal_min", (double)d->signal_min);
     if (d->signal_max != ARC_DEFAULT_SIG_MAX)
@@ -744,6 +782,40 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         NIGHT_PARSE_IMAGE(night, d->night, arc_image);
         NIGHT_PARSE_IMAGE(night, d->night, arc_image_full);
     }
+
+    /* ── v14 channel binding + backwards-compat migration ────────
+     * Empty-signal channel falls through to the legacy path so
+     * record_legacy_widget repopulates it from the widget's own signal. */
+    cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+    if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+        safe_strncpy(d->channel_id, ch_item->valuestring, sizeof(d->channel_id));
+    channel_t *bound_c = d->channel_id[0] ? channel_manager_get(d->channel_id) : NULL;
+    if (bound_c && bound_c->signal_index >= 0) {
+        d->channel = bound_c;
+        safe_strncpy(d->signal_name, bound_c->signal_name, sizeof(d->signal_name));
+        d->signal_index = bound_c->signal_index;
+        d->signal_min = (float)bound_c->min;
+        d->signal_max = (float)bound_c->max;
+        if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+            d->redline_enabled = true;
+            d->redline_threshold = (float)bound_c->high_warn;
+        } else {
+            d->redline_enabled = false;
+        }
+        /* Redline colour stays widget-owned — never overridden by the channel. */
+    } else if (d->signal_name[0] != '\0') {
+        legacy_widget_data_t legacy = {
+            .signal_name = d->signal_name,
+            .min = (int32_t)d->signal_min,
+            .max = (int32_t)d->signal_max,
+            .high_warn = d->redline_enabled ? (int32_t)d->redline_threshold : INT32_MIN,
+            .color_normal = lv_color_to32(d->arc_color) & 0xFFFFFF,
+            .color_high_warn = d->redline_enabled ?
+                (lv_color_to32(d->redline_color) & 0xFFFFFF) : CHANNEL_USE_DEFAULT_COLOR,
+        };
+        channel_t *c = channel_manager_record_legacy_widget(&legacy);
+        if (c) d->channel = c;
+    }
 }
 
 static void _arc_destroy(widget_t *w) {
@@ -753,6 +825,12 @@ static void _arc_destroy(widget_t *w) {
     /* Unsubscribe signal before deleting LVGL objects */
     if (d && d->signal_index >= 0)
         signal_unsubscribe(d->signal_index, _arc_on_signal, w);
+
+    if (d && d->channel) {
+        channel_manager_unsubscribe((channel_t *)d->channel,
+                                     _arc_on_channel_changed, w);
+        d->channel = NULL;
+    }
 
     night_mode_unsubscribe(_arc_night_cb, w);
 

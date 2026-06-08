@@ -15,6 +15,20 @@ extern "C" {
 /* Create and show the wizard overlay. Safe to call from the LVGL task only. */
 void show_first_run_wizard(void);
 
+/* Open just the Channels editor (the wizard's split-pane Step 3) as a
+ * standalone modal — no CAN scan / ECU detect / Wi-Fi steps. Launched
+ * from Device Settings → "Channels". LVGL task only. */
+void first_run_wizard_open_channels(void);
+
+/* Forward decl — full definition in widgets/widget_types.h. */
+typedef struct widget_t widget_t;
+
+/* Open the Channels editor targeting a specific dashboard widget (from a
+ * long-press). Same split-pane editor, opened on the widget's current
+ * channel, plus an "Apply to widget" action that binds the selected
+ * channel to `w` and reloads the dashboard. LVGL task only. */
+void first_run_wizard_open_channels_for_widget(widget_t *w);
+
 #ifdef __cplusplus
 }
 #endif

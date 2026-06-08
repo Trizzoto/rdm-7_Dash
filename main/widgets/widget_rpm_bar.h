@@ -43,6 +43,11 @@ typedef struct {
 	uint16_t flash_speed_ms;   /* default 200, range 50..1000 — flash period for effect=1 */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * RPM bar maps gauge_max → channel.max, redline → channel.high_warn,
+	 * limiter_value → unused (RPM-specific concept, stays widget-owned). */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	rpm_bar_night_overrides_t night;
 } rpm_bar_data_t;

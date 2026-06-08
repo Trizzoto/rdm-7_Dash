@@ -409,7 +409,7 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
             const obd2_subfield_t *sf = &def->sub_fields[i];
             if (!sf->signal_name) continue;
             if (signal_find_by_name(sf->signal_name) >= 0) continue;
-            int16_t idx = signal_register(sf->signal_name,
+            int16_t idx = signal_register_with_source(sf->signal_name,
                                           /*can_id=*/0,
                                           /*bit_start=*/0,
                                           /*bit_length=*/0,
@@ -417,7 +417,8 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
                                           /*offset=*/0.0f,
                                           sf->is_signed,
                                           /*endian=*/1,
-                                          sf->unit ? sf->unit : "");
+                                          sf->unit ? sf->unit : "",
+                                          SIGNAL_SOURCE_OBD2);
             if (idx < 0) {
                 ESP_LOGW(TAG, "Failed to register OBD2 signal '%s'",
                          sf->signal_name);
@@ -430,7 +431,7 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
     if (!def->signal_name) return;
     if (signal_find_by_name(def->signal_name) >= 0) return;
 
-    int16_t idx = signal_register(def->signal_name,
+    int16_t idx = signal_register_with_source(def->signal_name,
                                   /*can_id=*/0,
                                   /*bit_start=*/0,
                                   /*bit_length=*/0,
@@ -438,7 +439,8 @@ static void _register_pid_signal(const obd2_pid_def_t *def)
                                   /*offset=*/0.0f,
                                   /*is_signed=*/false,
                                   /*endian=*/1,
-                                  def->unit);
+                                  def->unit,
+                                  SIGNAL_SOURCE_OBD2);
     if (idx < 0) {
         ESP_LOGW(TAG, "Failed to register OBD2 signal '%s'", def->signal_name);
     }

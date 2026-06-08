@@ -1,5 +1,6 @@
 #include "widget_indicator.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -879,6 +880,17 @@ static void _indicator_on_signal(float value, bool is_stale, void *user_data) {
 	update_indicator_ui_immediate(slot);
 }
 
+/* Channel-changed listener — re-snapshot signal binding and invalidate. */
+static void _indicator_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (!id) return;
+	safe_strncpy(id->signal_name, c->signal_name, sizeof(id->signal_name));
+	id->signal_index = c->signal_index;
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+}
+
 static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	uint8_t slot = id ? id->slot : 0;
@@ -890,6 +902,10 @@ static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (id && id->signal_index >= 0)
 		signal_subscribe(id->signal_index, _indicator_on_signal, w);
+
+	if (id && id->channel)
+		channel_manager_subscribe((channel_t *)id->channel,
+		                           _indicator_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
@@ -925,6 +941,8 @@ static void _indicator_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "is_momentary", id->is_momentary);
 		if (id->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", id->signal_name);
+		if (id->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", id->channel_id);
 		cJSON_AddNumberToObject(cfg, "color_on", (int)id->color_on.full);
 		cJSON_AddNumberToObject(cfg, "opa_on", id->opa_on);
 		cJSON_AddNumberToObject(cfg, "color_off", (int)id->color_off.full);
@@ -979,11 +997,41 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (id->signal_name[0] != '\0')
 		id->signal_index = signal_find_by_name(id->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(id->channel_id, ch_item->valuestring, sizeof(id->channel_id));
+	channel_t *bound_c = id->channel_id[0] ? channel_manager_get(id->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		id->channel = bound_c;
+		safe_strncpy(id->signal_name, bound_c->signal_name, sizeof(id->signal_name));
+		id->signal_index = bound_c->signal_index;
+	} else if (id->signal_name[0] != '\0') {
+		/* Indicator is boolean — no min/max/threshold to migrate, just
+		 * signal binding. */
+		legacy_widget_data_t legacy = {
+			.signal_name = id->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) id->channel = c;
+	}
 }
 static void _indicator_destroy(widget_t *w) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	if (id && id->signal_index >= 0)
 		signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+	if (id && id->channel) {
+		channel_manager_unsubscribe((channel_t *)id->channel,
+		                             _indicator_on_channel_changed, w);
+		id->channel = NULL;
+	}
 	night_mode_unsubscribe(_indicator_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))

@@ -24,8 +24,15 @@ typedef struct {
 /* ── Per-instance state for meter widget ───────────────────────────────── */
 typedef struct {
 	uint8_t value_idx;
-	int32_t min;
-	int32_t max;
+	/* Display range in float units. The LVGL meter scale is integer, so
+	 * min/max/value are multiplied by value_scale (=10^value_decimals) only
+	 * at the lv_meter_* boundary; tick labels divide back. value_scale
+	 * defaults to 1 (integer behaviour) — decimals come from the bound
+	 * channel via _meter_apply_channel. */
+	float   min;
+	float   max;
+	int32_t value_scale;            /* 10^value_decimals; 1 = no decimals */
+	uint8_t value_decimals;         /* 0..3 — drives tick-label precision */
 	int16_t start_angle;
 	int16_t end_angle;
 	lv_obj_t *meter;
@@ -160,7 +167,7 @@ typedef struct {
 	lv_meter_indicator_t *night_redline_arc;
 	/* Redline zone — visual emphasis for "danger" range [threshold, max]. */
 	bool       redline_enabled;     /* default: false — master toggle */
-	int32_t    redline_threshold;   /* default: 80 — value at which the zone starts */
+	float      redline_threshold;   /* default: 80 — value at which the zone starts */
 	lv_color_t redline_color;       /* default: red (0xFF0000) */
 	bool       redline_show_arc;    /* default: true — draw a colored arc segment */
 	uint8_t    redline_arc_width;   /* default: 6 — arc thickness in px */
@@ -171,7 +178,7 @@ typedef struct {
 	 * sweep, giving two linear segments instead of one. Tick label positions
 	 * remain linear (LVGL v8 scale is single-segment). */
 	bool       anchor_enabled;       /* default: false */
-	int32_t    anchor_value;         /* default: 50 */
+	float      anchor_value;         /* default: 50 */
 	uint8_t    anchor_position;      /* default: 50 — percent of sweep */
 	/* Reverse — flip the value axis. With reverse=true, max sits at the
 	 * START of the sweep and min at the END. Combines cleanly with anchor
@@ -179,6 +186,25 @@ typedef struct {
 	bool       reverse;              /* default: false */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ───────────────────────────────────────
+	 * When `channel_id` is set, this meter pulls its data semantics
+	 * (signal_name, min, max, redline_threshold, redline_color) from
+	 * the named channel instead of carrying them per-widget. Visual
+	 * style (needle, shadow, fonts, etc.) stays widget-owned.
+	 *
+	 * Backwards compat: v13 layouts have channel_id == "" and use the
+	 * legacy per-widget fields above. On v13 load, the widget self-
+	 * reports its values to channel_manager_record_legacy_widget() so
+	 * the channel registry auto-populates from existing layout data —
+	 * users keep their custom redlines on first v14 boot.
+	 *
+	 * The `channel` pointer is cached at create-time so the render
+	 * hot path never does string lookups. It's NULL when binding is
+	 * legacy mode. */
+	char     channel_id[32];
+	void    *channel;             /* channel_t* — opaque to avoid
+	                                  pulling channel_manager.h into
+	                                  this header */
 	/* Night-mode appearance overrides */
 	meter_night_overrides_t night;
 	/* Night-mode dual-meter pattern: when any "baked-in" night property is

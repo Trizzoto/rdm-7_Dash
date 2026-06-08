@@ -25,6 +25,7 @@
 #include "storage/data_logger.h"
 #include "storage/signal_replay.h"
 #include "storage/sd_manager.h"
+#include "storage/boot_assets.h"
 #include "system/device_id.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
@@ -496,6 +497,10 @@ static void _handle_image_delete(int id, cJSON *params)
         _send_error(id, "Invalid name");
         return;
     }
+    if (boot_assets_is_protected_image(name_item->valuestring)) {
+        _send_error(id, "Built-in image cannot be deleted");
+        return;
+    }
     char path[80];
     snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR,
              name_item->valuestring);
@@ -660,6 +665,10 @@ static void _handle_font_delete(int id, cJSON *params)
     cJSON *name_item = cJSON_GetObjectItem(params, "name");
     if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
         _send_error(id, "Invalid name");
+        return;
+    }
+    if (boot_assets_is_protected_font(name_item->valuestring)) {
+        _send_error(id, "Built-in font cannot be deleted");
         return;
     }
     if (!font_manager_remove_family(name_item->valuestring)) {
@@ -1558,6 +1567,14 @@ static void _handle_sd_copy(int id, cJSON *params)
         lfs_dir = LFS_FONT_DIR; sd_dir = SD_FONT_DIR; ext = ".ttf";
     } else {
         _send_error(id, "Invalid type"); return;
+    }
+
+    /* Built-in assets are locked — never copy them to or from SD. */
+    if ((strcmp(type, "font")   == 0 && boot_assets_is_protected_font(name)) ||
+        (strcmp(type, "layout") == 0 && boot_assets_is_protected_layout(name)) ||
+        (strcmp(type, "image")  == 0 && boot_assets_is_protected_image(name))) {
+        _send_error(id, "Built-in asset cannot be moved to/from SD");
+        return;
     }
 
     char src[96], dst[96];

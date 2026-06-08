@@ -245,6 +245,12 @@ int16_t *widget_get_signal_index_ptr(widget_t *w);
  *  if this widget type has no label field. */
 char *widget_get_label_buf(widget_t *w);
 
+/** Return a pointer to the channel_id[32] buffer inside type_data, or NULL
+ *  if this widget type has no channel binding (image/shape/line/button/
+ *  toggle/shift_light). Used to (re)bind a widget to a channel at runtime —
+ *  set the buffer, persist the layout, then reload so from_json re-resolves. */
+char *widget_get_channel_id_buf(widget_t *w);
+
 /** Return true if the widget type supports alert/threshold configuration
  *  (currently WIDGET_PANEL and WIDGET_BAR only). */
 bool widget_has_alert_support(widget_t *w);

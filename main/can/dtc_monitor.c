@@ -87,12 +87,15 @@ static void _tick_cb(lv_timer_t *t) {
 /* ── Lifecycle ───────────────────────────────────────────────────────── */
 
 void dtc_monitor_start(void) {
-    /* Always check + re-register the signal: layout reloads call
-     * signal_registry_reset() which memsets the signal array, dropping
-     * any previously-registered DTC_COUNT. The timer itself only needs
-     * to be created once (guarded below). */
+    /* Check + register the signal only if absent. The signal registry
+     * MERGES across layout loads (the happy path does NOT call
+     * signal_registry_reset()), so a previously-registered DTC_COUNT
+     * normally survives a reload; re-registration would just update its
+     * decode params anyway. We only need to register when it's genuinely
+     * missing (first start, or after an explicit registry reset on ECU
+     * switch). The timer itself is created once (guarded below). */
     if (signal_find_by_name("DTC_COUNT") < 0) {
-        int16_t idx = signal_register("DTC_COUNT",
+        int16_t idx = signal_register_with_source("DTC_COUNT",
                                        /*can_id=*/0,
                                        /*bit_start=*/0,
                                        /*bit_length=*/0,
@@ -100,7 +103,8 @@ void dtc_monitor_start(void) {
                                        /*offset=*/0.0f,
                                        /*is_signed=*/false,
                                        /*endian=*/1,
-                                       /*unit=*/"");
+                                       /*unit=*/"",
+                                       SIGNAL_SOURCE_INTERNAL);
         if (idx < 0) {
             ESP_LOGW(TAG, "Failed to register DTC_COUNT signal — monitor disabled");
             return;

@@ -176,7 +176,7 @@ void font_manager_shutdown(void)
 
 const lv_font_t *font_manager_get(const char *family, uint16_t size)
 {
-	if (!family || family[0] == '\0' || size < 8 || size > 200)
+	if (!family || family[0] == '\0' || size < 8 || size > 500)
 		return NULL;
 
 	int fam_idx = _find_family(family);

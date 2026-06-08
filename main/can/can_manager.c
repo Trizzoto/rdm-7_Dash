@@ -32,6 +32,21 @@ static twai_general_config_t g_config =
 	TWAI_GENERAL_CONFIG_DEFAULT(20, 19, TWAI_MODE_NORMAL);
 static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
+/* True iff the wizard's ECU auto-detect probe (or other diagnostic) has
+ * forced the filter to ACCEPT_ALL via can_set_promiscuous_mode. While
+ * true, reconfigure_can_filter() becomes a no-op so signal binds in
+ * other UIs (channel binds, OBD2 PID toggles) can't narrow the filter
+ * underneath an in-flight probe. */
+static bool s_promiscuous_active = false;
+
+/* Tracks whether the TWAI driver is currently installed (and the RX path
+ * is meant to be live). Used by reconfigure_can_filter()'s equality
+ * guard: a dead/uninstalled driver must NEVER be skipped just because
+ * f_config happens to match the rebuilt filter (see FIX #6 — filter
+ * wedge). Set true after every successful install+start, cleared on
+ * uninstall/suspend. */
+static bool s_driver_installed = false;
+
 /* ── Receive task management ─────────────────────────────────────────── */
 
 static TaskHandle_t canTaskHandle = NULL;
@@ -63,17 +78,130 @@ extern void rdm_lvgl_unlock(void);
 #define CAN_RECOVERY_INITIAL_MS     100
 #define CAN_RECOVERY_MAX_MS         5000
 
+/* Bus-off recovery: how long to wait for the driver to leave RECOVERING
+ * (the ISR moves it to STOPPED on bus-recovery-complete) before we give
+ * up this attempt. ~1 s at 5 ms granularity. */
+#define CAN_BUSOFF_WAIT_MAX_MS      1000
+#define CAN_BUSOFF_WAIT_STEP_MS     5
+
+/* Map a twai_state_t to a short human string for the diagnostic log. */
+static const char *_twai_state_name(twai_state_t s) {
+	switch (s) {
+	case TWAI_STATE_STOPPED:    return "STOPPED";
+	case TWAI_STATE_RUNNING:    return "RUNNING";
+	case TWAI_STATE_BUS_OFF:    return "BUS_OFF";
+	case TWAI_STATE_RECOVERING: return "RECOVERING";
+	default:                    return "UNKNOWN";
+	}
+}
+
+/* FIX #1 — bus-off recovery. twai_initiate_recovery() is the ONLY API that
+ * exits the BUS_OFF state: it requires state==BUS_OFF, transitions the
+ * driver to RECOVERING, and the driver ISR sets state to STOPPED once
+ * bus-recovery completes; twai_start() from STOPPED is then legal.
+ *
+ * On a quiet bus in NORMAL mode the TX error counter climbs past 256 and
+ * the controller latches BUS_OFF. In that state twai_receive() returns
+ * ESP_ERR_TIMEOUT (NOT INVALID_STATE), so the legacy recovery branch never
+ * fired and CAN stayed dead until a full driver reinstall. This helper is
+ * the shared sequence used by both the RX task and can_recover().
+ *
+ * @param info  current status info (already fetched, state==BUS_OFF).
+ * @return true if the driver was brought back to RUNNING, false otherwise.
+ *
+ * Must be called from a context that may block briefly (RX task /
+ * diagnostics tick). Respects can_task_should_stop so a concurrent stop
+ * request aborts the wait promptly. */
+static bool _recover_from_bus_off(const twai_status_info_t *info) {
+	ESP_LOGW(TAG, "CAN BUS_OFF detected (tx_err=%lu) — initiating recovery",
+			 (unsigned long)info->tx_error_counter);
+
+	esp_err_t rec = twai_initiate_recovery();
+	if (rec != ESP_OK) {
+		ESP_LOGE(TAG, "twai_initiate_recovery failed: %s", esp_err_to_name(rec));
+		return false;
+	}
+
+	/* Wait (bounded) for the ISR to finish bus recovery and move us to
+	 * STOPPED. Do NOT busy-spin: yield 5 ms per iteration and bail early
+	 * if a stop was requested. */
+	int waited_ms = 0;
+	twai_status_info_t st;
+	while (waited_ms < CAN_BUSOFF_WAIT_MAX_MS) {
+		if (can_task_should_stop) {
+			ESP_LOGW(TAG, "Bus-off recovery aborted — stop requested");
+			return false;
+		}
+		vTaskDelay(pdMS_TO_TICKS(CAN_BUSOFF_WAIT_STEP_MS));
+		waited_ms += CAN_BUSOFF_WAIT_STEP_MS;
+		if (twai_get_status_info(&st) == ESP_OK &&
+		    st.state == TWAI_STATE_STOPPED) {
+			break;
+		}
+	}
+
+	if (twai_get_status_info(&st) != ESP_OK || st.state != TWAI_STATE_STOPPED) {
+		ESP_LOGE(TAG, "Bus-off recovery timed out after %d ms (state=%s)",
+				 waited_ms,
+				 (twai_get_status_info(&st) == ESP_OK)
+				     ? _twai_state_name(st.state) : "QUERY_FAIL");
+		return false;
+	}
+
+	esp_err_t serr = twai_start();
+	if (serr != ESP_OK) {
+		ESP_LOGE(TAG, "Bus-off recovery: twai_start failed: %s",
+				 esp_err_to_name(serr));
+		return false;
+	}
+	ESP_LOGI(TAG, "CAN bus-off recovery complete — RUNNING again");
+	return true;
+}
+
 static void can_receive_task(void *pvParameter) {
 	(void)pvParameter;
 	static uint32_t s_queue_drop_count = 0;
 	int recovery_retries = 0;
 	uint32_t recovery_delay_ms = CAN_RECOVERY_INITIAL_MS;
 
+	/* FIX #1 — throttle bus-off recovery to ~once/second so a hard-down
+	 * bus doesn't hammer twai_initiate_recovery() in a tight loop. */
+	int64_t last_busoff_attempt_us = 0;
+
+	/* INSTRUMENTATION (D) — low-rate state log. Track the last-logged TWAI
+	 * state so we emit on every transition, plus a heartbeat every ~5 s so
+	 * we can see bus-off / error-counter climb on-device without spamming.*/
+	twai_state_t last_logged_state = (twai_state_t)0xFF; /* impossible → forces first log */
+	int64_t last_state_log_us = 0;
+
 	s_can_task_running = true;
 
 	while (!can_task_should_stop) {
 		twai_message_t message;
 		esp_err_t ret = twai_receive(&message, pdMS_TO_TICKS(5));
+
+		/* INSTRUMENTATION (D): cheap state snapshot. Log on state change OR
+		 * every ~5 s. twai_get_status_info() is a lightweight register read;
+		 * we only call the logger when something is worth printing. */
+		{
+			twai_status_info_t dbg;
+			if (twai_get_status_info(&dbg) == ESP_OK) {
+				int64_t now_us = esp_timer_get_time();
+				bool changed = (dbg.state != last_logged_state);
+				bool heartbeat = (now_us - last_state_log_us) >= 5LL * 1000 * 1000;
+				if (changed || heartbeat) {
+					ESP_LOGI(TAG,
+						"TWAI state=%s tx_err=%lu rx_err=%lu rx_frames=%lu%s",
+						_twai_state_name(dbg.state),
+						(unsigned long)dbg.tx_error_counter,
+						(unsigned long)dbg.rx_error_counter,
+						(unsigned long)s_rx_frame_count,
+						changed ? " (transition)" : "");
+					last_logged_state = dbg.state;
+					last_state_log_us = now_us;
+				}
+			}
+		}
 
 		if (ret == ESP_OK) {
 			/* Successful receive resets recovery state */
@@ -93,7 +221,28 @@ static void can_receive_task(void *pvParameter) {
 				}
 			}
 		} else if (ret == ESP_ERR_TIMEOUT) {
-			vTaskDelay(pdMS_TO_TICKS(1));
+			/* FIX #1 — bus-off detection. In NORMAL mode on a quiet bus the
+			 * TX error counter climbs past 256 and the controller latches
+			 * TWAI_STATE_BUS_OFF. In that state twai_receive() keeps
+			 * returning ESP_ERR_TIMEOUT (not INVALID_STATE), so this is the
+			 * ONLY place we can notice it. Poll status; if bus-off, run the
+			 * recovery sequence (throttled to ~once/sec). */
+			twai_status_info_t info;
+			if (twai_get_status_info(&info) == ESP_OK &&
+			    info.state == TWAI_STATE_BUS_OFF) {
+				int64_t now_us = esp_timer_get_time();
+				if (now_us - last_busoff_attempt_us >= 1LL * 1000 * 1000) {
+					last_busoff_attempt_us = now_us;
+					_recover_from_bus_off(&info);
+					/* Force a fresh state log on next loop iteration so the
+					 * RUNNING/STILL-BUS_OFF transition is visible on-device. */
+					last_logged_state = (twai_state_t)0xFF;
+				} else {
+					vTaskDelay(pdMS_TO_TICKS(CAN_BUSOFF_WAIT_STEP_MS));
+				}
+			} else {
+				vTaskDelay(pdMS_TO_TICKS(1));
+			}
 		} else if (ret == ESP_ERR_INVALID_STATE) {
 			/* Intentional stop: _stop_can_task() calls twai_stop() which
 			 * makes twai_receive() return INVALID_STATE. Exit before the
@@ -304,6 +453,15 @@ static twai_timing_config_t _bitrate_to_timing(uint8_t bitrate_code) {
 }
 
 void reconfigure_can_filter(void) {
+	/* While the wizard's ECU probe is open, the filter must stay
+	 * promiscuous — refuse to narrow it just because some unrelated UI
+	 * touched the signal registry mid-probe. The probe's own
+	 * can_set_promiscuous_mode(false) call rebuilds the filter when
+	 * the user commits a preset. */
+	if (s_promiscuous_active) {
+		ESP_LOGI(TAG, "Filter rebuild skipped — promiscuous mode active");
+		return;
+	}
 	/* Build the new filter first WITHOUT touching the live one. If the
 	 * resulting filter would deliver the same set of frames as what's
 	 * already installed, skip the entire teardown/reinstall — saves a
@@ -314,25 +472,116 @@ void reconfigure_can_filter(void) {
 	 * OBD2 PIDs while the 0x7E8-0x7EF response range stays mapped). */
 	twai_filter_config_t new_filter;
 	build_twai_filter_from_signals(&new_filter);
+
+	/* FIX #6 — filter wedge. Only take the equality short-circuit if the
+	 * driver is genuinely installed AND running. A previous failed install
+	 * could have left the driver uninstalled while f_config still claims
+	 * the (narrow) filter that never got applied; skipping here would leave
+	 * CAN permanently dead. Confirm RUNNING via the live status before we
+	 * trust f_config as "what's actually installed". */
 	if (_twai_filter_equal(&new_filter, &f_config)) {
-		ESP_LOGI(TAG, "Filter rebuild: unchanged (code=0x%08X mask=0x%08X) — skipping",
-				 (unsigned)new_filter.acceptance_code,
-				 (unsigned)new_filter.acceptance_mask);
-		return;
+		twai_status_info_t info;
+		bool live_running = s_driver_installed &&
+		                    twai_get_status_info(&info) == ESP_OK &&
+		                    info.state == TWAI_STATE_RUNNING;
+		if (live_running) {
+			ESP_LOGI(TAG, "Filter rebuild: unchanged (code=0x%08X mask=0x%08X) — skipping",
+					 (unsigned)new_filter.acceptance_code,
+					 (unsigned)new_filter.acceptance_mask);
+			return;
+		}
+		ESP_LOGW(TAG, "Filter rebuild: filter matches but driver not RUNNING "
+				 "— forcing full reinstall");
 	}
 
 	_stop_can_task();
-	f_config = new_filter;
 
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
+	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
-	if (_install_twai_with_retry("filter rebuild") != ESP_OK) return;
-	twai_start();
+	/* FIX #6 — do NOT commit f_config=new_filter until the install+start
+	 * actually succeed. If the install fails we leave f_config describing
+	 * the previously-installed filter so the next call's equality guard
+	 * can't see new_filter and wrongly skip the retry. */
+	twai_filter_config_t prev_filter = f_config;
+	f_config = new_filter;
+	if (_install_twai_with_retry("filter rebuild") != ESP_OK) {
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
+		return;
+	}
+	if (twai_start() != ESP_OK) {
+		ESP_LOGE(TAG, "Filter rebuild: twai_start failed");
+		twai_driver_uninstall();
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
+		return;
+	}
+	s_driver_installed = true;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096, NULL,
 	                    CAN_TASK_PRIORITY, &canTaskHandle, MALLOC_CAP_SPIRAM);
+}
+
+bool can_is_promiscuous(void) { return s_promiscuous_active; }
+
+void can_set_promiscuous_mode(bool enable) {
+	if (enable == s_promiscuous_active) return;
+
+	twai_filter_config_t new_filter;
+	if (enable) {
+		new_filter = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+	} else {
+		build_twai_filter_from_signals(&new_filter);
+	}
+	/* FIX #6 — only short-circuit on filter equality if the driver is truly
+	 * installed AND running; otherwise a half-torn-down driver would be
+	 * skipped and CAN would stay dead. */
+	if (_twai_filter_equal(&new_filter, &f_config)) {
+		twai_status_info_t info;
+		bool live_running = s_driver_installed &&
+		                    twai_get_status_info(&info) == ESP_OK &&
+		                    info.state == TWAI_STATE_RUNNING;
+		if (live_running) {
+			s_promiscuous_active = enable;
+			ESP_LOGI(TAG, "Promiscuous %s — filter already matches, no reinstall",
+				 enable ? "on" : "off");
+			return;
+		}
+		ESP_LOGW(TAG, "Promiscuous %s — filter matches but driver not RUNNING, "
+			 "forcing full reinstall", enable ? "on" : "off");
+	}
+
+	_stop_can_task();
+
+	vTaskDelay(pdMS_TO_TICKS(50));
+	twai_driver_uninstall();
+	s_driver_installed = false;
+	vTaskDelay(pdMS_TO_TICKS(50));
+	/* FIX #6 — defer the f_config commit until install+start succeed so a
+	 * failed install can't wedge the equality guard on the next call. */
+	twai_filter_config_t prev_filter = f_config;
+	f_config = new_filter;
+	if (_install_twai_with_retry(enable ? "promiscuous on" :
+	                                       "promiscuous off") != ESP_OK) {
+		ESP_LOGE(TAG, "Promiscuous swap install failed");
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
+		return;
+	}
+	if (twai_start() != ESP_OK) {
+		ESP_LOGE(TAG, "Promiscuous swap start failed");
+		twai_driver_uninstall();
+		f_config = prev_filter;  /* roll back so equality guard won't wedge */
+		return;
+	}
+	s_driver_installed = true;
+	vTaskDelay(pdMS_TO_TICKS(50));
+
+	xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096, NULL,
+	                    CAN_TASK_PRIORITY, &canTaskHandle, MALLOC_CAP_SPIRAM);
+
+	s_promiscuous_active = enable;
+	ESP_LOGI(TAG, "Promiscuous mode %s", enable ? "ENABLED" : "disabled");
 }
 
 void can_init(void) {
@@ -346,8 +595,10 @@ void can_init(void) {
 
 	build_twai_filter_from_signals(&f_config);
 
-	if (_install_twai_with_retry("init") == ESP_OK)
+	if (_install_twai_with_retry("init") == ESP_OK) {
+		s_driver_installed = true;
 		ESP_LOGI(TAG, "TWAI driver installed");
+	}
 
 	/* Do NOT call twai_start() here — the RX task is not running yet.
 	 * If CAN bus traffic arrives before the task drains the HW FIFO,
@@ -399,6 +650,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	/* Uninstall, rebuild filter, reinstall (TWAI already stopped by _stop_can_task) */
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
+	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	build_twai_filter_from_signals(&f_config);
@@ -410,6 +662,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 		ESP_LOGE(TAG, "TWAI start failed after bitrate change");
 		return;
 	}
+	s_driver_installed = true;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	/* Recreate receive task — PSRAM stack avoids internal-SRAM OOM after WiFi init */
@@ -512,6 +765,7 @@ void can_suspend(void) {
 	_stop_can_task();
 	vTaskDelay(pdMS_TO_TICKS(50));
 	twai_driver_uninstall();
+	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
 	s_suspended = true;
 }
@@ -534,6 +788,7 @@ void can_resume(void) {
 	 * a prior failed install left partial state behind. */
 	twai_stop();
 	twai_driver_uninstall();
+	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(100));
 
 	if (_install_twai_with_retry("Resume") != ESP_OK) {
@@ -547,6 +802,7 @@ void can_resume(void) {
 		twai_driver_uninstall();
 		return;  /* keep s_suspended=true so caller can retry */
 	}
+	s_driver_installed = true;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	can_task_should_stop = false;
@@ -557,6 +813,7 @@ void can_resume(void) {
 		canTaskHandle = NULL;
 		twai_stop();
 		twai_driver_uninstall();
+		s_driver_installed = false;
 		return;  /* keep s_suspended=true so caller can retry */
 	}
 	s_suspended = false;
@@ -579,7 +836,18 @@ bool can_recover(void) {
 
 	twai_status_info_t info;
 	if (twai_get_status_info(&info) == ESP_OK) {
-		/* Driver is alive - nothing to recover. */
+		/* FIX #1 — driver responds, but check WHICH state it's in. A bus-off
+		 * controller still answers twai_get_status_info() with ESP_OK, so the
+		 * old "alive → nothing to recover" early-return never noticed bus-off
+		 * and CAN stayed dead. Run the recovery sequence here too; only treat
+		 * RUNNING/STOPPED-healthy as genuinely nothing-to-do. */
+		if (info.state == TWAI_STATE_BUS_OFF) {
+			ESP_LOGW(TAG, "Recovery: driver in BUS_OFF (tx_err=%lu) — recovering",
+					 (unsigned long)info.tx_error_counter);
+			return _recover_from_bus_off(&info);
+		}
+		/* RUNNING, STOPPED, or RECOVERING (transient) — let the driver/RX
+		 * task settle on its own; nothing for us to reinstall. */
 		return false;
 	}
 
@@ -592,6 +860,7 @@ bool can_recover(void) {
 	/* Defensive uninstall - ESP_ERR_INVALID_STATE on a not-installed driver
 	 * is fine, we just want to guarantee a clean slate. */
 	twai_driver_uninstall();
+	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	build_twai_filter_from_signals(&f_config);
@@ -605,6 +874,7 @@ bool can_recover(void) {
 		twai_driver_uninstall();
 		return true;
 	}
+	s_driver_installed = true;
 	can_task_should_stop = false;
 	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
 	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
@@ -613,6 +883,7 @@ bool can_recover(void) {
 		canTaskHandle = NULL;
 		twai_stop();
 		twai_driver_uninstall();
+		s_driver_installed = false;
 		return true;
 	}
 	ESP_LOGI(TAG, "Recovery: CAN reinstalled and RX task started");

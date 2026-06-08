@@ -52,8 +52,12 @@ int rpm_redline_value = 6000;
 uint8_t current_value_id;
 
 /* ── Coordinator-local state ────────────────────────────────────────────── */
-static uint32_t touch_press_time = 0;
 static lv_obj_t *ui_Setup_Menu_Screen = NULL;
+
+/* How long the chrome (Menu / arrows / Edit pill) stays visible after a
+ * background tap. Bumped from 6 s -> 10 s so the user has time to actually
+ * find what they need without the menu pulling a vanishing act mid-reach. */
+#define CHROME_AUTO_HIDE_MS 10000
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -82,34 +86,69 @@ static void menu_button_hide_timer_cb(lv_timer_t *timer) {
 	}
 }
 
-void screen3_touch_event_cb(lv_event_t *e) {
-	lv_event_code_t code = lv_event_get_code(e);
-	if (code == LV_EVENT_PRESSED) {
-		touch_press_time = lv_tick_get();
-	} else if (code == LV_EVENT_RELEASED) {
-		uint32_t dur = lv_tick_get() - touch_press_time;
-		if (dur < 300) {
-			/* Show Menu button only in live mode — it has no role while armed.
-			 * Layout arrows tag along, but only when the switcher cycle has
-			 * something to walk through (≥2 entries). */
-			if (!edit_mode_is_armed() && ui_Menu_Button && lv_obj_is_valid(ui_Menu_Button))
-				lv_obj_clear_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
-			if (!edit_mode_is_armed() && layout_switcher_count() >= 2) {
-				if (ui_Layout_Prev_Button && lv_obj_is_valid(ui_Layout_Prev_Button))
-					lv_obj_clear_flag(ui_Layout_Prev_Button, LV_OBJ_FLAG_HIDDEN);
-				if (ui_Layout_Next_Button && lv_obj_is_valid(ui_Layout_Next_Button))
-					lv_obj_clear_flag(ui_Layout_Next_Button, LV_OBJ_FLAG_HIDDEN);
-			}
-			/* Always reveal the Edit Mode pill so the user can exit / enter. */
-			edit_mode_show_pill();
-			if (menu_button_hide_timer)
-				lv_timer_del(menu_button_hide_timer);
-			menu_button_hide_timer =
-				lv_timer_create(menu_button_hide_timer_cb, 6000, NULL);
-			lv_timer_set_repeat_count(menu_button_hide_timer, 1);
-		}
-		touch_press_time = 0;
+/* Reveal all chrome (Menu / layout arrows / Edit pill) together and (re)arm
+ * the auto-hide timer. Deferred via lv_async_call from the tap handler so it
+ * runs after touch-event dispatch, not mid-event. Idempotent: a re-tap while
+ * the chrome is already up just resets the hide countdown.
+ *
+ * (This used to be a 4-step cascade — one object per refresh tick — to dodge a
+ * multi-rect RGB-LCD tear. With the vsync-gated flush now in place that
+ * workaround is unnecessary, and the stagger itself read as a glitch.) */
+/* Fade a chrome object in from transparent instead of a hard pop. The dash's
+ * flush isn't vsync-synced, so a sharp reveal over the live gauges shows a
+ * tear stripe; spreading the repaint across a ~150 ms fade hides it. No-op if
+ * already shown so a re-tap doesn't re-trigger the fade. */
+static void _chrome_fade_in(lv_obj_t *o) {
+	if (!o || !lv_obj_is_valid(o)) return;
+	if (!lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+	lv_obj_set_style_opa(o, LV_OPA_TRANSP, 0);
+	lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_fade_in(o, 150, 0);
+}
+
+static void _chrome_show_cb(void *arg) {
+	(void)arg;
+	if (edit_mode_is_armed()) return;
+
+	_chrome_fade_in(ui_Menu_Button);
+
+	if (layout_switcher_count() >= 2) {
+		_chrome_fade_in(ui_Layout_Next_Button);
+		_chrome_fade_in(ui_Layout_Prev_Button);
 	}
+
+	edit_mode_show_pill();
+
+	if (menu_button_hide_timer)
+		lv_timer_del(menu_button_hide_timer);
+	menu_button_hide_timer =
+		lv_timer_create(menu_button_hide_timer_cb, CHROME_AUTO_HIDE_MS, NULL);
+	lv_timer_set_repeat_count(menu_button_hide_timer, 1);
+}
+
+/* Dashboard-background tap handler.
+ *
+ * Listens for LV_EVENT_SHORT_CLICKED on ui_Screen3 — LVGL's built-in
+ * "quick tap without drag" event. This replaces the old PRESSED/RELEASED
+ * dance that measured duration manually against lv_tick_get(): that
+ * approach dropped events whenever the GT911 controller emitted a
+ * release at slightly different coordinates than the press, or whenever
+ * an unrelated frame jitter pushed the measured duration past 300 ms.
+ *
+ * SHORT_CLICKED already enforces "released within click-time window
+ * (~400 ms by default) AND drag distance under scroll threshold", which
+ * matches the human intent for a tap. Long-presses on widgets continue
+ * to fire LV_EVENT_LONG_PRESSED on the widget itself (different event
+ * path) — preset-change long-presses are unaffected.
+ *
+ * Widgets are LV_OBJ_FLAG_CLICKABLE, so events that land on a widget
+ * are absorbed and never reach the screen. This handler only fires on
+ * empty-background taps — exactly what we want. */
+void screen3_touch_event_cb(lv_event_t *e) {
+	if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
+	if (edit_mode_is_armed()) return;
+	/* Defer the reveal to after touch-event dispatch. */
+	lv_async_call(_chrome_show_cb, NULL);
 }
 
 static void setup_menu_close_btn_cb(lv_event_t *e) {
@@ -139,15 +178,30 @@ static void menu_device_settings_cb(lv_event_t *e) {
 
 /* ── Deferred layout reload (called via lv_async_call after menu closes) ── */
 
+/* True while a layout cross-fade is in flight. Blocks a second switch from
+ * starting an overlapping screen-load animation (which could delete a screen
+ * the first transition is still using). Cleared by a one-shot timer just after
+ * the fade completes. */
+static bool s_layout_switching = false;
+static void _layout_switch_done_cb(lv_timer_t *t) {
+	s_layout_switching = false;
+	lv_timer_del(t);
+}
+
 static void _deferred_layout_reload(void *arg) {
 	(void)arg;
-	lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
 	ui_Screen3_screen_init();
 	if (ui_Screen3) {
-		lv_scr_load(ui_Screen3);
-		if (old && old != ui_Screen3 && lv_obj_is_valid(old))
-			lv_obj_del(old);
+		/* Cross-fade to the new layout instead of an instant swap. lv_scr_load
+		 * renders the whole new screen in ONE flush, which tears hard on the
+		 * dash's un-vsync-synced display (this is the "glitch on layout change"
+		 * — the only full-screen redraw in normal use). The ~260 ms fade spreads
+		 * that redraw across frames so the swap reads as a smooth transition.
+		 * auto_del=true frees the outgoing screen when the animation finishes. */
+		lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_FADE_ON, 260, 0, true);
 	}
+	lv_timer_t *done = lv_timer_create(_layout_switch_done_cb, 320, NULL);
+	lv_timer_set_repeat_count(done, 1);
 }
 
 /* ── Layout dropdown change callback ── */
@@ -209,6 +263,7 @@ static void _style_dropdown(lv_obj_t *dd) {
  * existing _deferred_layout_reload so the screen rebuild path is shared
  * with the Layout dropdown in the menu. */
 static void _layout_arrow_step(int direction) {
+	if (s_layout_switching) return;   /* ignore taps while a fade is in flight */
 	char active[LAYOUT_MAX_NAME] = {0};
 	layout_manager_get_active(active, sizeof(active));
 	char next[LAYOUT_MAX_NAME];
@@ -217,6 +272,7 @@ static void _layout_arrow_step(int direction) {
 		: layout_switcher_get_prev(active, next, sizeof(next));
 	if (!ok) return;
 	if (strcmp(next, active) == 0) return;
+	s_layout_switching = true;
 	layout_manager_set_active(next);
 	lv_async_call(_deferred_layout_reload, NULL);
 }
@@ -569,10 +625,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_PRESSED,
-						NULL);
-	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_RELEASED,
-						NULL);
+	/* Tap-on-background -> reveal chrome via LVGL's built-in short-click
+	 * detection. Drag-tolerant, debounced, fires only on real taps. */
+	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb,
+						LV_EVENT_SHORT_CLICKED, NULL);
 	/* Edit Mode: empty-area press deselects whatever widget is currently
 	 * selected. Widgets intercept presses (CLICKABLE), so this only fires on
 	 * the dashboard background. No-op in live mode. */
@@ -623,11 +679,10 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_bg_opa(ui_Menu_Button, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_width(ui_Menu_Button, 0, 0);
 	lv_obj_set_style_radius(ui_Menu_Button, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ui_Menu_Button, 12, 0);
-	lv_obj_set_style_shadow_color(ui_Menu_Button, lv_color_black(), 0);
-	lv_obj_set_style_shadow_opa(ui_Menu_Button, LV_OPA_50, 0);
-	lv_obj_set_style_shadow_spread(ui_Menu_Button, 0, 0);
-	lv_obj_set_style_shadow_ofs_y(ui_Menu_Button, 2, 0);
+	/* No drop shadow: its semi-transparent halo sits over the live widgets
+	 * (RPM bar) and re-composites every time they update — that shimmer is
+	 * the "small glitch" on reveal. Flat reads cleaner anyway. */
+	lv_obj_set_style_shadow_width(ui_Menu_Button, 0, 0);
 	lv_obj_t *ml = lv_label_create(ui_Menu_Button);
 	lv_label_set_text(ml, LV_SYMBOL_SETTINGS "  Menu");
 	lv_obj_set_style_text_color(ml, THEME_COLOR_TEXT_ON_ACCENT, 0);
@@ -657,10 +712,7 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_bg_opa(ui_Layout_Next_Button, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_width(ui_Layout_Next_Button, 0, 0);
 	lv_obj_set_style_radius(ui_Layout_Next_Button, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ui_Layout_Next_Button, 12, 0);
-	lv_obj_set_style_shadow_color(ui_Layout_Next_Button, lv_color_black(), 0);
-	lv_obj_set_style_shadow_opa(ui_Layout_Next_Button, LV_OPA_50, 0);
-	lv_obj_set_style_shadow_ofs_y(ui_Layout_Next_Button, 2, 0);
+	lv_obj_set_style_shadow_width(ui_Layout_Next_Button, 0, 0);
 	lv_obj_t *nl = lv_label_create(ui_Layout_Next_Button);
 	lv_label_set_text(nl, LV_SYMBOL_RIGHT);
 	lv_obj_set_style_text_color(nl, THEME_COLOR_TEXT_ON_ACCENT, 0);
@@ -680,10 +732,7 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_set_style_bg_opa(ui_Layout_Prev_Button, LV_OPA_COVER, 0);
 	lv_obj_set_style_border_width(ui_Layout_Prev_Button, 0, 0);
 	lv_obj_set_style_radius(ui_Layout_Prev_Button, THEME_RADIUS_NORMAL, 0);
-	lv_obj_set_style_shadow_width(ui_Layout_Prev_Button, 12, 0);
-	lv_obj_set_style_shadow_color(ui_Layout_Prev_Button, lv_color_black(), 0);
-	lv_obj_set_style_shadow_opa(ui_Layout_Prev_Button, LV_OPA_50, 0);
-	lv_obj_set_style_shadow_ofs_y(ui_Layout_Prev_Button, 2, 0);
+	lv_obj_set_style_shadow_width(ui_Layout_Prev_Button, 0, 0);
 	lv_obj_t *pl = lv_label_create(ui_Layout_Prev_Button);
 	lv_label_set_text(pl, LV_SYMBOL_LEFT);
 	lv_obj_set_style_text_color(pl, THEME_COLOR_TEXT_ON_ACCENT, 0);
@@ -729,10 +778,9 @@ void ui_Screen3_preview_layout(cJSON *root) {
 	lv_obj_set_style_bg_color(ui_Screen3, THEME_COLOR_BG,
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_PRESSED,
-						NULL);
-	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb, LV_EVENT_RELEASED,
-						NULL);
+	/* Tap-on-background -> reveal chrome (see notes on screen3_touch_event_cb). */
+	lv_obj_add_event_cb(ui_Screen3, screen3_touch_event_cb,
+						LV_EVENT_SHORT_CLICKED, NULL);
 	lv_obj_add_event_cb(ui_Screen3, edit_mode_screen_pressed_cb,
 						LV_EVENT_PRESSED, NULL);
 

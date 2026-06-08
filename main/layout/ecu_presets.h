@@ -91,6 +91,81 @@ extern const int ECU_PRESETS_COUNT;
 /* Return the normalized signal name (e.g. "RPM") for a slot. */
 const char *ecu_signal_slot_name(ecu_signal_slot_t slot);
 
+/**
+ * Map a normalized ECU signal name (one of ECU_SIGNAL_NAMES) to its
+ * canonical channel id (e.g. "RPM" → "rpm", "MAP" → "manifold_pressure").
+ * Returns NULL when the name doesn't match any normalized ECU slot OR
+ * the slot has no canonical mapping yet. Used by the v14 channel
+ * registry's legacy-widget migrator to bind widgets whose signal_name
+ * is one of the dash's standard ECU vocabulary.
+ *
+ * Cheap O(N) scan, N=20. Called once per widget at layout-load time. */
+const char *ecu_signal_name_to_canonical(const char *signal_name);
+
+/**
+ * Reverse of ECU_SIGNAL_CANONICAL[]: canonical channel id ("rpm",
+ * "coolant_temp", ...) → ECU signal slot. Returns ECU_SIG__COUNT if
+ * the channel has no normalized slot (e.g. EGT cylinder N, custom
+ * channels). Cheap O(N), N=20. */
+ecu_signal_slot_t ecu_slot_from_canonical_id(const char *canonical_id);
+
+/**
+ * Write a single preset's slot row into a layout's signals[] array.
+ * Targets the canonical signal name (ECU_SIGNAL_NAMES[slot]) — if an
+ * entry with that name exists in signals[], its decode params are
+ * overwritten; otherwise a new entry is appended.
+ *
+ * Used by the source picker: when the user picks "Haltech RPM" for
+ * the rpm channel, this rewrites layout.signals[].rpm with Haltech's
+ * CAN id / bit start / scale / offset / etc. The channel keeps its
+ * binding to signal name "rpm" — only the decode changes.
+ *
+ * Does NOT touch the layout's `ecu` / `ecu_version` fields — those
+ * track the *bulk* preset chosen via the layout-level picker. A
+ * per-channel source override leaves them alone.
+ *
+ * Triggers layout reload (dashboard_init) on success so the new
+ * decode params take effect immediately. */
+esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,
+                                          const ecu_preset_t *preset,
+                                          ecu_signal_slot_t slot);
+
+/**
+ * Generic helper: write a single signal definition into the named
+ * layout's signals[] array. Creates the entry if it doesn't exist;
+ * otherwise wipes the existing decode params before re-adding so
+ * stale fields (decimals, value_map, etc.) don't leak through. Persists
+ * to disk.
+ *
+ * Used by ecu_preset_apply_slot_to_layout (ECU bulk slot apply) AND by
+ * the web channels source picker's preconfig binding path. Single
+ * apply path means both callers get the same JSON shape, the same
+ * cJSON allocation lifetime handling, and the same disk persistence
+ * semantics.
+ *
+ * @param layout_name  Layout to rewrite (typically "default").
+ * @param signal_name  Registry name to bind under (e.g. "RPM").
+ * @param can_id       CAN ID (0 for OBD2/internal signals).
+ * @param bit_start    Start bit (0-63).
+ * @param bit_length   Length in bits (1-64).
+ * @param scale        Linear scale factor.
+ * @param offset       Linear offset.
+ * @param is_signed    Signed two's-complement decode.
+ * @param endian       0 = Motorola/big, 1 = Intel/little.
+ * @param unit         Display unit, or NULL to omit.
+ * @param decimals     Display decimals, or -1 to omit.
+ * @return ESP_OK on success.
+ */
+esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
+                                            const char *signal_name,
+                                            uint32_t can_id,
+                                            uint8_t bit_start,
+                                            uint8_t bit_length,
+                                            float scale, float offset,
+                                            bool is_signed, uint8_t endian,
+                                            const char *unit,
+                                            int decimals);
+
 /* Find a preset by make+version strings. Returns NULL if not found. */
 const ecu_preset_t *ecu_preset_find(const char *make, const char *version);
 

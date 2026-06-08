@@ -26,10 +26,13 @@ typedef struct {
 typedef struct {
 	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
 	char     label[32];
-	int32_t  bar_min;
-	int32_t  bar_max;
-	int32_t  bar_low;
-	int32_t  bar_high;
+	/* Range + alert thresholds in display units. Float so decimals survive
+	 * (e.g. lambda 0.70..1.30); the LVGL bar range is scaled by 10^decimals
+	 * at the boundary (see _bar_resolution_scale / widget_bar_sync_range). */
+	float    bar_min;
+	float    bar_max;
+	float    bar_low;
+	float    bar_high;
 	lv_color_t bar_low_color;
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
@@ -66,7 +69,7 @@ typedef struct {
 	 * segments. Use case: "I want 90°C coolant at 50% of the bar so the
 	 * danger zone (90-110) takes the second half." Default leaves the bar
 	 * linear (anchor at midpoint, position 50%). */
-	int32_t  anchor_value;           /* default: bar_min + (bar_max-bar_min)/2 */
+	float    anchor_value;           /* default: bar_min + (bar_max-bar_min)/2 */
 	uint8_t  anchor_position;        /* 0..100, default: 50 */
 	bool     anchor_enabled;         /* false (default) = linear pass-through */
 	char     bar_image[64];          /* track/background image name (default: "") */
@@ -78,6 +81,12 @@ typedef struct {
 	lv_obj_t *img_clip_obj;          /* runtime: clipping container for fill */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * See widget_meter.h for the pattern. Backwards-compat: empty
+	 * channel_id falls through to legacy bar_min/bar_max/bar_low/
+	 * bar_high path. */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
 	/* LVGL object pointers (runtime only, per-instance) */
 	lv_obj_t *bar_obj;
 	lv_obj_t *label_obj;

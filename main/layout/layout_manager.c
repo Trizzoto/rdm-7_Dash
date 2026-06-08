@@ -1,6 +1,7 @@
 #include "layout_manager.h"
 #include "default_layout.h"
 #include "boot_assets.h"
+#include "data/channel_manager.h"
 
 /* Widget factory headers */
 #include "widget_bar.h"
@@ -32,6 +33,7 @@
 #include "data_logger.h"
 #include "signal_replay.h"
 #include "can_raw_logger.h"
+#include "config_store.h"
 
 #include "cJSON.h"
 #include "esp_littlefs.h"
@@ -370,10 +372,28 @@ static void _load_signals(const cJSON *root) {
 			cJSON_GetObjectItemCaseSensitive(sj, "bit_start");
 		const cJSON *len_item =
 			cJSON_GetObjectItemCaseSensitive(sj, "bit_length");
+		const cJSON *src_item =
+			cJSON_GetObjectItemCaseSensitive(sj, "source");
 
-		if (!cJSON_IsString(name_item) || !cJSON_IsNumber(can_id_item) ||
-			!cJSON_IsNumber(start_item) || !cJSON_IsNumber(len_item))
+		/* Name is the only hard requirement. Internal-source signals
+		 * (source: "internal") never come off CAN, so they don't need
+		 * can_id / bit_start / bit_length — those default to zero. CAN
+		 * signals still need real values for dispatch to find them. */
+		if (!cJSON_IsString(name_item)) continue;
+
+		const char *src = (cJSON_IsString(src_item) && src_item->valuestring)
+			? src_item->valuestring : "";
+		bool is_internal = (strcmp(src, "internal") == 0);
+
+		if (!is_internal &&
+		    (!cJSON_IsNumber(can_id_item) ||
+		     !cJSON_IsNumber(start_item)  ||
+		     !cJSON_IsNumber(len_item)))
 			continue;
+
+		uint32_t can_id    = cJSON_IsNumber(can_id_item) ? (uint32_t)can_id_item->valueint : 0;
+		uint8_t  bit_start = cJSON_IsNumber(start_item)  ? (uint8_t)start_item->valueint   : 0;
+		uint8_t  bit_len   = cJSON_IsNumber(len_item)    ? (uint8_t)len_item->valueint     : 0;
 
 		float scale = 1.0f, offset = 0.0f;
 		bool is_signed = false;
@@ -397,10 +417,26 @@ static void _load_signals(const cJSON *root) {
 		const char *unit_str = (cJSON_IsString(unit_item) && unit_item->valuestring)
 			? unit_item->valuestring : "";
 
-		int16_t idx = signal_register(
-			name_item->valuestring, (uint32_t)can_id_item->valueint,
-			(uint8_t)start_item->valueint, (uint8_t)len_item->valueint, scale,
-			offset, is_signed, endian, unit_str);
+		/* Map the JSON "source" string to the signal_source_t enum. The
+		 * registry-side classification is what the OBD2 picker and web
+		 * Custom Signals filter key off of — defaulting to CAN means
+		 * legacy layouts (no "source" field) continue to behave like
+		 * broadcast signals. */
+		signal_source_t src_enum = SIGNAL_SOURCE_CAN;
+		if (is_internal) {
+			src_enum = SIGNAL_SOURCE_INTERNAL;
+		} else if (strcmp(src, "obd2") == 0) {
+			src_enum = SIGNAL_SOURCE_OBD2;
+		}
+
+		/* Re-registration of an existing name now UPDATES that slot's decode
+		 * params in place and returns its index (latest-layout-wins) rather
+		 * than dropping the dup — so the freshly loaded layout's decode wins
+		 * even though the registry merges across loads. See
+		 * signal_register_with_source(). */
+		int16_t idx = signal_register_with_source(
+			name_item->valuestring, can_id, bit_start, bit_len, scale,
+			offset, is_signed, endian, unit_str, src_enum);
 
 		if (idx >= 0) {
 			ESP_LOGD(TAG, "Registered signal '%s' → index %d",
@@ -441,23 +477,58 @@ static void _load_signals(const cJSON *root) {
 			}
 		}
 
-		/* Check for fuel_cal object on FUEL_SENDER_V signal */
+		/* Check for fuel_cal object on FUEL_SENDER_V signal. Supports
+		 * two shapes:
+		 *   - Modern multipoint: { points:[{v,val}...], enabled }
+		 *   - Legacy 2-point:    { empty_v, full_v, full_value, enabled }
+		 * If both are present the points[] array wins. */
 		if (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0) {
 			const cJSON *fc = cJSON_GetObjectItemCaseSensitive(sj, "fuel_cal");
 			if (cJSON_IsObject(fc)) {
-				float empty_v = 0.5f, full_v = 3.0f, full_val = 100.0f;
 				bool en = false;
-				const cJSON *fci;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "empty_v");
-				if (cJSON_IsNumber(fci)) empty_v = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_v");
-				if (cJSON_IsNumber(fci)) full_v = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_value");
-				if (cJSON_IsNumber(fci)) full_val = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "enabled");
+				const cJSON *fci = cJSON_GetObjectItemCaseSensitive(fc, "enabled");
 				if (cJSON_IsBool(fci)) en = cJSON_IsTrue(fci);
-				signal_internal_set_fuel_cal(empty_v, full_v, full_val, en);
-				ESP_LOGI(TAG, "Loaded fuel_cal from FUEL_SENDER_V signal");
+
+				const cJSON *pts = cJSON_GetObjectItemCaseSensitive(fc, "points");
+				bool used_multipoint = false;
+				if (cJSON_IsArray(pts)) {
+					int n = cJSON_GetArraySize(pts);
+					if (n >= 2) {
+						if (n > FUEL_CAL_MAX_POINTS) n = FUEL_CAL_MAX_POINTS;
+						fuel_cal_point_t buf[FUEL_CAL_MAX_POINTS];
+						int got = 0;
+						const cJSON *p;
+						int idx = 0;
+						cJSON_ArrayForEach(p, pts) {
+							if (idx >= n) break;
+							idx++;
+							if (!cJSON_IsObject(p)) continue;
+							const cJSON *jv  = cJSON_GetObjectItemCaseSensitive(p, "v");
+							const cJSON *jva = cJSON_GetObjectItemCaseSensitive(p, "val");
+							if (!cJSON_IsNumber(jv) || !cJSON_IsNumber(jva)) continue;
+							buf[got].voltage = (float)jv->valuedouble;
+							buf[got].value   = (float)jva->valuedouble;
+							got++;
+						}
+						if (got >= 2) {
+							signal_internal_set_fuel_cal_points(buf, (uint8_t)got, en);
+							used_multipoint = true;
+							ESP_LOGI(TAG, "Loaded fuel_cal: %d points", got);
+						}
+					}
+				}
+
+				if (!used_multipoint) {
+					float empty_v = 0.5f, full_v = 3.0f, full_val = 100.0f;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "empty_v");
+					if (cJSON_IsNumber(fci)) empty_v = (float)fci->valuedouble;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "full_v");
+					if (cJSON_IsNumber(fci)) full_v = (float)fci->valuedouble;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "full_value");
+					if (cJSON_IsNumber(fci)) full_val = (float)fci->valuedouble;
+					signal_internal_set_fuel_cal(empty_v, full_v, full_val, en);
+					ESP_LOGI(TAG, "Loaded fuel_cal (2-point) from FUEL_SENDER_V signal");
+				}
 			}
 		}
 	}
@@ -603,7 +674,11 @@ static void _save_signals(cJSON *root) {
 			}
 		}
 
-		/* Attach fuel calibration to FUEL_SENDER_V signal */
+		/* Attach fuel calibration to FUEL_SENDER_V signal. Always write
+		 * the 2-point fields for backwards-compat with older firmwares
+		 * that haven't learned about points[] yet — when a multipoint
+		 * curve is set, those mirror the endpoints. The points array is
+		 * additive: present when point_count >= 2, absent otherwise. */
 		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {
 			fuel_cal_config_t fc;
 			signal_internal_get_fuel_cal(&fc);
@@ -613,6 +688,18 @@ static void _save_signals(cJSON *root) {
 				cJSON_AddNumberToObject(fc_obj, "full_v", fc.full_v);
 				cJSON_AddNumberToObject(fc_obj, "full_value", fc.full_value);
 				cJSON_AddBoolToObject(fc_obj, "enabled", fc.enabled);
+				if (fc.point_count >= 2) {
+					cJSON *arr = cJSON_AddArrayToObject(fc_obj, "points");
+					if (arr) {
+						for (uint8_t pi = 0; pi < fc.point_count; pi++) {
+							cJSON *p = cJSON_CreateObject();
+							if (!p) break;
+							cJSON_AddNumberToObject(p, "v",   fc.points[pi].voltage);
+							cJSON_AddNumberToObject(p, "val", fc.points[pi].value);
+							cJSON_AddItemToArray(arr, p);
+						}
+					}
+				}
 			}
 		}
 
@@ -712,13 +799,43 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	signal_replay_stop();
 	can_raw_logger_stop();
 
-	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
-	signal_registry_reset();
+	/* ── Load signals BEFORE widgets so from_json can resolve names ──
+	 *
+	 * Signals MERGE across layouts — we do NOT call signal_registry_reset()
+	 * here. This is intentional: channels are device-level user preferences
+	 * (e.g. user binds `rpm` channel to MaxxECU's RPM signal), and they
+	 * need to keep resolving even when the user loads a layout authored
+	 * against a different ECU (e.g. a Haltech-authored Drift_Pig).
+	 *
+	 * Behavior:
+	 *   - First layout loaded post-boot: registers its signals fresh.
+	 *   - Subsequent layouts: signal_register_with_source finds the existing
+	 *     same-name slot and UPDATES its decode params in place (can_id, bits,
+	 *     scale/offset, endian, unit, source), returning that slot's index.
+	 *     The latest layout's decode WINS; subscribers, peak/min stats and
+	 *     value_maps on the slot are preserved. New names not yet in the
+	 *     registry get added (additive).
+	 *   - To wipe and start fresh (e.g. user switches ECU presets via the
+	 *     ECU picker UI), explicitly call signal_registry_reset() from
+	 *     that handler before reloading the layout.
+	 *
+	 * Consequence: the name 'rpm' stays resolvable across ECU/layout
+	 * switches (so channel bindings keep working by index), but the decode
+	 * always reflects the most recently loaded layout — fixing the old
+	 * first-wins bug where a stale/boot-snapshot definition could shadow the
+	 * dashboard's correct decode and make the signal decode garbage. */
 	_load_signals(root);
 	/* Restore persisted peak/min values for any signal name that made it
 	 * into the new layout. Stale records (signal no longer present) are
 	 * silently dropped on the next autosave. */
 	signal_peaks_load();
+	/* Re-bind channels to signals now that the layout's signals are
+	 * registered. Channels in /lfs/channels.json carry signal_name strings;
+	 * they couldn't resolve at channel_manager_init time because the signal
+	 * registry was empty. This must happen BEFORE widgets are created so
+	 * widget channel-binding (which reads channel->signal_index) sees fresh
+	 * indices. */
+	channel_manager_resolve_signals();
 
 	const cJSON *widgets_arr =
 		cJSON_GetObjectItemCaseSensitive(root, "widgets");
@@ -901,6 +1018,24 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		s_layout_ecu_version[sizeof(s_layout_ecu_version) - 1] = '\0';
 	} else {
 		s_layout_ecu_version[0] = '\0';
+	}
+
+	/* Sync the NVS cache so every downstream consumer (web /api/ecu/get,
+	 * device_settings ECU label, preset_picker/ui_ecu_picker auto-select)
+	 * stays in lockstep with the active layout. Without this the layout
+	 * field and NVS could drift — e.g. user uploads a Haltech layout but
+	 * NVS still says MaxxECU until they re-run the picker.
+	 *
+	 * Only writes when the value actually changed: NVS wear-leveling
+	 * tolerates the occasional write but a no-op skip keeps things tidy
+	 * over many layout switches per session. */
+	char prev_make[32] = "";
+	char prev_ver[24] = "";
+	config_store_load_ecu(prev_make, sizeof(prev_make),
+	                      prev_ver,  sizeof(prev_ver));
+	if (strcmp(prev_make, s_layout_ecu)         != 0 ||
+	    strcmp(prev_ver,  s_layout_ecu_version) != 0) {
+		config_store_save_ecu(s_layout_ecu, s_layout_ecu_version);
 	}
 
 	/* ── Optional night-mode CAN trigger ── */

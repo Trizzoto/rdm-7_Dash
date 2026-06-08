@@ -48,6 +48,11 @@ typedef struct {
     int16_t    signal_index;    /* runtime: -1 = unbound */
     float      signal_min;      /* default: 0 */
     float      signal_max;      /* default: 100 */
+    /* ── v14 channel binding ──────────────────────────────────────
+     * See widget_meter.h for pattern. signal_min/max ← channel.min/max,
+     * redline_threshold ← channel.high_warn. */
+    char       channel_id[32];
+    void      *channel;     /* channel_t* — opaque */
 
     /* Image-based arc mode */
     char          arc_image[64];      /* track/empty image name, default: "" */

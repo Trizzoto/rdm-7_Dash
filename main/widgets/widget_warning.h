@@ -47,6 +47,9 @@ typedef struct {
 	bool       current_state;     /* runtime only -- NOT serialized */
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* ── v14 channel binding ─────────────────────────────────── */
+	char       channel_id[32];
+	void      *channel;     /* channel_t* — opaque */
 	/* Runtime LVGL pointers (not serialized) */
 	lv_img_dsc_t *img_dsc;          /* loaded RDMIMG descriptor, or NULL */
 	lv_obj_t     *img_obj;          /* LVGL image object, or NULL */

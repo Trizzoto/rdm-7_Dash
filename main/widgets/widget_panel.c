@@ -1,6 +1,7 @@
 #include "widget_panel.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include "data/channel_manager.h"
 #include <float.h>  /* FLT_MAX for peak/min sentinels */
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -332,6 +333,61 @@ static const int16_t s_panel_default_x[8] = {-312, -146, -312, -146,
 static const int16_t s_panel_default_y[8] = {-26, -26, 82, 82,
 											 -26, -26, 82, 82};
 
+/* Forward decl: the channel-changed handler below re-points this signal
+ * subscription, but the definition lives further down (after the factory). */
+static void _panel_on_signal(float value, bool is_stale, void *user_data);
+
+/* Channel-changed listener: fires when the user edits a bound channel's
+ * thresholds, range, signal binding, etc. Re-snapshot the relevant
+ * fields and invalidate so the next signal callback paints with new
+ * threshold values. */
+static void _panel_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	panel_data_t *pd = (panel_data_t *)w->type_data;
+	if (!pd) return;
+
+	/* Snapshot channel → widget legacy fields. Render code reads the
+	 * widget's fields directly, so this is how channel edits propagate. */
+	safe_strncpy(pd->signal_name, c->signal_name, sizeof(pd->signal_name));
+	/* Re-point our own signal subscription when the channel re-resolves to a
+	 * different underlying signal. The signal registry keys subscribers by the
+	 * index they attached to at create, so copying the new index alone would
+	 * leave _panel_on_signal bound to the OLD signal → the panel freezes on
+	 * its last value. Mirror the inspector signal-swap path (unsub old / sub
+	 * new). Safe here: the channel-changed callback runs under rdm_lvgl_lock. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != pd->signal_index) {
+		if (pd->signal_index >= 0)
+			signal_unsubscribe(pd->signal_index, _panel_on_signal, w);
+		pd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _panel_on_signal, w);
+	}
+	/* Threshold VALUES + enabled are owned by the channel. When the channel
+	 * has no warn set, the alert reverts to inactive (so we don't paint a
+	 * stale/always-on warning). Colours stay widget-owned (below). */
+	if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+		pd->warning_high_enabled = true;
+		pd->warning_high_threshold = (float)c->high_warn;
+	} else {
+		pd->warning_high_enabled = false;
+	}
+	if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
+		pd->warning_low_enabled = true;
+		pd->warning_low_threshold = (float)c->low_warn;
+	} else {
+		pd->warning_low_enabled = false;
+	}
+	/* Alert COLOURS are widget-owned (Widget settings → ALERTS) and are never
+	 * driven by the channel — the channel-side colour pickers were removed, so
+	 * adopting channel colours here just clobbered the user's choice with a
+	 * stale captured value (the "always red" bug). Only thresholds / range /
+	 * signal sync from the channel. */
+
+	if (pd->box && lv_obj_is_valid(pd->box)) lv_obj_invalidate(pd->box);
+}
+
 /* create vtable adapter: creates a single panel box for the given slot.
  * Only panels present in the JSON layout will be created. */
 static void _panel_on_signal(float value, bool is_stale, void *user_data) {
@@ -624,6 +680,12 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	if (pd->signal_index >= 0)
 		signal_subscribe(pd->signal_index, _panel_on_signal, w);
 
+	/* Subscribe to channel-changed events when bound. */
+	if (pd->channel) {
+		channel_manager_subscribe((channel_t *)pd->channel,
+		                           _panel_on_channel_changed, w);
+	}
+
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
 	 * was created while night-mode is already active. */
@@ -653,20 +715,28 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "slot", pd->slot);
 	cJSON_AddStringToObject(cfg, "label", pd->label);
 	cJSON_AddStringToObject(cfg, "custom_text", pd->custom_text);
-	cJSON_AddNumberToObject(cfg, "decimals", pd->decimals);
+	/* Decimals: persist only as a per-widget override — omit when it matches
+	 * the bound channel's decimals (the default), so it follows the channel. */
+	if (!pd->channel || pd->decimals != ((channel_t *)pd->channel)->decimals)
+		cJSON_AddNumberToObject(cfg, "decimals", pd->decimals);
 	if (pd->show_peak != 0)
 		cJSON_AddNumberToObject(cfg, "show_peak", pd->show_peak);
-	if (pd->warning_high_enabled) {
-		cJSON_AddBoolToObject(cfg, "warning_high_enabled", true);
-		cJSON_AddNumberToObject(cfg, "warning_high_threshold", pd->warning_high_threshold);
+	/* Alert COLOURS + apply-flags are widget-owned styling and DO round-trip
+	 * in the layout. The threshold VALUES + enabled state live on the bound
+	 * channel (channels.json) and are intentionally NOT persisted here — so
+	 * warning levels stick to the channel setup and don't travel when a layout
+	 * is shared. Emit defaults-only (colour untouched == 0). */
+	if (pd->warning_high_color.full != THEME_COLOR_RED.full ||
+	    !pd->warning_high_apply_label || !pd->warning_high_apply_value ||
+	    pd->warning_high_apply_panel) {
 		cJSON_AddNumberToObject(cfg, "warning_high_color", (int)pd->warning_high_color.full);
 		cJSON_AddBoolToObject(cfg, "warning_high_apply_label", pd->warning_high_apply_label);
 		cJSON_AddBoolToObject(cfg, "warning_high_apply_value", pd->warning_high_apply_value);
 		cJSON_AddBoolToObject(cfg, "warning_high_apply_panel", pd->warning_high_apply_panel);
 	}
-	if (pd->warning_low_enabled) {
-		cJSON_AddBoolToObject(cfg, "warning_low_enabled", true);
-		cJSON_AddNumberToObject(cfg, "warning_low_threshold", pd->warning_low_threshold);
+	if (pd->warning_low_color.full != THEME_COLOR_BLUE_DARK.full ||
+	    !pd->warning_low_apply_label || !pd->warning_low_apply_value ||
+	    pd->warning_low_apply_panel) {
 		cJSON_AddNumberToObject(cfg, "warning_low_color", (int)pd->warning_low_color.full);
 		cJSON_AddBoolToObject(cfg, "warning_low_apply_label", pd->warning_low_apply_label);
 		cJSON_AddBoolToObject(cfg, "warning_low_apply_value", pd->warning_low_apply_value);
@@ -678,6 +748,9 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "value_font", pd->value_font);
 	if (pd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", pd->signal_name);
+	/* v14 channel binding — only emit when explicitly bound */
+	if (pd->channel_id[0] != '\0')
+		cJSON_AddStringToObject(cfg, "channel", pd->channel_id);
 	/* Appearance overrides — only serialize non-default values */
 	if (pd->border_radius != 7)
 		cJSON_AddNumberToObject(cfg, "border_radius", pd->border_radius);
@@ -735,7 +808,8 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 		safe_strncpy(pd->custom_text, item->valuestring, sizeof(pd->custom_text));
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
-	if (cJSON_IsNumber(item)) pd->decimals = (uint8_t)item->valueint;
+	bool decimals_overridden = cJSON_IsNumber(item);
+	if (decimals_overridden) pd->decimals = (uint8_t)item->valueint;
 
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_peak");
 	if (cJSON_IsNumber(item)) {
@@ -829,12 +903,99 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (pd->signal_name[0] != '\0')
 		pd->signal_index = signal_find_by_name(pd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────────
+	 * See widget_meter.c for the pattern documentation.
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(pd->channel_id, ch_item->valuestring, sizeof(pd->channel_id));
+	channel_t *bound_c = pd->channel_id[0] ? channel_manager_get(pd->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		pd->channel = bound_c;
+		safe_strncpy(pd->signal_name, bound_c->signal_name, sizeof(pd->signal_name));
+		pd->signal_index = bound_c->signal_index;
+		/* Decimals default to the channel; a per-widget override in the layout
+		 * wins (config modal → Display → Decimals). */
+		if (!decimals_overridden) pd->decimals = bound_c->decimals;
+		/* Channel owns the threshold values. When it has a warn it's
+		 * authoritative; when it doesn't but this widget carried a legacy
+		 * per-widget threshold (layouts saved before thresholds moved to the
+		 * channel), migrate that value UP into the channel so the alert is
+		 * preserved and the channel becomes the single source of truth. With
+		 * neither, the alert is inactive. */
+		bool _ch_dirty = false;
+		if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+			pd->warning_high_enabled = true;
+			pd->warning_high_threshold = (float)bound_c->high_warn;
+		} else if (pd->warning_high_enabled) {
+			bound_c->high_warn = pd->warning_high_threshold;
+			_ch_dirty = true;
+		} else {
+			pd->warning_high_enabled = false;
+		}
+		if (bound_c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
+			pd->warning_low_enabled = true;
+			pd->warning_low_threshold = (float)bound_c->low_warn;
+		} else if (pd->warning_low_enabled) {
+			bound_c->low_warn = pd->warning_low_threshold;
+			_ch_dirty = true;
+		} else {
+			pd->warning_low_enabled = false;
+		}
+		if (_ch_dirty) channel_manager_mark_dirty();
+		/* Alert colours stay widget-owned — never overridden by the channel. */
+	} else if (pd->signal_name[0] != '\0') {
+		/* v13 legacy path — self-report data so the channel registry
+		 * auto-populates on first v14 boot. */
+		legacy_widget_data_t legacy = {
+			.signal_name = pd->signal_name,
+			.min = INT32_MIN,   /* panel doesn't carry display range */
+			.max = INT32_MIN,
+			.high_warn = pd->warning_high_enabled ? pd->warning_high_threshold : (float)INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = pd->warning_high_enabled ?
+				(lv_color_to32(pd->warning_high_color) & 0xFFFFFF) : CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) {
+			pd->channel = c;
+			if (!decimals_overridden) pd->decimals = c->decimals;
+			/* Also record the low_warn separately — record_legacy_widget
+			 * only takes high-side thresholds in v1. */
+			if (pd->warning_low_enabled && c->low_warn == CHANNEL_THRESHOLD_UNSET_LOW) {
+				c->low_warn = pd->warning_low_threshold;
+				if (pd->warning_low_enabled)
+					c->color_low_warn = lv_color_to32(pd->warning_low_color) & 0xFFFFFF;
+				channel_manager_mark_dirty();
+			}
+			/* Adopt the channel's warns into the widget so the alert reflects
+			 * the channel (single source of truth) — the signal-bound legacy
+			 * path must sync channel→widget just like the explicit-channel
+			 * path, otherwise a panel bound only by signal name never picks up
+			 * its channel's thresholds (the "panel alerts not working" bug). */
+			if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+				pd->warning_high_enabled = true;
+				pd->warning_high_threshold = (float)c->high_warn;
+			}
+			if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
+				pd->warning_low_enabled = true;
+				pd->warning_low_threshold = (float)c->low_warn;
+			}
+		}
+	}
 }
 static void _panel_destroy(widget_t *w) {
 	if (w) {
 		panel_data_t *pd = (panel_data_t *)w->type_data;
 		if (pd && pd->signal_index >= 0)
 			signal_unsubscribe(pd->signal_index, _panel_on_signal, w);
+		if (pd && pd->channel) {
+			channel_manager_unsubscribe((channel_t *)pd->channel,
+			                             _panel_on_channel_changed, w);
+			pd->channel = NULL;
+		}
 		night_mode_unsubscribe(_panel_night_cb, w);
 		widget_rules_free(w);
 		if (w->root && lv_obj_is_valid(w->root))
@@ -1138,6 +1299,11 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->warning_low_apply_label = true;
 	pd->warning_low_apply_value = true;
 	pd->warning_low_apply_panel = false;
+	/* Sensible default alert colours so a channel-driven warning is never
+	 * painted in the calloc'd black. User overrides via Widget settings →
+	 * ALERTS. Thresholds come from the channel; colours are widget-owned. */
+	pd->warning_high_color = THEME_COLOR_RED;
+	pd->warning_low_color = THEME_COLOR_BLUE_DARK;
 	/* Defaults — actual config comes from _from_json() when loading layouts */
 	snprintf(pd->label, sizeof(pd->label), "Panel %u", pd->slot + 1);
 	pd->border_radius = 7;

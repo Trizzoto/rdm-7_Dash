@@ -9,6 +9,7 @@
 
 #include "signal_internal.h"
 #include "signal.h"
+#include "data/channel_manager.h"
 #include "storage/config_store.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -33,11 +34,48 @@ static temperature_sensor_handle_t s_temp_sensor = NULL;
 /* ── Fuel sender calibration ─────────────────────────────────────────── */
 
 static fuel_cal_config_t s_fuel_cal = {
-    .empty_v    = 0.5f,
-    .full_v     = 3.0f,
-    .full_value = 100.0f,
-    .enabled    = false,
+    .empty_v     = 0.5f,
+    .full_v      = 3.0f,
+    .full_value  = 100.0f,
+    .enabled     = false,
+    .point_count = 0,
 };
+
+/* Piecewise-linear interpolation against the active calibration.
+ *
+ *   - When point_count >= 2, walks the (sorted) points and finds the
+ *     segment that brackets v. Clamps outside.
+ *   - Otherwise falls back to the legacy 2-point line.
+ *
+ * Output is clamped to [0, max_point_value] so a noisy sender that briefly
+ * reads beyond either end can't push a tank reading negative or beyond the
+ * top-of-scale. */
+static float _fuel_apply_cal(float v)
+{
+    if (s_fuel_cal.point_count >= 2) {
+        const fuel_cal_point_t *p = s_fuel_cal.points;
+        uint8_t n = s_fuel_cal.point_count;
+        if (v <= p[0].voltage)   return p[0].value;
+        if (v >= p[n-1].voltage) return p[n-1].value;
+        for (uint8_t i = 0; i + 1 < n; i++) {
+            float v0 = p[i].voltage, v1 = p[i+1].voltage;
+            if (v >= v0 && v <= v1) {
+                float dv = v1 - v0;
+                if (dv <= 0.0001f) return p[i].value;
+                float t = (v - v0) / dv;
+                return p[i].value + t * (p[i+1].value - p[i].value);
+            }
+        }
+        return p[n-1].value;
+    }
+    /* Legacy 2-point path. */
+    float range = s_fuel_cal.full_v - s_fuel_cal.empty_v;
+    if (range > -0.001f && range < 0.001f) return 0.0f;
+    float level = (v - s_fuel_cal.empty_v) / range * s_fuel_cal.full_value;
+    if (level < 0.0f) level = 0.0f;
+    if (level > s_fuel_cal.full_value) level = s_fuel_cal.full_value;
+    return level;
+}
 
 static float s_last_fuel_voltage = 0.0f;
 
@@ -145,15 +183,8 @@ static void _internal_timer_cb(lv_timer_t *timer)
      * user needs. Raw voltage is still available via the fuel cal API. */
     s_last_fuel_voltage = fuel_sender_read_voltage();
     if (s_fuel_cal.enabled) {
-        float range = s_fuel_cal.full_v - s_fuel_cal.empty_v;
-        float level = 0.0f;
-        if (range > 0.001f || range < -0.001f) {
-            level = (s_last_fuel_voltage - s_fuel_cal.empty_v) / range
-                    * s_fuel_cal.full_value;
-        }
-        if (level < 0.0f) level = 0.0f;
-        if (level > s_fuel_cal.full_value) level = s_fuel_cal.full_value;
-        signal_inject_test_value("FUEL_SENDER_V", level);
+        signal_inject_test_value("FUEL_SENDER_V",
+                                 _fuel_apply_cal(s_last_fuel_voltage));
     } else {
         signal_inject_test_value("FUEL_SENDER_V", s_last_fuel_voltage);
     }
@@ -310,12 +341,56 @@ static void _internal_timer_cb(lv_timer_t *timer)
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
+/* Internal-source signals — always present regardless of layout/ECU.
+ * Pre-registering here means the dash-system canonical channels
+ * (dash_fps, dash_cpu, …) can resolve their signal_index even on
+ * layouts whose JSON doesn't enumerate them. Duplicate registrations
+ * are silently no-op'd by signal_register, so re-runs after layout
+ * reloads are safe. */
+static void _register_internal_signals(void) {
+    struct { const char *name; const char *unit; } DASH_SIGS[] = {
+        {"FPS",            "fps"},
+        {"CPU_PERCENT",    "%"},
+        {"FREE_HEAP_KB",   "kB"},
+        {"FREE_PSRAM_KB",  "kB"},
+        {"UPTIME_S",       "s"},
+        {"CHIP_TEMP",      "°C"},
+        {"WIFI_RSSI",      "dBm"},
+        /* Other internal signals (ODOMETER, FUEL_SENDER_V, etc) are
+         * usually declared in the layout JSON, but registering them
+         * here too means a layout that omits them still works. */
+        {"ODOMETER",       "km"},
+        {"FUEL_SENDER_V",  "V"},
+        {"CALCULATED_GEAR","gear"},
+        {"INDICATOR_LEFT", ""},
+        {"INDICATOR_RIGHT",""},
+    };
+    for (size_t i = 0; i < sizeof(DASH_SIGS)/sizeof(DASH_SIGS[0]); i++) {
+        signal_register_with_source(DASH_SIGS[i].name,
+                                    /*can_id=*/0,
+                                    /*bit_start=*/0,
+                                    /*bit_length=*/0,
+                                    /*scale=*/1.0f, /*offset=*/0.0f,
+                                    /*is_signed=*/false, /*endian=*/1,
+                                    DASH_SIGS[i].unit,
+                                    SIGNAL_SOURCE_INTERNAL);
+    }
+}
+
 void signal_internal_start(void)
 {
     if (s_internal_timer) {
         ESP_LOGW(TAG, "already started");
         return;
     }
+
+    /* Make sure dash-internal signals exist in the registry BEFORE the
+     * inject timer fires (signal_inject_test_value silently no-ops on
+     * unregistered names). Also re-resolve channel bindings — any
+     * dash_* canonical channels activated at boot couldn't see these
+     * signals when channel_manager_init ran, so wake them up now. */
+    _register_internal_signals();
+    channel_manager_resolve_signals();
 
     /* Initialise the on-chip temperature sensor (once) */
     if (!s_temp_sensor) {
@@ -382,12 +457,55 @@ void signal_internal_stop(void)
 void signal_internal_set_fuel_cal(float empty_v, float full_v,
                                   float full_value, bool enabled)
 {
-    s_fuel_cal.empty_v    = empty_v;
-    s_fuel_cal.full_v     = full_v;
-    s_fuel_cal.full_value = full_value;
-    s_fuel_cal.enabled    = enabled;
+    s_fuel_cal.empty_v     = empty_v;
+    s_fuel_cal.full_v      = full_v;
+    s_fuel_cal.full_value  = full_value;
+    s_fuel_cal.enabled     = enabled;
+    /* Switching back to the 2-point legacy view — drop any multipoint
+     * curve that was previously installed so interpolation uses the line. */
+    s_fuel_cal.point_count = 0;
     ESP_LOGI(TAG, "fuel cal: empty=%.3f full=%.3f val=%.1f en=%d",
              empty_v, full_v, full_value, (int)enabled);
+}
+
+void signal_internal_set_fuel_cal_points(const fuel_cal_point_t *points,
+                                         uint8_t count, bool enabled)
+{
+    if (!points || count < 2) {
+        /* Treat as "disable multipoint, keep legacy 2-point view". */
+        s_fuel_cal.point_count = 0;
+        s_fuel_cal.enabled = enabled;
+        ESP_LOGI(TAG, "fuel cal: multipoint cleared, enabled=%d", (int)enabled);
+        return;
+    }
+    if (count > FUEL_CAL_MAX_POINTS) count = FUEL_CAL_MAX_POINTS;
+
+    /* Copy then sort ascending by voltage (insertion sort — tiny N). */
+    fuel_cal_point_t tmp[FUEL_CAL_MAX_POINTS];
+    for (uint8_t i = 0; i < count; i++) tmp[i] = points[i];
+    for (uint8_t i = 1; i < count; i++) {
+        fuel_cal_point_t k = tmp[i];
+        int j = (int)i - 1;
+        while (j >= 0 && tmp[j].voltage > k.voltage) {
+            tmp[j + 1] = tmp[j];
+            j--;
+        }
+        tmp[j + 1] = k;
+    }
+    for (uint8_t i = 0; i < count; i++) s_fuel_cal.points[i] = tmp[i];
+    s_fuel_cal.point_count = count;
+    s_fuel_cal.enabled = enabled;
+
+    /* Keep the 2-point legacy view in sync with the endpoints so any
+     * downstream reader (status JSON, layout serializer) gets a sensible
+     * summary even if it doesn't yet understand points[]. */
+    s_fuel_cal.empty_v    = tmp[0].voltage;
+    s_fuel_cal.full_v     = tmp[count - 1].voltage;
+    s_fuel_cal.full_value = tmp[count - 1].value;
+
+    ESP_LOGI(TAG, "fuel cal: %u points, enabled=%d (range %.3fV..%.3fV → %.1f)",
+             (unsigned)count, (int)enabled,
+             tmp[0].voltage, tmp[count - 1].voltage, tmp[count - 1].value);
 }
 
 void signal_internal_get_fuel_cal(fuel_cal_config_t *out)

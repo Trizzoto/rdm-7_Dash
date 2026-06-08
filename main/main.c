@@ -40,6 +40,7 @@
 #include "system/heap_monitor.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
+#include "data/channel_manager.h"
 #include "ui/screens/ui_wifi.h"
 
 
@@ -257,6 +258,16 @@ uint16_t *display_capture_shadow_fb(void) { return (uint16_t *)s_panel_fb; }
 bool display_capture_shadow_ready(void) { return s_panel_fb_ready; }
 uint32_t display_capture_shadow_seq(void) { return s_shadow_seq; }
 
+/* ── Tear-diagnostic flush trace ──────────────────────────────────────
+ * When RDM_FLUSH_TRACE is set, every flush_cb logs the dirty rect plus
+ * timing relative to the previous flush. Compare a tap-on-button log
+ * vs a tap-on-background (chrome reveal) log to see exactly what LVGL
+ * is emitting in each case — same rect count? same area? same cadence?
+ * Disabled at build time when chasing perf. */
+#ifndef RDM_FLUSH_TRACE
+#define RDM_FLUSH_TRACE 0
+#endif
+
 static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                               lv_color_t *color_map) {
   esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
@@ -265,7 +276,37 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
   int offsety1 = area->y1;
   int offsety2 = area->y2;
 
-  // Direct transfer to display - PSRAM buffers are handled by the LCD driver
+#if RDM_FLUSH_TRACE
+  /* Trace only short bursts: log when burst starts and ends. A "burst"
+   * is a sequence of flushes with < 5 ms between them. This filters out
+   * the steady-state per-frame flushes and keeps the log to the moments
+   * we care about (taps, reveals). */
+  static uint32_t s_last_flush_us = 0;
+  static uint32_t s_burst_count = 0;
+  static uint32_t s_burst_start_us = 0;
+  uint32_t now_us = (uint32_t)esp_timer_get_time();
+  uint32_t delta_us = now_us - s_last_flush_us;
+  int w = offsetx2 - offsetx1 + 1;
+  int h = offsety2 - offsety1 + 1;
+  bool is_last = lv_disp_flush_is_last(drv);
+  if (delta_us > 5000) {
+    /* New burst — log every flush of this burst */
+    s_burst_count = 1;
+    s_burst_start_us = now_us;
+    ESP_LOGW("flush", "BURST [%lu] x=%d y=%d w=%d h=%d area=%d last=%d "
+                      "since_prev=%lu us",
+             (unsigned long)s_burst_count, offsetx1, offsety1, w, h, w * h,
+             is_last, (unsigned long)delta_us);
+  } else {
+    s_burst_count++;
+    ESP_LOGW("flush", "  ... [%lu] x=%d y=%d w=%d h=%d area=%d last=%d "
+                      "delta=%lu us total=%lu us",
+             (unsigned long)s_burst_count, offsetx1, offsety1, w, h, w * h,
+             is_last, (unsigned long)delta_us,
+             (unsigned long)(now_us - s_burst_start_us));
+  }
+  s_last_flush_us = now_us;
+#endif
 
   esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
                             offsety2 + 1, color_map);
@@ -576,6 +617,16 @@ void app_main(void) {
   /* Night-mode subsystem: must init before any code can subscribe (i.e.
    * before dashboard_init). Idempotent — safe to call again. */
   night_mode_init();
+
+  /* Channel manager: loads /lfs/channels.json (or seeds the OBD2 default
+   * set if missing) so the channel registry is ready before any widget
+   * or web-server endpoint asks for it. Signal binding for channels
+   * happens lazily — channel_manager_resolve_signals() gets called from
+   * layout_manager_load() after the layout's signals[] array has been
+   * registered. */
+  if (channel_manager_init() != ESP_OK) {
+    ESP_LOGW(TAG, "channel_manager_init reported non-OK — dash will continue with empty channel table");
+  }
 
   // EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
   // comes later

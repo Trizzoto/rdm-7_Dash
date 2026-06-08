@@ -1,5 +1,6 @@
 #include "widget_rpm_bar.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "esp_heap_caps.h"
 #include "signal.h"
@@ -129,8 +130,12 @@ void rpm_gauge_roller_event_cb(lv_event_t *e) {
 		lv_bar_set_range(rpm_bar_gauge, 0, rpm_gauge_max);
 	}
 
-	update_rpm_lines(lv_scr_act());
-	update_redline_position();
+	/* Build ticks into the rpm bar's own container, not lv_scr_act() — see
+	 * the matching note in _rpm_bar_on_channel_changed. */
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container)) {
+		update_rpm_lines(s_rpm_container);
+		update_redline_position();
+	}
 }
 
 void rpm_redline_roller_event_cb(lv_event_t *e) {
@@ -576,6 +581,31 @@ void set_rpm_value(int rpm) {
  * Safe to call from any context that already holds the LVGL mutex (set_rpm_value
  * is called from update_rpm_ui which runs on the LVGL task; the flash timer
  * callback also runs on the LVGL task). */
+/* Memoization cache for _apply_limiter_effect. Per the LVGL v8 style-
+ * invalidation pitfall (see MEMORY.md): lv_obj_set_style_* unconditionally
+ * invalidates the target object regardless of whether the new value
+ * matches the old one. _apply_limiter_effect is called once PER FRAME
+ * from set_rpm_value(); without memo we invalidate the entire 800×55
+ * rpm_bar every refresh tick (4.5 MB/s of pixel pumping for no visible
+ * change), which then forces LVGL to chunk the area into 8 partial
+ * flushes that hammer the cross-FB sync queue. That sync queue overload
+ * is what makes the tap-to-show-chrome tear (chrome lives inside this
+ * widget's vertical zone). Caching the visible state and skipping style
+ * writes when nothing changed kills both the bandwidth waste and the
+ * tap-tear. */
+static struct {
+	bool       valid;          /* cleared on widget create/destroy */
+	lv_color_t fill;
+	bool       grad_active;
+	uint16_t   grad_first_color;  /* hash proxy for gradient identity */
+	lv_color_t panel9_color;
+} s_paint_cache = {0};
+
+/* Public reset: call from create_instance/destroy or any path that
+ * changes config in a way the cache can't detect (e.g. new gradient
+ * stops array swapped in). */
+static void _invalidate_paint_cache(void) { s_paint_cache.valid = false; }
+
 static void _apply_limiter_effect(void) {
 	if (!rpm_bar_gauge || !lv_obj_is_valid(rpm_bar_gauge)) return;
 
@@ -597,6 +627,26 @@ static void _apply_limiter_effect(void) {
 		}
 	}
 
+	bool grad_active = rd && rd->grad_stops.count >= 2 && !over_limiter;
+	uint16_t grad_first_color = (grad_active && rd->grad_stops.count >= 1)
+	                                 ? rd->grad_stops.stops[0].color
+	                                 : 0;
+	lv_color_t panel9_color = fill;
+	if (grad_active && rd->grad_stops.count >= 1) {
+		panel9_color.full = rd->grad_stops.stops[0].color;
+	}
+
+	/* Fast-path: cache hit means visible state is identical to what
+	 * we last painted. Skip ALL style writes — under LVGL v8 each one
+	 * would invalidate the bar even though nothing actually changes. */
+	if (s_paint_cache.valid &&
+	    s_paint_cache.fill.full == fill.full &&
+	    s_paint_cache.grad_active == grad_active &&
+	    s_paint_cache.grad_first_color == grad_first_color &&
+	    s_paint_cache.panel9_color.full == panel9_color.full) {
+		return;
+	}
+
 	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
 	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	/* Multi-stop gradient via LVGL's native lv_grad_dsc_t — suppressed
@@ -616,7 +666,6 @@ static void _apply_limiter_effect(void) {
 	 * bg_grad_dir style property would leave the descriptor's internal
 	 * HOR active from the previous render and the limiter override
 	 * would never take effect. */
-	bool grad_active = rd && rd->grad_stops.count >= 2 && !over_limiter;
 	if (grad_active &&
 	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
 	                                  LV_GRAD_DIR_HOR)) {
@@ -630,12 +679,10 @@ static void _apply_limiter_effect(void) {
 		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	}
 
-	/* PART_MAIN is the empty (unfilled) portion of the track. Keep it at
-	 * the normal background so the fill-vs-empty boundary stays visible
-	 * while the limiter effect is active - the driver needs to see the
-	 * actual RPM level, not a solid-coloured bar that looks 100% full. */
-	lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
-	                           LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* PART_MAIN bg_color is set ONCE at create (widget_rpm_bar_create →
+	 * lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
+	 * LV_PART_MAIN)). Re-writing it per frame served no purpose and
+	 * invalidated the entire bar — removed deliberately. */
 
 	/* Panel9 — the square colour swatch on the left edge of the RPM bar.
 	 * Tracks the bar's visible "starting" colour: when a gradient is
@@ -643,14 +690,17 @@ static void _apply_limiter_effect(void) {
 	 * sees painted at the leftmost pixel of the fill); otherwise it's
 	 * the solid bar_color. Limiter state still wins regardless so the
 	 * peripheral-vision warning cue stays unambiguous. */
-	lv_color_t panel9_color = fill;
-	if (grad_active && rd->grad_stops.count >= 1) {
-		panel9_color.full = rd->grad_stops.stops[0].color;
-	}
 	if (ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
 		lv_obj_set_style_bg_color(ui_Panel9, panel9_color,
 		                           LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+
+	/* Update the paint cache so next frame can fast-path. */
+	s_paint_cache.valid = true;
+	s_paint_cache.fill = fill;
+	s_paint_cache.grad_active = grad_active;
+	s_paint_cache.grad_first_color = grad_first_color;
+	s_paint_cache.panel9_color = panel9_color;
 }
 void update_redline_position(void) {
 	if (!rpm_redline_zone)
@@ -1009,6 +1059,52 @@ uint64_t *widget_rpm_bar_get_last_can_time(void) {
 /* ── Phase 2: widget_t factory
  * ───────────────────────────────────────────── */
 
+/* Forward decl: channel-changed handler re-subscribes this below its own def. */
+static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data);
+
+/* Channel-changed listener — snapshot channel fields into widget. */
+static void _rpm_bar_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	rpm_bar_data_t *rd = (rpm_bar_data_t *)w->type_data;
+	if (!rd) return;
+	safe_strncpy(rd->signal_name, c->signal_name, sizeof(rd->signal_name));
+	/* Re-point our own signal subscription when the channel re-resolves to a
+	 * different signal index. Updating rd->signal_index alone leaves the
+	 * _rpm_bar_on_signal callback bound to the OLD index in the registry, so
+	 * the gauge would freeze on its last value after a runtime re-bind. Mirror
+	 * the inspector-set re-subscribe pattern (safe: this runs under lvgl lock). */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != rd->signal_index) {
+		if (rd->signal_index >= 0)
+			signal_unsubscribe(rd->signal_index, _rpm_bar_on_signal, w);
+		rd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _rpm_bar_on_signal, w);
+	}
+	/* RPM is whole-number; channel range is float, so round to int. */
+	if (c->max > 0) rd->gauge_max = (int32_t)lroundf(c->max);
+	if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+		rd->redline = (int32_t)lroundf(c->high_warn);
+	/* Mirror to the global render state (gauge range, tick marks and redline
+	 * all read it), then refresh the gauge exactly as the old roller cb did so
+	 * a live channel edit rescales the bar + ticks without needing a reload. */
+	if (rd->gauge_max > 0) rpm_gauge_max = rd->gauge_max;
+	rpm_redline_value = rd->redline;
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
+		lv_bar_set_range(rpm_bar_gauge, 0, rpm_gauge_max);
+	/* Rebuild tick marks into the rpm bar's OWN container — never lv_scr_act().
+	 * A live channel edit can arrive while a modal (e.g. the on-device channels
+	 * editor) is the active screen; parenting ticks to lv_scr_act() then builds
+	 * them as children of the modal with center-origin coords, so they bleed on
+	 * top of the modal and the dashboard. The container is the only correct
+	 * parent. Guard for the rare window where it's been torn down. */
+	if (s_rpm_container && lv_obj_is_valid(s_rpm_container)) {
+		update_rpm_lines(s_rpm_container);
+		update_redline_position();
+	}
+}
+
 static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
 	(void)user_data;
 	if (is_stale) {
@@ -1044,6 +1140,10 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 	rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
 	if (rbd && rbd->signal_index >= 0)
 		signal_subscribe(rbd->signal_index, _rpm_bar_on_signal, w);
+
+	if (rbd && rbd->channel)
+		channel_manager_subscribe((channel_t *)rbd->channel,
+		                           _rpm_bar_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
@@ -1124,6 +1224,8 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "flash_speed", rd->flash_speed_ms);
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
+	if (rd->channel_id[0] != '\0')
+		cJSON_AddStringToObject(cfg, "channel", rd->channel_id);
 	/* Night-mode overrides — emit only fields that have an override set */
 	{
 		cJSON *n = cJSON_CreateObject();
@@ -1196,6 +1298,39 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (rd->signal_name[0] != '\0')
 		rd->signal_index = signal_find_by_name(rd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────────
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(rd->channel_id, ch_item->valuestring, sizeof(rd->channel_id));
+	channel_t *bound_c = rd->channel_id[0] ? channel_manager_get(rd->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		rd->channel = bound_c;
+		safe_strncpy(rd->signal_name, bound_c->signal_name, sizeof(rd->signal_name));
+		rd->signal_index = bound_c->signal_index;
+		if (bound_c->max > 0) rd->gauge_max = (int32_t)lroundf(bound_c->max);
+		if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+			rd->redline = (int32_t)lroundf(bound_c->high_warn);
+		/* Channel is authoritative for gauge range + redline — mirror to the
+		 * globals the gauge/tick/redline render helpers read, overriding any
+		 * rpm_max/redline that came from JSON above. Guard gauge_max so a
+		 * channel with max=0 can't zero the update_redline_position divisor. */
+		if (rd->gauge_max > 0) rpm_gauge_max = rd->gauge_max;
+		rpm_redline_value = rd->redline;
+	} else if (rd->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = rd->signal_name,
+			.min = 0,
+			.max = rd->gauge_max,
+			.high_warn = rd->redline,
+			.color_normal = lv_color_to32(rd->bar_color) & 0xFFFFFF,
+			.color_high_warn = lv_color_to32(rd->limiter_color) & 0xFFFFFF,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) rd->channel = c;
+	}
 }
 static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
@@ -1240,11 +1375,19 @@ static void _rpm_bar_destroy(widget_t *w) {
 		rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
 		if (rbd && rbd->signal_index >= 0)
 			signal_unsubscribe(rbd->signal_index, _rpm_bar_on_signal, w);
+		if (rbd && rbd->channel) {
+			channel_manager_unsubscribe((channel_t *)rbd->channel,
+			                             _rpm_bar_on_channel_changed, w);
+			rbd->channel = NULL;
+		}
 		night_mode_unsubscribe(_rpm_bar_night_cb, w);
 		widget_rules_free(w);
 		/* Tear down the shared limiter flash timer — it references nothing
 		 * widget-specific but there's no point running it without a bar. */
 		_ensure_flash_timer(0);
+		/* Reset the per-frame paint cache — the next rpm_bar instance
+		 * (different colors / gradient) must repaint at least once. */
+		_invalidate_paint_cache();
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;
@@ -1382,6 +1525,10 @@ static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
 }
 
 widget_t *widget_rpm_bar_create_instance(void) {
+	/* Fresh widget — drop any cached paint state from a previous instance
+	 * so the first _apply_limiter_effect call always writes through. */
+	_invalidate_paint_cache();
+
 	widget_t *w = calloc(1, sizeof(widget_t));
 	if (!w)
 		return NULL;

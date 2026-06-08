@@ -1,6 +1,7 @@
 #include "widget_bar.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -86,8 +87,8 @@ static float _bar_apply_anchor(const bar_data_t *bd, float v) {
 void widget_bar_sync_range(bar_data_t *bd) {
 	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
 	int32_t scale = _bar_resolution_scale(bd);
-	int32_t lo = bd->bar_min * scale;
-	int32_t hi = bd->bar_max * scale;
+	int32_t lo = lroundf(bd->bar_min * (float)scale);
+	int32_t hi = lroundf(bd->bar_max * (float)scale);
 	if (hi <= lo) { lo = 0; hi = 100 * scale; }
 	lv_bar_set_range(bd->bar_obj, lo, hi);
 }
@@ -116,16 +117,13 @@ void bar_range_input_event_cb(lv_event_t *e) {
 		if (!bd) return;
 
 		bool is_min = lv_obj_get_user_data(textarea) != NULL;
-		int32_t value = atoi(txt);
-		lv_obj_t *bar_obj = (slot == 0) ? ui_Bar_1 : ui_Bar_2;
+		float value = (float)atof(txt);
 
-		if (is_min) {
-			bd->bar_min = value;
-			lv_bar_set_range(bar_obj, value, bd->bar_max);
-		} else {
-			bd->bar_max = value;
-			lv_bar_set_range(bar_obj, bd->bar_min, value);
-		}
+		if (is_min) bd->bar_min = value;
+		else        bd->bar_max = value;
+		/* Re-apply the scaled range (10^decimals) so fractional bounds keep
+		 * their LVGL resolution instead of snapping to whole units. */
+		widget_bar_sync_range(bd);
 	}
 }
 
@@ -240,8 +238,8 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 void widget_bar_create(lv_obj_t *parent) {
 	bar_data_t *bd1 = _lookup_bar_data(0);
 	int32_t s1 = _bar_resolution_scale(bd1);
-	int32_t b1_min = (bd1 ? bd1->bar_min : 0)   * s1;
-	int32_t b1_max = (bd1 ? bd1->bar_max : 100) * s1;
+	int32_t b1_min = lroundf((bd1 ? bd1->bar_min : 0.0f)   * (float)s1);
+	int32_t b1_max = lroundf((bd1 ? bd1->bar_max : 100.0f) * (float)s1);
 	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100 * s1; }
 	ui_Bar_1 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_1, b1_min, b1_max);
@@ -293,8 +291,8 @@ void widget_bar_create(lv_obj_t *parent) {
 
 	bar_data_t *bd2 = _lookup_bar_data(1);
 	int32_t s2 = _bar_resolution_scale(bd2);
-	int32_t b2_min = (bd2 ? bd2->bar_min : 0)   * s2;
-	int32_t b2_max = (bd2 ? bd2->bar_max : 100) * s2;
+	int32_t b2_min = lroundf((bd2 ? bd2->bar_min : 0.0f)   * (float)s2);
+	int32_t b2_max = lroundf((bd2 ? bd2->bar_max : 100.0f) * (float)s2);
 	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100 * s2; }
 	ui_Bar_2 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_2, b2_min, b2_max);
@@ -351,6 +349,47 @@ uint64_t *widget_bar_get_last_can_time(uint8_t bar_idx) {
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
+/* Forward decl: defined below, but needed by _bar_on_channel_changed which
+ * re-subscribes it when the channel's signal source is rebound at runtime. */
+static void _bar_on_signal(float value, bool is_stale, void *user_data);
+
+/* Channel-changed listener: re-snapshot channel fields and invalidate.
+ * The next _bar_on_signal call will pick up the new bar_min/max/low/high
+ * via the widget's live fields. */
+static void _bar_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	safe_strncpy(bd->signal_name, c->signal_name, sizeof(bd->signal_name));
+	/* Re-point our own signal subscription when the channel's source index
+	 * actually moved. _bar_on_signal is keyed in the registry by the index it
+	 * attached to at create; without this the gauge stays bound to the OLD
+	 * signal (or nothing) and freezes on its last value after a runtime rebind.
+	 * Mirrors the inspector rebind path (_bar_inspector_set / "signal_name"). */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != bd->signal_index) {
+		if (bd->signal_index >= 0)
+			signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+		bd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _bar_on_signal, w);
+	}
+	bd->bar_min = c->min;
+	bd->bar_max = c->max;
+	/* Channel owns the alert thresholds. When a side has no warn set, park it
+	 * at the range edge so that alert can never fire (reverts to inactive)
+	 * instead of leaving a stale 0 that paints the bar permanently in-alert. */
+	bd->bar_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? c->low_warn  : bd->bar_min;
+	bd->bar_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? c->high_warn : bd->bar_max;
+	/* Bar zone colours are widget-owned (Widget settings → ALERTS) — never
+	 * driven by the channel. Only range/thresholds/signal sync above. */
+
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+		lv_obj_invalidate(bd->bar_obj);
+}
+
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
@@ -369,16 +408,16 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 
 	/* ── Fill-image bar mode (clip container controls fill width) ── */
 	if (bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
-		int32_t range = bd->bar_max - bd->bar_min;
+		float range = bd->bar_max - bd->bar_min;
 		int32_t pct = 0;
-		if (range > 0 && !is_stale) {
+		if (range > 0.0f && !is_stale) {
 			double clamped = (double)fill_value;
 			if (clamped < bd->bar_min) clamped = bd->bar_min;
 			if (clamped > bd->bar_max) clamped = bd->bar_max;
 			if (bd->invert_bar_value)
-				pct = (int32_t)(((bd->bar_max - clamped) * 100) / range);
+				pct = (int32_t)(((bd->bar_max - clamped) * 100.0) / range);
 			else
-				pct = (int32_t)(((clamped - bd->bar_min) * 100) / range);
+				pct = (int32_t)(((clamped - bd->bar_min) * 100.0) / range);
 		}
 		lv_coord_t clip_w = (lv_coord_t)((pct * w->w) / 100);
 		lv_obj_set_width(bd->img_clip_obj, clip_w);
@@ -391,8 +430,8 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		 * scaled (see _bar_resolution_scale). Stale → 0 anyway, no flip. */
 		int32_t display_value = bar_value;
 		if (bd->invert_bar_value && !is_stale) {
-			int32_t scaled_min = bd->bar_min * scale;
-			int32_t scaled_max = bd->bar_max * scale;
+			int32_t scaled_min = lroundf(bd->bar_min * (float)scale);
+			int32_t scaled_max = lroundf(bd->bar_max * (float)scale);
 			display_value = scaled_min + scaled_max - bar_value;
 		}
 		lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
@@ -481,8 +520,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	 * value of e.g. 0.85 on a 0..1 bar (decimals=2) fills 85/100 of the
 	 * bar, not snaps to 0 or 1. _bar_on_signal applies the same scale. */
 	int32_t scale = _bar_resolution_scale(bd);
-	int32_t b_min = (bd ? bd->bar_min : 0)   * scale;
-	int32_t b_max = (bd ? bd->bar_max : 100) * scale;
+	int32_t b_min = lroundf((bd ? bd->bar_min : 0.0f)   * (float)scale);
+	int32_t b_max = lroundf((bd ? bd->bar_max : 100.0f) * (float)scale);
 	if (b_max <= b_min) { b_min = 0; b_max = 100 * scale; }
 
 	bool has_track = _bar_has_track_image(bd);
@@ -652,6 +691,11 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	if (bd && bd->signal_index >= 0)
 		signal_subscribe(bd->signal_index, _bar_on_signal, w);
 
+	if (bd->channel)
+		channel_manager_subscribe((channel_t *)bd->channel,
+		                           _bar_on_channel_changed, w);
+	(void)0;
+
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
 	 * was created while night-mode is already active. */
@@ -698,8 +742,10 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "anchor_value", bd->anchor_value);
 		if (bd->anchor_enabled || bd->anchor_position != 50)
 			cJSON_AddNumberToObject(cfg, "anchor_position", bd->anchor_position);
-		cJSON_AddNumberToObject(cfg, "bar_low", bd->bar_low);
-		cJSON_AddNumberToObject(cfg, "bar_high", bd->bar_high);
+		/* Alert thresholds (bar_low / bar_high) live on the bound channel
+		 * (channels.json) and are intentionally NOT persisted here, so they
+		 * stick to the channel setup and don't travel when a layout is shared.
+		 * Alert COLOURS are widget-owned styling and do round-trip. */
 		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
@@ -716,13 +762,18 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		if (!bd->show_bar_label)
 			cJSON_AddBoolToObject(cfg, "show_bar_label", false);
 		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
-		cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
+		/* Decimals: per-widget override only — omit when it matches the bound
+			 * channel's decimals so it follows the channel by default. */
+			if (!bd->channel || bd->decimals != ((channel_t *)bd->channel)->decimals)
+				cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
 		if (bd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", bd->label_font);
 		if (bd->value_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "value_font", bd->value_font);
 		if (bd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", bd->signal_name);
+		if (bd->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", bd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
 		if (bd->bar_bg_color.full != THEME_COLOR_PANEL.full)
 			cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)bd->bar_bg_color.full);
@@ -778,13 +829,13 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(bd->label, item->valuestring, sizeof(bd->label));
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_min");
-	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_min = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
-	if (cJSON_IsNumber(item)) bd->bar_max = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_max = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
 	if (cJSON_IsBool(item)) bd->anchor_enabled = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
-	if (cJSON_IsNumber(item)) bd->anchor_value = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->anchor_value = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
 	if (cJSON_IsNumber(item)) {
 		int v = item->valueint;
@@ -793,9 +844,9 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		bd->anchor_position = (uint8_t)v;
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low");
-	if (cJSON_IsNumber(item)) bd->bar_low = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_low = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high");
-	if (cJSON_IsNumber(item)) bd->bar_high = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_high = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low_color");
 	if (cJSON_IsNumber(item)) bd->bar_low_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high_color");
@@ -820,7 +871,8 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
-	if (cJSON_IsNumber(item)) bd->decimals = (uint8_t)item->valueint;
+	bool decimals_overridden = cJSON_IsNumber(item);
+	if (decimals_overridden) bd->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
 		safe_strncpy(bd->label_font, item->valuestring, sizeof(bd->label_font));
@@ -877,12 +929,94 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (bd->signal_name[0] != '\0')
 		bd->signal_index = signal_find_by_name(bd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ───────── */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	/* Stash channel id (if any) but treat an empty-signal channel as a
+	 * miss so the legacy fallback can repopulate it from the widget's
+	 * own signal field. Happens on cross-layout switches where
+	 * resolve_signals cleared the stale binding before widgets load. */
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(bd->channel_id, ch_item->valuestring, sizeof(bd->channel_id));
+	channel_t *bound_c = bd->channel_id[0] ? channel_manager_get(bd->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		bd->channel = bound_c;
+		safe_strncpy(bd->signal_name, bound_c->signal_name, sizeof(bd->signal_name));
+		bd->signal_index = bound_c->signal_index;
+		/* Decimals default to the channel; a per-widget override in the layout
+		 * wins (config modal → Display → Decimals). */
+		if (!decimals_overridden) bd->decimals = bound_c->decimals;
+		bd->bar_min = bound_c->min;
+		bd->bar_max = bound_c->max;
+		/* Channel owns the alert thresholds. When a side has a warn it's
+		 * authoritative; when it doesn't but the widget carried a legacy
+		 * threshold inside the range (older layouts), migrate it UP into the
+		 * channel. Otherwise park at the range edge (alert inactive). */
+		bool _ch_dirty = false;
+		if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+			bd->bar_high = bound_c->high_warn;
+		} else if (bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
+			bound_c->high_warn = bd->bar_high;   /* real threshold, strictly in range */
+			_ch_dirty = true;
+		} else {
+			bd->bar_high = bd->bar_max;          /* edge / unset → high alert inactive */
+		}
+		if (bound_c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
+			bd->bar_low = bound_c->low_warn;
+		} else if (bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
+			bound_c->low_warn = bd->bar_low;
+			_ch_dirty = true;
+		} else {
+			bd->bar_low = bd->bar_min;
+		}
+		if (_ch_dirty) channel_manager_mark_dirty();
+		/* Bar zone colours stay widget-owned — never overridden by the channel. */
+	} else if (bd->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = bd->signal_name,
+			.min = bd->bar_min,
+			.max = bd->bar_max,
+			.high_warn = bd->bar_high,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) {
+			bd->channel = c;
+			if (!decimals_overridden) bd->decimals = c->decimals;
+			/* Migrate the widget's legacy alert thresholds UP into the channel
+			 * when the channel doesn't already define them (a real threshold is
+			 * one inside the range; an edge value means "no alert"). Never
+			 * clobber an existing channel warn — that's the source of truth. */
+			if (c->high_warn == CHANNEL_THRESHOLD_UNSET_HIGH &&
+			    bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
+				c->high_warn = bd->bar_high;
+				c->color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF;
+				channel_manager_mark_dirty();
+			}
+			if (c->low_warn == CHANNEL_THRESHOLD_UNSET_LOW &&
+			    bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
+				c->low_warn = bd->bar_low;
+				c->color_low_warn = lv_color_to32(bd->bar_low_color) & 0xFFFFFF;
+				channel_manager_mark_dirty();
+			}
+			/* Adopt the channel's thresholds (single source of truth); a side
+			 * with no channel warn parks at the range edge = alert inactive. */
+			bd->bar_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? c->high_warn : bd->bar_max;
+			bd->bar_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? c->low_warn  : bd->bar_min;
+		}
+	}
 }
 static void _bar_destroy(widget_t *w) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	uint8_t slot = bd ? bd->slot : 0;
 	if (bd && bd->signal_index >= 0)
 		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+	if (bd && bd->channel) {
+		channel_manager_unsubscribe((channel_t *)bd->channel,
+		                             _bar_on_channel_changed, w);
+		bd->channel = NULL;
+	}
 	night_mode_unsubscribe(_bar_night_cb, w);
 	widget_rules_free(w);
 	/* Label and value are siblings of root (children of parent), delete explicitly */

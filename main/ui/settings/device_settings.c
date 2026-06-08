@@ -17,10 +17,10 @@
 #include "ui_helpers.h"
 #include "screens/ui_Screen3.h"
 #include "screens/first_run_wizard.h"
-#include "screens/ui_ecu_picker.h"
 #include "screens/ui_can_list.h"
 #include "layout/ecu_presets.h"
 #include "layout/layout_manager.h"
+#include "data/channel_manager.h"
 #include "obd2_picker.h"
 #include "obd2.h"
 #include "dtc_reader.h"
@@ -153,9 +153,6 @@ static lv_obj_t  *s_scan_cancel_btn    = NULL;
 
 /* Bitrate dropdown pointer for scan apply */
 static lv_obj_t  *s_bitrate_dropdown   = NULL;
-
-/* ECU selection row (CAN BUS section) */
-static lv_obj_t  *s_ecu_value_label    = NULL;
 
 // AP hotspot status label
 static lv_obj_t* ap_status_label = NULL;
@@ -341,63 +338,48 @@ static void _qr_btn_cb(lv_event_t *e) {
 }
 
 // Function to refresh WiFi status displays
+/* Refresh the WiFi + Web Editor card stats. wifi_status_label and
+ * web_status_label are now the .stat_label of those two cards in the
+ * CONNECTIVITY grid (see _build_connectivity_grid). Stats are short,
+ * uppercase-friendly — title + body already describe the section, so
+ * the stat is just the live status (SSID, IP, "OFFLINE", etc). */
 static void refresh_wifi_status(void) {
-    if (!wifi_status_label || !web_status_label) return;
+    /* Defensive bail — labels can survive screen delete if cleanup
+     * skipped a path. lv_obj_is_valid catches freed-but-non-NULL. */
+    if (!wifi_status_label || !lv_obj_is_valid(wifi_status_label)) {
+        wifi_status_label = NULL;
+        if (web_status_label && !lv_obj_is_valid(web_status_label)) {
+            web_status_label = NULL;
+        }
+        return;
+    }
 
-    // Update WiFi STA status
     const char *sta_ssid = wifi_manager_get_connected_ssid();
     if (sta_ssid && sta_ssid[0] != '\0') {
-        char status_text[48];
-        snprintf(status_text, sizeof(status_text), "WiFi: %s", sta_ssid);
-        lv_label_set_text(wifi_status_label, status_text);
-        lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_label_set_text(wifi_status_label, sta_ssid);
+    } else if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "AP: %s", wifi_manager_get_ap_ssid());
+        lv_label_set_text(wifi_status_label, buf);
     } else {
-        lv_label_set_text(wifi_status_label, "WiFi: Not Connected");
-        lv_obj_set_style_text_color(wifi_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_label_set_text(wifi_status_label, "OFFLINE");
     }
 
-    // Update web server status — show the raw IP; mDNS (.local) is disabled
-    // because the espressif__mdns component can't allocate internal-RAM
-    // buffers in this build. Users reach the dash via the IP or QR code.
-    if (sta_ssid && sta_ssid[0] != '\0') {
-        esp_netif_ip_info_t ip_info;
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            char web_text[64];
-            snprintf(web_text, sizeof(web_text),
-                     "Web: http://" IPSTR, IP2STR(&ip_info.ip));
-            lv_label_set_text(web_status_label, web_text);
-            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
+    if (web_status_label && lv_obj_is_valid(web_status_label)) {
+        char buf[48];
+        if (sta_ssid && sta_ssid[0] != '\0') {
+            esp_netif_ip_info_t ip_info;
+            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                snprintf(buf, sizeof(buf), IPSTR, IP2STR(&ip_info.ip));
+                lv_label_set_text(web_status_label, buf);
+            } else {
+                lv_label_set_text(web_status_label, "WAITING");
+            }
+        } else if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
+            lv_label_set_text(web_status_label, "192.168.4.1");
         } else {
-            lv_label_set_text(web_status_label, "Web: Waiting for IP...");
-            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_YELLOW, LV_PART_MAIN | LV_STATE_DEFAULT);
-        }
-    } else {
-        /* Check if AP mode provides an alternative */
-        if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
-            lv_label_set_text(web_status_label, "Web: http://192.168.4.1");
-            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_ACCENT_BLUE, LV_PART_MAIN | LV_STATE_DEFAULT);
-        } else {
-            lv_label_set_text(web_status_label, "Web: Connect WiFi first");
-            lv_obj_set_style_text_color(web_status_label, THEME_COLOR_STATUS_WARN, LV_PART_MAIN | LV_STATE_DEFAULT);
-        }
-    }
-
-    // Update AP hotspot status
-    if (ap_status_label && lv_obj_is_valid(ap_status_label)) {
-        if (wifi_manager_is_started() && wifi_manager_is_ap_enabled()) {
-            wifi_sta_list_t sta_list;
-            esp_wifi_ap_get_sta_list(&sta_list);
-            char ap_text[96];
-            snprintf(ap_text, sizeof(ap_text),
-                     "Hotspot: %s - 192.168.4.1 (%d client%s)",
-                     wifi_manager_get_ap_ssid(), sta_list.num,
-                     sta_list.num == 1 ? "" : "s");
-            lv_label_set_text(ap_status_label, ap_text);
-            lv_obj_set_style_text_color(ap_status_label, THEME_COLOR_STATUS_CONNECTED, LV_PART_MAIN | LV_STATE_DEFAULT);
-        } else {
-            lv_label_set_text(ap_status_label, "Hotspot: Disabled");
-            lv_obj_set_style_text_color(ap_status_label, THEME_COLOR_TEXT_HINT, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_label_set_text(web_status_label, "OFFLINE");
         }
     }
 }
@@ -536,8 +518,9 @@ void dimmer_subscribe(void) {
         /* Signal not in layout — auto-register a placeholder so internal
            signal injection (GPIO indicators, etc.) can still feed it.
            CAN ID 0 ensures the filter builder ignores this entry. */
-        idx = signal_register(dimmer_config.signal_name, 0,
-                              0, 1, 1.0f, 0.0f, false, 1, "");
+        idx = signal_register_with_source(dimmer_config.signal_name, 0,
+                              0, 1, 1.0f, 0.0f, false, 1, "",
+                              SIGNAL_SOURCE_INTERNAL);
     }
     if (idx >= 0) {
         signal_subscribe(idx, _dimmer_signal_cb, NULL);
@@ -1453,6 +1436,13 @@ static void _open_scan_overlay(void) {
     lv_obj_add_flag(s_scan_apply_btn, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* Popup-close forward decls — _can_view_more_btn_cb / _view_peaks_btn_cb
+ * need to tear down the card popup before swapping screens. The actual
+ * popup_close definitions live further down with the rest of the popup
+ * builders; declaring here keeps the call-site order legal. */
+static void _can_bus_popup_close(lv_event_t *e);
+static void _testing_popup_close(lv_event_t *e);
+
 /* "View More" button in the CAN BUS section header. Opens the live CAN ID
  * list (ui_can_list) so the user can see every ID + binary bytes ticking
  * through. Bitrate scanning is no longer surfaced here — it's accessible
@@ -1460,13 +1450,15 @@ static void _open_scan_overlay(void) {
  * for a setup-time operation that suspends the bus. */
 static void _can_view_more_btn_cb(lv_event_t *e) {
     (void)e;
-    /* Drop back to the dashboard so the can_list screen has a clean
-     * backdrop, then show on the next tick (same pattern as the diag
-     * and wizard launchers in this file). */
-    lv_obj_t *ret = device_settings_return_screen;
-    if (ret && lv_obj_is_valid(ret)) {
-        lv_scr_load(ret);
-    }
+    /* Close the CAN Bus popup BEFORE swapping screens. Popups live on
+     * lv_layer_top() which survives lv_scr_load() — without this close
+     * the popup card would sit on top of the can_list screen,
+     * obscuring the live CAN ID feed. */
+    _can_bus_popup_close(NULL);
+    /* Show can_list directly. It captures lv_scr_act() as its return
+     * screen at call-time — which is still settings_screen here — so
+     * Back correctly drops the user back into Device Settings rather
+     * than skipping out to the dashboard. */
     can_list_ui_show();
 }
 
@@ -1707,6 +1699,16 @@ static char       s_share_picked_file[64] = {0};
 static void _share_modal_open(void);
 static void _share_modal_close(void);
 static void _share_btn_cb(lv_event_t *e);
+
+/* Forward decls for callbacks/helpers referenced by the popup builders
+ * (defined further down the file). Card-grid migration moved these calls
+ * earlier in source order — declaration here avoids implicit-function /
+ * undeclared-identifier errors. */
+static void _veh_odo_refresh_timer_cb(lv_timer_t *t);
+static void _odo_edit_btn_cb(lv_event_t *e);
+static void _veh_gear_btn_cb(lv_event_t *e);
+static void _build_section_can_diagnostics(lv_obj_t *content);
+static void refresh_can_diagnostics(void);
 
 static void _update_log_ui(void) {
     if (!s_log_btn_label || !s_log_status_label) return;
@@ -2121,10 +2123,12 @@ static void _show_peaks_async(void *arg) {
 
 static void _view_peaks_btn_cb(lv_event_t *e) {
     (void)e;
-    lv_obj_t *ret = device_settings_return_screen;
-    if (ret && lv_obj_is_valid(ret)) {
-        lv_scr_load(ret);
-    }
+    /* Close the Testing popup before peaks_ui takes over the screen —
+     * popups live on lv_layer_top() so they'd otherwise float above the
+     * peaks screen. peaks_ui captures lv_scr_act() as its return screen
+     * at call time, so leaving settings_screen active means Back returns
+     * to Device Settings (not the dashboard). */
+    _testing_popup_close(NULL);
     lv_async_call(_show_peaks_async, NULL);
 }
 
@@ -2253,77 +2257,12 @@ static void _run_wizard_btn_cb(lv_event_t *e) {
     lv_obj_add_event_cb(mbox, _run_wizard_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
-/* ── ECU selection ───────────────────────────────────────────────────── */
-
-/* Compose the "Make Version" or "Not selected" label for the current ECU. */
-static void _ecu_label_compose(char *buf, size_t n) {
-    char make[32] = {0}, ver[32] = {0};
-    if (config_store_load_ecu(make, sizeof(make), ver, sizeof(ver)) == ESP_OK &&
-        make[0] && ver[0]) {
-        const ecu_preset_t *p = ecu_preset_find(make, ver);
-        if (p && p->display) { snprintf(buf, n, "%s", p->display); return; }
-        snprintf(buf, n, "%s %s", make, ver);
-        return;
-    }
-    snprintf(buf, n, "Not selected");
-}
-
-/* Runs on the LVGL async queue so the picker's overlay del_async has
- * processed first. Without this deferral, lv_obj_del(old) races against
- * the pending async-del of the picker's overlay (same crash pattern as
- * the first_run_wizard Finish flow). */
-static void _deferred_reload_after_ecu(void *arg) {
-    (void)arg;
-    /* Tear down all menu-owned timers and NULL the static LVGL pointers
-     * BEFORE deleting the old screen. close_menu_event_cb only fires on
-     * the normal "back" button path; this reload bypasses that, and any
-     * surviving timer (CAN diag, WiFi status, odometer) would tick once
-     * more after the LVGL objects are freed and crash on a stale pointer.
-     * Cheaper than wiring an LV_EVENT_DELETE handler on the screen. */
-    if (s_can_diag_timer) {
-        lv_timer_del(s_can_diag_timer);
-        s_can_diag_timer = NULL;
-    }
-    if (s_wifi_status_timer) {
-        lv_timer_del(s_wifi_status_timer);
-        s_wifi_status_timer = NULL;
-    }
-    if (s_veh_odo_timer) {
-        lv_timer_del(s_veh_odo_timer);
-        s_veh_odo_timer = NULL;
-    }
-    s_veh_odo_value_lbl  = NULL;
-    s_can_health_dot     = NULL;
-    s_can_health_label   = NULL;
-    s_can_summary_label  = NULL;
-    s_can_details_grid   = NULL;
-    s_can_details_toggle = NULL;
-    memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
-
-    lv_obj_t *old = lv_disp_get_scr_act(lv_disp_get_default());
-    ui_Screen3_screen_init();
-    lv_scr_load(ui_Screen3);
-    if (old && old != ui_Screen3 && lv_obj_is_valid(old))
-        lv_obj_del(old);
-}
-
-static void _ecu_picker_done_cb(bool applied, void *ctx) {
-    (void)ctx;
-    /* Refresh the value label. */
-    if (s_ecu_value_label && lv_obj_is_valid(s_ecu_value_label)) {
-        char txt[64];
-        _ecu_label_compose(txt, sizeof(txt));
-        lv_label_set_text(s_ecu_value_label, txt);
-    }
-    if (applied) {
-        lv_async_call(_deferred_reload_after_ecu, NULL);
-    }
-}
-
-static void _ecu_btn_cb(lv_event_t *e) {
-    (void)e;
-    ecu_picker_open("default", true, _ecu_picker_done_cb, NULL);
-}
+/* ── ECU selection — REMOVED ──────────────────────────────────────────
+ * The standalone ECU-preset picker (ui_ecu_picker.c) is retired. ECU
+ * presets now bind per-channel through the Channels editor's source
+ * picker, and bulk ECU auto-detect lives in the setup wizard. The old
+ * _ecu_label_compose / _deferred_reload_after_ecu / _ecu_picker_done_cb /
+ * _ecu_btn_cb helpers went with it. ───────────────────────────────────── */
 
 /* ── OBD2 Signals button ─────────────────────────────────────────────── */
 
@@ -2372,6 +2311,17 @@ static char       s_vin_cache[20]      = {0};
 static char       s_ecuname_cache[24]  = {0};
 static lv_obj_t  *s_vin_label_obj      = NULL;
 static lv_obj_t  *s_ecuname_label_obj  = NULL;
+
+/* Card-grid popup overlays — all parented to lv_layer_top() like the share
+ * modal. Settings-screen delete cb defensively closes each one (the popup
+ * bodies hold the live label pointers that timers paint into; closing
+ * NULLs them so we don't dangle past the settings screen's lifetime). */
+static lv_obj_t  *s_device_info_overlay   = NULL;
+static lv_obj_t  *s_dimmer_overlay        = NULL;
+static lv_obj_t  *s_logger_overlay        = NULL;
+static lv_obj_t  *s_testing_overlay       = NULL;
+static lv_obj_t  *s_can_bus_overlay       = NULL;
+static lv_obj_t  *s_odo_overlay           = NULL;
 
 static void _vin_done(bool ok, const char *vin, void *user)
 {
@@ -2543,6 +2493,7 @@ void load_dimmer_config_from_nvs(void) {
  * Module-level static pointers are set as a side-effect where needed.
  * ─────────────────────────────────────────────────────────────────────────── */
 
+__attribute__((unused))
 static lv_obj_t *_build_row(lv_obj_t *parent, int32_t h) {
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_size(row, lv_pct(100), h);
@@ -2576,6 +2527,117 @@ static void _make_section_title(lv_obj_t *parent, const char *text) {
     lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_set_style_text_letter_space(lbl, 1, 0);
+}
+
+/* =========================================================================
+ * Setup card grid — mirrors the web editor's Setup-mode panel look (section
+ * title + grid of clickable card tiles, each opening a detail popup). Used
+ * to consolidate the old _build_section_* rows into a scannable launcher.
+ *
+ * Grid geometry: 3 cols x 232px-wide cards, 12px gaps, wraps as needed.
+ * Card geometry: 232 x 110, pad 12, optional LV_SYMBOL_* icon, title (BODY
+ * font), wrapped body line (TINY font, muted), accent-blue stat (TINY,
+ * uppercase, tracked).
+ *
+ * Sized to fit inside the 760-wide settings modal's content area at 720
+ * effective inner width (3*232 + 2*12 = 720).
+ * ========================================================================= */
+typedef struct {
+    lv_obj_t *card;
+    lv_obj_t *title_label;
+    lv_obj_t *body_label;
+    lv_obj_t *stat_label;
+} setup_card_t;
+
+static lv_obj_t *_make_setup_section_title(lv_obj_t *parent, const char *text) {
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_width(lbl, 720);
+    lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_letter_space(lbl, 2, 0);
+    lv_obj_set_style_pad_left(lbl, 4, 0);
+    lv_obj_set_style_pad_top(lbl, 6, 0);
+    lv_obj_set_style_pad_bottom(lbl, 4, 0);
+    return lbl;
+}
+
+static lv_obj_t *_make_setup_grid(lv_obj_t *parent) {
+    lv_obj_t *grid = lv_obj_create(parent);
+    lv_obj_set_size(grid, 720, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(grid, 0, 0);
+    lv_obj_set_style_pad_all(grid, 0, 0);
+    lv_obj_set_style_pad_column(grid, 12, 0);
+    lv_obj_set_style_pad_row(grid, 12, 0);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
+    return grid;
+}
+
+/* Build a single setup card. icon_sym is an optional LV_SYMBOL_* string
+ * (rendered accent-blue via label recolor) or NULL to skip. title/body/
+ * initial_stat may each be NULL. on_click is wired as LV_EVENT_CLICKED.
+ * The returned struct lets callers stash pointers for live timer updates
+ * (e.g. point s_wifi_status_timer at the stat_label). */
+static setup_card_t _make_setup_card(lv_obj_t *grid,
+                                     const char *icon_sym,
+                                     const char *title,
+                                     const char *body,
+                                     const char *initial_stat,
+                                     lv_event_cb_t on_click) {
+    setup_card_t r = {0};
+    r.card = lv_btn_create(grid);
+    lv_obj_set_size(r.card, 232, 110);
+    lv_obj_set_style_bg_color(r.card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(r.card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(r.card, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_color(r.card, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(r.card, 1, 0);
+    lv_obj_set_style_border_color(r.card, THEME_COLOR_ACCENT, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(r.card, 0, 0);
+    lv_obj_set_style_pad_all(r.card, 12, 0);
+    lv_obj_clear_flag(r.card, LV_OBJ_FLAG_SCROLLABLE);
+    if (on_click) lv_obj_add_event_cb(r.card, on_click, LV_EVENT_CLICKED, NULL);
+
+    /* Title — supports LVGL inline recolor so the icon can be accent-blue
+     * while the title text stays primary. */
+    r.title_label = lv_label_create(r.card);
+    lv_label_set_recolor(r.title_label, true);
+    if (icon_sym && icon_sym[0]) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "#2196F3 %s#  %s",
+                 icon_sym, title ? title : "");
+        lv_label_set_text(r.title_label, buf);
+    } else {
+        lv_label_set_text(r.title_label, title ? title : "");
+    }
+    lv_obj_align(r.title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(r.title_label, THEME_FONT_BODY, 0);
+    lv_obj_set_style_text_color(r.title_label, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    /* Body — small, muted, wraps to up to 2 lines within the 208px card
+     * inner width (232 - 2*12 pad = 208). */
+    r.body_label = lv_label_create(r.card);
+    lv_label_set_long_mode(r.body_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(r.body_label, body ? body : "");
+    lv_obj_set_width(r.body_label, 208);
+    lv_obj_align(r.body_label, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_obj_set_style_text_font(r.body_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(r.body_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_set_style_text_line_space(r.body_label, 2, 0);
+
+    /* Stat — accent-blue, tiny, uppercase tracked. Anchored bottom-left so
+     * variable-length body copy above can flex. */
+    r.stat_label = lv_label_create(r.card);
+    lv_label_set_text(r.stat_label, initial_stat ? initial_stat : "");
+    lv_obj_align(r.stat_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_text_font(r.stat_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(r.stat_label, THEME_COLOR_ACCENT, 0);
+    lv_obj_set_style_text_letter_space(r.stat_label, 2, 0);
+    return r;
 }
 
 static lv_obj_t *_build_content_area(lv_obj_t *parent) {
@@ -2633,6 +2695,7 @@ static void _build_header(lv_obj_t *parent) {
                         device_settings_return_screen);
 }
 
+__attribute__((unused))
 static void _build_section_can_config(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "CAN BUS");
@@ -2659,33 +2722,9 @@ static void _build_section_can_config(lv_obj_t *row) {
     lv_obj_add_event_cb(bitrate_dd, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     s_bitrate_dropdown = bitrate_dd;
 
-    lv_obj_t *ecu_label = lv_label_create(s);
-    lv_label_set_text(ecu_label, "ECU Type");
-    lv_obj_align(ecu_label, LV_ALIGN_TOP_LEFT, 0, 90);
-    lv_obj_set_style_text_font(ecu_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(ecu_label, THEME_COLOR_TEXT_MUTED, 0);
-
-    lv_obj_t *ecu_btn = lv_btn_create(s);
-    lv_obj_set_size(ecu_btn, lv_pct(62), 32);
-    lv_obj_align(ecu_btn, LV_ALIGN_TOP_LEFT, 80, 86);
-    lv_obj_set_style_bg_color(ecu_btn, THEME_COLOR_INPUT_BG, 0);
-    lv_obj_set_style_bg_opa(ecu_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ecu_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(ecu_btn, 1, 0);
-    lv_obj_set_style_radius(ecu_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_shadow_width(ecu_btn, 0, 0);
-    s_ecu_value_label = lv_label_create(ecu_btn);
-    {
-        char txt[64];
-        _ecu_label_compose(txt, sizeof(txt));
-        lv_label_set_text(s_ecu_value_label, txt);
-    }
-    lv_label_set_long_mode(s_ecu_value_label, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_ecu_value_label, lv_pct(95));
-    lv_obj_align(s_ecu_value_label, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_text_font(s_ecu_value_label, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(s_ecu_value_label, THEME_COLOR_TEXT_PRIMARY, 0);
-    lv_obj_add_event_cb(ecu_btn, _ecu_btn_cb, LV_EVENT_CLICKED, NULL);
+    /* (ECU Type picker removed — see "ECU selection — REMOVED" note above.
+     * This whole _build_section_can_config builder is legacy/dead and is
+     * slated for deletion in the _build_section_* cleanup.) */
 
     /* OBD2 Signals + Read Trouble Codes — rendered side-by-side at the
      * same y to save vertical space in the CAN section. Each ~47% wide
@@ -2742,74 +2781,135 @@ static void _build_section_can_config(lv_obj_t *row) {
     }
 }
 
-static void _build_section_device_info(lv_obj_t *row) {
-    lv_obj_t *s = _make_flex_section(row);
-    _make_section_title(s, "DEVICE INFO");
+/* Build a centered popup shell: w x h surface on lv_layer_top(), title in
+ * the top-left, "Close" button in the top-right wired to close_cb. Returns
+ * the overlay; callers position child widgets with absolute coords from
+ * (0, 56) — leaving the top 56 px free for the title bar. */
+static lv_obj_t *_make_popup_shell(int w, int h, const char *title,
+                                   lv_event_cb_t close_cb) {
+    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(overlay, w, h);
+    lv_obj_center(overlay);
+    lv_obj_set_style_bg_color(overlay, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(overlay, THEME_RADIUS_LARGE, 0);
+    lv_obj_set_style_border_color(overlay, THEME_COLOR_BORDER_MED, 0);
+    lv_obj_set_style_border_width(overlay, 1, 0);
+    lv_obj_set_style_pad_all(overlay, 18, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *serial_label = lv_label_create(s);
-    lv_label_set_text(serial_label, "Serial Number");
-    lv_obj_align(serial_label, LV_ALIGN_TOP_LEFT, 0, 22);
-    lv_obj_set_style_text_font(serial_label, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(serial_label, THEME_COLOR_TEXT_HINT, 0);
+    lv_obj_t *t = lv_label_create(overlay);
+    lv_label_set_text(t, title);
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(t, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(t, THEME_COLOR_TEXT_PRIMARY, 0);
 
-    lv_obj_t *serial_value = lv_label_create(s);
+    lv_obj_t *close_btn = lv_btn_create(overlay);
+    lv_obj_set_size(close_btn, 60, 28);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, 0, -2);
+    lv_obj_set_style_bg_color(close_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_radius(close_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_border_color(close_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(close_btn, 1, 0);
+    lv_obj_set_style_shadow_width(close_btn, 0, 0);
+    lv_obj_t *cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_center(cl);
+    lv_obj_set_style_text_font(cl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(cl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(close_btn, close_cb, LV_EVENT_CLICKED, NULL);
+
+    return overlay;
+}
+
+/* Tear down the Device Info popup. Safe to call when nothing is open. Also
+ * invoked from _settings_screen_delete_cb so the popup doesn't outlive its
+ * parent settings screen (the VIN/ECU label statics would dangle otherwise). */
+static void _device_info_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_device_info_overlay && lv_obj_is_valid(s_device_info_overlay)) {
+        lv_obj_del(s_device_info_overlay);
+    }
+    s_device_info_overlay = NULL;
+    /* The label statics live inside the overlay — null them now so any in-
+     * flight obd2 callback NULL-checks before painting (helpers already do). */
+    s_vin_label_obj      = NULL;
+    s_ecuname_label_obj  = NULL;
+}
+
+/* Open the Device Info popup. Mirrors the content of the old DEVICE INFO
+ * card section but presented in a clean centered modal with a Close button.
+ * Re-uses the existing VIN / ECU-name OBD2 read callbacks + caches. */
+static void _device_info_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_device_info_overlay && lv_obj_is_valid(s_device_info_overlay)) return;
+
+    s_device_info_overlay = _make_popup_shell(460, 340, "Device Info",
+                                              _device_info_popup_close);
+
+    /* Four info rows: Serial / Firmware / VIN / ECU. Each row is a
+     * stacked hint-label + primary-value pair, 48 px tall. */
+    int y = 56;
+
+    /* Serial */
+    lv_obj_t *l1 = lv_label_create(s_device_info_overlay);
+    lv_label_set_text(l1, "Serial Number");
+    lv_obj_align(l1, LV_ALIGN_TOP_LEFT, 0, y);
+    lv_obj_set_style_text_font(l1, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(l1, THEME_COLOR_TEXT_HINT, 0);
+    lv_obj_t *v1 = lv_label_create(s_device_info_overlay);
     char serial[MAX_SERIAL_LENGTH];
     if (get_device_serial(serial) == ESP_OK) {
-        lv_label_set_text(serial_value, serial);
+        lv_label_set_text(v1, serial);
     } else {
-        lv_label_set_text(serial_value, "Unknown");
+        lv_label_set_text(v1, "Unknown");
     }
-    lv_obj_align(serial_value, LV_ALIGN_TOP_LEFT, 0, 36);
-    lv_obj_set_style_text_font(serial_value, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(serial_value, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_align(v1, LV_ALIGN_TOP_LEFT, 0, y + 16);
+    lv_obj_set_style_text_font(v1, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(v1, THEME_COLOR_TEXT_PRIMARY, 0);
+    y += 48;
 
-    lv_obj_t *fw_label = lv_label_create(s);
-    lv_label_set_text(fw_label, "Firmware");
-    lv_obj_align(fw_label, LV_ALIGN_TOP_LEFT, 0, 62);
-    lv_obj_set_style_text_font(fw_label, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(fw_label, THEME_COLOR_TEXT_HINT, 0);
+    /* Firmware */
+    lv_obj_t *l2 = lv_label_create(s_device_info_overlay);
+    lv_label_set_text(l2, "Firmware");
+    lv_obj_align(l2, LV_ALIGN_TOP_LEFT, 0, y);
+    lv_obj_set_style_text_font(l2, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(l2, THEME_COLOR_TEXT_HINT, 0);
+    lv_obj_t *v2 = lv_label_create(s_device_info_overlay);
+    lv_label_set_text(v2, FIRMWARE_VERSION);
+    lv_obj_align(v2, LV_ALIGN_TOP_LEFT, 0, y + 16);
+    lv_obj_set_style_text_font(v2, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(v2, THEME_COLOR_TEXT_PRIMARY, 0);
+    y += 48;
 
-    lv_obj_t *fw_value = lv_label_create(s);
-    lv_label_set_text(fw_value, FIRMWARE_VERSION);
-    lv_obj_align(fw_value, LV_ALIGN_TOP_LEFT, 0, 76);
-    lv_obj_set_style_text_font(fw_value, THEME_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(fw_value, THEME_COLOR_TEXT_PRIMARY, 0);
-
-    /* VIN — pulled via Mode 09 PID 0x02 on first render. Cached statically
-     * because the VIN doesn't change for the life of the vehicle (and
-     * therefore the life of the dash mount). After successful first
-     * fetch we just paint the cached value on subsequent Settings opens. */
-    lv_obj_t *vin_label = lv_label_create(s);
-    lv_label_set_text(vin_label, "VIN");
-    lv_obj_align(vin_label, LV_ALIGN_TOP_LEFT, 0, 102);
-    lv_obj_set_style_text_font(vin_label, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(vin_label, THEME_COLOR_TEXT_HINT, 0);
-
-    s_vin_label_obj = lv_label_create(s);
-    lv_obj_align(s_vin_label_obj, LV_ALIGN_TOP_LEFT, 0, 116);
+    /* VIN (Mode 09 PID 0x02, cached statically) */
+    lv_obj_t *l3 = lv_label_create(s_device_info_overlay);
+    lv_label_set_text(l3, "VIN");
+    lv_obj_align(l3, LV_ALIGN_TOP_LEFT, 0, y);
+    lv_obj_set_style_text_font(l3, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(l3, THEME_COLOR_TEXT_HINT, 0);
+    s_vin_label_obj = lv_label_create(s_device_info_overlay);
+    lv_obj_align(s_vin_label_obj, LV_ALIGN_TOP_LEFT, 0, y + 16);
     lv_obj_set_style_text_font(s_vin_label_obj, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_vin_label_obj, THEME_COLOR_TEXT_PRIMARY, 0);
-
     if (s_vin_cache[0]) {
         lv_label_set_text(s_vin_label_obj, s_vin_cache);
     } else {
         lv_label_set_text(s_vin_label_obj, "Reading...");
         obd2_read_vin(_vin_done, NULL);
     }
+    y += 48;
 
-    /* ECU Name — Mode 09 PID 0x0A. Same caching pattern as VIN. Stacked
-     * vertically under VIN at y=140/154 (label / value 14 px apart). */
-    lv_obj_t *ecuname_label = lv_label_create(s);
-    lv_label_set_text(ecuname_label, "ECU");
-    lv_obj_align(ecuname_label, LV_ALIGN_TOP_LEFT, 0, 140);
-    lv_obj_set_style_text_font(ecuname_label, THEME_FONT_TINY, 0);
-    lv_obj_set_style_text_color(ecuname_label, THEME_COLOR_TEXT_HINT, 0);
-
-    s_ecuname_label_obj = lv_label_create(s);
-    lv_obj_align(s_ecuname_label_obj, LV_ALIGN_TOP_LEFT, 0, 154);
+    /* ECU Name (Mode 09 PID 0x0A, cached statically) */
+    lv_obj_t *l4 = lv_label_create(s_device_info_overlay);
+    lv_label_set_text(l4, "ECU");
+    lv_obj_align(l4, LV_ALIGN_TOP_LEFT, 0, y);
+    lv_obj_set_style_text_font(l4, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(l4, THEME_COLOR_TEXT_HINT, 0);
+    s_ecuname_label_obj = lv_label_create(s_device_info_overlay);
+    lv_obj_align(s_ecuname_label_obj, LV_ALIGN_TOP_LEFT, 0, y + 16);
     lv_obj_set_style_text_font(s_ecuname_label_obj, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(s_ecuname_label_obj, THEME_COLOR_TEXT_PRIMARY, 0);
-
     if (s_ecuname_cache[0]) {
         lv_label_set_text(s_ecuname_label_obj, s_ecuname_cache);
     } else {
@@ -2818,6 +2918,510 @@ static void _build_section_device_info(lv_obj_t *row) {
     }
 }
 
+/* Build the new DEVICE section (card-grid style mirroring the web Setup
+ * panel). Step 1 of the device-settings restyle: just the Device Info
+ * card. Subsequent steps will add Dimmer/Logging/Testing cards alongside
+ * it, and migrate the other grids (VEHICLE & CHANNELS, CONNECTIVITY). */
+/* =========================================================================
+ * Card-grid popup builders (Dimmer / Data Logger / Testing / CAN Bus /
+ * Odometer). Each one mirrors the content of the equivalent
+ * _build_section_* function but laid out inside a centered popup on
+ * lv_layer_top(). Click handlers, live label statics, and any sub-modals
+ * are reused as-is — only the parent geometry changes.
+ * ========================================================================= */
+
+static void _dimmer_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_dimmer_overlay && lv_obj_is_valid(s_dimmer_overlay)) lv_obj_del(s_dimmer_overlay);
+    s_dimmer_overlay = NULL;
+    brightness_label = NULL;
+}
+
+static void _dimmer_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_dimmer_overlay && lv_obj_is_valid(s_dimmer_overlay)) return;
+    s_dimmer_overlay = _make_popup_shell(540, 280, "Brightness & Dimmer",
+                                         _dimmer_popup_close);
+
+    lv_obj_t *brightness_text = lv_label_create(s_dimmer_overlay);
+    lv_label_set_text(brightness_text, "Brightness");
+    lv_obj_align(brightness_text, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(brightness_text, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(brightness_text, THEME_COLOR_TEXT_MUTED, 0);
+
+    uint8_t saved_brightness = current_brightness;
+    lv_obj_t *brightness_bar = lv_slider_create(s_dimmer_overlay);
+    lv_obj_set_size(brightness_bar, 380, 20);
+    lv_obj_align(brightness_bar, LV_ALIGN_TOP_LEFT, 0, 82);
+    lv_slider_set_range(brightness_bar, 5, 100);
+    lv_slider_set_value(brightness_bar, saved_brightness, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(brightness_bar, THEME_RADIUS_PILL, 0);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(brightness_bar, THEME_RADIUS_PILL, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(brightness_bar, THEME_COLOR_TEXT_PRIMARY, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(brightness_bar, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_radius(brightness_bar, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(brightness_bar, 2, LV_PART_KNOB);
+
+    brightness_label = lv_label_create(s_dimmer_overlay);
+    lv_label_set_text_fmt(brightness_label, "%d%%", saved_brightness);
+    lv_obj_align(brightness_label, LV_ALIGN_TOP_LEFT, 390, 84);
+    lv_obj_set_style_text_font(brightness_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(brightness_label, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(brightness_bar, brightness_bar_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *dimmer_btn = lv_btn_create(s_dimmer_overlay);
+    lv_obj_set_size(dimmer_btn, 260, 34);
+    lv_obj_align(dimmer_btn, LV_ALIGN_TOP_LEFT, 0, 130);
+    lv_obj_set_style_bg_color(dimmer_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(dimmer_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(dimmer_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(dimmer_btn, 1, 0);
+    lv_obj_set_style_border_color(dimmer_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(dimmer_btn, 0, 0);
+    lv_obj_t *dimmer_lbl = lv_label_create(dimmer_btn);
+    lv_label_set_text(dimmer_lbl, "Dimmer Switch Config...");
+    lv_obj_center(dimmer_lbl);
+    lv_obj_set_style_text_font(dimmer_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(dimmer_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(dimmer_btn, brightness_dimmer_config_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *note = lv_label_create(s_dimmer_overlay);
+    lv_label_set_text(note,
+        "Set a dimmer wire input or DIMMER_LEVEL signal to auto-dim at night.");
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 480);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 180);
+    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+}
+
+static void _logger_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_logger_overlay && lv_obj_is_valid(s_logger_overlay)) lv_obj_del(s_logger_overlay);
+    s_logger_overlay      = NULL;
+    s_log_btn             = NULL;
+    s_log_btn_label       = NULL;
+    s_log_status_label    = NULL;
+    s_log_rate_dd         = NULL;
+    s_canraw_btn          = NULL;
+    s_canraw_btn_label    = NULL;
+    s_canraw_status_label = NULL;
+}
+
+static void _logger_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_logger_overlay && lv_obj_is_valid(s_logger_overlay)) return;
+    s_logger_overlay = _make_popup_shell(620, 340, "Data Logging",
+                                         _logger_popup_close);
+
+    /* Signal log: Start button + rate dropdown + status text. */
+    s_log_btn = lv_btn_create(s_logger_overlay);
+    lv_obj_set_size(s_log_btn, 150, 32);
+    lv_obj_align(s_log_btn, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_bg_color(s_log_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(s_log_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_log_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_log_btn, 1, 0);
+    lv_obj_set_style_border_color(s_log_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(s_log_btn, 0, 0);
+    s_log_btn_label = lv_label_create(s_log_btn);
+    lv_label_set_text(s_log_btn_label, "Start Signal Log");
+    lv_obj_center(s_log_btn_label);
+    lv_obj_set_style_text_font(s_log_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_log_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(s_log_btn, _log_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_log_rate_dd = lv_dropdown_create(s_logger_overlay);
+    lv_dropdown_set_options_static(s_log_rate_dd,
+        "1 Hz\n2 Hz\n5 Hz\n10 Hz\n20 Hz\n50 Hz\n100 Hz\n200 Hz\nMax");
+    lv_obj_set_size(s_log_rate_dd, 100, 32);
+    lv_obj_align(s_log_rate_dd, LV_ALIGN_TOP_LEFT, 160, 58);
+    lv_obj_set_style_bg_color(s_log_rate_dd, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_border_color(s_log_rate_dd, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(s_log_rate_dd, 1, 0);
+    lv_obj_set_style_radius(s_log_rate_dd, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_text_color(s_log_rate_dd, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s_log_rate_dd, THEME_FONT_SMALL, 0);
+    lv_dropdown_set_selected(s_log_rate_dd,
+                             _log_rate_hz_to_idx(data_logger_get_rate_hz()));
+    lv_obj_add_event_cb(s_log_rate_dd, _log_rate_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    s_log_status_label = lv_label_create(s_logger_overlay);
+    lv_label_set_text(s_log_status_label, "Stopped");
+    lv_obj_align(s_log_status_label, LV_ALIGN_TOP_LEFT, 0, 100);
+    lv_obj_set_style_text_font(s_log_status_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_log_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Raw CAN capture: Start button + status text + Share button. */
+    s_canraw_btn = lv_btn_create(s_logger_overlay);
+    lv_obj_set_size(s_canraw_btn, 170, 32);
+    lv_obj_align(s_canraw_btn, LV_ALIGN_TOP_LEFT, 0, 140);
+    lv_obj_set_style_bg_color(s_canraw_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(s_canraw_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_canraw_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(s_canraw_btn, 1, 0);
+    lv_obj_set_style_border_color(s_canraw_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(s_canraw_btn, 0, 0);
+    s_canraw_btn_label = lv_label_create(s_canraw_btn);
+    lv_label_set_text(s_canraw_btn_label, "Start Raw CAN");
+    lv_obj_center(s_canraw_btn_label);
+    lv_obj_set_style_text_font(s_canraw_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_canraw_btn_label, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(s_canraw_btn, _canraw_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *share_btn = lv_btn_create(s_logger_overlay);
+    lv_obj_set_size(share_btn, 170, 32);
+    lv_obj_align(share_btn, LV_ALIGN_TOP_LEFT, 180, 140);
+    lv_obj_set_style_bg_color(share_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(share_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(share_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(share_btn, 1, 0);
+    lv_obj_set_style_border_color(share_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(share_btn, 0, 0);
+    lv_obj_t *share_lbl = lv_label_create(share_btn);
+    lv_label_set_text(share_lbl, "Share Raw CAN...");
+    lv_obj_center(share_lbl);
+    lv_obj_set_style_text_font(share_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(share_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(share_btn, _share_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    s_canraw_status_label = lv_label_create(s_logger_overlay);
+    lv_label_set_text(s_canraw_status_label, "Raw: idle");
+    lv_obj_align(s_canraw_status_label, LV_ALIGN_TOP_LEFT, 0, 182);
+    lv_obj_set_style_text_font(s_canraw_status_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(s_canraw_status_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    lv_obj_t *note = lv_label_create(s_logger_overlay);
+    lv_label_set_text(note,
+        "Signal log writes decoded values (CSV). Raw CAN captures every frame.");
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 560);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 220);
+    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+
+    _update_log_ui();
+}
+
+static void _testing_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_testing_overlay && lv_obj_is_valid(s_testing_overlay)) lv_obj_del(s_testing_overlay);
+    s_testing_overlay       = NULL;
+    s_sim_btn_label         = NULL;
+    s_wire_input_btn_label  = NULL;
+}
+
+static void _testing_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_testing_overlay && lv_obj_is_valid(s_testing_overlay)) return;
+    s_testing_overlay = _make_popup_shell(560, 320, "Peak Hold & Testing",
+                                          _testing_popup_close);
+
+    /* Peak Hold row */
+    lv_obj_t *view_btn = lv_btn_create(s_testing_overlay);
+    lv_obj_set_size(view_btn, 150, 32);
+    lv_obj_align(view_btn, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_bg_color(view_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(view_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(view_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(view_btn, 1, 0);
+    lv_obj_set_style_border_color(view_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(view_btn, 0, 0);
+    lv_obj_t *view_lbl = lv_label_create(view_btn);
+    lv_label_set_text(view_lbl, "View Peaks...");
+    lv_obj_center(view_lbl);
+    lv_obj_set_style_text_font(view_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(view_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(view_btn, _view_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *reset_btn = lv_btn_create(s_testing_overlay);
+    lv_obj_set_size(reset_btn, 150, 32);
+    lv_obj_align(reset_btn, LV_ALIGN_TOP_LEFT, 160, 58);
+    lv_obj_set_style_bg_color(reset_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(reset_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(reset_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(reset_btn, 1, 0);
+    lv_obj_set_style_border_color(reset_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(reset_btn, 0, 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Reset Peaks");
+    lv_obj_center(reset_lbl);
+    lv_obj_set_style_text_font(reset_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Sim + Wire Inputs row */
+    lv_obj_t *sim_btn = lv_btn_create(s_testing_overlay);
+    lv_obj_set_size(sim_btn, 150, 32);
+    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 0, 110);
+    lv_obj_set_style_bg_color(sim_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(sim_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(sim_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(sim_btn, 1, 0);
+    lv_obj_set_style_border_color(sim_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(sim_btn, 0, 0);
+    s_sim_btn_label = lv_label_create(sim_btn);
+    {
+        bool on = signal_sim_is_active();
+        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
+        lv_obj_set_style_text_color(s_sim_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    lv_obj_center(s_sim_btn_label);
+    lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *wire_btn = lv_btn_create(s_testing_overlay);
+    lv_obj_set_size(wire_btn, 170, 32);
+    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 160, 110);
+    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(wire_btn, 1, 0);
+    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
+    s_wire_input_btn_label = lv_label_create(wire_btn);
+    {
+        bool on = false;
+        config_store_load_wire_input_mode(&on);
+        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
+        lv_obj_set_style_text_color(s_wire_input_btn_label,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    }
+    lv_obj_center(s_wire_input_btn_label);
+    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
+    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *note = lv_label_create(s_testing_overlay);
+    lv_label_set_text(note,
+        "Sim replays fake CAN frames. Wire Inputs uses GPIO 43/44 as turn-signal inputs.");
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 500);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 170);
+    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+}
+
+static void _odo_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_odo_overlay && lv_obj_is_valid(s_odo_overlay)) lv_obj_del(s_odo_overlay);
+    s_odo_overlay        = NULL;
+    s_veh_odo_value_lbl  = NULL;
+}
+
+static void _odo_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_odo_overlay && lv_obj_is_valid(s_odo_overlay)) return;
+    s_odo_overlay = _make_popup_shell(500, 240, "Odometer", _odo_popup_close);
+
+    lv_obj_t *cur_label = lv_label_create(s_odo_overlay);
+    lv_label_set_text(cur_label, "Current reading");
+    lv_obj_align(cur_label, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(cur_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(cur_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_veh_odo_value_lbl = lv_label_create(s_odo_overlay);
+    lv_obj_align(s_veh_odo_value_lbl, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_obj_set_style_text_font(s_veh_odo_value_lbl, THEME_FONT_LARGE, 0);
+    lv_obj_set_style_text_color(s_veh_odo_value_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    _veh_odo_refresh_timer_cb(NULL);
+
+    lv_obj_t *edit_btn = lv_btn_create(s_odo_overlay);
+    lv_obj_set_size(edit_btn, 200, 34);
+    lv_obj_align(edit_btn, LV_ALIGN_TOP_LEFT, 0, 124);
+    lv_obj_set_style_bg_color(edit_btn, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(edit_btn, LV_OPA_80, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(edit_btn, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_border_width(edit_btn, 1, 0);
+    lv_obj_set_style_border_color(edit_btn, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_shadow_width(edit_btn, 0, 0);
+    lv_obj_t *edit_lbl = lv_label_create(edit_btn);
+    lv_label_set_text(edit_lbl, "Edit Odometer...");
+    lv_obj_center(edit_lbl);
+    lv_obj_set_style_text_font(edit_lbl, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(edit_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(edit_btn, _odo_edit_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *note = lv_label_create(s_odo_overlay);
+    lv_label_set_text(note,
+        "Auto-accumulates from VEHICLE_SPEED. Persists every 1 km or 5 min.");
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(note, 440);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 172);
+    lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
+}
+
+static void _can_bus_popup_close(lv_event_t *e) {
+    (void)e;
+    if (s_can_bus_overlay && lv_obj_is_valid(s_can_bus_overlay)) lv_obj_del(s_can_bus_overlay);
+    s_can_bus_overlay     = NULL;
+    s_bitrate_dropdown    = NULL;
+    s_can_health_dot      = NULL;
+    s_can_health_label    = NULL;
+    s_can_summary_label   = NULL;
+    s_can_details_grid    = NULL;
+    s_can_details_toggle  = NULL;
+    memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
+}
+
+static void _can_bus_popup_open(lv_event_t *e) {
+    (void)e;
+    if (s_can_bus_overlay && lv_obj_is_valid(s_can_bus_overlay)) return;
+    s_can_bus_overlay = _make_popup_shell(680, 420, "CAN Bus",
+                                          _can_bus_popup_close);
+
+    lv_obj_t *bitrate_label = lv_label_create(s_can_bus_overlay);
+    lv_label_set_text(bitrate_label, "Bitrate");
+    lv_obj_align(bitrate_label, LV_ALIGN_TOP_LEFT, 0, 58);
+    lv_obj_set_style_text_font(bitrate_label, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(bitrate_label, THEME_COLOR_TEXT_MUTED, 0);
+
+    s_bitrate_dropdown = lv_dropdown_create(s_can_bus_overlay);
+    lv_dropdown_set_options(s_bitrate_dropdown, "125 kbps\n250 kbps\n500 kbps\n1 Mbps");
+    lv_obj_set_size(s_bitrate_dropdown, 160, 34);
+    lv_obj_align(s_bitrate_dropdown, LV_ALIGN_TOP_LEFT, 0, 78);
+    lv_obj_set_style_bg_color(s_bitrate_dropdown, THEME_COLOR_INPUT_BG, 0);
+    lv_obj_set_style_bg_opa(s_bitrate_dropdown, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(s_bitrate_dropdown, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(s_bitrate_dropdown, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_border_color(s_bitrate_dropdown, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(s_bitrate_dropdown, 1, 0);
+    lv_obj_set_style_radius(s_bitrate_dropdown, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(s_bitrate_dropdown, 4, 0);
+    lv_obj_set_style_text_color(s_bitrate_dropdown, THEME_COLOR_TEXT_MUTED, LV_PART_INDICATOR);
+    lv_obj_add_event_cb(s_bitrate_dropdown, bitrate_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    /* Restore persisted bitrate (previously done in
+     * device_settings_with_return_screen after _build_section_can_config). */
+    uint8_t saved_bitrate = 2;
+    config_store_load_bitrate(&saved_bitrate);
+    lv_dropdown_set_selected(s_bitrate_dropdown, saved_bitrate);
+
+    /* Live CAN diagnostics panel — populated by refresh_can_diagnostics()
+     * which already NULL-checks every static. Build it into a sub-container
+     * inside the popup body. */
+    lv_obj_t *diag_host = lv_obj_create(s_can_bus_overlay);
+    lv_obj_set_size(diag_host, 640, 250);
+    lv_obj_align(diag_host, LV_ALIGN_TOP_LEFT, 0, 126);
+    lv_obj_set_style_bg_opa(diag_host, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(diag_host, 0, 0);
+    lv_obj_set_style_pad_all(diag_host, 0, 0);
+    lv_obj_clear_flag(diag_host, LV_OBJ_FLAG_SCROLLABLE);
+    _build_section_can_diagnostics(diag_host);
+    refresh_can_diagnostics();
+}
+
+/* =========================================================================
+ * Grid builders — VEHICLE & CHANNELS / CONNECTIVITY / DEVICE
+ *
+ * Mirrors the web Setup-mode layout. Cards are 232 x 110, 3 per row,
+ * inside a 720-wide grid. Each card opens either an existing screen
+ * (ECU picker, WiFi, Trouble Codes) or one of the popups defined above
+ * (Dimmer, Logger, Testing, CAN Bus, Odometer). The action buttons row
+ * (System Diagnostics / Setup Wizard / Reset) renders below the grids.
+ * ========================================================================= */
+
+/* Channels card → opens the full split-pane channels editor (the setup
+ * wizard's Step 3) standalone. Replaces the old "ECU Preset" card: ECU
+ * presets are now bound per-channel from inside that editor's source
+ * picker, and bulk ECU auto-detect lives in the setup wizard. */
+static void _channels_card_cb(lv_event_t *e) {
+    (void)e;
+    first_run_wizard_open_channels();
+}
+
+static void _build_vehicle_grid(lv_obj_t *content) {
+    _make_setup_section_title(content, "VEHICLE & CHANNELS");
+    lv_obj_t *grid = _make_setup_grid(content);
+
+    /* Channels card — primary vehicle-setup surface. Stat shows how many
+     * channels are currently mapped to a live signal. */
+    size_t ch_total = channel_manager_count();
+    size_t ch_bound = 0;
+    for (size_t i = 0; i < ch_total; i++) {
+        const channel_t *c = channel_manager_at(i);
+        if (c && c->signal_index >= 0) ch_bound++;
+    }
+    char ch_txt[32];
+    snprintf(ch_txt, sizeof(ch_txt), "%u MAPPED", (unsigned)ch_bound);
+    _make_setup_card(grid, LV_SYMBOL_LIST, "Channels",
+        "Map signals to channels, set ranges + warnings.",
+        ch_txt, _channels_card_cb);
+
+    /* OBD2 Signals card. Same pattern — repoint s_obd2_btn_label. */
+    char obd2_txt[48];
+    _obd2_label_compose(obd2_txt, sizeof(obd2_txt));
+    setup_card_t obd2 = _make_setup_card(grid, LV_SYMBOL_DRIVE, "OBD2 Signals",
+        "Mode 01/22 polling + custom PIDs.",
+        obd2_txt, _obd2_btn_cb);
+    s_obd2_btn_label = obd2.stat_label;
+
+    _make_setup_card(grid, LV_SYMBOL_SETTINGS, "Gear Calc",
+        "RPM + speed → calculated gear.",
+        "CALCULATED_GEAR", _veh_gear_btn_cb);
+
+    _make_setup_card(grid, LV_SYMBOL_CHARGE, "Odometer",
+        "Auto-accumulates from VEHICLE_SPEED.",
+        "KM", _odo_popup_open);
+}
+
+static void _build_connectivity_grid(lv_obj_t *content) {
+    _make_setup_section_title(content, "CONNECTIVITY");
+    lv_obj_t *grid = _make_setup_grid(content);
+
+    /* WiFi card. Stat shows the current SSID — refresh_wifi_status writes
+     * into wifi_status_label every 2 s via s_wifi_status_timer. */
+    setup_card_t wifi = _make_setup_card(grid, LV_SYMBOL_WIFI, "WiFi & Network",
+        "Configure WiFi, view IP and hotspot status.",
+        "—", wifi_btn_event_cb);
+    wifi_status_label = wifi.stat_label;
+
+    /* Web Editor QR card. Stat shows the IP. Same timer drives it via the
+     * repurposed web_status_label pointer. */
+    setup_card_t qr = _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Web Editor",
+        "Scan QR to open the dash web UI on your phone.",
+        "—", _qr_btn_cb);
+    web_status_label = qr.stat_label;
+
+    _make_setup_card(grid, LV_SYMBOL_SHUFFLE, "CAN Bus",
+        "Bitrate + live bus health diagnostics.",
+        "500 KBPS", _can_bus_popup_open);
+
+    _make_setup_card(grid, LV_SYMBOL_WARNING, "Trouble Codes",
+        "Read & clear DTCs over OBD2.",
+        "READ", _dtc_btn_cb);
+}
+
+static void _build_device_grid(lv_obj_t *content) {
+    _make_setup_section_title(content, "DEVICE");
+    lv_obj_t *grid = _make_setup_grid(content);
+
+    char fw_stat[24];
+    snprintf(fw_stat, sizeof(fw_stat), "v%s", FIRMWARE_VERSION);
+    _make_setup_card(grid, LV_SYMBOL_HOME, "Device Info",
+        "Serial, firmware, VIN, ECU name.",
+        fw_stat, _device_info_popup_open);
+
+    char bri_stat[12];
+    snprintf(bri_stat, sizeof(bri_stat), "%d%%", current_brightness);
+    _make_setup_card(grid, LV_SYMBOL_EYE_OPEN, "Brightness",
+        "Slider + auto-dim wire/signal hookup.",
+        bri_stat, _dimmer_popup_open);
+
+    _make_setup_card(grid, LV_SYMBOL_SD_CARD, "Data Logging",
+        "Signal log + Raw CAN capture + share.",
+        "IDLE", _logger_popup_open);
+
+    _make_setup_card(grid, LV_SYMBOL_PLAY, "Peak Hold & Testing",
+        "Peak readings, sim sweep, wire inputs.",
+        "TOOLS", _testing_popup_open);
+}
+
+__attribute__((unused))
 static void _build_section_network(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "NETWORK & UPDATES");
@@ -2883,6 +3487,7 @@ static void _build_section_network(lv_obj_t *row) {
     lv_obj_add_event_cb(update_btn, update_btn_event_cb, LV_EVENT_CLICKED, NULL);
 }
 
+__attribute__((unused))
 static void _build_section_display(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "DISPLAY");
@@ -2943,6 +3548,7 @@ static void _build_section_display(lv_obj_t *row) {
     (void) s_night_btn_label;
 }
 
+__attribute__((unused))
 static void _build_section_data_logging(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "DATA LOGGING");
@@ -3179,6 +3785,7 @@ static void _veh_gear_btn_cb(lv_event_t *e) {
     ui_gear_setup_open(NULL, NULL);
 }
 
+__attribute__((unused))
 static void _build_section_vehicle(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "VEHICLE");
@@ -3240,6 +3847,7 @@ static void _build_section_vehicle(lv_obj_t *row) {
     _veh_odo_refresh_timer_cb(NULL);
 }
 
+__attribute__((unused))
 static void _build_section_peak_hold(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "PEAK HOLD");
@@ -3283,6 +3891,7 @@ static void _build_section_peak_hold(lv_obj_t *row) {
     lv_obj_set_style_text_color(peak_note, THEME_COLOR_TEXT_MUTED, 0);
 }
 
+__attribute__((unused))
 static void _build_section_testing(lv_obj_t *row) {
     lv_obj_t *s = _make_flex_section(row);
     _make_section_title(s, "TESTING");
@@ -3533,6 +4142,71 @@ static void _build_action_buttons(lv_obj_t *content) {
     lv_obj_add_event_cb(reset_btn, _factory_reset_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
+/* Universal cleanup: fires no matter who deletes settings_screen — explicit
+ * lv_obj_del, lv_scr_load_anim with auto_del, or an async dashboard reload
+ * that wipes the previous active screen. close_menu_event_cb and
+ * _deferred_reload_after_ecu used to be the only paths that tore down the
+ * screen-owned timers; the 2026-06 wifi-status panic came from a path where
+ * neither ran, so the timer kept ticking on freed labels. Safe to invoke
+ * twice (those callers still do their own cleanup pre-load) because every
+ * branch is NULL-guarded. */
+static void _settings_screen_delete_cb(lv_event_t *e) {
+    (void)e;
+
+    if (s_wifi_status_timer) {
+        lv_timer_del(s_wifi_status_timer);
+        s_wifi_status_timer = NULL;
+    }
+    if (s_log_status_timer) {
+        lv_timer_del(s_log_status_timer);
+        s_log_status_timer = NULL;
+    }
+    if (s_can_diag_timer) {
+        lv_timer_del(s_can_diag_timer);
+        s_can_diag_timer = NULL;
+    }
+    if (s_veh_odo_timer) {
+        lv_timer_del(s_veh_odo_timer);
+        s_veh_odo_timer = NULL;
+    }
+
+    /* Tear down lv_layer_top() popups that may have been left open. They
+     * don't share a parent with settings_screen, so they'd otherwise leak
+     * (and their static label pointers would dangle the next time the
+     * settings screen reopens). Each popup_close NULLs its own internal
+     * statics; the bulk NULL block below catches anything else. */
+    _device_info_popup_close(NULL);
+    _dimmer_popup_close(NULL);
+    _logger_popup_close(NULL);
+    _testing_popup_close(NULL);
+    _can_bus_popup_close(NULL);
+    _odo_popup_close(NULL);
+
+    wifi_status_label    = NULL;
+    web_status_label     = NULL;
+    ap_status_label      = NULL;
+    brightness_label     = NULL;
+    s_log_btn            = NULL;
+    s_log_btn_label      = NULL;
+    s_log_status_label   = NULL;
+    s_log_rate_dd        = NULL;
+    s_canraw_btn         = NULL;
+    s_canraw_btn_label   = NULL;
+    s_canraw_status_label= NULL;
+    s_sim_btn_label      = NULL;
+    s_rotation_btn_label = NULL;
+    s_night_btn_label    = NULL;
+    s_wire_input_btn_label = NULL;
+    s_veh_odo_value_lbl  = NULL;
+    s_can_health_dot     = NULL;
+    s_can_health_label   = NULL;
+    s_can_summary_label  = NULL;
+    s_can_details_grid   = NULL;
+    s_can_details_toggle = NULL;
+    memset(s_can_detail_labels, 0, sizeof(s_can_detail_labels));
+    s_bitrate_dropdown   = NULL;
+}
+
 void device_settings_with_return_screen(lv_obj_t* return_screen) {
     device_settings_return_screen = return_screen ? return_screen : lv_scr_act();
 
@@ -3540,6 +4214,8 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     lv_obj_set_style_bg_color(settings_screen, THEME_COLOR_BG, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(settings_screen, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(settings_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(settings_screen, _settings_screen_delete_cb,
+                        LV_EVENT_DELETE, NULL);
 
     lv_obj_t *main_container = lv_obj_create(settings_screen);
     lv_obj_set_size(main_container, 760, 440);
@@ -3555,59 +4231,33 @@ void device_settings_with_return_screen(lv_obj_t* return_screen) {
     _build_header(main_container);
     lv_obj_t *content = _build_content_area(main_container);
 
-    /* Row 1 (h=195): CAN BUS config + DEVICE INFO.
-     * Bumped from 160 → 195 to fit the OBD2 Signals button under the ECU
-     * dropdown in the CAN BUS section. Device Info card has minimal content
-     * and benefits from the extra breathing room. */
-    lv_obj_t *row1 = _build_row(content, 195);
-    _build_section_can_config(row1);
-    _build_section_device_info(row1);
+    /* Card-grid layout mirroring the web Studio Setup-mode panel. Three
+     * grids stacked vertically (VEHICLE & CHANNELS / CONNECTIVITY /
+     * DEVICE), each a section title + 4 setup cards. Cards open popups
+     * or existing screens on tap — all live status is repainted into the
+     * card stat labels by the existing wifi / log / can / odo timers. */
+    _build_vehicle_grid(content);
+    _build_connectivity_grid(content);
+    _build_device_grid(content);
 
-    /* Row 2 (h=260): NETWORK & UPDATES + DISPLAY */
-    lv_obj_t *row2 = _build_row(content, 260);
-    _build_section_network(row2);
-    _build_section_display(row2);
-
-    /* Rows 3..6: VEHICLE / DATA LOGGING / PEAK HOLD / TESTING each get a
-     * full-width row of their own — previously crammed into one 3-column
-     * 95 px row which left no horizontal room for additional controls
-     * (e.g. the new Raw CAN Capture button in DATA LOGGING). The Vehicle
-     * row sits up top so the gear-calc / odometer pair is easy to find. */
-    lv_obj_t *veh_row    = _build_row(content, 95);
-    _build_section_vehicle(veh_row);
-    lv_obj_t *log_row    = _build_row(content, 95);
-    _build_section_data_logging(log_row);
-    lv_obj_t *peak_row   = _build_row(content, 95);
-    _build_section_peak_hold(peak_row);
-    lv_obj_t *test_row   = _build_row(content, 95);
-    _build_section_testing(test_row);
-
-    /* Row 4 (h=95): DEVELOPER OPTIONS — hidden in production. To re-enable,
-     * uncomment the two lines below; the _build_section_developer function
-     * is still compiled in. */
-    /*
-    lv_obj_t *dev_row = _build_row(content, 95);
-    _build_section_developer(dev_row);
-    */
-
-    _build_section_can_diagnostics(content);
+    /* Action buttons row (System Diagnostics / Setup Wizard / Reset). */
     _build_action_buttons(content);
 
-    /* Restore persisted bitrate into the dropdown built by _build_section_can_config */
-    uint8_t saved_bitrate = 2; /* default 500 kbps */
-    config_store_load_bitrate(&saved_bitrate);
-    lv_dropdown_set_selected(s_bitrate_dropdown, saved_bitrate);
-
-    _update_log_ui();
-
+    /* Live-update timers. Their callbacks NULL-check every label they
+     * paint into, so it's safe to keep them running even when a popup
+     * isn't open (the card stat labels are still alive in the grid). */
     if (s_log_status_timer) lv_timer_del(s_log_status_timer);
     s_log_status_timer = lv_timer_create(_log_status_timer_cb, 1000, NULL);
 
     if (s_wifi_status_timer) lv_timer_del(s_wifi_status_timer);
     s_wifi_status_timer = lv_timer_create(refresh_wifi_status_timer_cb, 2000, NULL);
+    refresh_wifi_status();
 
     if (s_can_diag_timer) lv_timer_del(s_can_diag_timer);
     s_can_diag_timer = lv_timer_create(refresh_can_diag_timer_cb, 1000, NULL);
+
+    if (s_veh_odo_timer) lv_timer_del(s_veh_odo_timer);
+    s_veh_odo_timer = lv_timer_create(_veh_odo_refresh_timer_cb, 1000, NULL);
 
     lv_scr_load(settings_screen);
 }

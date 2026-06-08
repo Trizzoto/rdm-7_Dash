@@ -23,6 +23,9 @@ typedef struct {
 	bool     current_state;     /* runtime only -- NOT serialized */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ─────────────────────────────────── */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
 	/* Color-based state rendering (replaces opacity-based) */
 	lv_color_t color_on;        /* default: amber 0xFFBF00 */
 	uint8_t    opa_on;          /* default: 255 (fully visible) */

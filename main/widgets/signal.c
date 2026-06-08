@@ -76,6 +76,18 @@ int16_t signal_register(const char *name, uint32_t can_id,
                         bool is_signed, uint8_t endian,
                         const char *unit)
 {
+    return signal_register_with_source(name, can_id, start, len,
+                                       scale, offset, is_signed, endian,
+                                       unit, SIGNAL_SOURCE_CAN);
+}
+
+int16_t signal_register_with_source(const char *name, uint32_t can_id,
+                                    uint8_t start, uint8_t len,
+                                    float scale, float offset,
+                                    bool is_signed, uint8_t endian,
+                                    const char *unit,
+                                    signal_source_t source)
+{
     if (!s_signals) {
         ESP_LOGE(TAG, "signal_registry_init() not called");
         return -1;
@@ -88,9 +100,46 @@ int16_t signal_register(const char *name, uint32_t can_id,
         ESP_LOGE(TAG, "Signal registry full (max %u)", MAX_SIGNALS);
         return -1;
     }
-    if (signal_find_by_name(name) >= 0) {
-        ESP_LOGW(TAG, "Duplicate signal name '%s' rejected", name);
-        return -1;
+    int16_t existing = signal_find_by_name(name);
+    if (existing >= 0) {
+        /* Expected on cross-layout switches: signals MERGE across layout
+         * loads (the registry is NOT reset on the happy path — see
+         * layout_manager.c _instantiate_widgets), so a name registered by
+         * an earlier layout is still present when a later layout re-declares
+         * it.
+         *
+         * Previously the first registration won and the duplicate was
+         * dropped (return -1). That silently shadowed the correct decode:
+         * if a splash/boot layout serialized a frozen snapshot of the whole
+         * registry and was loaded before the dashboard, the dashboard's
+         * authoritative decode params were discarded and the signal decoded
+         * garbage / never matched a frame (survived reboot). Fix: UPSERT —
+         * overwrite the existing slot's decode params with the freshly
+         * loaded layout's values (latest-layout-wins) while leaving the
+         * slot's subscribers, peak/min/session stats, value_map and
+         * test_locked intact so existing channel bindings (resolved by
+         * index) stay attached. */
+        signal_t *cur = &s_signals[existing];
+        cur->can_id     = can_id;
+        cur->bit_start  = start;
+        cur->bit_length = len;
+        cur->scale      = scale;
+        cur->offset     = offset;
+        cur->is_signed  = is_signed;
+        cur->endian     = endian;
+        cur->source     = (uint8_t)source;
+        if (unit && unit[0] != '\0')
+            safe_strncpy(cur->unit, unit, sizeof(cur->unit));
+        else
+            cur->unit[0] = '\0';
+        /* Reset decode freshness so the next frame re-evaluates and fires
+         * notify_subscribers — mirrors channel_source_apply.c's in-place
+         * patch. Without this a still-fresh slot whose current_value happens
+         * to match the new decode could swallow the first update. */
+        cur->is_stale       = true;
+        cur->last_update_ms = 0;
+        ESP_LOGD(TAG, "signal '%s' already registered — updating decode params", name);
+        return existing;
     }
 
     signal_t *sig = &s_signals[s_signal_count];
@@ -104,6 +153,7 @@ int16_t signal_register(const char *name, uint32_t can_id,
     sig->offset     = offset;
     sig->is_signed  = is_signed;
     sig->endian     = endian;
+    sig->source     = (uint8_t)source;
     sig->is_stale   = true; /* stale until the first frame arrives */
 
     /* Unit string */

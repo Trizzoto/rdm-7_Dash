@@ -35,6 +35,20 @@ static esp_err_t _fuel_status_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(cal, "full_v", fc.full_v);
 	cJSON_AddNumberToObject(cal, "full_value", fc.full_value);
 	cJSON_AddBoolToObject(cal, "enabled", fc.enabled);
+	/* Multipoint curve, when active. Absent for legacy 2-point cals so
+	 * the web UI can detect which mode the firmware is in. */
+	if (fc.point_count >= 2) {
+		cJSON *arr = cJSON_AddArrayToObject(cal, "points");
+		if (arr) {
+			for (uint8_t pi = 0; pi < fc.point_count; pi++) {
+				cJSON *p = cJSON_CreateObject();
+				if (!p) break;
+				cJSON_AddNumberToObject(p, "v",   fc.points[pi].voltage);
+				cJSON_AddNumberToObject(p, "val", fc.points[pi].value);
+				cJSON_AddItemToArray(arr, p);
+			}
+		}
+	}
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
@@ -45,6 +59,73 @@ static esp_err_t _fuel_status_handler(httpd_req_t *req) {
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, json);
 	free(json);
+	return ESP_OK;
+}
+
+/* POST /api/fuel/set-points
+ *
+ * Accepts { enabled: bool, points: [{v: number, val: number}, ...] } with
+ * 2..FUEL_CAL_MAX_POINTS entries. Replaces the active curve atomically. */
+static esp_err_t _fuel_set_points_handler(httpd_req_t *req) {
+	char buf[1024];
+	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (ret <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[ret] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	bool enabled = true;
+	cJSON *en = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (cJSON_IsBool(en)) enabled = cJSON_IsTrue(en);
+
+	cJSON *pts = cJSON_GetObjectItemCaseSensitive(root, "points");
+	if (!cJSON_IsArray(pts) || cJSON_GetArraySize(pts) < 2) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Need at least 2 points");
+		return ESP_FAIL;
+	}
+	int n = cJSON_GetArraySize(pts);
+	if (n > FUEL_CAL_MAX_POINTS) n = FUEL_CAL_MAX_POINTS;
+
+	fuel_cal_point_t buf_pts[FUEL_CAL_MAX_POINTS];
+	int got = 0;
+	cJSON *p;
+	int idx = 0;
+	cJSON_ArrayForEach(p, pts) {
+		if (idx >= n) break;
+		idx++;
+		if (!cJSON_IsObject(p)) continue;
+		cJSON *jv  = cJSON_GetObjectItemCaseSensitive(p, "v");
+		cJSON *jva = cJSON_GetObjectItemCaseSensitive(p, "val");
+		if (!cJSON_IsNumber(jv) || !cJSON_IsNumber(jva)) continue;
+		buf_pts[got].voltage = (float)jv->valuedouble;
+		buf_pts[got].value   = (float)jva->valuedouble;
+		got++;
+	}
+	cJSON_Delete(root);
+
+	if (got < 2) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Need at least 2 valid {v,val} points");
+		return ESP_FAIL;
+	}
+
+	signal_internal_set_fuel_cal_points(buf_pts, (uint8_t)got, enabled);
+
+	char resp[80];
+	snprintf(resp, sizeof(resp),
+	         "{\"status\":\"ok\",\"count\":%d,\"enabled\":%s}",
+	         got, enabled ? "true" : "false");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, resp);
 	return ESP_OK;
 }
 
@@ -96,6 +177,17 @@ static esp_err_t _signal_values_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(obj, "value", sig->current_value);
 		cJSON_AddBoolToObject(obj, "stale", sig->is_stale);
 		cJSON_AddNumberToObject(obj, "can_id", sig->can_id);
+		/* Provenance — lets the web side classify channel sources and the
+		 * Custom Signals filter exclude OBD2/INTERNAL rows without name
+		 * heuristics. Default is "can" for legacy registrations. */
+		const char *src_str = "can";
+		switch ((signal_source_t)sig->source) {
+			case SIGNAL_SOURCE_OBD2:     src_str = "obd2";     break;
+			case SIGNAL_SOURCE_INTERNAL: src_str = "internal"; break;
+			case SIGNAL_SOURCE_CAN:
+			default:                     src_str = "can";      break;
+		}
+		cJSON_AddStringToObject(obj, "source", src_str);
 		cJSON_AddItemToArray(arr, obj);
 	}
 
@@ -229,6 +321,100 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 		lv_async_call(_deferred_inject, batch);
 	else
 		free(batch);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+}
+
+/* ── Signal decode update (live, no layout reload) ──────────────────────────
+ * POST /api/signal/update { name, can_id, bit_start, bit_length, scale,
+ *   offset, is_signed, endian|is_little_endian, unit? }
+ * Upsert: patches an existing signal's decode params in the runtime registry,
+ * or registers it if new (covers the per-channel decode "fork"). Persistence
+ * still rides on the layout save; this only makes the change take effect
+ * immediately instead of on the next dashboard reload. */
+typedef struct {
+	char     name[32];
+	char     unit[8];
+	uint32_t can_id;
+	uint8_t  bit_start;
+	uint8_t  bit_length;
+	float    scale;
+	float    offset;
+	bool     is_signed;
+	uint8_t  endian;
+	bool     has_unit;
+} signal_decode_req_t;
+
+static void _deferred_signal_update(void *arg) {
+	signal_decode_req_t *r = (signal_decode_req_t *)arg;
+	int16_t idx = signal_find_by_name(r->name);
+	if (idx >= 0) {
+		signal_t *s = signal_get_by_index((uint16_t)idx);
+		if (s) {
+			s->can_id     = r->can_id;
+			s->bit_start  = r->bit_start;
+			s->bit_length = r->bit_length;
+			s->scale      = r->scale;
+			s->offset     = r->offset;
+			s->is_signed  = r->is_signed;
+			s->endian     = r->endian;
+			if (r->has_unit) { strncpy(s->unit, r->unit, sizeof(s->unit) - 1); s->unit[sizeof(s->unit) - 1] = '\0'; }
+		}
+	} else {
+		/* New signal (e.g. a per-channel decode fork) — register it so it
+		 * decodes live; the layout save persists it for next boot. */
+		signal_register_with_source(r->name, r->can_id, r->bit_start, r->bit_length,
+		                            r->scale, r->offset, r->is_signed, r->endian,
+		                            r->has_unit ? r->unit : "", SIGNAL_SOURCE_CAN);
+	}
+	free(r);
+}
+
+static esp_err_t _signal_update_handler(httpd_req_t *req) {
+	char buf[256];
+	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (ret <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body"); return ESP_FAIL; }
+	buf[ret] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON"); return ESP_FAIL; }
+
+	cJSON *jname = cJSON_GetObjectItemCaseSensitive(root, "name");
+	if (!cJSON_IsString(jname) || !jname->valuestring || !jname->valuestring[0]) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name");
+		return ESP_FAIL;
+	}
+
+	signal_decode_req_t *r = calloc(1, sizeof(signal_decode_req_t));
+	if (!r) { cJSON_Delete(root); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+
+	strncpy(r->name, jname->valuestring, sizeof(r->name) - 1);
+	cJSON *it;
+	it = cJSON_GetObjectItemCaseSensitive(root, "can_id");
+	r->can_id = cJSON_IsNumber(it) ? (uint32_t)it->valuedouble : 0;
+	it = cJSON_GetObjectItemCaseSensitive(root, "bit_start");
+	r->bit_start = cJSON_IsNumber(it) ? (uint8_t)it->valueint : 0;
+	it = cJSON_GetObjectItemCaseSensitive(root, "bit_length");
+	r->bit_length = cJSON_IsNumber(it) ? (uint8_t)it->valueint : 8;
+	it = cJSON_GetObjectItemCaseSensitive(root, "scale");
+	r->scale = cJSON_IsNumber(it) ? (float)it->valuedouble : 1.0f;
+	it = cJSON_GetObjectItemCaseSensitive(root, "offset");
+	r->offset = cJSON_IsNumber(it) ? (float)it->valuedouble : 0.0f;
+	it = cJSON_GetObjectItemCaseSensitive(root, "is_signed");
+	r->is_signed = cJSON_IsTrue(it);
+	cJSON *jen = cJSON_GetObjectItemCaseSensitive(root, "endian");
+	cJSON *jle = cJSON_GetObjectItemCaseSensitive(root, "is_little_endian");
+	if (cJSON_IsNumber(jen)) r->endian = (uint8_t)jen->valueint;
+	else if (cJSON_IsBool(jle)) r->endian = cJSON_IsTrue(jle) ? 1 : 0;
+	else r->endian = 1;
+	cJSON *ju = cJSON_GetObjectItemCaseSensitive(root, "unit");
+	if (cJSON_IsString(ju) && ju->valuestring) { strncpy(r->unit, ju->valuestring, sizeof(r->unit) - 1); r->has_unit = true; }
+	cJSON_Delete(root);
+
+	lv_async_call(_deferred_signal_update, r);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -466,6 +652,9 @@ static const httpd_uri_t signal_inject_uri = {
 static const httpd_uri_t signal_clear_uri = {
     .uri = "/api/signal/clear", .method = HTTP_POST,
     .handler = _signal_clear_handler, .user_ctx = NULL};
+static const httpd_uri_t signal_update_uri = {
+    .uri = "/api/signal/update", .method = HTTP_POST,
+    .handler = _signal_update_handler, .user_ctx = NULL};
 static const httpd_uri_t fuel_status_uri = {
     .uri = "/api/fuel/status", .method = HTTP_GET,
     .handler = _fuel_status_handler, .user_ctx = NULL};
@@ -475,6 +664,9 @@ static const httpd_uri_t fuel_set_empty_uri = {
 static const httpd_uri_t fuel_set_full_uri = {
     .uri = "/api/fuel/set-full", .method = HTTP_POST,
     .handler = _fuel_set_full_handler, .user_ctx = NULL};
+static const httpd_uri_t fuel_set_points_uri = {
+    .uri = "/api/fuel/set-points", .method = HTTP_POST,
+    .handler = _fuel_set_points_handler, .user_ctx = NULL};
 static const httpd_uri_t obd2_test_pid_uri = {
     .uri = "/api/obd2/test_pid", .method = HTTP_POST,
     .handler = _obd2_test_pid_handler, .user_ctx = NULL};
@@ -485,8 +677,10 @@ void web_server_signals_register(httpd_handle_t server) {
 	REGISTER_URI(server, &signal_simulate_get_uri);
 	REGISTER_URI(server, &signal_inject_uri);
 	REGISTER_URI(server, &signal_clear_uri);
+	REGISTER_URI(server, &signal_update_uri);
 	REGISTER_URI(server, &fuel_status_uri);
 	REGISTER_URI(server, &fuel_set_empty_uri);
 	REGISTER_URI(server, &fuel_set_full_uri);
+	REGISTER_URI(server, &fuel_set_points_uri);
 	REGISTER_URI(server, &obd2_test_pid_uri);
 }

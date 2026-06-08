@@ -41,7 +41,7 @@ const lv_font_t *widget_resolve_font(const char *name) {
 		memcpy(family, name, flen);
 		family[flen] = '\0';
 		uint16_t size = (uint16_t)atoi(colon + 1);
-		if (size >= 8 && size <= 200) {
+		if (size >= 8 && size <= 500) {
 			const lv_font_t *f = font_manager_get(family, size);
 			if (f) return f;
 		}
@@ -213,6 +213,22 @@ char *widget_get_label_buf(widget_t *w)
         case WIDGET_TOGGLE:  return ((toggle_data_t *)w->type_data)->label;
         case WIDGET_BUTTON:  return ((button_data_t *)w->type_data)->label;
         default:             return NULL;
+    }
+}
+
+char *widget_get_channel_id_buf(widget_t *w)
+{
+    if (!w || !w->type_data) return NULL;
+    switch (w->type) {
+        case WIDGET_PANEL:     return ((panel_data_t *)w->type_data)->channel_id;
+        case WIDGET_BAR:       return ((bar_data_t *)w->type_data)->channel_id;
+        case WIDGET_RPM_BAR:   return ((rpm_bar_data_t *)w->type_data)->channel_id;
+        case WIDGET_ARC:       return ((arc_data_t *)w->type_data)->channel_id;
+        case WIDGET_METER:     return ((meter_data_t *)w->type_data)->channel_id;
+        case WIDGET_TEXT:      return ((text_data_t *)w->type_data)->channel_id;
+        case WIDGET_INDICATOR: return ((indicator_data_t *)w->type_data)->channel_id;
+        case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->channel_id;
+        default:               return NULL;
     }
 }
 

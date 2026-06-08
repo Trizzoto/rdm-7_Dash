@@ -22,6 +22,9 @@ typedef struct {
 	char       static_text[64];
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* ── v14 channel binding ─────────────────────────────────── */
+	char       channel_id[32];
+	void      *channel;     /* channel_t* — opaque */
 	lv_color_t text_color;
 	int16_t    rotation;       /* Rotation in degrees (0-359, default 0) */
 	/* Night-mode appearance overrides (only applied when night_mode active) */

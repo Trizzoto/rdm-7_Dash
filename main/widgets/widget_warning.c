@@ -1,6 +1,7 @@
 #include "widget_warning.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "widget_panel.h"
 #include "system/night_mode.h"
@@ -1164,6 +1165,17 @@ static void _warning_on_signal(float value, bool is_stale, void *user_data) {
 static void _warning_apply_night_mode(widget_t *w, bool active);
 static void _warning_night_cb(bool active, void *user_data);
 
+/* Channel-changed listener for warning widget. */
+static void _warning_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	safe_strncpy(wd->signal_name, c->signal_name, sizeof(wd->signal_name));
+	wd->signal_index = c->signal_index;
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+}
+
 static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
@@ -1175,6 +1187,10 @@ static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (wd && wd->signal_index >= 0)
 		signal_subscribe(wd->signal_index, _warning_on_signal, w);
+
+	if (wd && wd->channel)
+		channel_manager_subscribe((channel_t *)wd->channel,
+		                           _warning_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set. */
 	if (wd && (wd->night.has_active_color || wd->night.has_inactive_color ||
@@ -1213,6 +1229,8 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
 		if (wd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", wd->signal_name);
+		if (wd->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", wd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
 		if (wd->inactive_color.full != THEME_COLOR_INACTIVE.full)
 			cJSON_AddNumberToObject(cfg, "inactive_color", (int)wd->inactive_color.full);
@@ -1340,10 +1358,38 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (wd->signal_name[0] != '\0')
 		wd->signal_index = signal_find_by_name(wd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(wd->channel_id, ch_item->valuestring, sizeof(wd->channel_id));
+	channel_t *bound_c = wd->channel_id[0] ? channel_manager_get(wd->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		wd->channel = bound_c;
+		safe_strncpy(wd->signal_name, bound_c->signal_name, sizeof(wd->signal_name));
+		wd->signal_index = bound_c->signal_index;
+	} else if (wd->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = wd->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) wd->channel = c;
+	}
 }
 static void _warning_destroy(widget_t *w) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
+	if (wd && wd->channel) {
+		channel_manager_unsubscribe((channel_t *)wd->channel,
+		                             _warning_on_channel_changed, w);
+		wd->channel = NULL;
+	}
 	if (wd && wd->signal_index >= 0)
 		signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
 	night_mode_unsubscribe(_warning_night_cb, w);
