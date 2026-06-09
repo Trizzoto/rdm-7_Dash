@@ -119,9 +119,22 @@ esp_err_t channel_apply_preconfig(channel_t *c, const preconfig_item_t *item) {
         ESP_LOGW(TAG, "no active layout (%d), skipping persist", le);
     }
 
-    /* 3. Point the channel at the new signal name + resolve so
-     *    signal_index updates and listeners refire. */
+    /* 3. Point the channel at the new signal name + write the decode onto the
+     *    channel (ADR 0005 — channels OWN their decode, device-local and
+     *    authoritative). set_decode UPSERTs the runtime signal + persists
+     *    channels.json, so the binding survives reboot without relying on the
+     *    layout's signals[] (which Phase B strips on save). The layout write in
+     *    step 2 stays as a harmless local cache — the channel decode wins. */
     channel_manager_set_signal(c, signal_name);
+    {
+        uint32_t can_id = (uint32_t)strtol(item->can_id, NULL, 16);
+        /* persist_now=false: channel_manager_set_signal() above already flushed
+         * channels.json synchronously — avoid a redundant second full-file
+         * write; the decode rides the debounced save. */
+        channel_manager_set_decode(c, can_id, item->bit_start, item->bit_length,
+                                   item->scale, item->value_offset,
+                                   item->is_signed, item->endianess, NULL, false);
+    }
     channel_manager_resolve_signals();
 
     /* 4. Rebuild the TWAI hardware acceptance filter so frames with the

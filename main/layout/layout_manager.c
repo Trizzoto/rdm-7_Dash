@@ -385,10 +385,22 @@ static void _load_signals(const cJSON *root) {
 			? src_item->valuestring : "";
 		bool is_internal = (strcmp(src, "internal") == 0);
 
-		if (!is_internal &&
-		    (!cJSON_IsNumber(can_id_item) ||
-		     !cJSON_IsNumber(start_item)  ||
-		     !cJSON_IsNumber(len_item)))
+		/* ADR 0005 Phase B: layouts no longer carry CAN decode, but they DO
+		 * still carry portable display/calibration metadata — value→label maps
+		 * (gear/mode labels) and the fuel-sender calibration. Such entries now
+		 * arrive as {name, value_map} / {name, fuel_cal} with NO can_id/bits and
+		 * NO source. Without this, the decode-requirement gate below would skip
+		 * them entirely and the value_map attach + fuel_cal parser further down
+		 * would never run — silently losing gear labels and fuel cal on every
+		 * reload. Let metadata-only entries through; they register with can_id=0
+		 * (the channel later UPSERTs the real CAN decode, preserving value_map). */
+		bool has_decode = cJSON_IsNumber(can_id_item) &&
+		                  cJSON_IsNumber(start_item) && cJSON_IsNumber(len_item);
+		bool has_value_map =
+			cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(sj, "value_map"));
+		bool is_fuel = (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0);
+
+		if (!is_internal && !has_decode && !has_value_map && !is_fuel)
 			continue;
 
 		uint32_t can_id    = cJSON_IsNumber(can_id_item) ? (uint32_t)can_id_item->valueint : 0;
@@ -427,6 +439,13 @@ static void _load_signals(const cJSON *root) {
 			src_enum = SIGNAL_SOURCE_INTERNAL;
 		} else if (strcmp(src, "obd2") == 0) {
 			src_enum = SIGNAL_SOURCE_OBD2;
+		} else if (!has_decode) {
+			/* Metadata-only entry (value_map / fuel_cal, no CAN bit-field):
+			 * classify as INTERNAL so it isn't mislabeled CAN. If a channel
+			 * owns this signal's decode, register_decoded_signals() UPSERTs the
+			 * real CAN decode (and source) afterwards — value_map survives the
+			 * UPSERT (decode params change in place; subscribers/value_map kept). */
+			src_enum = SIGNAL_SOURCE_INTERNAL;
 		}
 
 		/* Re-registration of an existing name now UPDATES that slot's decode
@@ -632,34 +651,42 @@ static void _save_signals(cJSON *root) {
 	if (count == 0)
 		return;
 
-	cJSON *arr = cJSON_AddArrayToObject(root, "signals");
-	if (!arr)
-		return;
+	/* ADR 0005 Phase B: CAN decode now lives on channels (channels.json),
+	 * NOT in the layout — so a shared layout no longer imposes the source
+	 * dash's decode (can_id/bits/scale/offset/endian) on the target. This
+	 * in-memory save (serial commands / data-logger snapshots) therefore emits
+	 * ONLY the display/calibration metadata that is genuinely layout-portable:
+	 * value→label maps and the fuel-sender calibration. Pure-decode signals are
+	 * dropped entirely; the "signals" array is created lazily so a decode-only
+	 * registry emits no "signals" key at all. (The web /api/layout/save path
+	 * goes through save_raw with the editor's buildFirmwarePayload, which strips
+	 * decode the same way.) */
+	cJSON *arr = NULL;
 
 	for (uint16_t i = 0; i < count; i++) {
 		signal_t *sig = signal_get_by_index(i);
 		if (!sig)
 			continue;
+		bool has_value_map = (sig->value_map && sig->value_map_count > 0);
+		bool is_fuel = (strcmp(sig->name, "FUEL_SENDER_V") == 0);
+		if (!has_value_map && !is_fuel)
+			continue;          /* nothing portable to emit for this signal */
+		if (!arr) {
+			arr = cJSON_AddArrayToObject(root, "signals");
+			if (!arr)
+				return;
+		}
 		cJSON *sj = cJSON_CreateObject();
 		if (!sj)
 			continue;
 		cJSON_AddStringToObject(sj, "name", sig->name);
-		cJSON_AddNumberToObject(sj, "can_id", sig->can_id);
-		cJSON_AddNumberToObject(sj, "bit_start", sig->bit_start);
-		cJSON_AddNumberToObject(sj, "bit_length", sig->bit_length);
-		cJSON_AddNumberToObject(sj, "scale", sig->scale);
-		cJSON_AddNumberToObject(sj, "offset", sig->offset);
-		cJSON_AddBoolToObject(sj, "is_signed", sig->is_signed);
-		cJSON_AddNumberToObject(sj, "endian", sig->endian);
-		if (sig->unit[0] != '\0')
-			cJSON_AddStringToObject(sj, "unit", sig->unit);
 
 		/* Optional value→label map round-trip. Web /api/layout/save goes
 		 * through layout_manager_save_raw and preserves this field as-is
 		 * (the editor's JSON flows verbatim to disk); the path here is
 		 * the in-memory save used by serial commands and any internal
 		 * "snapshot current state" caller. */
-		if (sig->value_map && sig->value_map_count > 0) {
+		if (has_value_map) {
 			cJSON *vm_arr = cJSON_AddArrayToObject(sj, "value_map");
 			if (vm_arr) {
 				for (uint8_t k = 0; k < sig->value_map_count; k++) {
@@ -679,7 +706,7 @@ static void _save_signals(cJSON *root) {
 		 * that haven't learned about points[] yet — when a multipoint
 		 * curve is set, those mirror the endpoints. The points array is
 		 * additive: present when point_count >= 2, absent otherwise. */
-		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {
+		if (is_fuel) {
 			fuel_cal_config_t fc;
 			signal_internal_get_fuel_cal(&fc);
 			cJSON *fc_obj = cJSON_AddObjectToObject(sj, "fuel_cal");
@@ -827,6 +854,32 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	_load_signals(root);
 	/* Peak/min values are session-only (reset every boot, no NVS
 	 * persistence), so there's nothing to restore here on layout load. */
+
+	/* ── Channel-owned CAN decode (ADR 0005) ──
+	 *
+	 * 1. One-time v2->v3 migration: seed each channel's decode from the
+	 *    signals[] just loaded into the registry, so existing devices move
+	 *    their decode into channels.json. Gated internally (no-op once v3).
+	 *    SKIPPED for the boot splash layout — it can carry a frozen snapshot
+	 *    of a prior registry, and channelizing from that would pin channel
+	 *    decode to stale values before the real dashboard layout even loads.
+	 *    The migration then runs against the dashboard layout instead.
+	 * 2. register_decoded_signals: push channel-owned decode into the registry
+	 *    (UPSERT) so the dispatch engine decodes the bus from channels.json
+	 *    and the channel's decode wins over any same-name embedded layout
+	 *    signal. Runs every load (cheap, idempotent).
+	 * Both run AFTER _load_signals (need the registry populated) and BEFORE
+	 * resolve_signals/widget create (so channel->signal_index is fresh). */
+	{
+		const cJSON *jname = cJSON_GetObjectItemCaseSensitive(root, "name");
+		const char *lname = (cJSON_IsString(jname) && jname->valuestring)
+			? jname->valuestring : "";
+		bool is_splash = (strncmp(lname, "_splash", 7) == 0);
+		if (!is_splash)
+			channel_manager_migrate_decode_from_registry();
+	}
+	channel_manager_register_decoded_signals();
+
 	/* Re-bind channels to signals now that the layout's signals are
 	 * registered. Channels in /lfs/channels.json carry signal_name strings;
 	 * they couldn't resolve at channel_manager_init time because the signal

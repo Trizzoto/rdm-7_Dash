@@ -42,6 +42,10 @@ extern const int ECU_PRESETS_COUNT;
 
 static const char *TAG = "web_channels";
 
+/* Forward decl — defined below; used by channel_to_full_json for the
+ * not-registered OBD2 provenance fallback. */
+static bool _obd2_name_known(const char *name);
+
 /* Derive a signal_name from a preconfig label using the same rule as
  * config_modal.c::label_to_signal_name — uppercase, replace runs of
  * non-alnum with single underscore, trim trailing underscores. So
@@ -120,6 +124,54 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 		cJSON_AddNumberToObject(j, "color_low_warn", (int)c->color_low_warn);
 	if (c->color_high_warn != CHANNEL_USE_DEFAULT_COLOR)
 		cJSON_AddNumberToObject(j, "color_high_warn", (int)c->color_high_warn);
+
+	/* CAN decode (ADR 0005) — present only when the channel owns one
+	 * (can_id != 0). The Channels-tab decode editor reads these to populate
+	 * the CAN ID / bit / scale inputs and writes them back via
+	 * /api/channels/update {fields:{decode:{...}}}. */
+	if (c->can_id != 0) {
+		cJSON *d = cJSON_AddObjectToObject(j, "decode");
+		if (d) {
+			cJSON_AddNumberToObject(d, "can_id", (double)c->can_id);
+			cJSON_AddNumberToObject(d, "bit_start", c->bit_start);
+			cJSON_AddNumberToObject(d, "bit_length", c->bit_length);
+			cJSON_AddNumberToObject(d, "scale", c->decode_scale);
+			cJSON_AddNumberToObject(d, "offset", c->decode_offset);
+			cJSON_AddBoolToObject(d, "is_signed", c->is_signed);
+			cJSON_AddNumberToObject(d, "endian", c->endian);
+			cJSON_AddStringToObject(d, "unit", c->decode_unit);
+		}
+	}
+
+	/* Provenance — AUTHORITATIVE OBD2/CAN/internal source taken from the bound
+	 * signal's registry source field (signal_t.source), NOT a name heuristic.
+	 * Lets the Channels tab visibly separate OBD2 from raw CAN and suppress the
+	 * CAN bit-decode editor for non-CAN channels. A channel bound to a signal
+	 * not yet in the registry but owning a CAN decode is inherently "can". */
+	const char *src_str;
+	if (c->signal_name[0]) {
+		int16_t si = signal_find_by_name(c->signal_name);
+		signal_t *s = (si >= 0) ? signal_get_by_index((uint16_t)si) : NULL;
+		if (s) {
+			switch ((signal_source_t)s->source) {
+				case SIGNAL_SOURCE_OBD2:     src_str = "obd2";     break;
+				case SIGNAL_SOURCE_INTERNAL: src_str = "internal"; break;
+				case SIGNAL_SOURCE_CAN:
+				default:                     src_str = "can";      break;
+			}
+		} else {
+			/* Bound by name but not in the registry — e.g. an OBD2 PID whose
+			 * polling is currently off. Owning a CAN decode means CAN; else a
+			 * name match against the OBD2 PID table is a safe fallback (no
+			 * registered namesake to collide with) so the OBD2 badge survives. */
+			if (c->can_id != 0)                    src_str = "can";
+			else if (_obd2_name_known(c->signal_name)) src_str = "obd2";
+			else                                   src_str = "unknown";
+		}
+	} else {
+		src_str = (c->can_id != 0) ? "can" : "unbound";
+	}
+	cJSON_AddStringToObject(j, "source", src_str);
 
 	/* Live runtime state */
 	cJSON_AddNumberToObject(j, "current_value", c->current_value);
@@ -342,6 +394,50 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 		return false;
 	}
 
+	/* CAN decode (ADR 0005) — `{ "decode": { can_id, bit_start, bit_length,
+	 * scale, offset, is_signed, endian|is_little_endian, unit } }`. Writes the
+	 * decode onto the channel (device-local, authoritative) and live-registers
+	 * it so the bus decodes immediately. Missing sub-fields fall back to the
+	 * channel's current values so a partial patch (e.g. just can_id) works. */
+	if (!strcmp(key, "decode") && cJSON_IsObject(val)) {
+		cJSON *it;
+		uint32_t can_id    = c->can_id;
+		uint8_t  bit_start = c->bit_start;
+		uint8_t  bit_length= c->bit_length;
+		float    scale     = c->decode_scale;
+		float    offset    = c->decode_offset;
+		bool     is_signed = c->is_signed;
+		uint8_t  endian    = c->endian;
+		char     unit[8];
+		strncpy(unit, c->decode_unit, sizeof(unit) - 1);
+		unit[sizeof(unit) - 1] = '\0';
+
+		it = cJSON_GetObjectItemCaseSensitive(val, "can_id");
+		if (cJSON_IsNumber(it)) can_id = (uint32_t)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(val, "bit_start");
+		if (cJSON_IsNumber(it)) bit_start = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(val, "bit_length");
+		if (cJSON_IsNumber(it)) bit_length = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(val, "scale");
+		if (cJSON_IsNumber(it)) scale = (float)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(val, "offset");
+		if (cJSON_IsNumber(it)) offset = (float)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(val, "is_signed");
+		if (cJSON_IsBool(it)) is_signed = cJSON_IsTrue(it);
+		cJSON *jen = cJSON_GetObjectItemCaseSensitive(val, "endian");
+		cJSON *jle = cJSON_GetObjectItemCaseSensitive(val, "is_little_endian");
+		if (cJSON_IsNumber(jen))      endian = (uint8_t)jen->valueint;
+		else if (cJSON_IsBool(jle))   endian = cJSON_IsTrue(jle) ? 1 : 0;
+		it = cJSON_GetObjectItemCaseSensitive(val, "unit");
+		if (cJSON_IsString(it) && it->valuestring) {
+			strncpy(unit, it->valuestring, sizeof(unit) - 1);
+			unit[sizeof(unit) - 1] = '\0';
+		}
+		return channel_manager_set_decode(c, can_id, bit_start, bit_length,
+		                                  scale, offset, is_signed, endian, unit,
+		                                  /* persist_now */ true);
+	}
+
 	/* Zone colors */
 	const struct { const char *name; channel_zone_t z; } color_map[] = {
 		{"color_low_warn",      CHZONE_LOW_WARN},
@@ -461,73 +557,23 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 	return send_channel_ok(req, NULL);
 }
 
-/* ── Internal source catalog ──────────────────────────────────────
- *
- * Signals the dash synthesizes itself — calculated channels (gear from
- * RPM+speed), GPIO/ADC inputs, dash telemetry. These appear in their
- * own picker section regardless of whether the signal is currently
- * registered in the registry (some only get registered after first
- * use). Picking one binds the channel to the listed signal name and
- * relies on the corresponding internal feeder to start emitting.
- *
- * Keep in lockstep with main/widgets/signal_internal.c + main/io —
- * any signal name a feeder emits via signal_inject_test_value()
- * belongs here so users can discover and pick it. */
-typedef struct {
-	const char *signal_name;
-	const char *label;
-	const char *unit;
-	const char *category;       /* UI grouping: "RDM Internal" / "GPIO / ADC" / "Dash telemetry" */
-	const char *setup_hint;     /* optional: where to configure if not yet emitting */
-} internal_source_t;
+/* NOTE: the former name-heuristic classifiers (_is_internal_signal_name /
+ * _is_ecu_preset_signal_name + the INTERNAL_SOURCES table) were removed — the
+ * source picker's Custom/OBD2/ECU bucketing now keys off the authoritative
+ * signal_t.source provenance instead of matching signal NAMES, so a raw-CAN
+ * signal that shares an OBD2/ECU name no longer leaks into the wrong section. */
 
-static const internal_source_t INTERNAL_SOURCES[] = {
-	/* RDM-computed */
-	{ "CALCULATED_GEAR", "Calculated Gear", "",      "RDM Internal",   "Gear Setup modal" },
-	{ "ODOMETER",        "Odometer",        "km",    "RDM Internal",   "Auto-accumulates from speed" },
-
-	/* GPIO / ADC */
-	{ "FUEL_SENDER_V",   "Fuel Sender (analog)", "V","GPIO / ADC",     "Fuel Sender Setup modal" },
-	{ "INDICATOR_LEFT",  "Left Indicator (wired)", "","GPIO / ADC",    "Wire Input mode (Device Settings)" },
-	{ "INDICATOR_RIGHT", "Right Indicator (wired)", "","GPIO / ADC",   "Wire Input mode (Device Settings)" },
-
-	/* Dash telemetry */
-	{ "FPS",             "Render FPS",      "fps",   "Dash telemetry", NULL },
-	{ "CPU_PERCENT",     "CPU Load",        "%",     "Dash telemetry", NULL },
-	{ "FREE_HEAP_KB",    "Free Heap",       "KB",    "Dash telemetry", NULL },
-	{ "FREE_PSRAM_KB",   "Free PSRAM",      "KB",    "Dash telemetry", NULL },
-	{ "UPTIME_S",        "Uptime",          "s",     "Dash telemetry", NULL },
-	{ "CHIP_TEMP",       "ESP32 Chip Temp", "°C",    "Dash telemetry", NULL },
-	{ "WIFI_RSSI",       "WiFi RSSI",       "dBm",   "Dash telemetry", NULL },
-};
-static const size_t INTERNAL_SOURCES_COUNT = sizeof(INTERNAL_SOURCES) / sizeof(INTERNAL_SOURCES[0]);
-
-static bool _is_internal_signal_name(const char *name) {
-	if (!name) return false;
-	for (size_t i = 0; i < INTERNAL_SOURCES_COUNT; ++i) {
-		if (strcmp(INTERNAL_SOURCES[i].signal_name, name) == 0) return true;
-	}
-	return false;
-}
-
-/* True if the signal name matches any ECU preset slot name (RPM, MAP,
- * THROTTLE, ...). Used to keep the Custom section free of signals that
- * belong to the ECU layer — even when they're for slots other than the
- * current channel's slot. */
-static bool _is_ecu_preset_signal_name(const char *name) {
-	if (!name) return false;
-	for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
-		const char *s = ecu_signal_slot_name((ecu_signal_slot_t)i);
-		if (s && s[0] && strcmp(s, name) == 0) return true;
-	}
-	return false;
-}
-
-static bool _is_obd2_pid_signal_name(const char *name) {
-	if (!name) return false;
+/* True if @p name is a standard OBD2 PID name. Used ONLY as a provenance
+ * FALLBACK when the registry has NO signal of that name (e.g. a channel bound
+ * to an OBD2 PID whose polling is currently off, so its signal isn't
+ * registered). Safe precisely because the registry is silent: with no
+ * registered signal of this name there is no CAN namesake to collide with, so
+ * the name match cannot mis-attribute a CAN signal as OBD2. */
+static bool _obd2_name_known(const char *name) {
+	if (!name || !name[0]) return false;
 	for (int i = 0; i < OBD2_PIDS_COUNT; ++i) {
-		const obd2_pid_def_t *d = &OBD2_PIDS[i];
-		if (d->signal_name && strcmp(d->signal_name, name) == 0) return true;
+		if (OBD2_PIDS[i].signal_name && strcmp(OBD2_PIDS[i].signal_name, name) == 0)
+			return true;
 	}
 	return false;
 }
@@ -552,16 +598,20 @@ static bool _is_obd2_pid_signal_name(const char *name) {
  * Live values come straight from the signal registry, so the user sees
  * which option is producing data right now. */
 
-static void _add_live_signal_state(cJSON *out, const char *signal_name) {
+/* Attribute live registry state to a picker row ONLY when the registered
+ * signal's provenance matches the row's section (@p expected). Without this
+ * gate a raw-CAN signal that happens to share an OBD2 PID name (RPM,
+ * COOLANT_TEMP, VEHICLE_SPEED, …) would make the OBD2 row light up with the
+ * CAN signal's live value — "CAN leaking through as OBD2". Provenance is the
+ * authoritative signal_t.source, not a name match. */
+static void _add_live_signal_state(cJSON *out, const char *signal_name,
+                                   signal_source_t expected) {
 	if (!out || !signal_name || !signal_name[0]) return;
 	int16_t idx = signal_find_by_name(signal_name);
-	if (idx < 0) {
-		cJSON_AddBoolToObject(out, "exists_in_layout", false);
-		return;
-	}
-	cJSON_AddBoolToObject(out, "exists_in_layout", true);
-	signal_t *s = signal_get_by_index((uint16_t)idx);
-	if (!s) return;
+	signal_t *s = (idx >= 0) ? signal_get_by_index((uint16_t)idx) : NULL;
+	bool match = s && ((signal_source_t)s->source == expected);
+	cJSON_AddBoolToObject(out, "exists_in_layout", match);
+	if (!match) return;
 	cJSON_AddNumberToObject(out, "live_value", s->current_value);
 	cJSON_AddBoolToObject(out, "is_stale", s->is_stale);
 }
@@ -624,6 +674,17 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 
 	channel_t *c = channel_manager_get(channel_id);
 	const char *current_signal = c ? c->signal_name : "";
+	/* Provenance of the currently-bound signal. A row is only "is_current" in
+	 * the section whose source matches it — so an OBD2 row never highlights as
+	 * the active source when the channel is really bound to a same-named CAN
+	 * signal (and vice-versa). */
+	signal_source_t current_src = SIGNAL_SOURCE_CAN;
+	if (current_signal[0]) {
+		int16_t csi = signal_find_by_name(current_signal);
+		signal_t *cs = (csi >= 0) ? signal_get_by_index((uint16_t)csi) : NULL;
+		if (cs) current_src = (signal_source_t)cs->source;
+		else if (_obd2_name_known(current_signal)) current_src = SIGNAL_SOURCE_OBD2;
+	}
 
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "channel_id", channel_id);
@@ -725,12 +786,11 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(o, "endian",      it->endianess);
 		cJSON_AddNumberToObject(o, "decimals",    it->decimals);
 		cJSON_AddBoolToObject  (o, "is_current",
-			strcmp(current_signal, sname) == 0);
-		/* Live value when the signal is currently in the registry —
-		 * works regardless of which preset's row planted it, so users
-		 * see live readings on alternates too if the names happen to
-		 * collide (e.g. multiple presets all using "RPM"). */
-		_add_live_signal_state(o, sname);
+			strcmp(current_signal, sname) == 0 && current_src == SIGNAL_SOURCE_CAN);
+		/* Live value only when a CAN-sourced signal of this name is registered
+		 * (ECU preset signals are broadcast CAN). A same-named OBD2/internal
+		 * signal must not light up the ECU row. */
+		_add_live_signal_state(o, sname, SIGNAL_SOURCE_CAN);
 		cJSON_AddItemToArray(signals_arr, o);
 	}
 
@@ -757,8 +817,12 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 			cJSON_AddNumberToObject(o, "service",     svc);
 			cJSON_AddNumberToObject(o, "pid",         d->pid);
 			cJSON_AddBoolToObject  (o, "polled",      _is_obd2_pid_polled(svc, d->pid));
-			cJSON_AddBoolToObject  (o, "is_current",  strcmp(current_signal, d->signal_name) == 0);
-			_add_live_signal_state(o, d->signal_name);
+			cJSON_AddBoolToObject  (o, "is_current",
+				strcmp(current_signal, d->signal_name) == 0 && current_src == SIGNAL_SOURCE_OBD2);
+			/* Live state only from an actually-OBD2 signal of this name — a
+			 * raw-CAN signal sharing the PID's name (RPM, COOLANT_TEMP, …) must
+			 * NOT make this OBD2 row appear live/bound ("CAN leaking as OBD2"). */
+			_add_live_signal_state(o, d->signal_name, SIGNAL_SOURCE_OBD2);
 			cJSON_AddItemToArray(signals_arr, o);
 		}
 		cJSON_AddItemToArray(versions_arr, ver_obj);
@@ -779,10 +843,14 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		uint16_t sig_n = signal_get_count();
 		for (uint16_t i = 0; i < sig_n; ++i) {
 			signal_t *s = signal_get_by_index(i);
-			if (!s) continue;
-			if (_is_ecu_preset_signal_name(s->name)) continue;
-			if (_is_obd2_pid_signal_name(s->name))   continue;
-			if (_is_internal_signal_name(s->name))   continue;
+			if (!s || s->name[0] == '\0') continue;
+			/* Classify by PROVENANCE, not name. Only genuine CAN-sourced signals
+			 * belong here (DBC imports, user CAN frames, ECU-preset signals) —
+			 * OBD2 + internal signals live under their own makes. This is what
+			 * keeps a user's raw-CAN "RPM"/"COOLANT_TEMP" in Custom instead of
+			 * being swallowed by an OBD2/ECU name collision, and conversely keeps
+			 * real OBD2 signals out of Custom regardless of name. */
+			if ((signal_source_t)s->source != SIGNAL_SOURCE_CAN) continue;
 			cJSON *o = cJSON_CreateObject();
 			cJSON_AddStringToObject(o, "kind",        "custom");
 			cJSON_AddStringToObject(o, "signal_name", s->name);
@@ -790,7 +858,8 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 			cJSON_AddStringToObject(o, "unit",        s->unit);
 			cJSON_AddNumberToObject(o, "live_value",  s->current_value);
 			cJSON_AddBoolToObject  (o, "is_stale",    s->is_stale);
-			cJSON_AddBoolToObject  (o, "is_current",  strcmp(current_signal, s->name) == 0);
+			cJSON_AddBoolToObject  (o, "is_current",
+				strcmp(current_signal, s->name) == 0 && current_src == SIGNAL_SOURCE_CAN);
 			cJSON_AddBoolToObject  (o, "exists_in_layout", true);
 			cJSON_AddItemToArray(signals_arr, o);
 		}
@@ -964,10 +1033,17 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 		int16_t si = signal_find_by_name(signal_name);
 		signal_t *s = (si >= 0) ? signal_get_by_index((uint16_t)si) : NULL;
 		if (s && s->source == SIGNAL_SOURCE_CAN && s->can_id != 0) {
+			/* ADR 0005: copy the decode onto the channel (device-local,
+			 * authoritative, survives reboot via channels.json). */
+			channel_manager_set_decode(c, s->can_id, s->bit_start, s->bit_length,
+			                           s->scale, s->offset, s->is_signed,
+			                           s->endian, s->unit[0] ? s->unit : NULL,
+			                           /* persist_now (set_signal already flushed) */ false);
 			char layout[64];
 			if (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK) {
 				/* ecu_preset_write_signal_to_layout persists to disk itself
-				 * (calls layout_manager_save_raw) — no double-save here. */
+				 * (calls layout_manager_save_raw) — no double-save here.
+				 * Kept as a harmless local cache; the channel decode wins. */
 				ecu_preset_write_signal_to_layout(
 					layout, s->name, s->can_id, s->bit_start, s->bit_length,
 					s->scale, s->offset, s->is_signed, s->endian,

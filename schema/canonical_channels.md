@@ -112,6 +112,8 @@ UI presentation order in the channel picker:
 | `afr_bank2` | AFR Bank 2 | 2 | AFR | AFR | 2 | 9–18 | `<11 >16` | `0x80FF80` | |
 | `lambda_bank1` | Lambda Bank 1 | 2 | λ | λ | 3 | 0.6–1.3 | `<0.75 >1.10` | `0x80FF80` | Lambda 1.0 = stoich. |
 | `lambda_bank2` | Lambda Bank 2 | 2 | λ | λ | 3 | 0.6–1.3 | `<0.75 >1.10` | `0x80FF80` | |
+| `wideband_1` | Wideband 1 | 2 | AFR | AFR | 2 | 9–18 | `—` | `0x80FF80` | Wideband O2 sensor 1. AFR units — distinct from `lambda_bank*` (λ). Haltech auto-setup binds here. Stoich = 14.7. |
+| `wideband_2` | Wideband 2 | 2 | AFR | AFR | 2 | 9–18 | `—` | `0x80FF80` | Wideband O2 sensor 2. |
 | `target_afr` | Target AFR | 2 | AFR | AFR | 2 | 9–18 | `—` | `0xA0FFA0` | What the ECU is aiming for. |
 | `knock_count` | Knock Events | 3 | count | count | 0 | 0–99 | `>1 >>5` | `0xFF0000` | Any knock is bad — warn on first, critical at 5. |
 | `knock_retard` | Knock Retard | 3 | ° | ° | 1 | 0–15 | `>2 >>6` | `0xFF4040` | Live retard amount being applied. |

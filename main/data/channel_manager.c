@@ -39,10 +39,15 @@ static const char *TAG = "channel_mgr";
 #define CHM_GROW_CHUNK  16
 #define CHM_MAX         128
 
-/* channels.json on-disk schema. v2 adds the one-time shared-binding heal
- * migration (see channel_manager_load_from_lfs). Bumping this re-runs any
- * future one-shot migrations exactly once on an older file. */
-#define CHM_SCHEMA_VERSION 2
+/* channels.json on-disk schema.
+ *   v2 — one-time shared-binding heal (see channel_manager_load_from_lfs).
+ *   v3 — channels OWN their CAN decode (ADR 0005): can_id/bits/scale/offset/
+ *        endian/unit emitted under a "decode" object, plus a one-time
+ *        v2->v3 migration that seeds channel decode from the active layout's
+ *        signals[] (channel_manager_migrate_decode_from_registry).
+ * Bumping this re-runs any future one-shot migrations exactly once on an
+ * older file. */
+#define CHM_SCHEMA_VERSION 3
 
 #define CHM_FILE_PATH    "/lfs/channels.json"
 #define CHM_TMP_PATH     CHM_FILE_PATH ".tmp"      /* atomic-write staging file */
@@ -56,6 +61,23 @@ static size_t s_cap = 0;
 static bool s_initialised = false;
 static bool s_dirty = false;
 static esp_timer_handle_t s_save_timer = NULL;
+/* Bulk-edit depth. While >0, every mutation only marks the manager dirty;
+ * no channels.json write happens until end_bulk. Lets the ECU wizard apply
+ * dozens of channel binds with ONE final flush instead of one full-file
+ * write per edit (which stalled the LVGL task + overflowed the CAN queue). */
+static uint16_t s_bulk_depth = 0;
+
+/* What schema_version save_to_lfs writes. Tracks the on-disk version so saves
+ * that happen BEFORE the deferred v2->v3 decode migration completes keep the
+ * file at its pre-migration version — preserving the "migration pending" state
+ * across an unexpected reboot in the narrow window between channel_manager_init
+ * and the first layout load. The decode migration bumps this to v3 once it has
+ * actually copied decode out of the registry. */
+static int  s_disk_schema_version = CHM_SCHEMA_VERSION;
+/* Set true when a pre-v3 file (or a fresh/reseed device) is loaded; consumed
+ * once by channel_manager_migrate_decode_from_registry() after the active
+ * layout's signals[] have populated the registry. */
+static bool s_decode_migration_pending = false;
 /* Guard so esp_register_shutdown_handler(channel_manager_flush) only ever
  * runs once even if init() is entered again after a shutdown/re-init. */
 static bool s_shutdown_handler_registered = false;
@@ -97,6 +119,12 @@ static channel_t *channel_alloc(void) {
 	if (!c) c = calloc(1, sizeof(channel_t));
 	if (!c) return NULL;
 	c->signal_index = -1;
+	/* CAN decode (ADR 0005) — zeroed by calloc means "no decode" (can_id == 0).
+	 * Seed the multiplicative/endian fields to sane neutrals so a partially
+	 * filled decode never scales by zero; only meaningful once can_id != 0. */
+	c->decode_scale  = 1.0f;
+	c->decode_offset = 0.0f;
+	c->endian        = 1;            /* Intel (little) — matches layout default */
 	c->low_warn      = CHANNEL_THRESHOLD_UNSET_LOW;
 	c->high_warn     = CHANNEL_THRESHOLD_UNSET_HIGH;
 	c->color_normal        = CHANNEL_USE_DEFAULT_COLOR;
@@ -367,15 +395,47 @@ bool channel_manager_set_signal(channel_t *c, const char *signal_name) {
 	} else {
 		c->signal_name[0] = '\0';
 	}
+
+	/* ADR 0005: a channel's CAN decode is meaningful ONLY while it is bound to
+	 * a CAN signal. When rebinding to a non-CAN source (OBD2-polled / internal)
+	 * or unbinding, drop any stale decode the channel carried from a previous
+	 * CAN binding. Otherwise channel_to_full_json keeps emitting a `decode`
+	 * block (so the web shows the CAN bit-decode editor on an OBD2/unbound
+	 * channel) and, worse, register_decoded_signals() would UPSERT the new
+	 * OBD2 signal back to source=CAN with a bogus decode on the next layout
+	 * load — corrupting provenance. The CAN bind paths (channel_apply_preconfig
+	 * / bind-source custom / wizard) call channel_manager_set_decode() right
+	 * after this to (re)install the correct decode, so clearing here is safe:
+	 * a freshly-registered CAN signal reports source CAN and is preserved. */
+	bool new_is_can = false;
+	if (c->signal_index >= 0) {
+		signal_t *ns = signal_get_by_index((uint16_t)c->signal_index);
+		if (ns && (signal_source_t)ns->source == SIGNAL_SOURCE_CAN) new_is_can = true;
+	}
+	if (!new_is_can && c->can_id != 0) {
+		c->can_id = 0;
+		c->bit_start = 0;
+		c->bit_length = 0;
+		c->decode_scale = 1.0f;
+		c->decode_offset = 0.0f;
+		c->is_signed = false;
+		c->endian = 1;
+		c->decode_unit[0] = '\0';
+	}
+
 	c->is_stale = true;
 	chm_notify_listeners(c);
 	/* Signal bindings are rare, high-value edits — and an automotive dash
 	 * can lose 12V abruptly at key-off with no graceful shutdown, so a
 	 * 500 ms debounce window can drop a just-made binding. Persist the
 	 * binding synchronously NOW (flash-endurance cost is negligible for
-	 * such an infrequent edit) instead of only marking dirty. */
+	 * such an infrequent edit) instead of only marking dirty.
+	 *
+	 * Exception: during a bulk edit (ECU wizard apply) the synchronous
+	 * flush is deferred to end_bulk so dozens of binds coalesce into one
+	 * write — see s_bulk_depth. */
 	s_dirty = true;
-	channel_manager_flush();
+	if (s_bulk_depth == 0) channel_manager_flush();
 	return true;
 }
 
@@ -731,6 +791,203 @@ void channel_manager_resolve_signals(void) {
 	if (dirty) channel_manager_mark_dirty();
 }
 
+/* ── Channel-owned CAN decode (ADR 0005) ─────────────────────────────
+ *
+ * The channel OWNS its decode (device-local), so a shared layout renders
+ * against the TARGET dash's channels rather than importing the source dash's
+ * signals[]. These helpers (a) push channel decode into the runtime signal
+ * registry so signal_dispatch_frame() decodes the bus from channels.json, and
+ * (b) one-time migrate existing devices' decode out of the active layout's
+ * signals[] into their channels. */
+
+/* (re)register one channel's decode into the signal registry + (re)bind its
+ * subscription. No-op for channels without a decode or signal name. UPSERTs,
+ * so the channel's decode wins over any same-name layout signal already in the
+ * registry (latest-registration-wins — see signal_register_with_source). */
+static void _register_channel_decode(channel_t *c) {
+	if (!c || c->can_id == 0 || c->signal_name[0] == '\0') return;
+	int16_t idx = signal_register_with_source(
+		c->signal_name, c->can_id, c->bit_start, c->bit_length,
+		c->decode_scale, c->decode_offset, c->is_signed, c->endian,
+		c->decode_unit[0] ? c->decode_unit : "", SIGNAL_SOURCE_CAN);
+	if (idx < 0) return;
+	/* Bind the channel's value callback to the slot. signal_subscribe does NOT
+	 * de-dupe, so only (re)subscribe when the index actually changed; on a
+	 * change drop the stale subscription first. */
+	if (c->signal_index != idx) {
+		if (c->signal_index >= 0)
+			signal_unsubscribe(c->signal_index, chm_signal_cb, c);
+		c->signal_index = idx;
+		signal_subscribe(idx, chm_signal_cb, c);
+		c->is_stale = true;
+	}
+}
+
+void channel_manager_register_decoded_signals(void) {
+	if (!s_initialised) return;
+	int n = 0;
+	for (size_t i = 0; i < s_count; ++i) {
+		channel_t *c = s_channels[i];
+		if (c->can_id == 0 || c->signal_name[0] == '\0') continue;
+		_register_channel_decode(c);
+		n++;
+	}
+	if (n) ESP_LOGI(TAG, "register_decoded_signals: %d channel decode(s) -> registry", n);
+}
+
+bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
+                                uint8_t bit_start, uint8_t bit_length,
+                                float scale, float offset, bool is_signed,
+                                uint8_t endian, const char *unit,
+                                bool persist_now) {
+	if (!c) return false;
+	c->can_id       = can_id;
+	c->bit_start    = bit_start;
+	c->bit_length   = bit_length;
+	c->decode_scale = scale;
+	c->decode_offset= offset;
+	c->is_signed    = is_signed;
+	c->endian       = endian;
+	safe_strcpy(c->decode_unit, unit ? unit : "", sizeof(c->decode_unit));
+
+	/* Make it decode live immediately (UPSERT + bind). */
+	_register_channel_decode(c);
+
+	chm_notify_listeners(c);
+	if (persist_now) {
+		/* Single high-value edit (web decode editor): persist NOW like signal
+		 * bindings — abrupt 12V loss at key-off gives no graceful shutdown. */
+		s_dirty = true;
+		channel_manager_flush();
+	} else {
+		/* Bulk/loop caller (ECU wizard) or a path that already flushed via
+		 * set_signal: coalesce into one debounced write instead of a
+		 * full-file rewrite per channel. */
+		channel_manager_mark_dirty();
+	}
+	return true;
+}
+
+/* Ensure a channel owns the given CAN signal's decode, mirroring the first-run
+ * wizard's resolution (_wiz_ensure_channel_for_signal): canonical via the ECU
+ * vocabulary / case-insensitive id, else a custom_<lowercased-name> channel.
+ * Collision guard: if the canonical channel is already bound to a DIFFERENT
+ * signal, fall through to a custom channel so two distinct signals never share
+ * one channel. Returns the channel (newly created or matched) or NULL. */
+static channel_t *_channelize_signal(const signal_t *sig) {
+	if (!sig || !sig->name[0]) return NULL;
+
+	const canonical_channel_def_t *def = NULL;
+	const char *canon = ecu_signal_name_to_canonical(sig->name);
+	if (canon) def = canonical_channel_find(canon);
+	if (!def)  def = canonical_channel_find_ci(sig->name);
+
+	channel_t *ch = NULL;
+	if (def) {
+		ch = channel_manager_get(def->id);
+		if (ch && ch->signal_name[0] && strcmp(ch->signal_name, sig->name) != 0) {
+			/* The canonical channel is bound under a DIFFERENT name. If that
+			 * name maps to the SAME canonical quantity (a different ECU
+			 * vocabulary — channel 'rpm' bound to "RPM" while this layout's
+			 * signal is "ENGINE_RPM"), it is NOT a real collision: reuse the
+			 * canonical channel and copy decode onto it rather than minting a
+			 * spurious custom_engine_rpm duplicate. signal_name is left intact
+			 * so cross-vocabulary re-mapping in resolve_signals still works.
+			 * Only a genuinely different quantity forks to a custom channel. */
+			const char *other = ecu_signal_name_to_canonical(ch->signal_name);
+			const canonical_channel_def_t *other_def = other
+				? canonical_channel_find(other)
+				: canonical_channel_find_ci(ch->signal_name);
+			if (!other_def || strcmp(other_def->id, def->id) != 0)
+				ch = NULL;             /* different quantity — go custom */
+		} else if (!ch) {
+			ch = channel_manager_activate(def->id);
+		}
+	}
+
+	if (!ch) {
+		char cid[32];
+		size_t j = 0;
+		for (const char *p = "custom_"; *p && j < sizeof(cid) - 1; p++) cid[j++] = *p;
+		for (size_t k = 0; sig->name[k] && j < sizeof(cid) - 1; k++) {
+			char ch_c = sig->name[k];
+			cid[j++] = (ch_c >= 'A' && ch_c <= 'Z') ? (char)(ch_c - 'A' + 'a') : ch_c;
+		}
+		cid[j] = '\0';
+		ch = channel_manager_get(cid);
+		if (!ch)
+			ch = channel_manager_create_custom(
+				cid, sig->name, CHGRP_DIAGNOSTIC, CHCARD_SCALAR,
+				sig->unit, sig->unit, 0, 0.0f, 100.0f);
+	}
+
+	if (ch && ch->signal_name[0] == '\0')
+		safe_strcpy(ch->signal_name, sig->name, sizeof(ch->signal_name));
+	return ch;
+}
+
+void channel_manager_migrate_decode_from_registry(void) {
+	if (!s_initialised || !s_decode_migration_pending) return;
+
+	int copied = 0, channelized = 0, skipped = 0;
+	uint16_t scount = signal_get_count();
+	for (uint16_t s = 0; s < scount; ++s) {
+		signal_t *sig = signal_get_by_index(s);
+		if (!sig) continue;
+		/* Only CAN bit-field signals carry portable decode. OBD2 (polled) and
+		 * INTERNAL (synthesized) signals re-register themselves at boot and
+		 * have no can_id/bits to copy. */
+		if (sig->source != SIGNAL_SOURCE_CAN || sig->can_id == 0) continue;
+
+		/* Find an existing channel bound to this signal name. */
+		channel_t *owner = NULL;
+		for (size_t i = 0; i < s_count; ++i) {
+			if (s_channels[i]->signal_name[0] &&
+			    strcmp(s_channels[i]->signal_name, sig->name) == 0) {
+				owner = s_channels[i];
+				break;
+			}
+		}
+		if (!owner) {
+			owner = _channelize_signal(sig);
+			if (owner) channelized++;
+			else       skipped++;     /* channel cap hit / alloc failed */
+		}
+		if (!owner) continue;
+
+		/* Copy decode only when the channel doesn't already own one — never
+		 * clobber decode a user already set (e.g. a re-run or partial state). */
+		if (owner->can_id == 0) {
+			owner->can_id       = sig->can_id;
+			owner->bit_start    = sig->bit_start;
+			owner->bit_length   = sig->bit_length;
+			owner->decode_scale = sig->scale;
+			owner->decode_offset= sig->offset;
+			owner->is_signed    = sig->is_signed;
+			owner->endian       = sig->endian;
+			safe_strcpy(owner->decode_unit, sig->unit, sizeof(owner->decode_unit));
+			copied++;
+		}
+	}
+
+	/* One-shot completion — but ONLY stamp v3 if every CAN signal got a channel.
+	 * If the channel cap (CHM_MAX) was hit, leave migration pending and the file
+	 * at its pre-v3 version: the on-disk layout signals[] decode is still intact
+	 * (migration never rewrites the layout), so nothing is lost and the
+	 * migration retries on a later boot (e.g. after the user prunes channels). */
+	if (skipped == 0) {
+		s_decode_migration_pending = false;
+		s_disk_schema_version = CHM_SCHEMA_VERSION;
+	} else {
+		ESP_LOGW(TAG, "decode migration: %d signal(s) could not be channelized "
+		         "(channel cap %d) — leaving migration PENDING", skipped, CHM_MAX);
+	}
+	s_dirty = true;
+	channel_manager_save_to_lfs();
+	ESP_LOGI(TAG, "decode migration -> v%d: %d copied, %d channelized, %d skipped",
+	         s_disk_schema_version, copied, channelized, skipped);
+}
+
 /* ── JSON I/O ─────────────────────────────────────────────────────── */
 
 /* Helper: only emit if differs from canonical default. Exact == is fine —
@@ -791,6 +1048,24 @@ static cJSON *channel_to_json(const channel_t *c) {
 	if (c->color_high_warn != CHANNEL_USE_DEFAULT_COLOR)
 		cJSON_AddNumberToObject(j, "color_high_warn", (int)c->color_high_warn);
 
+	/* CAN decode (ADR 0005) — defaults-only: omitted entirely when the channel
+	 * has no decode (can_id == 0, i.e. internal/OBD2/unset). When present, the
+	 * whole block is emitted so a re-load reconstructs the exact bit-field. */
+	if (c->can_id != 0) {
+		cJSON *d = cJSON_AddObjectToObject(j, "decode");
+		if (d) {
+			cJSON_AddNumberToObject(d, "can_id", (double)c->can_id);
+			cJSON_AddNumberToObject(d, "bit_start", c->bit_start);
+			cJSON_AddNumberToObject(d, "bit_length", c->bit_length);
+			cJSON_AddNumberToObject(d, "scale", c->decode_scale);
+			cJSON_AddNumberToObject(d, "offset", c->decode_offset);
+			cJSON_AddBoolToObject(d, "is_signed", c->is_signed);
+			cJSON_AddNumberToObject(d, "endian", c->endian);
+			if (c->decode_unit[0] != '\0')
+				cJSON_AddStringToObject(d, "unit", c->decode_unit);
+		}
+	}
+
 	return j;
 }
 
@@ -831,6 +1106,29 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 	if (cJSON_IsNumber(it)) c->color_low_warn = (uint32_t)it->valueint;
 	it = cJSON_GetObjectItemCaseSensitive(j, "color_high_warn");
 	if (cJSON_IsNumber(it)) c->color_high_warn = (uint32_t)it->valueint;
+
+	/* CAN decode (ADR 0005). Absent block leaves the calloc/alloc defaults
+	 * (can_id == 0 == "no decode"). */
+	cJSON *dec = cJSON_GetObjectItemCaseSensitive(j, "decode");
+	if (cJSON_IsObject(dec)) {
+		it = cJSON_GetObjectItemCaseSensitive(dec, "can_id");
+		if (cJSON_IsNumber(it)) c->can_id = (uint32_t)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "bit_start");
+		if (cJSON_IsNumber(it)) c->bit_start = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "bit_length");
+		if (cJSON_IsNumber(it)) c->bit_length = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "scale");
+		if (cJSON_IsNumber(it)) c->decode_scale = (float)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "offset");
+		if (cJSON_IsNumber(it)) c->decode_offset = (float)it->valuedouble;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "is_signed");
+		if (cJSON_IsBool(it)) c->is_signed = cJSON_IsTrue(it);
+		it = cJSON_GetObjectItemCaseSensitive(dec, "endian");
+		if (cJSON_IsNumber(it)) c->endian = (uint8_t)it->valueint;
+		it = cJSON_GetObjectItemCaseSensitive(dec, "unit");
+		if (cJSON_IsString(it) && it->valuestring)
+			safe_strcpy(c->decode_unit, it->valuestring, sizeof(c->decode_unit));
+	}
 
 	/* Sanity / self-heal: a high_warn at or below the channel min (or a
 	 * low_warn at or above max) can never be a meaningful alert — it would
@@ -1000,6 +1298,9 @@ esp_err_t channel_manager_load_from_lfs(void) {
 
 	cJSON *jver = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
 	int file_ver = cJSON_IsNumber(jver) ? jver->valueint : 1;
+	/* Mirror the on-disk version so saves before the deferred decode migration
+	 * don't prematurely stamp v3. */
+	s_disk_schema_version = (file_ver < 1) ? 1 : file_ver;
 
 	cJSON *chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
 	if (!cJSON_IsArray(chans)) { cJSON_Delete(root); return ESP_OK; }
@@ -1036,16 +1337,23 @@ esp_err_t channel_manager_load_from_lfs(void) {
 	 * legacy artifact WITHOUT ever touching shares the user sets up on purpose
 	 * later (deliberate signal sharing is how layouts stay portable). After the
 	 * version bump below, the pass never re-runs. */
-	if (file_ver < CHM_SCHEMA_VERSION) {
+	if (file_ver < 2) {
 		int healed = chm_heal_shared_bindings();
-		ESP_LOGI(TAG, "channels.json migrate v%d->%d (%d shared binding(s) healed)",
-		         file_ver, CHM_SCHEMA_VERSION, healed);
+		ESP_LOGI(TAG, "channels.json migrate v%d->2 (%d shared binding(s) healed)",
+		         file_ver, healed);
 		/* Persist the version bump even when nothing was healed, so the
 		 * one-time pass doesn't re-scan — and can't clear an intentional
 		 * share — on subsequent boots. */
+		if (s_disk_schema_version < 2) s_disk_schema_version = 2;
 		s_dirty = true;
 		channel_manager_save_to_lfs();
 	}
+
+	/* v2 -> v3 (ADR 0005): the decode migration needs the active layout's
+	 * signals[] in the registry, which isn't loaded yet at init time. Flag it
+	 * here; channel_manager_migrate_decode_from_registry() consumes the flag
+	 * from the layout-load path (after _load_signals) and bumps to v3 then. */
+	s_decode_migration_pending = (file_ver < 3);
 
 	s_dirty = false;
 	ESP_LOGI(TAG, "loaded %zu channels from %s", s_count, CHM_FILE_PATH);
@@ -1055,7 +1363,10 @@ esp_err_t channel_manager_load_from_lfs(void) {
 esp_err_t channel_manager_save_to_lfs(void) {
 	cJSON *root = cJSON_CreateObject();
 	if (!root) return ESP_ERR_NO_MEM;
-	cJSON_AddNumberToObject(root, "schema_version", CHM_SCHEMA_VERSION);
+	/* Emit the tracked on-disk version (not the compile-time constant): stays
+	 * at the pre-migration version until the v2->v3 decode migration completes,
+	 * so a reboot in that window still re-runs the migration. */
+	cJSON_AddNumberToObject(root, "schema_version", s_disk_schema_version);
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "channels");
 	for (size_t i = 0; i < s_count; ++i) {
@@ -1127,10 +1438,24 @@ static void chm_save_timer_cb(void *arg) {
 
 void channel_manager_mark_dirty(void) {
 	s_dirty = true;
+	/* During a bulk edit, don't even arm the debounce timer — end_bulk
+	 * does a single flush once all edits are in. */
+	if (s_bulk_depth > 0) return;
 	if (s_save_timer) {
 		esp_timer_stop(s_save_timer);
 		esp_timer_start_once(s_save_timer, CHM_SAVE_DEBOUNCE_US);
 	}
+}
+
+void channel_manager_begin_bulk(void) {
+	s_bulk_depth++;
+}
+
+void channel_manager_end_bulk(void) {
+	if (s_bulk_depth > 0) s_bulk_depth--;
+	/* On the outermost end, commit everything accumulated during the bulk
+	 * edit in ONE synchronous write. */
+	if (s_bulk_depth == 0 && s_dirty) channel_manager_flush();
 }
 
 void channel_manager_flush(void) {
@@ -1244,6 +1569,10 @@ esp_err_t channel_manager_init(void) {
 	esp_err_t err = channel_manager_load_from_lfs();
 	if (err == ESP_ERR_NOT_FOUND) {
 		ESP_LOGI(TAG, "no /lfs/channels.json — seeding default OBD2 set");
+		/* Fresh device: born pre-v3 so the first layout load channelizes any
+		 * CAN signals the default/active layout carries (ADR 0005 migration). */
+		s_disk_schema_version = 2;
+		s_decode_migration_pending = true;
 		seed_default_obd2_set();
 		channel_manager_save_to_lfs();
 	} else if (err != ESP_OK) {
@@ -1253,6 +1582,10 @@ esp_err_t channel_manager_init(void) {
 		 * silently overwrite a present-but-corrupt user file before a
 		 * recovery attempt. */
 		ESP_LOGW(TAG, "load failed (%d) — seeding default OBD2 set", err);
+		/* Reseeded defaults have no decode; let the next layout load re-derive
+		 * channel decode from its signals[] (ADR 0005 migration). */
+		s_disk_schema_version = 2;
+		s_decode_migration_pending = true;
 		seed_default_obd2_set();
 	}
 

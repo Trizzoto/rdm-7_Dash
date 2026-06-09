@@ -7,7 +7,7 @@
  * the markdown-to-C codegen lands (similar to tools/codegen_widget_defs.py),
  * this file becomes generated and manual edits move to the markdown.
  *
- * 90 channels across 12 groups. See header for sentinel semantics.
+ * 92 channels across 12 groups. See header for sentinel semantics.
  */
 
 #include "canonical_channels.h"
@@ -160,6 +160,29 @@ const canonical_channel_def_t CANONICAL_CHANNELS[] = {
 	.min_default=600, .max_default=1300,
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0x80FF80, .notes=NULL
+},
+/* Wideband O2 controllers — dedicated AFR channels, kept DISTINCT from
+ * lambda_bank* (λ units) and afr_bank* (bank-indexed). Haltech (and
+ * similar) broadcast numbered "Wideband 1..N" sensors AFR-scaled; the
+ * auto-setup binds them here instead of forcing AFR values into the λ
+ * Lambda-Bank channels (wrong units + range). Mirrors afr_bank1's shape. */
+{
+	.id="wideband_1", .label="Wideband 1",
+	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
+	.units_native="AFR", .units_display_def="AFR", .decimals=2,
+	.min_default=9, .max_default=18,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x80FF80,
+	.notes="Wideband O2 sensor 1 (AFR). Stoich petrol = 14.7. Distinct from lambda_bank."
+},
+{
+	.id="wideband_2", .label="Wideband 2",
+	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
+	.units_native="AFR", .units_display_def="AFR", .decimals=2,
+	.min_default=9, .max_default=18,
+	.low_warn=UL, .high_warn=UH,
+	.color_normal=0x80FF80,
+	.notes="Wideband O2 sensor 2 (AFR)."
 },
 {
 	.id="target_afr", .label="Target AFR",

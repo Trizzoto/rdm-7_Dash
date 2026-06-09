@@ -185,12 +185,18 @@ static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
     { "FUEL_TRIM_LT_B1",   "long_term_fuel_trim" },    /* Haltech */
     { "FUEL_TRIM_B1",      "short_term_fuel_trim" },   /* MegaSquirt */
 
-    /* Lambda / wideband — bank 1/2 only; extra sensors fall to custom. */
-    { "LAMBDA_1",          "lambda_bank1" },           /* Link */
-    { "LAMBDA_2",          "lambda_bank2" },           /* Link */
-    { "LAMBDA_AFR1",       "lambda_bank1" },           /* MegaSquirt "LAMBDA (AFR1)" */
-    { "WIDEBAND_1",        "lambda_bank1" },           /* Haltech */
-    { "WIDEBAND_2",        "lambda_bank2" },           /* Haltech */
+    /* Lambda — λ-scaled sensors map to the λ Lambda-Bank channels. */
+    { "LAMBDA_1",          "lambda_bank1" },           /* Link (λ-scaled) */
+    { "LAMBDA_2",          "lambda_bank2" },           /* Link (λ-scaled) */
+    { "LAMBDA_AFR1",       "lambda_bank1" },           /* MegaSquirt "LAMBDA (AFR1)" — λ-scaled */
+
+    /* Wideband — Haltech broadcasts AFR-scaled "Wideband N" sensors. These
+     * are a DIFFERENT quantity (AFR, not λ) so they get dedicated AFR
+     * Wideband channels, NOT the λ Lambda-Bank channels — putting an AFR
+     * value (~14.7) into a λ channel (range 0.6–1.3) was wrong units +
+     * range. Primary + secondary only; sensors 3/4 fall to custom. */
+    { "WIDEBAND_1",        "wideband_1" },             /* Haltech (AFR-scaled) */
+    { "WIDEBAND_2",        "wideband_2" },             /* Haltech (AFR-scaled) */
 
     /* Ignition */
     { "IGN_ANGLE_LEAD",    "ignition_timing" },        /* Haltech */
@@ -1035,35 +1041,15 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
  * unit == NULL omits the unit field. decimals < 0 omits the decimals
  * field. This matters because the preconfig flow doesn't carry a unit
  * but the ECU preset flow does. */
-esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
-                                            const char *signal_name,
-                                            uint32_t can_id,
-                                            uint8_t bit_start,
-                                            uint8_t bit_length,
-                                            float scale, float offset,
-                                            bool is_signed, uint8_t endian,
-                                            const char *unit,
-                                            int decimals) {
-    if (!layout_name || !signal_name || !signal_name[0])
-        return ESP_ERR_INVALID_ARG;
-
-    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
-    if (!buf) return ESP_ERR_NO_MEM;
-    size_t len = 0;
-    esp_err_t err = layout_manager_read_raw(layout_name, buf,
-                                            LAYOUT_MAX_FILE_BYTES, &len);
-    if (err != ESP_OK) { free(buf); return err; }
-
-    cJSON *root = cJSON_Parse(buf);
-    free(buf);
-    if (!root) return ESP_FAIL;
-
-    /* Find or create the signals[] array, then find or create the entry
-     * for the canonical signal name. */
-    cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
-    if (!cJSON_IsArray(signals)) {
-        signals = cJSON_AddArrayToObject(root, "signals");
-    }
+/* Upsert one signal row into an already-parsed signals[] cJSON array.
+ * Shared by the single-signal writer and the batched ecu_layout_writer so
+ * the find-or-create + stale-wipe + field-set logic lives in ONE place. */
+static void _upsert_signal_entry(cJSON *signals, const char *signal_name,
+                                 uint32_t can_id, uint8_t bit_start,
+                                 uint8_t bit_length, float scale, float offset,
+                                 bool is_signed, uint8_t endian,
+                                 const char *unit, int decimals) {
+    if (!signals || !signal_name || !signal_name[0]) return;
 
     cJSON *entry = NULL;
     cJSON *sig;
@@ -1102,10 +1088,101 @@ esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
     cJSON_AddNumberToObject(entry, "endian",     endian);
     if (unit)              cJSON_AddStringToObject(entry, "unit",     unit);
     if (decimals >= 0)     cJSON_AddNumberToObject(entry, "decimals", decimals);
+}
+
+esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
+                                            const char *signal_name,
+                                            uint32_t can_id,
+                                            uint8_t bit_start,
+                                            uint8_t bit_length,
+                                            float scale, float offset,
+                                            bool is_signed, uint8_t endian,
+                                            const char *unit,
+                                            int decimals) {
+    if (!layout_name || !signal_name || !signal_name[0])
+        return ESP_ERR_INVALID_ARG;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return ESP_ERR_NO_MEM;
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) { free(buf); return err; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+
+    /* Find or create the signals[] array, then upsert the entry. */
+    cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+    if (!cJSON_IsArray(signals)) {
+        signals = cJSON_AddArrayToObject(root, "signals");
+    }
+    _upsert_signal_entry(signals, signal_name, can_id, bit_start, bit_length,
+                         scale, offset, is_signed, endian, unit, decimals);
 
     err = layout_manager_save_raw(layout_name, root);
     cJSON_Delete(root);
     return err;
+}
+
+/* ── Batched layout signal writer (see header) ────────────────────────── */
+struct ecu_layout_writer {
+    char   layout_name[64];
+    cJSON *root;
+    cJSON *signals;   /* borrowed pointer into root */
+};
+
+ecu_layout_writer_t *ecu_layout_writer_open(const char *layout_name) {
+    if (!layout_name || !layout_name[0]) return NULL;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return NULL;
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) { free(buf); return NULL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return NULL;
+
+    ecu_layout_writer_t *w = calloc(1, sizeof(*w));
+    if (!w) { cJSON_Delete(root); return NULL; }
+
+    strncpy(w->layout_name, layout_name, sizeof(w->layout_name) - 1);
+    w->root = root;
+    w->signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+    if (!cJSON_IsArray(w->signals))
+        w->signals = cJSON_AddArrayToObject(root, "signals");
+    return w;
+}
+
+void ecu_layout_writer_upsert(ecu_layout_writer_t *w,
+                              const char *signal_name,
+                              uint32_t can_id,
+                              uint8_t bit_start, uint8_t bit_length,
+                              float scale, float offset,
+                              bool is_signed, uint8_t endian,
+                              const char *unit, int decimals) {
+    if (!w) return;
+    _upsert_signal_entry(w->signals, signal_name, can_id, bit_start,
+                         bit_length, scale, offset, is_signed, endian,
+                         unit, decimals);
+}
+
+esp_err_t ecu_layout_writer_commit(ecu_layout_writer_t *w) {
+    if (!w) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = layout_manager_save_raw(w->layout_name, w->root);
+    cJSON_Delete(w->root);
+    free(w);
+    return err;
+}
+
+void ecu_layout_writer_abort(ecu_layout_writer_t *w) {
+    if (!w) return;
+    cJSON_Delete(w->root);
+    free(w);
 }
 
 esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,

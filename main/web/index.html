@@ -2244,6 +2244,13 @@
         .ch2-src-badge.active { background: var(--accent); color: #fff; }
         .ch2-src-badge.polled { background: rgba(74,144,226,0.15); color: var(--accent); }
         .ch2-src-badge.enable { background: transparent; color: var(--accent); border: 1px dashed var(--accent); }
+        /* Provenance badges — make OBD2 vs raw CAN unmistakable at a glance. */
+        .ch2-srctag { font-size: 9px; font-weight: 700; letter-spacing: .4px; padding: 1px 5px;
+                      border-radius: 3px; text-transform: uppercase; vertical-align: middle; }
+        .ch2-srctag.obd2     { background: rgba(255,176,32,0.18);  color: #ffb020; }   /* amber  */
+        .ch2-srctag.can      { background: rgba(79,195,247,0.16);  color: #4fc3f7; }   /* cyan   */
+        .ch2-srctag.internal { background: rgba(167,139,250,0.18); color: #a78bfa; }   /* violet */
+        .ch2-srctag.unbound  { background: transparent; color: var(--text-ghost); border: 1px solid var(--border); }
 
         /* ECU "make" folder — expands to reveal version rows inside.
          * Active preset's make is rendered <details open> so users see
@@ -6415,6 +6422,12 @@
             (data.widgets || []).forEach(w => {
                 if (w.config && w.config.signal_name && !w.signal)
                     w.signal = w.config.signal_name;
+                /* Hoist the firmware-side config.channel up to the canonical
+                 * top-level w.channel (mirrors signal_name above) so the
+                 * inspector + buildFirmwarePayload treat w.channel as the single
+                 * source of truth and a re-save round-trips the binding. */
+                if (w.config && w.config.channel && !w.channel)
+                    w.channel = w.config.channel;
                 /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value}
                  * MUST happen BEFORE convertWidgetColors so rule override colors get converted too */
                 if (w.config && w.config.rules) {
@@ -9035,6 +9048,19 @@
                         delete w.config.signal_name;
                     }
                 }
+                /* Channel binding: the firmware reads it from config.channel, but
+                 * the editor keeps the canonical binding on the top-level
+                 * w.channel (set by _widgetAssignChannel, cleared by
+                 * _widgetUnbindChannel, hoisted from config.channel on load).
+                 * Mirror the signal_name mapping above so a freshly-applied
+                 * channel actually reaches the device — without this the binding
+                 * stayed top-level only, config.channel kept its stale loaded
+                 * value (or none), and the widget never updated ("---"). */
+                if (w.channel) {
+                    w.config.channel = w.channel;
+                } else {
+                    delete w.config.channel;
+                }
                 /* Warning thresholds (high/low warn) live on the bound CHANNEL,
                  * not the layout — strip the VALUES + enable flags so they don't
                  * travel when a layout is shared. Firmware derives them from the
@@ -9091,24 +9117,36 @@
                     });
                 }
             });
-            /* Convert web is_little_endian (bool) back to firmware endian (int).
-             * Also strip empty value_map arrays so the layout JSON stays
-             * lean — firmware treats absent and empty identically. */
-            if (payload.signals) {
+            /* ADR 0005 Phase B: CAN decode now lives on the dash's channels
+             * (channels.json), NOT in the layout — so a shared layout no longer
+             * imposes the source dash's decode (can_id/bits/scale/offset/endian)
+             * on the target. Emit ONLY the layout-portable display/calibration
+             * metadata: value→label maps and the fuel-sender calibration. Pure
+             * CAN-decode signals are dropped entirely, and the signals[] key is
+             * omitted when nothing portable remains. (The channel decode editor
+             * persists decode via /api/channels/update instead.) */
+            if (Array.isArray(payload.signals)) {
+                const portable = [];
                 payload.signals.forEach(s => {
-                    if ('is_little_endian' in s) {
-                        s.endian = s.is_little_endian ? 1 : 0;
-                        delete s.is_little_endian;
-                    }
+                    if (!s || !s.name) return;
+                    let vmap = null;
                     if (Array.isArray(s.value_map)) {
-                        /* Drop entries with empty labels — the user
-                         * added a row but never filled it in. */
-                        s.value_map = s.value_map.filter(e =>
+                        /* Drop entries with empty labels — the user added a row
+                         * but never filled it in. */
+                        vmap = s.value_map.filter(e =>
                             e && typeof e.v === 'number' &&
                             typeof e.label === 'string' && e.label.length > 0);
-                        if (s.value_map.length === 0) delete s.value_map;
                     }
+                    const hasVmap = vmap && vmap.length > 0;
+                    const hasFuel = (s.name === 'FUEL_SENDER_V' && s.fuel_cal);
+                    if (!hasVmap && !hasFuel) return;   /* decode-only → dropped */
+                    const out = { name: s.name };
+                    if (hasVmap) out.value_map = vmap;
+                    if (hasFuel) out.fuel_cal = s.fuel_cal;
+                    portable.push(out);
                 });
+                if (portable.length) payload.signals = portable;
+                else delete payload.signals;
             }
             return payload;
         }
@@ -11959,7 +11997,7 @@
         }
 
         /* ── Live signal value polling ──────────────────────────────── */
-        let _signalLiveValues = {};   /* name → { value, stale } */
+        let _signalLiveValues = {};   /* name → { value, stale, can_id, source } */
         let _signalPollTimer = null;
 
         async function _pollSignalValues() {
@@ -11969,7 +12007,7 @@
                 const data = await r.json();
                 const map = {};
                 (data.signals || []).forEach(s => {
-                    map[s.name] = { value: s.value, stale: s.stale, can_id: s.can_id };
+                    map[s.name] = { value: s.value, stale: s.stale, can_id: s.can_id, source: s.source };
                 });
                 _signalLiveValues = map;
                 _updateLiveValueCells();
@@ -12613,6 +12651,10 @@
                 (currentLayout.widgets || []).forEach(w => {
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
+                    }
+                    /* Hoist config.channel → canonical top-level w.channel (see save path) */
+                    if (w.config && w.config.channel && !w.channel) {
+                        w.channel = w.config.channel;
                     }
                     /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                     if (w.config && w.config.rules) {
@@ -14378,6 +14420,10 @@
                     if (w.config && w.config.signal_name && !w.signal) {
                         w.signal = w.config.signal_name;
                     }
+                    /* Hoist config.channel → canonical top-level w.channel (see save path) */
+                    if (w.config && w.config.channel && !w.channel) {
+                        w.channel = w.config.channel;
+                    }
                     /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                     if (w.config && w.config.rules) {
                         w.config.rules.forEach(rule => {
@@ -14496,6 +14542,10 @@
                     (currentLayout.widgets || []).forEach(w => {
                         if (w.config && w.config.signal_name && !w.signal) {
                             w.signal = w.config.signal_name;
+                        }
+                        /* Hoist config.channel → canonical top-level w.channel (see save path) */
+                        if (w.config && w.config.channel && !w.channel) {
+                            w.channel = w.config.channel;
                         }
                         /* Convert rule overrides from firmware array [{field, type, value}] to object {field: value} */
                         if (w.config && w.config.rules) {
@@ -16966,6 +17016,14 @@
          * active. */
         function _classifyChannelSource(signalName) {
             if (!signalName) return '';
+            /* AUTHORITATIVE: the firmware reports each signal's provenance via
+             * /api/signals/values (cached in _signalLiveValues). Prefer it over
+             * the layout signal entry, which since ADR 0005 Phase B no longer
+             * carries CAN decode/source for most signals. */
+            const liveSrc = (_signalLiveValues && _signalLiveValues[signalName])
+                ? _signalLiveValues[signalName].source : null;
+            if (liveSrc === 'obd2') return 'OBD2';
+            if (liveSrc === 'internal') return 'RDM-7';
             if (INTERNAL_SIGNALS.includes(signalName)) return 'RDM-7';
             const sig = (currentLayout.signals || []).find(s => s.name === signalName);
             /* OBD2 — either the signal entry was tagged as obd2 or the
@@ -16977,6 +17035,8 @@
             if (isObd2) return 'OBD2';
             /* Internal — explicit source field wins over name-list. */
             if (sig && sig.source === 'internal') return 'RDM-7';
+            /* A live CAN signal that fell through the above is genuine CAN —
+             * label by the active ECU preset below (don't mislabel as Custom). */
             /* Fall back to the active ECU preset, if any. */
             if (currentLayout.ecu) {
                 return `${currentLayout.ecu}${currentLayout.ecu_version ? ' ' + currentLayout.ecu_version : ''}`;
@@ -17234,7 +17294,7 @@
                 _chSignalValuesCache = {};
                 sigs.forEach(s => {
                     _chSignalValuesCache[s.name] = {
-                        value: s.value, stale: !!s.stale, unit: s.unit || ''
+                        value: s.value, stale: !!s.stale, unit: s.unit || '', source: s.source
                     };
                 });
             } catch(e) { /* silent */ }
@@ -17285,7 +17345,7 @@
                     const data = await sigR.json();
                     const sigs = Array.isArray(data) ? data : (data.signals || []);
                     sigs.forEach(s => {
-                        _chSignalValuesCache[s.name] = { value: s.value, stale: !!s.stale, unit: s.unit || '' };
+                        _chSignalValuesCache[s.name] = { value: s.value, stale: !!s.stale, unit: s.unit || '', source: s.source };
                     });
                     if (_chSelectedId) _patchSigPickerLive();
                 }
@@ -17447,7 +17507,7 @@
                         return `<div id="chRow_${c.id}" class="ch2-row ${sel} ${inact}" onclick="_selectChannel('${c.id}')">
                             <div>
                                 <div class="ch2-row-name">${c.label || c.id}</div>
-                                ${sub ? `<div class="ch2-row-sub">${sub}</div>` : ''}
+                                ${sub ? `<div class="ch2-row-sub">${_chSourceBadge(c)} ${sub}</div>` : ''}
                             </div>
                             <div class="ch2-row-val ${cls}">${valHtml}</div>
                         </div>`;
@@ -17601,6 +17661,19 @@
             _patchSigPickerLive();
         }
 
+        /* Provenance tag — OBD2 / CAN / RDM-7 / unbound — keyed off the
+         * authoritative `source` the firmware reports per channel
+         * (/api/channels, derived from the bound signal's signal_t.source).
+         * Makes OBD2 channels obviously distinct from raw CAN at a glance. */
+        function _chSourceBadge(c) {
+            const s = c && c.source;
+            if (s === 'obd2')     return '<span class="ch2-srctag obd2">OBD2</span>';
+            if (s === 'internal') return '<span class="ch2-srctag internal">RDM-7</span>';
+            if (s === 'can')      return '<span class="ch2-srctag can">CAN</span>';
+            if (!c || !c.signal)  return '<span class="ch2-srctag unbound">unbound</span>';
+            return '';  /* unknown source — omit rather than mislabel */
+        }
+
         function _renderSourceSection(c) {
             const cache = _chSignalValuesCache;
             let body;
@@ -17622,7 +17695,7 @@
             }
             return `
                 <div class="ch2-section">
-                    <h3>Source${c.signal ? `<span class="action danger" onclick="_unbindChannelSource('${c.id}')">Unbind</span>` : ''}</h3>
+                    <h3>Source <span style="margin-left:6px;">${_chSourceBadge(c)}</span>${c.signal ? `<span class="action danger" onclick="_unbindChannelSource('${c.id}')">Unbind</span>` : ''}</h3>
                     ${body}
                 </div>
                 ${_renderSourceSetupHint(c)}`;
@@ -18161,12 +18234,24 @@
             const sig = (c.signal && currentLayout.signals)
                 ? currentLayout.signals.find(s => s.name === c.signal)
                 : null;
-            const liveSrc = (c.signal && _signalLiveValues && _signalLiveValues[c.signal])
-                ? _signalLiveValues[c.signal].source : null;
-            /* Default to showing CAN config when the source field is missing
-             * (legacy registrations) but skip when the bound signal is OBD2
-             * or INTERNAL — those don't have user-editable CAN decode. */
-            const isCanSignal = sig && (!liveSrc || liveSrc === 'can');
+            /* Authoritative provenance: the channel's own `source` from
+             * /api/channels (derived from the bound signal's signal_t.source),
+             * preferred over the name-keyed live poll which lags first render. */
+            const chSrc = c.source
+                || (c.signal && _signalLiveValues && _signalLiveValues[c.signal]
+                    ? _signalLiveValues[c.signal].source : null);
+            /* ADR 0005: the decode lives on the CHANNEL now. Prefer c.decode
+             * (authoritative, device-local, from /api/channels); fall back to
+             * the in-session working layout signal for display only (e.g. right
+             * after "+ Add CAN signal" before the channel round-trips). */
+            const dec = (c.decode && typeof c.decode === 'object') ? c.decode : sig;
+            /* Show the CAN bit-decode editor ONLY for CAN-sourced channels (or a
+             * channel that already owns a CAN decode). OBD2 + internal channels
+             * have no user-editable bit decode — decode happens in firmware /
+             * via Mode polling — so they must NOT get this editor. An unknown
+             * source no longer defaults to CAN (that was the bug that made OBD2
+             * blend in). */
+            const isCanSignal = (!!c.decode) || (!!c.signal && chSrc === 'can');
             if (!sig && !c.signal) {
                 /* Unbound channel: offer a one-tap "Add CAN signal" so the
                  * user can author a raw CAN decode without first hunting for
@@ -18180,7 +18265,17 @@
                         <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chAddCanSignal('${c.id}')">+ Add CAN signal</button>
                     </div>`;
             } else if (isCanSignal) {
-                const hexCanId = '0x' + (sig.can_id|0).toString(16).toUpperCase().padStart(3,'0');
+                /* Read every field from `dec` (channel decode preferred). Endian
+                 * is an int (0/1) on the channel but a bool on the legacy layout
+                 * signal — normalize to a little-endian flag for the <select>. */
+                const _decCanId = dec ? ((typeof dec.can_id === 'string') ? (parseInt(dec.can_id, 16) || 0) : (dec.can_id | 0)) : 0;
+                const hexCanId = '0x' + _decCanId.toString(16).toUpperCase().padStart(3,'0');
+                const _decBitStart = dec ? (dec.bit_start | 0) : 0;
+                const _decBitLen   = dec ? ((dec.bit_length | 0) || 16) : 16;
+                const _decScale    = (dec && dec.scale  != null) ? dec.scale  : 1;
+                const _decOffset   = (dec && dec.offset != null) ? dec.offset : 0;
+                const _decSigned   = !!(dec && dec.is_signed);
+                const _decLE       = dec ? ((dec.endian != null) ? (Number(dec.endian) === 1) : (dec.is_little_endian !== false)) : true;
                 const _shareN = (typeof _chSignalShareCount === 'function') ? _chSignalShareCount(c.signal, c.id) : 0;
                 const _shareWarn = _shareN > 0 ? `
                         <div style="font-size:10px; color:#e6b800; margin-bottom:8px; line-height:1.4;">
@@ -18197,36 +18292,36 @@
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                             <div class="ch2-num">
                                 <span class="ch2-num-label">CAN ID</span>
-                                <input type="text" value="${hexCanId}" placeholder="0x000" onchange="_chEditSignalCanId('${c.signal}', this)" spellcheck="false" style="font-family:monospace;">
+                                <input type="text" value="${hexCanId}" placeholder="0x000" onchange="_chEditSignalCanId('${c.id}','${c.signal}', this)" spellcheck="false" style="font-family:monospace;">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Bit start</span>
-                                <input type="number" min="0" max="63" value="${sig.bit_start|0}" onchange="_chEditSignal('${c.signal}','bit_start', Number(this.value))">
+                                <input type="number" min="0" max="63" value="${_decBitStart}" onchange="_chEditDecode('${c.id}','${c.signal}','bit_start', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Bit length</span>
-                                <input type="number" min="1" max="64" value="${sig.bit_length|0}" onchange="_chEditSignal('${c.signal}','bit_length', Number(this.value))">
+                                <input type="number" min="1" max="64" value="${_decBitLen}" onchange="_chEditDecode('${c.id}','${c.signal}','bit_length', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Scale</span>
-                                <input type="number" step="any" value="${sig.scale!=null?sig.scale:1}" onchange="_chEditSignal('${c.signal}','scale', Number(this.value))">
+                                <input type="number" step="any" value="${_decScale}" onchange="_chEditDecode('${c.id}','${c.signal}','scale', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Offset</span>
-                                <input type="number" step="any" value="${sig.offset!=null?sig.offset:0}" onchange="_chEditSignal('${c.signal}','offset', Number(this.value))">
+                                <input type="number" step="any" value="${_decOffset}" onchange="_chEditDecode('${c.id}','${c.signal}','offset', Number(this.value))">
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Signed</span>
-                                <select onchange="_chEditSignal('${c.signal}','is_signed', this.value==='1')">
-                                    <option value="0" ${!sig.is_signed?'selected':''}>Unsigned</option>
-                                    <option value="1" ${sig.is_signed?'selected':''}>Signed</option>
+                                <select onchange="_chEditDecode('${c.id}','${c.signal}','is_signed', this.value==='1')">
+                                    <option value="0" ${!_decSigned?'selected':''}>Unsigned</option>
+                                    <option value="1" ${_decSigned?'selected':''}>Signed</option>
                                 </select>
                             </div>
                             <div class="ch2-num">
                                 <span class="ch2-num-label">Endian</span>
-                                <select onchange="_chEditSignal('${c.signal}','is_little_endian', this.value==='le')">
-                                    <option value="le" ${sig.is_little_endian!==false?'selected':''}>Little (Intel)</option>
-                                    <option value="be" ${sig.is_little_endian===false?'selected':''}>Big (Motorola)</option>
+                                <select onchange="_chEditDecode('${c.id}','${c.signal}','is_little_endian', this.value==='le')">
+                                    <option value="le" ${_decLE?'selected':''}>Little (Intel)</option>
+                                    <option value="be" ${!_decLE?'selected':''}>Big (Motorola)</option>
                                 </select>
                             </div>
                         </div>
@@ -18299,6 +18394,77 @@
                 })
             }).catch(() => {});
         }
+        /* ADR 0005: edit the CHANNEL's CAN decode. The channel OWNS its decode
+         * now (channels.json, device-local) — the layout no longer carries it.
+         * /api/channels/update persists to channels.json AND live-registers the
+         * signal, so the change applies immediately and survives reboot. We
+         * update the cached channel + any in-session working signal so a
+         * re-render reflects the edit without a refetch. */
+        function _chEditDecode(channelId, signalName, field, value) {
+            const c = (_chCache || []).find(x => x.id === channelId);
+            if (!c) return;
+            /* Seed the local cache from the channel's own decode, else the
+             * in-session working layout signal — so editing ONE field never
+             * loses the others (esp. can_id) in the cache/display. */
+            let base = (c.decode && typeof c.decode === 'object') ? Object.assign({}, c.decode) : null;
+            if (!base) {
+                const sg = (signalName && currentLayout && Array.isArray(currentLayout.signals))
+                    ? currentLayout.signals.find(s => s.name === signalName) : null;
+                base = sg ? {
+                    can_id:     (typeof sg.can_id === 'string') ? (parseInt(sg.can_id, 16) || 0) : (sg.can_id || 0),
+                    bit_start:  sg.bit_start | 0,
+                    bit_length: (sg.bit_length | 0) || 16,
+                    scale:      (sg.scale  != null) ? sg.scale  : 1,
+                    offset:     (sg.offset != null) ? sg.offset : 0,
+                    is_signed:  !!sg.is_signed,
+                    endian:     (sg.endian != null) ? Number(sg.endian) : (sg.is_little_endian === false ? 0 : 1),
+                    unit:       sg.unit || ''
+                } : { can_id: 0, bit_start: 0, bit_length: 16, scale: 1, offset: 0, is_signed: false, endian: 1, unit: (c.units_native || '') };
+            }
+            /* The single changed field, mapped to the channel decode shape. */
+            const patch = {};
+            if (field === 'is_little_endian') { patch.endian = value ? 1 : 0; base.endian = patch.endian; }
+            else { patch[field] = value; base[field] = value; }
+            c.decode = base;
+            /* Mirror into the working layout signal (live-display consistency). */
+            if (signalName && currentLayout && Array.isArray(currentLayout.signals)) {
+                const sg = currentLayout.signals.find(s => s.name === signalName);
+                if (sg) {
+                    if (field === 'is_little_endian') sg.is_little_endian = value;
+                    else sg[field] = value;
+                }
+            }
+            /* POST ONLY the changed field — the firmware decode handler fills
+             * missing sub-fields from the channel's CURRENT values, so editing
+             * one field never zeroes can_id (was: sending a full object built
+             * from base={} wiped can_id to 0 and killed the binding). */
+            fetch('/api/channels/update', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+                body: JSON.stringify({ id: channelId, fields: { decode: patch } })
+            }).catch(() => {});
+        }
+        /* Push a full decode (built from a layout-signal shape) onto a channel.
+         * Used by the fork / add-CAN flows so the freshly-created decode lands
+         * on the channel deterministically (not subject to the /api/signal/update
+         * async race that bind-source's copy would otherwise depend on). */
+        function _chSyncChannelDecode(channelId, sig) {
+            if (!channelId || !sig) return Promise.resolve();
+            const endian = (sig.endian != null) ? Number(sig.endian) : (sig.is_little_endian === false ? 0 : 1);
+            const canId = (typeof sig.can_id === 'string') ? (parseInt(sig.can_id, 16) || 0) : (sig.can_id || 0);
+            const decode = {
+                can_id: canId, bit_start: sig.bit_start | 0,
+                bit_length: (sig.bit_length | 0) || 16,
+                scale: (sig.scale != null) ? sig.scale : 1,
+                offset: (sig.offset != null) ? sig.offset : 0,
+                is_signed: !!sig.is_signed, endian: endian, unit: sig.unit || ''
+            };
+            const c = (_chCache || []).find(x => x.id === channelId);
+            if (c) c.decode = decode;
+            return fetch('/api/channels/update', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+                body: JSON.stringify({ id: channelId, fields: { decode } })
+            }).catch(() => {});
+        }
         /* Count OTHER channels (and legacy raw-signal widgets) that share a
          * signal, so the CAN-decode editor can warn that edits bleed across. */
         function _chSignalShareCount(signalName, exceptChannelId) {
@@ -18313,9 +18479,34 @@
          * is_custom copy (<SIG>_<channel>), register it live, rebind ONLY this
          * channel to it, and persist. The other channels keep the original. */
         async function _chForkSignal(channelId, signalName) {
-            if (!currentLayout || !Array.isArray(currentLayout.signals)) return;
-            const src = currentLayout.signals.find(s => s.name === signalName);
-            if (!src) return;
+            if (!currentLayout) return;
+            if (!Array.isArray(currentLayout.signals)) currentLayout.signals = [];
+            let src = currentLayout.signals.find(s => s.name === signalName);
+            if (!src) {
+                /* Phase B strips decode from the layout, so after a save→reload
+                 * the working signal is gone. Reconstruct it from the channel's
+                 * own decode (now authoritative) so "make a private copy" still
+                 * works instead of silently no-op'ing. */
+                const c0 = (_chCache || []).find(x => x.id === channelId);
+                if (c0 && c0.decode && typeof c0.decode === 'object') {
+                    const d = c0.decode;
+                    src = {
+                        name: signalName,
+                        can_id: d.can_id | 0,
+                        bit_start: d.bit_start | 0,
+                        bit_length: (d.bit_length | 0) || 16,
+                        scale: (d.scale != null) ? d.scale : 1,
+                        offset: (d.offset != null) ? d.offset : 0,
+                        is_signed: !!d.is_signed,
+                        is_little_endian: (d.endian != null) ? (Number(d.endian) === 1) : true,
+                        unit: d.unit || ''
+                    };
+                }
+            }
+            if (!src) {
+                if (typeof updateStatus === 'function') updateStatus('Cannot fork: no decode found for this channel', true);
+                return;
+            }
             const base = (signalName + '_' + channelId).replace(/[^A-Za-z0-9_]/g, '_').slice(0, 28) || 'SIG';
             let name = base, n = 1;
             while (currentLayout.signals.some(s => s.name === name)) name = (base.slice(0, 26) + '_' + (++n)).slice(0, 31);
@@ -18332,6 +18523,10 @@
             } catch (_) {}
             const ch = (_chCache || []).find(c => c.id === channelId);
             if (ch) ch.signal = name;
+            /* ADR 0005: copy the forked decode onto the channel so it OWNS it
+             * (device-local, authoritative) — deterministic, unlike relying on
+             * bind-source's registry copy which races /api/signal/update. */
+            await _chSyncChannelDecode(channelId, fork);
             if (typeof pushHistory === 'function') pushHistory();
             if (typeof updateStatus === 'function') updateStatus(`Private copy of ${signalName} created for this channel`);
             if (typeof _renderChannelDetail === 'function') _renderChannelDetail();
@@ -18372,6 +18567,10 @@
                 });
             } catch (_) {}
             if (ch) ch.signal = name;
+            /* ADR 0005: seed the channel's decode (can_id 0 until the user
+             * enters one) so the decode editor reads from c.decode and the
+             * channel owns it the moment a CAN ID is set. */
+            await _chSyncChannelDecode(channelId, sig);
             if (typeof pushHistory === 'function') pushHistory();
             /* Auto-create / extend the "Custom" preset (version "1") so this
              * one-off signal is reusable from the source picker. Fire-and-forget. */
@@ -18429,7 +18628,7 @@
             } catch (e) { console.warn('custom preset upsert error', e); }
         }
 
-        function _chEditSignalCanId(signalName, inputEl) {
+        function _chEditSignalCanId(channelId, signalName, inputEl) {
             const raw = (inputEl.value || '').trim();
             let val;
             if (raw.toLowerCase().startsWith('0x')) val = parseInt(raw, 16);
@@ -18441,7 +18640,7 @@
             }
             inputEl.classList.remove('invalid');
             inputEl.value = '0x' + val.toString(16).toUpperCase().padStart(3, '0');
-            _chEditSignal(signalName, 'can_id', val);
+            _chEditDecode(channelId, signalName, 'can_id', val);
         }
 
         /* One-tap "fill from canonical" for thresholds. Only writes

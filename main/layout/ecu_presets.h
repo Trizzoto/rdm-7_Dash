@@ -166,6 +166,40 @@ esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
                                             const char *unit,
                                             int decimals);
 
+/* ── Batched layout signal writer ─────────────────────────────────────
+ *
+ * Calling ecu_preset_write_signal_to_layout() in a loop does a full
+ * read-parse-modify-serialize-write of the layout file PER signal — for a
+ * 68-signal preset that's 68 full-file LittleFS writes, which on-device
+ * stalls the LVGL task for seconds and overflows the CAN RX queue.
+ *
+ * This writer opens the layout ONCE, accumulates any number of signal
+ * upserts in memory, and writes ONCE on commit. Lifetime:
+ *   w = ecu_layout_writer_open("Time_Attack");   // read + parse once
+ *   for (...) ecu_layout_writer_upsert(w, ...);   // in-memory, no disk
+ *   ecu_layout_writer_commit(w);                  // one save, frees w
+ * On any error path use ecu_layout_writer_abort(w) to free without saving.
+ * open() returns NULL on read/parse/alloc failure — callers should treat a
+ * NULL writer as "skip layout persistence" (channel-owned decode in
+ * channels.json remains the authoritative copy under ADR 0005). */
+typedef struct ecu_layout_writer ecu_layout_writer_t;
+
+ecu_layout_writer_t *ecu_layout_writer_open(const char *layout_name);
+
+void ecu_layout_writer_upsert(ecu_layout_writer_t *w,
+                              const char *signal_name,
+                              uint32_t can_id,
+                              uint8_t bit_start, uint8_t bit_length,
+                              float scale, float offset,
+                              bool is_signed, uint8_t endian,
+                              const char *unit, int decimals);
+
+/* Save the accumulated layout once and free the writer. */
+esp_err_t ecu_layout_writer_commit(ecu_layout_writer_t *w);
+
+/* Free the writer WITHOUT saving (error/cancel path). */
+void ecu_layout_writer_abort(ecu_layout_writer_t *w);
+
 /* Find a preset by make+version strings. Returns NULL if not found. */
 const ecu_preset_t *ecu_preset_find(const char *make, const char *version);
 

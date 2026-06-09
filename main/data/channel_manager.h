@@ -186,6 +186,27 @@ bool channel_manager_clear_threshold(channel_t *c, channel_zone_t zone);
 bool channel_manager_set_zone_color(channel_t *c, channel_zone_t zone, uint32_t color);
 
 /**
+ * Set the channel's CAN decode (ADR 0005). Stores the bit-field decode on the
+ * channel (device-local, authoritative) and, when can_id != 0 and the channel
+ * has a signal_name, UPSERTs a matching runtime signal so the bus decodes live
+ * immediately + (re)binds the channel's subscription. Persists synchronously
+ * (decode edits are rare, high-value — abrupt 12V loss gives no graceful
+ * shutdown window, mirroring channel_manager_set_signal). Returns false on a
+ * NULL channel.
+ *
+ * persist_now: true → flush channels.json synchronously (single high-value
+ * edits, e.g. the web decode editor). false → mark dirty + debounce (bulk
+ * callers like the ECU wizard that set many channels in a loop, or paths that
+ * already flushed via set_signal — avoids a redundant per-channel full-file
+ * rewrite under the LVGL lock).
+ */
+bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
+                                uint8_t bit_start, uint8_t bit_length,
+                                float scale, float offset, bool is_signed,
+                                uint8_t endian, const char *unit,
+                                bool persist_now);
+
+/**
  * Reset a channel to its canonical defaults (no-op for custom channels).
  * Returns false if the channel isn't canonical or isn't found.
  */
@@ -225,6 +246,22 @@ void channel_manager_mark_dirty(void);
  * via this path rather than waiting on the debounce window.
  */
 void channel_manager_flush(void);
+
+/**
+ * Bulk-edit guard. Between begin/end, all mutation persistence is deferred:
+ * set_signal / set_decode / mark_dirty only mark the manager dirty rather than
+ * writing channels.json. end_bulk performs ONE synchronous flush if anything
+ * changed. Reentrant (depth-counted) — nested begin/end pairs balance, only the
+ * outermost end flushes.
+ *
+ * Wrap bulk operations (e.g. the first-run wizard's ECU apply, which binds
+ * dozens of channels) in begin/end to avoid one full-file LittleFS write per
+ * edited channel — tens-to-hundreds of redundant writes that stall the LVGL
+ * task and overflow the CAN RX queue. ALWAYS pair begin with end (no early
+ * return in between) or persistence stays suppressed.
+ */
+void channel_manager_begin_bulk(void);
+void channel_manager_end_bulk(void);
 
 /* ── Listeners ────────────────────────────────────────────────────── */
 

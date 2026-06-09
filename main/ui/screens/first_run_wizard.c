@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "../theme.h"
+#include "../../system/rdm_lv_async.h"
 #include "../../storage/config_store.h"
 #include "../../can/can_bus_test.h"
 #include "../../can/can_id_tracker.h"
@@ -337,7 +338,7 @@ static void _close_wizard(bool mark_done) {
     s_start_retry_count = 0;
     s_wifi_return_pending = false;
     if (s_overlay && lv_obj_is_valid(s_overlay))
-        lv_obj_del_async(s_overlay);
+        rdm_obj_del_async(s_overlay);   /* crash-safe: cancelled if a reload frees it first */
     s_overlay = s_card = s_step1 = s_step_channels = s_step3 = NULL;
     s_step_ecu = NULL;
     s_ecu_progress = s_ecu_status = s_ecu_result_card = NULL;
@@ -1002,7 +1003,11 @@ static void _wiz_clear_vehicle_channel_bindings(void) {
  * Returns true if a channel was bound. */
 static bool _wiz_ensure_channel_for_signal(const char *sname,
                                            const char *label,
-                                           uint8_t decimals) {
+                                           uint8_t decimals,
+                                           uint32_t can_id, uint8_t bit_start,
+                                           uint8_t bit_length, float scale,
+                                           float offset, bool is_signed,
+                                           uint8_t endian) {
     if (!sname || !sname[0]) return false;
 
     const canonical_channel_def_t *def = NULL;
@@ -1040,6 +1045,15 @@ static bool _wiz_ensure_channel_for_signal(const char *sname,
 
     if (!ch) return false;
     channel_manager_set_signal(ch, sname);
+    /* ADR 0005: the channel OWNS its decode. Without this the channel keeps
+     * whatever decode the first migration seeded, and on the next layout load
+     * channel_manager_register_decoded_signals() UPSERTs that STALE decode over
+     * the freshly-applied ECU decode (re-introducing the exact "stale decode
+     * wins" misalignment the ADR fixes) when the user re-runs the wizard with a
+     * different ECU. persist_now=false: set_signal already flushed; the bulk
+     * apply does one explicit flush after the loop. */
+    channel_manager_set_decode(ch, can_id, bit_start, bit_length, scale, offset,
+                               is_signed, endian, NULL, false);
     return true;
 }
 
@@ -1048,6 +1062,13 @@ static bool _wiz_ensure_channel_for_signal(const char *sname,
  * then trigger channel resolution so channels rebind to the new
  * signals. Returns number of items written. */
 static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
+    /* Bulk-guard channel persistence: every set_signal / set_decode /
+     * create_custom below would otherwise synchronously rewrite the WHOLE
+     * channels.json (one full-file LittleFS write per edit — ~100+ for a
+     * Haltech apply), stalling the LVGL task for seconds and overflowing
+     * the CAN RX queue. begin/end_bulk coalesces them into ONE flush. */
+    channel_manager_begin_bulk();
+
     /* Resetup: wipe the previous setup's bindings so only the channels
      * THIS ECU provides come back populated. The force-rebind pass below
      * only overrides channels the ECU covers and leaves the rest as-is —
@@ -1062,6 +1083,16 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
     if (layout_manager_get_active(active_layout, sizeof(active_layout))
             != ESP_OK || !active_layout[0]) {
         strncpy(active_layout, "default", sizeof(active_layout) - 1);
+    }
+
+    /* Open the layout ONCE; signal rows batch in memory and write on commit
+     * (was a full read-modify-write of the layout file per signal). A NULL
+     * writer (read/parse failure) is tolerated — channels own their decode
+     * (ADR 0005) so the channels.json copy is authoritative regardless. */
+    ecu_layout_writer_t *lw = ecu_layout_writer_open(active_layout);
+    if (!lw) {
+        ESP_LOGW(TAG, "layout writer open failed for '%s' — persisting "
+                 "via channels.json only", active_layout);
     }
 
     int applied = 0;
@@ -1090,18 +1121,14 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
          * and 128-channel caps. */
         uint32_t cid = (uint32_t)strtol(it->can_id, NULL, 16);
 
-        /* Persist to layout JSON via the shared helper. */
-        esp_err_t err = ecu_preset_write_signal_to_layout(
-            active_layout, sname, cid,
+        /* Persist to layout JSON — batched in memory, written once on commit
+         * (was a full read-modify-write of the layout file per signal). A NULL
+         * writer is a no-op; the channel decode below is authoritative. */
+        ecu_layout_writer_upsert(lw, sname, cid,
             it->bit_start, it->bit_length,
             it->scale, it->value_offset,
             it->is_signed, it->endianess,
             NULL, it->decimals);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "write_signal_to_layout('%s') failed for %s",
-                     active_layout, sname);
-            continue;
-        }
 
         /* Apply to live registry too so channels can resolve NOW. */
         int16_t idx = signal_find_by_name(sname);
@@ -1139,12 +1166,29 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
          * custom otherwise. This both activates canonical channels the preset
          * provides (the old code only rebound already-active ones) and gives a
          * home to non-canonical signals (the old code dropped them). */
-        _wiz_ensure_channel_for_signal(sname, it->label, it->decimals);
+        _wiz_ensure_channel_for_signal(sname, it->label, it->decimals,
+                                       cid, it->bit_start, it->bit_length,
+                                       it->scale, it->value_offset,
+                                       it->is_signed, it->endianess);
 
         applied++;
     }
+
+    /* Commit the batched layout signals in ONE write (was one full-file
+     * write per signal). */
+    if (lw) {
+        esp_err_t cerr = ecu_layout_writer_commit(lw);
+        if (cerr != ESP_OK)
+            ESP_LOGW(TAG, "layout writer commit failed for '%s': %d",
+                     active_layout, cerr);
+    }
+
     /* Re-resolve so every binding made above is subscribed consistently. */
     channel_manager_resolve_signals();
+    /* End the bulk guard — flushes channels.json ONCE for all the binds made
+     * above (was one synchronous full-file write per channel). MUST balance
+     * the begin_bulk at the top or channel persistence stays suppressed. */
+    channel_manager_end_bulk();
 
     /* The old "definitive force-rebind" pass that iterated canonical channels
      * and re-pointed each at a matching ECU signal is now superseded: the

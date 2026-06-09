@@ -10,6 +10,7 @@
 #include "can/can_manager.h"
 #include "device_id.h"
 #include "device_settings.h"
+#include "system/rdm_lv_async.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "ui/callbacks/ui_callbacks.h"
@@ -166,7 +167,7 @@ static void setup_menu_close_btn_cb(lv_event_t *e) {
 	if (ui_Screen3 && lv_obj_is_valid(ui_Screen3)) {
 		lv_scr_load(ui_Screen3);
 		if (scr && lv_obj_is_valid(scr)) {
-			lv_obj_del_async(scr);
+			rdm_obj_del_async(scr);
 			ui_Setup_Menu_Screen = NULL;
 		}
 	}

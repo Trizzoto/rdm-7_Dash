@@ -48,6 +48,7 @@ idf_component_register(
         "system/remote_touch.c"
         "system/crash_log.c"
         "system/heap_monitor.c"
+        "system/rdm_lv_async.c"
         "ui/ui.c"
         "ui/dashboard.c"
         "ui/ui_styles.c"

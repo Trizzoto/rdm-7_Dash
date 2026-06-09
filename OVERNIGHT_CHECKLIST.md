@@ -80,6 +80,14 @@ Verification key: **[build]** compiled clean · **[boot]** flashed + booted clea
 - On-device VISUAL spot-check (arc ticks/value-line, rpm number, banner) is best done by you in the editor — defaults are OFF/unchanged so existing dashboards are visually identical; new options are opt-in.
 - Desktop `../rdm7-desktop/src/index.html` NOT synced (separate repo, deferred per CLAUDE.md).
 
+## Post-completion refinements (user follow-up)
+- ✅ 1g. Arc **tick labels** (meter‑style): `show_tick_labels`/`label_gap`/`tick_label_font`/`tick_label_color`/`tick_label_divisor` rendered via the overlay meter + `DRAW_PART_TICK` hook (divisor/decimals/anchor/reverse aware). Minor‑count + major‑every already matched the meter. **Verified on‑device — 0/25/50/75/100 labels render on the centre arc.**
+- ✅ 9b. Splash‑disabled **graceful load**: dashboard builds + renders while backlight off, then LCD backlight PWM‑ramps up ~450 ms (hardware fade from black) — avoids the laggy full‑layout LVGL alpha fade. [build][boot]
+- Build #5 PASS → flashed COM27, clean boot 0 faults, 15 arcs create, dashboard renders (screenshot confirms arc labels). Commit `2adbfab`.
+- ✅ 1h. Arc tick config now matches the meter: **value-based spacing** (Minor/Major Tick Value Spacing) instead of count/every; web derives count/every (auto nice-step), firmware inspector derives too. Verified in browser. Commit `2812210`.
+- ✅ Indicators: **always show "+ Assign Channel"** (both Wire/CAN); assigning a channel flips Input Source→CAN (the Wire/CAN gate was the user's own b6fd0e18, not this session). Verified in browser. Commit `9677b7c`.
+- ✅ 1i. Arc **"Ticks Outside Track"** toggle (default off): keeps the tick overlay at the rim and insets the arc+redline inward so ticks render above/outside the track. Built (Build #8).
+
 ## Notes / decisions
 - Schema is **v14** (CLAUDE.md/memory said v13 — stale). No schema-version bump needed (all additive/defaults-only).
 - Widget web fields are codegen'd from `schema/widgets.schema.json` (never hand-edit WIDGET_DEFS / widget_fields.gen.c).
