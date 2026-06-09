@@ -773,7 +773,13 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		}
 		lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(bar, THEME_COLOR_GREEN_BRIGHT,
+		/* Initialise the indicator to the configured in-range colour rather than
+		 * a hardcoded green, so an unbound bar — or one whose signal hasn't
+		 * delivered a frame yet (engine off / no CAN) — shows the user's colour
+		 * instead of green. _bar_on_signal overrides this per-value once data
+		 * arrives. Most visible with Center Fill, which paints a fill at the
+		 * resting value where NORMAL mode paints nothing. */
+		lv_obj_set_style_bg_color(bar, bd ? bd->bar_in_range_color : THEME_COLOR_GREEN_BRIGHT,
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		bd->bar_obj = bar;
@@ -871,6 +877,17 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	           bd->night.has_bar_image          || bd->night.has_bar_image_full)) {
 		night_mode_subscribe(_bar_night_cb, w);
 		_bar_apply_night_mode(w, night_mode_is_active());
+	}
+
+	/* Initial paint snap: signal_subscribe does not deliver a callback, so a
+	 * bar bound to a signal that is not updating yet (engine off / no CAN, or a
+	 * stale forked signal) would sit at the create-time colour until the first
+	 * frame. Run the colour/threshold logic once from the signal's current
+	 * value so the right in-range / alert colour shows immediately. Mirrors the
+	 * widget_meter / widget_arc initial-snap. */
+	if (bd && bd->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)bd->signal_index);
+		if (sig) _bar_on_signal(sig->current_value, sig->is_stale, w);
 	}
 }
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
