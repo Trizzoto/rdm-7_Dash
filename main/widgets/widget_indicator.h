@@ -51,6 +51,10 @@ void update_config_preview(uint8_t indicator_idx);
 /** Apply analog (wire) state to both indicators; skips CAN-sourced channels. */
 void indicator_apply_analog_state(bool left_on, bool right_on);
 
+/** Force one indicator's lamp on/off for the editor "Test Active" preview,
+ * regardless of input_source (Wire or CAN). Slot 0 = left, 1 = right. */
+void widget_indicator_apply_test_state(uint8_t slot, bool active);
+
 /** LVGL timer callback for indicator blink animation. */
 void indicator_animation_timer_cb(lv_timer_t *timer);
 

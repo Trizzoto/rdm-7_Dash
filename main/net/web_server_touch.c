@@ -94,7 +94,11 @@ static bool s_ind_test_right = false;
 
 static void _ind_test_apply_cb(void *param) {
 	(void)param;
-	indicator_apply_analog_state(s_ind_test_left, s_ind_test_right);
+	/* Drive the lamps directly by slot regardless of input_source so the
+	 * "Test Active" preview works for CAN-mode (and unbound) indicators too —
+	 * indicator_apply_analog_state() only touches Wire-mode indicators. */
+	widget_indicator_apply_test_state(0, s_ind_test_left);
+	widget_indicator_apply_test_state(1, s_ind_test_right);
 }
 
 static esp_err_t api_indicator_test_post_handler(httpd_req_t *req) {

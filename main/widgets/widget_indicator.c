@@ -716,6 +716,23 @@ void indicator_apply_analog_state(bool left_on, bool right_on) {
 	update_indicator_ui_immediate(1);
 }
 
+/* Force a single indicator's visual on/off for the editor "Test Active"
+ * preview, REGARDLESS of input_source. indicator_apply_analog_state() only
+ * touches Wire-mode (input_source==0) indicators, so a CAN-mode indicator —
+ * or one with no signal bound yet — could never be exercised from the editor.
+ * This drives the lamp directly by slot so the user can always preview the
+ * active look. (For a Wire-mode indicator with wire-input polling enabled the
+ * 20 Hz GPIO poll will reclaim the lamp on release, which is the correct
+ * live behaviour.) */
+void widget_indicator_apply_test_state(uint8_t slot, bool active) {
+	if (slot >= 2) return;
+	indicator_data_t *id = _lookup_indicator_data(slot);
+	if (!id) return;
+	id->current_state = active;
+	previous_indicator_states[slot] = active;
+	update_indicator_ui_immediate(slot);
+}
+
 // Asynchronous callback for updating an indicator
 void update_indicator_ui(void *param) {
 	uint8_t indicator_idx = *(uint8_t *)param;
@@ -887,7 +904,18 @@ static void _indicator_on_channel_changed(channel_t *c, void *user_data) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	if (!id) return;
 	safe_strncpy(id->signal_name, c->signal_name, sizeof(id->signal_name));
-	id->signal_index = c->signal_index;
+	/* Re-point our signal subscription when the channel's source index moved
+	 * (e.g. the user just configured this channel's CAN decode in the editor).
+	 * Without this an indicator bound to an as-yet-unconfigured channel stays
+	 * dark even after the channel is wired up. Mirrors _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != id->signal_index) {
+		if (id->signal_index >= 0)
+			signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+		id->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _indicator_on_signal, w);
+	}
 	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
@@ -1005,10 +1033,17 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
 		safe_strncpy(id->channel_id, ch_item->valuestring, sizeof(id->channel_id));
 	channel_t *bound_c = id->channel_id[0] ? channel_manager_get(id->channel_id) : NULL;
-	if (bound_c && bound_c->signal_index >= 0) {
+	if (bound_c) {
+		/* Attach to the channel even when it has no signal yet, so the
+		 * channel-changed listener fires (and _indicator_on_channel_changed
+		 * subscribes) the moment the user configures this channel's source.
+		 * Previously this was gated on signal_index >= 0, leaving an indicator
+		 * bound to an unconfigured channel dark until a full layout reload. */
 		id->channel = bound_c;
-		safe_strncpy(id->signal_name, bound_c->signal_name, sizeof(id->signal_name));
-		id->signal_index = bound_c->signal_index;
+		if (bound_c->signal_index >= 0) {
+			safe_strncpy(id->signal_name, bound_c->signal_name, sizeof(id->signal_name));
+			id->signal_index = bound_c->signal_index;
+		}
 	} else if (id->signal_name[0] != '\0') {
 		/* Indicator is boolean — no min/max/threshold to migrate, just
 		 * signal binding. */

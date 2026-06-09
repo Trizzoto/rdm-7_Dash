@@ -9735,13 +9735,17 @@
                              * w.config.slot (the firmware-side slot). */
                             mode = 'warning';
                             arg  = String(w.config?.slot ?? 0);
-                        } else if (w.type === 'indicator' && (w.config?.input_source ?? 0) === 0) {
+                        } else if (w.type === 'indicator') {
+                            /* Indicators ALWAYS preview via /api/indicator/test
+                             * by slot — the firmware drives the lamp directly
+                             * regardless of input_source, so this works for
+                             * CAN-mode and unbound indicators too (previously
+                             * only Wire-mode indicators could be tested, and a
+                             * CAN indicator with no signal tested nothing).
+                             * Slot is on w.config.slot (web JSON convention),
+                             * NOT w.slot — using w.slot made both indicators
+                             * report slot=0. */
                             mode = 'indicator';
-                            /* Indicator slot is stored on w.config.slot
-                             * (web UI JSON convention), NOT on w.slot —
-                             * the latter is the firmware-side widget_t
-                             * field name. Using w.slot made both left
-                             * and right indicators report slot=0. */
                             arg  = String(w.config?.slot ?? 0);
                         } else if (_testSig) {
                             mode = 'signal';
