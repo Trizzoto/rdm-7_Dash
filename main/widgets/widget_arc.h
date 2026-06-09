@@ -37,8 +37,7 @@ typedef struct {
     int16_t    end_angle;       /* default: 45 */
     uint8_t    arc_width;       /* default: 10 */
     uint8_t    arc_offset;      /* default: 0 — radial inset (px) pushing the
-                                 * arc track inward from the widget edge,
-                                 * ADDITIVE with the ticks-outside auto-inset.
+                                 * arc track inward from the widget edge.
                                  * See _arc_track_inset. */
     lv_color_t arc_color;       /* default: 0x00FF00 — fill color (used when not in redline/limiter) */
     lv_color_t bg_arc_color;    /* default: 0x333333 */
@@ -146,19 +145,6 @@ typedef struct {
     uint8_t    major_tick_width;        /* default: 4  */
     lv_color_t minor_tick_color;        /* default: 0x9E9E9E */
     lv_color_t major_tick_color;        /* default: 0xFFFFFF */
-    /* When true, render ticks ABOVE/OUTSIDE the arc track instead of at/inside
-     * it. The overlay lv_meter (which draws the ticks) stays at the full rim;
-     * the arc + redline arc are inset inward so the track sits inside the
-     * ticks. Default false = current behavior (ticks coincide with the track).
-     * STANDARD mode only. See _arc_track_inset / _arc_create_standard. */
-    bool       ticks_outside;           /* default: false */
-    /* When true (and arc_alerts_enabled), each tick recolors by the current
-     * value crossing it: a tick whose value is in the HIGH zone (>= arc_high)
-     * turns arc_high_color once the value climbs to/past it; a tick in the LOW
-     * zone (<= arc_low) turns arc_low_color once the value drops to/past it.
-     * Applied in _arc_tick_draw_cb; per-value invalidation in
-     * _arc_recompute_value (gated behind this flag). Default false. */
-    bool       tick_recolor_alert;      /* default: false */
 
     /* ── Numeric tick labels (meter-parity). Drawn by the OVERLAY lv_meter at
      * its major ticks. lv_meter bakes the label colour/font into LV_PART_TICKS

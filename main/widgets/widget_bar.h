@@ -52,6 +52,8 @@ typedef struct {
 	bool     show_bar_value;
 	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;
+	bool     center_fill;           /* default: false — lv_bar SYMMETRICAL: fill from
+	                                 * zero outward (set Min<0<Max for a centered split) */
 	uint8_t  decimals;
 	char     label_font[32];
 	char     value_font[32];

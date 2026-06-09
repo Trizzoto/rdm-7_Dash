@@ -777,6 +777,12 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		bd->bar_obj = bar;
+		/* Center Fill: SYMMETRICAL draws the indicator from the zero value to the
+		 * current value (fills outward from center). Default lv_bar mode is NORMAL,
+		 * so only set it when center_fill is enabled. Standard-bar path only —
+		 * image-mode bars have no lv_bar and recompute the clip width themselves. */
+		if (bd->center_fill)
+			lv_bar_set_mode(bar, LV_BAR_MODE_SYMMETRICAL);
 		if (!w->root) w->root = bar;
 	}
 
@@ -929,10 +935,13 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		if (!bd->show_bar_label)
 			cJSON_AddBoolToObject(cfg, "show_bar_label", false);
 		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
+		/* Defaults-only: emit center_fill only when enabled (default false). */
+		if (bd->center_fill)
+			cJSON_AddBoolToObject(cfg, "center_fill", true);
 		/* Decimals: per-widget override only — omit when it matches the bound
-			 * channel's decimals so it follows the channel by default. */
-			if (!bd->channel || bd->decimals != ((channel_t *)bd->channel)->decimals)
-				cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
+		 * channel's decimals so it follows the channel by default. */
+		if (!bd->channel || bd->decimals != ((channel_t *)bd->channel)->decimals)
+			cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
 		if (bd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", bd->label_font);
 		if (bd->value_font[0] != '\0')
@@ -1052,6 +1061,8 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) bd->show_bar_label = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "center_fill");
+	if (cJSON_IsBool(item)) bd->center_fill = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	bool decimals_overridden = cJSON_IsNumber(item);
 	if (decimals_overridden) bd->decimals = (uint8_t)item->valueint;
@@ -1424,6 +1435,7 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "decimals") == 0)           { out->i = bd->decimals;             return true; }
 	if (strcmp(name, "show_bar_value") == 0)     { out->b = bd->show_bar_value;       return true; }
 	if (strcmp(name, "invert_bar_value") == 0)   { out->b = bd->invert_bar_value;     return true; }
+	if (strcmp(name, "center_fill") == 0)        { out->b = bd->center_fill;          return true; }
 	if (strcmp(name, "show_bar_label") == 0)     { out->b = bd->show_bar_label;       return true; }
 	if (strcmp(name, "anchor_enabled") == 0)     { out->b = bd->anchor_enabled;       return true; }
 	if (strcmp(name, "anchor_value") == 0)       { out->i = bd->anchor_value;         return true; }
@@ -1528,6 +1540,20 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "invert_bar_value") == 0) {
 		bd->invert_bar_value = in->b;
 		return true;   /* picked up by the next _bar_on_signal call */
+	}
+	if (strcmp(name, "center_fill") == 0) {
+		bd->center_fill = in->b;
+		/* Live: SYMMETRICAL fills from the zero value, NORMAL from the start.
+		 * Standard-bar path only (image-mode bars have no bd->bar_obj). */
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+			lv_bar_set_mode(bd->bar_obj,
+				bd->center_fill ? LV_BAR_MODE_SYMMETRICAL : LV_BAR_MODE_NORMAL);
+			lv_obj_invalidate(bd->bar_obj);
+		}
+		/* Fill origin moved — drop the paint memo so the next signal tick
+		 * re-pushes the value/colour and the fill redraws from the new origin. */
+		bd->_pc_valid = false;
+		return true;
 	}
 	if (strcmp(name, "show_bar_label") == 0) {
 		bd->show_bar_label = in->b;
@@ -1715,6 +1741,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->show_bar_label = true;        /* show the text label above the bar by default */
+	bd->center_fill = false;          /* NORMAL fill (left→right); SYMMETRICAL only when enabled */
 	/* Tick-mark defaults (off by default so existing layouts are unaffected) */
 	bd->show_ticks  = false;
 	bd->tick_count  = 5;
