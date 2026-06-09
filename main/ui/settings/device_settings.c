@@ -3361,7 +3361,7 @@ static void _build_vehicle_grid(lv_obj_t *content) {
     s_obd2_btn_label = obd2.stat_label;
 
     _make_setup_card(grid, LV_SYMBOL_SETTINGS, "Gear Calc",
-        "RPM + speed → calculated gear.",
+        "RPM + speed = calculated gear.",
         "CALCULATED_GEAR", _veh_gear_btn_cb);
 
     _make_setup_card(grid, LV_SYMBOL_CHARGE, "Odometer",

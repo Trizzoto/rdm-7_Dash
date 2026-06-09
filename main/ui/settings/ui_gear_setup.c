@@ -30,7 +30,9 @@
 
 #include "../theme.h"
 #include "../../storage/config_store.h"
+#include "../../system/rdm_lv_async.h"
 #include "../../widgets/signal.h"
+#include "../../widgets/signal_internal.h"
 
 static const char *TAG = "gear_setup";
 
@@ -390,17 +392,17 @@ static void _save_cb(lv_event_t *e) {
      * enforce this but signal_internal.c relies on it. */
     s.cfg.ratios[0] = 0.0f;
 
-    esp_err_t err = config_store_save_gear_cal(&s.cfg);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "save_gear_cal failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Gear cal saved: %u gears, FD=%.2f, wheel=%.0f mm, %s",
-                 (unsigned)s.cfg.ratio_count,
-                 (double)s.cfg.final_drive,
-                 (double)(s.cfg.wheel_circumference_m * 1000.0f),
-                 s.cfg.enabled ? "enabled" : "disabled");
-    }
-    _close(err == ESP_OK);
+    /* Apply live AND persist via signal_internal_set_gear_cal() — it updates
+     * the running s_gear_cal so the change takes effect this instant, then
+     * writes NVS. (Calling config_store_save_gear_cal() directly only touched
+     * NVS, so on-device edits silently did nothing until the next reboot.) */
+    signal_internal_set_gear_cal(&s.cfg);
+    ESP_LOGI(TAG, "Gear cal saved: %u gears, FD=%.2f, wheel=%.0f mm, %s",
+             (unsigned)s.cfg.ratio_count,
+             (double)s.cfg.final_drive,
+             (double)(s.cfg.wheel_circumference_m * 1000.0f),
+             s.cfg.enabled ? "enabled" : "disabled");
+    _close(true);
 }
 
 static void _cancel_cb(lv_event_t *e) {
@@ -408,29 +410,12 @@ static void _cancel_cb(lv_event_t *e) {
     _close(false);
 }
 
-/* Deferred overlay delete that is SAFE against the overlay being torn down by
- * another path before this fires. The overlay lives on lv_layer_top(); the
- * gear-done callback (s.cb, invoked from _close) can trigger a layout reload
- * that wipes lv_layer_top() and frees the overlay synchronously. The plain
- * lv_obj_del_async() that used to schedule this delete could then fire on the
- * already-freed overlay → use-after-free (sending LV_EVENT_DELETE through a
- * dangling event-callback list → InstrFetchProhibited panic).
- *
- * lv_obj_del_async()'s internal callback isn't exported, so it can't be
- * cancelled. This custom cb CAN be: the overlay's LV_EVENT_DELETE handler
- * (_overlay_delete_evt_cb) cancels any queued call when the overlay is freed
- * by ANY path, so the deferred delete never touches freed memory. */
-static void _overlay_del_async_cb(void *arg) {
-    lv_obj_t *o = (lv_obj_t *)arg;
-    if (o && lv_obj_is_valid(o)) lv_obj_del(o);
-}
-
+/* Overlay teardown when the overlay is freed by a path OTHER than our own
+ * _close() (e.g. a layout reload wiping lv_layer_top()): just drop our handle
+ * so a later _close() / ui_gear_setup_is_open() doesn't touch freed memory.
+ * The crash-safe deferred delete itself is handled by rdm_obj_del_async(). */
 static void _overlay_delete_evt_cb(lv_event_t *e) {
     lv_obj_t *o = lv_event_get_target(e);
-    /* Drop any pending deferred delete for this overlay before its memory is
-     * freed, regardless of who is deleting it (us via _close, or a layout
-     * reload cleaning lv_layer_top()). */
-    lv_async_call_cancel(_overlay_del_async_cb, o);
     if (s.overlay == o) s.overlay = NULL;
 }
 
@@ -442,9 +427,12 @@ static void _close(bool saved) {
         s.status_timer = NULL;
     }
     /* Defer the delete (we're called from a child's event handler, so we can't
-     * delete the overlay synchronously) — but via the cancellable path above. */
+     * delete the overlay synchronously). rdm_obj_del_async() is crash-safe: it
+     * cancels the queued delete if any other path frees the overlay first, and
+     * detaches its own delete handler before self-deleting so the in-flight
+     * async call isn't double-freed ("CORRUPT HEAP: Bad head"). */
     if (s.overlay && lv_obj_is_valid(s.overlay))
-        lv_async_call(_overlay_del_async_cb, s.overlay);
+        rdm_obj_del_async(s.overlay);
     memset(&s, 0, sizeof(s));
     if (cb) cb(saved, ctx);
 }
@@ -624,9 +612,9 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     /* Overlay */
     lv_obj_t *scr = lv_layer_top();
     s.overlay = lv_obj_create(scr);
-    /* Cancel any deferred delete + clear our handle if the overlay is freed by
-     * ANY path (normal close, or a layout reload wiping lv_layer_top()), so the
-     * deferred delete can never run on freed memory. */
+    /* Clear our handle if the overlay is freed by a non-_close() path (e.g. a
+     * layout reload wiping lv_layer_top()). rdm_obj_del_async() installs its
+     * own cancel-on-delete handler for the deferred-delete safety. */
     lv_obj_add_event_cb(s.overlay, _overlay_delete_evt_cb, LV_EVENT_DELETE, NULL);
     lv_obj_remove_style_all(s.overlay);
     lv_obj_set_size(s.overlay, lv_pct(100), lv_pct(100));
