@@ -984,6 +984,65 @@ static void _wiz_clear_vehicle_channel_bindings(void) {
     }
 }
 
+/* Ensure a channel exists for a freshly-registered preset signal and bind it.
+ *
+ * Honours the wizard's "100% of a preset's signals become channels" contract:
+ *   1. Map to a canonical channel via the ECU vocabulary (handles the 20 ECU
+ *      slots + the explicit alias table in ecu_presets.c).
+ *   2. Else map to a canonical channel by exact (case-insensitive) id match
+ *      (e.g. "OIL_PRESSURE" -> oil_pressure, "COOLANT_PRESSURE" -> coolant_pressure).
+ *   3. Else auto-create a custom_<name> channel so the signal still lands
+ *      somewhere the user can see and use.
+ *
+ * Collision guard: if the resolved canonical channel is already bound to a
+ * DIFFERENT signal during this apply, don't share it — two distinct signals on
+ * one channel is exactly what the channels.json v2 heal later tears down — so
+ * fall through to a custom channel and keep every signal on its own channel.
+ *
+ * Returns true if a channel was bound. */
+static bool _wiz_ensure_channel_for_signal(const char *sname,
+                                           const char *label,
+                                           uint8_t decimals) {
+    if (!sname || !sname[0]) return false;
+
+    const canonical_channel_def_t *def = NULL;
+    const char *canon = ecu_signal_name_to_canonical(sname);
+    if (canon) def = canonical_channel_find(canon);
+    if (!def)  def = canonical_channel_find_ci(sname);
+
+    channel_t *ch = NULL;
+    if (def) {
+        ch = channel_manager_get(def->id);
+        if (ch && ch->signal_name[0] && strcmp(ch->signal_name, sname) != 0) {
+            ch = NULL;          /* canonical channel already taken — go custom */
+        } else if (!ch) {
+            ch = channel_manager_activate(def->id);
+        }
+    }
+
+    if (!ch) {
+        /* Custom fallback: "custom_" + lowercased signal name, capped to the
+         * 32-char channel id buffer. */
+        char cid[32];
+        size_t j = 0;
+        for (const char *p = "custom_"; *p && j < sizeof(cid) - 1; p++) cid[j++] = *p;
+        for (size_t k = 0; sname[k] && j < sizeof(cid) - 1; k++) {
+            char c = sname[k];
+            cid[j++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+        }
+        cid[j] = '\0';
+        ch = channel_manager_get(cid);
+        if (!ch)
+            ch = channel_manager_create_custom(
+                cid, (label && label[0]) ? label : sname,
+                CHGRP_DIAGNOSTIC, CHCARD_SCALAR, "", "", decimals, 0.0f, 100.0f);
+    }
+
+    if (!ch) return false;
+    channel_manager_set_signal(ch, sname);
+    return true;
+}
+
 /* Apply every preconfig item belonging to (ecu, version) to BOTH the
  * layout JSON (persistent) AND the live signal registry (immediate),
  * then trigger channel resolution so channels rebind to the new
@@ -1021,18 +1080,14 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
          * so existing widgets find it (see helper comment). */
         _wiz_canonicalize_signal_name(sname, sizeof(sname));
 
-        /* Register/persist ONLY signals that map to a canonical channel.
-         * An ECU's full broadcast catalog can be ~100 signals (MaxxECU
-         * 1.3), but auto-populate only needs the ~20 that feed canonical
-         * channels. Dumping the whole catalog filled the 200-signal
-         * registry (worse at the old 128 cap) and left no room for the
-         * OBD2 gap-fill to register its PIDs — which silently broke it.
-         * The non-canonical signals (EGT_1..8, USER_CHANNEL_n, VVT
-         * positions, rev-limit setpoints, …) stay available in the
-         * source picker and register on demand if the user binds one to
-         * a custom channel via channel_apply_preconfig. */
-        if (ecu_signal_name_to_canonical(sname) == NULL) continue;
-
+        /* Register/persist EVERY signal this preset provides — 100% of the
+         * preconfig must end up assigned to a channel. _wiz_ensure_channel_for_signal
+         * (below) maps each to a canonical channel where one exists and
+         * auto-creates a custom_<name> channel otherwise, so nothing is dropped.
+         * (Previously only canonical-mapped signals were kept; the rest were
+         * silently skipped and never got a channel.) The largest preset is
+         * Haltech Nexus at 68 signals — well within the 200-signal registry
+         * and 128-channel caps. */
         uint32_t cid = (uint32_t)strtol(it->can_id, NULL, 16);
 
         /* Persist to layout JSON via the shared helper. */
@@ -1079,63 +1134,25 @@ static int _apply_ecu_preconfigs(const char *ecu, const char *version) {
                 it->scale, it->value_offset,
                 it->is_signed, it->endianess, "");
         }
+
+        /* Guarantee this signal has a channel — canonical where it maps,
+         * custom otherwise. This both activates canonical channels the preset
+         * provides (the old code only rebound already-active ones) and gives a
+         * home to non-canonical signals (the old code dropped them). */
+        _wiz_ensure_channel_for_signal(sname, it->label, it->decimals);
+
         applied++;
     }
-    /* Rebind any channels whose canonical signal name now matches. */
+    /* Re-resolve so every binding made above is subscribed consistently. */
     channel_manager_resolve_signals();
 
-    /* ── Definitive force-rebind of canonical channels ─────────────────
-     * The user explicitly chose "auto-populate from this ECU", so the
-     * ECU's canonical signals are authoritative: every canonical channel
-     * that this ECU provides a definitive signal for is (re)bound to it,
-     * OVERRIDING any existing binding.
-     *
-     * Why override (not just fill unbound): re-running the wizard loads
-     * the previous channels.json, and channel_manager_resolve_signals
-     * PRESERVES a stored binding whenever it still resolves. A wrong
-     * binding from a prior run (e.g. rpm → "IGNITION_CUT") therefore
-     * survives forever unless we actively correct it here. The old
-     * "only bind channels with signal_index < 0" pass skipped exactly
-     * those already-(wrongly)-bound channels — that's the root of the
-     * "it messed up every assignment on rerun" report.
-     *
-     * "Definitive" = a registered signal whose name maps to this
-     * channel's canonical id via the (now-exact) ecu_signal_name_to_canonical.
-     * Channels with no definitive signal in this ECU are left untouched —
-     * we never clobber an existing binding with nothing, so user-picked
-     * custom sources for channels this ECU doesn't cover are preserved. */
-    {
-        size_t rebound = 0;
-        size_t ch_n = channel_manager_count();
-        uint16_t reg_n = signal_get_count();
-        for (size_t ci = 0; ci < ch_n; ci++) {
-            channel_t *c = channel_manager_at(ci);
-            if (!c || !c->is_canonical) continue;  /* custom channels: hands off */
-
-            const char *match = NULL;
-            for (uint16_t si = 0; si < reg_n; si++) {
-                signal_t *s = signal_get_by_index(si);
-                if (!s || !s->name[0]) continue;
-                const char *cid = ecu_signal_name_to_canonical(s->name);
-                if (!cid || strcmp(cid, c->id) != 0) continue;
-                match = s->name;
-                break;
-            }
-            if (!match) continue;  /* ECU doesn't cover this channel — leave as-is */
-            if (strcmp(c->signal_name, match) != 0) {
-                ESP_LOGI(TAG, "force-rebind: %s <- %s (was '%s')",
-                         c->id, match,
-                         c->signal_name[0] ? c->signal_name : "(none)");
-                channel_manager_set_signal(c, match);
-                rebound++;
-            }
-        }
-        if (rebound) {
-            channel_manager_resolve_signals();
-            ESP_LOGI(TAG, "force-rebound %u channels to ECU signals",
-                     (unsigned)rebound);
-        }
-    }
+    /* The old "definitive force-rebind" pass that iterated canonical channels
+     * and re-pointed each at a matching ECU signal is now superseded: the
+     * per-signal _wiz_ensure_channel_for_signal() above already activates +
+     * (re)binds the channel for every signal this preset provides, OVERRIDING
+     * any stale prior binding (the wizard cleared vehicle bindings first, then
+     * bound each signal fresh). Channels this ECU doesn't cover are left
+     * untouched, so user-picked sources for them survive a re-run. */
 
     /* Save the picked ECU so the dashboard remembers it across reboots. */
     config_store_save_ecu(ecu, version);

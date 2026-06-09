@@ -143,6 +143,80 @@ static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
     /* Barometric — no ECU slot exists; binds the canonical channel
      * directly (no rename, since there's no legacy slot name). */
     { "BARO_PRESSURE",     "barometric_pressure" },  /* Ford, MaxxECU, Link */
+
+    /* ── Wizard 100%-coverage aliases ──────────────────────────────────────
+     * Preset signals whose derived name doesn't exact-match a canonical id
+     * (case-insensitive) and isn't one of the 20 ECU slots. Each is an
+     * explicit, hand-verified map onto an existing canonical channel so the
+     * setup wizard can bind 100% of a preset's signals to canonical channels
+     * (curated units/ranges/grouping) instead of auto-creating custom ones.
+     * EXACT match only — no fuzzy matching (see header comment). Signals NOT
+     * listed here AND not exact-id matches fall through to a custom channel. */
+
+    /* Temperatures / air */
+    { "AMBIENT_AIR_TEMP",  "ambient_temp" },          /* Haltech */
+    { "AIR_TEMP",          "intake_air_temp" },        /* Haltech 3E0 air temp */
+    { "IAT",               "intake_air_temp" },        /* Link */
+    { "DIFF_OIL_TEMP",     "differential_temp" },      /* Haltech */
+    { "GEARBOX_OIL_TEMP",  "transmission_temp" },      /* Haltech */
+
+    /* Throttle / pedal */
+    { "TPS",               "throttle_position" },      /* Link */
+    { "APS_MAIN",          "accel_pedal_position" },   /* Link */
+    { "ACCEL_PEDAL",       "accel_pedal_position" },   /* Ford FG */
+
+    /* Pressure / boost / air flow */
+    { "MGP",               "boost_pressure" },         /* Link manifold gauge pressure */
+    { "BRAKE_PRESSURE",    "brake_pressure_front" },   /* Haltech */
+    { "MAF",               "mass_air_flow" },          /* Link */
+
+    /* Electrical */
+    { "ECU_VOLTS",         "ecu_voltage" },            /* Link */
+
+    /* Fuel system */
+    { "DAMPED_FUEL_LVL",   "fuel_level" },             /* Ford BA/BF */
+    { "INSTANT_ECONOMY",   "fuel_consumption_instant" }, /* Ford BA/BF */
+    { "KM_RANGE",          "fuel_remaining_distance" },  /* Ford BA/BF */
+    { "ETHANOL",           "ethanol_pct" },            /* Link "ETHANOL %" */
+    { "FUEL_COMP",         "ethanol_pct" },            /* Haltech fuel composition */
+    { "INJ_PULSE_WIDTH",   "injector_pulse_width" },   /* Link */
+    { "INJECTOR_DC",       "injector_duty" },          /* Link */
+    { "FUEL_TRIM_ST_B1",   "short_term_fuel_trim" },   /* Haltech */
+    { "FUEL_TRIM_LT_B1",   "long_term_fuel_trim" },    /* Haltech */
+    { "FUEL_TRIM_B1",      "short_term_fuel_trim" },   /* MegaSquirt */
+
+    /* Lambda / wideband — bank 1/2 only; extra sensors fall to custom. */
+    { "LAMBDA_1",          "lambda_bank1" },           /* Link */
+    { "LAMBDA_2",          "lambda_bank2" },           /* Link */
+    { "LAMBDA_AFR1",       "lambda_bank1" },           /* MegaSquirt "LAMBDA (AFR1)" */
+    { "WIDEBAND_1",        "lambda_bank1" },           /* Haltech */
+    { "WIDEBAND_2",        "lambda_bank2" },           /* Haltech */
+
+    /* Ignition */
+    { "IGN_ANGLE_LEAD",    "ignition_timing" },        /* Haltech */
+
+    /* EGT — Haltech "EGT SENSOR N" / ECU Master "EGT N" → egt_cyl_1..8
+     * (probes 9-12 have no canonical and fall to custom). */
+    { "EGT_SENSOR_1",      "egt_cyl_1" },              /* Haltech */
+    { "EGT_SENSOR_2",      "egt_cyl_2" },
+    { "EGT_SENSOR_3",      "egt_cyl_3" },
+    { "EGT_SENSOR_4",      "egt_cyl_4" },
+    { "EGT_SENSOR_5",      "egt_cyl_5" },
+    { "EGT_SENSOR_6",      "egt_cyl_6" },
+    { "EGT_SENSOR_7",      "egt_cyl_7" },
+    { "EGT_SENSOR_8",      "egt_cyl_8" },
+    { "EGT_1",             "egt_cyl_1" },              /* ECU Master, MegaSquirt */
+    { "EGT_2",             "egt_cyl_2" },
+
+    /* Wheel speeds — both naming conventions in the catalog. */
+    { "WHEEL_SPD_FL",      "wheel_speed_fl" },         /* Ford FG */
+    { "WHEEL_SPD_FR",      "wheel_speed_fr" },
+    { "WHEEL_SPD_RL",      "wheel_speed_rl" },
+    { "WHEEL_SPD_RR",      "wheel_speed_rr" },
+    { "LF_WHEEL_SPEED",    "wheel_speed_fl" },         /* Link */
+    { "RF_WHEEL_SPEED",    "wheel_speed_fr" },
+    { "LR_WHEEL_SPEED",    "wheel_speed_rl" },
+    { "RR_WHEEL_SPEED",    "wheel_speed_rr" },
 };
 static const size_t ECU_SIGNAL_ALIASES_COUNT =
     sizeof(ECU_SIGNAL_ALIASES) / sizeof(ECU_SIGNAL_ALIASES[0]);
