@@ -658,13 +658,22 @@ static void _apply_selection(picker_st_t *st)
     if (!st->apply_cb || st->sel_sig < 0) return;
     const preconfig_item_t *it = _resolve_item(st->sel_sig);
     if (!it) return;
-    st->apply_cb(it, st->apply_cb_ctx);
+    /* Capture the callback + ctx, then update the preview label BEFORE invoking
+     * it. The apply callback may tear down the picker — the wizard bind-sheet
+     * closes itself (lv_obj_del) on apply — which frees `st` and `preview_lbl`.
+     * Touching them after the callback was a use-after-free (crash in
+     * lv_label_set_text -> lv_obj_invalidate -> lv_obj_get_disp). So the
+     * callback MUST be the last thing we do with `st`. `it` points into the
+     * static preconfig tables, so it stays valid across the callback. */
+    preset_apply_cb_t cb = st->apply_cb;
+    void *cb_ctx = st->apply_cb_ctx;
     if (st->preview_lbl) {
         char buf[96];
         snprintf(buf, sizeof(buf), LV_SYMBOL_OK "  Applied: %s", it->label);
         lv_label_set_text(st->preview_lbl, buf);
         lv_obj_set_style_text_color(st->preview_lbl, THEME_COLOR_GREEN, 0);
     }
+    cb(it, cb_ctx);   /* may free st — do NOT touch st after this */
 }
 
 static void sig_click_cb(lv_event_t *e)
