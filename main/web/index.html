@@ -17452,11 +17452,13 @@
             });
             if (compHits.length === 1) return compHits[0];
 
-            const channelParts = lcId.split('_').filter(p => p.length > 2);
-            for (const p of channelParts) {
-                const hits = candidates.filter(n => _normalizeName(n) === p);
-                if (hits.length === 1) return hits[0];
-            }
+            /* Removed the loose "channel-parts" fallback: it matched a single
+             * PART of a channel id to a whole signal — e.g. egt_cyl_1..8 all
+             * matched the one "EGT" signal — binding many distinct channels to
+             * ONE shared signal, so testing one widget moved them all. Auto-bind
+             * now requires an exact (normalized) name match, or a single signal
+             * that contains the full channel id as a component. Channels with no
+             * match stay unbound (no signal) until their CAN decode is set up. */
             return null;
         }
 
