@@ -70,6 +70,20 @@ struct channel {
 	char     signal_name[32];
 	int16_t  signal_index;           /* -1 if unbound */
 
+	/* CAN decode (ADR 0005) — the channel OWNS its decode so it is
+	 * device-local and survives layout changes / sharing. Meaningful only for
+	 * CAN-sourced channels; can_id == 0 means "no decode" (internal/OBD2/unset).
+	 * channel_manager_register_decoded_signals() registers a registry signal
+	 * named signal_name with these params so signal_dispatch_frame decodes it. */
+	uint32_t can_id;
+	uint8_t  bit_start;
+	uint8_t  bit_length;
+	float    decode_scale;
+	float    decode_offset;
+	bool     is_signed;
+	uint8_t  endian;                 /* 0 = Motorola (big), 1 = Intel (little) */
+	char     decode_unit[8];
+
 	/* Format */
 	char     units_native[8];
 	char     units_display[8];
@@ -235,6 +249,25 @@ size_t channel_manager_dispatch_signal(uint16_t signal_index, float value, bool 
  * the signal registry has changed (layout reload, ECU preset change).
  */
 void channel_manager_resolve_signals(void);
+
+/**
+ * Register a runtime signal for every channel that owns a CAN decode (ADR
+ * 0005), then subscribe each channel to it. This makes the signal-dispatch
+ * engine channel-driven so the bus is decoded from channels.json rather than
+ * the layout's signals[]. UPSERTs, so calling it after a layout's _load_signals
+ * makes the channel's decode authoritative over any embedded layout signal of
+ * the same name. Safe to call repeatedly.
+ */
+void channel_manager_register_decoded_signals(void);
+
+/**
+ * One-time v2->v3 migration: seed each channel's decode from the currently
+ * registered signal of the same name (i.e. from the active layout's signals[]),
+ * so existing devices move their decode into channels.json. MUST run after the
+ * active layout's _load_signals has populated the registry. No-op once the file
+ * is at schema v3. Persists on change.
+ */
+void channel_manager_migrate_decode_from_registry(void);
 
 /* ── Backwards-compatible migration helpers ──────────────────────── */
 
