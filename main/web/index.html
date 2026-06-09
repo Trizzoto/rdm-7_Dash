@@ -9564,6 +9564,24 @@
                         <button class="danger" onclick="_widgetUnbindChannel()">Unbind</button>
                     </div>`;
 
+                    /* ── Shared-signal note (informational, not a warning) ──
+                     * Sharing a signal across channels is normal and is how
+                     * layouts stay portable, so this is a neutral FYI — no
+                     * alarm styling. It just tells the user these channels
+                     * track together (one test/alert moves all) and offers an
+                     * optional fork if they actually wanted independent
+                     * sources. (The old fuzzy auto-matcher used to create
+                     * unwanted shares; that's fixed + healed on the firmware
+                     * side, but a hand-built layout may still share on purpose.) */
+                    const _shareN = _effCh.signal ? _chSignalShareCount(_effCh.signal, _effCh.id) : 0;
+                    if (_shareN > 0) {
+                        const _canFork = (currentLayout.signals || []).some(s => s.name === _effCh.signal);
+                        html += `<div style="margin-top:6px; padding:7px 9px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:11px; color:var(--text-muted); line-height:1.5;">
+                            Signal <b style="color:var(--text);">${_effCh.signal}</b> also drives ${_shareN} other channel${_shareN > 1 ? 's' : ''}. They share one source, so they read the same value and respond to the same test &amp; alerts — expected for shared layouts.
+                            ${_canFork ? `<div style="margin-top:7px;"><button class="btn btn-secondary" style="font-size:11px;" onclick="_widgetForkSharedSignal()" ${disabledAttr}>Use a separate copy for this channel</button></div>` : ''}
+                        </div>`;
+                    }
+
                     /* ── Value Labels for CHANNEL-BOUND widgets (TASK 15) ──
                      * The value→label map lives on the backing SIGNAL (the
                      * same field the legacy raw-signal branch below edits) and
@@ -17174,6 +17192,23 @@
             const w = currentLayout.widgets[selectedIndex];
             delete w.channel;
             w.signal = '';
+            renderEditor();
+            updateInspector();
+            if (typeof saveLayout === 'function') saveLayout();
+        }
+
+        /* Break a shared-signal binding for the selected widget's channel by
+         * forking the signal into a private per-channel copy, then re-point the
+         * widget's cached w.signal at the new name. Backs the inspector's
+         * "Give this channel its own signal" affordance. */
+        async function _widgetForkSharedSignal() {
+            if (selectedIndex < 0) return;
+            const w = currentLayout.widgets[selectedIndex];
+            const ch = _widgetEffectiveChannel(w);
+            if (!ch || !ch.signal) return;
+            await _chForkSignal(ch.id, ch.signal);
+            const newCh = (_chCache || []).find(c => c.id === ch.id);
+            if (newCh && newCh.signal) w.signal = newCh.signal;
             renderEditor();
             updateInspector();
             if (typeof saveLayout === 'function') saveLayout();

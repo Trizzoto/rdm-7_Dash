@@ -39,6 +39,11 @@ static const char *TAG = "channel_mgr";
 #define CHM_GROW_CHUNK  16
 #define CHM_MAX         128
 
+/* channels.json on-disk schema. v2 adds the one-time shared-binding heal
+ * migration (see channel_manager_load_from_lfs). Bumping this re-runs any
+ * future one-shot migrations exactly once on an older file. */
+#define CHM_SCHEMA_VERSION 2
+
 #define CHM_FILE_PATH    "/lfs/channels.json"
 #define CHM_TMP_PATH     CHM_FILE_PATH ".tmp"      /* atomic-write staging file */
 #define CHM_BAK_PATH     CHM_FILE_PATH ".bak"      /* previous-good recovery copy */
@@ -862,6 +867,93 @@ static cJSON *chm_read_and_parse(const char *path, bool *out_existed) {
 	return root;   /* NULL if parse failed */
 }
 
+/* ── Heal: break spurious shared signal bindings ──────────────────────
+ *
+ * Before commit d9c8130 the web editor's _strictSignalMatch had a loose
+ * fallback that matched a single PART of a channel id to a whole signal, so a
+ * family of distinct canonical channels (egt_cyl_1..8) could all auto-bind to
+ * one shared signal (EGT). That binding got persisted into channels.json, and
+ * the web fix only prevents NEW mis-binds — it does NOT heal a file that
+ * already has them. Symptom: every widget bound to those channels resolves to
+ * the same signal_index, so injecting a test value into one moves them all,
+ * and warnings/alerts compare against the wrong source.
+ *
+ * Heal pass: find groups of >= 2 CANONICAL channels sharing the same non-empty
+ * signal_name. Within a group keep the single channel whose normalized id
+ * equals the normalized signal name (the genuine match, if exactly one
+ * exists) and clear the binding on the rest; if no unambiguous keeper exists,
+ * clear them all. Cleared channels keep their identity + metadata — only the
+ * signal source is dropped, so they light up again the moment the user
+ * re-binds a real source. Custom channels are never touched (the user bound
+ * those explicitly). Idempotent: a re-run on a healed file finds no groups. */
+static void chm_normalize_name(const char *in, char *out, size_t cap) {
+	size_t j = 0;
+	for (size_t i = 0; in && in[i] && j + 1 < cap; ++i) {
+		char ch = in[i];
+		if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+		if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+			out[j++] = ch;
+		/* Separators (_ / space / -) are dropped so "egt_cyl_1" -> "egtcyl1",
+		 * "EGT" -> "egt", "COOLANT_TEMP" -> "coolanttemp". */
+	}
+	out[j] = '\0';
+}
+
+static int chm_heal_shared_bindings(void) {
+	int cleared = 0;
+	for (size_t i = 0; i < s_count; ++i) {
+		channel_t *ci = s_channels[i];
+		if (!ci->is_canonical || ci->signal_name[0] == '\0') continue;
+
+		/* Collect canonical channels sharing this exact signal_name. Cleared
+		 * channels (below) get an empty signal_name, so later iterations skip
+		 * them and groups are never double-processed. */
+		size_t group[CHM_MAX];
+		size_t gn = 0;
+		for (size_t k = 0; k < s_count && gn < CHM_MAX; ++k) {
+			channel_t *ck = s_channels[k];
+			if (ck->is_canonical && ck->signal_name[0] != '\0' &&
+			    strcmp(ck->signal_name, ci->signal_name) == 0)
+				group[gn++] = k;
+		}
+		if (gn < 2) continue;   /* not shared */
+
+		/* Unambiguous keeper: exactly one channel whose normalized id matches
+		 * the normalized signal name. */
+		char sig_norm[40];
+		chm_normalize_name(ci->signal_name, sig_norm, sizeof(sig_norm));
+		int keep = -1, keep_hits = 0;
+		for (size_t g = 0; g < gn; ++g) {
+			char id_norm[40];
+			chm_normalize_name(s_channels[group[g]]->id, id_norm, sizeof(id_norm));
+			if (strcmp(id_norm, sig_norm) == 0) { keep = (int)group[g]; keep_hits++; }
+		}
+		if (keep_hits != 1) keep = -1;   /* ambiguous -> clear all */
+
+		for (size_t g = 0; g < gn; ++g) {
+			size_t idx = group[g];
+			if ((int)idx == keep) continue;
+			channel_t *c = s_channels[idx];
+			ESP_LOGW(TAG, "heal: channel '%s' shared signal '%s' with %u other "
+			         "channel(s) — unbinding (re-assign a source in the editor)",
+			         c->id, c->signal_name, (unsigned)(gn - 1));
+			if (c->signal_index >= 0) {
+				signal_unsubscribe(c->signal_index, chm_signal_cb, c);
+				c->signal_index = -1;
+			}
+			c->signal_name[0] = '\0';
+			c->is_stale = true;
+			cleared++;
+		}
+	}
+	if (cleared > 0) {
+		ESP_LOGW(TAG, "heal: cleared %d spurious shared signal binding(s); "
+		         "those channels now need a source re-assigned", cleared);
+		s_dirty = true;
+	}
+	return cleared;
+}
+
 esp_err_t channel_manager_load_from_lfs(void) {
 	bool existed = false;
 	cJSON *root = chm_read_and_parse(CHM_FILE_PATH, &existed);
@@ -906,6 +998,9 @@ esp_err_t channel_manager_load_from_lfs(void) {
 		}
 	}
 
+	cJSON *jver = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	int file_ver = cJSON_IsNumber(jver) ? jver->valueint : 1;
+
 	cJSON *chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
 	if (!cJSON_IsArray(chans)) { cJSON_Delete(root); return ESP_OK; }
 
@@ -933,6 +1028,25 @@ esp_err_t channel_manager_load_from_lfs(void) {
 	}
 
 	cJSON_Delete(root);
+
+	/* One-time migration (channels.json schema v1 -> v2): heal any pre-d9c8130
+	 * shared signal bindings left by the old fuzzy auto-matcher, which bound
+	 * DISTINCT canonical channels (egt_cyl_1..8) to one signal. This runs
+	 * exactly once — on the first boot of a pre-v2 file — so it cleans up the
+	 * legacy artifact WITHOUT ever touching shares the user sets up on purpose
+	 * later (deliberate signal sharing is how layouts stay portable). After the
+	 * version bump below, the pass never re-runs. */
+	if (file_ver < CHM_SCHEMA_VERSION) {
+		int healed = chm_heal_shared_bindings();
+		ESP_LOGI(TAG, "channels.json migrate v%d->%d (%d shared binding(s) healed)",
+		         file_ver, CHM_SCHEMA_VERSION, healed);
+		/* Persist the version bump even when nothing was healed, so the
+		 * one-time pass doesn't re-scan — and can't clear an intentional
+		 * share — on subsequent boots. */
+		s_dirty = true;
+		channel_manager_save_to_lfs();
+	}
+
 	s_dirty = false;
 	ESP_LOGI(TAG, "loaded %zu channels from %s", s_count, CHM_FILE_PATH);
 	return ESP_OK;
@@ -941,7 +1055,7 @@ esp_err_t channel_manager_load_from_lfs(void) {
 esp_err_t channel_manager_save_to_lfs(void) {
 	cJSON *root = cJSON_CreateObject();
 	if (!root) return ESP_ERR_NO_MEM;
-	cJSON_AddNumberToObject(root, "schema_version", 1);
+	cJSON_AddNumberToObject(root, "schema_version", CHM_SCHEMA_VERSION);
 
 	cJSON *arr = cJSON_AddArrayToObject(root, "channels");
 	for (size_t i = 0; i < s_count; ++i) {

@@ -1172,7 +1172,20 @@ static void _warning_on_channel_changed(channel_t *c, void *user_data) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	if (!wd) return;
 	safe_strncpy(wd->signal_name, c->signal_name, sizeof(wd->signal_name));
-	wd->signal_index = c->signal_index;
+	/* Re-point our signal subscription when the channel's source index moved
+	 * (e.g. the user just configured this channel's CAN decode in the editor).
+	 * Previously we only stored the new index and never (un)subscribed, so an
+	 * alert bound to an as-yet-unconfigured channel stayed dark even after the
+	 * channel was wired up, and a rebind left us listening to the old signal.
+	 * Mirrors _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != wd->signal_index) {
+		if (wd->signal_index >= 0)
+			signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
+		wd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _warning_on_signal, w);
+	}
 	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
@@ -1366,10 +1379,18 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
 		safe_strncpy(wd->channel_id, ch_item->valuestring, sizeof(wd->channel_id));
 	channel_t *bound_c = wd->channel_id[0] ? channel_manager_get(wd->channel_id) : NULL;
-	if (bound_c && bound_c->signal_index >= 0) {
+	if (bound_c) {
+		/* Attach to the channel even when it has no signal yet, so the
+		 * channel-changed listener fires (and _warning_on_channel_changed
+		 * subscribes) the moment the user configures this channel's source.
+		 * Previously this branch was gated on signal_index >= 0, leaving an
+		 * alert bound to an unconfigured channel permanently dark until a full
+		 * layout reload. */
 		wd->channel = bound_c;
-		safe_strncpy(wd->signal_name, bound_c->signal_name, sizeof(wd->signal_name));
-		wd->signal_index = bound_c->signal_index;
+		if (bound_c->signal_index >= 0) {
+			safe_strncpy(wd->signal_name, bound_c->signal_name, sizeof(wd->signal_name));
+			wd->signal_index = bound_c->signal_index;
+		}
 	} else if (wd->signal_name[0] != '\0') {
 		legacy_widget_data_t legacy = {
 			.signal_name = wd->signal_name,
