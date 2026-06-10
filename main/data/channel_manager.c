@@ -20,6 +20,7 @@
 #include "canonical_channels.h"
 #include "signal.h"
 #include "layout/ecu_presets.h"
+#include "ui/lvgl_helpers.h"   /* rdm_lvgl_lock / rdm_lvgl_unlock */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"    /* esp_register_shutdown_handler */
@@ -1361,8 +1362,26 @@ esp_err_t channel_manager_load_from_lfs(void) {
 }
 
 esp_err_t channel_manager_save_to_lfs(void) {
+	/* Serialize the live channel array under the LVGL mutex. Every mutator
+	 * (web handlers, the on-device wizard, signal dispatch) runs on the LVGL
+	 * task or holds this lock, and channel_manager_delete() frees + swap-
+	 * removes an entry — so iterating s_channels from the esp_timer debounce-
+	 * save task (chm_save_timer_cb) without the lock could read freed memory or
+	 * a torn signal_name/label string and persist garbage. Build the JSON
+	 * STRING under the lock, then do the slow flash I/O unlocked so rendering
+	 * isn't stalled. The mutex is recursive, so callers already holding it
+	 * (end_bulk on the LVGL task) are fine; on a lock timeout (LVGL wedged —
+	 * which also means nothing is concurrently mutating) fall back to an
+	 * unguarded build rather than dropping the save. */
+	bool locked = rdm_lvgl_lock(500);
+	if (!locked)
+		ESP_LOGW(TAG, "save: LVGL lock timeout — serializing unguarded");
+
 	cJSON *root = cJSON_CreateObject();
-	if (!root) return ESP_ERR_NO_MEM;
+	if (!root) {
+		if (locked) rdm_lvgl_unlock();
+		return ESP_ERR_NO_MEM;
+	}
 	/* Emit the tracked on-disk version (not the compile-time constant): stays
 	 * at the pre-migration version until the v2->v3 decode migration completes,
 	 * so a reboot in that window still re-runs the migration. */
@@ -1373,9 +1392,11 @@ esp_err_t channel_manager_save_to_lfs(void) {
 		cJSON *jc = channel_to_json(s_channels[i]);
 		if (jc) cJSON_AddItemToArray(arr, jc);
 	}
+	size_t saved_count = s_count;
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
+	if (locked) rdm_lvgl_unlock();
 	if (!json) return ESP_ERR_NO_MEM;
 
 	size_t len = strlen(json);
@@ -1427,7 +1448,7 @@ esp_err_t channel_manager_save_to_lfs(void) {
 	}
 
 	s_dirty = false;
-	ESP_LOGI(TAG, "saved %zu channels to %s", s_count, CHM_FILE_PATH);
+	ESP_LOGI(TAG, "saved %zu channels to %s", saved_count, CHM_FILE_PATH);
 	return ESP_OK;
 }
 
