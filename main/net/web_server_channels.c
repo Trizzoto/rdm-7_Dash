@@ -671,7 +671,24 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* Read the active layout (for the ECU make/version highlight) BEFORE taking
+	 * the lock — it's LittleFS I/O with no live state, and this handler used to
+	 * hold the LVGL mutex across the read (plus the whole ~98 KB build),
+	 * freezing rendering ~1.9 s every time the source picker opened. Moving the
+	 * filesystem read out shortens the lock hold; the live-signal reads in the
+	 * build still need it. (Remaining: snapshot signals to move the build out
+	 * too.) */
+	cJSON *layout_root = _load_active_layout_root();
+	const char *active_make = NULL, *active_version = NULL;
+	if (layout_root) {
+		cJSON *jmake = cJSON_GetObjectItemCaseSensitive(layout_root, "ecu");
+		cJSON *jver  = cJSON_GetObjectItemCaseSensitive(layout_root, "ecu_version");
+		if (cJSON_IsString(jmake)) active_make    = jmake->valuestring;
+		if (cJSON_IsString(jver))  active_version = jver->valuestring;
+	}
+
 	if (!rdm_lvgl_lock(500)) {
+		if (layout_root) cJSON_Delete(layout_root);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
 		return ESP_FAIL;
 	}
@@ -694,17 +711,8 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 	cJSON_AddStringToObject(root, "channel_id", channel_id);
 	cJSON_AddStringToObject(root, "current_signal", current_signal);
 
-	/* What ECU make+version is the layout currently configured for? */
-	cJSON *layout_root = _load_active_layout_root();
-	const char *active_make = NULL, *active_version = NULL;
-	if (layout_root) {
-		cJSON *jmake = cJSON_GetObjectItemCaseSensitive(layout_root, "ecu");
-		cJSON *jver  = cJSON_GetObjectItemCaseSensitive(layout_root, "ecu_version");
-		if (cJSON_IsString(jmake)) active_make    = jmake->valuestring;
-		if (cJSON_IsString(jver))  active_version = jver->valuestring;
-	}
-
-	/* Build the unified makes[] response. Each entry has its versions[]
+	/* active_make / active_version were read from the layout above, before the
+	 * lock. Build the unified makes[] response. Each entry has its versions[]
 	 * array, each version has its signals[] array of pickable rows.
 	 * Three-level drilldown: Make → Version → Signal.
 	 *
@@ -871,8 +879,8 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(makes_arr, make_obj);
 	}
 
-	if (layout_root) cJSON_Delete(layout_root);
 	rdm_lvgl_unlock();
+	if (layout_root) cJSON_Delete(layout_root);
 
 	char *json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
