@@ -655,6 +655,46 @@ static void lv_arc_draw(lv_event_t * e)
     lv_coord_t arc_r;
     get_center(obj, &center, &arc_r);
 
+    /* RDM-7 patch: hollow-arc cover skip. An arc's object area is the full
+     * bounding square, but its drawable pixels live only in the ring annulus
+     * (bg/indicator arcs + knob). lv_draw_arc still sets up and evaluates its
+     * angle/radius masks across whatever clip area it is given, so a dirty
+     * rect deep inside the hole (e.g. a meter needle sweeping at the center
+     * of a large enclosing arc gauge) pays the full mask cost for pixels the
+     * arc can never touch. If the entire clip area lies inside a
+     * conservatively shrunken inner hole — inner ring edge minus knob
+     * pads/shadow/outline and a safety margin — nothing of this widget can
+     * intersect it: skip the draw. Measured on the bench layout (two 600px
+     * arcs enclosing a 450px RPM meter): this was ~half the per-frame render
+     * cost. */
+    {
+        lv_coord_t bg_w = lv_obj_get_style_arc_width(obj, LV_PART_MAIN);
+        lv_coord_t ind_w = lv_obj_get_style_arc_width(obj, LV_PART_INDICATOR);
+        lv_coord_t ind_pad = LV_MAX4(lv_obj_get_style_pad_left(obj, LV_PART_INDICATOR),
+                                     lv_obj_get_style_pad_right(obj, LV_PART_INDICATOR),
+                                     lv_obj_get_style_pad_top(obj, LV_PART_INDICATOR),
+                                     lv_obj_get_style_pad_bottom(obj, LV_PART_INDICATOR));
+        lv_coord_t knob_pad = LV_MAX4(lv_obj_get_style_pad_left(obj, LV_PART_KNOB),
+                                      lv_obj_get_style_pad_right(obj, LV_PART_KNOB),
+                                      lv_obj_get_style_pad_top(obj, LV_PART_KNOB),
+                                      lv_obj_get_style_pad_bottom(obj, LV_PART_KNOB));
+        /* Deepest inward reach of any drawable part, from the outer radius:
+         * max(bg ring width, indicator pad + ring width) plus the knob's
+         * inward overhang beyond the indicator ring (pads + shadow/outline). */
+        lv_coord_t reach = LV_MAX(bg_w, ind_pad + ind_w) + knob_pad + knob_get_extra_size(obj);
+        lv_coord_t hole_r = arc_r - reach - 2; /* -2: rounding safety margin */
+        if(hole_r > 0) {
+            const lv_area_t * clip = draw_ctx->clip_area;
+            int32_t r2 = (int32_t)hole_r * hole_r;
+            int32_t dx1 = clip->x1 - center.x, dx2 = clip->x2 - center.x;
+            int32_t dy1 = clip->y1 - center.y, dy2 = clip->y2 - center.y;
+            if(dx1 * dx1 + dy1 * dy1 <= r2 && dx2 * dx2 + dy1 * dy1 <= r2 &&
+               dx1 * dx1 + dy2 * dy2 <= r2 && dx2 * dx2 + dy2 * dy2 <= r2) {
+                return;
+            }
+        }
+    }
+
     lv_obj_draw_part_dsc_t part_draw_dsc;
     lv_obj_draw_dsc_init(&part_draw_dsc, draw_ctx);
 
