@@ -25,6 +25,12 @@ typedef struct {
 	/* ── v14 channel binding ─────────────────────────────────── */
 	char       channel_id[32];
 	void      *channel;     /* channel_t* — opaque */
+	/* Last string written to the label by _text_on_signal. lv_label_set_text
+	 * invalidates even when the text is unchanged, so without this memo a
+	 * 170 px GEAR/SPEED text re-invalidates its whole glyph area at CAN rate
+	 * while showing the same string. Cleared ("") wherever the label text is
+	 * set outside the signal path so the next tick re-syncs. */
+	char       last_value_text[32];
 	lv_color_t text_color;
 	int16_t    rotation;       /* Rotation in degrees (0-359, default 0) */
 	/* Night-mode appearance overrides (only applied when night_mode active) */

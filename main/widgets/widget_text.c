@@ -36,17 +36,27 @@ static void _text_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	if (!w->root || !lv_obj_is_valid(w->root)) return;
 	text_data_t *td = (text_data_t *)w->type_data;
-	if (is_stale) {
-		lv_label_set_text(w->root, "--");
-		return;
-	}
 	char buf[32];
-	/* Route through signal_format_value so an attached value→label map
-	 * on the bound signal renders here as the label (e.g. GEAR 0 -> "N")
-	 * rather than the raw integer. Falls back to decimals-aware numeric
-	 * formatting when no map / no match. */
-	signal_format_value(td ? td->signal_index : -1, value,
-						td ? td->decimals : 0, buf, sizeof(buf));
+	if (is_stale) {
+		strcpy(buf, "--");
+	} else {
+		/* Route through signal_format_value so an attached value→label map
+		 * on the bound signal renders here as the label (e.g. GEAR 0 -> "N")
+		 * rather than the raw integer. Falls back to decimals-aware numeric
+		 * formatting when no map / no match. */
+		signal_format_value(td ? td->signal_index : -1, value,
+							td ? td->decimals : 0, buf, sizeof(buf));
+	}
+	/* Skip the redundant set: lv_label_set_text invalidates the whole glyph
+	 * area even when the string is identical, so an unchanged GEAR/SPEED text
+	 * re-invalidated a 170 px region at CAN rate (paint-memo pattern, same as
+	 * panel's last_display). */
+	if (td) {
+		if (strncmp(td->last_value_text, buf, sizeof(td->last_value_text)) == 0)
+			return;
+		strncpy(td->last_value_text, buf, sizeof(td->last_value_text) - 1);
+		td->last_value_text[sizeof(td->last_value_text) - 1] = '\0';
+	}
 	lv_label_set_text(w->root, buf);
 }
 
@@ -92,11 +102,16 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *resolved = td ? widget_resolve_font(td->font) : NULL;
 	lv_obj_set_style_text_font(label, resolved ? resolved : THEME_FONT_BODY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	/* Show static text if no signal bound, otherwise "--" until signal arrives */
-	if (td && td->signal_index < 0 && td->static_text[0] != '\0')
+	/* Show static text if no signal bound, otherwise "--" until signal arrives.
+	 * Sync the paint memo with whatever we set so _text_on_signal's
+	 * unchanged-string skip stays coherent with the label content. */
+	if (td && td->signal_index < 0 && td->static_text[0] != '\0') {
 		lv_label_set_text(label, td->static_text);
-	else
+		safe_strncpy(td->last_value_text, td->static_text, sizeof(td->last_value_text));
+	} else {
 		lv_label_set_text(label, "--");
+		if (td) safe_strncpy(td->last_value_text, "--", sizeof(td->last_value_text));
+	}
 
 	/* Apply rotation if set */
 	if (td && td->rotation != 0) {
@@ -331,14 +346,21 @@ static bool _text_inspector_set(widget_t *w, const char *name,
 		if (new_idx >= 0)
 			signal_subscribe(new_idx, _text_on_signal, w);
 		/* If newly unbound, fall back to static_text immediately. */
-		if (new_idx < 0 && lbl && lv_obj_is_valid(lbl))
+		if (new_idx < 0 && lbl && lv_obj_is_valid(lbl)) {
 			lv_label_set_text(lbl, td->static_text[0] ? td->static_text : "--");
+			safe_strncpy(td->last_value_text,
+			             td->static_text[0] ? td->static_text : "--",
+			             sizeof(td->last_value_text));
+		}
 		return true;
 	}
 	if (strcmp(name, "static_text") == 0 && in->str) {
 		safe_strncpy(td->static_text, in->str, sizeof(td->static_text));
-		if (lbl && lv_obj_is_valid(lbl) && td->signal_index < 0)
+		if (lbl && lv_obj_is_valid(lbl) && td->signal_index < 0) {
 			lv_label_set_text(lbl, td->static_text);
+			safe_strncpy(td->last_value_text, td->static_text,
+			             sizeof(td->last_value_text));
+		}
 		return true;
 	}
 	if (strcmp(name, "font") == 0 && in->str) {
