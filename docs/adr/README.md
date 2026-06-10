@@ -12,7 +12,9 @@ Read the relevant ADR before changing the area it covers. The "we already tried 
 | [0002](0002-web-server-split-roadmap.md) | Complete | Splitting the monolithic `web_server.c` by concern | `main/net/web_server*.c` |
 | [0003](0003-desktop-index-sync-plan.md) | Implemented | Plan for syncing `rdm7-desktop/src/index.html` with the firmware copy | `../rdm7-desktop/src/index.html`, `../rdm7-desktop/src/transport.js` |
 | [0004](0004-performance-budgets.md) | Proposed | Documented performance budgets (heap, OTA partition, URI handlers, layout JSON) | repo-wide |
-| [0005](0005-html-source-of-truth.md) | Accepted | Three HTML copies — why they exist and the codegen plan to collapse them | `main/web/index.html`, `../rdm7-desktop/src/index.html`, `schema/widgets.schema.json` |
+| [0005](0005-channel-owned-decode.md) | Accepted | Channel-owned CAN decode for portable layouts (decode moves layout `signals[]` → `channels.json`) | `main/data/channel_manager.c`, `main/layout/*`, `schema/canonical_channels.md` |
+| [0006](0006-channel-architecture-v2.md) | Accepted | Channel architecture v2 — canonical channel registry as the binding layer | `main/data/canonical_channels.c`, `main/data/channel_manager.c` |
+| [0007](0007-html-source-of-truth.md) | Accepted | Three HTML copies — why they exist and the codegen plan to collapse them | `main/web/index.html`, `../rdm7-desktop/src/index.html`, `schema/widgets.schema.json` |
 
 ## When to write a new ADR
 
@@ -59,4 +61,4 @@ Existing ADRs vary slightly from this skeleton — none rigorous. Match the surr
 
 ## Numbering
 
-Strictly sequential. The next ADR is `0006`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0006-abandoned.md` with one line of explanation).
+Strictly sequential. The next ADR is `0008`. Don't reuse numbers, even if a draft is abandoned — leave a stub if needed (`0008-abandoned.md` with one line of explanation).
