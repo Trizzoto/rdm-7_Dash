@@ -602,17 +602,39 @@ static bool _obd2_name_known(const char *name) {
  * Live values come straight from the signal registry, so the user sees
  * which option is producing data right now. */
 
+/* A frozen copy of one registry signal's pickable state. The source-options
+ * handler snapshots the whole registry into an array of these under a brief
+ * LVGL lock, then builds the (~98 KB) response from the snapshot UNLOCKED so
+ * the dashboard never freezes for the duration of the JSON build (H15). */
+typedef struct {
+	char    name[32];
+	char    unit[8];
+	uint8_t source;          /* signal_source_t */
+	float   current_value;
+	bool    is_stale;
+} sig_snapshot_t;
+
+/* Find a snapshot row by exact name, or NULL. */
+static const sig_snapshot_t *_snap_find(const sig_snapshot_t *snap, uint16_t n,
+                                        const char *name) {
+	if (!snap || !name || !name[0]) return NULL;
+	for (uint16_t i = 0; i < n; ++i)
+		if (strcmp(snap[i].name, name) == 0) return &snap[i];
+	return NULL;
+}
+
 /* Attribute live registry state to a picker row ONLY when the registered
  * signal's provenance matches the row's section (@p expected). Without this
  * gate a raw-CAN signal that happens to share an OBD2 PID name (RPM,
  * COOLANT_TEMP, VEHICLE_SPEED, …) would make the OBD2 row light up with the
  * CAN signal's live value — "CAN leaking through as OBD2". Provenance is the
- * authoritative signal_t.source, not a name match. */
-static void _add_live_signal_state(cJSON *out, const char *signal_name,
+ * authoritative signal_t.source, not a name match. Reads the pre-taken
+ * snapshot — never the live registry — so it is safe to call unlocked. */
+static void _add_live_signal_state(cJSON *out, const sig_snapshot_t *snap,
+                                   uint16_t snap_n, const char *signal_name,
                                    signal_source_t expected) {
 	if (!out || !signal_name || !signal_name[0]) return;
-	int16_t idx = signal_find_by_name(signal_name);
-	signal_t *s = (idx >= 0) ? signal_get_by_index((uint16_t)idx) : NULL;
+	const sig_snapshot_t *s = _snap_find(snap, snap_n, signal_name);
 	bool match = s && ((signal_source_t)s->source == expected);
 	cJSON_AddBoolToObject(out, "exists_in_layout", match);
 	if (!match) return;
@@ -687,22 +709,55 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		if (cJSON_IsString(jver))  active_version = jver->valuestring;
 	}
 
+	/* Snapshot everything that needs the LVGL lock into local memory, then
+	 * release the lock and build the response from the snapshot. The build
+	 * iterates ~180 preconfig rows + 200 signal slots and emits ~98 KB of
+	 * cJSON; doing that under the lock froze rendering ~1.9 s every time the
+	 * picker opened (H15). The lock now covers only the O(N) copy below. */
+	sig_snapshot_t *snap = malloc(sizeof(sig_snapshot_t) * MAX_SIGNALS);
+	if (!snap) {
+		if (layout_root) cJSON_Delete(layout_root);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	char current_signal[32] = {0};
+	uint16_t snap_n = 0;
+
 	if (!rdm_lvgl_lock(500)) {
+		free(snap);
 		if (layout_root) cJSON_Delete(layout_root);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
 		return ESP_FAIL;
 	}
 
 	channel_t *c = channel_manager_get(channel_id);
-	const char *current_signal = c ? c->signal_name : "";
+	if (c) {
+		strncpy(current_signal, c->signal_name, sizeof(current_signal) - 1);
+		current_signal[sizeof(current_signal) - 1] = '\0';
+	}
+	uint16_t sig_total = signal_get_count();
+	for (uint16_t i = 0; i < sig_total && snap_n < MAX_SIGNALS; ++i) {
+		signal_t *s = signal_get_by_index(i);
+		if (!s || s->name[0] == '\0') continue;
+		sig_snapshot_t *d = &snap[snap_n++];
+		strncpy(d->name, s->name, sizeof(d->name) - 1);
+		d->name[sizeof(d->name) - 1] = '\0';
+		strncpy(d->unit, s->unit, sizeof(d->unit) - 1);
+		d->unit[sizeof(d->unit) - 1] = '\0';
+		d->source        = s->source;
+		d->current_value = s->current_value;
+		d->is_stale      = s->is_stale;
+	}
+
+	rdm_lvgl_unlock();
+
 	/* Provenance of the currently-bound signal. A row is only "is_current" in
 	 * the section whose source matches it — so an OBD2 row never highlights as
 	 * the active source when the channel is really bound to a same-named CAN
 	 * signal (and vice-versa). */
 	signal_source_t current_src = SIGNAL_SOURCE_CAN;
 	if (current_signal[0]) {
-		int16_t csi = signal_find_by_name(current_signal);
-		signal_t *cs = (csi >= 0) ? signal_get_by_index((uint16_t)csi) : NULL;
+		const sig_snapshot_t *cs = _snap_find(snap, snap_n, current_signal);
 		if (cs) current_src = (signal_source_t)cs->source;
 		else if (_obd2_name_known(current_signal)) current_src = SIGNAL_SOURCE_OBD2;
 	}
@@ -802,7 +857,7 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		/* Live value only when a CAN-sourced signal of this name is registered
 		 * (ECU preset signals are broadcast CAN). A same-named OBD2/internal
 		 * signal must not light up the ECU row. */
-		_add_live_signal_state(o, sname, SIGNAL_SOURCE_CAN);
+		_add_live_signal_state(o, snap, snap_n, sname, SIGNAL_SOURCE_CAN);
 		cJSON_AddItemToArray(signals_arr, o);
 	}
 
@@ -834,7 +889,7 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 			/* Live state only from an actually-OBD2 signal of this name — a
 			 * raw-CAN signal sharing the PID's name (RPM, COOLANT_TEMP, …) must
 			 * NOT make this OBD2 row appear live/bound ("CAN leaking as OBD2"). */
-			_add_live_signal_state(o, d->signal_name, SIGNAL_SOURCE_OBD2);
+			_add_live_signal_state(o, snap, snap_n, d->signal_name, SIGNAL_SOURCE_OBD2);
 			cJSON_AddItemToArray(signals_arr, o);
 		}
 		cJSON_AddItemToArray(versions_arr, ver_obj);
@@ -852,10 +907,8 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		cJSON_AddStringToObject(ver_obj, "display", "Custom CAN + DBC imports");
 		cJSON_AddBoolToObject  (ver_obj, "is_active", false);
 		cJSON *signals_arr = cJSON_AddArrayToObject(ver_obj, "signals");
-		uint16_t sig_n = signal_get_count();
-		for (uint16_t i = 0; i < sig_n; ++i) {
-			signal_t *s = signal_get_by_index(i);
-			if (!s || s->name[0] == '\0') continue;
+		for (uint16_t i = 0; i < snap_n; ++i) {
+			const sig_snapshot_t *s = &snap[i];
 			/* Classify by PROVENANCE, not name. Only genuine CAN-sourced signals
 			 * belong here (DBC imports, user CAN frames, ECU-preset signals) —
 			 * OBD2 + internal signals live under their own makes. This is what
@@ -879,7 +932,7 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 		cJSON_AddItemToArray(makes_arr, make_obj);
 	}
 
-	rdm_lvgl_unlock();
+	free(snap);
 	if (layout_root) cJSON_Delete(layout_root);
 
 	char *json = cJSON_PrintUnformatted(root);
