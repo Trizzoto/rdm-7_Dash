@@ -842,6 +842,19 @@ bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
                                 uint8_t endian, const char *unit,
                                 bool persist_now) {
 	if (!c) return false;
+	/* Reject out-of-range decode geometry at the one authoritative writer so no
+	 * caller (web channels editor, ECU wizard, legacy layout import) can store a
+	 * binding that silently decodes to 0. A CAN frame is 8 bytes / 64 bits;
+	 * can_id is an 11-bit standard or 29-bit extended id (0 = unbound, in which
+	 * case the geometry is irrelevant and not checked). can_extract_bits also
+	 * guards OOB at decode time, but rejecting here keeps channels.json clean. */
+	if (can_id > 0x1FFFFFFF ||
+	    (can_id != 0 && (bit_length < 1 || bit_length > 64 ||
+	                     bit_start > 63 || bit_start + bit_length > 64))) {
+		ESP_LOGW(TAG, "set_decode rejected: can_id=0x%lX bit_start=%u bit_length=%u",
+		         (unsigned long)can_id, bit_start, bit_length);
+		return false;
+	}
 	c->can_id       = can_id;
 	c->bit_start    = bit_start;
 	c->bit_length   = bit_length;

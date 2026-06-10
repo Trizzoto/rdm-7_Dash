@@ -318,14 +318,51 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 
 	cJSON_Delete(root);
 
+	/* Validate every requested name against the live registry and report which
+	 * were injected vs unknown. The handler used to return {"status":"ok"}
+	 * unconditionally, so a typo'd signal name passed the POST then failed
+	 * mysteriously downstream (a real foot-gun for the agent test workflow). */
+	cJSON *resp = cJSON_CreateObject();
+	cJSON *injected = cJSON_AddArrayToObject(resp, "injected");
+	cJSON *unknown  = cJSON_AddArrayToObject(resp, "unknown");
+	bool any_known = false;
+	if (rdm_lvgl_lock(200)) {
+		for (uint8_t i = 0; i < batch->count; i++) {
+			if (signal_find_by_name(batch->entries[i].name) >= 0) {
+				cJSON_AddItemToArray(injected, cJSON_CreateString(batch->entries[i].name));
+				any_known = true;
+			} else {
+				cJSON_AddItemToArray(unknown, cJSON_CreateString(batch->entries[i].name));
+			}
+		}
+		rdm_lvgl_unlock();
+	} else {
+		/* Couldn't validate — best-effort report all as injected rather than
+		 * blocking the actual injection below. */
+		for (uint8_t i = 0; i < batch->count; i++)
+			cJSON_AddItemToArray(injected, cJSON_CreateString(batch->entries[i].name));
+		any_known = batch->count > 0;
+	}
+	cJSON_AddBoolToObject(resp, "ok", any_known);
+
+	/* signal_inject_test_value() no-ops on unknown names, so injecting the whole
+	 * batch is harmless; the response already told the caller what stuck. */
 	if (batch->count > 0)
 		rdm_async_call(_deferred_inject, batch);
 	else
 		free(batch);
 
+	char *out = cJSON_PrintUnformatted(resp);
+	cJSON_Delete(resp);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	return httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+	if (!out) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	esp_err_t e = httpd_resp_sendstr(req, out);
+	free(out);
+	return e;
 }
 
 /* ── Signal decode update (live, no layout reload) ──────────────────────────
@@ -394,12 +431,30 @@ static esp_err_t _signal_update_handler(httpd_req_t *req) {
 
 	strncpy(r->name, jname->valuestring, sizeof(r->name) - 1);
 	cJSON *it;
+	/* Read decode geometry into wide ints and bounds-check BEFORE narrowing to
+	 * uint8_t, so a bit_start of 300 is rejected rather than silently wrapping
+	 * to 44 and decoding garbage. A CAN frame is 8 bytes / 64 bits; can_id is
+	 * an 11-bit standard or 29-bit extended id (0 = unbound). */
 	it = cJSON_GetObjectItemCaseSensitive(root, "can_id");
-	r->can_id = cJSON_IsNumber(it) ? (uint32_t)it->valuedouble : 0;
+	double can_id_d = cJSON_IsNumber(it) ? it->valuedouble : 0;
 	it = cJSON_GetObjectItemCaseSensitive(root, "bit_start");
-	r->bit_start = cJSON_IsNumber(it) ? (uint8_t)it->valueint : 0;
+	int bit_start = cJSON_IsNumber(it) ? it->valueint : 0;
 	it = cJSON_GetObjectItemCaseSensitive(root, "bit_length");
-	r->bit_length = cJSON_IsNumber(it) ? (uint8_t)it->valueint : 8;
+	int bit_length = cJSON_IsNumber(it) ? it->valueint : 8;
+	if (can_id_d < 0 || can_id_d > 0x1FFFFFFF ||
+	    bit_start < 0 || bit_start > 63 ||
+	    bit_length < 1 || bit_length > 64 ||
+	    bit_start + bit_length > 64) {
+		cJSON_Delete(root);
+		free(r);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			"decode out of range (can_id<=0x1FFFFFFF, bit_start 0-63, "
+			"bit_length 1-64, bit_start+bit_length<=64)");
+		return ESP_FAIL;
+	}
+	r->can_id = (uint32_t)can_id_d;
+	r->bit_start = (uint8_t)bit_start;
+	r->bit_length = (uint8_t)bit_length;
 	it = cJSON_GetObjectItemCaseSensitive(root, "scale");
 	r->scale = cJSON_IsNumber(it) ? (float)it->valuedouble : 1.0f;
 	it = cJSON_GetObjectItemCaseSensitive(root, "offset");
