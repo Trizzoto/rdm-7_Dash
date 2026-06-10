@@ -18679,6 +18679,21 @@
             const id = _chSelectedId;
             const fields = _chPendingFields;
             _chPendingFields = {};
+            /* Re-queue the in-flight fields on failure so a dropped POST doesn't
+             * silently lose a threshold/decode edit (the input keeps showing the
+             * typed value while _chCache reverts on next render — the most
+             * safety-relevant editor in the app). Newer edits made during the
+             * fetch take precedence; older failed fields only fill the gaps. */
+            const _requeue = () => {
+                for (const k in fields)
+                    if (!(k in _chPendingFields)) _chPendingFields[k] = fields[k];
+                if (_chSelectedId === id && Object.keys(_chPendingFields).length) {
+                    if (_chSaveTimer) clearTimeout(_chSaveTimer);
+                    _chSaveTimer = setTimeout(_flushChannelEdits, 1500);
+                }
+                if (typeof updateStatus === 'function')
+                    updateStatus('Channel save failed — retrying', true);
+            };
             try {
                 const r = await fetch('/api/channels/update', {
                     method: 'POST',
@@ -18694,8 +18709,9 @@
                     }
                 } else {
                     console.warn('channel update failed', r.status, await r.text());
+                    _requeue();
                 }
-            } catch (e) { console.warn('channel update error', e); }
+            } catch (e) { console.warn('channel update error', e); _requeue(); }
         }
 
         async function _chResetDefaults(id) {
