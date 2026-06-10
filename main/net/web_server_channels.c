@@ -23,6 +23,7 @@
 #include "data/channel_manager.h"
 #include "data/channel_source_apply.h"  /* shared bind-preconfig path */
 #include "data/canonical_channels.h"
+#include "data/unit_convert.h"
 #include "layout/ecu_presets.h"
 #include "layout/layout_manager.h"
 #include "can/obd2.h"
@@ -184,6 +185,29 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	 * on a transition). Lets a test agent assert e.g. "EGT is in high_warn"
 	 * after injecting a value, instead of re-deriving the threshold logic. */
 	cJSON_AddStringToObject(j, "zone", channel_zone_name(c->last_zone));
+
+	/* Display-unit conversion (units_native -> units_display). The native fields
+	 * above stay authoritative for storage and threshold comparison; these
+	 * mirror them in the user's chosen display unit so the channels UI can show
+	 * e.g. boost in psi while the firmware keeps everything in kPa. Only emitted
+	 * when the units actually differ AND a conversion is known, so unitless or
+	 * identity channels add no noise and the client can fall back to the native
+	 * fields. */
+	if (unit_convert_supported(c->units_native, c->units_display) &&
+	    strcmp(c->units_native, c->units_display) != 0) {
+		cJSON_AddNumberToObject(j, "display_value",
+			unit_convert(c->current_value, c->units_native, c->units_display));
+		cJSON_AddNumberToObject(j, "display_min",
+			unit_convert(c->min, c->units_native, c->units_display));
+		cJSON_AddNumberToObject(j, "display_max",
+			unit_convert(c->max, c->units_native, c->units_display));
+		if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
+			cJSON_AddNumberToObject(j, "display_low_warn",
+				unit_convert(c->low_warn, c->units_native, c->units_display));
+		if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+			cJSON_AddNumberToObject(j, "display_high_warn",
+				unit_convert(c->high_warn, c->units_native, c->units_display));
+	}
 
 	return j;
 }

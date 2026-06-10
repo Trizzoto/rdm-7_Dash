@@ -12,6 +12,7 @@ idf_component_register(
         "data/canonical_channels.c"
         "data/channel_manager.c"
         "data/channel_source_apply.c"
+        "data/unit_convert.c"
         "storage/boot_assets.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
