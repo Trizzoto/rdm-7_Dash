@@ -96,7 +96,7 @@ void update_panel_ui_immediate(uint8_t i, const char *value_str,
 	/* Determine warning state and apply-to flags */
 	lv_color_t wc = {0};
 	bool al = false, av = false, ap = false;
-	bool stale = (strcmp(value_str, "---") == 0);
+	bool stale = (strcmp(value_str, "--") == 0);
 	if (!stale && pd && pd->warning_high_enabled &&
 		final_value > pd->warning_high_threshold) {
 		wc = pd->warning_high_color;
@@ -279,7 +279,7 @@ void widget_panel_create(lv_obj_t *parent) {
 		 * This means the label moves with the box automatically when the *
 		 * layout manager repositions ui_Box.                             */
 		ui_Value[i] = lv_label_create(ui_Box[i]);
-		lv_label_set_text(ui_Value[i], "---");
+		lv_label_set_text(ui_Value[i], "--");
 		lv_obj_set_style_text_color(ui_Value[i], THEME_COLOR_TEXT_PRIMARY,
 									LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_text_opa(ui_Value[i], 255,
@@ -399,7 +399,7 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	const char *display_str;
 	char buf[32];
 	if (is_stale) {
-		display_str = "---";
+		display_str = "--";
 	} else {
 		/* Goes through signal_format_value so a value→label map on the
 		 * signal (gear positions, drive modes, etc.) renders here as the
@@ -613,7 +613,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 
 	/* Value label */
 	lv_obj_t *val = lv_label_create(box);
-	lv_label_set_text(val, "---");
+	lv_label_set_text(val, "--");
 	lv_obj_set_style_text_color(val, pd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(val, 255,

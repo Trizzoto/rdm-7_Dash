@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "../rdm7-sandbox", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "studio",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-studio-web/public", "-l", "3002", "--cors"],
+      "port": 3002
     }
   ]
 }

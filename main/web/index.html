@@ -3347,6 +3347,14 @@
             white-space: nowrap;
         }
         .preset-selection-bar .selection-text.has-sel { color: var(--accent); }
+        .preset-selection-bar .selection-text.added { color: hsl(140, 55%, 55%); font-weight: 600; }
+        /* ✓ badge on a signal row that's already been imported into the layout */
+        .preset-col-item .preset-added-badge {
+            color: hsl(140, 55%, 55%);
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 6px;
+        }
 
         /* Color swatch field */
         .color-field-wrap {
@@ -3553,6 +3561,29 @@
         .inspector-accordion[open] summary::before { transform:rotate(90deg); }
         .accordion-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; }
 
+        /* ── Value Labels editor (widget inspector) ── */
+        .vlabels-card { margin-top:8px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--panel); overflow:hidden; }
+        .vlabels-desc { font-size:11px; color:var(--text-muted); line-height:1.5; }
+        .vlabels-desc code { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:0 4px; font-size:10px; color:var(--text); white-space:nowrap; }
+        .vlabels-live { font-size:11px; line-height:1.45; padding:6px 9px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); }
+        .vlabels-live .vl-sig { color:#5fb0f0; font-weight:600; }
+        .vlabels-live .vl-out { color:var(--text); font-weight:700; }
+        .vlabels-live .vl-out.mapped { color:var(--accent); }
+        .vlabels-live .vl-hint { color:var(--text-muted); }
+        .vlabels-rows { display:flex; flex-direction:column; gap:6px; }
+        .vlabels-row { display:flex; gap:6px; align-items:center; }
+        .vlabels-row input { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:var(--radius-md); font-size:11px; box-sizing:border-box; transition:border-color .15s; }
+        .vlabels-row input:focus { border-color:var(--accent); outline:none; box-shadow:0 0 0 1px hsla(0,0%,80%,.2); }
+        .vlabels-row .vl-v { width:62px; flex:none; text-align:center; font-family:'JetBrains Mono',monospace; -moz-appearance:textfield; }
+        .vlabels-row .vl-v::-webkit-inner-spin-button, .vlabels-row .vl-v::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+        .vlabels-row .vl-arrow { flex:none; color:var(--text-muted); font-size:13px; }
+        .vlabels-row .vl-label { flex:1; min-width:0; font-weight:600; }
+        .vlabels-row .vl-del { flex:none; width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center; background:transparent; border:1px solid var(--border); color:var(--text-muted); border-radius:var(--radius-md); font-size:16px; line-height:1; cursor:pointer; transition:all .12s; }
+        .vlabels-row .vl-del:hover { border-color:hsl(0,75%,55%); color:hsl(0,80%,62%); background:hsla(0,75%,55%,.12); }
+        .vlabels-empty { font-size:11px; color:var(--text-muted); font-style:italic; }
+        .vlabels-add { width:100%; }
+        .vlabels-note { font-size:10px; color:var(--text-muted); line-height:1.4; }
+
         /* Signal Linked State */
         .signal-linked-state { display:flex; flex-direction:column; gap:6px; }
         .signal-chip {
@@ -3753,49 +3784,10 @@
                 <button class="close-btn" onclick="closeSignalManager()">&times;</button>
             </div>
 
-            <!-- View 1: Signal Table -->
-            <div class="sig-view-body active" id="sigViewSignals">
-                <div class="signal-modal-toolbar">
-                    <input type="text" class="sig-search" id="signalSearchInput" placeholder="Search signals by name or CAN ID..." oninput="renderSignalTable()">
-                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted); white-space:nowrap; cursor:pointer;" title="Show ECU-preset and OBD2 signals in addition to your custom ones">
-                        <input type="checkbox" id="signalShowAllToggle" onchange="renderSignalTable()" style="cursor:pointer;">
-                        Show all
-                    </label>
-                    <button class="btn" style="font-size:12px; padding:6px 14px;" onclick="addSignal()">+ New Signal</button>
-                    <button class="btn btn-secondary" style="font-size:12px; padding:6px 14px;" onclick="switchSignalView('presets')">ECU Presets</button>
-                </div>
-                <div class="signal-table-wrap">
-                    <div id="signalTableEmpty" class="signal-table-empty" style="display:none;">
-                        <div class="empty-icon">~</div>
-                        <p>No custom CAN signals defined</p>
-                        <p class="hint">Most users won't need this. For factory ECUs use <b>ECU Preset</b> in Setup.<br>Use this only for custom-decoded frames not in any preset (DBC imports, one-off tuner signals).<br>Click <b>+ New Signal</b> to add one manually, or <b>ECU Presets</b> to import from a database.</p>
-                    </div>
-                    <table class="signal-table" id="signalTableEl">
-                        <thead>
-                            <tr>
-                                <th class="col-status" title="Bound to widget"></th>
-                                <th class="col-name">Signal Name</th>
-                                <th class="col-canid">CAN ID</th>
-                                <th class="col-bit">Start</th>
-                                <th class="col-bit">Length</th>
-                                <th class="col-scale">Scale</th>
-                                <th class="col-scale">Offset</th>
-                                <th class="col-toggle">Signed</th>
-                                <th class="col-toggle">Endian</th>
-                                <th class="col-unit">Unit</th>
-                                <th class="col-actions"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="signalTableBody"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- View 2: ECU Preset Browser -->
-            <div class="sig-view-body" id="sigViewPresets">
+            <!-- ECU Preset Browser (the only view — custom signals live on presets) -->
+            <div class="sig-view-body active" id="sigViewPresets">
                 <div class="signal-modal-toolbar" style="border-bottom: 1px solid var(--border);">
-                    <button class="btn btn-secondary" style="font-size:12px; padding:5px 12px;" onclick="switchSignalView('signals')">&larr; Back to Signals</button>
-                    <span style="font-size:12px; color:hsl(0, 0%, 53%); flex:1;">Select an ECU, version, then a signal to import.</span>
+                    <span style="font-size:12px; color:hsl(0, 0%, 53%); flex:1;">Pick an ECU and version, then a signal to import. Use <b>+ New ECU</b> or <b>Create Preset</b> to add your own custom signals.</span>
                 </div>
                 <div class="preset-columns" style="flex:1; min-height:0; border-bottom:none;">
                     <div class="preset-col">
@@ -3818,7 +3810,7 @@
             </div>
 
             <div class="signal-modal-footer">
-                <span class="sig-count" id="signalCount">0 signals</span>
+                <span class="sig-count" id="signalCount"></span>
                 <button class="btn" onclick="closeSignalManager()">Done</button>
             </div>
         </div>
@@ -5358,9 +5350,17 @@
         /* ── Preset Picker Modal ──────────────────────────────── */
         let _presetPickerWidgetIdx = -1;
         let _presetPickerSelection = null; // { ecu, version, preset }
+        /* Labels imported into the layout this session — drives the ✓ badge on
+         * signal rows so "Add Signal" gives visible feedback (the flat signals
+         * table that used to show the result was removed). */
+        let _importedPresetSigs = new Set();
 
         function switchSignalView(view) {
-            document.getElementById('sigViewSignals').classList.toggle('active', view === 'signals');
+            /* The flat signal-table view was removed; the preset browser is the
+             * only view. Guard the legacy element refs so old call sites that
+             * still pass 'signals' don't throw. */
+            const sv = document.getElementById('sigViewSignals');
+            if (sv) sv.classList.toggle('active', view === 'signals');
             document.getElementById('sigViewPresets').classList.toggle('active', view === 'presets');
             const isPickMode = document.getElementById('signalModal')?.dataset.mode === 'pick';
             if (view === 'presets') {
@@ -5378,6 +5378,7 @@
             const selText = document.getElementById('presetSelText');
             selText.textContent = 'Select an ECU, version, then signal';
             selText.classList.remove('has-sel');
+            selText.classList.remove('added');
 
             const customEcus = new Set(customPresets.map(p => p.ecu));
             const ecus = [...new Set([...globalPresets.map(p => p.ecu), ...customEcus])].sort();
@@ -5453,8 +5454,9 @@
                 }
                 const delBtn = isCustom ? `<button class="preset-sig-del" onclick="event.stopPropagation(); deleteCustomSignal('${selEcu.replace(/'/g, "\\'")}','${version.replace(/'/g, "\\'")}','${ch.label.replace(/'/g, "\\'")}')" title="Delete signal">&times;</button>` : '';
                 const extraClass = isCustom ? ' custom-sig' : '';
+                const addedBadge = _importedPresetSigs.has(ch.label) ? '<span class="preset-added-badge" title="Imported into this layout">✓ Added</span>' : '';
                 return `<div class="preset-col-item${extraClass}" onclick="presetPickChannel(this, ${gIdx})" draggable="true" ondragstart="presetDragStart(event, ${gIdx})" ondragend="signalDragEnd(event)">` +
-                    `<div>${ch.label}</div>` +
+                    `<div>${ch.label}${addedBadge}</div>` +
                     `<div class="preset-detail">${detailParts.join(' | ')}</div>` +
                     delBtn +
                     `</div>`;
@@ -5475,6 +5477,7 @@
             const p = _presetPickerSelection.preset;
             const selText = document.getElementById('presetSelText');
             selText.textContent = `${_presetPickerSelection.ecu} \u203A ${_presetPickerSelection.version} \u203A ${p.label}`;
+            selText.classList.remove('added');
             selText.classList.add('has-sel');
         }
 
@@ -5486,18 +5489,43 @@
             } else {
                 applyPresetToWidget(_presetPickerSelection.preset, _presetPickerWidgetIdx);
             }
-            /* In pick mode, close modal after applying */
+            /* In pick mode, close modal after applying; otherwise stay on the
+             * preset browser (the flat signals view it used to return to is
+             * gone — the imported signal shows in the left sidebar). */
             if (isPickMode) {
                 closeSignalManager();
-            } else {
-                /* Switch back to signals view to show the new signal */
-                switchSignalView('signals');
+                _presetPickerSelection = null;
+                document.getElementById('presetApplyBtn').disabled = true;
+                document.getElementById('presetSelText').textContent = 'Select an ECU, version, then signal';
+                document.getElementById('presetSelText').classList.remove('has-sel');
+                return;
             }
-            /* Reset selection for next use */
-            _presetPickerSelection = null;
-            document.getElementById('presetApplyBtn').disabled = true;
-            document.getElementById('presetSelText').textContent = 'Select an ECU, version, then signal';
-            document.getElementById('presetSelText').classList.remove('has-sel');
+            /* Manage mode: the modal stays open so the user can import more
+             * signals. Without the old flat signals table, "Add Signal" had no
+             * visible result — it looked dead. Show an inline confirmation in
+             * the selection bar, mark the row with a ✓ badge, and re-render the
+             * signal column so the badge appears immediately. */
+            const addedLabel = _presetPickerSelection.preset.label;
+            _importedPresetSigs.add(addedLabel);
+            updateStatus(`Added signal "${addedLabel}"`);
+
+            /* Re-render the current ECU/version signal list so the ✓ badge shows
+             * on the row we just imported. presetPickVersion rebuilds the column
+             * from _presetPickerSelection (and resets the held preset + selection
+             * text), so run it FIRST, then write the confirmation over the top. */
+            const activeVerEl = document.querySelector('#presetColVersion .preset-col-item.active');
+            const keepVersion = _presetPickerSelection.version;
+            if (activeVerEl && keepVersion) {
+                presetPickVersion(activeVerEl, keepVersion);
+            } else {
+                _presetPickerSelection.preset = null;
+                document.getElementById('presetApplyBtn').disabled = true;
+            }
+
+            const selText = document.getElementById('presetSelText');
+            selText.textContent = `✓ Added "${addedLabel}" — pick another, or Done`;
+            selText.classList.remove('has-sel');
+            selText.classList.add('added');
         }
 
         function _presetIsLittleEndian(preset) {
@@ -5750,9 +5778,12 @@
                 is_signed: document.getElementById('cusPreSigSigned')?.value === '1',
                 decimals: parseInt(document.getElementById('cusPreSigDec')?.value) || 0
             };
-            /* Collect existing signals + add new one */
+            /* Collect existing signals + add new one. Skip `_empty`
+             * placeholder rows — those are the GET response's marker for a
+             * preset with zero signals, not real signals; folding one in
+             * would persist a phantom blank-label signal. */
             const existingSigs = customPresets.filter(p =>
-                p.ecu === _presetPickerSelection.ecu && p.version === _presetPickerSelection.version
+                p.ecu === _presetPickerSelection.ecu && p.version === _presetPickerSelection.version && !p._empty
             ).map(p => ({
                 label: p.label, can_id: p.can_id, bit_start: p.bit_start, bit_length: p.bit_length,
                 scale: p.scale, offset: p.offset, endianess: p.endianess,
@@ -5796,7 +5827,7 @@
 
         async function deleteCustomSignal(ecu, version, label) {
             const sigs = customPresets.filter(p =>
-                p.ecu === ecu && p.version === version && p.label !== label
+                p.ecu === ecu && p.version === version && p.label !== label && !p._empty
             ).map(p => ({
                 label: p.label, can_id: p.can_id, bit_start: p.bit_start, bit_length: p.bit_length,
                 scale: p.scale, offset: p.offset, endianess: p.endianess,
@@ -6207,11 +6238,42 @@
         // History State
         let history = [];
         let historyIndex = -1;
+        let _historyCommitScheduled = false;
 
+        /* pushHistory() records an undo snapshot of the current layout.
+         *
+         * Call sites are deliberately inconsistent: some snapshot BEFORE
+         * mutating (drag start, align, z-order, add/remove rule, assign
+         * signal…) and some AFTER (inspector field edits via
+         * updateWidgetField). A *synchronous* capture can't serve both: a
+         * push-before caller hasn't applied its change yet, so it leaves
+         * currentLayout diverged from the history tip; then the next
+         * push-after edit mutates over that diverged state before anything
+         * recorded it, and its undo step is silently lost. That is the
+         * "undo only goes back one step" bug — the timeline collapses
+         * whenever before- and after-style edits interleave.
+         *
+         * Fix: defer the real capture to a microtask (_commitHistory). By
+         * the time it runs, the current synchronous edit — whichever style —
+         * has fully applied, so we always snapshot the settled post-edit
+         * state. Multiple pushHistory() calls in one tick coalesce into a
+         * single snapshot. Drags/resizes are mid-flight across many
+         * mousemove events, so _commitHistory skips while a gesture is
+         * active and the mouseup handler commits the final resting state. */
         function pushHistory() {
             _editingActive = true;
+            if (_historyCommitScheduled) return;
+            _historyCommitScheduled = true;
+            queueMicrotask(_commitHistory);
+        }
+
+        function _commitHistory() {
+            _historyCommitScheduled = false;
+            /* Gesture in flight → defer to its mouseup (see window.onmouseup),
+             * which calls pushHistory() once isDragging/isResizing clear. */
+            if (isDragging || isResizing) return;
             const snap = JSON.stringify(currentLayout);
-            // Skip if nothing changed since last snapshot
+            // Skip if nothing actually changed since the last snapshot
             if (history.length > 0 && history[historyIndex] === snap) return;
             if (historyIndex < history.length - 1) {
                 history = history.slice(0, historyIndex + 1);
@@ -6903,10 +6965,7 @@
                             { name: "tick_length", label: "Tick Length", type: "stepper", def: 12, cat: "appearance", min: 1, max: 40, enabledBy: "show_ticks" },
                             { name: "tick_width", label: "Tick Width", type: "stepper", def: 3, cat: "appearance", min: 1, max: 12, enabledBy: "show_ticks" },
                             { name: "tick_color", label: "Tick Color", type: "color", def: 0x000000, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "bar_bg_color", label: "Background", type: "color", def: 0xF0F0F0, cat: "appearance", nightOverridable: true },
-                            { name: "show_rpm_value", label: "Show RPM Number", type: "checkbox", def: false, cat: "appearance" },
-                            { name: "rpm_value_font", label: "RPM Number Font", type: "font", def: "", cat: "appearance", enabledBy: "show_rpm_value" },
-                            { name: "rpm_value_color", label: "RPM Number Color", type: "color", def: 0xE8E8E8, cat: "appearance", enabledBy: "show_rpm_value", nightOverridable: true }
+                            { name: "bar_bg_color", label: "Background", type: "color", def: 0xF0F0F0, cat: "appearance", nightOverridable: true }
                         ]
                     },
                     "panel": {
@@ -6924,16 +6983,16 @@
                               ] },
                             { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "high" },
                             { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "high", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
-                            { name: "warning_high_color", label: "Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high", enabledBy: "warning_high_enabled" },
-                            { name: "warning_high_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_panel", label: "Panel", type: "checkbox", def: false, cat: "alerts", group: "high", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
+                            { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high" },
+                            { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "high", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "high", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "high", inline: "warning_high_apply" },
                             { name: "warning_low_enabled", label: "Low Alert", type: "checkbox", def: false, cat: "alerts", group: "low" },
                             { name: "warning_low_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "low", min: -99999, max: 99999, enabledBy: "warning_low_enabled" },
-                            { name: "warning_low_color", label: "Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low", enabledBy: "warning_low_enabled" },
-                            { name: "warning_low_apply_label", label: "Label", type: "checkbox", def: true, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
-                            { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
-                            { name: "warning_low_apply_panel", label: "Panel", type: "checkbox", def: false, cat: "alerts", group: "low", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
+                            { name: "warning_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "low" },
+                            { name: "warning_low_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "low", inline: "warning_low_apply" },
+                            { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "low", inline: "warning_low_apply" },
+                            { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "low", inline: "warning_low_apply" },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                             { name: "border_radius", label: "Border Radius", type: "stepper", def: 7, cat: "appearance", min: 0, max: 100 },
@@ -8889,6 +8948,13 @@
                 isResizing = false;
                 guideX.style.display = 'none';
                 guideY.style.display = 'none';
+                /* Commit the gesture's final resting state as a single undo
+                 * step. _commitHistory suppresses snapshots while a drag/
+                 * resize is in flight, so this is where the move/resize
+                 * actually lands in the history stack. _dragMoved guards
+                 * against a plain click (no movement) adding a no-op entry. */
+                if (_dragMoved) pushHistory();
+                _dragMoved = false;
                 updateInspector();
                 if (document.getElementById('livePreviewToggle').checked) triggerPreview();
             }
@@ -9581,10 +9647,10 @@
                     const v = (_effCh.current_value != null)
                               ? _effCh.current_value
                               : (_chSignalValuesCache[_effCh.signal]?.value);
-                    const valTxt = (v == null || isNaN(v)) ? '—'
-                        : Number(v).toFixed(_effCh.decimals || 0);
                     const unit = _effCh.units_display || _effCh.units_native || '';
                     const stale = !_effCh.signal || _effCh.is_stale || v == null;
+                    const valTxt = (stale || v == null || isNaN(v)) ? '--'
+                        : Number(v).toFixed(_effCh.decimals || 0);
                     const sourceLabel = _classifyChannelSource(_effCh.signal);
                     const subline = _effCh.signal
                         ? `from ${sourceLabel}`
@@ -9602,60 +9668,13 @@
                         <button class="danger" onclick="_widgetUnbindChannel()">Unbind</button>
                     </div>`;
 
-                    /* ── Shared-signal note (informational, not a warning) ──
-                     * Sharing a signal across channels is normal and is how
-                     * layouts stay portable, so this is a neutral FYI — no
-                     * alarm styling. It just tells the user these channels
-                     * track together (one test/alert moves all) and offers an
-                     * optional fork if they actually wanted independent
-                     * sources. (The old fuzzy auto-matcher used to create
-                     * unwanted shares; that's fixed + healed on the firmware
-                     * side, but a hand-built layout may still share on purpose.) */
-                    const _shareN = _effCh.signal ? _chSignalShareCount(_effCh.signal, _effCh.id) : 0;
-                    if (_shareN > 0) {
-                        const _canFork = (currentLayout.signals || []).some(s => s.name === _effCh.signal);
-                        html += `<div style="margin-top:6px; padding:7px 9px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:11px; color:var(--text-muted); line-height:1.5;">
-                            Signal <b style="color:var(--text);">${_effCh.signal}</b> also drives ${_shareN} other channel${_shareN > 1 ? 's' : ''}. They share one source, so they read the same value and respond to the same test &amp; alerts — expected for shared layouts.
-                            ${_canFork ? `<div style="margin-top:7px;"><button class="btn btn-secondary" style="font-size:11px;" onclick="_widgetForkSharedSignal()" ${disabledAttr}>Use a separate copy for this channel</button></div>` : ''}
-                        </div>`;
-                    }
-
-                    /* ── Value Labels for CHANNEL-BOUND widgets (TASK 15) ──
-                     * The value→label map lives on the backing SIGNAL (the
-                     * same field the legacy raw-signal branch below edits) and
-                     * is applied in firmware via signal_format_value. It was
-                     * previously only surfaced for legacy raw-signal widgets;
-                     * surface the identical editor here so channel-bound text/
-                     * value widgets (e.g. GEAR 0→"N") can map values too.
-                     * Resolve the signal from the channel and reuse the same
-                     * addValueMapEntry / updateValueMapEntry / removeValueMapEntry
-                     * helpers (keyed by signal index). */
-                    if (_effCh.signal) {
-                        const csig = (currentLayout.signals || []).find(s => s.name === _effCh.signal);
-                        if (csig) {
-                            const csigIdx = (currentLayout.signals || []).indexOf(csig);
-                            const cvmap = Array.isArray(csig.value_map) ? csig.value_map : [];
-                            const cvmapOpen = cvmap.length > 0;
-                            html += `<details class="inspector-accordion" ${cvmapOpen ? 'open' : ''} style="margin-top:8px;"><summary>Value Labels${cvmap.length ? ` <span class="badge" style="background:var(--accent);">${cvmap.length}</span>` : ''}</summary><div class="accordion-body">`;
-                            html += `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Map raw decoded values to labels (e.g. <code>0 → N</code>, <code>1 → Sport</code>). Unmapped values fall through to numeric display. Applies to every widget bound to <b>${_effCh.signal}</b>.</div>`;
-                            if (cvmap.length) {
-                                html += `<div style="display:flex; flex-direction:column; gap:4px;">`;
-                                cvmap.forEach((entry, ei) => {
-                                    const ev = (entry && entry.v !== undefined) ? entry.v : 0;
-                                    const el = (entry && entry.label !== undefined) ? entry.label : '';
-                                    const escLbl = String(el).replace(/"/g, '&quot;');
-                                    html += `<div style="display:flex; gap:4px; align-items:center;">`;
-                                    html += `<input type="number" step="any" value="${ev}" onchange="updateValueMapEntry(${csigIdx},${ei},'v',this.value); updateInspector();" style="width:72px; font-family:monospace;" title="Raw decoded value (integer or decimal)" ${disabledAttr}>`;
-                                    html += `<span style="color:var(--text-muted); font-size:14px;">→</span>`;
-                                    html += `<input type="text" value="${escLbl}" maxlength="11" onchange="updateValueMapEntry(${csigIdx},${ei},'label',this.value)" placeholder="Label" style="flex:1; font-weight:600;" ${disabledAttr}>`;
-                                    html += `<button class="btn btn-secondary" style="padding:2px 8px; font-size:11px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%);" onclick="removeValueMapEntry(${csigIdx},${ei}); updateInspector();" title="Remove" ${disabledAttr}>×</button>`;
-                                    html += `</div>`;
-                                });
-                                html += `</div>`;
-                            }
-                            html += `<button class="btn btn-secondary" style="margin-top:6px; font-size:11px; width:100%;" onclick="addValueMapEntry(${csigIdx}); updateInspector();" ${disabledAttr}>+ Add Label</button>`;
-                            html += `</div></details>`;
-                        }
+                    /* Value Labels — first-class widget control. Stored on the
+                     * signal (shared by every widget showing it), surfaced here
+                     * on the widget you're editing. Only for widgets that render
+                     * the value as text (text/panel/bar/arc); a needle meter or
+                     * indicator has nowhere to show a label. */
+                    if (_effCh.signal && WIDGET_VALUE_DISPLAY_TYPES.includes(w.type)) {
+                        html += _valueLabelsCardHTML(_effCh.signal, disabledAttr);
                     }
                 }
 
@@ -9677,39 +9696,11 @@
                                 </div>
                             </div>`;
 
-                            /* ── Value Labels (signal-level, surfaced here for
-                             * discoverability) ─────────────────────────────────
-                             * Lets the user map raw decoded values to display
-                             * strings (e.g. GEAR 0→"N", 7→"P"; MODE 0→"Eco",
-                             * 1→"Sport"; on/off flags; cruise state; …). The
-                             * data lives on the signal, not the widget — so
-                             * every widget bound to the same signal stays in
-                             * sync. Edit it here for inline workflow, or via
-                             * the signal sidebar's matching section. */
-                            const vmap = Array.isArray(sig.value_map) ? sig.value_map : [];
-                            const vmapOpen = vmap.length > 0;
-                            html += `<details class="inspector-accordion" ${vmapOpen ? 'open' : ''} style="margin-top:8px;"><summary>Value Labels${vmap.length ? ` <span class="badge" style="background:var(--accent);">${vmap.length}</span>` : ''}</summary><div class="accordion-body">`;
-                            html += `<div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">Map raw decoded values to labels (e.g. <code>0 → N</code>, <code>1 → Sport</code>). Unmapped values fall through to numeric display. Applies to every widget bound to <b>${w.signal}</b>.</div>`;
-                            if (vmap.length) {
-                                html += `<div style="display:flex; flex-direction:column; gap:4px;">`;
-                                vmap.forEach((entry, ei) => {
-                                    const ev = (entry && entry.v !== undefined) ? entry.v : 0;
-                                    const el = (entry && entry.label !== undefined) ? entry.label : '';
-                                    const escLbl = String(el).replace(/"/g, '&quot;');
-                                    html += `<div style="display:flex; gap:4px; align-items:center;">`;
-                                    /* step="any" lets the browser accept decimals (0.85, 1.0, etc.)
-                                     * not just integers — same field works for gear codes and
-                                     * lambda bands. parseFloat handles both in the helper. */
-                                    html += `<input type="number" step="any" value="${ev}" onchange="updateValueMapEntry(${sigIdx},${ei},'v',this.value); updateInspector();" style="width:72px; font-family:monospace;" title="Raw decoded value (integer or decimal)" ${disabledAttr}>`;
-                                    html += `<span style="color:var(--text-muted); font-size:14px;">→</span>`;
-                                    html += `<input type="text" value="${escLbl}" maxlength="11" onchange="updateValueMapEntry(${sigIdx},${ei},'label',this.value)" placeholder="Label" style="flex:1; font-weight:600;" ${disabledAttr}>`;
-                                    html += `<button class="btn btn-secondary" style="padding:2px 8px; font-size:11px; border-color:hsl(0,100%,63%); color:hsl(0,100%,63%);" onclick="removeValueMapEntry(${sigIdx},${ei}); updateInspector();" title="Remove" ${disabledAttr}>×</button>`;
-                                    html += `</div>`;
-                                });
-                                html += `</div>`;
+                            /* Value Labels — same first-class control as the
+                             * channel-bound branch, for raw-signal widgets. */
+                            if (WIDGET_VALUE_DISPLAY_TYPES.includes(w.type)) {
+                                html += _valueLabelsCardHTML(w.signal, disabledAttr);
                             }
-                            html += `<button class="btn btn-secondary" style="margin-top:6px; font-size:11px; width:100%;" onclick="addValueMapEntry(${sigIdx}); updateInspector();" ${disabledAttr}>+ Add Label</button>`;
-                            html += `</div></details>`;
                         } else {
                             html += `<div style="font-size:11px; color:hsl(0, 100%, 63%); margin-bottom:4px;">Signal "${w.signal}" not found!</div>`;
                             html += `<button class="btn-assign-data" onclick="_widgetOpenChannelPicker()" ${disabledAttr}>+ Assign Channel</button>`;
@@ -9962,7 +9953,12 @@
              * type_data lacks an apply_overrides hook. */
             const NO_RULES_TYPES = new Set(['meter', 'indicator']);
             const rules = w.config.rules || [];
-            if (!NO_RULES_TYPES.has(w.type)) {
+            /* Rules UI hidden everywhere per product decision. The firmware
+             * rules engine still honours any rules already saved in a layout;
+             * this only removes the editor's add/edit surface. Flip
+             * RULES_UI_ENABLED back to true to restore the accordion. */
+            const RULES_UI_ENABLED = false;
+            if (RULES_UI_ENABLED && !NO_RULES_TYPES.has(w.type)) {
             html += `<details class="inspector-accordion" data-rules-group="1"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
             html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
             rules.forEach((rule, ri) => {
@@ -11832,9 +11828,9 @@
             /* Update footer Done button label */
             const doneBtn = modal.querySelector('.signal-modal-footer .btn');
             if (doneBtn) doneBtn.textContent = mode === 'pick' ? 'Cancel' : 'Done';
-            document.getElementById('signalSearchInput').value = '';
-            renderSignalTable();
-            switchSignalView('signals');
+            /* Preset browser is the only view now — the flat single-signal
+             * table was removed; custom signals are authored on presets. */
+            switchSignalView('presets');
             modal.style.display = 'flex';
             signalPollStart();
         }
@@ -12230,6 +12226,107 @@
             const nextV = used.length ? (Math.floor(Math.max.apply(null, used)) + 1) : 0;
             sigs[sigIdx].value_map.push({ v: nextV, label: '' });
             renderSignals();
+        }
+
+        /* Widget types that render their bound value AS TEXT, and so can show a
+         * value→label mapping. Needle meters, indicators, toggles, etc. have no
+         * numeric readout, so the Value Labels control is hidden for them. Mirrors
+         * the firmware widgets that route through signal_format_value(). */
+        const WIDGET_VALUE_DISPLAY_TYPES = ['text', 'panel', 'bar', 'arc'];
+
+        /* Count widgets currently showing this signal (channel-bound or raw), for
+         * the "shared by N widgets" note — communicates that the map is shared,
+         * not per-widget, which is the whole point of storing it on the signal. */
+        function _signalWidgetCount(signalName) {
+            if (!signalName) return 0;
+            let n = 0;
+            (currentLayout.widgets || []).forEach(w => {
+                const ch = _widgetEffectiveChannel(w);
+                const s = ch ? ch.signal : w.signal;
+                if (s === signalName) n++;
+            });
+            return n;
+        }
+
+        /* Build the widget-level Value Labels editor. The map is stored on the
+         * SIGNAL (shared by every widget showing it), but surfaced here as a
+         * first-class, default-open control on the widget you're editing —
+         * discoverable, with a live preview of what the gauge shows right now and
+         * a note that the labels are shared. Used by both the channel-bound and
+         * raw-signal inspector branches. */
+        function _valueLabelsCardHTML(signalName, disabledAttr) {
+            if (!signalName) return '';
+            const sigs = currentLayout.signals || [];
+            const sig = sigs.find(s => s.name === signalName);
+            const sigIdx = sig ? sigs.indexOf(sig) : -1;
+            const vmap = (sig && Array.isArray(sig.value_map)) ? sig.value_map : [];
+            const escSig = String(signalName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const sigHtml = String(signalName).replace(/</g, '&lt;');
+            const n = _signalWidgetCount(signalName);
+
+            let h = `<details class="inspector-accordion vlabels-card" open>`;
+            h += `<summary>Value Labels${vmap.length ? ` <span class="badge">${vmap.length}</span>` : ''}</summary>`;
+            h += `<div class="accordion-body">`;
+            h += `<div class="vlabels-desc">Show text instead of a number for specific decoded values — e.g. <code>0 → N</code>, <code>1 → 1st</code>, <code>2.40 → OFF</code>. Unmapped values stay numeric.</div>`;
+
+            /* Live preview snapshot (re-rendered on each updateInspector). Matches
+             * the firmware lookup: |value − v| < SIGNAL_VALUE_MAP_EPSILON (0.001).
+             * Read whichever value cache is currently warm — the signals-sidebar
+             * poll (_signalLiveValues) or the channels/editor poll
+             * (_chSignalValuesCache) — so the preview shows during normal edits. */
+            const live = _signalLiveValues[signalName] || _chSignalValuesCache[signalName];
+            if (live && !live.stale && typeof live.value === 'number') {
+                const v = live.value;
+                const m = vmap.find(e => e && typeof e.v === 'number' &&
+                                    Math.abs(e.v - v) < 0.001 &&
+                                    typeof e.label === 'string' && e.label.length > 0);
+                const vTxt = Number.isInteger(v) ? String(v) : v.toFixed(2);
+                const shown = m ? m.label : vTxt;
+                h += `<div class="vlabels-live">Live: <span class="vl-sig">${sigHtml} = ${vTxt}</span> → `
+                   + `<span class="vl-out${m ? ' mapped' : ''}">${String(shown).replace(/</g,'&lt;')}</span>`
+                   + (m ? '' : ` <span class="vl-hint">— numeric (add a label for ${vTxt})</span>`)
+                   + `</div>`;
+            }
+
+            if (vmap.length) {
+                h += `<div class="vlabels-rows">`;
+                vmap.forEach((entry, ei) => {
+                    const ev = (entry && entry.v !== undefined) ? entry.v : 0;
+                    const el = (entry && entry.label !== undefined) ? entry.label : '';
+                    const escLbl = String(el).replace(/"/g, '&quot;');
+                    /* step="any" → integers (gear) AND decimals (lambda bands). */
+                    h += `<div class="vlabels-row">`
+                       + `<input class="vl-v" type="number" step="any" value="${ev}" onchange="updateValueMapEntry(${sigIdx},${ei},'v',this.value); updateInspector();" title="Raw decoded value (integer or decimal)" ${disabledAttr}>`
+                       + `<span class="vl-arrow">→</span>`
+                       + `<input class="vl-label" type="text" value="${escLbl}" maxlength="11" onchange="updateValueMapEntry(${sigIdx},${ei},'label',this.value)" placeholder="Label" ${disabledAttr}>`
+                       + `<button class="vl-del" onclick="removeValueMapEntry(${sigIdx},${ei}); updateInspector();" title="Remove" ${disabledAttr}>×</button>`
+                       + `</div>`;
+                });
+                h += `</div>`;
+            } else {
+                h += `<div class="vlabels-empty">No labels yet — add one to map a value to text.</div>`;
+            }
+            h += `<button class="btn btn-secondary vlabels-add" onclick="addValueMapEntryForSignal('${escSig}'); updateInspector();" ${disabledAttr}>+ Add Label</button>`;
+            h += `<div class="vlabels-note">Saved on the <b>${sigHtml}</b> signal — shared by ${n} widget${n === 1 ? '' : 's'} showing it.</div>`;
+            h += `</div></details>`;
+            return h;
+        }
+
+        /* Add a value-label entry by SIGNAL NAME, creating the layout
+         * signals[] entry on demand. Channel-decoded signals (ADR-0005) have
+         * no signals[] entry until they carry portable metadata, so this is the
+         * entry point the channel-bound inspector uses to author a first label.
+         * A bare {name} stub with no labels is dropped at save by
+         * buildFirmwarePayload, so this never pollutes the persisted layout. */
+        function addValueMapEntryForSignal(signalName) {
+            if (!signalName) return;
+            if (!currentLayout.signals) currentLayout.signals = [];
+            let idx = currentLayout.signals.findIndex(s => s.name === signalName);
+            if (idx < 0) {
+                currentLayout.signals.push({ name: signalName });
+                idx = currentLayout.signals.length - 1;
+            }
+            addValueMapEntry(idx);   /* handles pushHistory + render */
         }
 
         function removeValueMapEntry(sigIdx, entryIdx) {
@@ -17079,7 +17176,7 @@
                           || c.units_native || def?.units_native || '');
             const v = c.current_value;
             const stale = !c.signal || c.is_stale || v == null;
-            const valTxt = (v == null || isNaN(v)) ? '—' : Number(v).toFixed(decimals);
+            const valTxt = (stale || v == null || isNaN(v)) ? '--' : Number(v).toFixed(decimals);
             const valEl = card.querySelector('.ch-card-val');
             if (valEl) {
                 valEl.classList.toggle('stale', stale);
@@ -17106,8 +17203,8 @@
                               || c?.units_native || def?.units_native || '');
                 const v = c?.current_value;
                 const stale = c?.is_stale;
-                const valTxt = (v == null || isNaN(v))
-                    ? '—'
+                const valTxt = (stale || v == null || isNaN(v))
+                    ? '--'
                     : Number(v).toFixed(decimals);
                 /* Subtle muted look for stale rows. */
                 cell.style.opacity = (stale || !c) ? '0.55' : '';
@@ -17173,7 +17270,7 @@
                     + items.map(c => {
                         const unit = c.units_display || c.units_native || '';
                         const v = c.current_value;
-                        const valTxt = (v == null || isNaN(v)) ? '—'
+                        const valTxt = (c.is_stale || v == null || isNaN(v)) ? '--'
                             : Number(v).toFixed(c.decimals || 0);
                         const inactCls = c.is_active ? '' : 'inactive';
                         return `<div class="ch2-picker-row wch ${inactCls}" data-ch-id="${c.id}" onclick="_widgetAssignChannel('${c.id}')">
@@ -17383,7 +17480,11 @@
         }
 
         function _chFmtPlain(c, v, stale) {
-            if (v == null || isNaN(v)) return '—';
+            /* Stale or no-data → show a dash, not the static 0 the channel
+             * still carries. Auto-assigned channels that aren't actually
+             * receiving frames were reading "0.000" etc., which looked like a
+             * real value. */
+            if (stale || v == null || isNaN(v)) return '--';
             const d = c.decimals || 0;
             return Number(v).toFixed(d);
         }
@@ -18276,19 +18377,12 @@
                 const _decOffset   = (dec && dec.offset != null) ? dec.offset : 0;
                 const _decSigned   = !!(dec && dec.is_signed);
                 const _decLE       = dec ? ((dec.endian != null) ? (Number(dec.endian) === 1) : (dec.is_little_endian !== false)) : true;
-                const _shareN = (typeof _chSignalShareCount === 'function') ? _chSignalShareCount(c.signal, c.id) : 0;
-                const _shareWarn = _shareN > 0 ? `
-                        <div style="font-size:10px; color:#e6b800; margin-bottom:8px; line-height:1.4;">
-                            ⚠ This decode is shared by ${_shareN} other channel${_shareN>1?'s':''} — editing it changes them too.
-                            <span style="cursor:pointer; text-decoration:underline; color:var(--accent, #4a90e2);" onclick="_chForkSignal('${c.id}','${c.signal}')">Make a private copy for this channel</span>
-                        </div>` : '';
                 canSection = `
                     <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
                         <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">
                             CAN decode — ${c.signal}
                             <span style="font-size:10px; color:var(--text-ghost); margin-left:6px;">(applies live)</span>
                         </div>
-                        ${_shareWarn}
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                             <div class="ch2-num">
                                 <span class="ch2-num-label">CAN ID</span>
@@ -19408,6 +19502,11 @@
                 { heading: 'Screen', items: [
                     { type: 'select', id: 'screenModeSelect' }
                 ]},
+                { heading: 'Startup', items: [
+                    { type: 'toggle', label: 'Layout Loading Animation', icon: 'activity',
+                      getState: () => (typeof window._bootAnim !== 'undefined' ? window._bootAnim : true),
+                      onclick: 'toggleBootAnim()' }
+                ]},
                 { heading: 'File', items: [
                     { type: 'button', label: 'Import .rdm',         icon: 'upload',   onclick: 'importRdm()' },
                     { type: 'button', label: 'Export .rdm',         icon: 'download', onclick: 'exportRdm()' },
@@ -19518,6 +19617,33 @@
                             try { openMobileMenu(); } catch (e) {}
                         };
                         content.appendChild(btn);
+                    } else if (mi.type === 'inlineselect') {
+                        /* Self-contained select built from an inline options list
+                         * (not cloned from existing DOM). getValue() seeds the
+                         * current selection; onchange(v) gets the numeric value. */
+                        const wrap = document.createElement('div');
+                        wrap.style.cssText = 'margin:4px 0;';
+                        if (mi.label) {
+                            const lbl = document.createElement('div');
+                            lbl.textContent = mi.label;
+                            lbl.style.cssText = 'font-size:11px;color:var(--text-muted);margin:2px 0 3px;';
+                            wrap.appendChild(lbl);
+                        }
+                        const sel = document.createElement('select');
+                        sel.style.cssText = 'display:block;width:100%;font-size:13px;padding:8px;height:40px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;';
+                        (mi.options || []).forEach(o => {
+                            const opt = document.createElement('option');
+                            opt.value = o.v; opt.textContent = o.l;
+                            sel.appendChild(opt);
+                        });
+                        let cur = 0;
+                        try { cur = mi.getValue ? mi.getValue() : 0; } catch (e) { cur = 0; }
+                        sel.value = String(cur);
+                        sel.onchange = function() {
+                            try { mi.onchange(parseInt(this.value, 10)); } catch (e) { console.warn(e); }
+                        };
+                        wrap.appendChild(sel);
+                        content.appendChild(wrap);
                     }
                 });
             });
@@ -19530,10 +19656,38 @@
             if (panel)   panel.classList.remove('active');
         }
 
+        /* ── Boot loading animation toggle (hamburger → Startup) ───────────
+         * Single on/off setting: when on, the dashboard sweeps in after the
+         * splash; when off it appears instantly. Persisted on the device;
+         * enabling also previews the sweep live on the dashboard. */
+        async function _initBootAnim() {
+            try {
+                const r = await fetch('/api/splash/list');
+                if (r.ok) { const d = await r.json(); window._bootAnim = (d.boot_anim !== false); }
+            } catch (e) { /* offline / dev server — leave default (on) */ }
+        }
+        async function toggleBootAnim() {
+            const next = !(typeof window._bootAnim !== 'undefined' ? window._bootAnim : true);
+            window._bootAnim = next;
+            try {
+                await fetch('/api/splash/bootanim', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: next, preview: true })
+                });
+                if (typeof showToast === 'function')
+                    showToast('Loading animation ' + (next ? 'on' : 'off'), 'success');
+            } catch (e) {
+                if (typeof showToast === 'function')
+                    showToast('Failed to update setting', 'error');
+            }
+        }
+
         /* Backdrop click = dismiss whatever's open */
         document.addEventListener('DOMContentLoaded', () => {
             const bd = document.getElementById('mobileSheetBackdrop');
             if (bd) bd.addEventListener('click', closeMobileSheet);
+            _initBootAnim();
         });
 
         /* Drag-to-expand/dismiss the bottom sheet (phone-only visually;

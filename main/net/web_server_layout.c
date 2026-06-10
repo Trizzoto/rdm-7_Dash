@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define. */
 #ifndef LAYOUT_MAX_FILE_BYTES
@@ -1544,10 +1545,14 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 	bool splash_enabled = true;
 	config_store_load_splash_enabled(&splash_enabled);
 
+	bool boot_anim = true;
+	config_store_load_boot_anim(&boot_anim);
+
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "active", active);
 	cJSON_AddBoolToObject(root, "fade_enabled", fade_enabled);
 	cJSON_AddBoolToObject(root, "enabled", splash_enabled);
+	cJSON_AddBoolToObject(root, "boot_anim", boot_anim);
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
@@ -1776,6 +1781,65 @@ static const httpd_uri_t splash_enabled_uri = {
 	.handler = splash_enabled_handler, .user_ctx = NULL
 };
 
+/* Trampoline so the live preview runs on the LVGL task (the web handler runs
+ * on the HTTP task). */
+static void _boot_anim_preview_async(void *arg) {
+	(void)arg;
+	splash_screen_preview_boot_anim();
+}
+
+/* POST /api/splash/bootanim — enable/disable the dashboard boot loading
+ * animation. Body: {"enabled": <bool>, "preview": <bool, optional>}. When
+ * preview is true (and enabling) the sweep is demonstrated on the live dash. */
+static esp_err_t splash_bootanim_handler(httpd_req_t *req) {
+	char buf[64];
+	if (req->content_len >= (int)sizeof(buf)) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+	if (received <= 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	buf[received] = '\0';
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (!cJSON_IsBool(enabled)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' bool");
+		return ESP_FAIL;
+	}
+
+	bool val = cJSON_IsTrue(enabled);
+	cJSON *preview = cJSON_GetObjectItemCaseSensitive(root, "preview");
+	bool do_preview = cJSON_IsTrue(preview);
+	cJSON_Delete(root);
+
+	config_store_save_boot_anim(val);
+	ESP_LOGI(TAG, "Dashboard boot animation %s%s", val ? "enabled" : "disabled",
+	         (do_preview && val) ? " (preview)" : "");
+
+	/* Only worth previewing the sweep when it's being turned on. */
+	if (do_preview && val)
+		rdm_async_call(_boot_anim_preview_async, NULL);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_bootanim_uri = {
+	.uri = "/api/splash/bootanim", .method = HTTP_POST,
+	.handler = splash_bootanim_handler, .user_ctx = NULL
+};
+
 
 void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &layout_version_uri);
@@ -1803,4 +1867,5 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &splash_delete_uri);
     REGISTER_URI(server, &splash_fade_uri);
     REGISTER_URI(server, &splash_enabled_uri);
+    REGISTER_URI(server, &splash_bootanim_uri);
 }

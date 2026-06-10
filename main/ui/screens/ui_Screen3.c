@@ -22,6 +22,7 @@
 #include "ui/ui.h"
 #include "layout/layout_manager.h"
 #include "layout/layout_switcher.h"
+#include "storage/config_store.h"
 #include "widgets/widget_bar.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_panel.h"
@@ -242,15 +243,24 @@ static void _toast_timer_cb(lv_timer_t *t) {
 static void _menu_splash_changed_cb(lv_event_t *e) {
 	if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
 	lv_obj_t *dd = lv_event_get_target(e);
-	char name[LAYOUT_MAX_NAME];
-	lv_dropdown_get_selected_str(dd, name, sizeof(name));
 
-	layout_manager_set_active_splash(name);
+	const char *msg;
+	if (lv_dropdown_get_selected(dd) == 0) {
+		/* Option 0 = "Disable Splash" — boot straight to the dashboard. */
+		config_store_save_splash_enabled(false);
+		msg = LV_SYMBOL_OK " Splash disabled";
+	} else {
+		char name[LAYOUT_MAX_NAME];
+		lv_dropdown_get_selected_str(dd, name, sizeof(name));
+		config_store_save_splash_enabled(true);
+		layout_manager_set_active_splash(name);
+		msg = LV_SYMBOL_OK " Splash updated";
+	}
 
 	/* Show brief toast confirmation */
 	lv_obj_t *scr = lv_scr_act();
 	lv_obj_t *toast = lv_label_create(scr);
-	lv_label_set_text(toast, LV_SYMBOL_OK " Splash updated");
+	lv_label_set_text(toast, msg);
 	lv_obj_set_style_text_color(toast, THEME_COLOR_ACCENT_TEAL, 0);
 	lv_obj_set_style_text_font(toast, THEME_FONT_SMALL, 0);
 	lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -12);
@@ -476,28 +486,32 @@ static void menu_button_clicked_cb(lv_event_t *e) {
 	char active_splash[LAYOUT_MAX_NAME];
 	layout_manager_get_active_splash(active_splash, sizeof(active_splash));
 
-	char splash_opts[640] = "";
-	int splash_sel = 0;
-	int splash_opt_count = 0;
-	size_t spos = 0;
+	bool splash_on = true;
+	config_store_load_splash_enabled(&splash_on);
+
+	/* Option 0 is always "Disable Splash"; the saved splash layouts follow. */
+	char splash_opts[640] = "Disable Splash";
+	size_t spos = strlen(splash_opts);
+	int splash_sel = 0;            /* default selection = Disable Splash */
+	int splash_opt_count = 1;      /* index 0 taken by Disable Splash     */
 	for (int i = 0; i < splash_count; i++) {
 		size_t slen = strlen(splash_names[i]);
 		if (spos + slen + 2 > sizeof(splash_opts)) break;
-		if (splash_opt_count > 0) splash_opts[spos++] = '\n';
+		splash_opts[spos++] = '\n';
 		memcpy(&splash_opts[spos], splash_names[i], slen);
 		spos += slen;
 		splash_opts[spos] = '\0';
-		if (strcmp(splash_names[i], active_splash) == 0)
+		if (splash_on && strcmp(splash_names[i], active_splash) == 0)
 			splash_sel = splash_opt_count;
 		splash_opt_count++;
 	}
-	if (splash_opt_count > 0) {
-		lv_dropdown_set_options(splash_dd, splash_opts);
-		lv_dropdown_set_selected(splash_dd, splash_sel);
-	} else {
-		lv_dropdown_set_options(splash_dd, "(none)");
-		lv_obj_add_state(splash_dd, LV_STATE_DISABLED);
-	}
+	/* Splash enabled but the active name wasn't in the list → fall back to the
+	 * first real splash rather than leaving "Disable Splash" selected. */
+	if (splash_on && splash_sel == 0 && splash_opt_count > 1)
+		splash_sel = 1;
+
+	lv_dropdown_set_options(splash_dd, splash_opts);
+	lv_dropdown_set_selected(splash_dd, splash_sel);
 	lv_obj_add_event_cb(splash_dd, _menu_splash_changed_cb,
 						LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -688,6 +702,18 @@ void ui_Screen3_screen_init(void) {
 	ui_Menu_Button = lv_btn_create(ui_Screen3);
 	lv_obj_set_size(ui_Menu_Button, 100, 36);
 	lv_obj_align(ui_Menu_Button, LV_ALIGN_TOP_RIGHT, -12, 12);
+	/* Expand the touch target 20 px beyond the visual bounds. The GT911 jitters
+	 * the contact point between press and release (see notes on
+	 * screen3_touch_event_cb); on a small corner target that drift can push the
+	 * finger off the button mid-press, firing LV_EVENT_PRESS_LOST and clearing
+	 * the active object — so neither CLICKED nor SHORT_CLICKED fires on release
+	 * and the tap is silently dropped ("the menu sometimes didn't open"). The
+	 * ext click area keeps the press tracked through that jitter. No steal risk:
+	 * it grows toward the screen corner, and the only neighbour (Layout_Next) is
+	 * created later so it sits on top and wins the seam hit-test. Hidden objects
+	 * aren't hit-tested, so this is inert while the chrome is hidden — widget
+	 * long-press underneath is unaffected. */
+	lv_obj_set_ext_click_area(ui_Menu_Button, 20);
 	lv_obj_add_flag(ui_Menu_Button, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE, 0);
 	lv_obj_set_style_bg_color(ui_Menu_Button, THEME_COLOR_ACCENT_BLUE_PRESSED,
@@ -757,9 +783,12 @@ void ui_Screen3_screen_init(void) {
 	lv_obj_add_event_cb(ui_Layout_Prev_Button, _layout_prev_clicked_cb,
 						LV_EVENT_CLICKED, NULL);
 
-	/* Edit Mode pill — grey-translucent sibling to the Menu button. Created
-	 * hidden; first dashboard short-tap reveals both pills together. */
-	edit_mode_create_pill(ui_Screen3);
+	/* Edit Mode pill — DISABLED for now. On-device edit mode is incomplete and
+	 * deferred to a later update, so the entry button is not created. Skipping
+	 * creation leaves s_pill NULL; edit_mode_show_pill()/hide_pill() both guard
+	 * on that, so the reveal-on-tap path is a safe no-op. Restore this call to
+	 * bring the button back. */
+	/* edit_mode_create_pill(ui_Screen3); */
 
 	/* BUS SILENT overlay — shows when no CAN frames have been received for
 	   >CAN_SILENT_MS milliseconds. Small top-right badge (doesn't block widgets),

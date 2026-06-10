@@ -75,6 +75,12 @@ esp_err_t config_store_load_splash_fade(bool *enabled);
 esp_err_t config_store_save_splash_enabled(bool enabled);
 esp_err_t config_store_load_splash_enabled(bool *enabled);
 
+/* ── Dashboard boot loading animation ─────────────────────────────────────
+   Whether the dashboard "sweeps in" after the splash fades out (true) or
+   appears instantly (false). Default: true (animation on). */
+esp_err_t config_store_save_boot_anim(bool enabled);
+esp_err_t config_store_load_boot_anim(bool *enabled);
+
 /* ── First-run flag (#17) ───────────────────────────────────────────────
    Set to true once the first-run wizard has been dismissed or completed.
    On a fresh NVS or after factory reset, this is false and the dash boots

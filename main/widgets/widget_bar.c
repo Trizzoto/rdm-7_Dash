@@ -299,7 +299,7 @@ void update_bar_ui(void *param) {
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
 		if (upd->is_timeout) {
-			strcpy(value_str, "---");
+			strcpy(value_str, "--");
 		} else {
 			signal_format_value(sig_idx, (float)upd->final_value,
 								(uint8_t)decimals, value_str, sizeof(value_str));
@@ -400,7 +400,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_align(ui_Bar_1_Value, LV_ALIGN_CENTER);
 	lv_obj_set_x(ui_Bar_1_Value, -140);
 	lv_obj_set_y(ui_Bar_1_Value, 181);
-	lv_label_set_text(ui_Bar_1_Value, "---");
+	lv_label_set_text(ui_Bar_1_Value, "--");
 	lv_obj_set_style_text_color(ui_Bar_1_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_1_Value, THEME_FONT_BODY,
@@ -453,7 +453,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_align(ui_Bar_2_Value, LV_ALIGN_CENTER);
 	lv_obj_set_x(ui_Bar_2_Value, 340);
 	lv_obj_set_y(ui_Bar_2_Value, 181);
-	lv_label_set_text(ui_Bar_2_Value, "---");
+	lv_label_set_text(ui_Bar_2_Value, "--");
 	lv_obj_set_style_text_color(ui_Bar_2_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_2_Value, THEME_FONT_BODY,
@@ -625,7 +625,7 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	if (bd->value_obj && lv_obj_is_valid(bd->value_obj) && bd->show_bar_value) {
 		char value_str[16];
 		if (is_stale) {
-			strcpy(value_str, "---");
+			strcpy(value_str, "--");
 		} else {
 			/* signal_format_value honours any value-label map on the
 			 * bound signal (gear positions, modes, etc.); falls back to
@@ -823,7 +823,7 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_pos(val,
 		w->x + (w->w / 2) - (BAR_VALUE_W / 2) - BAR_VALUE_PAD_R,
 		w->y);
-	lv_label_set_text(val, "---");
+	lv_label_set_text(val, "--");
 	lv_obj_set_style_text_color(val, bd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	const lv_font_t *bar_val_font = bd ? widget_resolve_font(bd->value_font) : NULL;

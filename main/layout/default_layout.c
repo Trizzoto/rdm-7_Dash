@@ -207,7 +207,7 @@ esp_err_t generate_default_layout(void) {
 	/* ── Vehicle speed (large center text) ──────────────────────────────── */
 	{
 		cJSON *cfg = cJSON_CreateObject();
-		cJSON_AddStringToObject(cfg, "static_text", "---");
+		cJSON_AddStringToObject(cfg, "static_text", "--");
 		cJSON_AddStringToObject(cfg, "signal_name", "VEHICLE_SPEED");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);
@@ -228,7 +228,7 @@ esp_err_t generate_default_layout(void) {
 	/* ── RPM text ───────────────────────────────────────────────────────── */
 	{
 		cJSON *cfg = cJSON_CreateObject();
-		cJSON_AddStringToObject(cfg, "static_text", "---");
+		cJSON_AddStringToObject(cfg, "static_text", "--");
 		cJSON_AddStringToObject(cfg, "signal_name", "RPM");
 		cJSON_AddNumberToObject(cfg, "decimals", 0);
 		cJSON_AddNumberToObject(cfg, "rotation", 0);

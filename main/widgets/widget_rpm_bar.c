@@ -858,31 +858,9 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 	lv_obj_set_style_border_width(rpm_redline_zone, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
 
-	/* Numeric RPM readout — historically the dashboard never created
-	 * ui_RPM_Value (Screen3 only NULLs it), so the bar showed no number.
-	 * When show_rpm_value is enabled we create the label here and assign it
-	 * to ui_RPM_Value so the existing update_rpm_ui / update_rpm_ui_immediate
-	 * paths populate it. It's a child of the container, so the layout
-	 * teardown cascade frees it; _rpm_bar_destroy NULLs the global to match
-	 * how ui_Screen3.c clears it. */
-	if (rd_bar && rd_bar->show_rpm_value) {
-		ui_RPM_Value = lv_label_create(container);
-		const lv_font_t *vfont = widget_resolve_font(rd_bar->rpm_value_font);
-		if (!vfont) vfont = THEME_FONT_DASH_RPM;
-		lv_obj_set_style_text_font(ui_RPM_Value, vfont,
-								   LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_color(ui_RPM_Value, rd_bar->rpm_value_color,
-									LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_text_opa(ui_RPM_Value, LV_OPA_COVER,
-								  LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_label_set_text(ui_RPM_Value, "---");
-		/* Centre the readout over the bar; pass touch through to the
-		 * container so the chrome-reveal tap still works. */
-		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
-		lv_obj_set_pos(ui_RPM_Value, (lv_coord_t)(20.0f * sx + 0.5f), 0);
-		lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_CLICKABLE);
-		rd_bar->rpm_value_obj = ui_RPM_Value;
-	}
+	/* (The optional numeric RPM readout that used to live on the bar was
+	 * removed — the dashboard never creates ui_RPM_Value, so the bar shows no
+	 * number.) */
 }
 
 /* Create-or-update the numeric RPM readout to match the current rd fields.
@@ -903,7 +881,7 @@ static void _rpm_bar_sync_value_label(rpm_bar_data_t *rd) {
 
 	if (!ui_RPM_Value || !lv_obj_is_valid(ui_RPM_Value)) {
 		ui_RPM_Value = lv_label_create(s_rpm_container);
-		lv_label_set_text(ui_RPM_Value, "---");
+		lv_label_set_text(ui_RPM_Value, "--");
 		lv_obj_set_align(ui_RPM_Value, LV_ALIGN_CENTER);
 		lv_obj_clear_flag(ui_RPM_Value, LV_OBJ_FLAG_CLICKABLE);
 		rd->rpm_value_obj = ui_RPM_Value;
@@ -1207,8 +1185,18 @@ void update_rpm_lines(lv_obj_t *parent) {
 				lv_obj_set_style_text_font(label, tick_font,
 										   LV_PART_MAIN | LV_STATE_DEFAULT);
 
-				// Position the label below the anchor tick (offset scales with sy)
-				lv_obj_align_to(label, label_anchor, LV_ALIGN_OUT_BOTTOM_MID, 0, label_off);
+				/* Anchor the label INSIDE the container. A top-row tick sits at
+				 * the container's top edge, so the label hangs below it. A
+				 * bottom-only tick sits flush with the container's BOTTOM edge —
+				 * hanging the label below it would push it past the bottom and
+				 * LVGL clips it (the "Bottom = numbers vanish" bug). Place it
+				 * above the tick instead so it stays visible. */
+				if (anchor_is_top)
+					lv_obj_align_to(label, label_anchor,
+									LV_ALIGN_OUT_BOTTOM_MID, 0, label_off);
+				else
+					lv_obj_align_to(label, label_anchor,
+									LV_ALIGN_OUT_TOP_MID, 0, -label_off);
 
 				rpm_labels[label_slot] = label;
 			}
@@ -1305,7 +1293,7 @@ static void _rpm_bar_on_channel_changed(channel_t *c, void *user_data) {
 static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
 	(void)user_data;
 	if (is_stale) {
-		update_rpm_ui_immediate("---", 0);
+		update_rpm_ui_immediate("--", 0);
 		return;
 	}
 	int rpm = (int)value;
@@ -1443,12 +1431,6 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "tick_color", (int)rd->tick_color.full);
 	if (rd->bar_bg_color.full != THEME_COLOR_RPM_BAR_BG.full)
 		cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)rd->bar_bg_color.full);
-	if (rd->show_rpm_value)         /* default false */
-		cJSON_AddBoolToObject(cfg, "show_rpm_value", true);
-	if (rd->rpm_value_font[0] != '\0')
-		cJSON_AddStringToObject(cfg, "rpm_value_font", rd->rpm_value_font);
-	if (rd->rpm_value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
-		cJSON_AddNumberToObject(cfg, "rpm_value_color", (int)rd->rpm_value_color.full);
 
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
@@ -1537,13 +1519,6 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) rd->tick_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_color");
 	if (cJSON_IsNumber(item)) rd->bar_bg_color.full = (uint32_t)item->valueint;
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_rpm_value");
-	if (cJSON_IsBool(item)) rd->show_rpm_value = cJSON_IsTrue(item);
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_font");
-	if (cJSON_IsString(item) && item->valuestring)
-		safe_strncpy(rd->rpm_value_font, item->valuestring, sizeof(rd->rpm_value_font));
-	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_color");
-	if (cJSON_IsNumber(item)) rd->rpm_value_color.full = (uint32_t)item->valueint;
 	/* Clamp to the current 3-value enum. Older firmware versions had a
 	 * 7-value enum that included "circles" modes (now removed); the legacy
 	 * migration ladder lived here until 2026-04-27 and was deleted because

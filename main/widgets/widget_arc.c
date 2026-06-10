@@ -153,8 +153,11 @@ static float _arc_apply_anchor(const arc_data_t *d, float v) {
     }
 }
 
-/* Apply anchor THEN reverse (same order as the meter) to a clamped value,
- * yielding the value to feed to the linear fill / image-clip / value-needle.
+/* Apply anchor THEN reverse (same order as the meter) to a clamped value.
+ * Used to drive the overlay value-line NEEDLE: the overlay lv_meter is laid
+ * out with a natural (non-reversed) geometry — lv_meter has no reverse mode in
+ * v8 — and its tick labels are swapped by the relabel hook, so the needle has
+ * to be fed the mirrored value to land on the (relabelled) reversed scale.
  * Clamps to [signal_min, signal_max] on the way out. */
 static float _arc_transform_value(const arc_data_t *d, float v) {
     if (v < d->signal_min) v = d->signal_min;
@@ -164,14 +167,27 @@ static float _arc_transform_value(const arc_data_t *d, float v) {
     return v;
 }
 
+/* Value to drive the LINEAR fill geometry (standard-arc indicator + image
+ * clip): clamp + anchor only, NO reverse mirror. Reverse is handled
+ * geometrically — LV_ARC_MODE_REVERSE for the standard arc, a right-anchored
+ * clip for image mode — so the fill empties at signal_min and the sweep
+ * direction + starting point genuinely flip (rather than the fill staying
+ * anchored at start_angle and just inverting its length). */
+static float _arc_fill_value(const arc_data_t *d, float v) {
+    if (v < d->signal_min) v = d->signal_min;
+    if (v > d->signal_max) v = d->signal_max;
+    return _arc_apply_anchor(d, v);
+}
+
 /* ── Helpers: image-mode clip width update ─────────────────────────────── */
 
 static void _update_image_clip(widget_t *w, float value) {
     arc_data_t *d = (arc_data_t *)w->type_data;
     if (!d || !d->img_clip_obj) return;
 
-    /* Anchor + reverse first, then linear pct. */
-    float tv = _arc_transform_value(d, value);
+    /* Anchor only, then linear pct. Reverse reveals from the right edge
+     * (clip is right-anchored at create), so we want the un-mirrored pct. */
+    float tv = _arc_fill_value(d, value);
     float range = d->signal_max - d->signal_min;
     if (range <= 0.0f) range = 100.0f;
     float pct = (tv - d->signal_min) / range;
@@ -187,8 +203,11 @@ static void _update_image_clip(widget_t *w, float value) {
 static void _update_arc_value(arc_data_t *d, float value) {
     if (!d || !d->arc_obj) return;
 
-    /* Anchor + reverse first, then linear pct over the configured range. */
-    float tv = _arc_transform_value(d, value);
+    /* Anchor only, then linear pct over the configured range. With reverse on,
+     * the arc is in LV_ARC_MODE_REVERSE so LVGL grows the fill from the END
+     * angle back toward the start — feeding the un-mirrored pct keeps the fill
+     * empty at signal_min and full at signal_max regardless of direction. */
+    float tv = _arc_fill_value(d, value);
     float range = d->signal_max - d->signal_min;
     if (range <= 0.0f) range = 100.0f;
     float pct = (tv - d->signal_min) / range;
@@ -461,21 +480,26 @@ static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
     /* Load fill image */
     d->arc_img_full_dsc = rdm_image_load(d->arc_image_full);
     if (d->arc_img_full_dsc) {
-        /* Create clip container -- starts at width 0 (empty) */
+        /* Create clip container -- starts at width 0 (empty). Reverse anchors
+         * the clip (and the inner image) to the RIGHT edge so the fill grows
+         * leftward — the image equivalent of LV_ARC_MODE_REVERSE: the reveal
+         * direction + starting point flip instead of just the length. */
+        lv_align_t clip_align = d->reverse ? LV_ALIGN_RIGHT_MID
+                                           : LV_ALIGN_LEFT_MID;
         d->img_clip_obj = lv_obj_create(cont);
         lv_obj_set_size(d->img_clip_obj, 0, w->h);
-        lv_obj_set_align(d->img_clip_obj, LV_ALIGN_LEFT_MID);
+        lv_obj_set_align(d->img_clip_obj, clip_align);
         lv_obj_clear_flag(d->img_clip_obj, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_opa(d->img_clip_obj, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_set_style_border_width(d->img_clip_obj, 0, LV_PART_MAIN);
         lv_obj_set_style_pad_all(d->img_clip_obj, 0, LV_PART_MAIN);
         lv_obj_set_style_radius(d->img_clip_obj, 0, LV_PART_MAIN);
 
-        /* Full image inside the clip container, aligned to left so it
-         * gets progressively revealed as clip container width grows */
+        /* Full image inside the clip container, aligned to the same edge so it
+         * gets progressively revealed as the clip container width grows */
         d->img_full_obj = lv_img_create(d->img_clip_obj);
         lv_img_set_src(d->img_full_obj, d->arc_img_full_dsc);
-        lv_obj_set_align(d->img_full_obj, LV_ALIGN_LEFT_MID);
+        lv_obj_set_align(d->img_full_obj, clip_align);
     } else {
         ESP_LOGW(TAG, "Failed to load fill image '%s'", d->arc_image_full);
     }
@@ -801,6 +825,13 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
     _configure_arc(obj, d->start_angle, d->end_angle,
                     d->bg_arc_width, d->bg_arc_color,
                     d->arc_width, d->arc_color, d->rounded_ends);
+    /* Reverse: flip the growth direction + starting point. LVGL fills the
+     * indicator from the END angle back toward the start, so the gauge empties
+     * at signal_min on the opposite side and sweeps the other way. The overlay
+     * ticks/needle reverse via the relabel + value-mirror path instead (lv_meter
+     * has no reverse mode), so the two stay visually aligned. */
+    if (d->reverse)
+        lv_arc_set_mode(obj, LV_ARC_MODE_REVERSE);
     /* Initial value: 0 if signal-bound (will update on first tick),
      * else 100 (decorative full-fill). */
     lv_arc_set_value(obj, d->signal_index >= 0 ? 0 : 100);
@@ -811,8 +842,15 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
      * progress. Background is transparent (track shows through); the
      * indicator part carries the red colour at the configured width. */
     if (d->redline_enabled) {
-        int16_t rstart = _value_to_angle(d, d->redline_threshold);
-        int16_t rend   = d->end_angle;
+        /* Redline marks [threshold .. max]. _value_to_angle already mirrors
+         * the threshold's angular position when reverse is on, so the high-
+         * value end of the track flips with the fill: normal mode the zone runs
+         * from the threshold angle out to end_angle (max side); reverse mode max
+         * sits at start_angle, so the zone runs from start_angle in to the
+         * (mirrored) threshold angle. */
+        int16_t tang = _value_to_angle(d, d->redline_threshold);
+        int16_t rstart = d->reverse ? d->start_angle : tang;
+        int16_t rend   = d->reverse ? tang           : d->end_angle;
         uint8_t rw     = d->redline_arc_width > 0 ? d->redline_arc_width
                                                   : d->arc_width;
         lv_obj_t *robj = lv_arc_create(cont);

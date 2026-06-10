@@ -49,10 +49,13 @@ static const char *TAG = "inspector";
 
 /* Tab definitions. LAYOUT was removed - the bottom toolbar's chip popover
  * owns position + size, the Inspector doesn't duplicate it. */
-#define TAB_COUNT 3
+/* RULES tab hidden per product decision — the on-device inspector now shows
+ * only DATA + STYLE. The TAB_RULES enum value is kept so the (now-unreached)
+ * switch case still compiles; bump TAB_COUNT back to 3 to restore the tab. */
+#define TAB_COUNT 2
 enum { TAB_DATA = 0, TAB_STYLE, TAB_RULES };
 static const char *const s_tab_names[TAB_COUNT] = {
-    "DATA", "STYLE", "RULES"
+    "DATA", "STYLE"
 };
 
 /* Dock geometry. Width varies per tab - STYLE is narrow so the dashboard
@@ -70,7 +73,6 @@ static int s_dock_w = DOCK_W_NARROW;
 static const int s_tab_dock_w[TAB_COUNT] = {
     [TAB_DATA]  = DOCK_W_WIDE,
     [TAB_STYLE] = DOCK_W_NARROW,
-    [TAB_RULES] = DOCK_W_WIDE,
 };
 
 static inline int _dock_x(void)    { return 800 - s_dock_w; }

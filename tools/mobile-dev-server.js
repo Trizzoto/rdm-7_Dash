@@ -64,9 +64,10 @@ const MOCK = {
     { ecu: 'Ford BA/BF', version: 'stock',      signals: [] },
     { ecu: 'Ford FG',    version: 'stock',      signals: [] }
   ]),
-  'GET  /api/presets/custom':   () => ([]),
-  'POST /api/presets/custom/save':   () => ({ ok: true }),
-  'POST /api/presets/custom/delete': () => ({ ok: true }),
+  /* /api/presets/custom GET|save|delete handled explicitly below — they need
+   * request body/query and an in-memory store so the editor's custom-preset
+   * flow ("+ New ECU", "+ Add Signal", "Create Preset") actually persists
+   * across requests during browser dev, matching the device's LittleFS. */
   'GET  /api/ecu/list':         () => ({ ecus: ['MS3-Pro', 'Haltech Elite', 'MaxxECU', 'Ford BA/BF', 'Ford FG'] }),
   'GET  /api/ecu/current':      () => ({ ecu: 'MS3-Pro', version: '1.5.x' }),
   'POST /api/ecu/set':          () => ({ ok: true }),
@@ -113,6 +114,46 @@ const MOCK = {
   'POST /api/fuel/set-full':    () => ({ ok: true, voltage: 3.0 })
 };
 
+/* ── In-memory custom-preset store (dev only) ──────────────────────────────
+ * Mirrors the device's LittleFS custom presets. Each entry:
+ *   { ecu, version, signals: [ { label, can_id, bit_start, bit_length,
+ *                                scale, offset, endianess, is_signed, decimals } ] }
+ * GET /api/presets/custom returns the FLAT array the firmware emits — one row
+ * per signal (carrying ecu/version/label/decode), or a single { _empty:true }
+ * placeholder row so an ECU with no signals still appears in the picker. */
+const customPresetStore = [];
+
+function flattenCustomPresets() {
+  const out = [];
+  for (const p of customPresetStore) {
+    if (!p.signals || p.signals.length === 0) {
+      out.push({ ecu: p.ecu, version: p.version, label: '', _empty: true });
+      continue;
+    }
+    for (const s of p.signals) {
+      out.push({
+        ecu: p.ecu, version: p.version,
+        label: s.label || '',
+        can_id: (s.can_id != null ? String(s.can_id) : '0'),
+        endianess: (s.endianess != null ? s.endianess : 1),
+        bit_start: s.bit_start || 0,
+        bit_length: (s.bit_length != null ? s.bit_length : 16),
+        scale: (s.scale != null ? s.scale : 1),
+        offset: s.offset || 0,
+        decimals: s.decimals || 0,
+        is_signed: !!s.is_signed
+      });
+    }
+  }
+  return out;
+}
+
+function readBody(req, cb) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => cb(body));
+}
+
 function sendJson(res, body, code = 200) {
   const json = typeof body === 'string' ? body : JSON.stringify(body);
   res.writeHead(code, {
@@ -136,6 +177,33 @@ const server = http.createServer((req, res) => {
   const handler = MOCK[key];
 
   if (req.url.startsWith('/api/')) {
+    /* Custom presets — explicit handlers (need body/query + persistence). */
+    if (url === '/api/presets/custom' && req.method === 'GET') {
+      return sendJson(res, flattenCustomPresets());
+    }
+    if (url === '/api/presets/custom/save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const ecu = data.ecu, version = data.version;
+          if (!ecu || !version) return sendJson(res, { ok: false, error: 'ecu and version required' }, 400);
+          const signals = Array.isArray(data.signals) ? data.signals : [];
+          const existing = customPresetStore.find(p => p.ecu === ecu && p.version === version);
+          if (existing) existing.signals = signals;
+          else customPresetStore.push({ ecu, version, signals });
+          sendJson(res, { ok: true });
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 400);
+        }
+      });
+    }
+    if (url === '/api/presets/custom/delete' && req.method === 'POST') {
+      const q = new URLSearchParams(req.url.split('?')[1] || '');
+      const ecu = q.get('ecu'), version = q.get('version');
+      const idx = customPresetStore.findIndex(p => p.ecu === ecu && p.version === version);
+      if (idx >= 0) customPresetStore.splice(idx, 1);
+      return sendJson(res, { ok: true });
+    }
     if (handler) return sendJson(res, handler());
     console.log(`[mock] no handler for ${key} — returning {ok:true}`);
     return sendJson(res, { ok: true });

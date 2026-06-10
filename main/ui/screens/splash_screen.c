@@ -115,15 +115,117 @@ static void _first_run_check_cb(lv_timer_t *t)
 	}
 }
 
+/* ── Dashboard entrance: layered fade-in ─────────────────────────────────
+ * The single boot animation: the dashboard's widgets fade in top-to-bottom,
+ * staggered by their Y position. A single on/off setting (config_store
+ * boot_anim) chooses this reveal vs. an instant appear. All of these run on the
+ * LVGL task and assume ui_Screen3 is built. */
+
+/* Per-object opacity animation. opa_LAYERED composites the whole widget —
+ * container plus all children — at the given opacity; plain LV_STYLE_OPA only
+ * affects the object's own bg/border and wouldn't fade the gauge/label
+ * children with it. */
+static void _opa_anim_cb(void *obj, int32_t v)
+{
+	if (obj && lv_obj_is_valid((lv_obj_t *)obj))
+		lv_obj_set_style_opa_layered((lv_obj_t *)obj, (lv_opa_t)v,
+		                             LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/* Make every dashboard widget transparent. Called BEFORE the screen is shown
+ * so the fully-built layout never flashes into view. */
+static void _hide_all_widgets(void)
+{
+	widget_t *ws[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
+	for (uint8_t i = 0; i < n; i++) {
+		if (ws[i] && ws[i]->root && lv_obj_is_valid(ws[i]->root))
+			lv_obj_set_style_opa_layered(ws[i]->root, LV_OPA_TRANSP,
+			                             LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+/* Fade widgets in top-to-bottom, staggered by layout Y. */
+static void _start_layered_reveal(void)
+{
+	widget_t *ws[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
+	if (n == 0) return;
+
+	/* Insertion-sort by layout Y (top of screen first). */
+	for (uint8_t i = 1; i < n; i++) {
+		widget_t *key = ws[i];
+		int j = (int)i - 1;
+		while (j >= 0 && ws[j]->y > key->y) { ws[j + 1] = ws[j]; j--; }
+		ws[j + 1] = key;
+	}
+
+	const uint32_t stagger_ms = 55;   /* gap between successive widgets */
+	const uint32_t fade_ms    = 240;  /* per-widget fade duration */
+	for (uint8_t i = 0; i < n; i++) {
+		lv_obj_t *root = ws[i]->root;
+		if (!root || !lv_obj_is_valid(root)) continue;
+		lv_obj_set_style_opa_layered(root, LV_OPA_TRANSP,
+		                             LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_anim_t a;
+		lv_anim_init(&a);
+		lv_anim_set_var(&a, root);
+		lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+		lv_anim_set_time(&a, fade_ms);
+		lv_anim_set_delay(&a, i * stagger_ms);
+		lv_anim_set_exec_cb(&a, _opa_anim_cb);
+		lv_anim_start(&a);
+	}
+}
+
+/* Show the dashboard. When animate is set, hide all widgets first, swap the
+ * screen in instantly (both screens are black so there's no visible cut), then
+ * fade the widgets in top-to-bottom. Otherwise the layout just appears. */
+static void _reveal_dashboard_now(bool animate)
+{
+	if (animate) _hide_all_widgets();
+	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+	if (animate) _start_layered_reveal();
+}
+
+void splash_screen_reveal_dashboard(void)
+{
+	ui_Screen3_screen_init();
+
+	/* Reset our splash-widget bookkeeping — the dashboard owns the registry
+	 * now, and the old splash screen is about to be auto-deleted. */
+	s_widget_count = 0;
+	memset(s_widgets, 0, sizeof(s_widgets));
+
+	bool animate = true;
+	config_store_load_boot_anim(&animate);
+	_reveal_dashboard_now(animate);
+}
+
+void splash_screen_preview_boot_anim(void)
+{
+	if (!ui_Screen3 || !lv_obj_is_valid(ui_Screen3)) return;
+
+	/* Cover the live dashboard with black, then re-run the layered reveal on the
+	 * EXISTING Screen3 (no rebuild). _reveal_dashboard_now auto-deletes this
+	 * cover when it swaps the dashboard back in. */
+	lv_obj_t *black = lv_obj_create(NULL);
+	lv_obj_set_style_bg_color(black, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
+	lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
+	lv_scr_load(black);
+
+	_reveal_dashboard_now(true);
+}
+
 static void _splash_build_dashboard(lv_timer_t *t)
 {
 	(void)t;
 
-	ui_Screen3_screen_init();
-
-	/* Instant swap — dashboard is already built off-screen.
-	 * auto_del=true cleans up the black screen. */
-	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+	/* Dashboard is built here (on the black screen, unseen) then swept in. */
+	splash_screen_reveal_dashboard();
 
 	/* First-run wizard: show 800ms after dashboard appears so the user sees
 	   the dashboard first, then the welcome overlay. Check NVS before showing
@@ -132,7 +234,26 @@ static void _splash_build_dashboard(lv_timer_t *t)
 	lv_timer_set_repeat_count(wiz, 1);
 }
 
-/** Phase 1: show a clean black screen while dashboard builds (LVGL task). */
+/* Drives the splash-cover opacity during the fade-out. */
+static void _splash_cover_opa_cb(void *obj, int32_t v)
+{
+	if (obj && lv_obj_is_valid((lv_obj_t *)obj))
+		lv_obj_set_style_bg_opa((lv_obj_t *)obj, (lv_opa_t)v, LV_PART_MAIN);
+}
+
+/* Fires exactly when the black cover has reached full opacity — i.e. the splash
+ * is 100% hidden. Only now do we build + reveal the dashboard. Chaining off the
+ * animation's real completion (instead of a fixed timer) guarantees the splash
+ * has fully faded out before anything else touches the screen, even at low boot
+ * FPS. The cover is a child of the splash screen, so the reveal's screen swap
+ * auto-deletes both together. */
+static void _splash_fade_ready_cb(lv_anim_t *a)
+{
+	(void)a;
+	_splash_build_dashboard(NULL);
+}
+
+/** Phase 1: fade the splash fully out, then build + reveal the dashboard. */
 static void _splash_transition_cb(void *arg)
 {
 	(void)arg;
@@ -142,22 +263,35 @@ static void _splash_transition_cb(void *arg)
 	memset(s_widgets, 0, sizeof(s_widgets));
 
 	if (s_fade_enabled) {
-		/* Create a solid black screen */
-		lv_obj_t *black = lv_obj_create(NULL);
-		lv_obj_set_style_bg_color(black, lv_color_black(), 0);
-		lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
-		lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
+		/* Overlay a full-screen black cover on the splash and animate its
+		 * opacity 0 → 255. When it's fully opaque the splash is invisible, and
+		 * the ready_cb chains the dashboard reveal. Center-aligned at full
+		 * display resolution so it covers every pixel regardless of screen
+		 * padding. */
+		lv_obj_t *cover = lv_obj_create(lv_scr_act());
+		lv_obj_remove_style_all(cover);
+		lv_coord_t w = lv_disp_get_hor_res(lv_disp_get_default());
+		lv_coord_t h = lv_disp_get_ver_res(lv_disp_get_default());
+		lv_obj_set_size(cover, w, h);
+		lv_obj_set_align(cover, LV_ALIGN_CENTER);
+		lv_obj_set_style_bg_color(cover, lv_color_black(), LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(cover, LV_OPA_TRANSP, LV_PART_MAIN);
+		lv_obj_clear_flag(cover, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-		/* Fade splash to black over 200ms, auto-delete splash screen */
-		lv_scr_load_anim(black, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
-
-		/* Build dashboard after fade completes */
-		lv_timer_t *t = lv_timer_create(_splash_build_dashboard, 250, NULL);
-		lv_timer_set_repeat_count(t, 1);
+		lv_anim_t a;
+		lv_anim_init(&a);
+		lv_anim_set_var(&a, cover);
+		lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+		lv_anim_set_time(&a, 350);
+		lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+		lv_anim_set_exec_cb(&a, _splash_cover_opa_cb);
+		lv_anim_set_ready_cb(&a, _splash_fade_ready_cb);
+		lv_anim_start(&a);
 	} else {
-		/* No fade — build and show dashboard immediately */
-		ui_Screen3_screen_init();
-		lv_scr_load(ui_Screen3);
+		/* No splash fade — build + reveal directly. The reveal animation still
+		 * applies (it swaps from the splash, which it auto-deletes), so the
+		 * chosen load style is honoured even with the fade transition off. */
+		_splash_build_dashboard(NULL);
 	}
 }
 
@@ -194,6 +328,15 @@ void show_splash_screen(void)
 	}
 
 	lv_scr_load(splash_screen);
+
+	/* Paint the splash in ONE synchronous pass before returning. show_splash_screen
+	 * runs inside ui_init() while app_main holds the LVGL mutex, so without this
+	 * the first splash frame (logo decode + panel flush) would instead render
+	 * asynchronously on the LVGL task right as the backlight is already on — and
+	 * a partial/interrupted first frame shows up as a quick tear. lv_refr_now()
+	 * forces the whole splash to render and flush atomically here, so the panel
+	 * goes straight from black to a fully-drawn splash. */
+	lv_refr_now(NULL);
 
 	/* Auto-transition to dashboard after 900 ms */
 	esp_timer_create_args_t timer_args = {

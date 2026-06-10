@@ -10,10 +10,26 @@
 extern "C" {
 #endif
 
+/** Duration (ms) of the dashboard "sweep in" reveal animation. */
+#define SPLASH_DASH_SWEEP_MS 450
+
 /** Show the splash screen at boot. Loads custom layout from _splash.json
  *  if available, otherwise shows default RDM logo. Starts a 900 ms timer
  *  that auto-transitions to the dashboard. */
 void show_splash_screen(void);
+
+/** Build the dashboard (Screen3) and sweep it in over whatever screen is
+ *  currently active, auto-deleting the previous screen when the animation
+ *  finishes. Opaque slide reveal — cheap on the RGB panel (no per-frame alpha
+ *  compositing). Used by both the boot-splash transition and the
+ *  splash-disabled boot path. Must run on the LVGL task. */
+void splash_screen_reveal_dashboard(void);
+
+/** Preview the boot loading animation on the already-built dashboard (web
+ *  editor "try it" when enabling the toggle). Drops a black cover over the live
+ *  dashboard and re-runs the sweep — no layout rebuild. Must run on the LVGL
+ *  task. */
+void splash_screen_preview_boot_anim(void);
 
 /* ── Splash edit mode (used by web editor) ────────────────────────────── */
 

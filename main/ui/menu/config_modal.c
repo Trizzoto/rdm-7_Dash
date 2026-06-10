@@ -960,21 +960,6 @@ static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
     lv_obj_add_event_cb(tcol_dd, rpm_tick_color_dropdown_event_cb,
                          LV_EVENT_VALUE_CHANGED, NULL);
 
-    /* ── RPM number readout section ────────────────────────────────── */
-    settings_section_t *num_sec =
-        settings_add_section(tab, "RPM NUMBER", THEME_COLOR_ACCENT_BLUE);
-
-    lv_obj_t *num_sw = settings_add_switch(num_sec, "Show Number:",
-                                           rd->show_rpm_value);
-    lv_obj_add_event_cb(num_sw, rpm_show_value_switch_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *ncol_dd = settings_add_dropdown(num_sec, "Number Colour:",
-                                              COLOR_OPTS, 0);
-    lv_dropdown_set_selected(ncol_dd, _color_opts_idx(rd->rpm_value_color));
-    lv_obj_add_event_cb(ncol_dd, rpm_value_color_dropdown_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
-
     /* ── Limiter section ───────────────────────────────────────────── */
     settings_section_t *lim_sec =
         settings_add_section(tab, "LIMITER", THEME_COLOR_ACCENT_AMBER);
