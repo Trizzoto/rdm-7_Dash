@@ -20,6 +20,7 @@
  * UAF after we've returned.
  */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "can/obd2.h"
 #include "can/obd2_dtc_db.h"
@@ -100,7 +101,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
     }
     ctx->mode = mode;
 
-    lv_async_call(_dtc_kick, ctx);
+    rdm_async_call(_dtc_kick, ctx);
     /* obd2 DTC timeout is 2 s — give 3 s HTTP wait as upper bound. */
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(3000));
 
@@ -183,7 +184,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_clear_kick, ctx);
+    rdm_async_call(_clear_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -276,7 +277,7 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_ecuname_kick, ctx);
+    rdm_async_call(_ecuname_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -322,7 +323,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_vin_kick, ctx);
+    rdm_async_call(_vin_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -404,15 +405,15 @@ static void _snap_stage_dtc_done(bool ok, const obd2_dtc_t *codes, uint8_t count
     if (mode == 0x03) {
         ctx->stored_ok = ok; ctx->stored_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->stored, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_pending, ctx);
+        rdm_async_call(_snap_kick_pending, ctx);
     } else if (mode == 0x07) {
         ctx->pending_ok = ok; ctx->pending_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->pending, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_permanent, ctx);
+        rdm_async_call(_snap_kick_permanent, ctx);
     } else if (mode == 0x0A) {
         ctx->permanent_ok = ok; ctx->permanent_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->permanent, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_vin, ctx);
+        rdm_async_call(_snap_kick_vin, ctx);
     }
 }
 
@@ -423,7 +424,7 @@ static void _snap_vin_done(bool ok, const char *vin, void *user) {
         strncpy(ctx->vin, vin, sizeof(ctx->vin) - 1);
     }
     /* Chain to ECU name — last OBD2 fetch in the snapshot chain. */
-    lv_async_call(_snap_kick_ecuname, ctx);
+    rdm_async_call(_snap_kick_ecuname, ctx);
 }
 
 static void _snap_ecuname_done(bool ok, const char *name, void *user) {
@@ -571,7 +572,7 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
 
     /* Start the chain. _snap_kick_stored -> Mode 03 -> (cb) -> Mode 07 ->
      * (cb) -> Mode 0A -> (cb) -> Mode 09 -> (cb) -> write file -> sem. */
-    lv_async_call(_snap_kick_stored, ctx);
+    rdm_async_call(_snap_kick_stored, ctx);
 
     /* Generous 12 s budget: 5 OBD2 round-trips (Mode 03/07/0A + VIN +
      * ECU name) × 2 s each = 10 s, plus a couple of seconds for the SD

@@ -12,6 +12,7 @@
  *   GET  /api/dimmer/config    brightness-dimmer signal config
  *   POST /api/dimmer/config    update dimmer config + re-subscribe */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -407,7 +408,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	save_dimmer_config_to_nvs();
-	lv_async_call(_deferred_dimmer_subscribe, NULL);
+	rdm_async_call(_deferred_dimmer_subscribe, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");

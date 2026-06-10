@@ -10,6 +10,7 @@
  *   POST /api/fuel/set-empty     record current voltage as empty reference
  *   POST /api/fuel/set-full      record current voltage as full reference */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
@@ -230,7 +231,7 @@ static esp_err_t _signal_simulate_post_handler(httpd_req_t *req) {
 	bool en = cJSON_IsTrue(enabled);
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_sim_toggle, (void *)(uintptr_t)en);
+	rdm_async_call(_deferred_sim_toggle, (void *)(uintptr_t)en);
 
 	httpd_resp_set_type(req, "application/json");
 	const char *resp = en ? "{\"status\":\"ok\",\"enabled\":true}" : "{\"status\":\"ok\",\"enabled\":false}";
@@ -318,7 +319,7 @@ static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	if (batch->count > 0)
-		lv_async_call(_deferred_inject, batch);
+		rdm_async_call(_deferred_inject, batch);
 	else
 		free(batch);
 
@@ -414,7 +415,7 @@ static esp_err_t _signal_update_handler(httpd_req_t *req) {
 	if (cJSON_IsString(ju) && ju->valuestring) { strncpy(r->unit, ju->valuestring, sizeof(r->unit) - 1); r->has_unit = true; }
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_signal_update, r);
+	rdm_async_call(_deferred_signal_update, r);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -473,7 +474,7 @@ static esp_err_t _signal_clear_handler(httpd_req_t *req) {
 	}
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_clear, r);
+	rdm_async_call(_deferred_clear, r);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -588,7 +589,7 @@ static esp_err_t _obd2_test_pid_handler(httpd_req_t *req)
 
     /* Dispatch the actual test on the LVGL task — all obd2 state is
      * LVGL-thread-only. */
-    lv_async_call(_obd2_test_kick, ctx);
+    rdm_async_call(_obd2_test_kick, ctx);
 
     /* Wait for the callback. obd2 internal timeout is 500 ms; give
      * 1.5 s here as a generous upper bound. */

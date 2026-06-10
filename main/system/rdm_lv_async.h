@@ -27,6 +27,22 @@ extern "C" {
 /** Crash-safe lv_obj_del_async() — see file header. No-op on NULL/invalid. */
 void rdm_obj_del_async(lv_obj_t *obj);
 
+/**
+ * Thread-safe lv_async_call(). In LVGL v8 lv_async_call() allocates from the
+ * LVGL heap and inserts into the GLOBAL timer linked list with NO locking; the
+ * LVGL task concurrently mutates that same list inside lv_timer_handler(). So
+ * calling lv_async_call() directly from any other task (httpd, UART, WiFi/OTA
+ * event, esp_timer, CAN) races the timer list → the intermittent "CORRUPT
+ * HEAP" / lv_mem crash class.
+ *
+ * rdm_async_call() takes the (recursive) LVGL mutex around the call, which
+ * serialises it against lv_timer_handler(). Safe to call from the LVGL task
+ * too (recursive lock). Use this for every cross-task deferral; raw
+ * lv_async_call() is only OK from code already holding the LVGL mutex (e.g.
+ * inside an LVGL event handler).
+ */
+void rdm_async_call(lv_async_cb_t cb, void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

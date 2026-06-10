@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "system/rdm_lv_async.h"
 #include "ota_handler.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -97,7 +98,7 @@ static void _set_state(wifi_mgr_state_t new_state)
             ctx->cb        = s_event_cb;
             ctx->state     = new_state;
             ctx->user_data = s_event_ud;
-            lv_async_call(_deferred_event_cb, ctx);
+            rdm_async_call(_deferred_event_cb, ctx);
         }
     }
 }
@@ -154,7 +155,7 @@ static void _deferred_reconnect(void *arg)
 static void _reconnect_timer_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    lv_async_call(_deferred_reconnect, NULL);
+    rdm_async_call(_deferred_reconnect, NULL);
 }
 
 static void _schedule_reconnect(void)

@@ -15,6 +15,7 @@
  *   POST /api/replay/stop        {}
  *   GET  /api/replay/status      active, file, row, total_rows, speed */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "storage/data_logger.h"
 #include "storage/can_raw_logger.h"
@@ -102,7 +103,7 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 		}
 	}
 
-	lv_async_call(_deferred_log_start, args);
+	rdm_async_call(_deferred_log_start, args);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -155,7 +156,7 @@ static esp_err_t _log_config_post_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 	*hz_arg = (uint16_t)v;
-	lv_async_call(_deferred_log_set_rate, hz_arg);
+	rdm_async_call(_deferred_log_set_rate, hz_arg);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
 	return ESP_OK;
@@ -166,7 +167,7 @@ static esp_err_t _log_stop_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not logging");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_log_stop, NULL);
+	rdm_async_call(_deferred_log_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;
@@ -469,7 +470,7 @@ static esp_err_t _canraw_start_handler(httpd_req_t *req) {
 		                    "Signal logger active — stop it first");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_canraw_start, NULL);
+	rdm_async_call(_deferred_canraw_start, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -480,7 +481,7 @@ static esp_err_t _canraw_stop_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not capturing");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_canraw_stop, NULL);
+	rdm_async_call(_deferred_canraw_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;
@@ -682,7 +683,7 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 	a->loop  = cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item);
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_replay_start, a);
+	rdm_async_call(_deferred_replay_start, a);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -690,7 +691,7 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 
 static esp_err_t _replay_stop_handler(httpd_req_t *req)
 {
-	lv_async_call(_deferred_replay_stop, NULL);
+	rdm_async_call(_deferred_replay_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;

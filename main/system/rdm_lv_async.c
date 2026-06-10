@@ -1,12 +1,33 @@
 /*
  * rdm_lv_async.c — see rdm_lv_async.h.
  *
- * Threading: all functions run on the LVGL task (they touch LVGL objects +
- * the async queue), same as lv_obj_del_async().
+ * Threading: rdm_obj_del_async() and its callbacks run on the LVGL task (they
+ * touch LVGL objects + the async queue). rdm_async_call() is the exception —
+ * it is explicitly the safe way to post to the LVGL task FROM another task, so
+ * it takes the LVGL mutex itself.
  */
 #include "system/rdm_lv_async.h"
+#include "ui/lvgl_helpers.h"   /* rdm_lvgl_lock / rdm_lvgl_unlock */
+#include "esp_log.h"
 
 static void _cancel_on_delete_cb(lv_event_t *e);   /* fwd decl */
+
+void rdm_async_call(lv_async_cb_t cb, void *user_data)
+{
+    if (!cb) return;
+    /* Serialise the timer-list mutation against lv_timer_handler(). The mutex
+     * is recursive, so this is also safe when already on the LVGL task. A
+     * generous timeout (rather than block-forever) keeps a wedged LVGL task
+     * from pinning a web/UART worker; on that degraded path fall back to a raw
+     * call so the deferred work isn't silently dropped. */
+    if (rdm_lvgl_lock(2000)) {
+        lv_async_call(cb, user_data);
+        rdm_lvgl_unlock();
+    } else {
+        ESP_LOGW("rdm_async", "LVGL lock timeout — posting async call unguarded");
+        lv_async_call(cb, user_data);
+    }
+}
 
 /* The deferred delete itself. lv_obj_is_valid() guards the (benign) case where
  * the object was already deleted AND its slot not yet reused; the real

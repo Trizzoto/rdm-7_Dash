@@ -1,4 +1,5 @@
 #include "ota_handler.h"
+#include "system/rdm_lv_async.h"
 #include "ota_update_dialog.h"
 #include "version.h"
 #include "storage/config_store.h"
@@ -870,7 +871,7 @@ static void _boot_check_task(void *arg)
         } else {
             ESP_LOGI(TAG, "Auto-OTA-check: update %s available — showing dialog",
                      latest);
-            lv_async_call(_boot_show_dialog_async, NULL);
+            rdm_async_call(_boot_show_dialog_async, NULL);
         }
     } else {
         ESP_LOGI(TAG, "Auto-OTA-check: no popup (status=%d)", (int)status);

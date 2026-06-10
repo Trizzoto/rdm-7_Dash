@@ -8,6 +8,7 @@
  *   POST /api/banner/test       force alert-banner widget visible/hidden by id
  *   POST /api/screen/switch     switch between dashboard and splash screen */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "system/remote_touch.h"
 #include "widgets/widget_indicator.h"
@@ -142,7 +143,7 @@ static esp_err_t api_indicator_test_post_handler(httpd_req_t *req) {
 	ESP_LOGI(TAG, "indicator test slot=%d active=%d (L=%d R=%d)",
 	         slot, active, s_ind_test_left, s_ind_test_right);
 
-	lv_async_call(_ind_test_apply_cb, NULL);
+	rdm_async_call(_ind_test_apply_cb, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -202,7 +203,7 @@ static esp_err_t api_warning_test_post_handler(httpd_req_t *req) {
 	}
 	payload->slot = (uint8_t)slot;
 	payload->active = active;
-	lv_async_call(_warn_test_apply_cb, payload);
+	rdm_async_call(_warn_test_apply_cb, payload);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -271,7 +272,7 @@ static esp_err_t api_banner_test_post_handler(httpd_req_t *req) {
 	payload->active = active;
 	cJSON_Delete(root);
 
-	lv_async_call(_banner_test_apply_cb, payload);
+	rdm_async_call(_banner_test_apply_cb, payload);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -308,10 +309,10 @@ static esp_err_t screen_switch_handler(httpd_req_t *req) {
 
 	if (strncmp(screen_val, "splash", 6) == 0) {
 		if (!splash_screen_is_edit_mode())
-			lv_async_call(_deferred_screen_switch_splash, NULL);
+			rdm_async_call(_deferred_screen_switch_splash, NULL);
 	} else if (strncmp(screen_val, "dashboard", 9) == 0) {
 		if (splash_screen_is_edit_mode())
-			lv_async_call(_deferred_screen_switch_dashboard, NULL);
+			rdm_async_call(_deferred_screen_switch_dashboard, NULL);
 	} else {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
 							"Invalid screen (use splash or dashboard)");

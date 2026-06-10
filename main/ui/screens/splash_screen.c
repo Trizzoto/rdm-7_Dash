@@ -1,4 +1,5 @@
 #include "splash_screen.h"
+#include "system/rdm_lv_async.h"
 #include "ui.h"
 #include "../theme.h"
 #include "ui_helpers.h"
@@ -165,7 +166,7 @@ static void splash_timer_cb(void *arg)
 {
 	(void)arg;
 	/* Defer all LVGL work to the LVGL task */
-	lv_async_call(_splash_transition_cb, NULL);
+	rdm_async_call(_splash_transition_cb, NULL);
 
 	/* Clean up the esp_timer (safe from esp_timer callback context) */
 	if (splash_timer) {

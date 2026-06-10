@@ -5,9 +5,10 @@
  * in listen-only mode.  Picks the bitrate with the most received frames.
  *
  * Runs on core 0, priority 5, stack 4096.  Communicates to LVGL via
- * lv_async_call() so UI updates are thread-safe.
+ * rdm_async_call() so UI updates are thread-safe.
  */
 #include "can_bus_test.h"
+#include "system/rdm_lv_async.h"
 #include "can_manager.h"
 
 #include <string.h>
@@ -52,7 +53,7 @@ static void _notify_ui(void *arg) {
 }
 
 static void _push_ui_update(void) {
-    lv_async_call(_notify_ui, NULL);
+    rdm_async_call(_notify_ui, NULL);
 }
 
 /** Add a CAN ID to the unique-IDs list for a result entry. */

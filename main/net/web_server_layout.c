@@ -7,6 +7,7 @@
  *
  * Also owns the debounced LVGL screen-reload helpers used by save/preview. */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "data/channel_source_apply.h"
 #include "layout/layout_manager.h"
@@ -458,7 +459,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			const char *bare = layout_name + 8; /* skip "_splash_" */
 			layout_manager_set_active_splash(bare);
 			splash_screen_set_active_name(bare);
-			lv_async_call(_deferred_splash_reload, NULL);
+			rdm_async_call(_deferred_splash_reload, NULL);
 		} else {
 			// Update active layout name in NVS
 			if (layout_manager_set_active(layout_name) != ESP_OK) {
@@ -468,7 +469,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			}
 
 			// Defer heavy screen rebuild to the LVGL task
-			lv_async_call(_deferred_screen_reload, NULL);
+			rdm_async_call(_deferred_screen_reload, NULL);
 		}
 	}
 
@@ -544,7 +545,7 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	 * Instead, the async callback (_deferred_preview_apply) frees its own
 	 * argument after use, so each buffer is freed exactly once. */
 	s_pending_preview_json = json_copy;
-	lv_async_call(_deferred_preview_apply, json_copy);
+	rdm_async_call(_deferred_preview_apply, json_copy);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
 
@@ -811,7 +812,7 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 			return ESP_FAIL;
 		}
 		config_store_save_ecu(make, ver);
-		lv_async_call(_deferred_screen_reload, NULL);
+		rdm_async_call(_deferred_screen_reload, NULL);
 	} else {
 		config_store_save_ecu("", "");
 	}
@@ -1289,7 +1290,7 @@ static esp_err_t layout_set_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	lv_async_call(_deferred_screen_reload, NULL);
+	rdm_async_call(_deferred_screen_reload, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -1360,7 +1361,7 @@ static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	layout_manager_get_active(active, sizeof(active));
 	if (strcmp(active, layout_name) == 0) {
 		layout_manager_set_active("default");
-		lv_async_call(_deferred_screen_reload, NULL);
+		rdm_async_call(_deferred_screen_reload, NULL);
 	}
 
 	ESP_LOGI(TAG, "Deleted layout '%s'", layout_name);
@@ -1612,7 +1613,7 @@ static esp_err_t splash_set_handler(httpd_req_t *req) {
 
 	/* If in splash edit mode, reload to the newly selected splash */
 	if (splash_screen_is_edit_mode())
-		lv_async_call(_deferred_splash_reload, NULL);
+		rdm_async_call(_deferred_splash_reload, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -1676,7 +1677,7 @@ static esp_err_t splash_delete_handler(httpd_req_t *req) {
 		layout_manager_set_active_splash("Default");
 		splash_screen_set_active_name("Default");
 		if (splash_screen_is_edit_mode())
-			lv_async_call(_deferred_splash_reload, NULL);
+			rdm_async_call(_deferred_splash_reload, NULL);
 	}
 
 	httpd_resp_set_type(req, "application/json");
