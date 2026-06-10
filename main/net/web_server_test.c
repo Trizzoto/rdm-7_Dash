@@ -20,6 +20,7 @@
 #include "widgets/widget_rules.h"
 #include "data/channel_manager.h"
 #include "widgets/font_manager.h"
+#include "system/render_perf.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -362,6 +363,35 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 	return _send_json(req, root);
 }
 
+/* ── GET /api/perf ────────────────────────────────────────────────────────
+ * Last ~1 s window of LVGL render telemetry (fps, invalidated area, render
+ * and flush time) published by rdm7_lvgl_monitor_cb. The serial refr_diag
+ * log is LOGD/compiled-out; this is the supported way to measure render
+ * performance on-device. No LVGL lock needed (plain struct copy). */
+static esp_err_t _perf_handler(httpd_req_t *req) {
+	render_perf_t p;
+	render_perf_get(&p);
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	cJSON_AddNumberToObject(root, "seq", p.seq);
+	cJSON_AddNumberToObject(root, "fps", p.fps_x10 / 10.0);
+	cJSON_AddNumberToObject(root, "frames", p.frames);
+	cJSON_AddNumberToObject(root, "avg_px", p.avg_px);
+	cJSON_AddNumberToObject(root, "avg_pct_screen", p.avg_pct);
+	cJSON_AddNumberToObject(root, "max_pct_screen", p.max_pct);
+	cJSON_AddNumberToObject(root, "avg_render_ms", p.avg_render_ms);
+	cJSON_AddNumberToObject(root, "flush_per_frame", p.flush_per_frame_x10 / 10.0);
+	cJSON_AddNumberToObject(root, "flush_us_per_frame", p.flush_us_per_frame);
+	return _send_json(req, root);
+}
+
+static const httpd_uri_t perf_uri = {
+	.uri = "/api/perf", .method = HTTP_GET,
+	.handler = _perf_handler, .user_ctx = NULL};
+
 static const httpd_uri_t can_inject_uri = {
 	.uri = "/api/can/inject", .method = HTTP_POST,
 	.handler = _can_inject_handler, .user_ctx = NULL};
@@ -376,4 +406,5 @@ void web_server_test_register(httpd_handle_t server) {
 	REGISTER_URI(server, &can_inject_uri);
 	REGISTER_URI(server, &widgets_uri);
 	REGISTER_URI(server, &selftest_uri);
+	REGISTER_URI(server, &perf_uri);
 }

@@ -37,6 +37,7 @@
 #include "sdkconfig.h"
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
+#include "system/render_perf.h"
 #include "storage/user_signals.h"
 #include "system/crash_log.h"
 #include "system/heap_monitor.h"
@@ -199,6 +200,14 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
 static uint64_t s_flush_us_sum = 0;
 static uint32_t s_flush_count = 0;
 
+/* Published once per ~1 s window by the monitor cb; read by GET /api/perf.
+ * See system/render_perf.h. */
+static render_perf_t s_render_perf = {0};
+
+void render_perf_get(render_perf_t *out) {
+  if (out) *out = s_render_perf;
+}
+
 /* Dirty-rect-topology diagnostic. LVGL calls this once per refresh where
  * anything was drawn; `px_num` is the sum of unjoined dirty-rect areas for
  * the frame (see lv_refr.c:620), i.e. the real on-screen invalidation load
@@ -246,6 +255,18 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
     s_flush_us_sum = 0;
     uint32_t flush_per_frame_x10 = (uint32_t)((uint64_t)fcount * 10U / s_frame_cnt);
     uint32_t flush_us_per_frame = (uint32_t)(fus / s_frame_cnt);
+
+    /* Publish the window for GET /api/perf (seq last, as a cheap freshness
+     * marker for readers on other tasks). */
+    s_render_perf.fps_x10 = fps_x10;
+    s_render_perf.frames = s_frame_cnt;
+    s_render_perf.avg_px = avg_px;
+    s_render_perf.avg_pct = avg_pct;
+    s_render_perf.max_pct = max_pct;
+    s_render_perf.avg_render_ms = avg_elaps;
+    s_render_perf.flush_per_frame_x10 = flush_per_frame_x10;
+    s_render_perf.flush_us_per_frame = flush_us_per_frame;
+    s_render_perf.seq++;
 
     /* Steady-state render telemetry — DEBUG, not WARN. The FPS-analysis
      * campaign that needed this is concluded; at the default INFO log level
