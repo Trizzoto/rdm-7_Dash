@@ -672,7 +672,16 @@ static void _handle_font_delete(int id, cJSON *params)
         _send_error(id, "Built-in font cannot be deleted");
         return;
     }
-    if (!font_manager_remove_family(name_item->valuestring)) {
+    /* Under the LVGL lock — lv_tiny_ttf_destroy() races the render task
+     * otherwise (runs on the UART task here). */
+    bool removed;
+    if (rdm_lvgl_lock(2000)) {
+        removed = font_manager_remove_family(name_item->valuestring);
+        rdm_lvgl_unlock();
+    } else {
+        removed = font_manager_remove_family(name_item->valuestring);
+    }
+    if (!removed) {
         _send_error(id, "Font not found");
         return;
     }
