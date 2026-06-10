@@ -8,6 +8,7 @@
  * Also owns the debounced LVGL screen-reload helpers used by save/preview. */
 #include "web_server_internal.h"
 #include "cJSON.h"
+#include "data/channel_source_apply.h"
 #include "layout/layout_manager.h"
 #include "layout/ecu_presets.h"
 #include "lvgl.h"
@@ -391,6 +392,34 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			const ecu_preset_t *p = ecu_preset_find(ecu_item->valuestring,
 			                                        ver_item->valuestring);
 			if (p) preset_applied = true;  /* will run after the raw save */
+		}
+	}
+
+	/* ── Studio "full config" import (channel thresholds + decode) ─────
+	 *
+	 * Off-device layouts (RDM Studio export / marketplace .rdm import —
+	 * both POST the raw layout here) carry channel config on signals[]:
+	 * low_warn/high_warn + CAN decode. Our own editor never emits those
+	 * keys (buildFirmwarePayload strips them), so the carry_config
+	 * pre-scan keeps normal saves off this path entirely. Adopt the
+	 * config into channels.json BEFORE the raw save: the import also
+	 * strips the threshold keys from `root`, so the persisted layout
+	 * can't re-assert imported thresholds over later on-device channel
+	 * edits on every reload. */
+	if (!is_splash) {
+		cJSON *sig_arr = cJSON_GetObjectItemCaseSensitive(root, "signals");
+		if (channel_layout_signals_carry_config(sig_arr)) {
+			if (rdm_lvgl_lock(1000)) {
+				size_t n = channel_import_from_layout_signals(sig_arr);
+				rdm_lvgl_unlock();
+				if (n)
+					ESP_LOGI(TAG, "layout/save: imported channel config "
+					              "for %u signal(s) from '%s'",
+					         (unsigned)n, layout_name);
+			} else {
+				ESP_LOGW(TAG, "layout/save: LVGL busy, channel config "
+				              "import skipped for '%s'", layout_name);
+			}
 		}
 	}
 
