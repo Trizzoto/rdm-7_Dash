@@ -229,6 +229,20 @@ esp_err_t channel_manager_load_from_lfs(void);
 esp_err_t channel_manager_save_to_lfs(void);
 
 /**
+ * Backup/restore the whole channel registry as the raw channels.json bytes.
+ * Channel config is device-local (ADR-0005) and otherwise unrecoverable on a
+ * hardware swap or FS corruption.
+ *
+ * export: flushes pending edits, returns a malloc'd NUL-terminated copy of the
+ *   on-disk file in *out_buf (caller frees); *out_len gets the byte length.
+ * import: validates (parses, has a "channels" array within the cap, loadable
+ *   schema_version) then atomically replaces the file. It does NOT mutate the
+ *   live registry — the caller MUST reboot for it to take effect.
+ */
+esp_err_t channel_manager_export_raw(char **out_buf, size_t *out_len);
+esp_err_t channel_manager_import_raw(const char *json, size_t len);
+
+/**
  * Mark the manager dirty and queue a debounced save (500 ms). Multiple
  * rapid edits coalesce into one disk write. Called automatically by
  * all the set_* mutation functions.

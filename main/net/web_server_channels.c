@@ -30,6 +30,9 @@
 #include "ui/settings/preset_picker.h"  /* preconfig_items[] master catalog */
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "cJSON.h"
 #include <ctype.h>
 #include <string.h>
@@ -1121,6 +1124,88 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 	return send_channel_ok(req, c);
 }
 
+/* ── GET /api/channels/export — download the entire channels.json ──────────
+ * Channel config (CAN decode + bindings) is device-local per ADR-0005 and was
+ * previously trapped on-device with no way to back it up or move it to another
+ * unit. Returns the raw file as a downloadable attachment. */
+static esp_err_t channels_export_handler(httpd_req_t *req) {
+	char *buf = NULL;
+	size_t len = 0;
+	esp_err_t e = channel_manager_export_raw(&buf, &len);
+	if (e != ESP_OK || !buf) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+			e == ESP_ERR_NOT_FOUND ? "No channels.json yet" : "Export failed");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_hdr(req, "Content-Disposition",
+	                   "attachment; filename=\"channels.json\"");
+	esp_err_t r = httpd_resp_send(req, buf, len);
+	free(buf);
+	return r;
+}
+
+/* ── POST /api/channels/import — restore channels.json, then reboot ────────
+ * Validates + atomically replaces the file (channel_manager_import_raw), then
+ * reboots so the new config loads cleanly at boot. We deliberately do NOT hot-
+ * swap the live registry — that would dangle widgets' channel subscriptions —
+ * and a restore is a rare, deliberate op where a reboot is expected. */
+static void _deferred_chimport_reboot(void *arg) {
+	(void)arg;
+	vTaskDelay(pdMS_TO_TICKS(800));
+	esp_restart();
+}
+
+static esp_err_t channels_import_handler(httpd_req_t *req) {
+	int total = req->content_len;
+	if (total <= 0 || total > 64 * 1024) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad content length");
+		return ESP_FAIL;
+	}
+	char *body = malloc((size_t)total + 1);
+	if (!body) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	/* Read the full body (may arrive across multiple TCP segments). */
+	int got = 0;
+	while (got < total) {
+		int r = httpd_req_recv(req, body + got, total - got);
+		if (r <= 0) {
+			free(body);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body recv failed");
+			return ESP_FAIL;
+		}
+		got += r;
+	}
+	body[total] = '\0';
+
+	esp_err_t e = channel_manager_import_raw(body, (size_t)total);
+	free(body);
+	if (e != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+			"Invalid channels.json (need channels[] + loadable schema_version)");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_sendstr(req, "{\"status\":\"ok\",\"reboot\":true}");
+	xTaskCreate((TaskFunction_t)_deferred_chimport_reboot, "chimp_rb",
+	            2048, NULL, 1, NULL);
+	return ESP_OK;
+}
+
+static const httpd_uri_t channels_export_uri = {
+	.uri = "/api/channels/export", .method = HTTP_GET,
+	.handler = channels_export_handler, .user_ctx = NULL
+};
+
+static const httpd_uri_t channels_import_uri = {
+	.uri = "/api/channels/import", .method = HTTP_POST,
+	.handler = channels_import_handler, .user_ctx = NULL
+};
+
 static const httpd_uri_t channels_source_options_uri = {
 	.uri = "/api/channels/source-options",
 	.method = HTTP_GET,
@@ -1178,5 +1263,7 @@ void web_server_channels_register(httpd_handle_t server) {
 	REGISTER_URI(server, &channels_delete_uri);
 	REGISTER_URI(server, &channels_source_options_uri);
 	REGISTER_URI(server, &channels_bind_source_uri);
-	ESP_LOGI(TAG, "channel endpoints: list, canonical, activate, update, delete, source-options, bind-source");
+	REGISTER_URI(server, &channels_export_uri);
+	REGISTER_URI(server, &channels_import_uri);
+	ESP_LOGI(TAG, "channel endpoints: list, canonical, activate, update, delete, source-options, bind-source, export, import");
 }

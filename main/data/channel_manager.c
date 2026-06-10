@@ -1465,6 +1465,64 @@ esp_err_t channel_manager_save_to_lfs(void) {
 	return ESP_OK;
 }
 
+/* ── Backup / restore (channels.json is device-local per ADR-0005, otherwise
+ * unrecoverable on a hardware swap or FS corruption) ─────────────────────── */
+
+esp_err_t channel_manager_export_raw(char **out_buf, size_t *out_len) {
+	if (!out_buf) return ESP_ERR_INVALID_ARG;
+	*out_buf = NULL;
+	if (out_len) *out_len = 0;
+	/* Commit any debounced edits so the export reflects the latest state. */
+	channel_manager_flush();
+	FILE *f = fopen(CHM_FILE_PATH, "rb");
+	if (!f) return ESP_ERR_NOT_FOUND;
+	fseek(f, 0, SEEK_END);
+	long sz = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (sz <= 0) { fclose(f); return ESP_FAIL; }
+	char *buf = malloc((size_t)sz + 1);
+	if (!buf) { fclose(f); return ESP_ERR_NO_MEM; }
+	size_t rd = fread(buf, 1, (size_t)sz, f);
+	fclose(f);
+	buf[rd] = '\0';
+	*out_buf = buf;
+	if (out_len) *out_len = rd;
+	return ESP_OK;
+}
+
+esp_err_t channel_manager_import_raw(const char *json, size_t len) {
+	if (!json || len == 0) return ESP_ERR_INVALID_ARG;
+	/* Validate before touching the live file: must parse, carry a "channels"
+	 * array within the channel cap, and a schema_version this firmware can load
+	 * (>=1 and not from the future). Rejecting here means a bad upload can never
+	 * replace a working config. */
+	cJSON *root = cJSON_Parse(json);
+	if (!root) return ESP_ERR_INVALID_ARG;
+	cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "channels");
+	cJSON *ver = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+	int n = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : -1;
+	bool ok = n >= 0 && n <= CHM_MAX && cJSON_IsNumber(ver) &&
+	          ver->valuedouble >= 1 && ver->valuedouble <= CHM_SCHEMA_VERSION;
+	cJSON_Delete(root);
+	if (!ok) return ESP_ERR_INVALID_ARG;
+
+	/* Atomic write, mirroring save_to_lfs (stage -> fsync -> rename, keep .bak).
+	 * Takes effect on the next boot via channel_manager_load_from_lfs(); the
+	 * caller reboots rather than hot-swapping the live registry (which would
+	 * dangle widgets' channel subscriptions). */
+	FILE *f = fopen(CHM_TMP_PATH, "w");
+	if (!f) return ESP_FAIL;
+	size_t w = fwrite(json, 1, len, f);
+	if (w != len) { fclose(f); remove(CHM_TMP_PATH); return ESP_FAIL; }
+	if (fflush(f) != 0 || fsync(fileno(f)) != 0) { fclose(f); remove(CHM_TMP_PATH); return ESP_FAIL; }
+	if (fclose(f) != 0) { remove(CHM_TMP_PATH); return ESP_FAIL; }
+	rename(CHM_FILE_PATH, CHM_BAK_PATH);
+	if (rename(CHM_TMP_PATH, CHM_FILE_PATH) != 0) { remove(CHM_TMP_PATH); return ESP_FAIL; }
+	ESP_LOGI(TAG, "imported channels.json (%zu bytes, %d channels) — reboot to apply",
+	         len, n);
+	return ESP_OK;
+}
+
 static void chm_save_timer_cb(void *arg) {
 	(void)arg;
 	if (s_dirty) channel_manager_save_to_lfs();
