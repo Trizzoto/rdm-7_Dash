@@ -150,11 +150,7 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(sigs, "fresh", sig_fresh);
 	cJSON_AddNumberToObject(sigs, "stale", (int)sig_total - (int)sig_fresh);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t device_info_uri = {
@@ -301,11 +297,7 @@ static esp_err_t _system_health_handler(httpd_req_t *req) {
 	}
 	cJSON_AddNumberToObject(root, "wifi_rssi", rssi);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t system_health_uri = {

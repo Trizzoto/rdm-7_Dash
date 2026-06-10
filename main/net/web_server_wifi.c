@@ -30,11 +30,7 @@ static esp_err_t _wifi_config_get_handler(httpd_req_t *req) {
 	cJSON_AddBoolToObject(root, "auto_connect", creds.auto_connect);
 	cJSON_AddBoolToObject(root, "wifi_on_boot", boot.wifi_on_boot);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static esp_err_t _wifi_config_post_handler(httpd_req_t *req) {

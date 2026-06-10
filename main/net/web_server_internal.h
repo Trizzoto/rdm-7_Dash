@@ -40,6 +40,13 @@ extern int web_server_uri_register_failures;
 // 413 Payload Too Large JSON response (layout JSON exceeded LAYOUT_MAX_FILE_BYTES).
 esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual);
 
+// Serialize + send a cJSON object as application/json (with CORS), then free
+// it. ALWAYS consumes root. Sends a 500 instead of crashing if the serialize
+// OOMs. Forward-declared with a cJSON struct tag so callers needn't include
+// cJSON.h just for the prototype.
+struct cJSON;
+esp_err_t web_server_send_json(httpd_req_t *req, struct cJSON *root);
+
 // Path-traversal guards for user-supplied file/layout names.
 // web_server_name_is_safe: no dots, no slashes, no control chars.
 // web_server_filename_is_safe: allows one dot (extension); rejects "..".

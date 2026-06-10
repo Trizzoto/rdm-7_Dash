@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "cJSON.h"
 #include <stdbool.h>
 #include <string.h>
 #include "web_server_internal.h"
@@ -42,6 +43,27 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
 			 (unsigned)LAYOUT_MAX_FILE_BYTES, (unsigned)actual);
 	httpd_resp_sendstr(req, body);
 	return ESP_FAIL;
+}
+
+/* Serialize `root`, send it as application/json, and free both. ALWAYS consumes
+ * `root` (deletes it, even on error). If serialization OOMs
+ * (cJSON_PrintUnformatted returns NULL) it sends a 500 instead of calling
+ * httpd_resp_sendstr(NULL), which crashes. Callers must not free root or send a
+ * response themselves. Does NOT set the CORS header: callers set it before
+ * calling (the established per-handler pattern), and httpd_resp_set_hdr appends
+ * rather than replaces, so setting it here too would emit a duplicate
+ * Access-Control-Allow-Origin that strict browsers reject. */
+esp_err_t web_server_send_json(httpd_req_t *req, cJSON *root) {
+	char *json = root ? cJSON_PrintUnformatted(root) : NULL;
+	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	esp_err_t r = httpd_resp_sendstr(req, json);
+	cJSON_free(json);
+	return r;
 }
 
 /* ── Path-safety check for user-supplied names (no traversal) ──────────── */
