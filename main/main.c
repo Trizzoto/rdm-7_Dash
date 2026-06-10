@@ -1186,11 +1186,12 @@ void app_main(void) {
    * (UART TX idles HIGH, overriding the pull-down and permanently reading
    * as active on the indicator circuit).
    *
-   * DEBUG: set RDM7_DEBUG_KEEP_CONSOLE to 1 to skip UART1 takeover so boot
-   * logs remain visible on the USB-UART bridge past this point. Desktop app
-   * cannot connect while this is enabled. Flip back to 0 for production. */
+   * Production default: take over UART1 for the desktop serial protocol.
+   * For a debugging session, build with -DRDM7_DEBUG_KEEP_CONSOLE=1 to skip the
+   * takeover so boot logs stay visible on the USB-UART bridge (the desktop app
+   * can't connect while that override is set). */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 1
+#define RDM7_DEBUG_KEEP_CONSOLE 0
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "
