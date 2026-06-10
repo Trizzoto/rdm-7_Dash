@@ -55,6 +55,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* Read a layout file into a malloc'd NUL-terminated buffer (caller frees);
+ * NULL on failure. Defined below; forward-declared for the boot-time
+ * default.json validity check. */
+static char *_read_layout_file(const char *path);
+
 static const char *TAG = "layout_mgr";
 
 /* NVS namespace + key for the active layout name */
@@ -298,8 +303,23 @@ esp_err_t layout_manager_init(void) {
 			 LFS_LAYOUT_DIR);
 
 	struct stat st_def;
-	if (stat(default_path, &st_def) != 0) {
-		ESP_LOGI(TAG, "default.json not found — generating");
+	bool need_default = (stat(default_path, &st_def) != 0);
+	if (!need_default) {
+		/* Exists — confirm it still parses. A corrupt default.json was never
+		 * regenerated (the check was stat-exists only), so the dash would drop
+		 * to the hardcoded fallback on every boot until factory reset. */
+		char *db = _read_layout_file(default_path);
+		cJSON *dj = db ? cJSON_Parse(db) : NULL;
+		free(db);
+		if (!dj) {
+			ESP_LOGW(TAG, "default.json present but unparseable — regenerating");
+			need_default = true;
+		} else {
+			cJSON_Delete(dj);
+		}
+	}
+	if (need_default) {
+		ESP_LOGI(TAG, "default.json not found/invalid — generating");
 		esp_err_t err2 = generate_default_layout();
 		if (err2 != ESP_OK) {
 			ESP_LOGW(TAG, "generate_default_layout failed: %s",
@@ -969,6 +989,33 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	return ESP_OK;
 }
 
+/* Read an entire layout file into a freshly-malloc'd, NUL-terminated buffer
+ * (caller frees). Returns NULL if the file can't be opened or read. */
+static char *_read_layout_file(const char *path) {
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+	if (!buf) {
+		close(fd);
+		return NULL;
+	}
+	size_t nread = 0;
+	while (nread < LAYOUT_MAX_FILE_BYTES - 1) {
+		ssize_t n = read(fd, buf + nread, LAYOUT_MAX_FILE_BYTES - 1 - nread);
+		if (n < 0) {
+			close(fd);
+			free(buf);
+			return NULL;
+		}
+		if (n == 0) break;
+		nread += (size_t)n;
+	}
+	close(fd);
+	buf[nread] = '\0';
+	return buf;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  layout_manager_load
  * ═══════════════════════════════════════════════════════════════════════════
@@ -982,54 +1029,45 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	/* POSIX open() — see layout_manager_read_raw for rationale. */
-	int fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		/* Try recovering from backup if primary file is missing */
-		char bak_path[96];
-		snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
-		if (rename(bak_path, path) == 0) {
-			ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
-			fd = open(path, O_RDONLY);
-		}
-		if (fd < 0) {
-			ESP_LOGE(TAG, "layout_load: cannot open %s (errno=%d)", path, errno);
-			xSemaphoreGiveRecursive(s_layout_mutex);
-			return ESP_ERR_NOT_FOUND;
-		}
-	}
+	char bak_path[96];
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
 
-	/* Read entire file into a heap buffer */
-	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
-	if (!buf) {
-		close(fd);
-		xSemaphoreGiveRecursive(s_layout_mutex);
-		return ESP_ERR_NO_MEM;
-	}
-
-	size_t nread = 0;
-	while (nread < LAYOUT_MAX_FILE_BYTES - 1) {
-		ssize_t n = read(fd, buf + nread, LAYOUT_MAX_FILE_BYTES - 1 - nread);
-		if (n < 0) {
-			ESP_LOGE(TAG, "layout_load: read failed (errno=%d)", errno);
-			close(fd);
-			free(buf);
-			xSemaphoreGiveRecursive(s_layout_mutex);
-			return ESP_FAIL;
-		}
-		if (n == 0) break;
-		nread += (size_t)n;
-	}
-	close(fd);
-	buf[nread] = '\0';
-
-	cJSON *root = cJSON_Parse(buf);
+	/* Read + parse the primary file. On ANY failure — missing, unreadable, or
+	 * corrupt/truncated JSON (the normal outcome of a power cut mid-save) —
+	 * fall back to the .bak the atomic save keeps. A corrupt-but-present
+	 * primary is moved aside to {path}.corrupt so it isn't retried every boot
+	 * and is available for post-mortem. Previously a parse failure here
+	 * returned immediately, ignoring a perfectly good .bak and dropping the
+	 * user to the default layout. */
+	char *buf = _read_layout_file(path);
+	cJSON *root = buf ? cJSON_Parse(buf) : NULL;
 	free(buf);
 
 	if (!root) {
-		ESP_LOGE(TAG, "layout_load: JSON parse failed for %s", path);
+		if (access(path, F_OK) == 0) {
+			char corrupt_path[112];
+			snprintf(corrupt_path, sizeof(corrupt_path), "%s.corrupt", path);
+			remove(corrupt_path);          /* keep only the latest */
+			rename(path, corrupt_path);
+			ESP_LOGE(TAG, "layout_load: %s unparseable — moved to .corrupt, "
+			              "trying .bak", path);
+		} else {
+			ESP_LOGW(TAG, "layout_load: %s missing — trying .bak", path);
+		}
+		if (rename(bak_path, path) == 0) {
+			buf = _read_layout_file(path);
+			root = buf ? cJSON_Parse(buf) : NULL;
+			free(buf);
+			if (root)
+				ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
+		}
+	}
+
+	if (!root) {
+		ESP_LOGE(TAG, "layout_load: cannot load %s (no valid primary or .bak)",
+				 path);
 		xSemaphoreGiveRecursive(s_layout_mutex);
-		return ESP_FAIL;
+		return ESP_ERR_NOT_FOUND;
 	}
 
 	/* ── Validate schema version ── */
@@ -1307,18 +1345,24 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	/* Create backup of existing file before overwriting */
 	char bak_path[96];
 	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
-	rename(path, bak_path);
+	char tmp_path[96];
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-	/* POSIX open()/write()/close() — see layout_manager_read_raw for rationale.
-	 * fsync() replaces fflush() to ensure data reaches flash before close. */
-	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	/* Atomic write: stage the new content into {path}.tmp, fsync it to flash,
+	 * then swap it into place with rename(). This way `path` always names a
+	 * COMPLETE file — the old one until the final rename, the new one after —
+	 * so a power cut mid-write (normal in a vehicle) can never leave a
+	 * truncated live layout. The previous approach renamed live→.bak and then
+	 * wrote the new content directly over the live name, so a cut during the
+	 * write corrupted the live file AND the loader never consulted the .bak on
+	 * a parse failure (only when the file was missing). Mirrors the proven
+	 * channel_manager_save_to_lfs() idiom. */
+	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) {
 		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing (errno=%d)",
-				 path, errno);
-		rename(bak_path, path);
+				 tmp_path, errno);
 		free(json_str);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
@@ -1333,8 +1377,7 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 					 (unsigned)total_written, (unsigned)len, errno);
 			close(fd);
 			free(json_str);
-			remove(path);
-			rename(bak_path, path);
+			remove(tmp_path);
 			xSemaphoreGiveRecursive(s_layout_mutex);
 			return ESP_FAIL;
 		}
@@ -1342,14 +1385,25 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	}
 	free(json_str);
 
-	/* close() commits LittleFS writes to flash — no separate fsync needed
-	 * with POSIX write() (which bypasses the stdio userspace buffer that
-	 * the previous fflush() was draining). */
-	if (close(fd) != 0) {
-		ESP_LOGE(TAG, "layout_save_raw: close failed for %s (errno=%d)",
-				 path, errno);
-		remove(path);
-		rename(bak_path, path);
+	/* fsync the tmp file so its bytes are on flash before we make it live. */
+	if (fsync(fd) != 0 || close(fd) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: fsync/close failed for %s (errno=%d)",
+				 tmp_path, errno);
+		remove(tmp_path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
+		return ESP_FAIL;
+	}
+
+	/* Keep one backup of the previous good file (no-op on first save), then
+	 * atomically move the staged file into place. The only window where `path`
+	 * is absent is between these two renames — two metadata ops, no data
+	 * write — and the loader recovers from .bak if a cut lands there. */
+	rename(path, bak_path);
+	if (rename(tmp_path, path) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: rename %s -> %s failed (errno=%d)",
+				 tmp_path, path, errno);
+		rename(bak_path, path);   /* put the old file back */
+		remove(tmp_path);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}
