@@ -17485,6 +17485,15 @@
              * receiving frames were reading "0.000" etc., which looked like a
              * real value. */
             if (stale || v == null || isNaN(v)) return '--';
+            /* Show the value in the channel's chosen display unit. The firmware
+             * emits display_value (native→display converted, e.g. kPa→bar) only
+             * when a conversion applies; the unit <span> beside this already
+             * shows units_display, so converting here keeps the number and the
+             * label in the same unit (was showing the native value, e.g.
+             * "203.9 bar" for 203.9 kPa). Guarded on v === current_value so a
+             * caller formatting some other value isn't silently substituted. */
+            if (c && c.display_value != null && v === c.current_value)
+                v = c.display_value;
             const d = c.decimals || 0;
             return Number(v).toFixed(d);
         }
