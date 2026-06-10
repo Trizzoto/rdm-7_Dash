@@ -177,6 +177,10 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	cJSON_AddNumberToObject(j, "current_value", c->current_value);
 	cJSON_AddBoolToObject(j, "is_stale", c->is_stale);
 	cJSON_AddNumberToObject(j, "last_update_ms", c->last_update_ms);
+	/* Zone the current value falls into (tracked on the channel, only changes
+	 * on a transition). Lets a test agent assert e.g. "EGT is in high_warn"
+	 * after injecting a value, instead of re-deriving the threshold logic. */
+	cJSON_AddStringToObject(j, "zone", channel_zone_name(c->last_zone));
 
 	return j;
 }

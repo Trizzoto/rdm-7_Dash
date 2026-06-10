@@ -150,6 +150,9 @@ typedef enum {
 
 uint32_t channel_default_zone_color(channel_zone_t zone);
 
+/** Stable lowercase name for a zone ("low_warn"/"normal"/"high_warn"). */
+const char *channel_zone_name(channel_zone_t zone);
+
 /**
  * Compute the zone a given value falls into for this channel definition.
  * Sentinel thresholds short-circuit cleanly — never fires on the unset

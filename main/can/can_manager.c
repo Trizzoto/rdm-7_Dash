@@ -699,6 +699,25 @@ esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) 
 	return ret;
 }
 
+esp_err_t can_inject_rx_frame(uint32_t id, bool extd, const uint8_t *data, uint8_t dlc) {
+	if (s_can_queue == NULL)
+		return ESP_ERR_INVALID_STATE;
+	twai_message_t msg = {0};
+	msg.identifier = extd ? (id & 0x1FFFFFFFu) : (id & 0x7FFu);
+	msg.extd = extd ? 1 : 0;
+	msg.data_length_code = dlc > 8 ? 8 : dlc;
+	if (data && msg.data_length_code > 0)
+		memcpy(msg.data, data, msg.data_length_code);
+	/* Same enqueue the RX task uses — drained + dispatched by
+	 * can_process_queued_frames() on the LVGL task. Unlike the RX task (which
+	 * sends with timeout 0 and drops on a full queue), wait briefly for space:
+	 * on a busy bus the 64-deep queue is often full between LVGL drain cycles,
+	 * and a dropped injection would look like a silent test failure. ~50 ms
+	 * spans a few drain cycles; acceptable on the httpd task for a test path. */
+	return (xQueueSendToBack(s_can_queue, &msg, pdMS_TO_TICKS(50)) == pdPASS)
+	           ? ESP_OK : ESP_FAIL;
+}
+
 void can_process_queued_frames(void) {
 	if (s_can_queue == NULL) {
 		return;

@@ -1029,6 +1029,15 @@ uint32_t channel_default_zone_color(channel_zone_t zone) {
 	}
 }
 
+const char *channel_zone_name(channel_zone_t zone) {
+	switch (zone) {
+	case CHZONE_LOW_WARN:  return "low_warn";
+	case CHZONE_NORMAL:    return "normal";
+	case CHZONE_HIGH_WARN: return "high_warn";
+	default:               return "unknown";
+	}
+}
+
 channel_zone_t canonical_channel_value_zone(
 	const canonical_channel_def_t *def, float value)
 {

@@ -37,6 +37,7 @@ idf_component_register(
         "net/web_server_layout.c"
         "net/web_server_obd2.c"
         "net/web_server_channels.c"
+        "net/web_server_test.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"

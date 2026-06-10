@@ -82,6 +82,29 @@ void can_process_queued_frames(void);
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * Inject a synthetic RX frame into the receive queue, as if it had arrived on
+ * the bus. The frame flows through the exact same decode path as a real one
+ * (can_process_queued_frames → signal_dispatch_frame → channel/widget update,
+ * OBD2 handler, id-tracker, raw logger), so this exercises bit extraction,
+ * scaling, endianness and dispatch end-to-end with no bus connected — the
+ * basis of the /api/can/inject test endpoint.
+ *
+ * Thread-safe: xQueueSendToBack may be called from any task.
+ *
+ * NOTE: queued frames are dropped (drained but not dispatched) while the
+ * signal simulator is active (see can_process_queued_frames). Callers that
+ * need the frame to take effect should ensure the sim is off.
+ *
+ * @param id    CAN ID (11-bit standard, or 29-bit when @p extd is true).
+ * @param extd  true for an extended (29-bit) frame.
+ * @param data  Pointer to up to 8 data bytes (may be NULL when dlc==0).
+ * @param dlc   Data length code (0–8; values >8 are clamped).
+ * @return ESP_OK if queued; ESP_ERR_INVALID_STATE if the RX queue doesn't
+ *         exist yet; ESP_FAIL if the queue is full.
+ */
+esp_err_t can_inject_rx_frame(uint32_t id, bool extd, const uint8_t *data, uint8_t dlc);
+
+/**
  * Read CAN bus diagnostic counters from the TWAI driver.
  * All output pointers are optional (pass NULL to skip).
  */
