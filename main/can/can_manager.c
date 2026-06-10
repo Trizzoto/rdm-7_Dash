@@ -291,7 +291,21 @@ static void can_receive_task(void *pvParameter) {
 
 	ESP_LOGI(TAG, "CAN task exited gracefully");
 	s_can_task_running = false;
-	vTaskDelete(NULL);
+	/* Created via *WithCaps (PSRAM stack) — must be torn down with the matching
+	 * deleter or the PSRAM stack + TCB leak on every self-exit. */
+	vTaskDeleteWithCaps(NULL);
+}
+
+/* Spawn the CAN RX task. PSRAM stack keeps the scarce internal SRAM free, and
+ * pinning to core 0 holds the documented CAN-on-core-0 / LVGL-on-core-1 split
+ * (the previous WithCaps recreations were unpinned, so the task drifted to
+ * core 1 after the first filter rebuild). All create sites route through here
+ * so they can't diverge; created *WithCaps, so EVERY teardown must use
+ * vTaskDeleteWithCaps(). */
+static BaseType_t _spawn_can_rx_task(void) {
+	return xTaskCreatePinnedToCoreWithCaps(
+		can_receive_task, "can_receive_task", 4096, NULL,
+		CAN_TASK_PRIORITY, &canTaskHandle, 0 /*core*/, MALLOC_CAP_SPIRAM);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
@@ -388,7 +402,7 @@ static void _stop_can_task(void) {
 	}
 	if (s_can_task_running) {
 		ESP_LOGW(TAG, "CAN task did not exit gracefully, force-deleting");
-		vTaskDelete(canTaskHandle);
+		vTaskDeleteWithCaps(canTaskHandle);
 		s_can_task_running = false;
 	}
 	canTaskHandle = NULL;
@@ -529,8 +543,7 @@ void reconfigure_can_filter(void) {
 	s_driver_installed = true;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096, NULL,
-	                    CAN_TASK_PRIORITY, &canTaskHandle, MALLOC_CAP_SPIRAM);
+	_spawn_can_rx_task();
 }
 
 bool can_is_promiscuous(void) { return s_promiscuous_active; }
@@ -587,8 +600,7 @@ void can_set_promiscuous_mode(bool enable) {
 	s_driver_installed = true;
 	vTaskDelay(pdMS_TO_TICKS(50));
 
-	xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096, NULL,
-	                    CAN_TASK_PRIORITY, &canTaskHandle, MALLOC_CAP_SPIRAM);
+	_spawn_can_rx_task();
 
 	s_promiscuous_active = enable;
 	ESP_LOGI(TAG, "Promiscuous mode %s", enable ? "ENABLED" : "disabled");
@@ -633,8 +645,7 @@ void can_start_task(void) {
 	else
 		ESP_LOGE(TAG, "TWAI start failed");
 
-	xTaskCreatePinnedToCore(can_receive_task, "can_receive_task", 4096, NULL,
-							CAN_TASK_PRIORITY, &canTaskHandle, 0);
+	_spawn_can_rx_task();
 	ESP_LOGI(TAG, "CAN receive task started");
 }
 
@@ -676,9 +687,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	/* Recreate receive task — PSRAM stack avoids internal-SRAM OOM after WiFi init */
-	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
-	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
-	                        MALLOC_CAP_SPIRAM) != pdPASS) {
+	if (_spawn_can_rx_task() != pdPASS) {
 		ESP_LOGE(TAG, "Failed to create CAN task after bitrate change");
 		canTaskHandle = NULL;
 	}
@@ -835,9 +844,7 @@ void can_resume(void) {
 	vTaskDelay(pdMS_TO_TICKS(50));
 
 	can_task_should_stop = false;
-	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
-	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
-	                        MALLOC_CAP_SPIRAM) != pdPASS) {
+	if (_spawn_can_rx_task() != pdPASS) {
 		ESP_LOGE(TAG, "Resume: failed to create CAN RX task");
 		canTaskHandle = NULL;
 		twai_stop();
@@ -905,9 +912,7 @@ bool can_recover(void) {
 	}
 	s_driver_installed = true;
 	can_task_should_stop = false;
-	if (xTaskCreateWithCaps(can_receive_task, "can_receive_task", 4096,
-	                        NULL, CAN_TASK_PRIORITY, &canTaskHandle,
-	                        MALLOC_CAP_SPIRAM) != pdPASS) {
+	if (_spawn_can_rx_task() != pdPASS) {
 		ESP_LOGE(TAG, "Recovery: failed to create CAN RX task");
 		canTaskHandle = NULL;
 		twai_stop();
