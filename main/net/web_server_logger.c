@@ -669,6 +669,17 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 	 * verbatim. */
 	const char *fn = file_item->valuestring;
 	if (fn[0] == '/') {
+		/* Absolute paths must stay inside a known storage tier and contain no
+		 * ".." traversal — otherwise a verbatim path could replay any file on
+		 * the device, bypassing the basename resolution's implicit safety. */
+		bool in_tier = (strncmp(fn, "/sdcard/", 8) == 0) ||
+		               (strncmp(fn, "/lfs/", 5) == 0);
+		if (!in_tier || strstr(fn, "..")) {
+			free(a);
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid log path");
+			return ESP_OK;
+		}
 		strncpy(a->path, fn, sizeof(a->path) - 1);
 		a->path[sizeof(a->path) - 1] = '\0';
 	} else if (!_log_resolve_path(fn, a->path, sizeof(a->path))) {
