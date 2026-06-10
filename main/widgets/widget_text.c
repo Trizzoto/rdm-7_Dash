@@ -57,7 +57,20 @@ static void _text_on_channel_changed(channel_t *c, void *user_data) {
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (!td) return;
 	safe_strncpy(td->signal_name, c->signal_name, sizeof(td->signal_name));
-	td->signal_index = c->signal_index;
+	/* Re-point our own signal subscription when the channel's source index
+	 * moved. Without this the text widget stays subscribed to the OLD signal
+	 * index (rendering stale/frozen), and _text_destroy would later
+	 * unsubscribe the NEW index — leaving a dangling subscriber on the old
+	 * signal pointing at freed memory (UAF on its next update). Mirrors
+	 * _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != td->signal_index) {
+		if (td->signal_index >= 0)
+			signal_unsubscribe(td->signal_index, _text_on_signal, w);
+		td->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _text_on_signal, w);
+	}
 	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 

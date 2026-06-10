@@ -1356,8 +1356,11 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		                           _meter_on_channel_changed, w);
 	}
 
-	/* Subscribe rules (safe no-op if no rules defined) */
-	widget_rules_subscribe(w);
+	/* NOTE: conditional rules are subscribed centrally by layout_manager
+	 * (widget_rules_subscribe after create) for every widget — do NOT call it
+	 * here too, or the rule signal gets a duplicate subscriber that survives
+	 * destroy as a dangling pointer (use-after-free). Same for from_json /
+	 * to_json below. */
 
 	/* Subscribe to night-mode changes if any night override is set. */
 	if (md->night.has_minor_tick_color  || md->night.has_major_tick_color ||
@@ -1536,8 +1539,7 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 	if (md->reverse)
 		cJSON_AddBoolToObject(cfg, "reverse", true);
 
-	/* Rules */
-	widget_rules_to_json(w, cfg);
+	/* Rules serialized centrally by layout_manager (see NOTE in _meter_create) */
 
 	/* Night-mode overrides — emit only fields that have an override set */
 	{
@@ -1732,8 +1734,7 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "reverse");
 	if (cJSON_IsBool(ap)) md->reverse = cJSON_IsTrue(ap);
 
-	/* Rules */
-	widget_rules_from_json(w, cfg);
+	/* Rules parsed centrally by layout_manager (see NOTE in _meter_create) */
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");

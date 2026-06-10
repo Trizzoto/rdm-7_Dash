@@ -180,7 +180,10 @@ static void menu_device_settings_cb(lv_event_t *e) {
 	lv_obj_t *scr = ui_Setup_Menu_Screen;
 	device_settings_with_return_screen(ui_Screen3);
 	if (scr && lv_obj_is_valid(scr)) {
-		lv_obj_del_async(scr);
+		/* Canonical crash-safe deferred delete: raw lv_obj_del_async can't be
+		 * cancelled, so if anything else frees this screen first (layout reload,
+		 * wizard teardown) the queued delete double-frees. Mirrors line 171. */
+		rdm_obj_del_async(scr);
 		ui_Setup_Menu_Screen = NULL;
 	}
 }

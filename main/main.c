@@ -245,7 +245,11 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
     uint32_t flush_per_frame_x10 = (uint32_t)((uint64_t)fcount * 10U / s_frame_cnt);
     uint32_t flush_us_per_frame = (uint32_t)(fus / s_frame_cnt);
 
-    ESP_LOGW("refr_diag",
+    /* Steady-state render telemetry — DEBUG, not WARN. The FPS-analysis
+     * campaign that needed this is concluded; at the default INFO log level
+     * this compiles out, so it no longer floods field logs (~3600 lines/hr)
+     * or buries genuine warnings. Raise the log level to re-enable. */
+    ESP_LOGD("refr_diag",
              "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% scr) max=%lu%% "
              "render=%lu ms flush=%lu.%lu/frame (%lu us/frame)",
              (unsigned long)(fps_x10 / 10), (unsigned long)(fps_x10 % 10),

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>   /* fsync() */
 
 static const char *TAG = "can_raw_logger";
 
@@ -130,6 +131,9 @@ void can_raw_logger_record_frame(uint32_t id, bool ext,
 	if ((s_frame_count % FLUSH_EVERY_FRAMES) == 0 ||
 	    (elapsed - s_last_flush_ms) >= FLUSH_EVERY_MS) {
 		fflush(s_file);
+		/* fsync commits the FAT directory entry; without it a power cut loses
+		 * the entire capture, not just the unflushed tail (see data_logger). */
+		fsync(fileno(s_file));
 		s_last_flush_ms = elapsed;
 		flushed = true;
 	}

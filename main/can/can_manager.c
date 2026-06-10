@@ -188,16 +188,26 @@ static void can_receive_task(void *pvParameter) {
 			if (twai_get_status_info(&dbg) == ESP_OK) {
 				int64_t now_us = esp_timer_get_time();
 				bool changed = (dbg.state != last_logged_state);
-				bool heartbeat = (now_us - last_state_log_us) >= 5LL * 1000 * 1000;
-				if (changed || heartbeat) {
+				/* State transitions are worth seeing at INFO; the periodic
+				 * heartbeat is steady-state noise once a unit is known healthy,
+				 * so it goes to DEBUG and only every 60 s (was INFO every 5 s). */
+				bool heartbeat = (now_us - last_state_log_us) >= 60LL * 1000 * 1000;
+				if (changed) {
 					ESP_LOGI(TAG,
-						"TWAI state=%s tx_err=%lu rx_err=%lu rx_frames=%lu%s",
+						"TWAI state=%s tx_err=%lu rx_err=%lu rx_frames=%lu (transition)",
 						_twai_state_name(dbg.state),
 						(unsigned long)dbg.tx_error_counter,
 						(unsigned long)dbg.rx_error_counter,
-						(unsigned long)s_rx_frame_count,
-						changed ? " (transition)" : "");
+						(unsigned long)s_rx_frame_count);
 					last_logged_state = dbg.state;
+					last_state_log_us = now_us;
+				} else if (heartbeat) {
+					ESP_LOGD(TAG,
+						"TWAI state=%s tx_err=%lu rx_err=%lu rx_frames=%lu",
+						_twai_state_name(dbg.state),
+						(unsigned long)dbg.tx_error_counter,
+						(unsigned long)dbg.rx_error_counter,
+						(unsigned long)s_rx_frame_count);
 					last_state_log_us = now_us;
 				}
 			}

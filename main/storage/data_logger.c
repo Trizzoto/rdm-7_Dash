@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>   /* fsync() */
 
 static const char *TAG = "data_logger";
 
@@ -100,6 +101,12 @@ static void _log_timer_cb(lv_timer_t *timer) {
 	if (s_sample_count % LOG_FLUSH_EVERY_SAMPLES == 0 ||
 	    (now - s_last_flush_ms) >= LOG_FLUSH_EVERY_MS) {
 		fflush(s_log_file);
+		/* fflush only drains the stdio buffer into the VFS; on FAT the
+		 * directory entry (file size) isn't committed until f_sync, so a
+		 * power cut would otherwise leave a 0-byte/truncated CSV — losing the
+		 * whole session, not the ~2 s the threshold implies. fsync maps to
+		 * f_sync and commits the metadata. */
+		fsync(fileno(s_log_file));
 		s_last_flush_ms = now;
 		flushed = true;
 	}

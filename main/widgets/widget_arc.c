@@ -891,8 +891,11 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
         channel_manager_subscribe((channel_t *)d->channel,
                                    _arc_on_channel_changed, w);
 
-    /* Subscribe rules (safe no-op if no rules defined) */
-    widget_rules_subscribe(w);
+    /* NOTE: conditional rules are subscribed centrally by layout_manager
+     * (widget_rules_subscribe after create) for every widget — do NOT call it
+     * here too, or the rule signal gets a duplicate subscriber that survives
+     * destroy as a dangling pointer (use-after-free). Same for from_json /
+     * to_json below. */
 
     /* Subscribe to night-mode changes if any night override is set, and apply
      * current state immediately so the widget renders correctly even if it
@@ -1098,8 +1101,7 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     if (d->reverse)
         cJSON_AddBoolToObject(cfg, "reverse", true);
 
-    /* Rules */
-    widget_rules_to_json(w, cfg);
+    /* Rules serialized centrally by layout_manager (see NOTE in _arc_create) */
 
     /* Night-mode overrides — emit only fields that have an override set */
     {
@@ -1324,8 +1326,7 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (d->signal_name[0] != '\0')
         d->signal_index = signal_find_by_name(d->signal_name);
 
-    /* Rules */
-    widget_rules_from_json(w, cfg);
+    /* Rules parsed centrally by layout_manager (see NOTE in _arc_create) */
 
     /* Night-mode overrides */
     cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");

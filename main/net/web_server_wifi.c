@@ -21,7 +21,12 @@ static esp_err_t _wifi_config_get_handler(httpd_req_t *req) {
 
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "ssid", creds.ssid);
-	cJSON_AddStringToObject(root, "password", creds.password);
+	/* SECURITY: never return the stored WiFi password. The API is
+	 * unauthenticated, so emitting it here lets any client on the LAN (or AP)
+	 * read the user's home credentials with one GET. Expose only whether a
+	 * password is set; the POST handler preserves the existing password when
+	 * the field is omitted, so no client needs to read it back. */
+	cJSON_AddBoolToObject(root, "has_password", creds.password[0] != '\0');
 	cJSON_AddBoolToObject(root, "auto_connect", creds.auto_connect);
 	cJSON_AddBoolToObject(root, "wifi_on_boot", boot.wifi_on_boot);
 
@@ -57,7 +62,12 @@ static esp_err_t _wifi_config_post_handler(httpd_req_t *req) {
 		strncpy(creds.ssid, j->valuestring, sizeof(creds.ssid) - 1);
 		creds.ssid[sizeof(creds.ssid) - 1] = '\0';
 	}
-	if ((j = cJSON_GetObjectItem(root, "password")) && cJSON_IsString(j)) {
+	/* Only overwrite the password when a non-empty one is supplied. The GET
+	 * handler no longer returns the stored password, so a client's password
+	 * field is blank unless the user typed a new one — an empty string here
+	 * means "keep existing", not "clear it". */
+	if ((j = cJSON_GetObjectItem(root, "password")) && cJSON_IsString(j) &&
+	    j->valuestring[0] != '\0') {
 		strncpy(creds.password, j->valuestring, sizeof(creds.password) - 1);
 		creds.password[sizeof(creds.password) - 1] = '\0';
 	}
