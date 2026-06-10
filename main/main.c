@@ -20,6 +20,8 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_ota_ops.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal/gpio_types.h"
@@ -390,6 +392,29 @@ void rdm_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
 TaskHandle_t lvglTaskHandle = NULL;
 
 // Change the LVGL task function to be accessible
+/* Cancel the OTA rollback once the dashboard has demonstrably booted healthy.
+ * With CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE and no factory partition, every
+ * boot starts in ESP_OTA_IMG_PENDING_VERIFY and rolls back to the other slot on
+ * the next reset unless we confirm the image here. Called from the LVGL task
+ * only after several seconds of successful rendering, so a boot-looping image
+ * never reaches it and gets rolled back instead. Idempotent (no-op when not
+ * pending / rollback disabled); only the first call does real work. */
+static void rdm_mark_app_valid_once(void) {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  esp_ota_img_states_t st;
+  if (running && esp_ota_get_state_partition(running, &st) == ESP_OK &&
+      st == ESP_OTA_IMG_PENDING_VERIFY) {
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+      ESP_LOGI(TAG, "OTA image confirmed healthy — rollback cancelled (%s)",
+               running->label);
+    else
+      ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback failed");
+  }
+}
+
 void rdm_lvgl_port_task(void *pvParameter) {
   ESP_LOGI(TAG, "Starting LVGL task");
   const uint32_t refresh_period_ms =
@@ -400,6 +425,15 @@ void rdm_lvgl_port_task(void *pvParameter) {
   const uint32_t max_failures =
       10; // Maximum consecutive failures before task notification
   uint32_t start_time;
+  // Watchdog (H13): subscribe this render task to the TWDT on its FIRST
+  // successful frame (not at task start) so boot-time lock contention can't
+  // false-trip before we've proven we can render. Reset only on the success
+  // path — if lv_timer_handler hangs OR another task holds the LVGL lock
+  // forever, the dash is frozen and the WDT (PANIC=y) reboots us. The CAN RX
+  // task is intentionally NOT subscribed: its bus-off recovery path sleeps and
+  // a quiet/disconnected bus must not panic the device.
+  bool wdt_subscribed = false;
+  const int64_t boot_us = esp_timer_get_time();
 
   while (1) {
     start_time = esp_timer_get_time() / 1000;
@@ -416,6 +450,17 @@ void rdm_lvgl_port_task(void *pvParameter) {
       // widget/UI work stays single-threaded.
       can_process_queued_frames();
       rdm_lvgl_unlock();
+
+      // Arm + pet the watchdog now that a full frame succeeded.
+      if (!wdt_subscribed) {
+        esp_task_wdt_add(NULL);
+        wdt_subscribed = true;
+      }
+      esp_task_wdt_reset();
+
+      // Confirm the OTA image after ~10 s of healthy rendering (H11).
+      if ((esp_timer_get_time() - boot_us) >= 10LL * 1000 * 1000)
+        rdm_mark_app_valid_once();
 
       // Calculate remaining time in the refresh period
       uint32_t elapsed = (esp_timer_get_time() / 1000) - start_time;

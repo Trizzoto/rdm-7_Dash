@@ -23,6 +23,7 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_ota_ops.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -327,6 +328,34 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(fonts, "families", font_manager_family_count());
 
 		rdm_lvgl_unlock();
+	}
+
+	/* OTA / rollback state — which slot is running and whether the bootloader
+	 * is still waiting for us to confirm it (PENDING_VERIFY). After a healthy
+	 * boot the LVGL task calls esp_ota_mark_app_valid_cancel_rollback(), so a
+	 * stable device should report "valid" (or "undefined" for a USB-flashed
+	 * image, which is never subject to rollback). */
+	{
+		cJSON *ota = cJSON_AddObjectToObject(root, "ota");
+		const esp_partition_t *run = esp_ota_get_running_partition();
+		esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+		const char *st_name = "unknown";
+		if (run) {
+			cJSON_AddStringToObject(ota, "running", run->label);
+			if (esp_ota_get_state_partition(run, &st) == ESP_OK) {
+				switch (st) {
+				case ESP_OTA_IMG_NEW:            st_name = "new"; break;
+				case ESP_OTA_IMG_PENDING_VERIFY: st_name = "pending_verify"; break;
+				case ESP_OTA_IMG_VALID:          st_name = "valid"; break;
+				case ESP_OTA_IMG_INVALID:        st_name = "invalid"; break;
+				case ESP_OTA_IMG_ABORTED:        st_name = "aborted"; break;
+				default:                         st_name = "undefined"; break;
+				}
+			}
+		}
+		cJSON_AddStringToObject(ota, "state", st_name);
+		cJSON_AddBoolToObject(ota, "rollback_pending",
+		                      st == ESP_OTA_IMG_PENDING_VERIFY);
 	}
 
 	cJSON_AddBoolToObject(root, "ok", overall);

@@ -21,6 +21,18 @@ CONFIG_LV_GRADIENT_MAX_STOPS=8
 # (layout_manager, widget_image, font_manager). 15 s still catches real
 # task hangs without false-tripping on heavy boot work.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+# Reboot (not just warn) if a subscribed task stops petting the watchdog. Only
+# the LVGL render task is subscribed (main.c) — a frozen render loop is a dead
+# dash, so panic-reboot is the right recovery. The 15 s budget above keeps a
+# heavy layout reload from tripping it.
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# OTA rollback safety. There is no factory partition, so every boot runs from
+# an OTA slot in PENDING_VERIFY; the firmware calls
+# esp_ota_mark_app_valid_cancel_rollback() after ~10 s of healthy rendering
+# (main.c). An image that boot-loops before then is rolled back to the previous
+# slot by the bootloader instead of bricking the dash.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # WiFi — reduce static RX buffers (10×1600B=16KB DMA RAM) to 6 so
 # esp_wifi_init succeeds on first boot when the first-run wizard holds
