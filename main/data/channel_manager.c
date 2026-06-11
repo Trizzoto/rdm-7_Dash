@@ -1070,12 +1070,15 @@ static cJSON *channel_to_json(const channel_t *c) {
 
 	/* Math/derived source — whole block or nothing. Additive key: older
 	 * firmware ignores it (channel falls back to its persisted signal
-	 * binding, which simply never updates). */
+	 * binding, which simply never updates). Operands are typed: a string
+	 * is a channel id, a number is a constant. */
 	if (c->math_enabled) {
 		cJSON *m = cJSON_AddObjectToObject(j, "math");
 		if (m) {
-			cJSON_AddStringToObject(m, "a", c->math_a);
-			cJSON_AddStringToObject(m, "b", c->math_b);
+			if (c->math_a_is_const) cJSON_AddNumberToObject(m, "a", c->math_a_const);
+			else                    cJSON_AddStringToObject(m, "a", c->math_a);
+			if (c->math_b_is_const) cJSON_AddNumberToObject(m, "b", c->math_b_const);
+			else                    cJSON_AddStringToObject(m, "b", c->math_b);
 			cJSON_AddNumberToObject(m, "op", c->math_op);
 		}
 	}
@@ -1139,16 +1142,25 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 	it = cJSON_GetObjectItemCaseSensitive(j, "color_high_warn");
 	if (cJSON_IsNumber(it)) c->color_high_warn = (uint32_t)it->valueint;
 
-	/* Math/derived source. Absent block leaves math disabled. */
+	/* Math/derived source. Absent block leaves math disabled. Operands are
+	 * typed (string = channel id, number = constant); at least one must be
+	 * a channel or the entry is ignored. */
 	cJSON *m = cJSON_GetObjectItemCaseSensitive(j, "math");
 	if (cJSON_IsObject(m)) {
 		cJSON *a  = cJSON_GetObjectItemCaseSensitive(m, "a");
 		cJSON *b  = cJSON_GetObjectItemCaseSensitive(m, "b");
 		cJSON *op = cJSON_GetObjectItemCaseSensitive(m, "op");
-		if (cJSON_IsString(a) && a->valuestring[0] &&
-		    cJSON_IsString(b) && b->valuestring[0]) {
-			safe_strcpy(c->math_a, a->valuestring, sizeof(c->math_a));
-			safe_strcpy(c->math_b, b->valuestring, sizeof(c->math_b));
+		bool a_ch    = cJSON_IsString(a) && a->valuestring[0];
+		bool a_const = cJSON_IsNumber(a);
+		bool b_ch    = cJSON_IsString(b) && b->valuestring[0];
+		bool b_const = cJSON_IsNumber(b);
+		if ((a_ch || a_const) && (b_ch || b_const) && (a_ch || b_ch)) {
+			if (a_ch) safe_strcpy(c->math_a, a->valuestring, sizeof(c->math_a));
+			else      { c->math_a[0] = '\0'; c->math_a_is_const = true;
+			            c->math_a_const = (float)a->valuedouble; }
+			if (b_ch) safe_strcpy(c->math_b, b->valuestring, sizeof(c->math_b));
+			else      { c->math_b[0] = '\0'; c->math_b_is_const = true;
+			            c->math_b_const = (float)b->valuedouble; }
 			c->math_op = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
 			c->math_enabled = true;
 		}

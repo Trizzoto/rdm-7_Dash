@@ -17828,8 +17828,10 @@
             let body;
             if (isMath) {
                 /* Calculated channel — show the expression in channel labels
-                 * (firmware evaluates a <op> b into the MATH_* signal). */
-                const lbl = id => (_chCache.find(x => x.id === id)?.label) || id;
+                 * (firmware evaluates a <op> b into the MATH_* signal). A
+                 * numeric operand is a constant — render the number. */
+                const lbl = v => (typeof v === 'number') ? String(v)
+                    : ((_chCache.find(x => x.id === v)?.label) || v);
                 const ops = ['+', '−', '×', '÷'];
                 const info = cache[c.signal];
                 const v = info?.value;
@@ -17884,23 +17886,39 @@
             if (!_chMathFormOpen) return '';
             const ops = [['0','+ add'], ['1','− subtract'], ['2','× multiply'], ['3','÷ divide']];
             const cur = c.math || {};
+            const bIsConst = typeof cur.b === 'number';
             const operandOpts = sel => _chCache
                 .filter(x => x.id !== c.id)
                 .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id))
                 .map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${x.label || x.id}</option>`)
                 .join('');
+            /* Operand B can be a channel OR a typed number ("MAP − 50"):
+             * the special __const__ option reveals the number input. Units
+             * are handled firmware-side: differing channel units convert to
+             * a common unit, the result converts to THIS channel's native
+             * unit, and constants are read in operand A's unit. */
             return `
                 <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
                     <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
-                        Calculate this channel from two others (e.g. Boost = MAP − Baro).
+                        Calculate this channel from two others, or a channel and a number
+                        (Boost = MAP − Baro, or MAP − 50). Different units convert
+                        automatically; numbers are read in Channel A's unit.
                     </div>
                     <div class="ch2-num-row">
                         <div class="ch2-num"><span class="ch2-num-label">Channel A</span>
-                            <select id="chMathA"><option value=""></option>${operandOpts(cur.a)}</select></div>
+                            <select id="chMathA"><option value=""></option>${operandOpts(typeof cur.a === 'string' ? cur.a : '')}</select></div>
                         <div class="ch2-num"><span class="ch2-num-label">Operation</span>
                             <select id="chMathOp">${ops.map(([v, t]) => `<option value="${v}" ${String(cur.op ?? 1) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
                         <div class="ch2-num"><span class="ch2-num-label">Channel B</span>
-                            <select id="chMathB"><option value=""></option>${operandOpts(cur.b)}</select></div>
+                            <select id="chMathB" onchange="_chMathBModeSync()">
+                                <option value=""></option>
+                                <option value="__const__" ${bIsConst ? 'selected' : ''}>Number…</option>
+                                ${operandOpts(typeof cur.b === 'string' ? cur.b : '')}
+                            </select></div>
+                    </div>
+                    <div class="ch2-num-row" id="chMathConstRow" style="margin-top:8px; ${bIsConst ? '' : 'display:none;'}">
+                        <div class="ch2-num"><span class="ch2-num-label">Number</span>
+                            <input type="number" step="any" id="chMathBConst" value="${bIsConst ? cur.b : ''}" placeholder="e.g. 50"></div>
                     </div>
                     <div style="margin-top:10px; display:flex; gap:8px;">
                         <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chMathApply('${c.id}')">Apply</button>
@@ -17908,11 +17926,21 @@
                     </div>
                 </div>`;
         }
+        function _chMathBModeSync() {
+            const row = document.getElementById('chMathConstRow');
+            if (row) row.style.display =
+                document.getElementById('chMathB')?.value === '__const__' ? '' : 'none';
+        }
         async function _chMathApply(id) {
             const a = document.getElementById('chMathA')?.value;
-            const b = document.getElementById('chMathB')?.value;
+            let b = document.getElementById('chMathB')?.value;
             const op = Number(document.getElementById('chMathOp')?.value || 1);
-            if (!a || !b) { alert('Pick both operand channels.'); return; }
+            if (b === '__const__') {
+                const n = Number(document.getElementById('chMathBConst')?.value);
+                if (!Number.isFinite(n)) { alert('Enter a number for operand B.'); return; }
+                b = n;   /* typed operand: number = constant */
+            }
+            if (!a || b === '' || b == null) { alert('Pick both operands.'); return; }
             try {
                 const r = await fetch('/api/channels/update', {
                     method: 'POST',

@@ -149,12 +149,15 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	}
 
 	/* Math/derived source — config block so the web form can populate, and
-	 * the source classification below short-circuits to "math". */
+	 * the source classification below short-circuits to "math". Operands
+	 * are typed: string = channel id, number = constant. */
 	if (c->math_enabled) {
 		cJSON *m = cJSON_AddObjectToObject(j, "math");
 		if (m) {
-			cJSON_AddStringToObject(m, "a", c->math_a);
-			cJSON_AddStringToObject(m, "b", c->math_b);
+			if (c->math_a_is_const) cJSON_AddNumberToObject(m, "a", c->math_a_const);
+			else                    cJSON_AddStringToObject(m, "a", c->math_a);
+			if (c->math_b_is_const) cJSON_AddNumberToObject(m, "b", c->math_b_const);
+			else                    cJSON_AddStringToObject(m, "b", c->math_b);
 			cJSON_AddNumberToObject(m, "op", c->math_op);
 		}
 	}
@@ -483,19 +486,27 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 		                                  /* persist_now */ true);
 	}
 
-	/* Math/derived source — `{ "math": { "a": "<channel id>", "b": "<channel
-	 * id>", "op": 0..3 } }` configures, `{ "math": null }` clears (channel
-	 * reverts to unbound). Validation (operands exist, no self-reference)
-	 * lives in channel_math_set. */
+	/* Math/derived source — `{ "math": { "a": <operand>, "b": <operand>,
+	 * "op": 0..3 } }` configures, `{ "math": null }` clears (channel reverts
+	 * to unbound). An operand is a channel-id STRING or a NUMBER constant
+	 * (`{"a":"manifold_pressure","b":50,"op":1}` = MAP − 50). Validation
+	 * (operands exist, no self-reference, ≥1 channel) lives in
+	 * channel_math_set. */
 	if (!strcmp(key, "math")) {
 		if (cJSON_IsNull(val)) return channel_math_clear(c);
 		if (cJSON_IsObject(val)) {
 			cJSON *a  = cJSON_GetObjectItemCaseSensitive(val, "a");
 			cJSON *b  = cJSON_GetObjectItemCaseSensitive(val, "b");
 			cJSON *op = cJSON_GetObjectItemCaseSensitive(val, "op");
-			if (!cJSON_IsString(a) || !cJSON_IsString(b)) return false;
+			channel_math_operand_t oa = {0}, ob = {0};
+			if (cJSON_IsString(a))      oa.channel_id = a->valuestring;
+			else if (cJSON_IsNumber(a)) { oa.is_const = true; oa.value = (float)a->valuedouble; }
+			else return false;
+			if (cJSON_IsString(b))      ob.channel_id = b->valuestring;
+			else if (cJSON_IsNumber(b)) { ob.is_const = true; ob.value = (float)b->valuedouble; }
+			else return false;
 			uint8_t opv = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
-			return channel_math_set(c, a->valuestring, b->valuestring, opv);
+			return channel_math_set(c, &oa, &ob, opv);
 		}
 		return false;
 	}

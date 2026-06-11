@@ -103,15 +103,21 @@ struct channel {
 	uint32_t color_low_warn;
 	uint32_t color_high_warn;
 
-	/* Math/derived source (boost = MAP − BARO, etc.). When enabled, the
-	 * channel_math evaluator computes  <a> <op> <b>  from the two operand
-	 * channels' live signals and pushes the result into this channel's own
-	 * synthetic signal (MATH_<ID>, registered at load — see channel_math.h).
-	 * Operands are CHANNEL ids, not signal names, so re-decoding an operand
-	 * doesn't break the math. */
+	/* Math/derived source (boost = MAP − BARO, oil − 50, MAP × 1.6 …).
+	 * When enabled, the channel_math evaluator computes  <a> <op> <b>  and
+	 * pushes the result into this channel's own synthetic signal (MATH_<ID>,
+	 * registered at load — see channel_math.h). Each operand is either a
+	 * CHANNEL id (not a signal name, so re-decoding an operand doesn't break
+	 * the math) or a numeric CONSTANT. Unit handling lives in the evaluator:
+	 * channel operands commensurate to a common unit and the result converts
+	 * to this channel's units_native when the conversion is known. */
 	bool     math_enabled;
-	char     math_a[32];             /* operand channel id */
-	char     math_b[32];             /* operand channel id */
+	char     math_a[32];             /* operand channel id ("" when const) */
+	char     math_b[32];             /* operand channel id ("" when const) */
+	bool     math_a_is_const;
+	bool     math_b_is_const;
+	float    math_a_const;
+	float    math_b_const;
 	uint8_t  math_op;                /* channel_math_op_t: 0 + / 1 - / 2 * / 3 ÷ */
 
 	/* Live state */
