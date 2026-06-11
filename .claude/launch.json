@@ -8,10 +8,22 @@
       "port": 8180
     },
     {
+      "name": "mirror-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/mobile-dev-server.js", "--device", "192.168.4.61"],
+      "port": 8180
+    },
+    {
       "name": "sandbox",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "../rdm7-sandbox", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "desktop-static",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-desktop/src", "-l", "3003", "--cors"],
+      "port": 3003
     },
     {
       "name": "studio",

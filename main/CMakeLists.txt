@@ -40,6 +40,7 @@ idf_component_register(
         "net/web_server_obd2.c"
         "net/web_server_channels.c"
         "net/web_server_test.c"
+        "net/web_server_mirror.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
@@ -168,6 +169,7 @@ idf_component_register(
         "esp_http_server"
         "joltwallet__littlefs"
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
+                "${CMAKE_CURRENT_BINARY_DIR}/mirror.html.gz"
                 "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf"
 )
 
@@ -195,10 +197,12 @@ idf_component_register(
 # ────────────────────────────────────────────────────────────────────────────
 set(_RDM_INDEX_HTML_SRC "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html")
 set(_RDM_INDEX_HTML_GZ  "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz")
+set(_RDM_MIRROR_HTML_SRC "${CMAKE_CURRENT_SOURCE_DIR}/web/mirror.html")
+set(_RDM_MIRROR_HTML_GZ  "${CMAKE_CURRENT_BINARY_DIR}/mirror.html.gz")
 
 # Re-run CMake configure when index.html changes so the .gz gets regenerated.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             "${_RDM_INDEX_HTML_SRC}")
+             "${_RDM_INDEX_HTML_SRC}" "${_RDM_MIRROR_HTML_SRC}")
 
 # The build-tree component dir is lazily created by ESP-IDF and may not exist
 # yet when we're configuring — make sure it does before Python tries to write
@@ -226,6 +230,22 @@ execute_process(
 if(NOT _rdm_gzip_result EQUAL 0)
     message(FATAL_ERROR
             "Failed to gzip ${_RDM_INDEX_HTML_SRC} -> ${_RDM_INDEX_HTML_GZ}\n"
+            "  python: ${_RDM_PYTHON}\n"
+            "  result: ${_rdm_gzip_result}\n"
+            "  stderr: ${_rdm_gzip_stderr}")
+endif()
+
+# Same treatment for the WASM live-mirror page (web/mirror.html → /mirror).
+execute_process(
+    COMMAND "${_RDM_PYTHON}" -c
+        "import gzip,sys; open(sys.argv[2],'wb').write(gzip.compress(open(sys.argv[1],'rb').read(), 9))"
+        "${_RDM_MIRROR_HTML_SRC}" "${_RDM_MIRROR_HTML_GZ}"
+    RESULT_VARIABLE _rdm_gzip_result
+    ERROR_VARIABLE  _rdm_gzip_stderr
+)
+if(NOT _rdm_gzip_result EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to gzip ${_RDM_MIRROR_HTML_SRC} -> ${_RDM_MIRROR_HTML_GZ}\n"
             "  python: ${_RDM_PYTHON}\n"
             "  result: ${_rdm_gzip_result}\n"
             "  stderr: ${_rdm_gzip_stderr}")

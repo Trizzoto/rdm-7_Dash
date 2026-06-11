@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<!-- RDM-7 Live Mirror — renders the dash on a PC at full frame rate.
+     The LVGL WASM engine is served FROM THE DEVICE (/mirror/index.js +
+     /mirror/index.wasm, installed once onto LittleFS), so this works in
+     hotspot mode with no internet. Live values come from polling
+     /api/signals/values; the PC does all rendering, the dash only serves
+     small JSON. /api/screenshot remains the pixel-true fallback. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDM-7 Live Mirror</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0a;color:#99a;font:12px system-ui,sans-serif;overflow:hidden}
+  #stage{position:absolute;inset:0 0 28px 0;display:flex;align-items:center;justify-content:center}
+  #canvas{background:#000;box-shadow:0 0 40px rgba(0,0,0,.8);transform-origin:center center}
+  #bar{position:absolute;left:0;right:0;bottom:0;height:28px;display:flex;align-items:center;gap:14px;
+       padding:0 12px;background:#111;border-top:1px solid #222;white-space:nowrap;overflow:hidden}
+  #bar b{color:#ddd;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:#666;display:inline-block;margin-right:5px;vertical-align:-1px}
+  .dot.ok{background:#4caf50}.dot.err{background:#e53935}
+  #install{max-width:560px;line-height:1.5;color:#bbc}
+  #install code{background:#1a1a1a;padding:1px 5px;border-radius:3px;color:#8fd}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="canvas" width="800" height="480"></canvas></div>
+<div id="bar">
+  <span><span class="dot" id="dot"></span><b>RDM-7 Live Mirror</b></span>
+  <span id="status">loading engine…</span>
+  <span id="meta"></span>
+</div>
+<script src="/mirror/index.js"></script>
+<script>
+"use strict";
+(async () => {
+  const $ = id => document.getElementById(id);
+  const setStatus = (t, ok) => {
+    $('status').textContent = t;
+    $('dot').className = 'dot' + (ok === true ? ' ok' : ok === false ? ' err' : '');
+  };
+
+  /* Fit the fixed 800x480 canvas to the window (CSS scale only — the WASM
+   * keeps rendering at native resolution, so it stays crisp downscaled). */
+  const fit = () => {
+    const s = Math.min(innerWidth / 800, (innerHeight - 28) / 480);
+    $('canvas').style.transform = 'scale(' + Math.max(0.1, s) + ')';
+  };
+  addEventListener('resize', fit); fit();
+
+  if (typeof LVGLPreview !== 'function') {
+    /* /mirror/index.js 404'd — engine not on LittleFS yet. */
+    $('stage').innerHTML = '<div id="install"><h3 style="color:#ddd">Mirror engine not installed</h3>' +
+      'The live mirror renders in your browser using the dash\'s LVGL engine compiled to WebAssembly. ' +
+      'The engine (~850&nbsp;KB) lives on the device\'s storage and survives firmware updates, but has to be ' +
+      'installed once over WiFi:<br><br><code>tools/install_mirror.ps1 -DeviceIp ' + location.hostname + '</code>' +
+      '<br><br>from the firmware repo (artifacts come from the rdm7-wasm-editor build).</div>';
+    setStatus('engine not installed', false);
+    return;
+  }
+
+  let M;
+  try {
+    M = await LVGLPreview({ canvas: $('canvas'), locateFile: p => '/mirror/' + p });
+  } catch (e) {
+    setStatus('engine failed to start: ' + e, false);
+    return;
+  }
+
+  const pushBytes = (fn, name, u8) => {
+    const ptr = M._malloc(u8.length);
+    if (!ptr) return;
+    M.HEAPU8.set(u8, ptr);
+    M.ccall(fn, null, ['string', 'number', 'number'], [name, ptr, u8.length]);
+    M._free(ptr);
+  };
+  const fetchOk = async url => {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(url + ' -> ' + r.status);
+    return r;
+  };
+
+  /* Device fonts -> WASM font manager, so text renders with the exact TTFs
+   * the panel uses (tiny_ttf synthesizes any size, same as firmware). */
+  setStatus('loading fonts…');
+  try {
+    const fams = await (await fetchOk('/api/font/list')).json();
+    for (const fam of (Array.isArray(fams) ? fams : (fams.fonts || []))) {
+      try {
+        pushBytes('register_font', fam,
+          new Uint8Array(await (await fetchOk('/api/font/data?name=' + encodeURIComponent(fam))).arrayBuffer()));
+      } catch (e) { console.warn('font', fam, e); }
+    }
+  } catch (e) { console.warn('font list', e); }
+
+  /* Device images (RDMIMG) -> WASM MEMFS for image widgets. */
+  setStatus('loading images…');
+  try {
+    const il = await (await fetchOk('/api/image/list')).json();
+    for (const img of (il.images || [])) {
+      const nm = (img.name || '').replace(/\.rdmimg$/i, '');
+      if (!nm) continue;
+      try {
+        pushBytes('register_image', nm,
+          new Uint8Array(await (await fetchOk('/api/image/data?name=' + encodeURIComponent(nm))).arrayBuffer()));
+      } catch (e) { console.warn('image', nm, e); }
+    }
+  } catch (e) { console.warn('image list', e); }
+
+  /* Active layout — same JSON the panel renders. */
+  const loadLayout = async () => {
+    const list = await (await fetchOk('/api/layout/list')).json();
+    const active = list.active || 'default';
+    const txt = await (await fetchOk('/api/layout/raw?name=' + encodeURIComponent(active))).text();
+    M.ccall('load_layout_json', null, ['string'], [txt]);
+    $('meta').textContent = 'layout: ' + active;
+  };
+  setStatus('loading layout…');
+  try { await loadLayout(); } catch (e) { setStatus('layout load failed: ' + e, false); return; }
+
+  /* Live values at 10 Hz. Fresh signals inject into the WASM registry —
+   * the compiled-in widget code (rules, colors, formatting) reacts exactly
+   * like the device. Stale signals are skipped so the WASM's own timeout
+   * marks them stale. Paused while the tab is hidden so a background
+   * mirror doesn't keep the dash's web server busy. */
+  let lastSeen = 0;
+  setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const data = await (await fetchOk('/api/signals/values')).json();
+      for (const s of (data.signals || [])) {
+        if (s.stale || s.value == null) continue;
+        M.ccall('inject_signal', null, ['string', 'number'], [s.name, s.value]);
+      }
+      lastSeen = Date.now();
+      setStatus('live', true);
+    } catch (e) {
+      if (Date.now() - lastSeen > 3000) setStatus('connection lost — retrying…', false);
+    }
+  }, 100);
+
+  /* Layout hot-reload: a save in the web editor bumps the version. */
+  let lastVer = null;
+  setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const v = (await (await fetchOk('/api/layout/version')).json()).version;
+      if (lastVer == null) { lastVer = v; return; }
+      if (v !== lastVer) {
+        lastVer = v;
+        setStatus('layout changed — reloading…');
+        await loadLayout();
+      }
+    } catch (e) { /* transient — value poll owns the error status */ }
+  }, 3000);
+})();
+</script>
+</body>
+</html>

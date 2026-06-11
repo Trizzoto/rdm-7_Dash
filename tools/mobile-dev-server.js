@@ -16,6 +16,31 @@ const path = require('path');
 const PORT = 8180;
 const ROOT = path.resolve(__dirname, '..');
 const INDEX_HTML = path.join(ROOT, 'main', 'web', 'index.html');
+const MIRROR_HTML = path.join(ROOT, 'main', 'web', 'mirror.html');
+
+/* --device <ip>: proxy mode for the WASM live mirror. Serves the LOCAL
+ * main/web/mirror.html at /mirror (so the page under development is the
+ * one being tested) but forwards /mirror/index.js, /mirror/index.wasm and
+ * every /api/* request to the real dash. Lets the mirror run same-origin
+ * on localhost where browser tooling can inspect it. */
+const _devIdx = process.argv.indexOf('--device');
+const DEVICE_IP = _devIdx >= 0 ? process.argv[_devIdx + 1] : null;
+
+function proxyToDevice(req, res) {
+  const opts = {
+    host: DEVICE_IP, port: 80, path: req.url, method: req.method,
+    headers: { ...req.headers, host: DEVICE_IP },
+  };
+  const up = http.request(opts, (ur) => {
+    res.writeHead(ur.statusCode, ur.headers);
+    ur.pipe(res);
+  });
+  up.on('error', (e) => {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'device proxy failed: ' + e.message }));
+  });
+  req.pipe(up);
+}
 
 const SAMPLE_LAYOUT = {
   schema_version: 13,
@@ -207,6 +232,17 @@ const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   const key = `${req.method.padEnd(4)} ${url}`;
   const handler = MOCK[key];
+
+  /* Mirror dev mode: local page, real device behind it. */
+  if (DEVICE_IP) {
+    if (url === '/mirror') {
+      try { return sendHtml(res, fs.readFileSync(MIRROR_HTML, 'utf8')); }
+      catch (e) { return sendHtml(res, `<h1>Cannot read ${MIRROR_HTML}</h1><pre>${e.message}</pre>`, 500); }
+    }
+    if (url.startsWith('/mirror/') || url.startsWith('/api/')) {
+      return proxyToDevice(req, res);
+    }
+  }
 
   if (req.url.startsWith('/api/')) {
     /* Channels — explicit handlers (need body + the in-memory store). */

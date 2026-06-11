@@ -237,6 +237,7 @@ esp_err_t web_server_start(void) {
 	web_server_obd2_register(server);
 	web_server_channels_register(server);
 	web_server_test_register(server);
+	web_server_mirror_register(server);
 
 	/* Final registration tally. If any registration failed (almost always
 	 * because max_uri_handlers is too low), shout loudly so the developer
