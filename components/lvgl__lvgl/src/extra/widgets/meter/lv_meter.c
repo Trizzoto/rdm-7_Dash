@@ -10,6 +10,7 @@
 #if LV_USE_METER != 0
 
 #include "../../../misc/lv_assert.h"
+#include <string.h> /* RDM7 PERF: strlen for the label cull bound */
 
 /*********************
  *      DEFINES
@@ -487,6 +488,37 @@ static void draw_ticks_and_labels(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, cons
             p_outer.y = p_center.y;
             lv_point_transform(&p_outer, angle_upscale, 256, &p_center);
 
+            /* RDM7 PERF: the tick line is drawn as a ray from the center and
+             * only the radius masks trim it to the r_in..r_out annulus, so
+             * lv_draw_line's own bbox-vs-clip test passes for nearly every
+             * tick whenever the clip touches the hub (every needle-wedge
+             * invalidation) — full masked rasterization for all ticks, per
+             * draw band. Compute the bbox of the segment that can actually
+             * produce pixels and skip the line draw when it misses the clip.
+             * Padded by half the line width + 4 px for AA bleed and small
+             * width changes from DRAW_PART_BEGIN handlers (ours recolor
+             * only). Events still fire unconditionally below. */
+            bool tick_visible;
+            {
+                lv_coord_t r_in_act = major ? r_in_major : r_in_minor;
+                lv_point_t seg_a;
+                seg_a.x = p_center.x + r_in_act;
+                seg_a.y = p_center.y;
+                lv_point_transform(&seg_a, angle_upscale, 256, &p_center);
+                lv_point_t seg_b;
+                seg_b.x = p_center.x + r_out;
+                seg_b.y = p_center.y;
+                lv_point_transform(&seg_b, angle_upscale, 256, &p_center);
+                lv_coord_t seg_pad = line_width / 2 + 4;
+                lv_area_t seg_bbox;
+                seg_bbox.x1 = LV_MIN(seg_a.x, seg_b.x) - seg_pad;
+                seg_bbox.y1 = LV_MIN(seg_a.y, seg_b.y) - seg_pad;
+                seg_bbox.x2 = LV_MAX(seg_a.x, seg_b.x) + seg_pad;
+                seg_bbox.y2 = LV_MAX(seg_a.y, seg_b.y) + seg_pad;
+                lv_area_t seg_clip;
+                tick_visible = _lv_area_intersect(&seg_clip, &seg_bbox, draw_ctx->clip_area);
+            }
+
             part_draw_dsc.p1 = &p_center;
             part_draw_dsc.p2 = &p_outer;
             part_draw_dsc.id = i;
@@ -494,7 +526,6 @@ static void draw_ticks_and_labels(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, cons
 
             /*Draw the text*/
             if(major) {
-                lv_draw_mask_remove_id(outer_mask_id);
                 uint32_t r_text = r_in_major - scale->label_gap;
                 lv_point_t p;
                 p.x = p_center.x + r_text;
@@ -512,20 +543,44 @@ static void draw_ticks_and_labels(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, cons
 
                 lv_event_send(obj, LV_EVENT_DRAW_PART_BEGIN, &part_draw_dsc);
 
-                lv_point_t label_size;
-                lv_txt_get_size(&label_size, part_draw_dsc.text, label_dsc_tmp.font, label_dsc_tmp.letter_space,
-                                label_dsc_tmp.line_space,
-                                LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+                /* RDM7 PERF: skip the text measure + glyph draw when a
+                 * conservative box around the label center can't touch the
+                 * clip. Bound the half-width by chars * (line height +
+                 * letter space): glyph advance never exceeds the line
+                 * height for the numeric labels a meter scale emits. Uses
+                 * the post-event text/font, so DRAW_PART_BEGIN handlers
+                 * that rewrite the label (tick_label_divisor) are bounded
+                 * correctly. lv_draw_label clips glyphs itself, but the
+                 * lv_txt_get_size measure ran per major tick per band
+                 * regardless — that's what this saves. */
+                const lv_font_t * label_font = label_dsc_tmp.font;
+                lv_coord_t label_lh = lv_font_get_line_height(label_font);
+                lv_coord_t label_half_w =
+                    (lv_coord_t)(strlen(part_draw_dsc.text) * (uint32_t)(label_lh + label_dsc_tmp.letter_space)) / 2 + 8;
+                lv_area_t label_rough;
+                label_rough.x1 = p.x - label_half_w;
+                label_rough.y1 = p.y - label_lh / 2 - 4;
+                label_rough.x2 = p.x + label_half_w;
+                label_rough.y2 = p.y + label_lh / 2 + 4;
+                lv_area_t label_clip;
+                if(_lv_area_intersect(&label_clip, &label_rough, draw_ctx->clip_area)) {
+                    lv_draw_mask_remove_id(outer_mask_id);
 
-                lv_area_t label_cord;
-                label_cord.x1 = p.x - label_size.x / 2;
-                label_cord.y1 = p.y - label_size.y / 2;
-                label_cord.x2 = label_cord.x1 + label_size.x;
-                label_cord.y2 = label_cord.y1 + label_size.y;
+                    lv_point_t label_size;
+                    lv_txt_get_size(&label_size, part_draw_dsc.text, label_dsc_tmp.font, label_dsc_tmp.letter_space,
+                                    label_dsc_tmp.line_space,
+                                    LV_COORD_MAX, LV_TEXT_FLAG_NONE);
 
-                lv_draw_label(draw_ctx, part_draw_dsc.label_dsc, &label_cord, part_draw_dsc.text, NULL);
+                    lv_area_t label_cord;
+                    label_cord.x1 = p.x - label_size.x / 2;
+                    label_cord.y1 = p.y - label_size.y / 2;
+                    label_cord.x2 = label_cord.x1 + label_size.x;
+                    label_cord.y2 = label_cord.y1 + label_size.y;
 
-                outer_mask_id = lv_draw_mask_add(&outer_mask, NULL);
+                    lv_draw_label(draw_ctx, part_draw_dsc.label_dsc, &label_cord, part_draw_dsc.text, NULL);
+
+                    outer_mask_id = lv_draw_mask_add(&outer_mask, NULL);
+                }
             }
             else {
                 part_draw_dsc.label_dsc = NULL;
@@ -533,9 +588,11 @@ static void draw_ticks_and_labels(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, cons
                 lv_event_send(obj, LV_EVENT_DRAW_PART_BEGIN, &part_draw_dsc);
             }
 
-            inner_act_mask_id = lv_draw_mask_add(major ? &inner_major_mask : &inner_minor_mask, NULL);
-            lv_draw_line(draw_ctx, &line_dsc, &p_outer, &p_center);
-            lv_draw_mask_remove_id(inner_act_mask_id);
+            if(tick_visible) {
+                inner_act_mask_id = lv_draw_mask_add(major ? &inner_major_mask : &inner_minor_mask, NULL);
+                lv_draw_line(draw_ctx, &line_dsc, &p_outer, &p_center);
+                lv_draw_mask_remove_id(inner_act_mask_id);
+            }
             lv_event_send(obj, LV_EVENT_DRAW_MAIN_END, &part_draw_dsc);
 
             line_dsc.color = line_color_ori;
