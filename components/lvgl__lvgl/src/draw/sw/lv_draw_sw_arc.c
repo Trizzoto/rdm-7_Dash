@@ -43,6 +43,9 @@ typedef struct {
     static void draw_quarter_2(quarter_draw_dsc_t * q);
     static void draw_quarter_3(quarter_draw_dsc_t * q);
     static void get_rounded_area(int16_t angle, lv_coord_t radius, uint8_t thickness, lv_area_t * res_area);
+    static void draw_ring_rect_skip_hole(lv_draw_ctx_t * draw_ctx, const lv_draw_rect_dsc_t * dsc,
+                                         const lv_area_t * draw_area, const lv_point_t * center,
+                                         lv_coord_t r_in);
 #endif /*LV_DRAW_COMPLEX*/
 
 /**********************
@@ -111,7 +114,7 @@ void lv_draw_sw_arc(lv_draw_ctx_t * draw_ctx, const lv_draw_arc_dsc_t * dsc, con
     /*Draw a full ring*/
     if(start_angle + 360 == end_angle || start_angle == end_angle + 360) {
         cir_dsc.radius = LV_RADIUS_CIRCLE;
-        lv_draw_rect(draw_ctx, &cir_dsc, &area_out);
+        draw_ring_rect_skip_hole(draw_ctx, &cir_dsc, &area_out, center, radius - width);
 
         lv_draw_mask_remove_id(mask_out_id);
         if(mask_in_id != LV_MASK_ID_INV) lv_draw_mask_remove_id(mask_in_id);
@@ -161,7 +164,7 @@ void lv_draw_sw_arc(lv_draw_ctx_t * draw_ctx, const lv_draw_arc_dsc_t * dsc, con
         draw_quarter_3(&q_dsc);
     }
     else {
-        lv_draw_rect(draw_ctx, &cir_dsc, &area_out);
+        draw_ring_rect_skip_hole(draw_ctx, &cir_dsc, &area_out, center, radius - width);
     }
 
     lv_draw_mask_free_param(&mask_angle_param);
@@ -227,6 +230,72 @@ void lv_draw_sw_arc(lv_draw_ctx_t * draw_ctx, const lv_draw_arc_dsc_t * dsc, con
  **********************/
 
 #if LV_DRAW_COMPLEX
+/* RDM-7 patch: draw the ring rect with the clip split into the bands around
+ * the inscribed square of the inner hole. The arc is rasterized as a rect over
+ * the ring's full bounding box with radius/angle masks, so clip rows passing
+ * through the hole pay full per-pixel mask evaluation for pixels the inner
+ * mask then discards. The largest axis-aligned square certainly inside the
+ * inner circle (side/2 = r_in/sqrt2) is provably fully-masked: splitting the
+ * clip into top/bottom/left/right bands around it skips that work while
+ * producing pixel-identical output. The draw AREA passed to lv_draw_rect is
+ * never changed — only the clip — so bg images, gradients and the dsc radius
+ * keep their positioning. Composes with the quarter-split path (each quarter
+ * narrows the clip first, then lands here). Measured: a 248px throttle arc
+ * ring inside a sweeping 450px meter needle's wedge was ~15 ms/frame of mask
+ * cost; this removes the hole-interior share of it. */
+static void draw_ring_rect_skip_hole(lv_draw_ctx_t * draw_ctx, const lv_draw_rect_dsc_t * dsc,
+                                     const lv_area_t * draw_area, const lv_point_t * center,
+                                     lv_coord_t r_in)
+{
+    const lv_area_t * clip_ori = draw_ctx->clip_area;
+    /* 180/256 = 0.7031 < 1/sqrt2 keeps the square strictly inside the hole. */
+    lv_coord_t k = (lv_coord_t)(((int32_t)r_in * 180) >> 8);
+    lv_area_t hole;
+    hole.x1 = center->x - k;
+    hole.x2 = center->x + k;
+    hole.y1 = center->y - k;
+    hole.y2 = center->y + k;
+    /* Tiny hole or clip doesn't reach it: nothing to save, draw as before. */
+    if(k < 8 || !_lv_area_is_on(clip_ori, &hole)) {
+        lv_draw_rect(draw_ctx, dsc, draw_area);
+        return;
+    }
+    lv_area_t band;
+    if(clip_ori->y1 <= hole.y1 - 1) {            /* band above the hole */
+        band = *clip_ori;
+        band.y2 = LV_MIN(clip_ori->y2, hole.y1 - 1);
+        draw_ctx->clip_area = &band;
+        lv_draw_rect(draw_ctx, dsc, draw_area);
+    }
+    if(clip_ori->y2 >= hole.y2 + 1) {            /* band below the hole */
+        band = *clip_ori;
+        band.y1 = LV_MAX(clip_ori->y1, hole.y2 + 1);
+        draw_ctx->clip_area = &band;
+        lv_draw_rect(draw_ctx, dsc, draw_area);
+    }
+    lv_coord_t mid_y1 = LV_MAX(clip_ori->y1, hole.y1);
+    lv_coord_t mid_y2 = LV_MIN(clip_ori->y2, hole.y2);
+    if(mid_y1 <= mid_y2) {
+        if(clip_ori->x1 <= hole.x1 - 1) {        /* band left of the hole */
+            band.x1 = clip_ori->x1;
+            band.x2 = LV_MIN(clip_ori->x2, hole.x1 - 1);
+            band.y1 = mid_y1;
+            band.y2 = mid_y2;
+            draw_ctx->clip_area = &band;
+            lv_draw_rect(draw_ctx, dsc, draw_area);
+        }
+        if(clip_ori->x2 >= hole.x2 + 1) {        /* band right of the hole */
+            band.x1 = LV_MAX(clip_ori->x1, hole.x2 + 1);
+            band.x2 = clip_ori->x2;
+            band.y1 = mid_y1;
+            band.y2 = mid_y2;
+            draw_ctx->clip_area = &band;
+            lv_draw_rect(draw_ctx, dsc, draw_area);
+        }
+    }
+    draw_ctx->clip_area = clip_ori;
+}
+
 static void draw_quarter_0(quarter_draw_dsc_t * q)
 {
     const lv_area_t * clip_area_ori = q->draw_ctx->clip_area;
@@ -243,7 +312,8 @@ static void draw_quarter_0(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     else if(q->start_quarter == 0 || q->end_quarter == 0) {
@@ -258,7 +328,8 @@ static void draw_quarter_0(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
         if(q->end_quarter == 0) {
@@ -271,7 +342,8 @@ static void draw_quarter_0(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
     }
@@ -288,7 +360,8 @@ static void draw_quarter_0(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     q->draw_ctx->clip_area = clip_area_ori;
@@ -310,7 +383,8 @@ static void draw_quarter_1(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     else if(q->start_quarter == 1 || q->end_quarter == 1) {
@@ -325,7 +399,8 @@ static void draw_quarter_1(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
         if(q->end_quarter == 1) {
@@ -338,7 +413,8 @@ static void draw_quarter_1(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
     }
@@ -355,7 +431,8 @@ static void draw_quarter_1(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     q->draw_ctx->clip_area = clip_area_ori;
@@ -377,7 +454,8 @@ static void draw_quarter_2(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     else if(q->start_quarter == 2 || q->end_quarter == 2) {
@@ -392,7 +470,8 @@ static void draw_quarter_2(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
         if(q->end_quarter == 2) {
@@ -405,7 +484,8 @@ static void draw_quarter_2(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
     }
@@ -422,7 +502,8 @@ static void draw_quarter_2(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     q->draw_ctx->clip_area = clip_area_ori;
@@ -444,7 +525,8 @@ static void draw_quarter_3(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
     else if(q->start_quarter == 3 || q->end_quarter == 3) {
@@ -459,7 +541,8 @@ static void draw_quarter_3(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
         if(q->end_quarter == 3) {
@@ -472,7 +555,8 @@ static void draw_quarter_3(quarter_draw_dsc_t * q)
             bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
             if(ok) {
                 q->draw_ctx->clip_area = &quarter_area;
-                lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+                draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
             }
         }
     }
@@ -489,7 +573,8 @@ static void draw_quarter_3(quarter_draw_dsc_t * q)
         bool ok = _lv_area_intersect(&quarter_area, &quarter_area, clip_area_ori);
         if(ok) {
             q->draw_ctx->clip_area = &quarter_area;
-            lv_draw_rect(q->draw_ctx, q->draw_dsc, q->draw_area);
+            draw_ring_rect_skip_hole(q->draw_ctx, q->draw_dsc, q->draw_area,
+                                     q->center, q->radius - q->width);
         }
     }
 
