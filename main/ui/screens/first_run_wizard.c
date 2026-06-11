@@ -1890,7 +1890,13 @@ static void _channels_refresh_cb(lv_timer_t *t) {
         } else {
             uint8_t d = c->decimals;
             if (d > 3) d = 3;
-            snprintf(buf, sizeof(buf), "%.*f", d, (double)c->current_value);
+            /* Show the value in the channel's chosen DISPLAY unit so the list
+             * matches the detail-pane hero (was rendering raw native, so a
+             * °F channel read 25 in the list but 77 in the detail). */
+            const char *u = c->units_display[0] ? c->units_display
+                                                : c->units_native;
+            float shown = unit_convert(c->current_value, c->units_native, u);
+            snprintf(buf, sizeof(buf), "%.*f", d, (double)shown);
             lv_color_t col = THEME_COLOR_TEXT_PRIMARY;
             switch (c->last_zone) {
                 case CHZONE_LOW_WARN:
