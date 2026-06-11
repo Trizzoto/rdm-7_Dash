@@ -1676,12 +1676,12 @@
             display: flex; flex-direction: column;
         }
         .ch2-list-tools {
-            display: flex; gap: 6px;
+            display: flex; flex-direction: column; gap: 6px;
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
         }
         .ch2-list-tools input[type="search"] {
-            flex: 1;
+            width: 100%; box-sizing: border-box;
             padding: 6px 10px;
             background: var(--bg);
             border: 1px solid var(--border);
@@ -1691,6 +1691,16 @@
             font-family: inherit;
         }
         .ch2-list-tools input[type="search"]:focus { outline: none; border-color: var(--accent); }
+        .ch2-filter { display: flex; gap: 4px; }
+        .ch2-filter-btn {
+            flex: 1; padding: 4px 6px;
+            font-size: 11px; font-family: inherit;
+            background: var(--bg); color: var(--text-muted);
+            border: 1px solid var(--border); border-radius: 4px;
+            cursor: pointer; white-space: nowrap;
+        }
+        .ch2-filter-btn:hover { color: var(--text); }
+        .ch2-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .ch2-list { flex: 1; overflow-y: auto; }
 
         .ch2-row {
@@ -4360,6 +4370,11 @@
                 <div class="ch2-list-pane">
                     <div class="ch2-list-tools">
                         <input id="chSearch" type="search" placeholder="Search channels, signals, groups" oninput="_refreshChannelsList()">
+                        <div class="ch2-filter" id="chFilter">
+                            <button class="ch2-filter-btn active" data-f="all" onclick="_setChFilter('all')">All</button>
+                            <button class="ch2-filter-btn" data-f="configured" onclick="_setChFilter('configured')">Configured</button>
+                            <button class="ch2-filter-btn" data-f="unconfigured" onclick="_setChFilter('unconfigured')">Available</button>
+                        </div>
                     </div>
                     <div id="chList" class="ch2-list"></div>
                 </div>
@@ -16849,7 +16864,7 @@
         let _chSelectedId = null;
         let _chSaveTimer = null;  /* per-channel debounced PUT */
         let _chPendingFields = {}; /* fields queued for the next PUT */
-        let _chFilter = 'all';    /* list filter: all | active | tier1 | broadcasting */
+        let _chFilter = 'all';    /* list status filter: all | configured | unconfigured */
         let _chSignalValuesCache = {}; /* signal-name → {value, stale, unit} */
 
         async function openChannelsModal() {
@@ -17529,6 +17544,17 @@
         /* Sidebar: every canonical channel + every custom channel, grouped
          * by purpose. Inactive (not yet in user's channels.json) rows fade
          * to 40% — click activates + auto-binds in one motion. */
+        /* Channel-list status filter (_chFilter declared with the other
+         * channel state above): 'all' | 'configured' | 'unconfigured'. Lets
+         * the user collapse the full canonical catalog down to just the
+         * channels they've set up, which makes picking far easier. */
+        function _setChFilter(f) {
+            _chFilter = f;
+            document.querySelectorAll('#chFilter .ch2-filter-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.f === f));
+            _refreshChannelsList();
+        }
+
         function _refreshChannelsList() {
             const list = document.getElementById('chList');
             if (!list) return;
@@ -17565,8 +17591,14 @@
                 }
             });
 
-            /* Filter by search across id / label / signal / group name. */
+            /* Status filter (All / Configured / Available) + search across
+             * id / label / signal / group name. "Configured" = the channel
+             * has a firmware record (is_active) — i.e. one the user has set
+             * up, whether or not a signal is bound; "Available" = canonical
+             * channels not yet activated. */
             const filtered = merged.filter(c => {
+                if (_chFilter === 'configured' && !c.is_active) return false;
+                if (_chFilter === 'unconfigured' && c.is_active) return false;
                 if (!q) return true;
                 const groupName = (_CH_GROUP_SHORT[c.group || 0] || '').toLowerCase();
                 return c.id.toLowerCase().includes(q)
@@ -17584,7 +17616,10 @@
 
             const order = Object.keys(grouped).map(Number).sort((a, b) => a - b);
             if (!order.length) {
-                list.innerHTML = `<div class="ch2-empty"><div class="ch2-empty-msg">No matches.</div></div>`;
+                const msg = (_chFilter === 'configured' && !q)
+                    ? 'No channels set up yet — switch to All to add some.'
+                    : 'No matches.';
+                list.innerHTML = `<div class="ch2-empty"><div class="ch2-empty-msg">${msg}</div></div>`;
                 return;
             }
             list.innerHTML = order.map(g => {
