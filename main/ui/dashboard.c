@@ -212,6 +212,13 @@ void dashboard_init(lv_obj_t *parent) {
 	font_manager_reset_instances();
 	font_manager_init();
 	signal_registry_init();
+	/* Internal signals (FPS, ODOMETER, …) must exist BEFORE the layout
+	 * instantiates widgets — from_json resolves signal names at create time,
+	 * and on FIRST boot nothing else has registered them yet
+	 * (signal_internal_start runs after the load), so widgets bound to them
+	 * stayed dead until a save+reload re-ran from_json against a registry
+	 * that already carried them. Idempotent — start() re-registers later. */
+	signal_internal_register_signals();
 	/* DTC monitor exposes DTC_COUNT as a synthetic signal so warning
 	 * widgets can bind it directly. Re-asserted on every dashboard_init:
 	 * the signal registry MERGES across layout loads (the happy path does

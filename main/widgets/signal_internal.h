@@ -43,6 +43,17 @@ typedef struct {
 } fuel_cal_config_t;
 
 /**
+ * Register the dash-internal signals (FPS, ODOMETER, CHIP_TEMP, …) in the
+ * signal registry without starting the injection timer. Must run BEFORE the
+ * layout instantiates widgets: from_json resolves signal names at create
+ * time, and on first boot nothing else has registered these yet — widgets
+ * bound to them stayed dead until a save/reload re-ran from_json against a
+ * registry that already carried them. Idempotent (duplicate registrations
+ * no-op); signal_internal_start() calls it again harmlessly.
+ */
+void signal_internal_register_signals(void);
+
+/**
  * Start the internal signal injection timer (LVGL timer, 500 ms).
  * Must be called from the LVGL task after signal_registry_init().
  */

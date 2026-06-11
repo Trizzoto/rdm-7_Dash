@@ -377,6 +377,11 @@ static void _register_internal_signals(void) {
     }
 }
 
+void signal_internal_register_signals(void)
+{
+    _register_internal_signals();
+}
+
 void signal_internal_start(void)
 {
     if (s_internal_timer) {
