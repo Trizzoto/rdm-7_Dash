@@ -156,6 +156,7 @@ static uint8_t     s_obd2_gap_count                       = 0;
 static uint32_t    s_obd2_orig_pids[OBD2_MAX_ENABLED]     = {0};
 static uint8_t     s_obd2_orig_count                      = 0;
 static lv_obj_t   *s_obd2_chip          = NULL;   /* "Fill N from OBD2" pill */
+static lv_obj_t   *s_step_chip_lbl      = NULL;   /* header text the pill anchors to */
 static lv_obj_t   *s_obd2_modal         = NULL;   /* probe/result overlay */
 static lv_obj_t   *s_obd2_status_lbl    = NULL;
 static lv_obj_t   *s_obd2_hint_lbl      = NULL;
@@ -362,6 +363,7 @@ static void _close_wizard(bool mark_done) {
     s_detail_warn_lbl      = NULL;
     s_detail_source_lbl    = NULL;
     s_channels_stats_lbl   = NULL;
+    s_step_chip_lbl        = NULL;
     s_selected_ch_id[0]    = '\0';
     s_scan_status = s_scan_progress = s_scan_bar = s_scan_detail = NULL;
     s_btn_apply = s_btn_next1 = s_btn_cancel = s_btn_start = NULL;
@@ -2122,6 +2124,21 @@ typedef enum {
     KP_CAN_ID, KP_SCALE, KP_OFFSET,                  /* signal decode fields   */
 } kp_field_t;
 
+/* Display-unit helpers: the detail pane SHOWS and EDITS range/threshold
+ * values in the channel's chosen display unit (psi for a kPa channel etc.),
+ * while the channel stores native — same model as the web editor. Identity
+ * and unknown pairs pass through unchanged, so unit-less channels behave
+ * exactly as before. */
+static const char *_ch_disp_unit(const channel_t *c) {
+    return c->units_display[0] ? c->units_display : c->units_native;
+}
+static float _ch_to_disp(const channel_t *c, float v) {
+    return unit_convert(v, c->units_native, _ch_disp_unit(c));
+}
+static float _ch_to_native(const channel_t *c, float v) {
+    return unit_convert(v, _ch_disp_unit(c), c->units_native);
+}
+
 static void _kp_confirmed(const char *text, void *ud) {
     kp_field_t f = (kp_field_t)(intptr_t)ud;
     channel_t *c = channel_manager_get(s_selected_ch_id);
@@ -2129,15 +2146,17 @@ static void _kp_confirmed(const char *text, void *ud) {
     bool blank = (!text || !text[0]);
     signal_t *s;
     switch (f) {
-        case KP_MIN: if (!blank) channel_manager_set_range(c, (float)atof(text), c->max); break;
-        case KP_MAX: if (!blank) channel_manager_set_range(c, c->min, (float)atof(text)); break;
+        /* Range/threshold input arrives in the DISPLAY unit — convert back
+         * to native before storing (the registry compares native). */
+        case KP_MIN: if (!blank) channel_manager_set_range(c, _ch_to_native(c, (float)atof(text)), c->max); break;
+        case KP_MAX: if (!blank) channel_manager_set_range(c, c->min, _ch_to_native(c, (float)atof(text))); break;
         case KP_HIGH_WARN:
             if (blank) channel_manager_clear_threshold(c, CHZONE_HIGH_WARN);
-            else       channel_manager_set_threshold(c, CHZONE_HIGH_WARN, (float)atof(text));
+            else       channel_manager_set_threshold(c, CHZONE_HIGH_WARN, _ch_to_native(c, (float)atof(text)));
             break;
         case KP_LOW_WARN:
             if (blank) channel_manager_clear_threshold(c, CHZONE_LOW_WARN);
-            else       channel_manager_set_threshold(c, CHZONE_LOW_WARN, (float)atof(text));
+            else       channel_manager_set_threshold(c, CHZONE_LOW_WARN, _ch_to_native(c, (float)atof(text)));
             break;
         case KP_CAN_ID:
             s = _wiz_selected_signal();
@@ -2184,13 +2203,15 @@ static void _kp_open_cb(lv_event_t *e) {
     const char *title = "Value";
     signal_t *s;
     switch (f) {
-        case KP_MIN: snprintf(initial, sizeof(initial), "%.*f", c->decimals, c->min); title = "Min"; break;
-        case KP_MAX: snprintf(initial, sizeof(initial), "%.*f", c->decimals, c->max); title = "Max"; break;
+        /* Keypad pre-fill in the DISPLAY unit to match what the row shows;
+         * _kp_confirmed converts the typed value back to native. */
+        case KP_MIN: snprintf(initial, sizeof(initial), "%.*f", c->decimals, _ch_to_disp(c, c->min)); title = "Min"; break;
+        case KP_MAX: snprintf(initial, sizeof(initial), "%.*f", c->decimals, _ch_to_disp(c, c->max)); title = "Max"; break;
         case KP_HIGH_WARN:
-            if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) snprintf(initial, sizeof(initial), "%.*f", c->decimals, c->high_warn);
+            if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) snprintf(initial, sizeof(initial), "%.*f", c->decimals, _ch_to_disp(c, c->high_warn));
             title = "High warn (blank = off)"; break;
         case KP_LOW_WARN:
-            if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) snprintf(initial, sizeof(initial), "%.*f", c->decimals, c->low_warn);
+            if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) snprintf(initial, sizeof(initial), "%.*f", c->decimals, _ch_to_disp(c, c->low_warn));
             title = "Low warn (blank = off)"; break;
         case KP_CAN_ID:
             s = _wiz_selected_signal();
@@ -2204,6 +2225,14 @@ static void _kp_open_cb(lv_event_t *e) {
 }
 
 typedef enum { DD_DECIMALS = 1, DD_BIT_START, DD_BIT_LEN, DD_SIGNED, DD_ENDIAN, DD_UNITS } dd_field_t;
+
+/* Deferred full pane rebuild — used by edits whose event target would be
+ * deleted by an inline re-render (dropdowns mid VALUE_CHANGED). The pane
+ * validity is re-checked inside _render_detail_pane. */
+static void _detail_rerender_async(void *unused) {
+    (void)unused;
+    _render_detail_pane();
+}
 
 /* Display-unit dropdown options for a channel: native unit first, then every
  * unit the conversion table can reach from it. Mirrors the web editor's
@@ -2242,9 +2271,11 @@ static void _dropdown_changed_cb(lv_event_t *e) {
     if (!c) return;
     if (f == DD_DECIMALS) { channel_manager_set_decimals(c, (uint8_t)idx); return; }
     if (f == DD_UNITS) {
-        /* The 500 ms refresh timer repaints the hero in the new unit on its
-         * next tick — no re-render here (same reasoning as decimals). */
         channel_manager_set_units_display(c, _units_dd_index_to_unit(c, idx));
+        /* Recalculate the whole pane (hero, min/max, thresholds) in the new
+         * unit IMMEDIATELY — but deferred one tick: rebuilding mid
+         * VALUE_CHANGED would delete the dropdown that is still settling. */
+        rdm_async_call(_detail_rerender_async, NULL);
         return;
     }
     signal_t *s = _wiz_selected_signal();
@@ -2419,11 +2450,14 @@ static void _render_detail_pane(void) {
     _detail_section_rule(s_detail_pane, y + 14);
     y += 20;
 
+    /* Range + thresholds render AND edit in the channel's display unit —
+     * _ch_to_disp here, _kp_open_cb pre-fills converted, _kp_confirmed
+     * converts the typed value back to native. Same model as the web. */
     char vbuf[24];
-    snprintf(vbuf, sizeof(vbuf), "%.*f", c->decimals, c->min);
+    snprintf(vbuf, sizeof(vbuf), "%.*f", c->decimals, _ch_to_disp(c, c->min));
     _make_textbox_row(s_detail_pane, y, "Min", vbuf, KP_MIN);
     y += 34;
-    snprintf(vbuf, sizeof(vbuf), "%.*f", c->decimals, c->max);
+    snprintf(vbuf, sizeof(vbuf), "%.*f", c->decimals, _ch_to_disp(c, c->max));
     _make_textbox_row(s_detail_pane, y, "Max", vbuf, KP_MAX);
     y += 34;
     _make_dropdown_row(s_detail_pane, y, "Decimals", "0\n1\n2\n3",
@@ -2432,8 +2466,8 @@ static void _render_detail_pane(void) {
 
     /* Display-unit picker — only when the conversion table can actually
      * convert this channel's native unit somewhere (kPa→bar/psi/…, °C→°F/K,
-     * km/h→mph). The hero value renders in the chosen unit; Min/Max and
-     * thresholds keep editing in the NATIVE unit (their rows say which). */
+     * km/h→mph). Picking a unit rebuilds the pane immediately so the hero,
+     * range and thresholds all recalculate on the spot. */
     {
         char units_opts[96];
         uint16_t units_sel = 0;
@@ -2449,19 +2483,17 @@ static void _render_detail_pane(void) {
     _detail_section_rule(s_detail_pane, y + 14);
     y += 20;
 
+    const char *u = _ch_disp_unit(c);
     if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
-        /* Thresholds are stored AND edited in the native unit (the keypad
-         * writes native), so label them with the native unit — pairing the
-         * native number with the display unit read as e.g. "204 bar". */
-        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->high_warn,
-                 c->units_native);
+        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals,
+                 _ch_to_disp(c, c->high_warn), u);
     else
         snprintf(vbuf, sizeof(vbuf), "%s", "Off");   /* unset warn = off */
     _make_textbox_row(s_detail_pane, y, "High warn", vbuf, KP_HIGH_WARN);
     y += 34;
     if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
-        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->low_warn,
-                 c->units_native);
+        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals,
+                 _ch_to_disp(c, c->low_warn), u);
     else
         snprintf(vbuf, sizeof(vbuf), "%s", "Off");
     _make_textbox_row(s_detail_pane, y, "Low warn", vbuf, KP_LOW_WARN);
@@ -3102,8 +3134,6 @@ static void _obd2_chip_update(void) {
          * read as washed-out next to them. */
         lv_obj_set_height(s_obd2_chip, 26);
         lv_obj_set_width(s_obd2_chip, LV_SIZE_CONTENT);
-        /* y=32 clears the 28 px top-right "×" close button added to the hero. */
-        lv_obj_align(s_obd2_chip, LV_ALIGN_TOP_RIGHT, 0, 32);
         lv_obj_set_style_bg_color(s_obd2_chip, THEME_COLOR_ACCENT_BLUE, 0);
         lv_obj_set_style_bg_opa(s_obd2_chip, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(s_obd2_chip, 0, 0);
@@ -3125,6 +3155,15 @@ static void _obd2_chip_update(void) {
         snprintf(buf, sizeof(buf), "Fill %u from OBD2", gaps);
         lv_label_set_text(lbl, buf);
     }
+
+    /* Sit in the header row, just left of the "Pick a channel…" text (the
+     * chip's content width changes with the gap count, so re-align after
+     * every label update; update_layout settles SIZE_CONTENT first). */
+    lv_obj_update_layout(s_obd2_chip);
+    if (s_step_chip_lbl && lv_obj_is_valid(s_step_chip_lbl))
+        lv_obj_align_to(s_obd2_chip, s_step_chip_lbl, LV_ALIGN_OUT_LEFT_MID, -14, 0);
+    else
+        lv_obj_align(s_obd2_chip, LV_ALIGN_TOP_RIGHT, 0, 32);
 }
 
 /* Top-right "×" close — same teardown as the footer cancel/skip path. Used by
@@ -3217,6 +3256,8 @@ static void _show_step_channels(void) {
     lv_obj_align(step_chip, LV_ALIGN_TOP_RIGHT, -(28 + 8), 4);
     lv_obj_set_style_text_font(step_chip, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(step_chip, THEME_COLOR_TEXT_MUTED, 0);
+    /* The "Fill N from OBD2" chip anchors to this label's left edge. */
+    s_step_chip_lbl = step_chip;
 
     s_channels_stats_lbl = lv_label_create(s_step_channels);
     lv_label_set_text(s_channels_stats_lbl, "");
