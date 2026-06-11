@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +25,12 @@ float unit_convert(float v, const char *from, const char *to);
 /* True if a (non-identity) conversion exists between @from and @to. Lets the
  * UI decide whether a display-unit choice is meaningful for a given channel. */
 bool unit_convert_supported(const char *from, const char *to);
+
+/* Enumerate the units convertible to/from @from (excluding @from itself).
+ * Fills @out with up to @max pointers into the static conversion table
+ * (no allocation; strings live for the program). Returns the count — 0
+ * means the unit has no known conversions (UI should hide the picker). */
+size_t unit_convert_targets(const char *from, const char **out, size_t max);
 
 #ifdef __cplusplus
 }

@@ -55,6 +55,22 @@ float unit_convert(float v, const char *from, const char *to) {
 	return v; /* unknown pair — pass through unchanged (relabel, no scale) */
 }
 
+size_t unit_convert_targets(const char *from, const char **out, size_t max) {
+	if (!from || !from[0] || !out || max == 0) return 0;
+	size_t n = 0;
+	for (size_t i = 0; i < N_CONVS && n < max; ++i) {
+		const char *cand = NULL;
+		if (strcmp(from, CONVS[i].from) == 0)      cand = CONVS[i].to;
+		else if (strcmp(from, CONVS[i].to) == 0)   cand = CONVS[i].from;
+		if (!cand) continue;
+		bool dup = false;
+		for (size_t j = 0; j < n; ++j)
+			if (strcmp(out[j], cand) == 0) { dup = true; break; }
+		if (!dup) out[n++] = cand;
+	}
+	return n;
+}
+
 bool unit_convert_supported(const char *from, const char *to) {
 	if (!from || !to || !from[0] || !to[0]) return false;
 	if (strcmp(from, to) == 0) return true; /* identity is trivially fine */

@@ -18447,6 +18447,11 @@
                         <div class="ch2-num"><span class="ch2-num-label"><span class="swatch" style="background:rgba(155,196,230,0.6);"></span>Low warn</span>${numField('low_warn', c.low_warn, '—')}</div>
                         <div class="ch2-num"><span class="ch2-num-label"><span class="swatch" style="background:rgba(230,184,0,0.6);"></span>High warn</span>${numField('high_warn', c.high_warn, '—')}</div>
                     </div>
+                    <div class="ch2-num-row">
+                        <div class="ch2-num"><span class="ch2-num-label">Units</span>${_chUnitFieldHTML(c)}</div>
+                        <div class="ch2-num"><span class="ch2-num-label">Decimals</span>
+                            <input type="number" min="0" max="3" value="${c.decimals||0}" onchange="_chEdit('${c.id}','decimals', Number(this.value)); _flushChannelEdits(); _renderChannelDetail();"></div>
+                    </div>
                 </div>`;
         }
 
@@ -18589,14 +18594,6 @@
                                 <div class="ch2-num">
                                     <span class="ch2-num-label">Label</span>
                                     <input type="text" value="${c.label||''}" onchange="_chEdit('${c.id}','label', this.value)">
-                                </div>
-                                <div class="ch2-num" style="margin-top:10px;">
-                                    <span class="ch2-num-label">Display units</span>
-                                    ${_chUnitFieldHTML(c)}
-                                </div>
-                                <div class="ch2-num" style="margin-top:10px;">
-                                    <span class="ch2-num-label">Decimals</span>
-                                    <input type="number" min="0" max="3" value="${c.decimals||0}" onchange="_chEdit('${c.id}','decimals', Number(this.value))">
                                 </div>
                             </div>
                             ${canSection}

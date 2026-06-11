@@ -31,6 +31,7 @@
 #include "../../data/channel_manager.h"
 #include "../../data/channel_source_apply.h"
 #include "../../data/canonical_channels.h"
+#include "../../data/unit_convert.h"
 #include "../../layout/ecu_presets.h"
 #include "../../layout/layout_manager.h"
 #include "../../net/wifi_manager.h"
@@ -1919,8 +1920,13 @@ static void _channels_refresh_cb(lv_timer_t *t) {
             } else {
                 uint8_t d = c->decimals;
                 if (d > 3) d = 3;
+                /* Hero shows the value in the chosen DISPLAY unit (kPa→psi
+                 * etc.) so the number and the unit label agree. Identity /
+                 * unknown pairs pass through unchanged. */
+                float shown = unit_convert(c->current_value,
+                                           c->units_native, u);
                 snprintf(buf, sizeof(buf), "%.*f %s",
-                    d, (double)c->current_value, u);
+                    d, (double)shown, u);
                 lv_color_t col = THEME_COLOR_TEXT_PRIMARY;
                 switch (c->last_zone) {
                     case CHZONE_LOW_WARN:
@@ -2197,7 +2203,35 @@ static void _kp_open_cb(lv_event_t *e) {
     show_numeric_input_dialog(title, initial, _kp_confirmed, NULL, (void *)(intptr_t)f);
 }
 
-typedef enum { DD_DECIMALS = 1, DD_BIT_START, DD_BIT_LEN, DD_SIGNED, DD_ENDIAN } dd_field_t;
+typedef enum { DD_DECIMALS = 1, DD_BIT_START, DD_BIT_LEN, DD_SIGNED, DD_ENDIAN, DD_UNITS } dd_field_t;
+
+/* Display-unit dropdown options for a channel: native unit first, then every
+ * unit the conversion table can reach from it. Mirrors the web editor's
+ * picker (index.html _chUnitFieldHTML). Returns the option count and writes
+ * the newline-joined list into @buf; @sel_out gets the index of the
+ * channel's current display unit (0 = native). */
+static uint16_t _units_dd_options(const channel_t *c, char *buf, size_t cap,
+                                  uint16_t *sel_out) {
+    const char *targets[8];
+    size_t n = unit_convert_targets(c->units_native, targets, 8);
+    size_t pos = (size_t)snprintf(buf, cap, "%s", c->units_native);
+    uint16_t sel = 0;
+    for (size_t i = 0; i < n && pos < cap; i++) {
+        if (c->units_display[0] && strcmp(c->units_display, targets[i]) == 0)
+            sel = (uint16_t)(i + 1);
+        pos += (size_t)snprintf(buf + pos, cap - pos, "\n%s", targets[i]);
+    }
+    if (sel_out) *sel_out = sel;
+    return (uint16_t)(n + 1);
+}
+
+/* Map a units-dropdown index back to the unit string (0 = native). */
+static const char *_units_dd_index_to_unit(const channel_t *c, uint16_t idx) {
+    if (idx == 0) return c->units_native;
+    const char *targets[8];
+    size_t n = unit_convert_targets(c->units_native, targets, 8);
+    return ((size_t)(idx - 1) < n) ? targets[idx - 1] : c->units_native;
+}
 
 static void _dropdown_changed_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -2207,6 +2241,12 @@ static void _dropdown_changed_cb(lv_event_t *e) {
     channel_t *c = channel_manager_get(s_selected_ch_id);
     if (!c) return;
     if (f == DD_DECIMALS) { channel_manager_set_decimals(c, (uint8_t)idx); return; }
+    if (f == DD_UNITS) {
+        /* The 500 ms refresh timer repaints the hero in the new unit on its
+         * next tick — no re-render here (same reasoning as decimals). */
+        channel_manager_set_units_display(c, _units_dd_index_to_unit(c, idx));
+        return;
+    }
     signal_t *s = _wiz_selected_signal();
     if (!s) return;
     switch (f) {
@@ -2319,8 +2359,6 @@ static void _render_detail_pane(void) {
     channel_t *c = channel_manager_get(s_selected_ch_id);
     if (!c) return;
 
-    const char *u = c->units_display[0] ? c->units_display : c->units_native;
-
     /* ── Hero (label + giant live value) ─────────────────────────────── */
     lv_obj_t *lbl = lv_label_create(s_detail_pane);
     lv_label_set_text(lbl, c->label);
@@ -2392,19 +2430,38 @@ static void _render_detail_pane(void) {
                        (uint16_t)(c->decimals <= 3 ? c->decimals : 3), DD_DECIMALS);
     y += 38;
 
+    /* Display-unit picker — only when the conversion table can actually
+     * convert this channel's native unit somewhere (kPa→bar/psi/…, °C→°F/K,
+     * km/h→mph). The hero value renders in the chosen unit; Min/Max and
+     * thresholds keep editing in the NATIVE unit (their rows say which). */
+    {
+        char units_opts[96];
+        uint16_t units_sel = 0;
+        if (_units_dd_options(c, units_opts, sizeof(units_opts), &units_sel) > 1) {
+            _make_dropdown_row(s_detail_pane, y, "Units", units_opts,
+                               units_sel, DD_UNITS);
+            y += 38;
+        }
+    }
+
     /* ── Thresholds section ─────────────────────────────────────────── */
     _detail_section_label(s_detail_pane, "THRESHOLDS", y);
     _detail_section_rule(s_detail_pane, y + 14);
     y += 20;
 
     if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
-        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->high_warn, u);
+        /* Thresholds are stored AND edited in the native unit (the keypad
+         * writes native), so label them with the native unit — pairing the
+         * native number with the display unit read as e.g. "204 bar". */
+        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->high_warn,
+                 c->units_native);
     else
         snprintf(vbuf, sizeof(vbuf), "%s", "Off");   /* unset warn = off */
     _make_textbox_row(s_detail_pane, y, "High warn", vbuf, KP_HIGH_WARN);
     y += 34;
     if (c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
-        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->low_warn, u);
+        snprintf(vbuf, sizeof(vbuf), "%.*f %s", c->decimals, c->low_warn,
+                 c->units_native);
     else
         snprintf(vbuf, sizeof(vbuf), "%s", "Off");
     _make_textbox_row(s_detail_pane, y, "Low warn", vbuf, KP_LOW_WARN);
@@ -3039,16 +3096,18 @@ static void _obd2_chip_update(void) {
 
     if (!s_obd2_chip || !lv_obj_is_valid(s_obd2_chip)) {
         s_obd2_chip = lv_btn_create(s_step_channels);
-        lv_obj_set_height(s_obd2_chip, 24);
+        /* Match the established solid-button language ("Change" / "Apply to
+         * widget"): accent-blue fill, white label, radius 4, no shadow. The
+         * old ghost-outline pill (thin 60%-opacity border + blue tiny text)
+         * read as washed-out next to them. */
+        lv_obj_set_height(s_obd2_chip, 26);
         lv_obj_set_width(s_obd2_chip, LV_SIZE_CONTENT);
         /* y=32 clears the 28 px top-right "×" close button added to the hero. */
         lv_obj_align(s_obd2_chip, LV_ALIGN_TOP_RIGHT, 0, 32);
-        lv_obj_set_style_bg_color(s_obd2_chip, THEME_COLOR_SECTION_BG, 0);
+        lv_obj_set_style_bg_color(s_obd2_chip, THEME_COLOR_ACCENT_BLUE, 0);
         lv_obj_set_style_bg_opa(s_obd2_chip, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(s_obd2_chip, THEME_COLOR_ACCENT_BLUE, 0);
-        lv_obj_set_style_border_width(s_obd2_chip, 1, 0);
-        lv_obj_set_style_border_opa(s_obd2_chip, LV_OPA_60, 0);
-        lv_obj_set_style_radius(s_obd2_chip, 12, 0);
+        lv_obj_set_style_border_width(s_obd2_chip, 0, 0);
+        lv_obj_set_style_radius(s_obd2_chip, 4, 0);
         lv_obj_set_style_shadow_width(s_obd2_chip, 0, 0);
         lv_obj_set_style_pad_hor(s_obd2_chip, 12, 0);
         lv_obj_set_style_pad_ver(s_obd2_chip, 0, 0);
@@ -3057,7 +3116,6 @@ static void _obd2_chip_update(void) {
         lv_obj_t *lbl = lv_label_create(s_obd2_chip);
         lv_obj_center(lbl);
         lv_obj_set_style_text_font(lbl, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(lbl, THEME_COLOR_ACCENT_BLUE, 0);
         lv_obj_set_user_data(s_obd2_chip, lbl);
     }
 
