@@ -146,6 +146,39 @@
       }
     } catch (e) { console.warn('signal registration list', e); }
     layout.signals = signals;
+
+    /* Apply channel zone thresholds to widgets. ADR-0005 strips warn
+     * thresholds from widget JSON (they live on the channel, applied at
+     * runtime by the device's channel listener), so the WASM — which has no
+     * channel_manager — would colour with empty/default thresholds (e.g. a
+     * coolant arc that never goes red). Inject the bound channel's
+     * low_warn/high_warn into the config-readable fields per widget type so
+     * from_json picks them up; the channel value wins when present, matching
+     * the device. Zone COLOURS already travel in the layout. (Arc low/high
+     * zone-fill and night mode are channel-listener-only / need a WASM
+     * rebuild — out of scope here; the redline + bar/panel warns are the
+     * common case and are covered.) */
+    try {
+      const ch = await (await fetchOk('/api/channels')).json();
+      const chBySignal = {};
+      for (const c of (ch.channels || [])) if (c.signal) chBySignal[c.signal] = c;
+      for (const w of (layout.widgets || [])) {
+        const cfg = w.config; if (!cfg) continue;
+        const c = chBySignal[cfg.signal_name]; if (!c) continue;
+        const hasHi = c.high_warn != null, hasLo = c.low_warn != null;
+        if (w.type === 'arc' || w.type === 'meter') {
+          if (hasHi) { cfg.redline_threshold = c.high_warn; cfg.redline_enabled = true; }
+        } else if (w.type === 'bar') {
+          if (hasHi) cfg.bar_high = c.high_warn;
+          if (hasLo) cfg.bar_low = c.low_warn;
+          if (hasHi || hasLo) cfg.bar_alerts_enabled = true;
+        } else if (w.type === 'panel') {
+          if (hasHi) { cfg.warning_high_threshold = c.high_warn; cfg.warning_high_enabled = true; }
+          if (hasLo) { cfg.warning_low_threshold = c.low_warn; cfg.warning_low_enabled = true; }
+        }
+      }
+    } catch (e) { console.warn('channel threshold apply', e); }
+
     M.ccall('load_layout_json', null, ['string'], [JSON.stringify(layout)]);
     $('meta').textContent = 'layout: ' + active + ' · ' + signals.length + ' signals';
   };
