@@ -53,6 +53,11 @@ esp_err_t web_server_send_json(httpd_req_t *req, struct cJSON *root);
 bool web_server_name_is_safe(const char *name);
 bool web_server_filename_is_safe(const char *name);
 
+// In-place percent-decode of a query-string value: "%XX" -> byte, "+" -> space.
+// httpd_query_key_value() returns the raw encoded value; call this before the
+// safety check + path build so names with spaces (e.g. "Fugaz One") resolve.
+void web_server_url_decode(char *name);
+
 // Domain register() entry points — called from web_server_start().
 void web_server_captive_register(httpd_handle_t server);
 void web_server_gear_register(httpd_handle_t server);

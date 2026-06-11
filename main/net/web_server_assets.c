@@ -57,6 +57,11 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
+
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
@@ -224,6 +229,11 @@ static esp_err_t image_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
+
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
@@ -265,6 +275,11 @@ static esp_err_t image_data_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
 		return ESP_FAIL;
 	}
+
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
 
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
@@ -338,6 +353,11 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
 		return ESP_FAIL;
 	}
+
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
 
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
@@ -495,6 +515,11 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
+
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");
 		return ESP_FAIL;
@@ -544,6 +569,11 @@ static esp_err_t font_data_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'name' parameter");
 		return ESP_FAIL;
 	}
+
+	/* httpd_query_key_value() returns the raw percent-encoded value — decode it
+	 * so names with spaces ("Fugaz One", "Manrope Bold") resolve to the right
+	 * file. Must run before the safety check + path build. */
+	web_server_url_decode(name);
 
 	if (!web_server_name_is_safe(name)) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid name");

@@ -22,12 +22,15 @@
  *   main/net/web_server.c:
  *     bool web_server_name_is_safe(const char *name)
  *     bool web_server_filename_is_safe(const char *name)
+ *     void web_server_url_decode(char *name)
  */
 #include "unity.h"
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ── Host mirror (verbatim from web_server.c, modulo formatting) ──────────
@@ -57,6 +60,29 @@ static bool filename_is_safe(const char *name) {
     }
     if (strstr(name, "..")) return false;
     return true;
+}
+
+/* Host mirror of web_server_url_decode (verbatim, modulo formatting).
+ * Decodes "%XX" -> byte and "+" -> space in place. Runs BEFORE the safety
+ * checks above, so the decoded result is what the guard actually sees — a
+ * "%2e%2e%2f" payload must decode to "../" and then be rejected. */
+static void url_decode(char *s) {
+    if (!s) return;
+    char *dst = s;
+    for (char *src = s; *src; ) {
+        if (*src == '%' && isxdigit((unsigned char)src[1]) &&
+            isxdigit((unsigned char)src[2])) {
+            char hex[3] = {src[1], src[2], '\0'};
+            *dst++ = (char)strtol(hex, NULL, 16);
+            src += 3;
+        } else if (*src == '+') {
+            *dst++ = ' ';
+            src++;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
 }
 
 /* ── name_is_safe: reject anything that could traverse ─────────────────── */
@@ -213,6 +239,42 @@ static void test_realworld_attacks_blocked(void) {
     }
 }
 
+/* ── url_decode: the read/write/delete asset endpoints decode first ─────── */
+
+static void test_decode_spaces(void) {
+    /* The bug this whole change fixes: spaced font/image names arrive
+     * percent-encoded and must decode to the real on-disk name. */
+    char a[64]; strcpy(a, "Fugaz%20One");      url_decode(a); TEST_ASSERT_EQUAL_STRING("Fugaz One", a);
+    char b[64]; strcpy(b, "Manrope%20Bold");   url_decode(b); TEST_ASSERT_EQUAL_STRING("Manrope Bold", b);
+    char c[64]; strcpy(c, "a+b");              url_decode(c); TEST_ASSERT_EQUAL_STRING("a b", c);
+}
+
+static void test_decode_passthrough(void) {
+    /* No escapes => string unchanged. */
+    char a[64]; strcpy(a, "Montserrat"); url_decode(a); TEST_ASSERT_EQUAL_STRING("Montserrat", a);
+}
+
+static void test_decode_malformed_escape_passthrough(void) {
+    /* A truncated / non-hex "%" escape is copied verbatim, not dropped. */
+    char a[64]; strcpy(a, "100%");   url_decode(a); TEST_ASSERT_EQUAL_STRING("100%", a);
+    char b[64]; strcpy(b, "ab%2");   url_decode(b); TEST_ASSERT_EQUAL_STRING("ab%2", b);
+    char c[64]; strcpy(c, "%zz");    url_decode(c); TEST_ASSERT_EQUAL_STRING("%zz", c);
+}
+
+static void test_decode_then_guard_blocks_traversal(void) {
+    /* Load-bearing security property: decoding runs BEFORE name_is_safe, so an
+     * encoded traversal attempt decodes to its raw form and is then rejected. */
+    char a[64]; strcpy(a, "%2e%2e%2f");          url_decode(a);
+    TEST_ASSERT_EQUAL_STRING("../", a);
+    TEST_ASSERT_FALSE(name_is_safe(a));
+    char b[64]; strcpy(b, "%2e%2e%5cnvs");       url_decode(b);
+    TEST_ASSERT_EQUAL_STRING("..\\nvs", b);
+    TEST_ASSERT_FALSE(name_is_safe(b));
+    char c[64]; strcpy(c, "evil%2ejson");        url_decode(c);
+    TEST_ASSERT_EQUAL_STRING("evil.json", c);
+    TEST_ASSERT_FALSE(name_is_safe(c));          /* dot rejected by strict variant */
+}
+
 /* ── Runner ─────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -242,6 +304,12 @@ int main(void) {
 
     /* Real-world attack patterns — both variants must block all of them. */
     RUN_TEST(test_realworld_attacks_blocked);
+
+    /* url_decode (runs before the guards on the asset endpoints) */
+    RUN_TEST(test_decode_spaces);
+    RUN_TEST(test_decode_passthrough);
+    RUN_TEST(test_decode_malformed_escape_passthrough);
+    RUN_TEST(test_decode_then_guard_blocks_traversal);
 
     return UNITY_END();
 }

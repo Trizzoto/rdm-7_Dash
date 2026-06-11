@@ -4,6 +4,8 @@
 #include "cJSON.h"
 #include <stdbool.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include "web_server_internal.h"
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define. */
@@ -102,6 +104,35 @@ bool web_server_filename_is_safe(const char *name) {
 	/* Reject ".." sequences */
 	if (strstr(name, "..")) return false;
 	return true;
+}
+
+/* In-place percent-decode of a query-string value: "%XX" -> the byte it
+ * encodes, "+" -> space. httpd_query_key_value() hands back the raw,
+ * percent-encoded value, so any name with a space (e.g. "Fugaz One",
+ * "Manrope Bold") arrives as "Fugaz%20One" and never matches the file on
+ * LittleFS. Decode it before the path-safety check + fopen path build.
+ *
+ * Decoding never grows the string (every escape collapses to one byte), so
+ * decoding in place is safe. A malformed "%" escape (truncated or non-hex)
+ * is copied through verbatim rather than dropped — the subsequent
+ * web_server_name_is_safe() check still rejects anything dangerous. */
+void web_server_url_decode(char *s) {
+	if (!s) return;
+	char *dst = s;
+	for (char *src = s; *src; ) {
+		if (*src == '%' && isxdigit((unsigned char)src[1]) &&
+		    isxdigit((unsigned char)src[2])) {
+			char hex[3] = {src[1], src[2], '\0'};
+			*dst++ = (char)strtol(hex, NULL, 16);
+			src += 3;
+		} else if (*src == '+') {
+			*dst++ = ' ';
+			src++;
+		} else {
+			*dst++ = *src++;
+		}
+	}
+	*dst = '\0';
 }
 
 /* HTTP handler for the main page — serves the gzipped web/index.html.
