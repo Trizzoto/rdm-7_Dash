@@ -114,6 +114,38 @@ const MOCK = {
   'POST /api/fuel/set-full':    () => ({ ok: true, voltage: 3.0 })
 };
 
+/* ── In-memory channel store (dev only) ────────────────────────────────────
+ * Enough of /api/channels to exercise the Channels modal in the browser,
+ * including the display-unit conversion UI (units_native vs units_display).
+ * Values are NATIVE — the client converts for display, same as against the
+ * device. /api/channels/update merges fields and echoes {channel} back like
+ * the firmware does. */
+const channelStore = [
+  { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
+    signal: 'OIL_PRES', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
+    min: 0, max: 1000, low_warn: 80, high_warn: 650, current_value: 203.9, is_stale: false },
+  { id: 'coolant_temp', label: 'Coolant Temp', group: 0, tier: 0, is_canonical: true,
+    signal: 'COOLANT', source: 'can', units_native: '°C', units_display: '°C', decimals: 0,
+    min: -40, max: 150, low_warn: null, high_warn: 105, current_value: 88, is_stale: false },
+  { id: 'vehicle_speed', label: 'Vehicle Speed', group: 2, tier: 0, is_canonical: true,
+    signal: 'SPEED', source: 'can', units_native: 'km/h', units_display: 'km/h', decimals: 0,
+    min: 0, max: 300, low_warn: null, high_warn: null, current_value: 67.4, is_stale: false },
+  { id: 'custom_lambda', label: 'Lambda', group: 99, tier: 1, is_canonical: false,
+    signal: 'LAMBDA', source: 'can', units_native: 'λ', units_display: '', decimals: 2,
+    min: 0.6, max: 1.4, low_warn: 0.75, high_warn: 1.1, current_value: 0.98, is_stale: false }
+];
+const CANONICAL_DEFS = [
+  { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, units_native: 'kPa',
+    units_display_default: 'bar', decimals: 2, min_default: 0, max_default: 1000,
+    low_warn: 80, high_warn: 650, notes: 'Mock canonical def.' },
+  { id: 'coolant_temp', label: 'Coolant Temp', group: 0, tier: 0, units_native: '°C',
+    units_display_default: '°C', decimals: 0, min_default: -40, max_default: 150,
+    low_warn: null, high_warn: 105, notes: '' },
+  { id: 'vehicle_speed', label: 'Vehicle Speed', group: 2, tier: 0, units_native: 'km/h',
+    units_display_default: 'km/h', decimals: 0, min_default: 0, max_default: 300,
+    low_warn: null, high_warn: null, notes: '' }
+];
+
 /* ── In-memory custom-preset store (dev only) ──────────────────────────────
  * Mirrors the device's LittleFS custom presets. Each entry:
  *   { ecu, version, signals: [ { label, can_id, bit_start, bit_length,
@@ -177,6 +209,26 @@ const server = http.createServer((req, res) => {
   const handler = MOCK[key];
 
   if (req.url.startsWith('/api/')) {
+    /* Channels — explicit handlers (need body + the in-memory store). */
+    if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
+      return sendJson(res, { channels: channelStore });
+    }
+    if (url === '/api/channels/canonical' && req.method === 'GET') {
+      return sendJson(res, { channels: CANONICAL_DEFS });
+    }
+    if (url === '/api/channels/update' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const c = channelStore.find(x => x.id === data.id);
+          if (!c) return sendJson(res, { ok: false, error: 'unknown channel' }, 404);
+          Object.assign(c, data.fields || {});
+          sendJson(res, { ok: true, channel: c });
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 400);
+        }
+      });
+    }
     /* Custom presets — explicit handlers (need body/query + persistence). */
     if (url === '/api/presets/custom' && req.method === 'GET') {
       return sendJson(res, flattenCustomPresets());

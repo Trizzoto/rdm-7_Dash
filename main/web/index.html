@@ -9650,7 +9650,7 @@
                     const unit = _effCh.units_display || _effCh.units_native || '';
                     const stale = !_effCh.signal || _effCh.is_stale || v == null;
                     const valTxt = (stale || v == null || isNaN(v)) ? '--'
-                        : Number(v).toFixed(_effCh.decimals || 0);
+                        : Number(_chToDisplay(_effCh, v)).toFixed(_effCh.decimals || 0);
                     const sourceLabel = _classifyChannelSource(_effCh.signal);
                     const subline = _effCh.signal
                         ? `from ${sourceLabel}`
@@ -17047,9 +17047,13 @@
         function _widgetWarnLevelsHTML(w) {
             if (!_widgetThresholdSpec(w)) return '';
             const ch = _widgetEffectiveChannel(w);
-            const unit = (ch && ch.units) ? ' ' + ch.units : '';
-            const hv = (ch && ch.high_warn != null) ? ch.high_warn : '';
-            const lv = (ch && ch.low_warn  != null) ? ch.low_warn  : '';
+            /* Shown (and typed) in the channel's display unit — _widgetSetWarn
+             * converts back to native before the POST. (ch.units never existed
+             * on the channel object, so the unit hint was always blank.) */
+            const unitName = ch ? (ch.units_display || ch.units_native || '') : '';
+            const unit = unitName ? ` (${unitName})` : '';
+            const hv = (ch && ch.high_warn != null) ? _chDispRound(_chToDisplay(ch, ch.high_warn)) : '';
+            const lv = (ch && ch.low_warn  != null) ? _chDispRound(_chToDisplay(ch, ch.low_warn))  : '';
             const dis = ch ? '' : 'disabled';
             const hint = ch ? '' : `<div style="font-size:10px; color:#e6b800; margin-top:4px;">Bind a channel to set warn levels.</div>`;
             return `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
@@ -17065,7 +17069,8 @@
             const ch = _widgetEffectiveChannel(w);
             if (!ch || !ch.id) return;
             const txt = (rawValue == null ? '' : String(rawValue)).trim();
-            const num = txt === '' ? null : Number(txt);
+            /* Input is in the channel's display unit — store native. */
+            const num = txt === '' ? null : _chToNative(ch, Number(txt));
             const key = side === 'high' ? 'high_warn' : 'low_warn';
             const fields = {};
             fields[key] = (num != null && isFinite(num)) ? num : null;
@@ -17176,7 +17181,7 @@
                           || c.units_native || def?.units_native || '');
             const v = c.current_value;
             const stale = !c.signal || c.is_stale || v == null;
-            const valTxt = (stale || v == null || isNaN(v)) ? '--' : Number(v).toFixed(decimals);
+            const valTxt = (stale || v == null || isNaN(v)) ? '--' : Number(_chToDisplay(c, v)).toFixed(decimals);
             const valEl = card.querySelector('.ch-card-val');
             if (valEl) {
                 valEl.classList.toggle('stale', stale);
@@ -17205,7 +17210,7 @@
                 const stale = c?.is_stale;
                 const valTxt = (stale || v == null || isNaN(v))
                     ? '--'
-                    : Number(v).toFixed(decimals);
+                    : Number(_chToDisplay(c, v)).toFixed(decimals);
                 /* Subtle muted look for stale rows. */
                 cell.style.opacity = (stale || !c) ? '0.55' : '';
                 cell.innerHTML = `${valTxt}<span style="color:var(--text-muted); font-size:10px; margin-left:3px;">${unit}</span>`;
@@ -17271,7 +17276,7 @@
                         const unit = c.units_display || c.units_native || '';
                         const v = c.current_value;
                         const valTxt = (c.is_stale || v == null || isNaN(v)) ? '--'
-                            : Number(v).toFixed(c.decimals || 0);
+                            : Number(_chToDisplay(c, v)).toFixed(c.decimals || 0);
                         const inactCls = c.is_active ? '' : 'inactive';
                         return `<div class="ch2-picker-row wch ${inactCls}" data-ch-id="${c.id}" onclick="_widgetAssignChannel('${c.id}')">
                             <span class="ch2-picker-row-name">${c.label || c.id}</span>
@@ -17479,21 +17484,74 @@
             });
         }
 
+        /* ── Display-unit conversion (mirror of main/data/unit_convert.c) ──
+         * Native values stay authoritative everywhere — thresholds, ranges,
+         * zone math and every /api/channels/update POST are native; conversion
+         * happens only at the presentation edge (and inverts on input). This
+         * table must stay in sync with the firmware CONVS[]: direct + reverse
+         * pairs only, no chaining; an unknown pair passes through unchanged so
+         * a free-text relabel never mis-scales the number. */
+        const _UNIT_CONVS = [
+            /* from, to, scale, offset — out = v * scale + offset */
+            ['kPa',  'bar',  0.01,        0],
+            ['kPa',  'psi',  0.14503774,  0],
+            ['kPa',  'MPa',  0.001,       0],
+            ['kPa',  'inHg', 0.29529983,  0],
+            ['bar',  'psi',  14.503774,   0],
+            ['bar',  'MPa',  0.1,         0],
+            ['°C',   '°F',   1.8,         32],
+            ['°C',   'K',    1,           273.15],
+            ['km/h', 'mph',  0.62137119,  0],
+            ['m/s',  'km/h', 3.6,         0],
+            ['m/s',  'mph',  2.23693629,  0],
+        ];
+        function _unitConvert(v, from, to) {
+            if (v == null || isNaN(v) || !from || !to || from === to) return v;
+            for (const [f, t, s, o] of _UNIT_CONVS) {
+                if (f === from && t === to) return v * s + o;
+                if (t === from && f === to) return (v - o) / s;
+            }
+            return v; /* unknown pair — relabel only, no scale */
+        }
+        /* Channel native value → the user's chosen display unit, and back.
+         * Tolerant of '' / null so input handlers can pass raw field values. */
+        function _chToDisplay(c, v) {
+            if (!c || v == null || v === '' || isNaN(v)) return v;
+            return _unitConvert(Number(v), c.units_native, c.units_display || c.units_native);
+        }
+        function _chToNative(c, v) {
+            if (!c || v == null || v === '' || isNaN(v)) return v;
+            return _unitConvert(Number(v), c.units_display || c.units_native, c.units_native);
+        }
+        /* Trim float dust off a converted value before it lands in a number
+         * input (2.039 not 2.0389999999999997). Display-only — write-backs
+         * convert the typed value, not this rounded echo. */
+        function _chDispRound(v) {
+            return (v == null || v === '' || isNaN(v)) ? v : Number(Number(v).toPrecision(6));
+        }
+        /* Units offered in the display-unit dropdown for a native unit. */
+        function _chUnitOptions(native) {
+            if (!native) return [];
+            const out = [];
+            for (const [f, t] of _UNIT_CONVS) {
+                if (f === native && !out.includes(t)) out.push(t);
+                if (t === native && !out.includes(f)) out.push(f);
+            }
+            return out;
+        }
+
         function _chFmtPlain(c, v, stale) {
             /* Stale or no-data → show a dash, not the static 0 the channel
              * still carries. Auto-assigned channels that aren't actually
              * receiving frames were reading "0.000" etc., which looked like a
              * real value. */
             if (stale || v == null || isNaN(v)) return '--';
-            /* Show the value in the channel's chosen display unit. The firmware
-             * emits display_value (native→display converted, e.g. kPa→bar) only
-             * when a conversion applies; the unit <span> beside this already
-             * shows units_display, so converting here keeps the number and the
-             * label in the same unit (was showing the native value, e.g.
-             * "203.9 bar" for 203.9 kPa). Guarded on v === current_value so a
-             * caller formatting some other value isn't silently substituted. */
-            if (c && c.display_value != null && v === c.current_value)
-                v = c.display_value;
+            /* Convert into the channel's chosen display unit via the local
+             * mirror of the firmware conversion table — works for ANY native-
+             * space value (current, peak, threshold), not just current_value,
+             * which is why this replaced the old display_value substitution
+             * (the API field still exists for other consumers). */
+            v = _chToDisplay(c, v);
             const d = c.decimals || 0;
             return Number(v).toFixed(d);
         }
@@ -18282,15 +18340,21 @@
         }
 
         function _renderRangeSection(c, def) {
+            /* The whole Range UI works in the channel's DISPLAY unit: shown
+             * values convert native→display here, typed values convert back
+             * display→native in _chEditDisp before the POST. Stored channel
+             * state (and the zone/pct math, which is affine-invariant) stays
+             * native. */
+            const disp = v => _chDispRound(_chToDisplay(c, v));
             const numField = (key, val, placeholder) => `
-                <input type="number" step="any" value="${val ?? ''}" placeholder="${placeholder ?? '—'}"
-                       onchange="_chEdit('${c.id}','${key}', this.value===''? null : Number(this.value)); _flushChannelEdits(); _renderChannelDetail();">`;
+                <input type="number" step="any" value="${disp(val) ?? ''}" placeholder="${disp(placeholder) ?? '—'}"
+                       onchange="_chEditDisp('${c.id}','${key}', this.value); _flushChannelEdits(); _renderChannelDetail();">`;
             const canFill = def && (def.low_warn != null || def.high_warn != null);
             const hasAnyT = c.low_warn != null || c.high_warn != null;
             const min = c.min ?? def?.min_default ?? 0;
             const max = c.max ?? def?.max_default ?? 100;
             const fmtMark = t => (t == null) ? '' :
-                `<div class="endpoint" style="left:${_chValuePct(c, t)}%;">${Number(t).toFixed(c.decimals ?? 0)}</div>`;
+                `<div class="endpoint" style="left:${_chValuePct(c, t)}%;">${Number(_chToDisplay(c, t)).toFixed(c.decimals ?? 0)}</div>`;
             return `
                 <div class="ch2-section">
                     <h3>Range${canFill && !hasAnyT ? `<span class="action" onclick="_chFillCanonicalThresholds('${c.id}')">Use defaults</span>` : ''}</h3>
@@ -18298,10 +18362,10 @@
                     <div class="ch2-thresh-bar">
                         ${_renderZoneSlices(c)}
                         <div class="marker" id="chThreshMarker" style="left:calc(${_chValuePct(c, c.current_value)}% - 1px);"></div>
-                        <div class="endpoint" style="left:0;">${min}</div>
+                        <div class="endpoint" style="left:0;">${disp(min)}</div>
                         ${fmtMark(c.low_warn)}
                         ${fmtMark(c.high_warn)}
-                        <div class="endpoint" style="left:100%;">${max}</div>
+                        <div class="endpoint" style="left:100%;">${disp(max)}</div>
                     </div>
 
                     <div class="ch2-num-row">
@@ -18313,6 +18377,14 @@
                         <div class="ch2-num"><span class="ch2-num-label"><span class="swatch" style="background:rgba(230,184,0,0.6);"></span>High warn</span>${numField('high_warn', c.high_warn, '—')}</div>
                     </div>
                 </div>`;
+        }
+
+        /* Range-input edit in DISPLAY units: convert back to native before the
+         * debounced channel POST. Empty string clears the field (null). */
+        function _chEditDisp(id, field, raw) {
+            const c = (_chCache || []).find(x => x.id === id);
+            const v = (raw === '' || raw == null) ? null : _chToNative(c, Number(raw));
+            _chEdit(id, field, v);
         }
 
         function _renderZoneSlices(c) {
@@ -18449,7 +18521,7 @@
                                 </div>
                                 <div class="ch2-num" style="margin-top:10px;">
                                     <span class="ch2-num-label">Display units</span>
-                                    <input type="text" value="${c.units_display||''}" placeholder="${c.units_native||'unit'}" onchange="_chEdit('${c.id}','units_display', this.value)">
+                                    ${_chUnitFieldHTML(c)}
                                 </div>
                                 <div class="ch2-num" style="margin-top:10px;">
                                     <span class="ch2-num-label">Decimals</span>
@@ -18460,6 +18532,47 @@
                         </div>
                     </details>
                 </div>`;
+        }
+
+        /* Display-units field: a dropdown of units the conversion table can
+         * actually convert to (native first), when the native unit has any —
+         * the user picks "psi" instead of having to type it exactly. Falls
+         * back to the old free-text input for unit-less / unknown-unit
+         * channels, and keeps a "Custom…" escape hatch for pure relabels
+         * (no conversion — unknown pairs pass through). */
+        function _chUnitFieldHTML(c) {
+            const native = c.units_native || '';
+            const opts = _chUnitOptions(native);
+            if (!opts.length) {
+                return `<input type="text" value="${c.units_display||''}" placeholder="${native||'unit'}" onchange="_chEdit('${c.id}','units_display', this.value)">`;
+            }
+            const cur = c.units_display || '';
+            const isNative = !cur || cur === native;
+            const isKnown = isNative || opts.includes(cur);
+            return `<select onchange="_chUnitSelect('${c.id}', this.value)">
+                        <option value="${native}" ${isNative ? 'selected' : ''}>${native} (native)</option>
+                        ${opts.map(u => `<option value="${u}" ${cur === u ? 'selected' : ''}>${u}</option>`).join('')}
+                        ${!isKnown ? `<option value="${cur}" selected>${cur} (custom)</option>` : ''}
+                        <option value="__custom__">Custom…</option>
+                    </select>`;
+        }
+        async function _chUnitSelect(id, value) {
+            const c = (_chCache || []).find(x => x.id === id);
+            if (value === '__custom__') {
+                const typed = prompt('Custom unit label (relabel only — values are not converted):', c?.units_display || '');
+                if (typed == null) { _renderChannelDetail(); return; }
+                value = typed.trim();
+            }
+            /* The firmware update handler only accepts a STRING for
+             * units_display (null is ignored), so "back to native" sends the
+             * native unit literal rather than clearing the field. */
+            if (!value) value = c?.units_native || '';
+            _chEdit(id, 'units_display', value);
+            /* Flush now and re-render so the value, range and threshold
+             * fields all flip to the new unit immediately. */
+            await _flushChannelEdits();
+            _renderChannelDetail();
+            _refreshChannelsList();
         }
 
         /* Edit a layout-side signal field by name. Used by the channel
