@@ -107,13 +107,47 @@
     }
   } catch (e) { console.warn('image list', e); }
 
-  /* Active layout — same JSON the panel renders. */
+  /* Active layout — same JSON the panel renders, but with the live signal
+   * set spliced in. ADR-0005: device layouts no longer carry signals[]
+   * decode (it lives in channels.json, device-local), so loading the raw
+   * layout into the WASM registers ZERO signals — and inject_signal() is a
+   * no-op for an unregistered name, leaving every gauge stuck at "--".
+   * Register every live signal NAME with inert decode fields — the WASM's
+   * _load_signals requires name + can_id + bit_start + bit_length present
+   * or it skips the entry, so {name} alone registers nothing. The decode
+   * never runs (no CAN bus in the WASM; we inject values directly), so the
+   * params are placeholders. Merged ON TOP of whatever metadata entries the
+   * layout does carry (gear value_map, fuel cal) so those survive. */
   const loadLayout = async () => {
     const list = await (await fetchOk('/api/layout/list')).json();
     const active = list.active || 'default';
-    const txt = await (await fetchOk('/api/layout/raw?name=' + encodeURIComponent(active))).text();
-    M.ccall('load_layout_json', null, ['string'], [txt]);
-    $('meta').textContent = 'layout: ' + active;
+    const layout = await (await fetchOk('/api/layout/raw?name=' + encodeURIComponent(active))).json();
+    const signals = Array.isArray(layout.signals) ? layout.signals.slice() : [];
+    const idxByName = new Map();
+    signals.forEach((s, i) => { if (s && s.name) idxByName.set(s.name, i); });
+    const hasDecode = s => typeof s.can_id === 'number' &&
+                           typeof s.bit_start === 'number' && typeof s.bit_length === 'number';
+    const DECODE = { can_id: 1, bit_start: 0, bit_length: 8, scale: 1, offset: 0 };
+    try {
+      const sv = await (await fetchOk('/api/signals/values')).json();
+      for (const s of (sv.signals || [])) {
+        if (!s.name) continue;
+        if (idxByName.has(s.name)) {
+          /* Already in the layout (e.g. GEAR with its value_map, FUEL_SENDER_V):
+           * the WASM gate rejects entries lacking decode, so AUGMENT it with
+           * inert decode fields rather than skip — keeps value_map/fuel_cal
+           * while making it register. */
+          const e = signals[idxByName.get(s.name)];
+          if (!hasDecode(e)) Object.assign(e, DECODE, { source: e.source || 'internal' });
+        } else {
+          signals.push({ name: s.name, source: 'internal', ...DECODE });
+          idxByName.set(s.name, signals.length - 1);
+        }
+      }
+    } catch (e) { console.warn('signal registration list', e); }
+    layout.signals = signals;
+    M.ccall('load_layout_json', null, ['string'], [JSON.stringify(layout)]);
+    $('meta').textContent = 'layout: ' + active + ' · ' + signals.length + ' signals';
   };
   setStatus('loading layout…');
   try { await loadLayout(); } catch (e) { setStatus('layout load failed: ' + e, false); return; }

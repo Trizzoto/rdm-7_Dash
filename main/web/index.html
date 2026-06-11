@@ -652,7 +652,7 @@
             header #layoutSelect,
             header #pillAutoSync,
             header #pillSimulate,
-            header #liveViewLink,
+            header #pillLive,
             header #pillLiveControl,
             header #helpBtn,
             header #resetBtnHdr,
@@ -4102,7 +4102,7 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
-            <a class="btn btn-secondary" id="liveViewLink" href="/mirror" target="_blank" rel="noopener" style="height:26px;line-height:26px;text-decoration:none;display:inline-flex;align-items:center;" title="Open the full-rate live view — the dashboard rendered in your browser via WASM (works offline / in hotspot mode). The editor canvas itself refreshes on Sync / Save.">Live View ↗</a>
+            <button class="header-pill active" id="pillLive" onclick="toggleLivePreview()" title="LIVE ON: the canvas continuously mirrors the device screen (default). Turn off to refresh only on Sync / Save. For a high-frame-rate view, open /mirror.">LIVE</button>
             <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
@@ -13052,22 +13052,64 @@
             }
         }
 
-        /* ═══ Editor preview = Sync-on-demand ═══
-         * The editor canvas refreshes via the Sync button and on Save only —
-         * the old background screenshot STREAM (auto-poll + rate dropdown)
-         * was removed: it cost the dash real CPU per encode for a 1-3 s
-         * preview, and the full-rate live view now lives on the separate
-         * /mirror page (WASM, rendered in-browser). captureScreenshot()
-         * still backs the Sync button + post-save refresh.
+        /* ═══ Live preview (default ON) ═══
+         * The editor canvas shows the live device screen by default: a
+         * SELF-PACING /api/screenshot loop — one request in flight, the next
+         * fired as soon as the previous frame is drawn — so it refreshes as
+         * fast as the dash can serve (~3-6 fps half-res) without the old
+         * fixed-rate dropdown or request pile-ups. A single LIVE toggle turns
+         * it off (then it's Sync-on-demand); the choice persists. Paused while
+         * the tab is hidden or CONTROL mode owns the preview. captureScreenshot()
+         * (half-res, q100) also still backs the Sync button + post-save refresh.
          *
-         * CONTROL mode (remote-touch demo mirror) keeps its OWN screenshot
-         * poll loop below; this fixed cadence replaces the deleted rate
-         * dropdown that used to tune it. */
+         * The high-frame-rate WASM view remains at /mirror; this is the
+         * in-editor preview so you see live data while you arrange widgets. */
         const _CONTROL_POLL_INTERVAL_MS = 1000;
+        let _livePreviewOn = (localStorage.getItem('rdm7_live_preview') !== '0');
+        let _livePreviewToken = 0;
 
-        /* Device→web layout sync only — no more background screenshot poll. */
+        async function _livePreviewLoop(token) {
+            while (_livePreviewOn && token === _livePreviewToken) {
+                /* CONTROL drives its own <img>; the tab being hidden means
+                 * nobody's watching — idle in both cases instead of burning
+                 * device CPU on encodes. */
+                if (document.hidden || _liveControlOn) {
+                    await new Promise(r => setTimeout(r, 400));
+                    continue;
+                }
+                await captureScreenshot();   /* swallows its own errors */
+                await new Promise(r => setTimeout(r, 0));  /* yield; pace = encode latency */
+            }
+        }
+        function _startLivePreview() {
+            _livePreviewToken++;                 /* cancel any prior loop */
+            if (_livePreviewOn) _livePreviewLoop(_livePreviewToken);
+        }
+        function toggleLivePreview() {
+            _livePreviewOn = !_livePreviewOn;
+            localStorage.setItem('rdm7_live_preview', _livePreviewOn ? '1' : '0');
+            _updateLivePill();
+            if (_livePreviewOn) {
+                _startLivePreview();
+            } else {
+                _livePreviewToken++;             /* stops the running loop */
+                if (typeof showToast === 'function')
+                    showToast('Live preview OFF — press Sync to refresh', 'info');
+            }
+        }
+        function _updateLivePill() {
+            const pill = document.getElementById('pillLive');
+            if (!pill) return;
+            pill.textContent = _livePreviewOn ? 'LIVE' : 'LIVE OFF';
+            pill.classList.toggle('active', _livePreviewOn);
+            pill.style.background = _livePreviewOn ? '' : 'hsl(0, 70%, 40%)';
+            pill.style.color = _livePreviewOn ? '' : '#fff';
+        }
+
         window.addEventListener('load', () => {
-            setTimeout(_startLayoutSync, 2500);
+            _updateLivePill();
+            setTimeout(_startLayoutSync, 2500);   /* device→web layout sync */
+            setTimeout(_startLivePreview, 1500);  /* live canvas preview, default on */
         });
 
         /* ═══ Live Control — JS-polled mirror + remote touch injection ═══
@@ -19657,7 +19699,8 @@
                             const p = document.getElementById('pillSimulate');
                             return !!(p && p.classList.contains('active'));
                         }, onclick: 'toggleSimulation()' },
-                    { type: 'button', label: 'Live View', icon: 'monitor', onclick: "window.open('/mirror','_blank','noopener')" },
+                    { type: 'toggle', label: 'LIVE', icon: 'monitor', getState: () => (typeof _livePreviewOn !== 'undefined' ? _livePreviewOn : true),
+                        onclick: 'toggleLivePreview()' },
                     { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
                         onclick: 'toggleLiveControl()' },
                     { type: 'button', label: 'Reset View',   icon: 'reset', onclick: 'resetView()' },
