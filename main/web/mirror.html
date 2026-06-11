@@ -121,11 +121,12 @@
   /* Live values at 10 Hz. Fresh signals inject into the WASM registry —
    * the compiled-in widget code (rules, colors, formatting) reacts exactly
    * like the device. Stale signals are skipped so the WASM's own timeout
-   * marks them stale. Paused while the tab is hidden so a background
-   * mirror doesn't keep the dash's web server busy. */
+   * marks them stale. Polling runs even when the tab is hidden: the WASM
+   * render loop (requestAnimationFrame) is throttled by the browser while
+   * hidden, but because we keep injecting, the moment the tab is shown
+   * again it paints the CURRENT values instead of a stale frozen frame. */
   let lastSeen = 0;
   setInterval(async () => {
-    if (document.hidden) return;
     try {
       const data = await (await fetchOk('/api/signals/values')).json();
       for (const s of (data.signals || [])) {
@@ -142,7 +143,6 @@
   /* Layout hot-reload: a save in the web editor bumps the version. */
   let lastVer = null;
   setInterval(async () => {
-    if (document.hidden) return;
     try {
       const v = (await (await fetchOk('/api/layout/version')).json()).version;
       if (lastVer == null) { lastVer = v; return; }
