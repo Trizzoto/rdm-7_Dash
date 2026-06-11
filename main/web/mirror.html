@@ -118,15 +118,25 @@
   setStatus('loading layout…');
   try { await loadLayout(); } catch (e) { setStatus('layout load failed: ' + e, false); return; }
 
-  /* Live values at 10 Hz. Fresh signals inject into the WASM registry —
-   * the compiled-in widget code (rules, colors, formatting) reacts exactly
-   * like the device. Stale signals are skipped so the WASM's own timeout
-   * marks them stale. Polling runs even when the tab is hidden: the WASM
-   * render loop (requestAnimationFrame) is throttled by the browser while
-   * hidden, but because we keep injecting, the moment the tab is shown
-   * again it paints the CURRENT values instead of a stale frozen frame. */
+  /* Live values via a SELF-PACING loop. The local-WiFi round-trip is
+   * ~70 ms, so a fixed setInterval would fire a second request before the
+   * first returned — overlapping requests pile up on the dash's single-
+   * connection HTTP server and stall. Instead we run exactly ONE request
+   * at a time and schedule the next the moment it completes, so the mirror
+   * updates as fast as the link physically allows (~12-14 Hz) with no
+   * congestion, capped at 30 Hz so a fast link can't outrun the dash.
+   *
+   * Runs even when the tab is hidden (the WASM render loop is browser-
+   * throttled while hidden, but values keep flowing so showing the tab
+   * paints the CURRENT state, not a stale frozen frame). */
+  const MIN_GAP_MS = 33;        /* ceiling ~30 Hz */
+  const ERR_BACKOFF_MS = 500;
   let lastSeen = 0;
-  setInterval(async () => {
+  let emaIntervalMs = 100;      /* smoothed update period, for the Hz readout */
+  let lastTick = 0;
+  const pollValues = async () => {
+    const t0 = performance.now();
+    let backoff = false;
     try {
       const data = await (await fetchOk('/api/signals/values')).json();
       for (const s of (data.signals || [])) {
@@ -134,11 +144,19 @@
         M.ccall('inject_signal', null, ['string', 'number'], [s.name, s.value]);
       }
       lastSeen = Date.now();
-      setStatus('live', true);
+      const now = performance.now();
+      if (lastTick) emaIntervalMs += 0.2 * ((now - lastTick) - emaIntervalMs);
+      lastTick = now;
+      setStatus('live · ' + Math.round(1000 / Math.max(1, emaIntervalMs)) + ' Hz', true);
     } catch (e) {
+      backoff = true;
       if (Date.now() - lastSeen > 3000) setStatus('connection lost — retrying…', false);
     }
-  }, 100);
+    const elapsed = performance.now() - t0;
+    const wait = backoff ? ERR_BACKOFF_MS : Math.max(0, MIN_GAP_MS - elapsed);
+    setTimeout(pollValues, wait);
+  };
+  pollValues();
 
   /* Layout hot-reload: a save in the web editor bumps the version. */
   let lastVer = null;
