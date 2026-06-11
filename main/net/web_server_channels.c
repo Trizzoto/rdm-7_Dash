@@ -21,6 +21,7 @@
 
 #include "web_server_internal.h"
 #include "data/channel_manager.h"
+#include "data/channel_math.h"
 #include "data/channel_source_apply.h"  /* shared bind-preconfig path */
 #include "data/canonical_channels.h"
 #include "data/unit_convert.h"
@@ -147,13 +148,26 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 		}
 	}
 
+	/* Math/derived source — config block so the web form can populate, and
+	 * the source classification below short-circuits to "math". */
+	if (c->math_enabled) {
+		cJSON *m = cJSON_AddObjectToObject(j, "math");
+		if (m) {
+			cJSON_AddStringToObject(m, "a", c->math_a);
+			cJSON_AddStringToObject(m, "b", c->math_b);
+			cJSON_AddNumberToObject(m, "op", c->math_op);
+		}
+	}
+
 	/* Provenance — AUTHORITATIVE OBD2/CAN/internal source taken from the bound
 	 * signal's registry source field (signal_t.source), NOT a name heuristic.
 	 * Lets the Channels tab visibly separate OBD2 from raw CAN and suppress the
 	 * CAN bit-decode editor for non-CAN channels. A channel bound to a signal
 	 * not yet in the registry but owning a CAN decode is inherently "can". */
 	const char *src_str;
-	if (c->signal_name[0]) {
+	if (c->math_enabled) {
+		src_str = "math";
+	} else if (c->signal_name[0]) {
 		int16_t si = signal_find_by_name(c->signal_name);
 		signal_t *s = (si >= 0) ? signal_get_by_index((uint16_t)si) : NULL;
 		if (s) {
@@ -467,6 +481,23 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 		return channel_manager_set_decode(c, can_id, bit_start, bit_length,
 		                                  scale, offset, is_signed, endian, unit,
 		                                  /* persist_now */ true);
+	}
+
+	/* Math/derived source — `{ "math": { "a": "<channel id>", "b": "<channel
+	 * id>", "op": 0..3 } }` configures, `{ "math": null }` clears (channel
+	 * reverts to unbound). Validation (operands exist, no self-reference)
+	 * lives in channel_math_set. */
+	if (!strcmp(key, "math")) {
+		if (cJSON_IsNull(val)) return channel_math_clear(c);
+		if (cJSON_IsObject(val)) {
+			cJSON *a  = cJSON_GetObjectItemCaseSensitive(val, "a");
+			cJSON *b  = cJSON_GetObjectItemCaseSensitive(val, "b");
+			cJSON *op = cJSON_GetObjectItemCaseSensitive(val, "op");
+			if (!cJSON_IsString(a) || !cJSON_IsString(b)) return false;
+			uint8_t opv = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
+			return channel_math_set(c, a->valuestring, b->valuestring, opv);
+		}
+		return false;
 	}
 
 	/* Zone colors */

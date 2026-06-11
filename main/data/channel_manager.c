@@ -17,6 +17,7 @@
  */
 
 #include "channel_manager.h"
+#include "channel_math.h"
 #include "canonical_channels.h"
 #include "signal.h"
 #include "layout/ecu_presets.h"
@@ -834,6 +835,11 @@ void channel_manager_register_decoded_signals(void) {
 		n++;
 	}
 	if (n) ESP_LOGI(TAG, "register_decoded_signals: %d channel decode(s) -> registry", n);
+
+	/* Math channels own a synthetic output signal (MATH_<ID>) — restore those
+	 * on the same paths that restore CAN decodes so a reload never strands a
+	 * calculated channel without its registry entry. */
+	channel_math_register_signals();
 }
 
 bool channel_manager_set_decode(channel_t *c, uint32_t can_id,
@@ -1062,6 +1068,18 @@ static cJSON *channel_to_json(const channel_t *c) {
 	if (c->color_high_warn != CHANNEL_USE_DEFAULT_COLOR)
 		cJSON_AddNumberToObject(j, "color_high_warn", (int)c->color_high_warn);
 
+	/* Math/derived source — whole block or nothing. Additive key: older
+	 * firmware ignores it (channel falls back to its persisted signal
+	 * binding, which simply never updates). */
+	if (c->math_enabled) {
+		cJSON *m = cJSON_AddObjectToObject(j, "math");
+		if (m) {
+			cJSON_AddStringToObject(m, "a", c->math_a);
+			cJSON_AddStringToObject(m, "b", c->math_b);
+			cJSON_AddNumberToObject(m, "op", c->math_op);
+		}
+	}
+
 	/* CAN decode (ADR 0005) — defaults-only: omitted entirely when the channel
 	 * has no decode (can_id == 0, i.e. internal/OBD2/unset). When present, the
 	 * whole block is emitted so a re-load reconstructs the exact bit-field. */
@@ -1120,6 +1138,21 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 	if (cJSON_IsNumber(it)) c->color_low_warn = (uint32_t)it->valueint;
 	it = cJSON_GetObjectItemCaseSensitive(j, "color_high_warn");
 	if (cJSON_IsNumber(it)) c->color_high_warn = (uint32_t)it->valueint;
+
+	/* Math/derived source. Absent block leaves math disabled. */
+	cJSON *m = cJSON_GetObjectItemCaseSensitive(j, "math");
+	if (cJSON_IsObject(m)) {
+		cJSON *a  = cJSON_GetObjectItemCaseSensitive(m, "a");
+		cJSON *b  = cJSON_GetObjectItemCaseSensitive(m, "b");
+		cJSON *op = cJSON_GetObjectItemCaseSensitive(m, "op");
+		if (cJSON_IsString(a) && a->valuestring[0] &&
+		    cJSON_IsString(b) && b->valuestring[0]) {
+			safe_strcpy(c->math_a, a->valuestring, sizeof(c->math_a));
+			safe_strcpy(c->math_b, b->valuestring, sizeof(c->math_b));
+			c->math_op = cJSON_IsNumber(op) ? (uint8_t)op->valueint : 0;
+			c->math_enabled = true;
+		}
+	}
 
 	/* CAN decode (ADR 0005). Absent block leaves the calloc/alloc defaults
 	 * (can_id == 0 == "no decode"). */

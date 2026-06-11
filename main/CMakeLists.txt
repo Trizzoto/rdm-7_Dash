@@ -11,6 +11,7 @@ idf_component_register(
         "can/dtc_monitor.c"
         "data/canonical_channels.c"
         "data/channel_manager.c"
+        "data/channel_math.c"
         "data/channel_source_apply.c"
         "data/unit_convert.c"
         "storage/boot_assets.c"

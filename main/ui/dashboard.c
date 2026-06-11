@@ -21,6 +21,7 @@
 #include "ui/settings/device_settings.h"
 #include "can/can_manager.h"
 #include "can/dtc_monitor.h"
+#include "data/channel_math.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -282,6 +283,12 @@ loaded:
 	/* Stop any existing internal signal timer before (re-)starting */
 	signal_internal_stop();
 	signal_internal_start();
+
+	/* Math/derived channel evaluator (boost = MAP − BARO, …). Idempotent —
+	 * the timer survives layout reloads and reads live channel state each
+	 * tick. Output signals were (re-)registered during the layout load via
+	 * channel_manager_register_decoded_signals. */
+	channel_math_start();
 
 	/* Subscribe brightness dimmer to its configured signal */
 	dimmer_subscribe();

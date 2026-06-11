@@ -222,7 +222,19 @@ const server = http.createServer((req, res) => {
           const data = JSON.parse(body || '{}');
           const c = channelStore.find(x => x.id === data.id);
           if (!c) return sendJson(res, { ok: false, error: 'unknown channel' }, 404);
-          Object.assign(c, data.fields || {});
+          const fields = data.fields || {};
+          /* Mirror the firmware's math handling so the Calculated-channel
+           * form is exercisable in browser dev. */
+          if ('math' in fields) {
+            if (fields.math == null) {
+              delete c.math; c.source = 'unbound'; c.signal = '';
+            } else {
+              c.math = fields.math; c.source = 'math';
+              c.signal = 'MATH_' + c.id.toUpperCase();
+            }
+            delete fields.math;
+          }
+          Object.assign(c, fields);
           sendJson(res, { ok: true, channel: c });
         } catch (e) {
           sendJson(res, { ok: false, error: e.message }, 400);

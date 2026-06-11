@@ -2250,6 +2250,7 @@
         .ch2-srctag.obd2     { background: rgba(255,176,32,0.18);  color: #ffb020; }   /* amber  */
         .ch2-srctag.can      { background: rgba(79,195,247,0.16);  color: #4fc3f7; }   /* cyan   */
         .ch2-srctag.internal { background: rgba(167,139,250,0.18); color: #a78bfa; }   /* violet */
+        .ch2-srctag.math     { background: rgba(102,187,106,0.18); color: #66bb6a; }   /* green  */
         .ch2-srctag.unbound  { background: transparent; color: var(--text-ghost); border: 1px solid var(--border); }
 
         /* ECU "make" folder — expands to reveal version rows inside.
@@ -17734,6 +17735,7 @@
          * a signal. Then render the detail panel. */
         async function _selectChannel(id) {
             _flushChannelEdits();
+            _chMathFormOpen = false;
             const isActive = !!_chCache.find(c => c.id === id);
             const canonical = _chCanonical.find(d => d.id === id);
             if (!isActive && canonical) {
@@ -17835,6 +17837,7 @@
          * Makes OBD2 channels obviously distinct from raw CAN at a glance. */
         function _chSourceBadge(c) {
             const s = c && c.source;
+            if (s === 'math')     return '<span class="ch2-srctag math">CALC</span>';
             if (s === 'obd2')     return '<span class="ch2-srctag obd2">OBD2</span>';
             if (s === 'internal') return '<span class="ch2-srctag internal">RDM-7</span>';
             if (s === 'can')      return '<span class="ch2-srctag can">CAN</span>';
@@ -17844,8 +17847,23 @@
 
         function _renderSourceSection(c) {
             const cache = _chSignalValuesCache;
+            const isMath = c.source === 'math' && c.math;
             let body;
-            if (c.signal) {
+            if (isMath) {
+                /* Calculated channel — show the expression in channel labels
+                 * (firmware evaluates a <op> b into the MATH_* signal). */
+                const lbl = id => (_chCache.find(x => x.id === id)?.label) || id;
+                const ops = ['+', '−', '×', '÷'];
+                const info = cache[c.signal];
+                const v = info?.value;
+                const valTxt = (v == null || isNaN(v)) ? '—' : Number(v).toFixed(2);
+                const stale = !info || info.stale || v == null;
+                body = `<div class="ch2-source-bound" onclick="_chMathToggleForm()" title="Click to edit calculation">
+                    <span class="ch2-source-bound-name">${lbl(c.math.a)} ${ops[c.math.op] || '?'} ${lbl(c.math.b)}</span>
+                    <span class="ch2-source-bound-val ${stale?'stale':''}" data-sigval="${c.signal}">${valTxt}</span>
+                    <span class="ch2-source-bound-chev">›</span>
+                </div>`;
+            } else if (c.signal) {
                 const info = cache[c.signal];
                 const v = info?.value;
                 const valTxt = (v == null || isNaN(v)) ? '—' : Number(v).toFixed(2);
@@ -17861,12 +17879,88 @@
             } else {
                 body = `<button class="ch2-source-empty" onclick="_openSignalPicker('${c.id}')">+ Pick a source</button>`;
             }
+            const headAction = isMath
+                ? `<span class="action danger" onclick="_chMathRemove('${c.id}')">Remove</span>`
+                : (c.signal ? `<span class="action danger" onclick="_unbindChannelSource('${c.id}')">Unbind</span>` : '');
+            const calcAction = isMath ? ''
+                : `<span class="action" onclick="_chMathToggleForm()">Calculate…</span>`;
             return `
                 <div class="ch2-section">
-                    <h3>Source <span style="margin-left:6px;">${_chSourceBadge(c)}</span>${c.signal ? `<span class="action danger" onclick="_unbindChannelSource('${c.id}')">Unbind</span>` : ''}</h3>
+                    <h3>Source <span style="margin-left:6px;">${_chSourceBadge(c)}</span>${calcAction}${headAction}</h3>
                     ${body}
+                    ${_renderMathForm(c)}
                 </div>
                 ${_renderSourceSetupHint(c)}`;
+        }
+
+        /* ── Calculated (math) channels ────────────────────────────────────
+         * boost = MAP − BARO and friends. The form posts
+         * {math:{a,b,op}} to /api/channels/update; the firmware registers a
+         * MATH_<ID> signal, binds the channel to it and evaluates at 5 Hz.
+         * Operands are CHANNEL ids — any active channel except this one. */
+        let _chMathFormOpen = false;
+        function _chMathToggleForm() {
+            _chMathFormOpen = !_chMathFormOpen;
+            _renderChannelDetail();
+        }
+        function _renderMathForm(c) {
+            if (!_chMathFormOpen) return '';
+            const ops = [['0','+ add'], ['1','− subtract'], ['2','× multiply'], ['3','÷ divide']];
+            const cur = c.math || {};
+            const operandOpts = sel => _chCache
+                .filter(x => x.id !== c.id)
+                .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id))
+                .map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${x.label || x.id}</option>`)
+                .join('');
+            return `
+                <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+                    <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">
+                        Calculate this channel from two others (e.g. Boost = MAP − Baro).
+                    </div>
+                    <div class="ch2-num-row">
+                        <div class="ch2-num"><span class="ch2-num-label">Channel A</span>
+                            <select id="chMathA"><option value=""></option>${operandOpts(cur.a)}</select></div>
+                        <div class="ch2-num"><span class="ch2-num-label">Operation</span>
+                            <select id="chMathOp">${ops.map(([v, t]) => `<option value="${v}" ${String(cur.op ?? 1) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+                        <div class="ch2-num"><span class="ch2-num-label">Channel B</span>
+                            <select id="chMathB"><option value=""></option>${operandOpts(cur.b)}</select></div>
+                    </div>
+                    <div style="margin-top:10px; display:flex; gap:8px;">
+                        <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chMathApply('${c.id}')">Apply</button>
+                        <button class="btn btn-secondary" style="font-size:12px; padding:6px 12px;" onclick="_chMathToggleForm()">Cancel</button>
+                    </div>
+                </div>`;
+        }
+        async function _chMathApply(id) {
+            const a = document.getElementById('chMathA')?.value;
+            const b = document.getElementById('chMathB')?.value;
+            const op = Number(document.getElementById('chMathOp')?.value || 1);
+            if (!a || !b) { alert('Pick both operand channels.'); return; }
+            try {
+                const r = await fetch('/api/channels/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id, fields: { math: { a, b, op } } }),
+                });
+                if (!r.ok) { alert('Calculation rejected: ' + await r.text()); return; }
+            } catch (e) { console.warn('math apply failed', e); return; }
+            _chMathFormOpen = false;
+            await _fetchChannelsActive();
+            _renderChannelDetail();
+            _refreshChannelsList();
+        }
+        async function _chMathRemove(id) {
+            try {
+                await fetch('/api/channels/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id, fields: { math: null } }),
+                });
+            } catch (e) { console.warn('math remove failed', e); }
+            _chMathFormOpen = false;
+            await _fetchChannelsActive();
+            _renderChannelDetail();
+            _refreshChannelsList();
         }
 
         /* Unbind helper — awaits the flush before re-rendering so the
