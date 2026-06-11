@@ -652,8 +652,7 @@
             header #layoutSelect,
             header #pillAutoSync,
             header #pillSimulate,
-            header #pillStream,
-            header #streamRateSel,
+            header #liveViewLink,
             header #pillLiveControl,
             header #helpBtn,
             header #resetBtnHdr,
@@ -4103,14 +4102,7 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
-            <button class="header-pill" id="pillStream" onclick="toggleStream()" title="Stream ON periodically refreshes the device preview. Turn OFF on slow WiFi — the preview then only updates when you press Sync or save.">STREAM</button>
-            <select id="streamRateSel" class="btn btn-secondary" style="height:26px;padding:0 6px;" onchange="onStreamRateChange()" title="How often the preview refreshes">
-                <option value="1000">1 s</option>
-                <option value="3000" selected>3 s</option>
-                <option value="5000">5 s</option>
-                <option value="10000">10 s</option>
-                <option value="30000">30 s</option>
-            </select>
+            <a class="btn btn-secondary" id="liveViewLink" href="/mirror" target="_blank" rel="noopener" style="height:26px;line-height:26px;text-decoration:none;display:inline-flex;align-items:center;" title="Open the full-rate live view — the dashboard rendered in your browser via WASM (works offline / in hotspot mode). The editor canvas itself refreshes on Sync / Save.">Live View ↗</a>
             <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
@@ -13060,107 +13052,22 @@
             }
         }
 
-        /* ═══ Background canvas auto-refresh ═══
-         * Keeps the edit-mode canvas backdrop in sync with the device even
-         * when LIVE is off, so users don't have to hit Sync to see the
-         * current state. Paused while LIVE is active (Live has its own
-         * 1 Hz polling). Interval intentionally slow — 3 s is enough for
-         * "I moved a widget, want to see what the device shows now"
-         * without burning CPU on constant encodes. */
-        let _bgRefreshTimer = null;
-        /* Stream refresh rate (also drives the CONTROL-mode poll interval).
-         * User can override via the Stream Rate dropdown — the selection
-         * is persisted in localStorage so the preference survives reloads. */
-        let _BG_REFRESH_INTERVAL_MS = parseInt(localStorage.getItem('rdm7_stream_rate') || '3000', 10) || 3000;
-        /* Stream master switch. When off, no periodic screenshot fetches —
-         * user must press Sync (or Save) to refresh the preview. Helps on
-         * bad WiFi where a slow screenshot round-trip starves the UI. */
-        let _streamEnabled = (localStorage.getItem('rdm7_stream_enabled') !== '0');
+        /* ═══ Editor preview = Sync-on-demand ═══
+         * The editor canvas refreshes via the Sync button and on Save only —
+         * the old background screenshot STREAM (auto-poll + rate dropdown)
+         * was removed: it cost the dash real CPU per encode for a 1-3 s
+         * preview, and the full-rate live view now lives on the separate
+         * /mirror page (WASM, rendered in-browser). captureScreenshot()
+         * still backs the Sync button + post-save refresh.
+         *
+         * CONTROL mode (remote-touch demo mirror) keeps its OWN screenshot
+         * poll loop below; this fixed cadence replaces the deleted rate
+         * dropdown that used to tune it. */
+        const _CONTROL_POLL_INTERVAL_MS = 1000;
 
-        function _startBgRefresh() {
-            if (_bgRefreshTimer) return;
-            if (!_streamEnabled) return;  /* user switched stream off */
-            _bgRefreshTimer = setInterval(() => {
-                /* Skip if LIVE is running (its <img> is already updating) or
-                 * if the tab is hidden (browser throttles us anyway, no point
-                 * spending firmware CPU on a preview nobody's watching). */
-                if (_liveControlOn || document.hidden) return;
-                captureScreenshot();
-            }, _BG_REFRESH_INTERVAL_MS);
-        }
-        function _stopBgRefresh() {
-            if (_bgRefreshTimer) {
-                clearInterval(_bgRefreshTimer);
-                _bgRefreshTimer = null;
-            }
-        }
-
-        /* Toggle the master stream switch. When off we tear down the bg
-         * refresh and force-exit CONTROL mode (polling it without a stream
-         * makes no sense). */
-        function toggleStream() {
-            _streamEnabled = !_streamEnabled;
-            localStorage.setItem('rdm7_stream_enabled', _streamEnabled ? '1' : '0');
-            _updateStreamPill();
-            if (_streamEnabled) {
-                _startBgRefresh();
-                captureScreenshot();  /* refresh immediately so user sees effect */
-            } else {
-                _stopBgRefresh();
-                /* If CONTROL was on, turn it off — the polling image would
-                 * never update with stream disabled. */
-                if (typeof _liveControlOn !== 'undefined' && _liveControlOn) {
-                    toggleLiveControl();
-                }
-                if (typeof showToast === 'function') showToast('Stream OFF — press Sync to refresh preview', 'info');
-            }
-        }
-
-        function _updateStreamPill() {
-            const pill = document.getElementById('pillStream');
-            if (!pill) return;
-            if (_streamEnabled) {
-                pill.textContent = 'STREAM';
-                pill.classList.add('active');
-                pill.style.background = '';
-                pill.style.color = '';
-            } else {
-                pill.textContent = 'STREAM OFF';
-                pill.classList.remove('active');
-                pill.style.background = 'hsl(0, 70%, 40%)';
-                pill.style.color = '#fff';
-            }
-            const sel = document.getElementById('streamRateSel');
-            if (sel) sel.disabled = !_streamEnabled;
-        }
-
-        function onStreamRateChange() {
-            const sel = document.getElementById('streamRateSel');
-            if (!sel) return;
-            const v = parseInt(sel.value, 10);
-            if (!Number.isFinite(v) || v < 500) return;
-            _BG_REFRESH_INTERVAL_MS = v;
-            localStorage.setItem('rdm7_stream_rate', String(v));
-            /* Restart the bg refresh so the new cadence takes effect now,
-             * not on next natural interval. The CONTROL-mode poll loop
-             * reads _BG_REFRESH_INTERVAL_MS on each iteration so it picks
-             * up the change automatically. */
-            _stopBgRefresh();
-            _startBgRefresh();
-        }
-
-        /* Initial pill + dropdown sync on page load. */
+        /* Device→web layout sync only — no more background screenshot poll. */
         window.addEventListener('load', () => {
-            const sel = document.getElementById('streamRateSel');
-            if (sel) sel.value = String(_BG_REFRESH_INTERVAL_MS);
-            _updateStreamPill();
-        });
-
-        /* Kick it off once the page is idle so we don't race early layout
-         * loading. Safe to call repeatedly — both starters are idempotent. */
-        window.addEventListener('load', () => {
-            setTimeout(_startBgRefresh, 2000);
-            setTimeout(_startLayoutSync, 2500);  /* device→web layout sync */
+            setTimeout(_startLayoutSync, 2500);
         });
 
         /* ═══ Live Control — JS-polled mirror + remote touch injection ═══
@@ -13195,9 +13102,9 @@
          * tapped. */
         let _lastTouchPos    = null;
         const _TOUCH_SEND_THROTTLE_MS = 25;   /* ~40 Hz — plenty for drag */
-        /* CONTROL mode uses the same user-chosen refresh cadence as the
-         * background preview (_BG_REFRESH_INTERVAL_MS). Read per-iteration
-         * below so changing the Stream Rate dropdown retunes it live. */
+        /* CONTROL mode polls /api/screenshot at a fixed cadence
+         * (_CONTROL_POLL_INTERVAL_MS) — the per-rate dropdown was removed
+         * with the background STREAM. */
 
         async function _postTouch(body) {
             try {
@@ -13326,22 +13233,15 @@
                     continue;
                 }
                 const elapsed = performance.now() - t0;
-                const wait = Math.max(0, _BG_REFRESH_INTERVAL_MS - elapsed);
+                const wait = Math.max(0, _CONTROL_POLL_INTERVAL_MS - elapsed);
                 await new Promise(res => setTimeout(res, wait));
             }
             if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
         }
 
         async function toggleLiveControl() {
-            /* Guard: CONTROL needs the stream. Flip stream on for the user
-             * rather than silently doing nothing. */
-            if (!_liveControlOn && !_streamEnabled) {
-                if (typeof showToast === 'function') showToast('Turning stream ON — CONTROL needs live polling', 'info');
-                _streamEnabled = true;
-                localStorage.setItem('rdm7_stream_enabled', '1');
-                _updateStreamPill();
-                _startBgRefresh();
-            }
+            /* CONTROL runs its own _livePollLoop (below) — self-contained now
+             * that the background STREAM is gone, so no stream-enable dance. */
             _liveControlOn = !_liveControlOn;
             const pill         = document.getElementById('pillLiveControl');
             const img          = document.getElementById('liveStreamImg');
@@ -19749,17 +19649,15 @@
                  * as cards in the Setup studio panel, reached via "Open Setup"
                  * above. The OBD2 sub-items (Trouble Codes / Vehicle Info /
                  * Custom PIDs) stay reachable from inside the OBD2 Setup modal. */
-                /* Stream & View — replicates the header pills/dropdown that
-                 * disappear at narrow widths so phone/tablet users still
-                 * control simulation + preview stream + remote control. */
-                { heading: 'Stream & View', items: [
+                /* Live & View — replicates the header pills that disappear at
+                 * narrow widths so phone/tablet users still reach simulation,
+                 * the live /mirror view, and remote control. */
+                { heading: 'Live & View', items: [
                     { type: 'toggle', label: 'SIM',     icon: 'activity', getState: () => {
                             const p = document.getElementById('pillSimulate');
                             return !!(p && p.classList.contains('active'));
                         }, onclick: 'toggleSimulation()' },
-                    { type: 'toggle', label: 'STREAM',  icon: 'monitor', getState: () => (typeof _streamEnabled !== 'undefined' ? _streamEnabled : true),
-                        onclick: 'toggleStream()' },
-                    { type: 'select', id: 'streamRateSel' },
+                    { type: 'button', label: 'Live View', icon: 'monitor', onclick: "window.open('/mirror','_blank','noopener')" },
                     { type: 'toggle', label: 'CONTROL', icon: 'pointer', getState: () => (typeof _liveControlOn !== 'undefined' && _liveControlOn),
                         onclick: 'toggleLiveControl()' },
                     { type: 'button', label: 'Reset View',   icon: 'reset', onclick: 'resetView()' },
