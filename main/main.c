@@ -23,6 +23,7 @@
 #include "esp_ota_ops.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "hal/gpio_types.h"
 #include "io/wire_inputs.h"
@@ -195,10 +196,12 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
  * bitmap) from the per-pixel draw cost folded into LVGL's elaps. A
  * flushes/frame count climbing toward V_RES/buf_lines (~80 with 6-line SRAM
  * buffers) is the signature of a full-screen redraw — i.e. the 32-rect
- * invalidation cliff or a join cascade to near-full-screen. Same-task as the
- * monitor (both run on the LVGL refresh, core 1), so no locking needed. */
+ * invalidation cliff or a join cascade to near-full-screen. The flush worker
+ * writes these from core 0 while the monitor cb drains them on core 1, so the
+ * 64-bit read-modify-writes are guarded by a spinlock. */
 static uint64_t s_flush_us_sum = 0;
 static uint32_t s_flush_count = 0;
+static portMUX_TYPE s_flush_stat_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* Published once per ~1 s window by the monitor cb; read by GET /api/perf.
  * See system/render_perf.h. */
@@ -248,11 +251,14 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
         screen_px ? (uint32_t)((uint64_t)s_px_max * 100ULL / screen_px) : 0;
     uint32_t fps_x10 = (s_frame_cnt * 10000U) / window;
 
-    /* Drain flush instrumentation over the same window (same task — no race). */
+    /* Drain flush instrumentation over the same window. The flush worker on
+     * core 0 may be mid-update — take the stat spinlock for the swap. */
+    taskENTER_CRITICAL(&s_flush_stat_mux);
     uint32_t fcount = s_flush_count;
     uint64_t fus = s_flush_us_sum;
     s_flush_count = 0;
     s_flush_us_sum = 0;
+    taskEXIT_CRITICAL(&s_flush_stat_mux);
     uint32_t flush_per_frame_x10 = (uint32_t)((uint64_t)fcount * 10U / s_frame_cnt);
     uint32_t flush_us_per_frame = (uint32_t)(fus / s_frame_cnt);
 
@@ -326,15 +332,84 @@ uint32_t display_capture_shadow_seq(void) { return s_shadow_seq; }
 #define RDM_FLUSH_TRACE 0
 #endif
 
+/* ── Cross-core flush worker ──────────────────────────────────────────────
+ * LVGL renders into two 120-line PSRAM draw buffers, so it can rasterize the
+ * next band while the previous one is still being copied into the panel
+ * framebuffer — but only if flush_cb returns before the copy. Handing the
+ * esp_lcd_panel_draw_bitmap (dirty-rect memcpy + full-768KB-FB cache msync,
+ * 4–10 ms/frame on heavy layouts) to a core-0 task overlaps it with core-1
+ * rasterization; lv_disp_flush_ready is called from the worker once the copy
+ * lands. LVGL's draw_buf_flush spins on `flushing` before reusing a buffer,
+ * so at most one job is ever in flight and band ordering is FIFO-preserved.
+ * If queue/task creation fails we fall back to the old synchronous flush. */
+typedef struct {
+  lv_disp_drv_t *drv;
+  lv_area_t area;
+  lv_color_t *color_map;
+  bool is_last;
+} rdm_flush_job_t;
+
+static QueueHandle_t s_flush_queue = NULL;
+
+static void rdm_flush_execute(lv_disp_drv_t *drv, const lv_area_t *area,
+                              lv_color_t *color_map, bool is_last) {
+  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
+
+  int64_t _flush_t0 = esp_timer_get_time();
+  esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1,
+                            area->y2 + 1, color_map);
+  /* Per-flush cost = memcpy of the dirty rect into the PSRAM FB + (under the
+   * current DOUBLE_FB / no-bounce config) an esp_cache_msync of the WHOLE
+   * 768 KB framebuffer. Accumulate so the monitor can report flush time and
+   * count per frame. When the worker is active this time runs concurrently
+   * with core-1 rendering instead of adding to it. */
+  int64_t _flush_us = esp_timer_get_time() - _flush_t0;
+  taskENTER_CRITICAL(&s_flush_stat_mux);
+  s_flush_us_sum += (uint64_t)_flush_us;
+  s_flush_count++;
+  taskEXIT_CRITICAL(&s_flush_stat_mux);
+
+  /* Lazily cache the panel FB pointer on first flush. Use fb_num=1 so the
+   * variadic call only needs one pointer argument — we always read the
+   * same FB for capture (accepting an occasional torn frame) and don't
+   * need fb1. */
+  if (!s_panel_fb) {
+    void *fb0 = NULL;
+    if (esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &fb0) == ESP_OK) {
+      s_panel_fb = fb0;
+    }
+  }
+  s_panel_fb_ready = true;
+
+  /* Bump the change counter so the MJPEG stream loop can tell a new frame
+   * is available. Single 32-bit write — atomic on ESP32-S3. */
+  s_shadow_seq++;
+
+  if (is_last) {
+    signal_internal_count_frame();
+  }
+  lv_disp_flush_ready(drv);
+}
+
+static void rdm_flush_worker_task(void *arg) {
+  (void)arg;
+  rdm_flush_job_t job;
+  for (;;) {
+    if (xQueueReceive(s_flush_queue, &job, portMAX_DELAY) == pdTRUE) {
+      rdm_flush_execute(job.drv, &job.area, job.color_map, job.is_last);
+    }
+  }
+}
+
 static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
                               lv_color_t *color_map) {
-  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
+  bool is_last = lv_disp_flush_is_last(drv);
+
+#if RDM_FLUSH_TRACE
   int offsetx1 = area->x1;
   int offsetx2 = area->x2;
   int offsety1 = area->y1;
   int offsety2 = area->y2;
-
-#if RDM_FLUSH_TRACE
   /* Trace only short bursts: log when burst starts and ends. A "burst"
    * is a sequence of flushes with < 5 ms between them. This filters out
    * the steady-state per-frame flushes and keeps the log to the moments
@@ -346,7 +421,6 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
   uint32_t delta_us = now_us - s_last_flush_us;
   int w = offsetx2 - offsetx1 + 1;
   int h = offsety2 - offsety1 + 1;
-  bool is_last = lv_disp_flush_is_last(drv);
   if (delta_us > 5000) {
     /* New burst — log every flush of this burst */
     s_burst_count = 1;
@@ -366,37 +440,15 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
   s_last_flush_us = now_us;
 #endif
 
-  int64_t _flush_t0 = esp_timer_get_time();
-  esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
-                            offsety2 + 1, color_map);
-  /* Per-flush cost = memcpy of the dirty rect into the PSRAM FB + (under the
-   * current DOUBLE_FB / no-bounce config) an esp_cache_msync of the WHOLE
-   * 768 KB framebuffer. Accumulate so the monitor can report flush time and
-   * count per frame — the lever for deciding draw-cost vs flush-cost fixes. */
-  s_flush_us_sum += (uint64_t)(esp_timer_get_time() - _flush_t0);
-  s_flush_count++;
-
-  /* Lazily cache the panel FB pointer on first flush. Use fb_num=1 so the
-   * variadic call only needs one pointer argument — we always read the
-   * same FB for capture (accepting an occasional torn frame) and don't
-   * need fb1. fb_num=2 (two-pointer) form was disabled temporarily during
-   * a debugging session; this single-pointer form is the safer API shape. */
-  if (!s_panel_fb) {
-    void *fb0 = NULL;
-    if (esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &fb0) == ESP_OK) {
-      s_panel_fb = fb0;
-    }
+  if (s_flush_queue) {
+    rdm_flush_job_t job = {
+        .drv = drv, .area = *area, .color_map = color_map, .is_last = is_last};
+    /* Only one flush is ever in flight (LVGL gates on `flushing`), so the
+     * depth-2 queue never fills — this send doesn't block in practice. */
+    xQueueSend(s_flush_queue, &job, portMAX_DELAY);
+    return; /* lv_disp_flush_ready comes from the worker */
   }
-  s_panel_fb_ready = true;
-
-  /* Bump the change counter so the MJPEG stream loop can tell a new frame
-   * is available. Single 32-bit write — atomic on ESP32-S3. */
-  s_shadow_seq++;
-
-  if (lv_disp_flush_is_last(drv)) {
-    signal_internal_count_frame();
-  }
-  lv_disp_flush_ready(drv);
+  rdm_flush_execute(drv, area, color_map, is_last);
 }
 
 bool rdm_lvgl_lock(int timeout_ms) {
@@ -1054,6 +1106,23 @@ void app_main(void) {
   ESP_LOGI(TAG, "LVGL buffers allocated successfully, size: %u bytes each",
            buf_size);
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, buf_size / sizeof(lv_color_t));
+
+  /* Cross-core flush worker — see comment above rdm_flush_execute. Created
+   * before the display driver registers so the very first flush already
+   * routes through it. Prio 10 on core 0: above CAN RX (7) so flush latency
+   * stays bounded, below lwIP (18) / WiFi (23). Created pre-WiFi so the
+   * 4 KB internal-RAM stack allocation has headroom. */
+  s_flush_queue = xQueueCreate(2, sizeof(rdm_flush_job_t));
+  if (s_flush_queue) {
+    if (xTaskCreatePinnedToCore(rdm_flush_worker_task, "lcd_flush", 4096, NULL,
+                                10, NULL, 0) != pdPASS) {
+      vQueueDelete(s_flush_queue);
+      s_flush_queue = NULL;
+      ESP_LOGW(TAG, "Flush worker create failed — falling back to synchronous flush");
+    } else {
+      ESP_LOGI(TAG, "Cross-core flush worker active (async flush on core 0)");
+    }
+  }
 
   ESP_LOGI(TAG, "Register display driver to LVGL");
   /* Capture reads directly from the panel's own framebuffer — see the
