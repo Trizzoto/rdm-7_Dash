@@ -2088,17 +2088,60 @@ static signal_t *_wiz_selected_signal(void) {
     return signal_get_by_index((uint16_t)c->signal_index);
 }
 
+/* Snapshot of a signal's decode, captured by value so the deferred write
+ * doesn't dereference a registry slot that may have moved by the time it
+ * runs. */
+typedef struct {
+    char     layout[64];
+    char     name[32];
+    char     unit[16];
+    bool     has_unit;
+    uint32_t can_id;
+    uint8_t  bit_start;
+    uint8_t  bit_length;
+    float    scale;
+    float    offset;
+    bool     is_signed;
+    uint8_t  endian;
+} wiz_decode_write_t;
+
+/* Runs on a CLEAN LVGL tick (not inside the originating input-event
+ * handler). The actual write does a 32 KB malloc + cJSON parse of the
+ * active layout + an atomic LittleFS rewrite — far too heavy to run
+ * synchronously inside a dropdown's VALUE_CHANGED while its option list is
+ * still mid-close, or inside the deep lv_event dispatch stack: doing so
+ * crashed the device when toggling any CAN-decode dropdown (signed, endian,
+ * bit start/length). Deferring matches the web editor's path. */
+static void _wiz_persist_decode_async(void *arg) {
+    wiz_decode_write_t *w = (wiz_decode_write_t *)arg;
+    ecu_preset_write_signal_to_layout(w->layout, w->name, w->can_id,
+        w->bit_start, w->bit_length, w->scale, w->offset,
+        w->is_signed, w->endian, w->has_unit ? w->unit : NULL, -1);
+    free(w);
+}
+
 /* Persist an (already mutated) signal's decode into the active layout's
- * signals[] so the edit survives reboot. The live effect is immediate because
- * we mutate the registry in place; this only rewrites the JSON. Decimals are
- * omitted (-1) — those are channel-owned now. */
+ * signals[] so the edit survives reboot. The live effect is immediate
+ * because we mutate the registry in place; this only schedules the JSON
+ * rewrite (deferred — see _wiz_persist_decode_async). Decimals are omitted
+ * (-1) — those are channel-owned now. */
 static void _wiz_persist_signal_decode(const signal_t *s) {
     if (!s || !s->name[0]) return;
     char layout[64];
     if (layout_manager_get_active(layout, sizeof(layout)) != ESP_OK) return;
-    ecu_preset_write_signal_to_layout(layout, s->name, s->can_id,
-        s->bit_start, s->bit_length, s->scale, s->offset,
-        s->is_signed, s->endian, s->unit[0] ? s->unit : NULL, -1);
+    wiz_decode_write_t *w = calloc(1, sizeof(*w));
+    if (!w) return;
+    strncpy(w->layout, layout, sizeof(w->layout) - 1);
+    strncpy(w->name, s->name, sizeof(w->name) - 1);
+    if (s->unit[0]) { strncpy(w->unit, s->unit, sizeof(w->unit) - 1); w->has_unit = true; }
+    w->can_id     = s->can_id;
+    w->bit_start  = s->bit_start;
+    w->bit_length = s->bit_length;
+    w->scale      = s->scale;
+    w->offset     = s->offset;
+    w->is_signed  = s->is_signed;
+    w->endian     = s->endian;
+    rdm_async_call(_wiz_persist_decode_async, w);
 }
 
 static void _change_source_cb(lv_event_t *e) {
