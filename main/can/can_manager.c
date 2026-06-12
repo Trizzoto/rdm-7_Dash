@@ -477,6 +477,19 @@ static twai_timing_config_t _bitrate_to_timing(uint8_t bitrate_code) {
 }
 
 void reconfigure_can_filter(void) {
+	/* While the bus scan owns the TWAI peripheral (can_suspend), ANY
+	 * filter rebuild here would reinstall the normal driver + respawn the
+	 * RX task underneath the scan's own install/uninstall cycles. The two
+	 * then fight over the peripheral: the scan's installs fail ("CAN
+	 * driver busy" on the wizard) and the rogue RX task spams
+	 * twai_start() from its recovery loop. Triggers are easy to hit
+	 * mid-scan — wizard teardown, menu save, a web-editor channel edit.
+	 * Defer: can_resume() rebuilds the filter from the live registry when
+	 * the scan finishes, so nothing is lost. */
+	if (s_suspended) {
+		ESP_LOGI(TAG, "Filter rebuild deferred — CAN suspended (bus scan owns the peripheral)");
+		return;
+	}
 	/* While the wizard's ECU probe is open, the filter must stay
 	 * promiscuous — refuse to narrow it just because some unrelated UI
 	 * touched the signal registry mid-probe. The probe's own
@@ -550,6 +563,17 @@ bool can_is_promiscuous(void) { return s_promiscuous_active; }
 
 void can_set_promiscuous_mode(bool enable) {
 	if (enable == s_promiscuous_active) return;
+
+	/* Scan owns the peripheral — record the request and let can_resume()
+	 * install the matching filter when the scan hands CAN back. Touching
+	 * the driver here mid-scan causes the same install fight as
+	 * reconfigure_can_filter (see comment there). */
+	if (s_suspended) {
+		s_promiscuous_active = enable;
+		ESP_LOGI(TAG, "Promiscuous %s deferred — CAN suspended (applied on resume)",
+		         enable ? "on" : "off");
+		return;
+	}
 
 	twai_filter_config_t new_filter;
 	if (enable) {
@@ -661,6 +685,13 @@ void can_task_set_priority(UBaseType_t priority) {
 }
 
 void can_change_bitrate(uint8_t bitrate_index) {
+	/* Scan owns the peripheral — don't bounce the driver underneath it.
+	 * can_resume() reloads the saved bitrate from NVS (callers persist it
+	 * before calling here), so the new rate applies when the scan ends. */
+	if (s_suspended) {
+		ESP_LOGI(TAG, "Bitrate change deferred — CAN suspended (applied on resume)");
+		return;
+	}
 	_stop_can_task();
 
 	/* Apply new timing config */
@@ -800,20 +831,33 @@ bool can_is_suspended(void) {
 void can_suspend(void) {
 	if (s_suspended) return;
 	ESP_LOGI(TAG, "Suspending CAN for bus test");
+	/* Flip the flag FIRST: from here on reconfigure_can_filter /
+	 * can_set_promiscuous_mode defer instead of reinstalling the driver
+	 * underneath the scan. */
+	s_suspended = true;
 	_stop_can_task();
 	vTaskDelay(pdMS_TO_TICKS(50));
+	/* _stop_can_task only stops the driver when an RX task existed; stop
+	 * explicitly so uninstall can't fail INVALID_STATE on a RUNNING driver
+	 * (harmless no-op if already stopped). */
+	twai_stop();
 	twai_driver_uninstall();
 	s_driver_installed = false;
 	vTaskDelay(pdMS_TO_TICKS(50));
-	s_suspended = true;
 }
 
 void can_resume(void) {
 	if (!s_suspended) return;
 	ESP_LOGI(TAG, "Resuming normal CAN operation");
 
-	/* Rebuild acceptance filter from current signal registry */
-	build_twai_filter_from_signals(&f_config);
+	/* Rebuild the acceptance filter. Honour a promiscuous request that
+	 * arrived (deferred) while the scan owned the peripheral — e.g. the
+	 * wizard moving from the scan step straight into the ECU probe. */
+	if (s_promiscuous_active) {
+		f_config = (twai_filter_config_t)TWAI_FILTER_CONFIG_ACCEPT_ALL();
+	} else {
+		build_twai_filter_from_signals(&f_config);
+	}
 
 	/* Load saved bitrate */
 	uint8_t saved_bitrate = 2;
