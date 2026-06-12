@@ -769,11 +769,38 @@ void can_process_queued_frames(void) {
 	int processed = 0;
 	twai_message_t msg;
 
+	/* Signal dispatch is COALESCED to the last frame per CAN id in the
+	 * batch. On a busy bus (~300+ frames/s vs ~30 renders/s) ten-plus
+	 * frames of the same id drain per render cycle; dispatching each one
+	 * invalidated widgets at every INTERMEDIATE value — positions that are
+	 * never rendered (only the last value before the next refresh is) —
+	 * which flooded LVGL's dirty-rect buffer past LV_INV_BUF_SIZE and
+	 * triggered its silent full-screen-redraw fallback: the periodic
+	 * 130-170 ms hitch frames caught by /api/perf/bigframe's overflow
+	 * backtrace (meter rear-inv × N intermediate needle positions).
+	 * Gauges are pure value-state, so last-value-wins is lossless for
+	 * them; the OBD2 decoder (ISO-TP is sequential!), the per-id tracker,
+	 * and the raw trace logger still see EVERY frame below. */
+	static struct {
+		uint32_t id;
+		uint8_t  data[8];
+		uint8_t  dlc;
+	} coal[32];   /* static: LVGL task only; max_batch bounds the count */
+	int n_coal = 0;
+
 	while (processed < max_batch &&
 		   xQueueReceive(s_can_queue, &msg, 0) == pdTRUE) {
 		/* When simulator is active, drain queue but skip dispatch */
 		if (!signal_sim_is_active()) {
-			signal_dispatch_frame(msg.identifier, msg.data, msg.data_length_code);
+			int k;
+			for (k = 0; k < n_coal; k++)
+				if (coal[k].id == msg.identifier) break;
+			if (k < (int)(sizeof(coal) / sizeof(coal[0]))) {
+				coal[k].id  = msg.identifier;
+				coal[k].dlc = msg.data_length_code > 8 ? 8 : msg.data_length_code;
+				memcpy(coal[k].data, msg.data, coal[k].dlc);
+				if (k == n_coal) n_coal++;
+			}
 			/* OBD2 response decoder: any frame on 0x7E8-0x7EF could be a
 			 * Mode 01 PID response. Cheap early-return when polling isn't
 			 * active or the ID is out of the OBD2 range. */
@@ -793,6 +820,11 @@ void can_process_queued_frames(void) {
 		}
 		processed++;
 	}
+
+	/* Dispatch once per unique id, in first-seen order, with the freshest
+	 * payload. Widgets repaint at most once per id per render cycle. */
+	for (int k = 0; k < n_coal; k++)
+		signal_dispatch_frame(coal[k].id, coal[k].data, coal[k].dlc);
 }
 
 esp_err_t can_get_diagnostics(uint32_t *state, uint32_t *msgs_to_tx,

@@ -211,6 +211,26 @@ void render_perf_get(render_perf_t *out) {
   if (out) *out = s_render_perf;
 }
 
+/* Boot-timeline ring: one compact snapshot per published window, from the
+ * first rendered frame. Lets GET /api/perf/history show the post-boot fps
+ * curve (including the pre-WiFi seconds no HTTP poller can observe) and
+ * catch single-frame spikes via max_render_ms. Writer = LVGL task; readers
+ * tolerate 1 s-granularity tearing, same as render_perf_get. */
+static render_perf_hist_t s_perf_hist[RENDER_PERF_HISTORY_LEN];
+static uint16_t s_perf_hist_next = 0;   /* next slot to write */
+static uint16_t s_perf_hist_count = 0;  /* valid entries (caps at LEN) */
+
+uint16_t render_perf_history_get(render_perf_hist_t *out, uint16_t max) {
+  if (!out || max == 0) return 0;
+  uint16_t count = s_perf_hist_count;
+  if (count > max) count = max;
+  uint16_t start = (uint16_t)((s_perf_hist_next + RENDER_PERF_HISTORY_LEN -
+                               count) % RENDER_PERF_HISTORY_LEN);
+  for (uint16_t i = 0; i < count; i++)
+    out[i] = s_perf_hist[(start + i) % RENDER_PERF_HISTORY_LEN];
+  return count;
+}
+
 /* Dirty-rect-topology diagnostic. LVGL calls this once per refresh where
  * anything was drawn; `px_num` is the sum of unjoined dirty-rect areas for
  * the frame (see lv_refr.c:620), i.e. the real on-screen invalidation load
@@ -227,6 +247,7 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
   static uint64_t s_px_sum = 0;
   static uint64_t s_elaps_sum = 0;
   static uint32_t s_px_max = 0;
+  static uint32_t s_elaps_max = 0;
 
   uint32_t now = lv_tick_get();
   if (s_start_ms == 0)
@@ -237,6 +258,8 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
   s_elaps_sum += elaps_ms;
   if (px_num > s_px_max)
     s_px_max = px_num;
+  if (elaps_ms > s_elaps_max)
+    s_elaps_max = elaps_ms;
 
   uint32_t window = now - s_start_ms;
   if (window >= 1000 && s_frame_cnt > 0) {
@@ -274,6 +297,18 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
     s_render_perf.flush_us_per_frame = flush_us_per_frame;
     s_render_perf.seq++;
 
+    /* Append to the boot-timeline ring (see render_perf_history_get). */
+    render_perf_hist_t *h = &s_perf_hist[s_perf_hist_next];
+    h->up_ms = now;
+    h->fps_x10 = (uint16_t)LV_MIN(fps_x10, 0xFFFF);
+    h->avg_render_ms = (uint16_t)LV_MIN(avg_elaps, 0xFFFF);
+    h->max_render_ms = (uint16_t)LV_MIN(s_elaps_max, 0xFFFF);
+    h->max_pct = (uint16_t)max_pct;
+    h->avg_px = avg_px;
+    s_perf_hist_next = (uint16_t)((s_perf_hist_next + 1) % RENDER_PERF_HISTORY_LEN);
+    if (s_perf_hist_count < RENDER_PERF_HISTORY_LEN)
+      s_perf_hist_count++;
+
     /* Steady-state render telemetry — DEBUG, not WARN. The FPS-analysis
      * campaign that needed this is concluded; at the default INFO log level
      * this compiles out, so it no longer floods field logs (~3600 lines/hr)
@@ -293,6 +328,7 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
     s_px_sum = 0;
     s_elaps_sum = 0;
     s_px_max = 0;
+    s_elaps_max = 0;
   }
 }
 

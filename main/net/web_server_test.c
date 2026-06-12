@@ -389,6 +389,83 @@ static esp_err_t _perf_handler(httpd_req_t *req) {
 	return _send_json(req, root);
 }
 
+/* ── GET /api/perf/history ────────────────────────────────────────────────
+ * Boot-timeline ring: one entry per ~1 s render window since boot (up to
+ * RENDER_PERF_HISTORY_LEN, oldest dropped). Captures the post-boot fps
+ * curve — including the pre-WiFi seconds no HTTP poller can observe — and
+ * per-window worst single-frame render time (max_ms) for spike hunting.
+ * Streamed chunked: 180 entries would not fit a single send buffer. */
+static esp_err_t _perf_history_handler(httpd_req_t *req) {
+	static render_perf_hist_t hist[RENDER_PERF_HISTORY_LEN]; /* httpd task only */
+	uint16_t n = render_perf_history_get(hist, RENDER_PERF_HISTORY_LEN);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_sendstr_chunk(req, "{\"entries\":[");
+	char line[112];
+	for (uint16_t i = 0; i < n; i++) {
+		snprintf(line, sizeof(line),
+		         "%s{\"t\":%u,\"fps\":%u.%u,\"ms\":%u,\"max_ms\":%u,"
+		         "\"max_pct\":%u,\"px\":%u}",
+		         i ? "," : "",
+		         (unsigned)hist[i].up_ms,
+		         (unsigned)(hist[i].fps_x10 / 10), (unsigned)(hist[i].fps_x10 % 10),
+		         (unsigned)hist[i].avg_render_ms,
+		         (unsigned)hist[i].max_render_ms,
+		         (unsigned)hist[i].max_pct,
+		         (unsigned)hist[i].avg_px);
+		httpd_resp_sendstr_chunk(req, line);
+	}
+	httpd_resp_sendstr_chunk(req, "]}");
+	httpd_resp_sendstr_chunk(req, NULL);
+	return ESP_OK;
+}
+
+/* ── GET /api/perf/bigframe ───────────────────────────────────────────────
+ * Pre-join dirty-rect list of the most recent frame that invalidated >=90%
+ * of the screen (RDM7 DIAG hook in lv_refr.c). Maps rect coords back to the
+ * widgets whose invalidations chained into a full-screen redraw. */
+extern int16_t  rdm7_bigframe_rects[][4];
+extern uint16_t rdm7_bigframe_count;
+extern uint32_t rdm7_bigframe_px;
+extern volatile uint32_t rdm7_bigframe_seq;
+extern uint32_t rdm7_fullinv_pcs[8];
+extern volatile uint32_t rdm7_fullinv_seq;
+extern uint32_t rdm7_invovf_pcs[8];
+extern volatile uint32_t rdm7_invovf_seq;
+
+static esp_err_t _perf_bigframe_handler(httpd_req_t *req) {
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	char head[512];
+	int hl = snprintf(head, sizeof(head),
+	                  "{\"seq\":%u,\"px\":%u,\"fullinv_seq\":%u,\"fullinv_pcs\":[",
+	                  (unsigned)rdm7_bigframe_seq, (unsigned)rdm7_bigframe_px,
+	                  (unsigned)rdm7_fullinv_seq);
+	for (int i = 0; i < 8; i++)
+		hl += snprintf(head + hl, sizeof(head) - hl, "%s\"0x%08x\"",
+		               i ? "," : "", (unsigned)rdm7_fullinv_pcs[i]);
+	hl += snprintf(head + hl, sizeof(head) - hl,
+	               "],\"invovf_seq\":%u,\"invovf_pcs\":[",
+	               (unsigned)rdm7_invovf_seq);
+	for (int i = 0; i < 8; i++)
+		hl += snprintf(head + hl, sizeof(head) - hl, "%s\"0x%08x\"",
+		               i ? "," : "", (unsigned)rdm7_invovf_pcs[i]);
+	snprintf(head + hl, sizeof(head) - hl, "],\"rects\":[");
+	httpd_resp_sendstr_chunk(req, head);
+	char line[64];
+	uint16_t n = rdm7_bigframe_count;
+	for (uint16_t i = 0; i < n; i++) {
+		snprintf(line, sizeof(line), "%s[%d,%d,%d,%d]", i ? "," : "",
+		         (int)rdm7_bigframe_rects[i][0], (int)rdm7_bigframe_rects[i][1],
+		         (int)rdm7_bigframe_rects[i][2], (int)rdm7_bigframe_rects[i][3]);
+		httpd_resp_sendstr_chunk(req, line);
+	}
+	httpd_resp_sendstr_chunk(req, "]}");
+	httpd_resp_sendstr_chunk(req, NULL);
+	return ESP_OK;
+}
+
 /* ── CAN bus scan: remote trigger + report ─────────────────────────────────
  *
  * The wizard/device-settings bitrate scan is touch-driven; these two
@@ -474,6 +551,12 @@ static const httpd_uri_t can_scan_status_uri = {
 static const httpd_uri_t perf_uri = {
 	.uri = "/api/perf", .method = HTTP_GET,
 	.handler = _perf_handler, .user_ctx = NULL};
+static const httpd_uri_t perf_history_uri = {
+	.uri = "/api/perf/history", .method = HTTP_GET,
+	.handler = _perf_history_handler, .user_ctx = NULL};
+static const httpd_uri_t perf_bigframe_uri = {
+	.uri = "/api/perf/bigframe", .method = HTTP_GET,
+	.handler = _perf_bigframe_handler, .user_ctx = NULL};
 
 static const httpd_uri_t can_inject_uri = {
 	.uri = "/api/can/inject", .method = HTTP_POST,
@@ -490,6 +573,8 @@ void web_server_test_register(httpd_handle_t server) {
 	REGISTER_URI(server, &widgets_uri);
 	REGISTER_URI(server, &selftest_uri);
 	REGISTER_URI(server, &perf_uri);
+	REGISTER_URI(server, &perf_history_uri);
+	REGISTER_URI(server, &perf_bigframe_uri);
 	REGISTER_URI(server, &can_scan_start_uri);
 	REGISTER_URI(server, &can_scan_status_uri);
 }

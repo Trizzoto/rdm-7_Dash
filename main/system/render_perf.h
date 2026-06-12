@@ -30,6 +30,26 @@ typedef struct {
  * `seq` across two reads if consistency matters. */
 void render_perf_get(render_perf_t *out);
 
+/* ── Boot-timeline history ────────────────────────────────────────────────
+ * Compact per-second snapshots recorded from the very first rendered frame,
+ * so the post-boot fps timeline (including the pre-WiFi seconds no HTTP
+ * poller can see) can be read back later via GET /api/perf/history.
+ * max_render_ms is the worst single frame in the window — the spike
+ * detector for "every now and then it lags" reports. */
+typedef struct {
+	uint32_t up_ms;          /* window end, ms since boot (lv_tick) */
+	uint16_t fps_x10;
+	uint16_t avg_render_ms;
+	uint16_t max_render_ms;  /* worst single frame in the window */
+	uint16_t max_pct;        /* worst frame's invalidated % of screen */
+	uint32_t avg_px;
+} render_perf_hist_t;
+
+#define RENDER_PERF_HISTORY_LEN 180   /* 3 minutes of 1 s windows */
+
+/* Copy up to `max` entries (oldest first) into out; returns the count. */
+uint16_t render_perf_history_get(render_perf_hist_t *out, uint16_t max);
+
 #ifdef __cplusplus
 }
 #endif
