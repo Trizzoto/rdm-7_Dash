@@ -3751,10 +3751,15 @@ static void _show_step3(void) {
     lv_obj_t *opt2_sub = lv_label_create(s_step3);
     lv_label_set_long_mode(opt2_sub, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(opt2_sub, BTN_W - 30);
+    /* Show the unit's ACTUAL hotspot password — per-device since 2026-06,
+     * so the old hardcoded "rdm7dash" string would mislead every new unit. */
+    rdm_ap_config_t ap_cfg;
+    config_store_load_ap_config(&ap_cfg);
     lv_label_set_text_fmt(opt2_sub,
-        "Connect to \"%s\"  /  password: rdm7dash\n"
+        "Connect to \"%s\"  /  password: %s\n"
         "Then open http://%s in a browser",
         ap_ssid ? ap_ssid : "RDM7-????",
+        ap_cfg.password,
         ap_ip   ? ap_ip   : "192.168.4.1");
     lv_obj_align(opt2_sub, LV_ALIGN_TOP_LEFT, 30, 190);
     lv_obj_set_style_text_font(opt2_sub, THEME_FONT_TINY, 0);

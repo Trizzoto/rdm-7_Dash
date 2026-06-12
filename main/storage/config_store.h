@@ -50,7 +50,8 @@ esp_err_t config_store_remove_wifi(const char *ssid);
 /* ── WiFi AP (hotspot) settings ────────────────────────────────────────── */
 typedef struct {
 	bool enabled;           /* AP enabled (default: false) */
-	char password[65];      /* AP password (default: "rdm7dash") */
+	char password[65];      /* AP password (default: per-device, derived from
+	                         * the MAC — see get_device_ap_password) */
 } rdm_ap_config_t;
 
 esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg);

@@ -1,4 +1,5 @@
 #include "config_store.h"
+#include "system/device_id.h"   /* get_device_ap_password — per-unit AP default */
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
@@ -340,14 +341,26 @@ esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg)
     return err;
 }
 
+/* The hotspot password every unit shipped with before per-device passwords
+ * (2026-06-12). A stored value equal to this is the old fleet-wide default
+ * that the WiFi screen happened to persist, not something an owner chose —
+ * upgrade it to the per-device password on load. */
+#define LEGACY_FLEET_AP_PASSWORD "rdm7dash"
+
 esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg)
 {
     if (!cfg) return ESP_ERR_INVALID_ARG;
 
-    /* Defaults — AP disabled until user explicitly enables it */
+    /* Defaults — AP disabled until user explicitly enables it. Password
+     * defaults to the per-device derivation (unique per unit, shown on the
+     * dash WiFi screen + first-run wizard) so consumer units never share a
+     * guessable fleet-wide hotspot password. Falls back to the legacy
+     * constant only if the MAC read itself fails (never seen in practice). */
     cfg->enabled = false;
-    strncpy(cfg->password, "rdm7dash", sizeof(cfg->password) - 1);
-    cfg->password[sizeof(cfg->password) - 1] = '\0';
+    if (get_device_ap_password(cfg->password, sizeof(cfg->password)) != ESP_OK) {
+        strncpy(cfg->password, LEGACY_FLEET_AP_PASSWORD, sizeof(cfg->password) - 1);
+        cfg->password[sizeof(cfg->password) - 1] = '\0';
+    }
 
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NS_WIFI_AP, NVS_READONLY, &handle);
@@ -356,8 +369,13 @@ esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg)
     uint8_t u8;
     if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) cfg->enabled = (u8 != 0);
 
-    size_t len = sizeof(cfg->password);
-    nvs_get_str(handle, "password", cfg->password, &len);
+    char stored[sizeof(cfg->password)];
+    size_t len = sizeof(stored);
+    if (nvs_get_str(handle, "password", stored, &len) == ESP_OK &&
+        strcmp(stored, LEGACY_FLEET_AP_PASSWORD) != 0) {
+        /* Owner-chosen password wins over the derived default. */
+        memcpy(cfg->password, stored, sizeof(stored));
+    }
 
     nvs_close(handle);
     return ESP_OK;

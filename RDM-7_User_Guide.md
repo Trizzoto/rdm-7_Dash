@@ -131,7 +131,7 @@ Good for at-home tuning. The Desktop Studio app is a free download — see [gets
 The dashboard broadcasts its own WiFi network you can connect to directly:
 
 - **Network name:** `RDM7-XXXX` *(the last 4 digits match your device's MAC address — it's printed under the rear cover too)*
-- **Password:** `rdm7dash`
+- **Password:** unique to your unit — shown on the dash in the setup wizard and under **WiFi Settings → Hotspot**
 - **Address:** `http://192.168.4.1`
 
 1. On your phone's WiFi settings, connect to `RDM7-XXXX`.
@@ -463,7 +463,7 @@ Long-press the RDM logo on the home screen. Settings is organised into sections:
 
 ### 10.2 Hotspot Mode
 
-The dashboard always runs a built-in hotspot (`RDM7-XXXX`, password `rdm7dash`) alongside WiFi station mode. You can always connect directly to it, even when the dash is also online on your home WiFi.
+The dashboard always runs a built-in hotspot (`RDM7-XXXX`; the password is unique to your unit and shown in WiFi Settings) alongside WiFi station mode. You can always connect directly to it, even when the dash is also online on your home WiFi.
 
 **Hotspot on Boot** toggle — in WiFi Settings. If on, the AP starts at boot time. If off, the AP only starts after you manually enable it (useful if your phone auto-joins `RDM7-XXXX` and you don't want that).
 
@@ -529,7 +529,7 @@ No CAN data. Work through:
 ### Can't connect to the hotspot (phone)
 
 - Make sure you picked `RDM7-XXXX` (your specific one, not another dashboard's)
-- Password is `rdm7dash` by default — **case-sensitive**
+- The password is unique to your unit (check the dash: WiFi Settings → Hotspot) — **case-sensitive**, all lowercase letters and digits
 - **Forget the network** on your phone, then rejoin — iOS especially gets sticky if it tried once and failed
 - Move your phone within ~5 m of the dash — ESP32 WiFi isn't the strongest
 

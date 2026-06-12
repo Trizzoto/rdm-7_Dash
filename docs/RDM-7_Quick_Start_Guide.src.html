@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RDM-7 Dash — Quick Start Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,500;0,700;0,800;0,900;1,700;1,800;1,900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --rdm-red:#E0151F;
+    --rdm-red-dark:#B01018;
+    --rdm-red-tint:#FDEBEC;
+    --ink:#16181C;
+    --ink-soft:#4A4F58;
+    --line:#E4E6EA;
+    --paper:#FFFFFF;
+    --chip:#F6F7F9;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'Manrope',-apple-system,'Segoe UI',sans-serif;
+    color:var(--ink);
+    background:#EDEFF2;
+    line-height:1.6;
+    font-size:15px;
+  }
+  .page{
+    max-width:860px;
+    margin:0 auto;
+    background:var(--paper);
+    box-shadow:0 2px 30px rgba(0,0,0,.10);
+  }
+
+  /* ───────────── COVER ───────────── */
+  .cover{
+    position:relative;
+    background:#101114;
+    background:linear-gradient(135deg,#101114 0%,#1B1D22 60%,#26282E 100%);
+    color:#fff;
+    padding:72px 64px 0;
+    overflow:hidden;
+  }
+  .cover::after{
+    content:"";
+    position:absolute;
+    right:-140px;top:-180px;
+    width:480px;height:680px;
+    background:var(--rdm-red);
+    transform:skewX(-12deg);
+    opacity:.10;
+  }
+  .cover .logo{
+    display:block;
+    width:240px;
+    margin-bottom:40px;
+    position:relative;z-index:1;
+  }
+  .cover h1{
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;
+    font-weight:900;
+    font-size:52px;
+    line-height:1.02;
+    text-transform:uppercase;
+    letter-spacing:.5px;
+    position:relative;z-index:1;
+  }
+  .cover h1 em{color:var(--rdm-red);font-style:italic;}
+  .cover .sub{
+    margin-top:18px;
+    font-size:17px;
+    font-weight:500;
+    color:#C9CCD2;
+    max-width:520px;
+    position:relative;z-index:1;
+  }
+  .cover-strip{
+    margin-top:56px;
+    background:var(--rdm-red);
+    margin-left:-64px;margin-right:-64px;
+    padding:14px 64px;
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:800;
+    font-size:13px;letter-spacing:2.5px;
+    text-transform:uppercase;
+    position:relative;z-index:1;
+  }
+
+  /* ───────────── BODY ───────────── */
+  .content{padding:48px 64px 64px;}
+
+  .toc{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:6px 36px;
+    margin:10px 0 8px;
+    padding:26px 30px;
+    background:var(--chip);
+    border-left:5px solid var(--rdm-red);
+  }
+  .toc a{
+    color:var(--ink);
+    text-decoration:none;
+    font-weight:600;
+    font-size:14px;
+    display:flex;gap:10px;align-items:baseline;
+    padding:3px 0;
+  }
+  .toc a:hover{color:var(--rdm-red);}
+  .toc .n{
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:800;
+    color:var(--rdm-red);
+    min-width:24px;
+  }
+
+  section{margin-top:56px;}
+  .sec-head{
+    display:flex;align-items:center;gap:16px;
+    margin-bottom:8px;
+    border-bottom:3px solid var(--ink);
+    padding-bottom:12px;
+  }
+  .sec-num{
+    flex:none;
+    background:var(--rdm-red);
+    color:#fff;
+    transform:skewX(-9deg);
+    padding:4px 14px;
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:900;
+    font-size:24px;
+  }
+  .sec-head h2{
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:900;
+    text-transform:uppercase;
+    font-size:25px;
+    letter-spacing:.4px;
+  }
+  .lede{
+    color:var(--ink-soft);
+    font-size:15px;
+    margin:14px 0 18px;
+  }
+  h3{
+    font-family:'Montserrat',sans-serif;
+    font-weight:800;
+    font-size:16px;
+    text-transform:uppercase;
+    letter-spacing:.8px;
+    margin:28px 0 10px;
+    color:var(--ink);
+  }
+  h3::before{content:"▸ ";color:var(--rdm-red);}
+  p{margin:10px 0;}
+  strong{font-weight:800;}
+
+  /* steps */
+  ol.steps{list-style:none;counter-reset:step;margin:14px 0;}
+  ol.steps li{
+    counter-increment:step;
+    position:relative;
+    padding:0 0 16px 52px;
+  }
+  ol.steps li::before{
+    content:counter(step);
+    position:absolute;left:0;top:0;
+    width:32px;height:32px;
+    background:var(--ink);
+    color:#fff;
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:800;
+    font-size:15px;
+    display:flex;align-items:center;justify-content:center;
+    transform:skewX(-9deg);
+  }
+  ol.steps li::after{
+    content:"";
+    position:absolute;left:15px;top:36px;bottom:4px;
+    width:2px;background:var(--line);
+  }
+  ol.steps li:last-child::after{display:none;}
+  ol.steps li b.t{display:block;font-weight:800;margin-bottom:2px;}
+
+  ul.dash{list-style:none;margin:10px 0;}
+  ul.dash li{padding:4px 0 4px 22px;position:relative;}
+  ul.dash li::before{
+    content:"";position:absolute;left:0;top:13px;
+    width:12px;height:4px;background:var(--rdm-red);
+    transform:skewX(-25deg);
+  }
+
+  /* callouts */
+  .callout{
+    margin:20px 0;
+    padding:16px 20px 16px 22px;
+    border-left:5px solid var(--rdm-red);
+    background:var(--rdm-red-tint);
+    font-size:14px;
+  }
+  .callout.note{border-left-color:var(--ink);background:var(--chip);}
+  .callout .tag{
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:1.5px;
+    font-size:12px;
+    color:var(--rdm-red);
+    display:block;margin-bottom:4px;
+  }
+  .callout.note .tag{color:var(--ink);}
+
+  /* key-value cheat card */
+  .cheat{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:14px;
+    margin:22px 0;
+  }
+  .cheat .kv{
+    border:1px solid var(--line);
+    border-top:4px solid var(--rdm-red);
+    padding:14px 18px;
+    background:#fff;
+  }
+  .cheat .k{
+    font-family:'Montserrat',sans-serif;
+    font-weight:800;font-size:11px;
+    text-transform:uppercase;letter-spacing:1.4px;
+    color:var(--ink-soft);
+    display:block;margin-bottom:4px;
+  }
+  .cheat .v{
+    font-size:17px;font-weight:800;
+  }
+  .cheat .v code{font-size:16px;}
+
+  code{
+    font-family:Consolas,'SF Mono',monospace;
+    background:var(--chip);
+    border:1px solid var(--line);
+    padding:1px 7px;
+    border-radius:4px;
+    font-size:13.5px;
+    color:var(--rdm-red-dark);
+    font-weight:600;
+    white-space:nowrap;
+  }
+  .path{
+    display:inline-block;
+    background:var(--ink);
+    color:#fff;
+    font-weight:700;
+    font-size:13px;
+    padding:2px 12px;
+    border-radius:3px;
+    white-space:nowrap;
+  }
+
+  /* figures */
+  figure.fig{
+    margin:22px 0;
+    border:1px solid var(--line);
+    background:#fff;
+  }
+  figure.fig img{display:block;width:100%;}
+  figure.fig figcaption{
+    border-top:3px solid var(--rdm-red);
+    background:var(--chip);
+    padding:9px 14px;
+    font-size:12.5px;
+    font-weight:600;
+    color:var(--ink-soft);
+  }
+  figure.fig figcaption b{
+    color:var(--rdm-red);
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:1px;
+    font-size:11px;
+    margin-right:8px;
+  }
+  .fig2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+  .fig2 figure.fig{margin:22px 0 0;}
+
+  table{
+    width:100%;
+    border-collapse:collapse;
+    margin:16px 0;
+    font-size:13.5px;
+  }
+  thead th{
+    background:var(--ink);
+    color:#fff;
+    font-family:'Montserrat',sans-serif;
+    font-weight:800;
+    font-size:11.5px;
+    text-transform:uppercase;
+    letter-spacing:1.2px;
+    text-align:left;
+    padding:10px 14px;
+  }
+  tbody td{
+    padding:9px 14px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+  }
+  tbody tr:nth-child(even){background:#FAFBFC;}
+
+  /* ───────────── BACK COVER ───────────── */
+  .backcover{
+    margin-top:64px;
+    background:linear-gradient(135deg,#101114 0%,#1B1D22 60%,#26282E 100%);
+    color:#fff;
+    padding:64px;
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+    min-height:760px;
+    position:relative;
+    overflow:hidden;
+  }
+  .backcover::after{
+    content:"";
+    position:absolute;
+    right:-140px;top:-180px;
+    width:420px;height:720px;
+    background:var(--rdm-red);
+    transform:skewX(-12deg);
+    opacity:.10;
+  }
+  .bc-logo{width:170px;display:block;margin-bottom:36px;position:relative;z-index:1;}
+  .backcover h2{
+    font-family:'Montserrat',sans-serif;
+    font-style:italic;font-weight:900;
+    text-transform:uppercase;
+    font-size:34px;line-height:1.08;
+    position:relative;z-index:1;
+  }
+  .backcover h2 em{color:var(--rdm-red);font-style:italic;}
+  .bc-grid{
+    display:flex;gap:44px;align-items:center;
+    margin-top:40px;
+    position:relative;z-index:1;
+  }
+  .bc-qr{flex:none;background:#fff;padding:10px;border-top:5px solid var(--rdm-red);}
+  .bc-qr img{display:block;width:150px;height:150px;}
+  .bc-list{display:flex;flex-direction:column;gap:18px;}
+  .bc-list .k{
+    font-family:'Montserrat',sans-serif;
+    font-weight:800;font-size:11px;
+    text-transform:uppercase;letter-spacing:1.6px;
+    color:#9DA2AB;
+    display:block;margin-bottom:2px;
+  }
+  .bc-list .v{font-size:17px;font-weight:800;color:#fff;}
+  .bc-tag{
+    margin-top:36px;
+    font-size:15px;color:#C9CCD2;
+    max-width:560px;
+    position:relative;z-index:1;
+  }
+  .bc-bottom{
+    margin-top:48px;
+    border-top:1px solid rgba(255,255,255,.14);
+    padding-top:22px;
+    display:flex;justify-content:space-between;align-items:center;
+    color:#9DA2AB;font-size:13px;
+    position:relative;z-index:1;
+  }
+  .bc-bottom img{width:84px;display:block;}
+
+  /* ───────────── PRINT ───────────── */
+  @page{size:A4;margin:20mm 0 14mm;}
+  @page :first{margin:0;}
+  @media print{
+    body{background:#fff;}
+    .page{max-width:none;box-shadow:none;}
+    .cover{padding:64px 56px 0;}
+    .content{padding:40px 56px 48px;}
+    section{page-break-inside:auto;page-break-before:always;margin-top:0;}
+    #s7,#s10{page-break-before:auto;}
+    figure.fig img{max-height:92mm;width:auto;margin:0 auto;}
+    #s0 figure.fig img{max-height:68mm;}
+    #s8 figure.fig img{max-height:58mm;}
+    tr{page-break-inside:avoid;}
+    .backcover{page-break-before:always;height:256mm;margin-top:0;}
+    .sec-head{page-break-after:avoid;}
+    h3{page-break-after:avoid;}
+    ol.steps li,.callout,.cheat .kv,figure.fig{page-break-inside:avoid;}
+    .cover,.cover-strip,.sec-num,.backcover,.bc-qr,thead th,.path,ol.steps li::before,.callout,ul.dash li::before{
+      -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    }
+    a{color:inherit;text-decoration:none;}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ════════ COVER ════════ -->
+  <header class="cover">
+    <img class="logo" src="img/rdm_logo.png" alt="RDM logo">
+    <h1>RDM-7 Dash<br><em>Quick Start</em> Guide</h1>
+    <p class="sub">From the box to the car: first boot, CAN setup, channels, units and the web editor.</p>
+    <div class="cover-strip">Get up &amp; running &nbsp;·&nbsp; First Boot → Wizard → Connect → Build → Drive</div>
+  </header>
+
+  <main class="content">
+
+    <!-- TOC -->
+    <nav class="toc">
+      <a href="#s0"><span class="n">01</span> Wiring the dash</a>
+      <a href="#s1"><span class="n">02</span> First boot &amp; the Setup Wizard</a>
+      <a href="#s2"><span class="n">03</span> Get connected</a>
+      <a href="#s3"><span class="n">04</span> The Web Editor at a glance</a>
+      <a href="#s4"><span class="n">05</span> Channels — wiring data to widgets</a>
+      <a href="#s5"><span class="n">06</span> Changing units &amp; decimals</a>
+      <a href="#s6"><span class="n">07</span> Custom CAN signals</a>
+      <a href="#s7"><span class="n">08</span> OBD2 — filling the gaps</a>
+      <a href="#s8"><span class="n">09</span> Fuel level sender</a>
+      <a href="#s9"><span class="n">10</span> Alerts &amp; thresholds</a>
+      <a href="#s10"><span class="n">11</span> Everyday features</a>
+      <a href="#s11"><span class="n">12</span> Troubleshooting</a>
+    </nav>
+
+    <!-- CHEAT SHEET -->
+    <div class="cheat">
+      <div class="kv"><span class="k">Dash Hotspot (WiFi name)</span><span class="v">RDM7-XXXX</span></div>
+      <div class="kv"><span class="k">Hotspot password</span><span class="v">Unique per unit — shown in the setup wizard &amp; WiFi Settings</span></div>
+      <div class="kv"><span class="k">Editor address (hotspot)</span><span class="v"><code>http://192.168.4.1</code></span></div>
+      <div class="kv"><span class="k">Editor address (home WiFi)</span><span class="v">Shown in Device Settings</span></div>
+    </div>
+
+    <!-- ════════ 01 ════════ -->
+    <section id="s0">
+      <div class="sec-head"><div class="sec-num">01</div><h2>Wiring the Dash</h2></div>
+      <p class="lede">Everything connects to the quick-connect push terminals on the back of the dash — strip the wire, push it in, done. Get these few wires right and the rest of this guide is pure software.</p>
+
+      <figure class="fig">
+        <img src="img/wiring.png" alt="RDM-7 board wiring map">
+        <figcaption><b>Wiring map</b>The back of the board — quick-connect push terminals on the right, 120&nbsp;Ω CAN termination jumper circled top-left.</figcaption>
+      </figure>
+
+      <table>
+        <thead><tr><th>Terminal</th><th>Connect to</th></tr></thead>
+        <tbody>
+          <tr><td><b>Power +</b> / <b>GND</b></td><td>Switched 12&nbsp;V (ignition-on) feed and chassis ground.</td></tr>
+          <tr><td><b>CAN H</b> / <b>CAN L</b></td><td>Your ECU or vehicle CAN bus — use a twisted pair.</td></tr>
+          <tr><td><b>INDICATOR L</b> / <b>R</b></td><td>12&nbsp;V+ inputs — tap into your left and right indicator circuits to drive the on-screen turn arrows.</td></tr>
+          <tr><td><b>FUEL SENDER</b></td><td>The sense wire straight from your fuel tank float — the resistor is built into the dash, nothing to add. Sender ground goes to a sensor ground or ties in with the dash's ground. Calibration is in Section 09.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout"><span class="tag">CAN termination</span>A CAN bus needs a <b>120&nbsp;Ω</b> terminating resistor at each end. If the dash sits at the end of the bus, enable its built-in one with the jumper at the top-left of the board (circled in the photo — it's the right-hand one of the two, marked with a yellow tab on the back).</div>
+    </section>
+
+    <!-- ════════ 02 ════════ -->
+    <section id="s1">
+      <div class="sec-head"><div class="sec-num">02</div><h2>First Boot &amp; the Setup Wizard</h2></div>
+      <p class="lede">With the dash wired up (Section 01), key on. The very first time it boots, the RDM-7 runs its on-screen Setup Wizard and does most of the work for you.</p>
+
+      <ol class="steps">
+        <li><b class="t">CAN scan</b> The dash listens on the bus and automatically detects the bitrate (125k / 250k / 500k / 1M). Make sure the engine is on, or at least the ignition, so the bus is talking. If the scan comes up empty, work through the CAN checklist in Troubleshooting at the back of this guide (Section 12).</li>
+        <li><b class="t">ECU auto-detect</b> The CAN traffic is matched against the built-in ECU library and the best match is shown with a confidence score. If it guessed wrong, tap <b>Pick a different ECU</b> and choose from the list.</li>
+        <li><b class="t">Channels review</b> The wizard binds every signal the ECU broadcasts (RPM, coolant, MAP, …) to named channels. Skim the list — tap any channel to point it somewhere else.</li>
+        <li><b class="t">WiFi</b> Pick <b>Join WiFi Network</b> or <b>Start Hotspot</b> — either one finishes the wizard and drops you on the dashboard. Section 03 covers what each means.</li>
+      </ol>
+
+      <figure class="fig">
+        <img src="img/dashboard.jpg" alt="RDM-7 dashboard running live">
+        <figcaption><b>On the dash</b>Up and running — the default dashboard driving live CAN data.</figcaption>
+      </figure>
+
+      <h3>Built-in ECU presets</h3>
+      <table>
+        <thead><tr><th>Preset</th><th>Good for</th></tr></thead>
+        <tbody>
+          <tr><td><b>ECU Master</b> Black / Classic</td><td>EMU Black &amp; Classic standard broadcast</td></tr>
+          <tr><td><b>MegaSquirt</b> MS3-Pro</td><td>MS3-Pro standard CAN broadcast</td></tr>
+          <tr><td><b>Haltech</b> Nexus / Elite</td><td>Haltech V2 protocol</td></tr>
+          <tr><td><b>MaxxECU</b> 1.2 &amp; 1.3+</td><td>MaxxECU dash broadcast (1.3 adds oil/fuel pressure)</td></tr>
+          <tr><td><b>Link ECU</b> Generic Dash</td><td>Link generic dash stream</td></tr>
+          <tr><td><b>Ford Falcon</b> BA/BF &amp; FG</td><td>Factory Falcon CAN buses</td></tr>
+          <tr><td><b>Toyota 86 / Subaru BRZ</b></td><td>Factory HS-CAN, 2012–2020</td></tr>
+          <tr><td><b>OBD2</b> Standard</td><td>Any 2008+ car via the OBD2 port — no aftermarket ECU needed</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout note"><span class="tag">Note</span>You can re-run the wizard any time from <span class="path">Setup → Re-run Setup Wizard</span>. Changing ECU preset later automatically re-points your existing widgets at the new ECU's signals.</div>
+    </section>
+
+    <!-- ════════ 02 ════════ -->
+    <section id="s2">
+      <div class="sec-head"><div class="sec-num">03</div><h2>Get Connected</h2></div>
+      <p class="lede">The dash talks to your phone or laptop over WiFi in one of two modes — its own hotspot, or joined to your home network. It's one or the other: pick it from the <b>Mode</b> dropdown in <span class="path">Setup → Device Settings → WiFi &amp; Network</span>, and switch whenever you like.</p>
+
+      <h3>Hotspot mode (zero setup — in the car)</h3>
+      <p>Pick <b>Start Hotspot</b> in the wizard, or set <b>Mode</b> to Hotspot in WiFi Settings. Then join the WiFi network named <b>RDM7-XXXX</b> (the XXXX is unique to your unit) — the password is unique to your unit and shown right on the dash (setup wizard, and any time under WiFi Settings); you can change it there too. A captive-portal prompt usually pops up and lands you straight in the editor; if it doesn't, browse to <code>http://192.168.4.1</code>.</p>
+
+      <h3>Client mode (join your home network)</h3>
+      <p>Pick <b>Join WiFi Network</b> in the wizard, or set <b>Mode</b> to <b>WiFi (Client)</b> in WiFi Settings: choose your network from the scan list and type the password. Once connected, the dash's address appears at the top of that screen — browse to it from anything on the same network, and bookmark it. There's a <b>QR code</b> too if your phone is closer than your keyboard. (Can't reach the dash? Your router's client list will show it as <b>RDM7…</b>.)</p>
+
+      <div class="fig2">
+        <figure class="fig">
+          <img src="img/device_settings.jpg" alt="Device Settings hub">
+          <figcaption><b>Step 1</b>Device Settings — tap the <i>WiFi &amp; Network</i> card.</figcaption>
+        </figure>
+        <figure class="fig">
+          <img src="img/wifi_settings.jpg" alt="On-device Wi-Fi Settings screen">
+          <figcaption><b>Step 2</b>Pick a network from the scan list — your dash's address shows top-right once connected.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ════════ 03 ════════ -->
+    <section id="s3">
+      <div class="sec-head"><div class="sec-num">04</div><h2>The Web Editor at a Glance</h2></div>
+      <p class="lede">Browse to the dash's address and the <b>RDM-7 Visual Designer</b> loads — this is where you build screens and configure data. Changes appear on the real dash the moment you hit save.</p>
+
+      <ul class="dash">
+        <li><b>Widgets palette (left)</b> — drag gauges, bars, panels, text, indicators, warning lights, images and more onto the canvas.</li>
+        <li><b>Canvas (center)</b> — your dashboard, live. Drag to position, use the alignment tools to line things up. The canvas previews <b>real values from the car</b> by default (toggle with the LIVE pill).</li>
+        <li><b>Inspector (right)</b> — select any widget to edit its channel, range, colors, fonts and alert behavior.</li>
+        <li><b>SAVE</b> — writes the layout to the dash and reloads the screen instantly.</li>
+        <li><b>Menu (☰)</b> — Channels, Live Signals, Custom CAN Signals, OBD2 Setup, ECU Preset, Data Logger, Gear Setup, WiFi, Device Info and Diagnostics.</li>
+      </ul>
+
+      <figure class="fig">
+        <img src="img/web_editor.png" alt="RDM-7 Visual Designer web editor">
+        <figcaption><b>Web editor</b>The Visual Designer — widget palette left, live canvas center, Inspector right, SAVE top-right.</figcaption>
+      </figure>
+
+      <div class="callout"><span class="tag">Tip</span>Hit <b>SAVE</b> and the dash reloads its screen on the spot — so you can tweak a layout with the car running and watch it change in real time.</div>
+    </section>
+
+    <!-- ════════ 04 ════════ -->
+    <section id="s4">
+      <div class="sec-head"><div class="sec-num">05</div><h2>Channels — Wiring Data to Widgets</h2></div>
+      <p class="lede">A <b>channel</b> is a named value like <i>RPM</i>, <i>Coolant Temp</i> or <i>Boost</i>. The channel owns where the data comes from (ECU CAN, OBD2, custom CAN, or the dash's own inputs) plus its units, range and warning thresholds. Widgets just point at a channel — so you can swap data sources without touching your layout.</p>
+
+      <h3>Assign a channel to a widget (web)</h3>
+      <ol class="steps">
+        <li>Click the widget on the canvas — the Inspector opens on the right.</li>
+        <li>Click the <b>Channel</b> field — the channel picker opens. Search or scroll, then select.</li>
+        <li>The widget immediately follows that channel's live value, units, decimals and thresholds.</li>
+      </ol>
+
+      <h3>Change where a channel gets its data</h3>
+      <ol class="steps">
+        <li>Open <span class="path">☰ → Channels</span>. Use the <b>All / Configured / Available</b> filter to find what you need.</li>
+        <li>Select a channel — its detail pane shows the current source as a badge (<b>CAN</b>, <b>OBD2</b> or <b>RDM-7</b>).</li>
+        <li>Hit <b>Change</b> on the source to pick a different ECU preset signal, an OBD2 PID, or a fully custom CAN decode.</li>
+      </ol>
+
+      <figure class="fig">
+        <img src="img/web_channels.png" alt="Channels modal in the web editor">
+        <figcaption><b>Web editor</b>The Channels modal — source badge and live value up top, Range with warn thresholds, Units &amp; Decimals, and the raw CAN decode under <i>More</i>.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="tag">On the touchscreen</span>The same channel editor lives on the device: <span class="path">Setup → Channels</span>. Tap a channel to edit its source, range, units and warning thresholds with the on-screen keypad — no laptop needed.</div>
+
+      <figure class="fig">
+        <img src="img/channels_device.jpg" alt="On-device channels editor">
+        <figcaption><b>On the dash</b>The on-device channel editor — list on the left, live value, source, range and thresholds on the right.</figcaption>
+      </figure>
+
+      <div class="callout"><span class="tag">Tip — Calculated channels</span>In the channel detail you'll also find <b>Calculate</b>: build a channel from two others (or a channel and a number) with + − × ÷. Classic example: <i>Boost = MAP − Baro</i>. Units are handled for you.</div>
+    </section>
+
+    <!-- ════════ 05 ════════ -->
+    <section id="s5">
+      <div class="sec-head"><div class="sec-num">06</div><h2>Changing Units &amp; Decimals</h2></div>
+      <p class="lede">Prefer °F over °C, psi over kPa, mph over km/h? Units live on the channel, so changing them once updates every widget bound to it.</p>
+
+      <h3>In the web editor</h3>
+      <ol class="steps">
+        <li>Open <span class="path">☰ → Channels</span> and select the channel (e.g. <i>Coolant Temp</i>).</li>
+        <li>In the <b>Range</b> section, pick the display unit from the <b>Units</b> dropdown and set <b>Decimals</b>.</li>
+        <li>Min / Max and warning thresholds in this section are shown and edited <b>in your chosen unit</b> — type what you see on the gauge.</li>
+      </ol>
+
+      <h3>On the touchscreen</h3>
+      <ol class="steps">
+        <li>Go to <span class="path">Setup → Channels</span> and tap the channel.</li>
+        <li>In the <b>Range</b> section, pick the unit from the dropdown — the whole page recalculates instantly, including the live value.</li>
+        <li>Edit range and thresholds with the keypad, in the displayed unit.</li>
+      </ol>
+
+      <div class="callout note"><span class="tag">Note</span>Conversion is automatic and live — the dash keeps the raw sensor data untouched and converts for display, so switching back and forth never degrades your numbers.</div>
+    </section>
+
+    <!-- ════════ 06 ════════ -->
+    <section id="s6">
+      <div class="sec-head"><div class="sec-num">07</div><h2>Custom CAN Signals</h2></div>
+      <p class="lede">Got a sensor module, a non-listed ECU, or a one-off CAN message? Decode anything on the bus yourself.</p>
+
+      <h3>Add a one-off signal</h3>
+      <ol class="steps">
+        <li>Open <span class="path">☰ → Custom CAN Signals</span>. The browser shows the preset catalog; tap <b>+ Add CAN Signal</b> to create your own.</li>
+        <li>Fill in the decode: <b>CAN ID</b> (hex), <b>bit start</b>, <b>bit length</b>, <b>scale</b>, <b>offset</b>, byte order (<b>Intel/LE</b> or <b>Motorola/BE</b>) and whether it's <b>signed</b>.</li>
+        <li>Save, then bind a channel to it (Section 05) and drop a widget on it. The value goes live immediately — watch it in <span class="path">☰ → Live Signals</span> while you dial the decode in.</li>
+      </ol>
+
+      <figure class="fig">
+        <img src="img/web_customcan.png" alt="Custom CAN Signals modal">
+        <figcaption><b>Web editor</b>Custom CAN Signals — browse the ECU catalog, or use <i>+ New ECU</i>, <i>Import DBC</i> and <i>Create Preset</i> to roll your own.</figcaption>
+      </figure>
+
+      <h3>Import a DBC file</h3>
+      <p>If you have a <code>.dbc</code> database for your vehicle or device, import it from the menu — every message and signal inside becomes available to bind, no manual bit-math required.</p>
+
+      <h3>Save your own preset</h3>
+      <p>Built a full set of decodes for an unlisted ECU? Save it as a <b>custom preset</b> — it appears alongside the factory presets so you (or your next car) can apply the whole set in one tap.</p>
+    </section>
+
+    <!-- ════════ 07 ════════ -->
+    <section id="s7">
+      <div class="sec-head"><div class="sec-num">08</div><h2>OBD2 — Filling the Gaps</h2></div>
+      <p class="lede">On a factory car (2008+), the dash can poll standard OBD2 PIDs over the same CAN connection — either as the main data source or to back-fill what your ECU doesn't broadcast.</p>
+      <ul class="dash">
+        <li><b>Whole-car OBD2:</b> pick the <b>OBD2 Standard</b> preset in the wizard — ~30 common PIDs are polled automatically.</li>
+        <li><b>Fill from OBD2:</b> in a channel's detail pane, tap the <b>Fill from OBD2</b> chip — the dash probes the car for a matching PID and binds it if found. Great for adding intake temp or fuel level next to ECU data. (No fuel PID on your car? Wire a sender directly — see Section 09.)</li>
+        <li><b>OBD2 Setup</b> (<span class="path">☰ → OBD2 Setup</span>) lets you browse supported PIDs and manage polling; <b>Diagnostics</b> includes a DTC fault-code reader.</li>
+      </ul>
+      <div class="callout note"><span class="tag">Note</span>Channels show a badge for their source — <b>CAN</b>, <b>OBD2</b> or <b>RDM-7</b> (internal, e.g. calculated gear) — so you always know where a number comes from.</div>
+    </section>
+
+    <!-- ════════ 08 ════════ -->
+    <section id="s8">
+      <div class="sec-head"><div class="sec-num">09</div><h2>Fuel Level Sender</h2></div>
+      <p class="lede">Most aftermarket ECUs don't broadcast fuel level, and not every car exposes it over OBD2. The dash reads a resistive tank sender directly — wire two wires, then teach it your tank with a quick calibration.</p>
+
+      <h3>Connect the sender</h3>
+      <ul class="dash">
+        <li>Run the sense wire from your fuel tank float straight into the <b>FUEL SENDER</b> terminal (see the wiring map in Section 01). The resistor is built into the dash — no external components needed.</li>
+        <li>The sender's ground goes to a sensor ground, or ties in with the same ground as the dash.</li>
+      </ul>
+
+      <h3>Calibrate it</h3>
+      <p>You don't enter resistances — you capture the live voltage at tank levels you already know. Open <span class="path">☰ → Fuel Sender</span> in the web editor (or the <b>Fuel Sender</b> card in Device Settings on the dash):</p>
+      <ol class="steps">
+        <li><b class="t">Set your end points</b> With the tank empty, set <b>Tank reading</b> to <code>0</code> and tap <b>Use current</b> to grab the live voltage. Fill the tank, set the next point to <code>100</code> (percent) or your tank's litres, and tap <b>Use current</b> again.</li>
+        <li><b class="t">Add mid points (optional)</b> Senders are rarely linear. For a truer gauge, add points in between — quarter, half, three-quarter — each captured with <b>Use current</b>. Up to 8 points; the dash sorts them and interpolates between.</li>
+        <li><b class="t">Enable &amp; save</b> Tick <b>Enabled — publish calibrated FUEL_SENDER_V</b> and hit <b>Save</b>. Leave it unticked to read raw voltage while you're testing.</li>
+      </ol>
+
+      <figure class="fig">
+        <img src="img/web_fuel.png" alt="Fuel Sender calibration curve modal">
+        <figcaption><b>Web editor</b>The calibration curve — capture live voltage at known tank levels; add up to 8 points for non-linear senders.</figcaption>
+      </figure>
+
+      <div class="callout note"><span class="tag">Note</span>Once enabled, the calibrated level is just another signal — bind a bar, gauge or panel to your <b>Fuel Level</b> channel, set its units (% or litres) and add a low-fuel warning like any other channel.</div>
+    </section>
+
+    <!-- ════════ 09 ════════ -->
+    <section id="s9">
+      <div class="sec-head"><div class="sec-num">10</div><h2>Alerts &amp; Thresholds</h2></div>
+      <p class="lede">Warning limits also live on the channel — set them once, and every gauge, bar and panel bound to that channel reacts.</p>
+      <ol class="steps">
+        <li>Open the channel (web <span class="path">☰ → Channels</span>, or <span class="path">Setup → Channels</span> on-device).</li>
+        <li>Set <b>Warn Low</b> and/or <b>Warn High</b> in the Range section — in your display units.</li>
+        <li>On the dash: arcs and meters show a redline zone, bars and panels change color, and <b>warning-light widgets</b> trip when the value crosses the limit.</li>
+      </ol>
+      <div class="callout"><span class="tag">Tip</span>Each widget controls its own alert <i>colors</i> in the Inspector — the channel decides <i>when</i>, the widget decides <i>how it looks</i>.</div>
+    </section>
+
+    <!-- ════════ 10 ════════ -->
+    <section id="s10">
+      <div class="sec-head"><div class="sec-num">11</div><h2>Everyday Features</h2></div>
+
+      <table>
+        <thead><tr><th>Feature</th><th>Where</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><b>Data logger</b></td><td><span class="path">☰ → Data Logger</span></td><td>Records all channels to CSV. Set a rate (or Max), start/stop, and download logs straight from the browser. <b>Requires an SD card</b> fitted in the dash.</td></tr>
+          <tr><td><b>Gear indicator</b></td><td><span class="path">☰ → Gear Setup</span></td><td>Calculates current gear from RPM + speed. Enter tire size, final drive and gear ratios once.</td></tr>
+          <tr><td><b>Layouts</b></td><td>Editor toolbar</td><td>Save multiple dashboards (street / track / debug) and switch between them. Layouts are portable between RDM-7 units — your car-specific CAN setup stays on the device.</td></tr>
+          <tr><td><b>Screen rotation</b></td><td><span class="path">Setup → Device Settings</span></td><td>Rotate the display for your mounting orientation.</td></tr>
+          <tr><td><b>Firmware updates</b></td><td>Editor banner</td><td>When an update is available the editor shows a banner at the top — one click installs it over WiFi, with a live progress bar. The dash keeps the previous version as a fallback if anything goes wrong. (Current version is under <span class="path">☰ → Device Info</span>.)</td></tr>
+        </tbody>
+      </table>
+
+      <figure class="fig">
+        <img src="img/device_menu.jpg" alt="On-device menu">
+        <figcaption><b>On the dash</b>Tap the screen, then the <i>Menu</i> pill — switch dashboards, set the boot splash, or dive into Device Settings.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ════════ 11 ════════ -->
+    <section id="s11">
+      <div class="sec-head"><div class="sec-num">12</div><h2>Troubleshooting</h2></div>
+
+      <h3>No CAN data? Work down this checklist</h3>
+      <ol class="steps">
+        <li><b class="t">Wake the bus</b> Ignition on — better yet, engine running. Most buses are silent with the key out.</li>
+        <li><b class="t">Check the pair</b> CAN&nbsp;H and CAN&nbsp;L are easy to get backwards — swapping them won't damage anything, so if you're seeing nothing, swap and retry.</li>
+        <li><b class="t">Termination</b> A CAN bus needs a <b>120&nbsp;Ω</b> resistor at each end. If the dash is at the end of the bus (e.g. wired straight to an ECU), enable its built-in termination with the jumper at the top-left of the board — the right-hand one of the two 3-pin headers, marked with a yellow tab on the back (circled in the Section 01 photo).</li>
+        <li><b class="t">Bitrate</b> Re-run the bitrate scan from <span class="path">Setup → Device Settings</span> — a wrong bitrate looks exactly like a dead bus.</li>
+        <li><b class="t">Wiring quality</b> Use a twisted pair for CAN&nbsp;H/L, keep it away from ignition leads, and make sure grounds are solid.</li>
+      </ol>
+
+      <table>
+        <thead><tr><th>Symptom</th><th>Try this</th></tr></thead>
+        <tbody>
+          <tr><td>Gauges show <b>--</b></td><td>The channel has no fresh data. Check ignition/engine is on, then <span class="path">☰ → Live Signals</span> to see what's arriving. Values go stale after 2&nbsp;seconds of silence.</td></tr>
+          <tr><td>Wizard found no CAN traffic</td><td>Work down the CAN checklist above — wake the bus, swap H/L, check 120&nbsp;Ω termination, re-scan the bitrate.</td></tr>
+          <tr><td>Wrong / weird values</td><td>Usually a decode mismatch — confirm the ECU preset matches your ECU firmware's broadcast version, or check scale/offset/endian on a custom signal.</td></tr>
+          <tr><td>Can't reach the editor</td><td>Confirm you're on the same network as the dash. Fall back to the hotspot: join <b>RDM7-XXXX</b> and open <code>192.168.4.1</code>.</td></tr>
+          <tr><td>Dash dropped off home WiFi</td><td>The dash keeps driving the gauges and falls back to its own hotspot — join it, open WiFi Settings in the editor and re-enter the password.</td></tr>
+          <tr><td>Fuel gauge pinned or wrong</td><td>Open <span class="path">☰ → Fuel Sender</span> and watch <b>Live voltage</b>. If it doesn't move with fuel level, check the sense wire and the sender's ground. Otherwise recapture your empty and full points.</td></tr>
+          <tr><td>Widget ignores a units change</td><td>Make sure the widget is bound to the channel (Inspector → Channel) rather than carrying its own old settings — rebind and save.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <footer class="backcover">
+    <div>
+      <img class="bc-logo" src="img/rdm_logo.png" alt="RDM logo">
+      <h2>Questions? Builds?<br><em>Get in touch.</em></h2>
+      <div class="bc-grid">
+        <div class="bc-qr"><img src="img/qr_website.png" alt="QR code — RDM support page"></div>
+        <div class="bc-list">
+          <div><span class="k">Support &amp; more information</span><span class="v">realtimedatamonitoring.com.au</span></div>
+          <div><span class="k">Questions &amp; queries</span><span class="v">info@realtimedatamonitoring.com.au</span></div>
+          <div><span class="k">Show us your build</span><span class="v">Tag <span style="color:var(--rdm-red);">@realtimedatamonitoring</span> on Instagram!</span></div>
+        </div>
+      </div>
+      <p class="bc-tag">Scan the code for the latest firmware, layouts and documentation. And when your dash is in the car and the gauges are alive — tag us. Seeing your builds is the best part of this job.</p>
+    </div>
+    <div class="bc-bottom">
+      <img src="img/rdm_logo.png" alt="RDM logo">
+      <div>RDM-7 Dash · Quick Start Guide · 2026</div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
