@@ -39,10 +39,28 @@
 #include <time.h>
 #include <unistd.h>
 
+/* ── Blocking-request lifetime ────────────────────────────────────────────
+ * Every handler in this file parks the httpd task on a binary semaphore
+ * while an async chain runs on the LVGL task, sharing a heap ctx. On
+ * semaphore timeout the chain is still in flight, so handlers used to
+ * deliberately LEAK ctx + semaphore (freeing would be a use-after-free when
+ * the late OBD2 callback finally wrote into it). That is a leak on EVERY
+ * ECU-silent timeout — the common case on a car without OBD2 wired, polled
+ * by the editor's OBD2 modal. Refcount instead: the handler and the chain
+ * each hold one reference; whoever releases last frees. Never touch the ctx
+ * after releasing your reference. */
+static void _obd2_ctx_release(volatile int *refs, SemaphoreHandle_t done, void *ctx) {
+    if (__atomic_fetch_sub(refs, 1, __ATOMIC_ACQ_REL) == 1) {
+        vSemaphoreDelete(done);
+        free(ctx);
+    }
+}
+
 /* ── DTC read ─────────────────────────────────────────────────────────── */
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;   /* 2 = httpd handler + async chain */
     bool              ok;
     uint8_t           mode;
     uint8_t           count;
@@ -59,6 +77,7 @@ static void _dtc_done(bool ok, const obd2_dtc_t *codes, uint8_t count,
         memcpy(ctx->codes, codes, ctx->count * sizeof(obd2_dtc_t));
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* chain's reference */
 }
 
 static void _dtc_kick(void *arg) {
@@ -99,6 +118,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "sem alloc");
         return ESP_FAIL;
     }
+    ctx->refs = 2;
     ctx->mode = mode;
 
     rdm_async_call(_dtc_kick, ctx);
@@ -134,11 +154,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
         }
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
-    /* If got != pdTRUE we leak ctx — see header comment. */
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -157,6 +173,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
 } clear_ctx_t;
 
@@ -164,6 +181,7 @@ static void _clear_done(bool ok, void *user) {
     clear_ctx_t *ctx = (clear_ctx_t *)user;
     ctx->ok = ok;
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _clear_kick(void *arg) {
@@ -184,6 +202,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
+    ctx->refs = 2;
     rdm_async_call(_clear_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
@@ -199,10 +218,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
         cJSON_AddBoolToObject(resp, "ok", true);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -221,6 +237,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
     char              vin[20];
 } vin_ctx_t;
@@ -233,6 +250,7 @@ static void _vin_done(bool ok, const char *vin, void *user) {
         ctx->vin[sizeof(ctx->vin) - 1] = '\0';
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _vin_kick(void *arg) {
@@ -245,6 +263,7 @@ static void _vin_kick(void *arg) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
     char              name[24];
 } ecuname_ctx_t;
@@ -257,6 +276,7 @@ static void _ecuname_done(bool ok, const char *name, void *user) {
         ctx->name[sizeof(ctx->name) - 1] = '\0';
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _ecuname_kick(void *arg) {
@@ -277,6 +297,7 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
+    ctx->refs = 2;
     rdm_async_call(_ecuname_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
@@ -292,10 +313,7 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(resp, "ecu_name", ctx->name);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -323,6 +341,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
+    ctx->refs = 2;
     rdm_async_call(_vin_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
@@ -338,10 +357,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(resp, "vin", ctx->vin);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -377,6 +393,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;           /* 2 = httpd handler + async chain */
     int               stage;          /* 0..4: which step is in flight */
     bool              all_ok;         /* false if ANY step failed (file still written) */
     /* Buffered results */
@@ -507,6 +524,7 @@ static void _snap_write_and_done(snap_ctx_t *ctx) {
         ctx->out_path[0] = '\0';
         ctx->out_bytes = 0;
         xSemaphoreGive(ctx->done);
+        _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
         return;
     }
 
@@ -555,6 +573,7 @@ static void _snap_write_and_done(snap_ctx_t *ctx) {
     }
     free(json);
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* chain's reference */
 }
 
 static esp_err_t _snapshot_handler(httpd_req_t *req) {
@@ -570,14 +589,15 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
+    ctx->refs = 2;
     /* Start the chain. _snap_kick_stored -> Mode 03 -> (cb) -> Mode 07 ->
      * (cb) -> Mode 0A -> (cb) -> Mode 09 -> (cb) -> write file -> sem. */
     rdm_async_call(_snap_kick_stored, ctx);
 
     /* Generous 12 s budget: 5 OBD2 round-trips (Mode 03/07/0A + VIN +
      * ECU name) × 2 s each = 10 s, plus a couple of seconds for the SD
-     * write. If we time out, the in-flight obd2 request will still
-     * complete and harmlessly write into the leaked context. */
+     * write. On timeout the in-flight chain still completes, writes into
+     * the still-alive ctx, and drops the LAST reference — no leak. */
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(12000));
 
     cJSON *resp = cJSON_CreateObject();
@@ -602,10 +622,7 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(summary, "ecu_name", ctx->ecuname_ok ? ctx->ecu_name : "");
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
