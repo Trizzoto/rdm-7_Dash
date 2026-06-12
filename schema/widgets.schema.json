@@ -258,6 +258,7 @@
         { "name": "needle_color",      "label": "Needle Color",  "type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true, "enabled_by": "show_needle" },
         { "name": "needle_r_mod",      "label": "Needle Length Trim","type": "stepper", "default": -10, "category": "appearance", "min": -100, "max": 100, "enabled_by": "show_needle" },
         { "name": "needle_rear_length","label": "Needle Rear Length","type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 100, "enabled_by": "show_needle" },
+        { "name": "needle_inner_radius","label": "Needle Start Radius","type": "stepper", "default": 0, "category": "appearance", "min": 0, "max": 400, "enabled_by": "show_needle" },
         { "name": "needle_tip_style",  "label": "Needle Tip Style","type": "select", "default": 0, "category": "appearance", "enabled_by": "show_needle",
           "options": [
             { "value": 0, "label": "Flat" },

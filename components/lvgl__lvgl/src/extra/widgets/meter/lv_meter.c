@@ -642,6 +642,16 @@ static void draw_needles(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, const lv_area
             lv_point_t p_end;
             p_end.y = (lv_trigo_sin(angle) * (r_out)) / LV_TRIGO_SIN_MAX + scale_center.y;
             p_end.x = (lv_trigo_cos(angle) * (r_out)) / LV_TRIGO_SIN_MAX + scale_center.x;
+            /* RDM7 PERF: optional inner start radius — the needle begins
+             * r_in px out from the pivot instead of at the scale centre.
+             * Pairs with the matching offset in inv_line so the centre of
+             * the meter is neither drawn nor invalidated on value changes. */
+            lv_point_t p_start = scale_center;
+            lv_coord_t r_in = indic->type_data.needle_line.r_in;
+            if(r_in > 0) {
+                p_start.x = (lv_trigo_cos(angle) * r_in) / LV_TRIGO_SIN_MAX + scale_center.x;
+                p_start.y = (lv_trigo_sin(angle) * r_in) / LV_TRIGO_SIN_MAX + scale_center.y;
+            }
             line_dsc.color = indic->type_data.needle_line.color;
             line_dsc.width = indic->type_data.needle_line.width;
             line_dsc.opa = indic->opa > LV_OPA_MAX ? opa_main : (opa_main * indic->opa) >> 8;
@@ -649,7 +659,7 @@ static void draw_needles(lv_obj_t * obj, lv_draw_ctx_t * draw_ctx, const lv_area
             part_draw_dsc.type = LV_METER_DRAW_PART_NEEDLE_LINE;
             part_draw_dsc.line_dsc = &line_dsc;
             part_draw_dsc.p2 = &p_end;
-            part_draw_dsc.p1 = &scale_center;
+            part_draw_dsc.p1 = &p_start;
             lv_event_send(obj, LV_EVENT_DRAW_PART_BEGIN, &part_draw_dsc);
             lv_draw_line(draw_ctx, &line_dsc, part_draw_dsc.p1, &p_end);
             lv_event_send(obj, LV_EVENT_DRAW_PART_END, &part_draw_dsc);
@@ -728,11 +738,22 @@ static void inv_line(lv_obj_t * obj, lv_meter_indicator_t * indic, int32_t value
         p_end.y = (lv_trigo_sin(angle) * (r_out)) / LV_TRIGO_SIN_MAX + scale_center.y;
         p_end.x = (lv_trigo_cos(angle) * (r_out)) / LV_TRIGO_SIN_MAX + scale_center.x;
 
+        /* RDM7 PERF: with an inner start radius (see draw_needles) the
+         * dirty rect spans the inner point to the tip, not pivot to tip,
+         * so widgets stacked at the meter centre stay untouched on value
+         * changes. */
+        lv_point_t p_start = scale_center;
+        lv_coord_t r_in = indic->type_data.needle_line.r_in;
+        if(r_in > 0) {
+            p_start.x = (lv_trigo_cos(angle) * r_in) / LV_TRIGO_SIN_MAX + scale_center.x;
+            p_start.y = (lv_trigo_sin(angle) * r_in) / LV_TRIGO_SIN_MAX + scale_center.y;
+        }
+
         lv_area_t a;
-        a.x1 = LV_MIN(scale_center.x, p_end.x) - indic->type_data.needle_line.width - 2;
-        a.y1 = LV_MIN(scale_center.y, p_end.y) - indic->type_data.needle_line.width - 2;
-        a.x2 = LV_MAX(scale_center.x, p_end.x) + indic->type_data.needle_line.width + 2;
-        a.y2 = LV_MAX(scale_center.y, p_end.y) + indic->type_data.needle_line.width + 2;
+        a.x1 = LV_MIN(p_start.x, p_end.x) - indic->type_data.needle_line.width - 2;
+        a.y1 = LV_MIN(p_start.y, p_end.y) - indic->type_data.needle_line.width - 2;
+        a.x2 = LV_MAX(p_start.x, p_end.x) + indic->type_data.needle_line.width + 2;
+        a.y2 = LV_MAX(p_start.y, p_end.y) + indic->type_data.needle_line.width + 2;
 
         lv_obj_invalidate_area(obj, &a);
     }

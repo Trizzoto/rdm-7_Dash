@@ -62,6 +62,14 @@ typedef struct {
 	/* Rear extension behind the pivot, in pixels. Drawn in the same color and
 	 * width as the needle line; works alongside any tip style. 0 = no rear. */
 	uint8_t    needle_rear_length;   /* default: 0 */
+	/* Needle start radius, px from the pivot. 0 = needle drawn from the
+	 * centre (stock). Set it to the radius of a decorative centre cap so the
+	 * needle starts at the cap's edge: the hidden inner segment is neither
+	 * drawn nor invalidated, which stops every needle tick from repainting
+	 * whatever is stacked at the meter centre (cap, gear text, inner arcs).
+	 * Measured on the Time_Attack tach: the needle's full redraw stack cost
+	 * 27 ms/frame under live CAN with the needle reaching the pivot. */
+	uint16_t   needle_inner_radius;  /* default: 0 */
 	/* Tip style for line needles (ignored when needle_image_name is set):
 	 *   0 = Flat    (plain line end, LVGL default)
 	 *   1 = Rounded (soft round caps)

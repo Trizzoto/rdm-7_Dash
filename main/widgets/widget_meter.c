@@ -37,7 +37,8 @@ static const char *TAG = "widget_meter";
  * and the new value so partial-refresh clears stale rear pixels and paints
  * the new ones — without invalidating the whole meter every signal tick. */
 static void _meter_inv_rear(lv_obj_t *m, lv_meter_scale_t *scale,
-                             int32_t value, uint8_t rear_len, uint8_t width) {
+                             int32_t value, uint8_t rear_len, uint8_t width,
+                             uint16_t r_in) {
 	if (!m || !scale || rear_len == 0) return;
 
 	lv_area_t scale_area;
@@ -51,17 +52,25 @@ static void _meter_inv_rear(lv_obj_t *m, lv_meter_scale_t *scale,
 	int32_t angle = lv_map(value, scale->min, scale->max,
 	                        scale->rotation, scale->rotation + scale->angle_range);
 
-	/* Rear endpoint: opposite direction of the needle, distance = rear_len. */
+	/* The rear segment spans base→p_rear where base is the needle's start
+	 * point (the pivot, or r_in px out when an inner start radius is set —
+	 * the BEGIN-time p1 mutation extends backwards from wherever the needle
+	 * starts). */
+	lv_point_t base = scale_center;
+	if (r_in > 0) {
+		base.x += (lv_trigo_cos(angle) * (int32_t)r_in) / LV_TRIGO_SIN_MAX;
+		base.y += (lv_trigo_sin(angle) * (int32_t)r_in) / LV_TRIGO_SIN_MAX;
+	}
 	lv_point_t p_rear;
-	p_rear.x = scale_center.x - (lv_trigo_cos(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
-	p_rear.y = scale_center.y - (lv_trigo_sin(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
+	p_rear.x = base.x - (lv_trigo_cos(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
+	p_rear.y = base.y - (lv_trigo_sin(angle) * (int32_t)rear_len) / LV_TRIGO_SIN_MAX;
 
 	int32_t pad = (int32_t)width / 2 + 2;
 	lv_area_t a;
-	a.x1 = LV_MIN(scale_center.x, p_rear.x) - pad;
-	a.y1 = LV_MIN(scale_center.y, p_rear.y) - pad;
-	a.x2 = LV_MAX(scale_center.x, p_rear.x) + pad;
-	a.y2 = LV_MAX(scale_center.y, p_rear.y) + pad;
+	a.x1 = LV_MIN(base.x, p_rear.x) - pad;
+	a.y1 = LV_MIN(base.y, p_rear.y) - pad;
+	a.x2 = LV_MAX(base.x, p_rear.x) + pad;
+	a.y2 = LV_MAX(base.y, p_rear.y) + pad;
 	lv_obj_invalidate_area(m, &a);
 }
 
@@ -124,25 +133,32 @@ static void _meter_inv_shadow(lv_obj_t *m, lv_meter_scale_t *scale,
 		}
 	}
 
-	/* Pivot-anchored bbox: pivot stays at scale_center; only the tip is
-	 * displaced by (ox, oy). The rear extends BEHIND the pivot in the
-	 * shadow direction by up to rear_len — bound it loosely by padding
-	 * the pivot side by rear_len (over-invalidation is harmless; missed
-	 * pixels would leave trails). */
+	/* Pivot-anchored bbox: the shadow starts at the needle's start point
+	 * (the pivot, or needle_inner_radius px out along the needle when an
+	 * inner start radius is set); only the tip is displaced by (ox, oy).
+	 * The rear extends BEHIND the start point in the shadow direction by up
+	 * to rear_len — bound it loosely by padding the start side by rear_len
+	 * (over-invalidation is harmless; missed pixels would leave trails). */
+	lv_point_t base = scale_center;
+	if (md->needle_inner_radius > 0) {
+		base.x += (lv_trigo_cos(angle) * (int32_t)md->needle_inner_radius) / LV_TRIGO_SIN_MAX;
+		base.y += (lv_trigo_sin(angle) * (int32_t)md->needle_inner_radius) / LV_TRIGO_SIN_MAX;
+	}
 	lv_coord_t tip_x = (lv_coord_t)(p_end.x + ox);
 	lv_coord_t tip_y = (lv_coord_t)(p_end.y + oy);
 	int32_t rear_pad = (int32_t)md->needle_rear_length;
 	lv_area_t a;
-	a.x1 = LV_MIN(scale_center.x - rear_pad, tip_x) - pad;
-	a.y1 = LV_MIN(scale_center.y - rear_pad, tip_y) - pad;
-	a.x2 = LV_MAX(scale_center.x + rear_pad, tip_x) + pad;
-	a.y2 = LV_MAX(scale_center.y + rear_pad, tip_y) + pad;
+	a.x1 = LV_MIN(base.x - rear_pad, tip_x) - pad;
+	a.y1 = LV_MIN(base.y - rear_pad, tip_y) - pad;
+	a.x2 = LV_MAX(base.x + rear_pad, tip_x) + pad;
+	a.y2 = LV_MAX(base.y + rear_pad, tip_y) + pad;
 	lv_obj_invalidate_area(m, &a);
 }
 
-/* Forward decl: _meter_apply_channel re-subscribes this callback when a
- * channel's source index changes; the definition lives further down. */
+/* Forward decls: _meter_apply_channel re-subscribes this callback when a
+ * channel's source index changes; the definitions live further down. */
 static void _meter_on_signal(float value, bool is_stale, void *user_data);
+static uint32_t _meter_compute_angle_range(const meter_data_t *md);
 
 /* ── v14 Channel binding ─────────────────────────────────────────────
  * When md->channel_id is non-empty, the meter pulls signal_name, min,
@@ -298,16 +314,31 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	fv = _meter_apply_anchor(md, fv);
 	if (md->reverse) fv = md->max + md->min - fv;
 	int32_t v = lroundf(fv * (float)md->value_scale);
-	/* Value-gate: suppress redundant repaints when the integer needle value
-	 * hasn't moved. This is the only ticking widget without a value-gate, so
-	 * the sim's continuous triangle-wave sweep used to repaint the (large,
-	 * centerpiece) meter every render window even when v was unchanged. Real
-	 * CAN holds steady decoded values, so this also equalises sim vs CAN.
-	 * The stale path forces fv=md->min, which changes v and flows through.
+	/* Value-gate: suppress repaints that wouldn't visibly move the needle.
+	 * v carries (max-min)*value_scale resolution — 1 rpm on a 0-7000 tach is
+	 * 0.04° of sweep, invisible at the tip, yet live CAN jitters by a few
+	 * units continuously and EVERY accepted update repaints the needle's
+	 * whole pivot→tip bbox (expensive: on big centerpiece meters that rect
+	 * crosses everything stacked at the centre — measured 27 ms/frame on
+	 * the Time_Attack 450 px tach under live MaxxECU traffic). Quantize to
+	 * ~1 tip-pixel of arc travel: anything finer can't change a pixel.
+	 * The indicator is still set with full-resolution v when a repaint does
+	 * happen, so the needle always lands exactly. The stale path forces
+	 * fv=md->min, which lands in a different quantum and flows through.
 	 * The memo starts invalid (calloc) so the first post-create paint runs,
 	 * and is reset to invalid on every rebuild / forced-repaint path. */
-	if (md->_last_needle_valid && md->_last_needle_v == v) return;
-	md->_last_needle_v = v;
+	int32_t range_v = lroundf((md->max - md->min) * (float)md->value_scale);
+	if (range_v < 1) range_v = 1;
+	int32_t r_px  = (w->w < w->h ? w->w : w->h) / 2;
+	/* Tip arc length in px ≈ angle_range[deg] * π/180 * r. 0.01745 = π/180. */
+	int32_t steps = (int32_t)((float)_meter_compute_angle_range(md) *
+	                          0.01745f * (float)r_px);
+	if (steps < 1) steps = 1;
+	int32_t quant = range_v / steps;
+	if (quant < 1) quant = 1;
+	int32_t vq = v / quant;
+	if (md->_last_needle_valid && md->_last_needle_v == vq) return;
+	md->_last_needle_v = vq;
 	md->_last_needle_valid = true;
 	/* Only drive whichever meter is currently visible. Updating the hidden
 	 * sibling costs an LVGL indicator recompute + invalidation-mark that
@@ -328,9 +359,11 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
 		if (md->needle_rear_length > 0) {
 			_meter_inv_rear(md->night_meter, md->night_scale, old_v,
-			                md->needle_rear_length, md->needle_width);
+			                md->needle_rear_length, md->needle_width,
+			                md->needle_inner_radius);
 			_meter_inv_rear(md->night_meter, md->night_scale, v,
-			                md->needle_rear_length, md->needle_width);
+			                md->needle_rear_length, md->needle_width,
+			                md->needle_inner_radius);
 		}
 		if (md->shadow_enabled && md->night_shadow_needle) {
 			lv_meter_set_indicator_value(md->night_meter, md->night_shadow_needle, v);
@@ -343,9 +376,11 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		lv_meter_set_indicator_value(md->meter, md->needle, v);
 		if (md->needle_rear_length > 0) {
 			_meter_inv_rear(md->meter, md->scale, old_v,
-			                md->needle_rear_length, md->needle_width);
+			                md->needle_rear_length, md->needle_width,
+			                md->needle_inner_radius);
 			_meter_inv_rear(md->meter, md->scale, v,
-			                md->needle_rear_length, md->needle_width);
+			                md->needle_rear_length, md->needle_width,
+			                md->needle_inner_radius);
 		}
 		if (md->shadow_enabled && md->shadow_needle) {
 			lv_meter_set_indicator_value(md->meter, md->shadow_needle, v);
@@ -963,6 +998,7 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 		if (md->shadow_enabled && !needle_is_image) {
 			lv_meter_indicator_t *sh = lv_meter_add_needle_line(m, scale, md->needle_width,
 			                                                     md->shadow_color, md->needle_r_mod);
+			if (sh) sh->type_data.needle_line.r_in = md->needle_inner_radius;
 			if (use_night) md->night_shadow_needle = sh;
 			else           md->shadow_needle       = sh;
 		}
@@ -989,6 +1025,13 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 		} else {
 			needle = lv_meter_add_needle_line(m, scale, md->needle_width, needle_c, md->needle_r_mod);
 		}
+		/* Inner start radius (line needles only — image needles pivot at
+		 * centre by construction; also covers the image-load-failure
+		 * fallback, which lands on a line needle). Set BEFORE the initial
+		 * lv_meter_set_indicator_value below so the first inv_line already
+		 * uses the truncated bbox. */
+		if (needle && needle->type == LV_METER_INDICATOR_TYPE_NEEDLE_LINE)
+			needle->type_data.needle_line.r_in = md->needle_inner_radius;
 	}
 
 	/* Needle center ball */
@@ -1470,6 +1513,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_r_mod", md->needle_r_mod);
 	if (md->needle_rear_length != 0)
 		cJSON_AddNumberToObject(cfg, "needle_rear_length", md->needle_rear_length);
+	if (md->needle_inner_radius != 0)
+		cJSON_AddNumberToObject(cfg, "needle_inner_radius", md->needle_inner_radius);
 	if (md->needle_tip_style != 0)
 		cJSON_AddNumberToObject(cfg, "needle_tip_style", md->needle_tip_style);
 	if (md->needle_tip_base_w != 0)
@@ -1657,6 +1702,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->needle_r_mod = (int16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_rear_length");
 	if (cJSON_IsNumber(ap)) md->needle_rear_length = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_inner_radius");
+	if (cJSON_IsNumber(ap)) md->needle_inner_radius = (uint16_t)LV_CLAMP(0, ap->valueint, 400);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_style");
 	if (cJSON_IsNumber(ap)) md->needle_tip_style = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "needle_tip_base_w");
@@ -2122,6 +2169,7 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "needle_color") == 0)       { out->color = lv_color_to32(md->needle_color)     & 0xFFFFFF; return true; }
 	if (strcmp(name, "needle_r_mod") == 0)       { out->i = md->needle_r_mod;        return true; }
 	if (strcmp(name, "needle_rear_length") == 0) { out->i = md->needle_rear_length;  return true; }
+	if (strcmp(name, "needle_inner_radius") == 0) { out->i = md->needle_inner_radius; return true; }
 	if (strcmp(name, "needle_tip_style") == 0)   { out->i = md->needle_tip_style;    return true; }
 	if (strcmp(name, "needle_tip_base_w") == 0)  { out->i = md->needle_tip_base_w;   return true; }
 	if (strcmp(name, "needle_tip_point_w") == 0) { out->i = md->needle_tip_point_w;  return true; }
@@ -2279,6 +2327,24 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "needle_color") == 0)        { md->needle_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "needle_r_mod") == 0)        { md->needle_r_mod = (int16_t)in->i;      return true; }
 	if (strcmp(name, "needle_rear_length") == 0)  { md->needle_rear_length = (uint8_t)in->i; return true; }
+	if (strcmp(name, "needle_inner_radius") == 0) {
+		md->needle_inner_radius = (uint16_t)LV_CLAMP(0, in->i, 400);
+		/* Live-apply on the existing indicators, then repaint once. The
+		 * memo reset forces the next signal tick through the value-gate. */
+		if (md->needle && md->needle->type == LV_METER_INDICATOR_TYPE_NEEDLE_LINE)
+			md->needle->type_data.needle_line.r_in = md->needle_inner_radius;
+		if (md->shadow_needle)
+			md->shadow_needle->type_data.needle_line.r_in = md->needle_inner_radius;
+		if (md->night_needle && md->night_needle->type == LV_METER_INDICATOR_TYPE_NEEDLE_LINE)
+			md->night_needle->type_data.needle_line.r_in = md->needle_inner_radius;
+		if (md->night_shadow_needle)
+			md->night_shadow_needle->type_data.needle_line.r_in = md->needle_inner_radius;
+		md->_last_needle_valid = false;
+		if (LV_VALID(m)) lv_obj_invalidate(m);
+		if (md->night_meter && lv_obj_is_valid(md->night_meter))
+			lv_obj_invalidate(md->night_meter);
+		return true;
+	}
 	if (strcmp(name, "needle_tip_style") == 0)    { md->needle_tip_style = (uint8_t)in->i;  return true; }
 	if (strcmp(name, "needle_tip_base_w") == 0)   { md->needle_tip_base_w = (uint8_t)in->i; return true; }
 	if (strcmp(name, "needle_tip_point_w") == 0)  { md->needle_tip_point_w = (uint8_t)in->i; return true; }
@@ -2376,6 +2442,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->needle_color = lv_color_white();
 	md->needle_r_mod = -10;
 	md->needle_rear_length = 0;
+	md->needle_inner_radius = 0;
 	md->needle_tip_style   = 0;
 	md->needle_tip_base_w  = 0;
 	md->needle_tip_point_w = 0;
