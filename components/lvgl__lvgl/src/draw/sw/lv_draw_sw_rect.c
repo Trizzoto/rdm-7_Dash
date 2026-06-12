@@ -56,6 +56,72 @@ static void draw_border_simple(lv_draw_ctx_t * draw_ctx, const lv_area_t * outer
     static uint8_t sh_cache[LV_SHADOW_CACHE_SIZE * LV_SHADOW_CACHE_SIZE];
     static int32_t sh_cache_size = -1;
     static int32_t sh_cache_r = -1;
+#elif defined(ESP_PLATFORM)
+/* RDM7 PERF: PSRAM-backed multi-slot shadow corner cache.
+ *
+ * With LV_SHADOW_CACHE_SIZE 0, shadow_draw_corner_buf() recomputes the
+ * blurred corner — two box-blur passes over a (shadow_width + radius)^2
+ * uint16 workspace — on EVERY redraw whose dirty rect touches a shadowed
+ * object. A 250 px circle with a 30 px shadow costs ~28 ms per needle
+ * tick on the S3 (measured via /api/perf), which is what made "shape on
+ * top of a meter" layouts unusable. The stock cache fixes that but is a
+ * single slot in internal .bss (size^2 bytes), too small/too precious
+ * for the corner sizes dash bezels use (~155+).
+ *
+ * This variant keeps the stock semantics (same key, same copy-out-on-hit
+ * because the draw mirrors sh_buf in place) but holds N slots allocated
+ * lazily from PSRAM with LRU eviction. Content is fully determined by
+ * (corner_size, r): sw = corner_size - r, and colour/opa/position apply
+ * at blend time. Alloc failure just skips caching — correctness never
+ * depends on a slot. LVGL draws single-threaded, so no locking. */
+#include "esp_heap_caps.h"
+#define RDM7_SH_CACHE_SLOTS       4
+#define RDM7_SH_CACHE_MAX_CORNER  256   /* 64 KB/slot worst case */
+typedef struct {
+    uint8_t * buf;          /* PSRAM, corner_size^2 bytes used */
+    uint32_t  cap;          /* allocated bytes */
+    int32_t   corner_size;  /* -1 = empty */
+    int32_t   r;
+    uint32_t  stamp;        /* LRU clock */
+} rdm7_sh_slot_t;
+static rdm7_sh_slot_t rdm7_sh_cache[RDM7_SH_CACHE_SLOTS];
+static uint32_t rdm7_sh_clock = 0;
+
+static const uint8_t * rdm7_sh_cache_get(int32_t corner_size, int32_t r)
+{
+    for(int i = 0; i < RDM7_SH_CACHE_SLOTS; i++) {
+        if(rdm7_sh_cache[i].buf && rdm7_sh_cache[i].corner_size == corner_size &&
+           rdm7_sh_cache[i].r == r) {
+            rdm7_sh_cache[i].stamp = ++rdm7_sh_clock;
+            return rdm7_sh_cache[i].buf;
+        }
+    }
+    return NULL;
+}
+
+static void rdm7_sh_cache_put(const uint8_t * data, int32_t corner_size, int32_t r)
+{
+    if(corner_size <= 0 || corner_size > RDM7_SH_CACHE_MAX_CORNER) return;
+    uint32_t need = (uint32_t)corner_size * corner_size;
+
+    /*Pick an empty slot, else evict least-recently-used*/
+    rdm7_sh_slot_t * victim = &rdm7_sh_cache[0];
+    for(int i = 0; i < RDM7_SH_CACHE_SLOTS; i++) {
+        if(rdm7_sh_cache[i].buf == NULL) { victim = &rdm7_sh_cache[i]; break; }
+        if(rdm7_sh_cache[i].stamp < victim->stamp) victim = &rdm7_sh_cache[i];
+    }
+
+    if(victim->buf == NULL || victim->cap < need) {
+        if(victim->buf) heap_caps_free(victim->buf);
+        victim->buf = heap_caps_malloc(need, MALLOC_CAP_SPIRAM);
+        victim->cap = victim->buf ? need : 0;
+        if(victim->buf == NULL) { victim->corner_size = -1; return; }
+    }
+    lv_memcpy(victim->buf, data, need);
+    victim->corner_size = corner_size;
+    victim->r = r;
+    victim->stamp = ++rdm7_sh_clock;
+}
 #endif
 
 /**********************
@@ -502,6 +568,20 @@ static void LV_ATTRIBUTE_FAST_MEM draw_shadow(lv_draw_ctx_t * draw_ctx, const lv
             sh_cache_size = corner_size;
             sh_cache_r = r_sh;
         }
+    }
+#elif defined(ESP_PLATFORM)
+    /* RDM7 PERF: PSRAM multi-slot cache — see the slot definitions above.
+     * Copy-out on hit is mandatory: the corner buffer is mirrored in place
+     * further down, so handing out the cached pointer would corrupt it. */
+    const uint8_t * rdm7_hit = rdm7_sh_cache_get(corner_size, r_sh);
+    if(rdm7_hit) {
+        sh_buf = lv_mem_buf_get(corner_size * corner_size);
+        lv_memcpy(sh_buf, rdm7_hit, corner_size * corner_size);
+    }
+    else {
+        sh_buf = lv_mem_buf_get(corner_size * corner_size * sizeof(uint16_t));
+        shadow_draw_corner_buf(&core_area, (uint16_t *)sh_buf, dsc->shadow_width, r_sh);
+        rdm7_sh_cache_put(sh_buf, corner_size, r_sh);
     }
 #else
     sh_buf = lv_mem_buf_get(corner_size * corner_size * sizeof(uint16_t));

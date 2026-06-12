@@ -1056,6 +1056,16 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	 * pass synchronously. */
 	lv_obj_update_layout(m);
 
+	/* lv_meter draws the centre knob (LV_PART_INDICATOR) unconditionally in
+	 * DRAW_MAIN — even with zero indicators. At this point the needle hasn't
+	 * been added yet, so the part still carries the THEME's default knob
+	 * style, and without this hide the snapshot bakes a ghost white knob
+	 * into the face image (the lone static-vs-dynamic pixel diff found by
+	 * tools/meter_visual_parity.py). _meter_add_needle_indicator re-styles
+	 * the part right after the snapshot, so no restore is needed. */
+	lv_obj_set_style_size(m, 0, LV_PART_INDICATOR);
+	lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_INDICATOR);
+
 	/* Use TRUE_COLOR_ALPHA so meter_bg_opa < 255 round-trips correctly.
 	 * TRUE_COLOR would composite the translucent bg over a black
 	 * (zeroed) buffer and lose the alpha, leaving the user with a
@@ -1506,10 +1516,11 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "show_ticks", false);
 	if (!md->show_tick_labels)
 		cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
-	/* static_ticks defaults to FALSE — only emit when the user has
-	 * opted in, keeping the JSON quiet for the common path. */
-	if (md->static_ticks)
-		cJSON_AddBoolToObject(cfg, "static_ticks", true);
+	/* static_ticks defaults to TRUE — only emit when the user has opted
+	 * out, keeping the JSON quiet for the common path. (Layouts saved by
+	 * older firmware may carry a redundant `true`; from_json reads both.) */
+	if (!md->static_ticks)
+		cJSON_AddBoolToObject(cfg, "static_ticks", false);
 
 	/* Redline */
 	if (md->redline_enabled)
@@ -2372,11 +2383,14 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->tick_label_divisor = 1;
 	md->show_ticks = true;
 	md->show_tick_labels = true;
-	/* Static-tick optimisation is OFF by default for now — the snapshot
-	 * path needs more polish (sizing / z-order issues spotted in the
-	 * field with mid-size meters). Users can opt in per-meter through
-	 * the inspector once we've verified the rendering. */
-	md->static_ticks = false;
+	/* Static-tick optimisation is ON by default: the face (ticks / labels /
+	 * bg / redline arc) is rendered once into a PSRAM snapshot and only the
+	 * needle stays live. The historical "sizing / z-order issues" turned out
+	 * to be a single defect — the theme's default centre knob baked into the
+	 * snapshot (fixed in _meter_flatten_static_ticks); pixel-diff parity at
+	 * 140/240/450 px is verified by tools/meter_visual_parity.py. The flag
+	 * remains as a per-meter opt-out for debugging. */
+	md->static_ticks = true;
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;
