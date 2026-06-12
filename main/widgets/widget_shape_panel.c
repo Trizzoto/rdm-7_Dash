@@ -99,10 +99,18 @@ static void _polygon_draw_cb(lv_event_t *e) {
     int32_t pw = x2 - x1;
     int32_t ph = y2 - y1;
 
+    /* Custom draw bypasses lv_obj_init_draw_rect_dsc, so the recursive parent
+     * opacity (boot fade-in etc.) must be applied by hand or polygon shapes
+     * pop in at full opacity while everything else fades. */
+    lv_opa_t master_opa = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
+    if (master_opa <= LV_OPA_MIN) return;
+
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
     dsc.bg_color    = sd->bg_color;
-    dsc.bg_opa      = sd->bg_opa;
+    dsc.bg_opa      = master_opa < LV_OPA_MAX
+                      ? (lv_opa_t)(((uint32_t)sd->bg_opa * master_opa) >> 8)
+                      : sd->bg_opa;
     dsc.border_width = 0;
     dsc.radius      = 0;
 

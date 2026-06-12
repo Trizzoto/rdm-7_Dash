@@ -398,8 +398,10 @@ static inline lv_point_t _tip_pt(const lv_point_t *p1, int32_t dx, int32_t dy,
  * own opa to TRANSP so the original-position line draw is suppressed. */
 static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
                                        const lv_point_t *orig_p1,
-                                       const lv_point_t *orig_p2) {
+                                       const lv_point_t *orig_p2,
+                                       lv_opa_t master_opa) {
 	if (!ctx || !md) return;
+	if (master_opa <= LV_OPA_MIN) return;
 
 	/* Compute needle direction vector & length up front. Used both for the
 	 * dynamic-offset scaling and for the polygon/rear geometry below. */
@@ -443,7 +445,11 @@ static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
 	uint8_t style    = md->needle_tip_style;
 	uint8_t rear_len = md->needle_rear_length;
 	lv_color_t color = md->shadow_color;
-	lv_opa_t   opa   = md->shadow_opa;
+	/* master_opa carries the recursive parent opacity (boot fade-in etc.) —
+	 * these draws bypass lv_obj_init_draw_*_dsc so it must be applied here. */
+	lv_opa_t   opa   = master_opa < LV_OPA_MAX
+	                   ? (lv_opa_t)(((uint32_t)md->shadow_opa * master_opa) >> 8)
+	                   : md->shadow_opa;
 
 	/* Recompute the shadow direction vector + length. With pivot anchored
 	 * and only the tip offset, the shadow's axis is slightly skewed from
@@ -703,6 +709,13 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	if (dsc->type != LV_METER_DRAW_PART_NEEDLE_LINE) return;
 	if (dsc->p1 == NULL || dsc->p2 == NULL || dsc->line_dsc == NULL) return;
 
+	/* Recursive parent opacity (boot fade-in, future widget fades). LVGL
+	 * already factored it into line_dsc, but the tip polygon / rear / shadow
+	 * draws below build their own dscs from scratch and would otherwise pop
+	 * in at full opacity while the rest of the meter fades. */
+	lv_opa_t master_opa =
+		lv_obj_get_style_opa_recursive(lv_event_get_target(e), LV_PART_MAIN);
+
 	/* Shadow needle path. The shadow is a real lv_meter indicator added in
 	 * front of the main needle in the linked list (drawn first by READ_BACK
 	 * iteration), so LVGL fires DRAW_PART_NEEDLE_LINE for it before the main
@@ -715,7 +728,8 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	                  (dsc->sub_part_ptr == md->night_shadow_needle && md->night_shadow_needle != NULL));
 	if (is_shadow) {
 		if (code == LV_EVENT_DRAW_PART_BEGIN) {
-			_meter_draw_shadow_needle(dsc->draw_ctx, md, dsc->p1, dsc->p2);
+			_meter_draw_shadow_needle(dsc->draw_ctx, md, dsc->p1, dsc->p2,
+			                          master_opa);
 			dsc->line_dsc->opa = LV_OPA_TRANSP;
 		}
 		return;
@@ -791,7 +805,7 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 	lv_draw_rect_dsc_t rdsc;
 	lv_draw_rect_dsc_init(&rdsc);
 	rdsc.bg_color     = line_dsc->color;
-	rdsc.bg_opa       = LV_OPA_COVER;
+	rdsc.bg_opa       = master_opa;   /* COVER normally; scaled during fades */
 	rdsc.border_width = 0;
 
 	/* Tip polygon (styles 2-5). Rear extension below runs independently for
@@ -894,7 +908,8 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 		int32_t ry = p1->y - (dy * (int32_t)rear_len) / len;
 		lv_point_t rear_start = { (lv_coord_t)rx, (lv_coord_t)ry };
 		lv_draw_line_dsc_t rear_dsc = *line_dsc;
-		rear_dsc.opa = LV_OPA_COVER;
+		rear_dsc.opa = master_opa;   /* restore from the BEGIN-time hide, but
+		                              * keep any recursive fade opacity */
 		lv_draw_line(dsc->draw_ctx, &rear_dsc, &rear_start, p1);
 	}
 }

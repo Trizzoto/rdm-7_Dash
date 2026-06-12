@@ -78,10 +78,18 @@ static void _line_draw_cb(lv_event_t *e) {
     int32_t pw  = x2c - x1c;
     int32_t ph  = y2c - y1c;
 
+    /* Custom draw bypasses lv_obj_init_draw_line_dsc, so the recursive parent
+     * opacity (boot fade-in etc.) must be applied by hand or the line pops in
+     * at full opacity while everything else fades. */
+    lv_opa_t master_opa = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
+    if (master_opa <= LV_OPA_MIN) return;
+
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
     dsc.color      = ld->line_color;
-    dsc.opa        = ld->line_opa;
+    dsc.opa        = master_opa < LV_OPA_MAX
+                     ? (lv_opa_t)(((uint32_t)ld->line_opa * master_opa) >> 8)
+                     : ld->line_opa;
     dsc.width      = ld->line_width;
     dsc.dash_gap   = ld->dash_gap;
     dsc.dash_width = ld->dash_gap > 0 ? ld->dash_gap * 2 : 0;

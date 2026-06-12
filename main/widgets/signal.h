@@ -272,6 +272,13 @@ bool signal_unsubscribe(int16_t signal_index, signal_update_cb_t cb,
 void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * Drop CAN-dispatched signal updates for the next @p ms milliseconds (0 to
+ * resume immediately). Self-expiring deadline — safe even if the caller
+ * never resumes. Used by the boot reveal to keep animation frames cheap.
+ */
+void signal_dispatch_pause_ms(uint32_t ms);
+
+/**
  * Mark signals as stale if no CAN frame has been received within
  * SIGNAL_TIMEOUT_MS and notify subscribers.
  */

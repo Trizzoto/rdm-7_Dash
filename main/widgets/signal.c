@@ -342,11 +342,24 @@ static void notify_subscribers(signal_t *sig)
 
 /* ── Dispatch ───────────────────────────────────────────────────────────── */
 
+/* Self-expiring dispatch pause. Used by the boot curtain reveal so live CAN
+ * updates don't force expensive widget redraws mid-animation. Deadline-based
+ * rather than a bool so a missed "resume" (animation killed, screen torn
+ * down mid-sweep) can never wedge dispatch permanently. */
+static uint64_t s_dispatch_pause_until_ms = 0;
+
+void signal_dispatch_pause_ms(uint32_t ms)
+{
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_dispatch_pause_until_ms = (ms > 0) ? now + ms : 0;
+}
+
 void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 {
     if (!s_signals || !data) return;
 
     uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    if (now_ms < s_dispatch_pause_until_ms) return;
 
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];

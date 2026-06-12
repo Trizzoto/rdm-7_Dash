@@ -115,79 +115,163 @@ static void _first_run_check_cb(lv_timer_t *t)
 	}
 }
 
-/* ── Dashboard entrance: layered fade-in ─────────────────────────────────
- * The single boot animation: the dashboard's widgets fade in top-to-bottom,
- * staggered by their Y position. A single on/off setting (config_store
- * boot_anim) chooses this reveal vs. an instant appear. All of these run on the
- * LVGL task and assume ui_Screen3 is built. */
+/* ── Dashboard entrance: top-to-bottom curtain reveal ────────────────────
+ * The single boot animation: the fully-built (and already live) dashboard is
+ * covered by an opaque black curtain whose edge sweeps down the screen, with
+ * a soft semi-transparent band trailing the edge so content appears to fade
+ * in as the edge passes over it. A single on/off setting (config_store
+ * boot_anim) chooses this reveal vs. an instant appear. Runs on the LVGL
+ * task and assumes ui_Screen3 is built.
+ *
+ * Why a curtain and not the old per-widget staggered fades: any opacity fade
+ * invalidates the widget's full bounding box every animation tick, and the
+ * big centre widgets (450 px meter, 600 px arcs) overlap to near-full-screen
+ * — a full repaint of a real layout costs ~150 ms, so the staggered fade ran
+ * at 5-7 fps no matter how cheaply the fade itself rendered (opa_layered's
+ * chunked intermediate layers: 201 ms/frame; plain recursive opa: still
+ * 157 ms — measured with tools/perf_bootanim.py on Time_Attack). The curtain
+ * inverts the cost: per frame only the freshly revealed strip (~10-20 rows)
+ * renders, and everything still covered is skipped entirely by LVGL's
+ * cover-check because the curtain is opaque. Frame cost is bounded by sweep
+ * speed, not by layout complexity. */
 
-/* Per-object opacity animation. opa_LAYERED composites the whole widget —
- * container plus all children — at the given opacity; plain LV_STYLE_OPA only
- * affects the object's own bg/border and wouldn't fade the gauge/label
- * children with it. */
-static void _opa_anim_cb(void *obj, int32_t v)
+#define REVEAL_SLAT_H       16    /* px per curtain slat */
+#define REVEAL_MAX_SLATS    40    /* supports screens up to 640 px tall */
+#define REVEAL_SOFT_STEPS   4     /* strips in the soft trailing edge */
+#define REVEAL_SOFT_STEP_H  10    /* px per strip */
+#define REVEAL_SWEEP_MS     950   /* edge travel time over the screen */
+
+typedef struct {
+	lv_obj_t *slat[REVEAL_MAX_SLATS];    /* opaque cover, hidden one by one */
+	uint8_t   slat_count;
+	uint8_t   slats_hidden;              /* slats already revealed */
+	lv_obj_t *soft[REVEAL_SOFT_STEPS];   /* feathered band above the edge */
+	lv_coord_t scr_h;
+} reveal_ctx_t;
+
+static reveal_ctx_t s_reveal;
+
+/* Edge position v sweeps 0 .. scr_h + soft band height.
+ *
+ * The curtain is built from fixed slats that get LV_OBJ_FLAG_HIDDEN as the
+ * edge passes them — hiding invalidates ONLY that slat's few rows, unlike
+ * moving/resizing one big cover, which invalidates the whole remaining
+ * cover area every tick (still ~full-screen union → the cover-check can't
+ * rescue it because the union also contains the uncovered fresh strip).
+ * With slats, the still-covered region is never invalidated at all: the
+ * framebuffer already holds its black pixels. Per tick the work is the
+ * newly revealed rows (the full layout renders exactly once, amortized
+ * across the sweep) plus the small soft band. */
+static void _reveal_anim_cb(void *var, int32_t v)
 {
-	if (obj && lv_obj_is_valid((lv_obj_t *)obj))
-		lv_obj_set_style_opa_layered((lv_obj_t *)obj, (lv_opa_t)v,
-		                             LV_PART_MAIN | LV_STATE_DEFAULT);
+	(void)var;
+	reveal_ctx_t *r = &s_reveal;
+
+	/* Hide every slat whose bottom edge is above the sweep position. They
+	 * are created top-to-bottom, so this is a simple cursor walk. */
+	while (r->slats_hidden < r->slat_count) {
+		lv_coord_t bottom = (lv_coord_t)(r->slats_hidden + 1) * REVEAL_SLAT_H;
+		if (bottom > (lv_coord_t)v) break;
+		lv_obj_t *s = r->slat[r->slats_hidden];
+		if (s && lv_obj_is_valid(s))
+			lv_obj_add_flag(s, LV_OBJ_FLAG_HIDDEN);
+		r->slats_hidden++;
+	}
+
+	for (int i = 0; i < REVEAL_SOFT_STEPS; i++) {
+		lv_obj_t *s = r->soft[i];
+		if (!s || !lv_obj_is_valid(s)) continue;
+		lv_coord_t sy = (lv_coord_t)v - (lv_coord_t)(i + 1) * REVEAL_SOFT_STEP_H;
+		/* Park strips just off-screen until the sweep brings them in, and
+		 * let them run off the bottom at the end. */
+		if (sy < -REVEAL_SOFT_STEP_H) sy = -REVEAL_SOFT_STEP_H;
+		lv_obj_set_y(s, sy);
+	}
 }
 
-/* Make every dashboard widget transparent. Called BEFORE the screen is shown
- * so the fully-built layout never flashes into view. */
-static void _hide_all_widgets(void)
+static void _reveal_anim_ready_cb(lv_anim_t *a)
 {
-	widget_t *ws[WIDGET_REGISTRY_MAX];
-	uint8_t n = 0;
-	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
+	(void)a;
+	reveal_ctx_t *r = &s_reveal;
+	for (int i = 0; i < r->slat_count; i++) {
+		if (r->slat[i] && lv_obj_is_valid(r->slat[i])) lv_obj_del(r->slat[i]);
+		r->slat[i] = NULL;
+	}
+	r->slat_count = 0;
+	r->slats_hidden = 0;
+	for (int i = 0; i < REVEAL_SOFT_STEPS; i++) {
+		if (r->soft[i] && lv_obj_is_valid(r->soft[i])) lv_obj_del(r->soft[i]);
+		r->soft[i] = NULL;
+	}
+	/* Resume live updates right away (the pause would also self-expire). */
+	signal_dispatch_pause_ms(0);
+}
+
+/* Build the slat curtain + soft band over the (already-built) ui_Screen3 and
+ * start the sweep. Must run BEFORE the screen becomes visible so the finished
+ * layout never flashes into view ahead of the animation. */
+static void _start_curtain_reveal(void)
+{
+	lv_coord_t w = lv_disp_get_hor_res(lv_disp_get_default());
+	lv_coord_t h = lv_disp_get_ver_res(lv_disp_get_default());
+	s_reveal.scr_h = h;
+	s_reveal.slats_hidden = 0;
+
+	uint8_t n = (uint8_t)((h + REVEAL_SLAT_H - 1) / REVEAL_SLAT_H);
+	if (n > REVEAL_MAX_SLATS) n = REVEAL_MAX_SLATS;
+	s_reveal.slat_count = n;
 	for (uint8_t i = 0; i < n; i++) {
-		if (ws[i] && ws[i]->root && lv_obj_is_valid(ws[i]->root))
-			lv_obj_set_style_opa_layered(ws[i]->root, LV_OPA_TRANSP,
-			                             LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_t *s = lv_obj_create(ui_Screen3);
+		lv_obj_remove_style_all(s);
+		lv_obj_set_size(s, w, REVEAL_SLAT_H);
+		lv_obj_set_pos(s, 0, (lv_coord_t)i * REVEAL_SLAT_H);
+		lv_obj_set_style_bg_color(s, lv_color_black(), LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(s, LV_OPA_COVER, LV_PART_MAIN);
+		lv_obj_clear_flag(s, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+		s_reveal.slat[i] = s;
 	}
+
+	for (int i = 0; i < REVEAL_SOFT_STEPS; i++) {
+		lv_obj_t *s = lv_obj_create(ui_Screen3);
+		lv_obj_remove_style_all(s);
+		lv_obj_set_size(s, w, REVEAL_SOFT_STEP_H);
+		lv_obj_set_pos(s, 0, -REVEAL_SOFT_STEP_H);
+		lv_obj_set_style_bg_color(s, lv_color_black(), LV_PART_MAIN);
+		/* i=0 is nearest the curtain → most opaque. */
+		lv_obj_set_style_bg_opa(s,
+		        (lv_opa_t)(255 * (REVEAL_SOFT_STEPS - i) /
+		                   (REVEAL_SOFT_STEPS + 1)),
+		        LV_PART_MAIN);
+		lv_obj_clear_flag(s, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+		s_reveal.soft[i] = s;
+	}
+
+	/* Freeze CAN-driven widget updates while the curtain sweeps: every live
+	 * needle/value change would invalidate (and re-render) the expensive
+	 * centre widgets on top of the reveal work. Deadline-based with margin,
+	 * so it self-expires even if the ready callback never runs. */
+	signal_dispatch_pause_ms(REVEAL_SWEEP_MS + 500);
+
+	lv_anim_t a;
+	lv_anim_init(&a);
+	lv_anim_set_var(&a, &s_reveal);
+	lv_anim_set_values(&a, 0,
+	                   h + REVEAL_SOFT_STEPS * REVEAL_SOFT_STEP_H);
+	lv_anim_set_time(&a, REVEAL_SWEEP_MS);
+	lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+	lv_anim_set_exec_cb(&a, _reveal_anim_cb);
+	lv_anim_set_ready_cb(&a, _reveal_anim_ready_cb);
+	lv_anim_start(&a);
 }
 
-/* Fade widgets in top-to-bottom, staggered by layout Y. */
-static void _start_layered_reveal(void)
-{
-	widget_t *ws[WIDGET_REGISTRY_MAX];
-	uint8_t n = 0;
-	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
-	if (n == 0) return;
-
-	/* Insertion-sort by layout Y (top of screen first). */
-	for (uint8_t i = 1; i < n; i++) {
-		widget_t *key = ws[i];
-		int j = (int)i - 1;
-		while (j >= 0 && ws[j]->y > key->y) { ws[j + 1] = ws[j]; j--; }
-		ws[j + 1] = key;
-	}
-
-	const uint32_t stagger_ms = 55;   /* gap between successive widgets */
-	const uint32_t fade_ms    = 240;  /* per-widget fade duration */
-	for (uint8_t i = 0; i < n; i++) {
-		lv_obj_t *root = ws[i]->root;
-		if (!root || !lv_obj_is_valid(root)) continue;
-		lv_obj_set_style_opa_layered(root, LV_OPA_TRANSP,
-		                             LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_anim_t a;
-		lv_anim_init(&a);
-		lv_anim_set_var(&a, root);
-		lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-		lv_anim_set_time(&a, fade_ms);
-		lv_anim_set_delay(&a, i * stagger_ms);
-		lv_anim_set_exec_cb(&a, _opa_anim_cb);
-		lv_anim_start(&a);
-	}
-}
-
-/* Show the dashboard. When animate is set, hide all widgets first, swap the
- * screen in instantly (both screens are black so there's no visible cut), then
- * fade the widgets in top-to-bottom. Otherwise the layout just appears. */
+/* Show the dashboard. When animate is set, cover it with the curtain first,
+ * swap the screen in instantly (both screens are black so there's no visible
+ * cut), then sweep the curtain away top-to-bottom. Otherwise the layout just
+ * appears. */
 static void _reveal_dashboard_now(bool animate)
 {
-	if (animate) _hide_all_widgets();
+	if (animate) _start_curtain_reveal();
 	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
-	if (animate) _start_layered_reveal();
 }
 
 void splash_screen_reveal_dashboard(void)
