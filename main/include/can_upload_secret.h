@@ -14,8 +14,11 @@
  * tools/cloudflare-ota-proxy/README.md § "Rotating the HMAC secret".
  * Longer term, consider per-device keys derived from device_id.
  */
+/* Rotated 2026-06-12 (pre-beta, per the runbook). The worker side must be
+ * updated to match — until `wrangler secret put CAN_UPLOAD_HMAC_SECRET` is
+ * run with THIS value, uploads from this firmware 401 (fail-safe). */
 #define RDM7_CAN_UPLOAD_HMAC_SECRET \
-    "9d72ff881ef7ca928b99cece154ee62ae44f521a982a7687bd436cabb64b75b8"
+    "ca7d22c7ae1ad021595d291f170cd133e2957ad1bbf44e73cc5aca5789e5d0d3"
 
 /**
  * Worker URL for the CAN upload endpoint. Same worker as OTA proxy;
