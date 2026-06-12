@@ -177,6 +177,16 @@ typedef struct {
     lv_obj_t             *tick_meter;   /* runtime: overlay lv_meter, or NULL */
     lv_meter_scale_t     *tick_scale;   /* runtime: its scale */
     lv_meter_indicator_t *value_needle; /* runtime: the value-line needle, or NULL */
+    /* Static-tick snapshot (STANDARD mode, show_ticks on). The tick ring +
+     * labels render ONCE into a tight sector-bbox image (NOT the full widget
+     * bbox — a 600 px arc's ring sector is ~100 KB vs ~1 MB, two of which
+     * would not even fit in PSRAM) and the live overlay's tick rendering is
+     * stripped, so redraws crossing the ring blit cached pixels instead of
+     * re-running tick math + glyph rendering. tick_img is a child of the
+     * container (freed by the delete cascade); the dsc + pixel buffer are
+     * lv_mem allocations freed by _arc_free_tick_snapshot. */
+    lv_obj_t             *tick_img;     /* runtime: baked tick ring, or NULL */
+    lv_img_dsc_t         *tick_img_dsc; /* runtime: its image descriptor */
 
     /* ── Anchor curve (data) — piecewise-linear value mapping, ported from
      * widget_meter. Applied to the value BEFORE pct is computed (fill,

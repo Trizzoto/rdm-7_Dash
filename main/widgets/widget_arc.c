@@ -25,6 +25,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "core/lv_refr.h"   /* fake-disp render for the tick-ring snapshot */
 #include "widget_types.h"
 
 #include <math.h>
@@ -663,6 +664,170 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
     }
 }
 
+/* ── Static tick-ring snapshot ─────────────────────────────────────────────
+ * The overlay meter's ticks + labels are pure static content, yet they
+ * re-render (tick math + glyph blits) on every redraw whose dirty rect
+ * crosses the ring — which is constant on layouts where a fast signal
+ * drives the arc fill or another gauge sweeps over it (the Time_Attack
+ * 600 px arcs cost ~16 ms/frame under full sweep). Mirror of the meter's
+ * static_ticks flatten with one crucial difference: a full-bbox snapshot of
+ * a 600 px arc would be ~1 MB and two of them don't fit in PSRAM, so the
+ * render goes into a TIGHT bbox of just the swept ring sector (~100 KB),
+ * shown as an lv_img child at the sector's position. */
+
+static void _arc_free_tick_snapshot(arc_data_t *d) {
+	if (!d) return;
+	if (d->tick_img && lv_obj_is_valid(d->tick_img))
+		lv_obj_del(d->tick_img);
+	d->tick_img = NULL;
+	if (d->tick_img_dsc) {
+		if (d->tick_img_dsc->data) lv_mem_free((void *)d->tick_img_dsc->data);
+		lv_mem_free(d->tick_img_dsc);
+		d->tick_img_dsc = NULL;
+	}
+}
+
+/* Render the overlay meter (ticks + labels only — call BEFORE the value
+ * needle is added) into a sector-bbox image and strip the live tick
+ * rendering. Any failure falls back silently to the dynamic path. */
+static void _arc_flatten_overlay(arc_data_t *d, lv_obj_t *cont, lv_obj_t *m,
+                                 lv_meter_scale_t *scale, bool want_labels) {
+	if (!d || !cont || !m || !scale || !d->show_ticks) return;
+
+	/* The snapshot needs realised coordinates. */
+	lv_obj_update_layout(m);
+
+	lv_area_t content;
+	lv_obj_get_content_coords(m, &content);
+	/* Same radius/centre derivation lv_meter's draw uses (width-based). */
+	lv_coord_t r_edge = lv_area_get_width(&content) / 2;
+	lv_point_t c = { (lv_coord_t)(content.x1 + r_edge),
+	                 (lv_coord_t)(content.y1 + r_edge) };
+	if (r_edge <= 0) return;
+
+	/* Inner radius of the painted ring: ticks reach inward by the major
+	 * tick length; labels sit label_gap further in, centred on their
+	 * anchor point, so pad by the larger of the longest label's W/H. */
+	int32_t label_pad = 0;
+	if (want_labels) {
+		const lv_font_t *f = lv_obj_get_style_text_font(m, LV_PART_TICKS);
+		char txt[16];
+		uint16_t div = d->tick_label_divisor > 0 ? d->tick_label_divisor : 1;
+		lv_point_t s1 = {0, 0}, s2 = {0, 0};
+		lv_snprintf(txt, sizeof(txt), "%d",
+		            (int)lroundf(d->signal_min / (float)div));
+		lv_txt_get_size(&s1, txt, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+		lv_snprintf(txt, sizeof(txt), "%d",
+		            (int)lroundf(d->signal_max / (float)div));
+		lv_txt_get_size(&s2, txt, f, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+		lv_coord_t mw = LV_MAX(s1.x, s2.x), mh = LV_MAX(s1.y, s2.y);
+		label_pad = (int32_t)d->label_gap + LV_MAX(mw, mh);
+	}
+	int32_t r_in = (int32_t)r_edge - (int32_t)d->major_tick_length - label_pad - 6;
+	if (r_in < 0) r_in = 0;
+	lv_coord_t ext = _lv_obj_get_ext_draw_size(m);
+	int32_t r_out = (int32_t)r_edge + ext + 2;
+
+	/* Sector bbox: sample the sweep at both radii. */
+	int32_t range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
+	if (range == 0 && d->start_angle != d->end_angle) range = 360;
+	lv_area_t bbox = { LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN };
+	for (int32_t adeg = 0; adeg <= range; adeg += 3) {
+		int32_t ang = (int32_t)d->start_angle + LV_MIN(adeg, range);
+		int32_t cs = lv_trigo_cos((int16_t)ang);
+		int32_t sn = lv_trigo_sin((int16_t)ang);
+		for (int ri = 0; ri < 2; ri++) {
+			int32_t r = ri ? r_in : r_out;
+			lv_coord_t px = (lv_coord_t)(c.x + (cs * r) / LV_TRIGO_SIN_MAX);
+			lv_coord_t py = (lv_coord_t)(c.y + (sn * r) / LV_TRIGO_SIN_MAX);
+			bbox.x1 = LV_MIN(bbox.x1, px); bbox.y1 = LV_MIN(bbox.y1, py);
+			bbox.x2 = LV_MAX(bbox.x2, px); bbox.y2 = LV_MAX(bbox.y2, py);
+		}
+	}
+	lv_area_increase(&bbox, 8, 8);
+	/* Clamp to what the meter could legally draw. */
+	lv_area_t legal;
+	lv_obj_get_coords(m, &legal);
+	lv_area_increase(&legal, ext, ext);
+	if (!_lv_area_intersect(&bbox, &bbox, &legal)) return;
+
+	lv_coord_t iw = lv_area_get_width(&bbox);
+	lv_coord_t ih = lv_area_get_height(&bbox);
+	uint32_t px_size = LV_IMG_PX_SIZE_ALPHA_BYTE; /* RGB565 + A8 */
+	uint32_t buf_size = (uint32_t)iw * ih * px_size;
+	uint8_t *buf = lv_mem_alloc(buf_size);
+	if (!buf) {
+		ESP_LOGW(TAG, "tick snapshot alloc failed (%u B) — dynamic ticks",
+		         (unsigned)buf_size);
+		return;
+	}
+	lv_memset_00(buf, buf_size);
+
+	lv_img_dsc_t *dsc = lv_mem_alloc(sizeof(lv_img_dsc_t));
+	if (!dsc) { lv_mem_free(buf); return; }
+	lv_memset_00(dsc, sizeof(*dsc));
+
+	/* Fake-display render into the sector buffer — the same trick
+	 * lv_snapshot_take_to_buf uses, but with OUR clip area instead of the
+	 * full object bbox. */
+	lv_disp_t *obj_disp = lv_obj_get_disp(m);
+	lv_disp_drv_t driver;
+	lv_disp_drv_init(&driver);
+	driver.hor_res = lv_disp_get_hor_res(obj_disp);
+	driver.ver_res = lv_disp_get_ver_res(obj_disp);
+	lv_disp_drv_use_generic_set_px_cb(&driver, LV_IMG_CF_TRUE_COLOR_ALPHA);
+
+	lv_disp_t fake_disp;
+	lv_memset_00(&fake_disp, sizeof(fake_disp));
+	fake_disp.driver = &driver;
+
+	lv_draw_ctx_t *draw_ctx = lv_mem_alloc(obj_disp->driver->draw_ctx_size);
+	if (!draw_ctx) { lv_mem_free(buf); lv_mem_free(dsc); return; }
+	obj_disp->driver->draw_ctx_init(fake_disp.driver, draw_ctx);
+	fake_disp.driver->draw_ctx = draw_ctx;
+	draw_ctx->clip_area = &bbox;
+	draw_ctx->buf_area  = &bbox;
+	draw_ctx->buf       = buf;
+	driver.draw_ctx     = draw_ctx;
+
+	lv_disp_t *refr_ori = _lv_refr_get_disp_refreshing();
+	_lv_refr_set_disp_refreshing(&fake_disp);
+	lv_obj_redraw(draw_ctx, m);
+	_lv_refr_set_disp_refreshing(refr_ori);
+	obj_disp->driver->draw_ctx_deinit(fake_disp.driver, draw_ctx);
+	lv_mem_free(draw_ctx);
+
+	dsc->data = buf;
+	dsc->data_size = buf_size;
+	dsc->header.w = iw;
+	dsc->header.h = ih;
+	dsc->header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+
+	lv_obj_t *img = lv_img_create(cont);
+	if (!img) { lv_mem_free(buf); lv_mem_free(dsc); return; }
+	lv_img_set_src(img, dsc);
+	/* Place at the sector's position inside the container. */
+	lv_area_t cc;
+	lv_obj_get_content_coords(cont, &cc);
+	lv_obj_set_align(img, LV_ALIGN_TOP_LEFT);
+	lv_obj_set_pos(img, (lv_coord_t)(bbox.x1 - cc.x1),
+	                    (lv_coord_t)(bbox.y1 - cc.y1));
+	lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_move_background(img);
+
+	d->tick_img = img;
+	d->tick_img_dsc = dsc;
+
+	/* Strip the live tick rendering — it all lives in the image now.
+	 * Counts/range are preserved so the value-line needle's angle math
+	 * keeps working; widths go to 0 and labels transparent. */
+	uint8_t mtc = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
+	uint8_t mte = d->major_tick_every < 1 ? 1 : d->major_tick_every;
+	lv_meter_set_scale_ticks(m, scale, mtc, 0, 0, lv_color_black());
+	lv_meter_set_scale_major_ticks(m, scale, mte, 0, 0, lv_color_black(), 0);
+	lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
+}
+
 /* ── Overlay meter: ticks + value-line needle ──────────────────────────────
  * lv_arc has no tick API in LVGL v8, so when show_ticks and/or
  * show_value_line are set in STANDARD mode we drop a transparent lv_meter
@@ -750,6 +915,12 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
     }
 
+    /* Bake the tick ring into a sector image BEFORE the value-line needle
+     * is added (the needle must stay live, not be frozen into the bake).
+     * The relabel hook above is already registered so the snapshot carries
+     * the divisor/anchor/reverse label text. No-op when show_ticks is off. */
+    _arc_flatten_overlay(d, cont, m, scale, want_labels);
+
     /* Value-line needle. */
     if (d->show_value_line) {
         lv_color_t vlc = NIGHT_PICK_COLOR(night_active, d->night, value_line_color, d->value_line_color);
@@ -790,6 +961,7 @@ static void _arc_rebuild_overlay(widget_t *w, bool night_active) {
     d->tick_meter   = NULL;
     d->tick_scale   = NULL;
     d->value_needle = NULL;
+    _arc_free_tick_snapshot(d);
     _arc_build_overlay(d, w->root, (lv_coord_t)w->w, (lv_coord_t)w->h, night_active);
     /* Push the freshly-built value-needle to the cached value. */
     _arc_drive_value_needle(d, d->_cached_value);
@@ -975,12 +1147,19 @@ static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
             lv_obj_set_size(d->arc_obj, aw, ah);
         if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
             lv_obj_set_size(d->redline_arc_obj, aw, ah);
-        /* Overlay tick/value-line meter tracks the FULL container size so ticks
-         * stay at the rim (radius is independent of the inset arc). The scale's
-         * angle math is size-independent, so just resizing is enough — no
-         * rebuild. */
-        if (d->tick_meter && lv_obj_is_valid(d->tick_meter))
+        /* Overlay tick/value-line meter tracks the FULL container size so
+         * ticks stay at the rim (radius is independent of the inset arc).
+         * With the static tick snapshot the ring is a baked image at a
+         * fixed radius, so a size change requires a full overlay rebuild
+         * (which re-bakes at the new radius). Without a snapshot the old
+         * resize-in-place behaviour stands. */
+        if (d->tick_img) {
+            w->w = nw;
+            w->h = nh;
+            _arc_rebuild_overlay(w, night_mode_is_active());
+        } else if (d->tick_meter && lv_obj_is_valid(d->tick_meter)) {
             lv_obj_set_size(d->tick_meter, nw, nh);
+        }
     }
     w->w = nw;
     w->h = nh;
@@ -1457,6 +1636,10 @@ static void _arc_destroy(widget_t *w) {
     w->root = NULL;
 
     if (d) {
+        /* The tick_img OBJECT died with the root cascade above; this frees
+         * the descriptor + pixel buffer it pointed at. */
+        d->tick_img = NULL;
+        _arc_free_tick_snapshot(d);
         rdm_image_free(d->arc_img_dsc);
         rdm_image_free(d->arc_img_full_dsc);
         free(d);
