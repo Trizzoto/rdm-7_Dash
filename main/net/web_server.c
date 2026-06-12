@@ -135,6 +135,38 @@ void web_server_url_decode(char *s) {
 	*dst = '\0';
 }
 
+int web_server_recv_body_raw(httpd_req_t *req, char *buf, size_t cap) {
+	size_t want = req->content_len;
+	if (want == 0 || want >= cap) return -1;
+	size_t total = 0;
+	while (total < want) {
+		int r = httpd_req_recv(req, buf + total, want - total);
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+		if (r <= 0) return -1;
+		total += (size_t)r;
+	}
+	buf[total] = '\0';
+	return (int)total;
+}
+
+esp_err_t web_server_recv_body(httpd_req_t *req, char *buf, size_t cap) {
+	if (req->content_len == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	if (req->content_len >= cap) {
+		/* Truncating JSON just produces a confusing parse error downstream —
+		 * reject oversize bodies outright with the real reason. */
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		return ESP_FAIL;
+	}
+	if (web_server_recv_body_raw(req, buf, cap) < 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Receive failed");
+		return ESP_FAIL;
+	}
+	return ESP_OK;
+}
+
 /* HTTP handler for the main page — serves the gzipped web/index.html.
  *
  * Every browser shipped this decade negotiates gzip transparently, and

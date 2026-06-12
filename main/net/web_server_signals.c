@@ -69,12 +69,7 @@ static esp_err_t _fuel_status_handler(httpd_req_t *req) {
  * 2..FUEL_CAL_MAX_POINTS entries. Replaces the active curve atomically. */
 static esp_err_t _fuel_set_points_handler(httpd_req_t *req) {
 	char buf[1024];
-	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (ret <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[ret] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -214,12 +209,7 @@ static void _deferred_sim_toggle(void *arg) {
 
 static esp_err_t _signal_simulate_post_handler(httpd_req_t *req) {
 	char buf[64];
-	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (ret <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[ret] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -271,12 +261,7 @@ static void _deferred_inject(void *arg) {
 
 static esp_err_t _signal_inject_handler(httpd_req_t *req) {
 	char buf[512];
-	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (ret <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[ret] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -412,9 +397,7 @@ static void _deferred_signal_update(void *arg) {
 
 static esp_err_t _signal_update_handler(httpd_req_t *req) {
 	char buf[256];
-	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (ret <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body"); return ESP_FAIL; }
-	buf[ret] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON"); return ESP_FAIL; }
@@ -493,12 +476,7 @@ static void _deferred_clear(void *arg) {
 
 static esp_err_t _signal_clear_handler(httpd_req_t *req) {
 	char buf[128];
-	int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (ret <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[ret] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -592,16 +570,7 @@ static void _obd2_test_kick(void *arg)
 static esp_err_t _obd2_test_pid_handler(httpd_req_t *req)
 {
     char buf[384];
-    if (req->content_len >= sizeof(buf)) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-        return ESP_FAIL;
-    }
-    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (ret <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-        return ESP_FAIL;
-    }
-    buf[ret] = '\0';
+    if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
     cJSON *root = cJSON_Parse(buf);
     if (!root) {

@@ -173,12 +173,7 @@ static esp_err_t _brightness_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[64];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -231,12 +226,7 @@ static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[64];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -360,12 +350,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[256];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {

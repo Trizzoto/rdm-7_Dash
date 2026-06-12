@@ -731,13 +731,7 @@ static esp_err_t ecu_picker_mode_get_handler(httpd_req_t *req) {
 /* POST /api/ecu/picker_mode  body: {"auto": true|false} */
 static esp_err_t ecu_picker_mode_post_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
-	buf[n] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
 	const cJSON *ja = cJSON_GetObjectItemCaseSensitive(root, "auto");
@@ -777,13 +771,7 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 /* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
 static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
-	buf[n] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
@@ -1211,13 +1199,7 @@ static esp_err_t layout_switcher_get_handler(httpd_req_t *req) {
  * An empty csv erases the NVS key and reverts to filesystem-order cycling. */
 static esp_err_t layout_switcher_post_handler(httpd_req_t *req) {
 	char buf[LAYOUT_SWITCHER_CSV_MAX + 32];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
-	buf[n] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
 	const cJSON *jc = cJSON_GetObjectItemCaseSensitive(root, "csv");
@@ -1247,18 +1229,7 @@ static const httpd_uri_t layout_switcher_post_uri = {
 
 static esp_err_t layout_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Request body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Failed to receive body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1306,18 +1277,7 @@ static const httpd_uri_t layout_set_uri = {.uri = "/api/layout/set",
 // HTTP handler for deleting a layout JSON file
 static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Request body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Failed to receive body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1380,16 +1340,7 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
  * Body: { "old_name": "Foo", "new_name": "Bar" } */
 static esp_err_t layout_rename_handler(httpd_req_t *req) {
 	char buf[192];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1580,16 +1531,7 @@ static const httpd_uri_t splash_list_uri = {
 /* POST /api/splash/set â€” set active splash by name */
 static esp_err_t splash_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1633,16 +1575,7 @@ static const httpd_uri_t splash_set_uri = {
 /* POST /api/splash/delete â€” delete a splash layout file */
 static esp_err_t splash_delete_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1698,16 +1631,7 @@ static const httpd_uri_t splash_delete_uri = {
 /* POST /api/splash/fade â€” set splash fade enabled/disabled */
 static esp_err_t splash_fade_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1741,16 +1665,7 @@ static const httpd_uri_t splash_fade_uri = {
 /* POST /api/splash/enabled — enable/disable the boot splash screen */
 static esp_err_t splash_enabled_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1793,16 +1708,7 @@ static void _boot_anim_preview_async(void *arg) {
  * preview is true (and enabling) the sweep is demonstrated on the live dash. */
 static esp_err_t splash_bootanim_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {

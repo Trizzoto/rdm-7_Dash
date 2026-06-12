@@ -867,12 +867,7 @@ static esp_err_t _copy_file(const char *src, const char *dst) {
 /* POST /api/sd/copy — copy file between internal <-> SD */
 static esp_err_t sd_copy_handler(httpd_req_t *req) {
 	char buf[192];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -995,12 +990,7 @@ static const httpd_uri_t sd_copy_uri = {
 /* POST /api/sd/delete — delete file from SD card */
 static esp_err_t sd_delete_handler(httpd_req_t *req) {
 	char buf[128];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {

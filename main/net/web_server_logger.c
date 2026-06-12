@@ -81,9 +81,8 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 	log_start_args_t *args = NULL;
 	if (req->content_len > 0 && req->content_len < 128) {
 		char buf[128];
-		int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+		int received = web_server_recv_body_raw(req, buf, sizeof(buf));
 		if (received > 0) {
-			buf[received] = '\0';
 			cJSON *root = cJSON_Parse(buf);
 			if (root) {
 				cJSON *rate = cJSON_GetObjectItemCaseSensitive(root, "rate_hz");
@@ -127,12 +126,10 @@ static esp_err_t _log_config_post_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 	char buf[128];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
+	if (web_server_recv_body_raw(req, buf, sizeof(buf)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
 		return ESP_OK;
 	}
-	buf[received] = '\0';
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -532,8 +529,7 @@ static esp_err_t _canraw_cloud_upload_handler(httpd_req_t *req)
 	}
 
 	char body[1024 + 1] = {0};
-	int recvd = httpd_req_recv(req, body, sizeof(body) - 1);
-	if (recvd <= 0) {
+	if (web_server_recv_body_raw(req, body, sizeof(body)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body read failed");
 		return ESP_OK;
 	}
@@ -641,12 +637,10 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 		return ESP_OK;
 	}
 	char buf[256];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
+	if (web_server_recv_body_raw(req, buf, sizeof(buf)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
 		return ESP_OK;
 	}
-	buf[received] = '\0';
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");

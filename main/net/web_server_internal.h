@@ -58,6 +58,19 @@ bool web_server_filename_is_safe(const char *name);
 // safety check + path build so names with spaces (e.g. "Fugaz One") resolve.
 void web_server_url_decode(char *name);
 
+// Receive a (small, JSON) POST body into buf, looping until content_len is
+// consumed — a single httpd_req_recv() only returns the first TCP segment,
+// so split bodies used to cause intermittent 400s. Null-terminates. On any
+// failure (no body, socket error, body >= cap) sends the 4xx itself and
+// returns ESP_FAIL — callers just `return ESP_FAIL;`. Not for file uploads;
+// those stream chunks instead of buffering.
+esp_err_t web_server_recv_body(httpd_req_t *req, char *buf, size_t cap);
+
+// Same receive loop but never touches the response: returns body length, or
+// -1 on empty/oversize/socket error. For handlers with an OPTIONAL body or
+// their own error envelope.
+int web_server_recv_body_raw(httpd_req_t *req, char *buf, size_t cap);
+
 // Domain register() entry points — called from web_server_start().
 void web_server_captive_register(httpd_handle_t server);
 void web_server_gear_register(httpd_handle_t server);

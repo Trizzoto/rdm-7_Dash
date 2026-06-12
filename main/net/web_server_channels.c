@@ -316,21 +316,10 @@ static esp_err_t channels_canonical_handler(httpd_req_t *req) {
 /* ── Mutation helpers ────────────────────────────────────────────── */
 
 /* Read body up to max-1 bytes into buf. Returns ESP_OK on success.
- * Sends a 400 response and returns ESP_FAIL otherwise. */
+ * Sends a 400 response and returns ESP_FAIL otherwise. (This was the
+ * original loop the shared helper was promoted from — delegate now.) */
 static esp_err_t recv_json_body(httpd_req_t *req, char *buf, size_t max) {
-	int total = 0;
-	while (total < (int)max - 1) {
-		int ret = httpd_req_recv(req, buf + total, max - 1 - total);
-		if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
-		if (ret <= 0) break;
-		total += ret;
-	}
-	if (total <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[total] = '\0';
-	return ESP_OK;
+	return web_server_recv_body(req, buf, max);
 }
 
 /* Send `{"ok":true}` with the channel inlined under "channel". */
