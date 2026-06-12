@@ -1311,6 +1311,29 @@ static int chm_heal_shared_bindings(void) {
 	return cleared;
 }
 
+/* Preserve the bad live file as .corrupt, then try the staged .tmp and the
+ * previous-good .bak. Returns the recovered root (republished as the live
+ * file) or NULL when nothing usable exists. */
+static cJSON *chm_preserve_and_recover(void) {
+	remove(CHM_CORRUPT_PATH);                 /* drop any stale copy */
+	rename(CHM_FILE_PATH, CHM_CORRUPT_PATH);  /* preserve the bad file */
+
+	const char *recover_from[] = { CHM_TMP_PATH, CHM_BAK_PATH };
+	for (size_t i = 0; i < sizeof(recover_from) / sizeof(recover_from[0]); ++i) {
+		bool rexist = false;
+		cJSON *rroot = chm_read_and_parse(recover_from[i], &rexist);
+		if (rroot) {
+			ESP_LOGW(TAG, "recovered channels from %s", recover_from[i]);
+			/* Republish the recovered copy as the live file so the next
+			 * boot is clean (best-effort; recovery already succeeded). */
+			rename(recover_from[i], CHM_FILE_PATH);
+			return rroot;
+		}
+		if (rexist) remove(recover_from[i]);  /* recovery file also bad */
+	}
+	return NULL;
+}
+
 esp_err_t channel_manager_load_from_lfs(void) {
 	bool existed = false;
 	cJSON *root = chm_read_and_parse(CHM_FILE_PATH, &existed);
@@ -1328,24 +1351,7 @@ esp_err_t channel_manager_load_from_lfs(void) {
 		 * the user's bindings survive. */
 		ESP_LOGW(TAG, "%s failed to parse — preserving as %s and attempting recovery",
 		         CHM_FILE_PATH, CHM_CORRUPT_PATH);
-		remove(CHM_CORRUPT_PATH);                 /* drop any stale copy */
-		rename(CHM_FILE_PATH, CHM_CORRUPT_PATH);  /* preserve the bad file */
-
-		const char *recover_from[] = { CHM_TMP_PATH, CHM_BAK_PATH };
-		for (size_t i = 0; i < sizeof(recover_from) / sizeof(recover_from[0]); ++i) {
-			bool rexist = false;
-			cJSON *rroot = chm_read_and_parse(recover_from[i], &rexist);
-			if (rroot) {
-				ESP_LOGW(TAG, "recovered channels from %s", recover_from[i]);
-				/* Republish the recovered copy as the live file so the next
-				 * boot is clean (best-effort; recovery already succeeded). */
-				rename(recover_from[i], CHM_FILE_PATH);
-				root = rroot;
-				break;
-			}
-			if (rexist) remove(recover_from[i]);  /* recovery file also bad */
-		}
-
+		root = chm_preserve_and_recover();
 		if (!root) {
 			/* No recoverable copy. Return ESP_FAIL; init() may reseed now
 			 * that the corrupt file has been moved out of the way (so it
@@ -1355,14 +1361,33 @@ esp_err_t channel_manager_load_from_lfs(void) {
 		}
 	}
 
+	cJSON *chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
+	if (!cJSON_IsArray(chans)) {
+		/* Parses but has no channels array — structurally corrupt (e.g. a
+		 * torn write that still happens to be valid JSON). This used to
+		 * return ESP_OK, silently dropping every binding AND skipping .bak
+		 * recovery. Treat it exactly like an unparseable file. */
+		ESP_LOGW(TAG, "%s parses but has no channels array — attempting recovery",
+		         CHM_FILE_PATH);
+		cJSON_Delete(root);
+		root = chm_preserve_and_recover();
+		if (!root) {
+			ESP_LOGE(TAG, "no recoverable channels file — defaults will be seeded");
+			return ESP_FAIL;
+		}
+		chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
+		if (!cJSON_IsArray(chans)) {
+			/* Recovered copy is structurally bad too — give up cleanly. */
+			cJSON_Delete(root);
+			return ESP_FAIL;
+		}
+	}
+
 	cJSON *jver = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
 	int file_ver = cJSON_IsNumber(jver) ? jver->valueint : 1;
 	/* Mirror the on-disk version so saves before the deferred decode migration
 	 * don't prematurely stamp v3. */
 	s_disk_schema_version = (file_ver < 1) ? 1 : file_ver;
-
-	cJSON *chans = cJSON_GetObjectItemCaseSensitive(root, "channels");
-	if (!cJSON_IsArray(chans)) { cJSON_Delete(root); return ESP_OK; }
 
 	int sz = cJSON_GetArraySize(chans);
 	for (int i = 0; i < sz; ++i) {
