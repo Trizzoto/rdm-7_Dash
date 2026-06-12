@@ -77,10 +77,17 @@ esp_err_t config_store_save_splash_enabled(bool enabled);
 esp_err_t config_store_load_splash_enabled(bool *enabled);
 
 /* ── Dashboard boot loading animation ─────────────────────────────────────
-   Whether the dashboard "sweeps in" after the splash fades out (true) or
+   Whether the dashboard animates in after the splash fades out (true) or
    appears instantly (false). Default: true (animation on). */
 esp_err_t config_store_save_boot_anim(bool enabled);
 esp_err_t config_store_load_boot_anim(bool *enabled);
+
+/* Boot animation style (when enabled). 0 = individual widget fade-in,
+   top-to-bottom (default); 1 = curtain sweep. */
+#define BOOT_ANIM_STYLE_FADE    0
+#define BOOT_ANIM_STYLE_CURTAIN 1
+esp_err_t config_store_save_boot_anim_style(uint8_t style);
+esp_err_t config_store_load_boot_anim_style(uint8_t *style);
 
 /* ── First-run flag (#17) ───────────────────────────────────────────────
    Set to true once the first-run wizard has been dismissed or completed.

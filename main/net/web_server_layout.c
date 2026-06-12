@@ -1498,12 +1498,17 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 
 	bool boot_anim = true;
 	config_store_load_boot_anim(&boot_anim);
+	uint8_t boot_anim_style = BOOT_ANIM_STYLE_FADE;
+	config_store_load_boot_anim_style(&boot_anim_style);
 
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "active", active);
 	cJSON_AddBoolToObject(root, "fade_enabled", fade_enabled);
 	cJSON_AddBoolToObject(root, "enabled", splash_enabled);
 	cJSON_AddBoolToObject(root, "boot_anim", boot_anim);
+	cJSON_AddStringToObject(root, "boot_anim_style",
+	                        boot_anim_style == BOOT_ANIM_STYLE_CURTAIN
+	                            ? "curtain" : "fade");
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
@@ -1703,11 +1708,12 @@ static void _boot_anim_preview_async(void *arg) {
 	splash_screen_preview_boot_anim();
 }
 
-/* POST /api/splash/bootanim — enable/disable the dashboard boot loading
- * animation. Body: {"enabled": <bool>, "preview": <bool, optional>}. When
- * preview is true (and enabling) the sweep is demonstrated on the live dash. */
+/* POST /api/splash/bootanim — configure the dashboard boot loading
+ * animation. Body: {"enabled": <bool>, "style": "fade"|"curtain" (optional),
+ * "preview": <bool, optional>}. When preview is true (and enabling) the
+ * selected reveal is demonstrated on the live dash. */
 static esp_err_t splash_bootanim_handler(httpd_req_t *req) {
-	char buf[64];
+	char buf[96];
 	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
@@ -1724,15 +1730,25 @@ static esp_err_t splash_bootanim_handler(httpd_req_t *req) {
 	}
 
 	bool val = cJSON_IsTrue(enabled);
+	cJSON *style = cJSON_GetObjectItemCaseSensitive(root, "style");
+	bool has_style = cJSON_IsString(style) && style->valuestring;
+	if (has_style) {
+		config_store_save_boot_anim_style(
+		    strcmp(style->valuestring, "curtain") == 0
+		        ? BOOT_ANIM_STYLE_CURTAIN
+		        : BOOT_ANIM_STYLE_FADE);
+	}
 	cJSON *preview = cJSON_GetObjectItemCaseSensitive(root, "preview");
 	bool do_preview = cJSON_IsTrue(preview);
-	cJSON_Delete(root);
 
 	config_store_save_boot_anim(val);
-	ESP_LOGI(TAG, "Dashboard boot animation %s%s", val ? "enabled" : "disabled",
+	ESP_LOGI(TAG, "Dashboard boot animation %s, style=%s%s",
+	         val ? "enabled" : "disabled",
+	         has_style ? style->valuestring : "(unchanged)",
 	         (do_preview && val) ? " (preview)" : "");
+	cJSON_Delete(root);
 
-	/* Only worth previewing the sweep when it's being turned on. */
+	/* Only worth previewing the reveal when it's being turned on. */
 	if (do_preview && val)
 		rdm_async_call(_boot_anim_preview_async, NULL);
 

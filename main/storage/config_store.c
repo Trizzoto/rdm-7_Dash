@@ -494,6 +494,32 @@ esp_err_t config_store_load_boot_anim(bool *enabled)
     return ESP_OK;
 }
 
+esp_err_t config_store_save_boot_anim_style(uint8_t style)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "bootanimstyle", style);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_boot_anim_style(uint8_t *style)
+{
+    if (!style) return ESP_ERR_INVALID_ARG;
+    *style = BOOT_ANIM_STYLE_FADE; /* default: individual top-to-bottom fade */
+    nvs_handle_t handle;
+    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8;
+    if (nvs_get_u8(handle, "bootanimstyle", &u8) == ESP_OK &&
+        u8 <= BOOT_ANIM_STYLE_CURTAIN)
+        *style = u8;
+    nvs_close(handle);
+    return ESP_OK;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  *  DATA LOGGER RATE
  * ═══════════════════════════════════════════════════════════════════════ */

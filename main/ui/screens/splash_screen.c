@@ -115,13 +115,20 @@ static void _first_run_check_cb(lv_timer_t *t)
 	}
 }
 
-/* ── Dashboard entrance: top-to-bottom curtain reveal ────────────────────
- * The single boot animation: the fully-built (and already live) dashboard is
- * covered by an opaque black curtain whose edge sweeps down the screen, with
- * a soft semi-transparent band trailing the edge so content appears to fade
- * in as the edge passes over it. A single on/off setting (config_store
- * boot_anim) chooses this reveal vs. an instant appear. Runs on the LVGL
- * task and assumes ui_Screen3 is built.
+/* ── Dashboard entrance animations ───────────────────────────────────────
+ * Two user-selectable boot animation styles (config_store boot_anim_style,
+ * web UI hamburger → Startup), gated by the boot_anim on/off setting:
+ *   BOOT_ANIM_STYLE_FADE    — individual widget fade-in, staggered
+ *                             top-to-bottom (default; see further down)
+ *   BOOT_ANIM_STYLE_CURTAIN — opaque curtain sweeps down revealing the
+ *                             live dashboard beneath
+ * Both run on the LVGL task and assume ui_Screen3 is built.
+ *
+ * ── Style 1: curtain sweep ──────────────────────────────────────────────
+ * The fully-built (and already live) dashboard is covered by an opaque
+ * black curtain whose edge sweeps down the screen, with a soft
+ * semi-transparent band trailing the edge so content appears to fade in as
+ * the edge passes over it.
  *
  * Why a curtain and not the old per-widget staggered fades: any opacity fade
  * invalidates the widget's full bounding box every animation tick, and the
@@ -264,14 +271,126 @@ static void _start_curtain_reveal(void)
 	lv_anim_start(&a);
 }
 
-/* Show the dashboard. When animate is set, cover it with the curtain first,
- * swap the screen in instantly (both screens are black so there's no visible
- * cut), then sweep the curtain away top-to-bottom. Otherwise the layout just
- * appears. */
+/* ── Style 2: individual widget fade-in (the default) ────────────────────
+ * Every widget fades in on its own, staggered top-to-bottom by layout Y —
+ * the original boot look. Rebuilt on three perf lessons (numbers from
+ * tools/perf_bootanim.py on Time_Attack):
+ *   1. Plain LV_STYLE_OPA, never opa_layered: all lv_obj_init_draw_*_dsc
+ *      factor lv_obj_get_style_opa_recursive() into their descriptors, so a
+ *      parent's opa fades every child without compositing. opa_layered
+ *      re-rendered each fading widget through 24 KB layer chunks per frame
+ *      (201 ms frames); plain opa renders like a normal frame (custom draw
+ *      cbs apply opa_recursive themselves — widget_line, shape_panel
+ *      polygon, meter tip/rear/shadow).
+ *   2. CAN dispatch paused for the duration, so live values don't pile
+ *      extra redraws of the expensive centre widgets onto the fade frames.
+ *   3. BIG widgets never fade at the same time. A fading widget dirties its
+ *      whole bounding box every animation tick, and the big gauges
+ *      (450/600 px) overlap to near-full-screen — five of them mid-fade at
+ *      once is what produced the 201 ms frames. Small widgets keep the
+ *      quick ripple; big ones are serialized (each waits for the previous
+ *      big one to finish) and use a shorter fade since their fade only gets
+ *      a handful of frames anyway. */
+
+#define FADE_STAGGER_MS     50      /* ripple gap between successive widgets */
+#define FADE_SMALL_MS       220     /* fade duration, small widgets */
+#define FADE_BIG_MS         160     /* fade duration, big widgets */
+#define FADE_BIG_AREA_PX    90000UL /* >~300x300 counts as big */
+
+static void _opa_anim_cb(void *obj, int32_t v)
+{
+	if (obj && lv_obj_is_valid((lv_obj_t *)obj))
+		lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v,
+		                     LV_PART_MAIN | LV_STATE_DEFAULT);
+}
+
+/* Make every dashboard widget transparent. Called BEFORE the screen is shown
+ * so the fully-built layout never flashes into view. */
+static void _hide_all_widgets(void)
+{
+	widget_t *ws[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
+	for (uint8_t i = 0; i < n; i++) {
+		if (ws[i] && ws[i]->root && lv_obj_is_valid(ws[i]->root))
+			lv_obj_set_style_opa(ws[i]->root, LV_OPA_TRANSP,
+			                     LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+}
+
+static void _start_fade_reveal(void)
+{
+	widget_t *ws[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(ws, WIDGET_REGISTRY_MAX, &n);
+	if (n == 0) return;
+
+	/* Insertion-sort by layout Y (top of screen first). */
+	for (uint8_t i = 1; i < n; i++) {
+		widget_t *key = ws[i];
+		int j = (int)i - 1;
+		while (j >= 0 && ws[j]->y > key->y) { ws[j + 1] = ws[j]; j--; }
+		ws[j + 1] = key;
+	}
+
+	uint32_t delay       = 0;  /* next widget's start on the ripple */
+	uint32_t big_free_at = 0;  /* when the in-flight big widget finishes */
+	uint32_t total_end   = 0;
+	for (uint8_t i = 0; i < n; i++) {
+		lv_obj_t *root = ws[i]->root;
+		if (!root || !lv_obj_is_valid(root)) continue;
+
+		uint32_t area = (uint32_t)ws[i]->w * (uint32_t)ws[i]->h;
+		bool big = area > FADE_BIG_AREA_PX;
+		uint32_t fade_ms = big ? FADE_BIG_MS : FADE_SMALL_MS;
+
+		uint32_t d = delay;
+		if (big && d < big_free_at) d = big_free_at;
+		if (big) big_free_at = d + fade_ms;
+		/* Later (lower) widgets always start after this one so the
+		 * top-to-bottom order is preserved even when a big widget got
+		 * pushed back. */
+		delay = d + FADE_STAGGER_MS;
+		if (d + fade_ms > total_end) total_end = d + fade_ms;
+
+		lv_obj_set_style_opa(root, LV_OPA_TRANSP,
+		                     LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_anim_t a;
+		lv_anim_init(&a);
+		lv_anim_set_var(&a, root);
+		lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+		lv_anim_set_time(&a, fade_ms);
+		lv_anim_set_delay(&a, d);
+		lv_anim_set_exec_cb(&a, _opa_anim_cb);
+		lv_anim_start(&a);
+	}
+
+	/* Freeze CAN-driven updates until the last fade lands (self-expiring —
+	 * see signal_dispatch_pause_ms). */
+	signal_dispatch_pause_ms(total_end + 300);
+}
+
+/* Show the dashboard. When animate is set, the configured boot animation
+ * style hides the layout first (transparent widgets, or the curtain), the
+ * screen swaps in instantly (both screens are black so there's no visible
+ * cut), and the reveal plays. Otherwise the layout just appears. */
 static void _reveal_dashboard_now(bool animate)
 {
-	if (animate) _start_curtain_reveal();
-	lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+	if (!animate) {
+		lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+		return;
+	}
+
+	uint8_t style = BOOT_ANIM_STYLE_FADE;
+	config_store_load_boot_anim_style(&style);
+	if (style == BOOT_ANIM_STYLE_CURTAIN) {
+		_start_curtain_reveal();
+		lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+	} else {
+		_hide_all_widgets();
+		lv_scr_load_anim(ui_Screen3, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+		_start_fade_reveal();
+	}
 }
 
 void splash_screen_reveal_dashboard(void)

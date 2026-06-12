@@ -4063,6 +4063,14 @@
             <input type="checkbox" id="showBezelToggle" checked style="display:none;">
             <input type="checkbox" id="showWidgetsToggle" style="display:none;">
             <select id="screenSizeSelect" style="display:none;" onchange="switchScreenSize(this.value)"></select>
+            <!-- Boot animation picker. Hidden source element: the hamburger
+                 menu (visible at all widths) clones it into its Startup
+                 section, same pattern as screenModeSelect. -->
+            <select id="bootAnimSelect" style="display:none;" onchange="setBootAnim(this.value)">
+                <option value="fade" selected>Boot Anim: Fade In (top to bottom)</option>
+                <option value="curtain">Boot Anim: Curtain Sweep</option>
+                <option value="off">Boot Anim: Off</option>
+            </select>
             <div class="header-divider"></div>
             <select id="screenModeSelect" onchange="switchScreenMode(this.value)"
                 style="background:var(--bg); color:var(--text); border:1px solid var(--border); padding:5px 8px; border-radius:var(--radius-sm); font-size:11px; font-family:'JetBrains Mono', monospace; font-weight:600;">
@@ -19732,9 +19740,7 @@
                     { type: 'select', id: 'screenModeSelect' }
                 ]},
                 { heading: 'Startup', items: [
-                    { type: 'toggle', label: 'Layout Loading Animation', icon: 'activity',
-                      getState: () => (typeof window._bootAnim !== 'undefined' ? window._bootAnim : true),
-                      onclick: 'toggleBootAnim()' }
+                    { type: 'select', id: 'bootAnimSelect' }
                 ]},
                 { heading: 'File', items: [
                     { type: 'button', label: 'Import .rdm',         icon: 'upload',   onclick: 'importRdm()' },
@@ -19884,27 +19890,39 @@
             if (panel)   panel.classList.remove('active');
         }
 
-        /* ── Boot loading animation toggle (hamburger → Startup) ───────────
-         * Single on/off setting: when on, the dashboard sweeps in after the
-         * splash; when off it appears instantly. Persisted on the device;
-         * enabling also previews the sweep live on the dashboard. */
+        /* ── Boot loading animation picker (hamburger → Startup) ───────────
+         * Three modes: 'fade' (individual widget fade-in, top-to-bottom —
+         * the default), 'curtain' (sweep reveal), 'off' (instant appear).
+         * Persisted on the device as enabled + style; choosing an animated
+         * mode also previews it live on the dashboard. */
         async function _initBootAnim() {
             try {
                 const r = await fetch('/api/splash/list');
-                if (r.ok) { const d = await r.json(); window._bootAnim = (d.boot_anim !== false); }
-            } catch (e) { /* offline / dev server — leave default (on) */ }
+                if (r.ok) {
+                    const d = await r.json();
+                    const on = (d.boot_anim !== false);
+                    const style = d.boot_anim_style === 'curtain' ? 'curtain' : 'fade';
+                    window._bootAnim = on ? style : 'off';
+                    const sel = document.getElementById('bootAnimSelect');
+                    if (sel) sel.value = window._bootAnim;
+                }
+            } catch (e) { /* offline / dev server — leave default (fade) */ }
         }
-        async function toggleBootAnim() {
-            const next = !(typeof window._bootAnim !== 'undefined' ? window._bootAnim : true);
-            window._bootAnim = next;
+        async function setBootAnim(mode) {
+            window._bootAnim = mode;
+            const body = mode === 'off'
+                ? { enabled: false }
+                : { enabled: true, style: mode, preview: true };
+            const labels = { fade: 'Fade In (top to bottom)',
+                             curtain: 'Curtain Sweep', off: 'off' };
             try {
                 await fetch('/api/splash/bootanim', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: next, preview: true })
+                    body: JSON.stringify(body)
                 });
                 if (typeof showToast === 'function')
-                    showToast('Loading animation ' + (next ? 'on' : 'off'), 'success');
+                    showToast('Boot animation: ' + (labels[mode] || mode), 'success');
             } catch (e) {
                 if (typeof showToast === 'function')
                     showToast('Failed to update setting', 'error');
