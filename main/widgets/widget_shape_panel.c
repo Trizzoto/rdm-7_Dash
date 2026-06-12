@@ -317,6 +317,9 @@ static void _shape_panel_to_json(widget_t *w, cJSON *out) {
     if (sd->shadow_ofs_y != DEF_SHADOW_OFS_Y)
         cJSON_AddNumberToObject(cfg, "shadow_ofs_y", sd->shadow_ofs_y);
 
+    if (sd->bake_into_gauge)
+        cJSON_AddBoolToObject(cfg, "bake_into_gauge", true);
+
     {
         cJSON *n = cJSON_CreateObject();
         NIGHT_SERIALIZE_COLOR(n, sd->night, bg_color);
@@ -377,6 +380,9 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shadow_ofs_y");
     if (cJSON_IsNumber(item)) sd->shadow_ofs_y = (int8_t)item->valueint;
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "bake_into_gauge");
+    if (cJSON_IsBool(item)) sd->bake_into_gauge = cJSON_IsTrue(item);
 
     cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
     if (cJSON_IsObject(night)) {
@@ -494,6 +500,7 @@ static bool _shape_panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "shadow_opa") == 0)    { out->i = sd->shadow_opa;       return true; }
 	if (strcmp(name, "shadow_ofs_x") == 0)  { out->i = sd->shadow_ofs_x;     return true; }
 	if (strcmp(name, "shadow_ofs_y") == 0)  { out->i = sd->shadow_ofs_y;     return true; }
+	if (strcmp(name, "bake_into_gauge") == 0) { out->b = sd->bake_into_gauge; return true; }
 	return false;
 }
 
@@ -590,6 +597,14 @@ static bool _shape_panel_inspector_set(widget_t *w, const char *name,
 		sd->shadow_ofs_y = (int8_t)in->i;
 		if (obj && lv_obj_is_valid(obj))
 			lv_obj_set_style_shadow_ofs_y(obj, sd->shadow_ofs_y, LV_PART_MAIN);
+		return true;
+	}
+	if (strcmp(name, "bake_into_gauge") == 0) {
+		/* Live-toggle only records intent — the actual bake runs in the
+		 * post-build pass on the next layout (re)load, since it needs the
+		 * target meter's cached face to exist. The web editor saves + reloads
+		 * on change, so the bake takes effect on that round-trip. */
+		sd->bake_into_gauge = (in->i != 0);
 		return true;
 	}
 	return false;

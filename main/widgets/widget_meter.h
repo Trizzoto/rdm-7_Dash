@@ -179,6 +179,14 @@ typedef struct {
 	 * bg_img_src style — no sibling lv_img, no z-order problems. */
 	lv_img_dsc_t *tick_snapshot_dsc;
 	lv_img_dsc_t *night_tick_snapshot_dsc;
+	/* Overlay bake: decorative sibling widgets (shapes) absorbed INTO this
+	 * meter's cached face (see widget_meter_bake_overlay). Their objects are
+	 * composited into tick_snapshot_dsc / night_tick_snapshot_dsc once and
+	 * then hidden, so they cost nothing per frame. Pointers retained so the
+	 * lazily-built night face can re-composite them. */
+#define METER_MAX_BAKE 4
+	lv_obj_t   *baked_overlays[METER_MAX_BAKE];
+	uint8_t     baked_count;
 	/* Stored pointers to the redline-arc indicators on the day and
 	 * night meters. Needed by the static-tick flatten path so we can
 	 * collapse them to zero-length AFTER taking the snapshot (lv_meter
@@ -256,6 +264,14 @@ widget_t *widget_meter_create_instance(uint8_t value_idx);
 
 /** Return value index for meter widget. */
 uint8_t widget_meter_get_value_idx(const widget_t *w);
+
+/** Composite a decorative overlay object INTO this meter's cached face image
+ *  (day + night, if built), so it renders once instead of every frame. The
+ *  caller hides the live overlay afterwards. Requires the meter to have a
+ *  static-ticks face (returns false otherwise — nothing to bake into).
+ *  The overlay must sit within the meter's bounds; it renders below the
+ *  needle. Safe to call with a currently-hidden overlay. */
+bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay);
 
 #ifdef __cplusplus
 }

@@ -330,7 +330,8 @@
         { "name": "shadow_color",   "label": "Shadow Color",     "type": "color",   "default": "#000000", "category": "appearance", "night_overridable": true },
         { "name": "shadow_opa",     "label": "Shadow Opacity",   "type": "stepper", "default": 128, "category": "appearance", "min": 0, "max": 255 },
         { "name": "shadow_ofs_x",   "label": "Shadow X",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 },
-        { "name": "shadow_ofs_y",   "label": "Shadow Y",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 }
+        { "name": "shadow_ofs_y",   "label": "Shadow Y",         "type": "stepper", "default": 0,   "category": "appearance", "min": -100, "max": 100 },
+        { "name": "bake_into_gauge","label": "Bake Into Gauge (perf)","type": "checkbox", "default": false, "category": "appearance" }
       ]
     },
     {

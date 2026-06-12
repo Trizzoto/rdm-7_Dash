@@ -200,6 +200,11 @@ static esp_err_t _widgets_handler(httpd_req_t *req) {
 		cJSON_AddNumberToObject(o, "y", w->y);
 		cJSON_AddNumberToObject(o, "w", w->w);
 		cJSON_AddNumberToObject(o, "h", w->h);
+		/* Live hidden state — confirms overlay-bake absorbed a shape (baked
+		 * shapes are HIDDEN; their pixels live in the meter face). */
+		if (w->root && lv_obj_is_valid(w->root))
+			cJSON_AddBoolToObject(o, "hidden",
+			    lv_obj_has_flag(w->root, LV_OBJ_FLAG_HIDDEN));
 
 		/* Field values via inspector_get, keyed by schema name. Same
 		 * type→union mapping the on-device inspector uses. */

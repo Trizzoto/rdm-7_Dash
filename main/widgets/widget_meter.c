@@ -16,6 +16,7 @@
 #include "esp_log.h"
 #include "lvgl.h"
 #include "extra/others/snapshot/lv_snapshot.h"
+#include "core/lv_refr.h"   /* fake-disp render for overlay baking */
 #include "ui/theme.h"
 #include "ui/ui.h"
 #include "widget_types.h"
@@ -1082,6 +1083,96 @@ static void _meter_add_needle_indicator(meter_data_t *md, lv_obj_t *m,
 	*out_needle = needle;
 }
 
+/* ── Overlay bake ─────────────────────────────────────────────────────────
+ * Composite a decorative sibling object INTO a cached face buffer in place,
+ * using the same fake-display render the static-tick / arc-tick snapshots
+ * use — but WITHOUT clearing the buffer, so the overlay blends over the
+ * existing face. After this the caller hides the live overlay; from then on
+ * the decoration is part of the one-shot face blit. */
+static void _meter_bake_into_face(lv_obj_t *meter_obj, lv_img_dsc_t *face,
+                                  lv_obj_t *overlay) {
+	if (!meter_obj || !face || !face->data || !overlay) return;
+	if (!lv_obj_is_valid(meter_obj) || !lv_obj_is_valid(overlay)) return;
+
+	/* Reconstruct the snapshot's screen area: the face image spans the
+	 * meter's coords expanded by the ext-draw size active at snapshot time.
+	 * Derive that ext from face dims vs meter size so we don't depend on the
+	 * current (possibly-changed) ext. */
+	lv_area_t mc;
+	lv_obj_get_coords(meter_obj, &mc);
+	lv_coord_t mw = lv_area_get_width(&mc);
+	lv_coord_t mh = lv_area_get_height(&mc);
+	lv_coord_t ext_x = (lv_coord_t)(((int32_t)face->header.w - mw) / 2);
+	lv_coord_t ext_y = (lv_coord_t)(((int32_t)face->header.h - mh) / 2);
+	lv_area_t area = {
+		(lv_coord_t)(mc.x1 - ext_x),
+		(lv_coord_t)(mc.y1 - ext_y),
+		(lv_coord_t)(mc.x1 - ext_x + (lv_coord_t)face->header.w - 1),
+		(lv_coord_t)(mc.y1 - ext_y + (lv_coord_t)face->header.h - 1),
+	};
+
+	/* The overlay may already be hidden (lazy night re-bake) — lv_obj_redraw
+	 * skips hidden objects, so un-hide for the render and restore after. */
+	bool was_hidden = lv_obj_has_flag(overlay, LV_OBJ_FLAG_HIDDEN);
+	if (was_hidden) lv_obj_clear_flag(overlay, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_update_layout(overlay);
+
+	lv_disp_t *obj_disp = lv_obj_get_disp(meter_obj);
+	lv_disp_drv_t driver;
+	lv_disp_drv_init(&driver);
+	driver.hor_res = lv_disp_get_hor_res(obj_disp);
+	driver.ver_res = lv_disp_get_ver_res(obj_disp);
+	lv_disp_drv_use_generic_set_px_cb(&driver, LV_IMG_CF_TRUE_COLOR_ALPHA);
+
+	lv_disp_t fake_disp;
+	lv_memset_00(&fake_disp, sizeof(fake_disp));
+	fake_disp.driver = &driver;
+
+	lv_draw_ctx_t *draw_ctx = lv_mem_alloc(obj_disp->driver->draw_ctx_size);
+	if (draw_ctx) {
+		obj_disp->driver->draw_ctx_init(fake_disp.driver, draw_ctx);
+		fake_disp.driver->draw_ctx = draw_ctx;
+		draw_ctx->clip_area = &area;
+		draw_ctx->buf_area  = &area;
+		draw_ctx->buf       = (void *)face->data;
+		driver.draw_ctx     = draw_ctx;
+
+		lv_disp_t *refr_ori = _lv_refr_get_disp_refreshing();
+		_lv_refr_set_disp_refreshing(&fake_disp);
+		lv_obj_redraw(draw_ctx, overlay);
+		_lv_refr_set_disp_refreshing(refr_ori);
+
+		obj_disp->driver->draw_ctx_deinit(fake_disp.driver, draw_ctx);
+		lv_mem_free(draw_ctx);
+	}
+
+	if (was_hidden) lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay) {
+	if (!meter_w || !overlay) return false;
+	meter_data_t *md = (meter_data_t *)meter_w->type_data;
+	if (!md || !md->static_ticks) return false;
+	if (!md->tick_snapshot_dsc || !md->meter) return false;
+
+	_meter_bake_into_face(md->meter, md->tick_snapshot_dsc, overlay);
+	/* Night face: bake now if it already exists; otherwise the lazy night
+	 * build re-bakes from md->baked_overlays. */
+	if (md->night_meter && md->night_tick_snapshot_dsc)
+		_meter_bake_into_face(md->night_meter, md->night_tick_snapshot_dsc, overlay);
+
+	if (md->baked_count < METER_MAX_BAKE)
+		md->baked_overlays[md->baked_count++] = overlay;
+
+	/* bg_img_src points at tick_snapshot_dsc->data (modified in place); image
+	 * caching is off (LV_IMG_CACHE_DEF_SIZE 0) so a plain invalidate re-reads
+	 * the updated pixels. */
+	if (lv_obj_is_valid(md->meter)) lv_obj_invalidate(md->meter);
+	if (md->night_meter && lv_obj_is_valid(md->night_meter))
+		lv_obj_invalidate(md->night_meter);
+	return true;
+}
+
 /* Snapshot the meter's tick / label / bg / redline-arc layer, apply
  * that snapshot as the meter's own bg_img_src, strip the now-redundant
  * static parts off the live meter, then add the needle. This is the
@@ -2003,6 +2094,14 @@ static void _meter_build_night_lazy(widget_t *w) {
 		_meter_flatten_static_ticks(md, parent, true /*night*/);
 		/* _meter_flatten_static_ticks writes md->night_needle and
 		 * md->night_needle_scale itself, so no extra assignments needed. */
+		/* Re-composite any baked overlays into the freshly-built night face
+		 * so night mode shows the same baked decoration as day. */
+		for (uint8_t i = 0; i < md->baked_count; i++) {
+			if (md->baked_overlays[i] && md->night_tick_snapshot_dsc)
+				_meter_bake_into_face(md->night_meter,
+				                      md->night_tick_snapshot_dsc,
+				                      md->baked_overlays[i]);
+		}
 	}
 }
 

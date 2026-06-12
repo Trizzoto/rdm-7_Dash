@@ -13,6 +13,8 @@
 #include "widgets/widget_panel.h"
 #include "widgets/widget_rpm_bar.h"
 #include "widgets/widget_warning.h"
+#include "widgets/widget_meter.h"        /* widget_meter_bake_overlay */
+#include "widgets/widget_shape_panel.h"  /* shape_panel_data_t — bake flag */
 
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
@@ -197,6 +199,63 @@ static void _setup_night_trigger(void) {
 	         s_night_trig_name, (double)s_night_trig_threshold);
 }
 
+/* Overlay-bake pass. For each shape flagged "bake_into_gauge", composite it
+ * INTO the cached face of the static-ticks meter it sits over, then hide the
+ * live shape — so the decoration costs nothing per frame (it becomes part of
+ * the meter's one-shot face blit, rendered below the needle). Runs after the
+ * full layout is built; needs final coords, so it flushes layout first. */
+static void _overlay_bake_pass(lv_obj_t *parent, widget_t **ws, uint8_t n) {
+	if (!ws || n == 0) return;
+	if (parent) lv_obj_update_layout(parent);
+
+	for (uint8_t i = 0; i < n; i++) {
+		widget_t *s = ws[i];
+		if (!s || s->type != WIDGET_SHAPE_PANEL || !s->root ||
+		    !lv_obj_is_valid(s->root))
+			continue;
+		shape_panel_data_t *sd = (shape_panel_data_t *)s->type_data;
+		if (!sd) continue;
+		sd->baked = false;
+		if (!sd->bake_into_gauge) continue;
+
+		/* Target = the static-ticks meter below this shape in z-order
+		 * (created earlier → lower index) whose bounds contain the shape's
+		 * centre. Walk back from i to pick the closest one underneath. */
+		lv_area_t sa;
+		lv_obj_get_coords(s->root, &sa);
+		lv_coord_t scx = (lv_coord_t)((sa.x1 + sa.x2) / 2);
+		lv_coord_t scy = (lv_coord_t)((sa.y1 + sa.y2) / 2);
+		widget_t *target = NULL;
+		for (int j = (int)i - 1; j >= 0; j--) {
+			widget_t *m = ws[j];
+			if (!m || m->type != WIDGET_METER || !m->root ||
+			    !lv_obj_is_valid(m->root))
+				continue;
+			lv_area_t ma;
+			lv_obj_get_coords(m->root, &ma);
+			if (scx >= ma.x1 && scx <= ma.x2 && scy >= ma.y1 && scy <= ma.y2) {
+				target = m;
+				break;
+			}
+		}
+		if (!target) {
+			ESP_LOGW("dashboard", "bake: shape '%s' has no meter under it",
+			         s->id);
+			continue;
+		}
+		if (widget_meter_bake_overlay(target, s->root)) {
+			lv_obj_add_flag(s->root, LV_OBJ_FLAG_HIDDEN);
+			sd->baked = true;
+			ESP_LOGI("dashboard", "baked shape '%s' into meter '%s'",
+			         s->id, target->id);
+		} else {
+			ESP_LOGW("dashboard",
+			         "bake: meter '%s' has no cached face (static_ticks off)",
+			         target->id);
+		}
+	}
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  *  dashboard_init
  * ════════════════════════════════════════════════════════════════════════════
@@ -277,6 +336,9 @@ loaded:
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
 
+	/* Absorb bake-flagged decorative shapes into the meter faces they cover. */
+	_overlay_bake_pass(parent, s_widgets, s_widget_count);
+
 	/* Register long-press config on signal-bound widgets */
 	_register_widget_long_press();
 
@@ -340,6 +402,7 @@ static void _apply_layout_json_internal(lv_obj_t *parent, cJSON *root) {
 	} else {
 		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
 								 &s_widget_count);
+		_overlay_bake_pass(parent, s_widgets, s_widget_count);
 		_register_widget_long_press();
 		/* Re-bind layout-level night-mode CAN trigger for the new layout. */
 		_setup_night_trigger();

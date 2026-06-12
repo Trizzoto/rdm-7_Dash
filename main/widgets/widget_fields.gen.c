@@ -1814,6 +1814,16 @@ static const widget_field_t shape_panel_fields[] = {
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
+    {
+        .name = "bake_into_gauge", .label = "Bake Into Gauge (perf)",
+        .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
 };
 
 static const widget_field_option_t line_orientation_opts[] = {

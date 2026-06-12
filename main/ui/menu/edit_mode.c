@@ -14,6 +14,7 @@
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/inspector.h"    /* inspector_open */
+#include "widgets/widget_shape_panel.h" /* shape_panel_data_t — baked flag */
 /* menu_screen.h is no longer included from here — the legacy editor fallback
  * now lives inside inspector.c's placeholder tabs. */
 #include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
@@ -517,6 +518,18 @@ static void _set_decoration_clickable(bool clickable) {
             w->type != WIDGET_LINE) continue;
         if (clickable) lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
         else           lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+        /* A shape baked into a meter face is hidden in normal mode (it lives
+         * in the cached image). Reveal it while editing so it can be selected
+         * + moved; re-hide on exit. Moving it on-device leaves the baked copy
+         * stale until the next save/reload re-bakes — the web editor round-
+         * trips through a reload so it stays clean there. */
+        if (w->type == WIDGET_SHAPE_PANEL && w->type_data) {
+            shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
+            if (sd->baked) {
+                if (clickable) lv_obj_clear_flag(w->root, LV_OBJ_FLAG_HIDDEN);
+                else           lv_obj_add_flag(w->root, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
     }
 }
 
