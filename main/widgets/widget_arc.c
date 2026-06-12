@@ -967,6 +967,88 @@ static void _arc_rebuild_overlay(widget_t *w, bool night_active) {
     _arc_drive_value_needle(d, d->_cached_value);
 }
 
+/* ── Sector crop ───────────────────────────────────────────────────────────
+ * An arc's lv_obj spans the full circle's bounding square even when the
+ * visible stroke only sweeps a shallow sector (a 600 px-radius bottom band
+ * occupies ~600×150 of its 600×600 box). LVGL gates redraw by bbox
+ * intersection, so every needle/text update under the dead part of that
+ * square re-rasterized the arc's masks for nothing. The main + redline arcs
+ * therefore live inside a clipping container sized to the swept sector's
+ * bbox — dirty rects outside it skip the arc subtree entirely. The full-size
+ * arc objects are offset inside so the circle centre stays at the widget
+ * centre; geometry is untouched.
+ *
+ * The band's inner radius is taken conservatively deep (widths are capped at
+ * 50 px in the inspector and conditional rules may bump them at runtime), so
+ * width changes never need a crop recompute — only angle / size / inset
+ * changes do. */
+static void _arc_apply_sector_crop(widget_t *w) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d || !d->sector_clip || !lv_obj_is_valid(d->sector_clip)) return;
+
+    lv_coord_t cw = (lv_coord_t)w->w, ch = (lv_coord_t)w->h;
+    if (cw <= 0 || ch <= 0) return;
+    int ins = _arc_track_inset(d);
+    lv_coord_t aw = _arc_inset_dim(cw, ins);
+    lv_coord_t ah = _arc_inset_dim(ch, ins);
+    lv_coord_t r = LV_MIN(aw, ah) / 2;
+
+    lv_coord_t ext = 0;
+    if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+        ext = _lv_obj_get_ext_draw_size(d->arc_obj);
+
+    int32_t range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
+    if (range == 0) range = 360; /* full circle (or degenerate: treat as full) */
+
+    lv_area_t bbox = {0, 0, (lv_coord_t)(cw - 1), (lv_coord_t)(ch - 1)};
+    if (range < 360 && r > 0) {
+        int32_t r_out = (int32_t)r + ext + 2;
+        int32_t r_in  = (int32_t)r - 100 - ext;
+        if (r_in < 0) r_in = 0;
+        lv_point_t c = {(lv_coord_t)(cw / 2), (lv_coord_t)(ch / 2)};
+        lv_area_t sb = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
+        for (int32_t adeg = 0; adeg <= range; adeg += 3) {
+            int32_t ang = (int32_t)d->start_angle + LV_MIN(adeg, range);
+            int32_t cs = lv_trigo_cos((int16_t)ang);
+            int32_t sn = lv_trigo_sin((int16_t)ang);
+            for (int ri = 0; ri < 2; ri++) {
+                int32_t rr = ri ? r_in : r_out;
+                lv_coord_t px = (lv_coord_t)(c.x + (cs * rr) / LV_TRIGO_SIN_MAX);
+                lv_coord_t py = (lv_coord_t)(c.y + (sn * rr) / LV_TRIGO_SIN_MAX);
+                sb.x1 = LV_MIN(sb.x1, px); sb.y1 = LV_MIN(sb.y1, py);
+                sb.x2 = LV_MAX(sb.x2, px); sb.y2 = LV_MAX(sb.y2, py);
+            }
+        }
+        /* Rounded end caps overhang tangentially by up to half the stroke
+         * width; AA adds a fringe. */
+        uint8_t maxw = LV_MAX(d->arc_width, d->bg_arc_width);
+        if (d->redline_enabled)
+            maxw = LV_MAX(maxw, d->redline_arc_width > 0 ? d->redline_arc_width
+                                                         : d->arc_width);
+        lv_area_increase(&sb, maxw / 2 + 8, maxw / 2 + 8);
+        if (!_lv_area_intersect(&sb, &sb, &bbox))
+            sb = bbox;
+        bbox = sb;
+    }
+
+    lv_obj_set_align(d->sector_clip, LV_ALIGN_TOP_LEFT);
+    lv_obj_set_pos(d->sector_clip, bbox.x1, bbox.y1);
+    lv_obj_set_size(d->sector_clip,
+                    lv_area_get_width(&bbox), lv_area_get_height(&bbox));
+
+    /* Re-anchor the arcs inside the crop so the circle centre stays put. */
+    lv_coord_t ax = (lv_coord_t)((cw - aw) / 2 - bbox.x1);
+    lv_coord_t ay = (lv_coord_t)((ch - ah) / 2 - bbox.y1);
+    if (d->arc_obj && lv_obj_is_valid(d->arc_obj)) {
+        lv_obj_set_align(d->arc_obj, LV_ALIGN_TOP_LEFT);
+        lv_obj_set_pos(d->arc_obj, ax, ay);
+    }
+    if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj)) {
+        lv_obj_set_align(d->redline_arc_obj, LV_ALIGN_TOP_LEFT);
+        lv_obj_set_pos(d->redline_arc_obj, ax, ay);
+    }
+}
+
 /* ── Create: standard arc mode (now with redline + value text) ────────── */
 
 static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
@@ -989,8 +1071,22 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
      * px on every side. 0 = current behavior. */
     int ins = _arc_track_inset(d);
 
+    /* Sector-crop container for the live arcs (see _arc_apply_sector_crop).
+     * Created full-size; the crop call at the end of this function shrinks it
+     * to the swept sector's bbox. */
+    lv_obj_t *clip = lv_obj_create(cont);
+    lv_obj_set_size(clip, w->w, w->h);
+    lv_obj_set_align(clip, LV_ALIGN_TOP_LEFT);
+    lv_obj_set_pos(clip, 0, 0);
+    lv_obj_clear_flag(clip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_opa(clip, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(clip, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(clip, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(clip, 0, LV_PART_MAIN);
+    d->sector_clip = clip;
+
     /* Main moving arc. */
-    lv_obj_t *obj = lv_arc_create(cont);
+    lv_obj_t *obj = lv_arc_create(clip);
     lv_obj_set_size(obj, _arc_inset_dim((lv_coord_t)w->w, ins),
                          _arc_inset_dim((lv_coord_t)w->h, ins));
     lv_obj_set_align(obj, LV_ALIGN_CENTER);
@@ -1025,7 +1121,7 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
         int16_t rend   = d->reverse ? tang           : d->end_angle;
         uint8_t rw     = d->redline_arc_width > 0 ? d->redline_arc_width
                                                   : d->arc_width;
-        lv_obj_t *robj = lv_arc_create(cont);
+        lv_obj_t *robj = lv_arc_create(clip);
         lv_obj_set_size(robj, _arc_inset_dim((lv_coord_t)w->w, ins),
                               _arc_inset_dim((lv_coord_t)w->h, ins));
         lv_obj_set_align(robj, LV_ALIGN_CENTER);
@@ -1062,6 +1158,9 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
     _arc_build_overlay(d, cont, (lv_coord_t)w->w, (lv_coord_t)w->h,
                        night_mode_is_active());
 
+    /* Shrink the live arcs' redraw bbox to the swept sector. */
+    _arc_apply_sector_crop(w);
+
     w->root = cont;
 }
 
@@ -1073,6 +1172,7 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
 
     /* Reset runtime pointers in case this is a re-create (layout reload). */
     d->arc_obj         = NULL;
+    d->sector_clip     = NULL;
     d->redline_arc_obj = NULL;
     d->value_label     = NULL;
     d->tick_meter      = NULL;
@@ -1163,6 +1263,8 @@ static void _arc_resize(widget_t *w, uint16_t nw, uint16_t nh) {
     }
     w->w = nw;
     w->h = nh;
+    /* Crop tracks the new geometry (also re-anchors the arc children). */
+    if (d) _arc_apply_sector_crop(w);
 }
 
 static void _arc_open_settings(widget_t *w) { (void)w; }
@@ -1870,6 +1972,7 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 			lv_arc_set_bg_angles(a, d->start_angle, d->end_angle);
 			lv_arc_set_angles(a, d->start_angle, d->end_angle);
 		}
+		_arc_apply_sector_crop(w);
 		return true;
 	}
 	if (strcmp(name, "signal_min") == 0) { d->signal_min = (float)in->i; return true; }
@@ -1902,6 +2005,7 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
 			lv_obj_set_size(d->redline_arc_obj, aw, ah);
 		_arc_rebuild_overlay(w, night_mode_is_active());
+		_arc_apply_sector_crop(w);
 		return true;
 	}
 	if (strcmp(name, "rounded_ends") == 0) {

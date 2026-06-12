@@ -58,6 +58,11 @@ typedef struct {
     uint8_t    bg_arc_width;    /* default: 10 */
     bool       rounded_ends;    /* default: false */
     lv_obj_t  *arc_obj;         /* runtime only */
+    lv_obj_t  *sector_clip;     /* runtime: clipping container sized to the
+                                 * swept-sector bbox; the arc + redline arc live
+                                 * inside it so dirty rects in the dead part of
+                                 * the circle's bounding square never wake the
+                                 * arc draw at all (standard mode only) */
 
     /* Signal binding (optional data source) */
     char       signal_name[32]; /* default: "" */
