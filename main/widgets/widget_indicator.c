@@ -971,10 +971,12 @@ static void _indicator_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "signal_name", id->signal_name);
 		if (id->channel_id[0] != '\0')
 			cJSON_AddStringToObject(cfg, "channel", id->channel_id);
-		cJSON_AddNumberToObject(cfg, "color_on", (int)id->color_on.full);
-		cJSON_AddNumberToObject(cfg, "opa_on", id->opa_on);
-		cJSON_AddNumberToObject(cfg, "color_off", (int)id->color_off.full);
-		cJSON_AddNumberToObject(cfg, "opa_off", id->opa_off);
+		/* base_* not the live fields — a conditional-rule override may be
+		 * active right now and must never be persisted as configuration. */
+		cJSON_AddNumberToObject(cfg, "color_on", (int)id->base_color_on.full);
+		cJSON_AddNumberToObject(cfg, "opa_on", id->base_opa_on);
+		cJSON_AddNumberToObject(cfg, "color_off", (int)id->base_color_off.full);
+		cJSON_AddNumberToObject(cfg, "opa_off", id->base_opa_off);
 		/* Night-mode overrides — emit only fields that have an override set */
 		cJSON *n = cJSON_CreateObject();
 		NIGHT_SERIALIZE_COLOR(n, id->night, color_on);
@@ -1014,6 +1016,11 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) id->color_off.full = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opa_off");
 	if (cJSON_IsNumber(item)) id->opa_off = (uint8_t)item->valueint;
+	/* Loaded config is the new base for rule overrides to layer onto. */
+	id->base_color_on  = id->color_on;
+	id->base_opa_on    = id->opa_on;
+	id->base_color_off = id->color_off;
+	id->base_opa_off   = id->opa_off;
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -1126,10 +1133,12 @@ static bool _indicator_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "input_source") == 0) { out->i = id->input_source;         return true; }
 	if (strcmp(name, "animation") == 0)    { out->b = id->animation_enabled;    return true; }
 	if (strcmp(name, "is_momentary") == 0) { out->b = id->is_momentary;         return true; }
-	if (strcmp(name, "opa_on") == 0)       { out->i = id->opa_on;               return true; }
-	if (strcmp(name, "opa_off") == 0)      { out->i = id->opa_off;              return true; }
-	if (strcmp(name, "color_on") == 0)     { out->color = lv_color_to32(id->color_on)  & 0xFFFFFF; return true; }
-	if (strcmp(name, "color_off") == 0)    { out->color = lv_color_to32(id->color_off) & 0xFFFFFF; return true; }
+	/* base_* — the inspector shows configured values, not whatever a
+	 * conditional rule happens to be overriding right now. */
+	if (strcmp(name, "opa_on") == 0)       { out->i = id->base_opa_on;          return true; }
+	if (strcmp(name, "opa_off") == 0)      { out->i = id->base_opa_off;         return true; }
+	if (strcmp(name, "color_on") == 0)     { out->color = lv_color_to32(id->base_color_on)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_off") == 0)    { out->color = lv_color_to32(id->base_color_off) & 0xFFFFFF; return true; }
 	return false;
 }
 
@@ -1168,28 +1177,63 @@ static bool _indicator_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "color_on") == 0) {
-		id->color_on = lv_color_hex(in->color);
+		id->color_on = id->base_color_on = lv_color_hex(in->color);
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "color_off") == 0) {
-		id->color_off = lv_color_hex(in->color);
+		id->color_off = id->base_color_off = lv_color_hex(in->color);
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "opa_on") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
-		id->opa_on = (uint8_t)v;
+		id->opa_on = id->base_opa_on = (uint8_t)v;
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "opa_off") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
-		id->opa_off = (uint8_t)v;
+		id->opa_off = id->base_opa_off = (uint8_t)v;
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	return false;
+}
+
+/* ── apply_overrides: conditional-rule styling ─────────────────────────────
+ *
+ * Indicator was the one widget with rules support missing — rules on an
+ * indicator would subscribe and evaluate but silently apply nothing. The
+ * renderers (state flips, blink timer, night mode) all read color/opa from
+ * indicator_data_t, so overrides mutate those live fields — reset from the
+ * base_* copies first so deactivated rules restore the configured look —
+ * then repaint through the same path a state change uses. */
+static void _indicator_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || w->type != WIDGET_INDICATOR || !w->type_data) return;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+
+	id->color_on  = id->base_color_on;
+	id->opa_on    = id->base_opa_on;
+	id->color_off = id->base_color_off;
+	id->opa_off   = id->base_opa_off;
+
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "color_on") == 0 && o->value_type == RULE_VAL_COLOR) {
+			id->color_on.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "color_off") == 0 && o->value_type == RULE_VAL_COLOR) {
+			id->color_off.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "opa_on") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->opa_on = (uint8_t)v;
+		} else if (strcmp(o->field_name, "opa_off") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->opa_off = (uint8_t)v;
+		}
+	}
+
+	update_indicator_ui_immediate(id->slot);
 }
 
 widget_t *widget_indicator_create_instance(uint8_t slot) {
@@ -1212,6 +1256,10 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	id->opa_on = 255;                         /* fully visible */
 	id->color_off = lv_color_hex(0x333333);   /* dark grey */
 	id->opa_off = 70;                         /* dimmed when off (visible) */
+	id->base_color_on  = id->color_on;
+	id->base_opa_on    = id->opa_on;
+	id->base_color_off = id->color_off;
+	id->base_opa_off   = id->opa_off;
 
 	w->type = WIDGET_INDICATOR;
 	w->slot = s;
@@ -1229,6 +1277,7 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	w->from_json = _indicator_from_json;
 	w->destroy = _indicator_destroy;
 	w->apply_night_mode = _indicator_apply_night_mode;
+	w->apply_overrides = _indicator_apply_overrides;
 	w->inspector_get = _indicator_inspector_get;
 	w->inspector_set = _indicator_inspector_set;
 

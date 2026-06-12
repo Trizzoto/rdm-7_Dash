@@ -26,11 +26,20 @@ typedef struct {
 	/* ── v14 channel binding ─────────────────────────────────── */
 	char     channel_id[32];
 	void    *channel;     /* channel_t* — opaque */
-	/* Color-based state rendering (replaces opacity-based) */
+	/* Color-based state rendering (replaces opacity-based).
+	 * color_on/opa_on/... are the LIVE values the renderers read; the base_*
+	 * twins hold the user-configured values. They differ only while a
+	 * conditional rule override is active — apply_overrides resets live from
+	 * base then layers the active overrides on top. to_json / inspector_get
+	 * must read base_* so an active rule never gets persisted as config. */
 	lv_color_t color_on;        /* default: amber 0xFFBF00 */
 	uint8_t    opa_on;          /* default: 255 (fully visible) */
 	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
 	uint8_t    opa_off;         /* default: 0 (invisible) */
+	lv_color_t base_color_on;
+	uint8_t    base_opa_on;
+	lv_color_t base_color_off;
+	uint8_t    base_opa_off;
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	indicator_night_overrides_t night;
 } indicator_data_t;
