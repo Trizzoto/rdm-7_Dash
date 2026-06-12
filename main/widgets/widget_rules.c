@@ -219,12 +219,16 @@ void widget_rules_from_json(widget_t *w, const cJSON *config)
     w->last_rule_mask = 0xFFFFFFFFu;
 
     for (uint8_t i = 0; i < count; i++) {
-        const cJSON *rule_obj = cJSON_GetArrayItem(rules_arr, (int)i);
-        if (!cJSON_IsObject(rule_obj)) continue;
-
+        /* Mark the slot inert BEFORE the validity check — a malformed
+         * (non-object) entry must not leave the calloc'd signal_index of 0,
+         * which is a real signal: the slot would subscribe to and evaluate
+         * against whatever signal happens to be index 0. */
         widget_rule_t *r = &w->rules[i];
         r->signal_index = -1;
         r->is_active = false;
+
+        const cJSON *rule_obj = cJSON_GetArrayItem(rules_arr, (int)i);
+        if (!cJSON_IsObject(rule_obj)) continue;
 
         /* signal_name */
         const cJSON *sn = cJSON_GetObjectItemCaseSensitive(rule_obj, "signal_name");
