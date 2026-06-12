@@ -29,6 +29,7 @@
 #include "../../can/can_manager.h"
 #include "../../can/obd2.h"
 #include "../../data/channel_manager.h"
+#include "../../data/channel_math.h"
 #include "../../data/channel_source_apply.h"
 #include "../../data/canonical_channels.h"
 #include "../../data/unit_convert.h"
@@ -251,6 +252,14 @@ static lv_obj_t  *s_step3         = NULL;
 static lv_obj_t  *s_bind_sheet            = NULL;
 static const channel_t *s_bind_target_chan = NULL;
 
+/* Calculate (math channel) sheet — declared here so the wizard teardown can
+ * null the pointers; the builder + callbacks live further down. */
+static lv_obj_t *s_math_sheet     = NULL;
+static lv_obj_t *s_math_a_dd      = NULL;
+static lv_obj_t *s_math_op_dd     = NULL;
+static lv_obj_t *s_math_b_dd      = NULL;
+static lv_obj_t *s_math_bval_lbl  = NULL;  /* constant value shown on its button */
+
 /* Set when the user picks an ECU (Step 2) OR binds any channel (Step 3).
  * Trips a dashboard reload at Finish so widgets pick up new bindings. */
 static bool       s_channels_changed = false;
@@ -348,6 +357,7 @@ static void _close_wizard(bool mark_done) {
     s_channels_list_box = NULL;
     s_bind_sheet = NULL;
     s_bind_target_chan = NULL;
+    s_math_sheet = s_math_a_dd = s_math_op_dd = s_math_b_dd = s_math_bval_lbl = NULL;
     for (int i = 0; i < WIZ_CH_MAX_ROWS; i++) {
         s_channels_value_lbls[i] = NULL;
         s_channels_rows[i]       = NULL;
@@ -1745,6 +1755,7 @@ static void _wiz_canonical_bind_channel(channel_t *c);
 static void _wiz_persist_signal_decode(const signal_t *s);
 static void _rebuild_channel_row(uint16_t idx);
 static void _add_custom_btn_cb(lv_event_t *e);
+static void _calc_btn_cb(lv_event_t *e);
 
 /* ── List rows ───────────────────────────────────────────────────────── */
 
@@ -2493,6 +2504,41 @@ static void _render_detail_pane(void) {
     lv_obj_set_style_text_color(cl, THEME_COLOR_TEXT_ON_ACCENT, 0);
     lv_obj_add_event_cb(change, _change_source_cb, LV_EVENT_CLICKED, NULL);
     y += 34;
+
+    /* Calculate button — derive this channel from two others (math), the
+     * on-device twin of the web editor's Calculate form. When already a
+     * math channel, the button shows the current formula. */
+    {
+        lv_obj_t *calc = lv_btn_create(s_detail_pane);
+        lv_obj_set_size(calc, CH_DETAIL_W - 40, 26);
+        lv_obj_align(calc, LV_ALIGN_TOP_LEFT, 0, y);
+        lv_obj_set_style_bg_color(calc, THEME_COLOR_SECTION_BG, 0);
+        lv_obj_set_style_border_color(calc,
+            c->math_enabled ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_BORDER_MED, 0);
+        lv_obj_set_style_border_width(calc, 1, 0);
+        lv_obj_set_style_border_opa(calc, c->math_enabled ? LV_OPA_COVER : LV_OPA_60, 0);
+        lv_obj_set_style_radius(calc, 4, 0);
+        lv_obj_set_style_shadow_width(calc, 0, 0);
+        lv_obj_t *cll = lv_label_create(calc);
+        if (c->math_enabled) {
+            static const char *ops = "+-*/";
+            char ab[40];
+            const char *a = c->math_a_is_const ? "#" : c->math_a;
+            const char *b = c->math_b_is_const ? "#" : c->math_b;
+            snprintf(ab, sizeof(ab), "Calc: %s %c %s", a,
+                     ops[c->math_op & 3], b);
+            lv_label_set_text(cll, ab);
+        } else {
+            lv_label_set_text(cll, "Calculate from other channels");
+        }
+        lv_label_set_long_mode(cll, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(cll, CH_DETAIL_W - 60);
+        lv_obj_center(cll);
+        lv_obj_set_style_text_font(cll, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(cll, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_add_event_cb(calc, _calc_btn_cb, LV_EVENT_CLICKED, NULL);
+        y += 34;
+    }
 
     /* ── Range section ──────────────────────────────────────────────── */
     _detail_section_label(s_detail_pane, "RANGE", y);
@@ -3635,6 +3681,258 @@ static void _close_bind_sheet(void) {
         s_channels_refresh_timer =
             lv_timer_create(_channels_refresh_cb, 500, NULL);
     }
+}
+
+/* ── Calculate (math channel) sheet ────────────────────────────────────────
+ * On-device twin of the web editor's Calculate form: operand A (a channel)
+ * <op> operand B (a channel OR a typed number) → this channel. Mirrors the
+ * /api/channels/update {math:{a,b,op}} contract via channel_math_set. */
+
+/* Upper bound on channels offered in the operand dropdowns. */
+#define CHM_MAX_FOR_UI 96
+
+static float     s_math_b_const   = 0.0f;
+/* Index→channel-id map shared by both operand dropdowns. The target
+ * channel itself is excluded (no self-reference). */
+static char      s_math_ids[CHM_MAX_FOR_UI][40];
+static uint16_t  s_math_id_count  = 0;
+
+static void _close_math_sheet(void) {
+    if (s_math_sheet && lv_obj_is_valid(s_math_sheet)) lv_obj_del(s_math_sheet);
+    s_math_sheet = s_math_a_dd = s_math_op_dd = s_math_b_dd = s_math_bval_lbl = NULL;
+}
+
+static void _math_close_cb(lv_event_t *e) { (void)e; _close_math_sheet(); }
+
+/* Numeric keypad for operand-B-as-constant. */
+static void _math_bconst_confirmed(const char *text, void *ud) {
+    (void)ud;
+    if (text && text[0]) s_math_b_const = strtof(text, NULL);
+    if (s_math_bval_lbl && lv_obj_is_valid(s_math_bval_lbl)) {
+        char b[24]; snprintf(b, sizeof(b), "%g", s_math_b_const);
+        lv_label_set_text(s_math_bval_lbl, b);
+    }
+}
+static void _math_bconst_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    char initial[24]; snprintf(initial, sizeof(initial), "%g", s_math_b_const);
+    show_numeric_input_dialog("Number", initial, _math_bconst_confirmed, NULL, NULL);
+}
+
+static void _math_apply_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    channel_t *c = channel_manager_get(s_selected_ch_id);
+    if (!c || !s_math_a_dd) { _close_math_sheet(); return; }
+
+    uint16_t ai  = lv_dropdown_get_selected(s_math_a_dd);
+    uint16_t opi = lv_dropdown_get_selected(s_math_op_dd);
+    uint16_t bi  = lv_dropdown_get_selected(s_math_b_dd);
+
+    channel_math_operand_t oa = {0}, ob = {0};
+    /* A is always a channel (satisfies "≥1 operand must be a channel"). */
+    if (ai >= s_math_id_count) { _close_math_sheet(); return; }
+    oa.channel_id = s_math_ids[ai];
+    /* B: index 0 = the typed constant, 1.. = channel (index bi-1). */
+    if (bi == 0) { ob.is_const = true; ob.value = s_math_b_const; }
+    else if ((uint16_t)(bi - 1) < s_math_id_count) ob.channel_id = s_math_ids[bi - 1];
+    else { _close_math_sheet(); return; }
+
+    bool ok = channel_math_set(c, &oa, &ob, (uint8_t)(opi & 3));
+    ESP_LOGI(TAG, "math_set %s: %s %u %s -> %s", c->id,
+             oa.channel_id ? oa.channel_id : "#", (unsigned)opi,
+             ob.channel_id ? ob.channel_id : "#", ok ? "ok" : "FAILED");
+    _close_math_sheet();
+    /* channel_math_set persists + rebinds; re-render so SOURCE/Calc/value
+     * all reflect the new derived binding. */
+    _render_detail_pane();
+}
+
+static void _math_clear_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    channel_t *c = channel_manager_get(s_selected_ch_id);
+    if (c) channel_math_clear(c);
+    _close_math_sheet();
+    _render_detail_pane();
+}
+
+/* Build the index→id map + a newline option string of channel labels,
+ * excluding @skip_id. Returns option count; writes labels into @opts. */
+static uint16_t _math_build_channel_options(const char *skip_id, char *opts, size_t cap) {
+    s_math_id_count = 0;
+    size_t pos = 0;
+    size_t total = channel_manager_count();
+    for (size_t i = 0; i < total && s_math_id_count < CHM_MAX_FOR_UI; i++) {
+        const channel_t *ch = channel_manager_at(i);
+        if (!ch || !ch->id[0]) continue;
+        if (skip_id && strcmp(ch->id, skip_id) == 0) continue;  /* no self-ref */
+        strncpy(s_math_ids[s_math_id_count], ch->id, sizeof(s_math_ids[0]) - 1);
+        s_math_ids[s_math_id_count][sizeof(s_math_ids[0]) - 1] = '\0';
+        pos += (size_t)snprintf(opts + pos, pos < cap ? cap - pos : 0,
+                                s_math_id_count ? "\n%s" : "%s", ch->label);
+        s_math_id_count++;
+    }
+    return s_math_id_count;
+}
+
+/* Find the dropdown index of a channel id in s_math_ids, or 0 if absent. */
+static uint16_t _math_id_index(const char *id) {
+    for (uint16_t i = 0; i < s_math_id_count; i++)
+        if (strcmp(s_math_ids[i], id) == 0) return i;
+    return 0;
+}
+
+static void _open_math_sheet(const channel_t *c) {
+    if (!c || !s_overlay || !lv_obj_is_valid(s_overlay)) return;
+    _close_math_sheet();
+
+    /* Operand option strings — A is channels only; B prepends "Number…". */
+    static char a_opts[2048];
+    _math_build_channel_options(c->id, a_opts, sizeof(a_opts));
+    if (s_math_id_count == 0) return;  /* nothing to derive from */
+    static char b_opts[2048];
+    int bp = snprintf(b_opts, sizeof(b_opts), "Number…");
+    for (uint16_t i = 0; i < s_math_id_count; i++)
+        bp += snprintf(b_opts + bp, sizeof(b_opts) - bp, "\n%s",
+                       /* reuse A's labels by re-reading the channel */
+                       (channel_manager_get(s_math_ids[i]) ?
+                        channel_manager_get(s_math_ids[i])->label : s_math_ids[i]));
+
+    s_math_b_const = c->math_enabled && c->math_b_is_const ? c->math_b_const : 0.0f;
+
+    s_math_sheet = lv_obj_create(s_overlay);
+    lv_obj_remove_style_all(s_math_sheet);
+    lv_obj_set_size(s_math_sheet, lv_pct(100), lv_pct(100));
+    lv_obj_center(s_math_sheet);
+    lv_obj_set_style_bg_color(s_math_sheet, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_math_sheet, LV_OPA_70, 0);
+    lv_obj_clear_flag(s_math_sheet, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *card = lv_obj_create(s_math_sheet);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, 460, 300);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, THEME_COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(card, 16, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(card);
+    char hdr[64]; snprintf(hdr, sizeof(hdr), "Calculate %s", c->label);
+    lv_label_set_text(title, hdr);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_text_font(title, THEME_FONT_MEDIUM, 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_PRIMARY, 0);
+
+    lv_coord_t cy = 34;
+    /* Operand A (channel). */
+    {
+        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "A");
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        s_math_a_dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(s_math_a_dd, a_opts);
+        lv_obj_set_size(s_math_a_dd, 360, 30);
+        lv_obj_align(s_math_a_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
+        if (c->math_enabled && !c->math_a_is_const)
+            lv_dropdown_set_selected(s_math_a_dd, _math_id_index(c->math_a));
+        cy += 38;
+    }
+    /* Operator. */
+    {
+        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "Op");
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        s_math_op_dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(s_math_op_dd, "A + B\nA - B\nA x B\nA / B");
+        lv_obj_set_size(s_math_op_dd, 360, 30);
+        lv_obj_align(s_math_op_dd, LV_ALIGN_TOP_RIGHT, 0, cy);
+        if (c->math_enabled) lv_dropdown_set_selected(s_math_op_dd, c->math_op & 3);
+        cy += 38;
+    }
+    /* Operand B (channel or Number…) + its constant value box. */
+    {
+        lv_obj_t *l = lv_label_create(card); lv_label_set_text(l, "B");
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 0, cy + 6);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        s_math_b_dd = lv_dropdown_create(card);
+        lv_dropdown_set_options(s_math_b_dd, b_opts);
+        lv_obj_set_size(s_math_b_dd, 250, 30);
+        lv_obj_align(s_math_b_dd, LV_ALIGN_TOP_LEFT, 60, cy);
+        if (c->math_enabled && !c->math_b_is_const)
+            lv_dropdown_set_selected(s_math_b_dd, (uint16_t)(_math_id_index(c->math_b) + 1));
+        /* Number value button (used when B = "Number…", index 0). */
+        lv_obj_t *vbtn = lv_btn_create(card);
+        lv_obj_set_size(vbtn, 96, 30);
+        lv_obj_align(vbtn, LV_ALIGN_TOP_RIGHT, 0, cy);
+        lv_obj_set_style_bg_color(vbtn, THEME_COLOR_INPUT_BG, 0);
+        lv_obj_set_style_radius(vbtn, 6, 0);
+        lv_obj_set_style_shadow_width(vbtn, 0, 0);
+        s_math_bval_lbl = lv_label_create(vbtn);
+        char vb[24]; snprintf(vb, sizeof(vb), "%g", s_math_b_const);
+        lv_label_set_text(s_math_bval_lbl, vb);
+        lv_obj_center(s_math_bval_lbl);
+        lv_obj_set_style_text_font(s_math_bval_lbl, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(s_math_bval_lbl, THEME_COLOR_TEXT_PRIMARY, 0);
+        lv_obj_add_event_cb(vbtn, _math_bconst_cb, LV_EVENT_CLICKED, NULL);
+        cy += 44;
+    }
+
+    lv_obj_t *hint = lv_label_create(card);
+    lv_label_set_text(hint, "B = \"Number…\" uses the typed value; otherwise B is a channel.");
+    lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, cy);
+    lv_obj_set_style_text_font(hint, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(hint, THEME_COLOR_TEXT_MUTED, 0);
+
+    /* Footer buttons: Cancel · (Clear if math) · Apply. */
+    lv_obj_t *apply = lv_btn_create(card);
+    lv_obj_set_size(apply, 110, 34);
+    lv_obj_align(apply, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(apply, THEME_COLOR_ACCENT_BLUE, 0);
+    lv_obj_set_style_radius(apply, 4, 0);
+    lv_obj_set_style_shadow_width(apply, 0, 0);
+    lv_obj_t *al = lv_label_create(apply); lv_label_set_text(al, "Apply");
+    lv_obj_center(al);
+    lv_obj_set_style_text_color(al, THEME_COLOR_TEXT_ON_ACCENT, 0);
+    lv_obj_add_event_cb(apply, _math_apply_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *cancel = lv_btn_create(card);
+    lv_obj_set_size(cancel, 100, 34);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(cancel, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_radius(cancel, 4, 0);
+    lv_obj_set_style_shadow_width(cancel, 0, 0);
+    lv_obj_t *cnl = lv_label_create(cancel); lv_label_set_text(cnl, "Cancel");
+    lv_obj_center(cnl);
+    lv_obj_set_style_text_color(cnl, THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_add_event_cb(cancel, _math_close_cb, LV_EVENT_CLICKED, NULL);
+
+    if (c->math_enabled) {
+        lv_obj_t *clr = lv_btn_create(card);
+        lv_obj_set_size(clr, 110, 34);
+        lv_obj_align(clr, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(clr, THEME_COLOR_SECTION_BG, 0);
+        lv_obj_set_style_border_color(clr, THEME_COLOR_STATUS_WARN, 0);
+        lv_obj_set_style_border_width(clr, 1, 0);
+        lv_obj_set_style_radius(clr, 4, 0);
+        lv_obj_set_style_shadow_width(clr, 0, 0);
+        lv_obj_t *crl = lv_label_create(clr); lv_label_set_text(crl, "Clear");
+        lv_obj_center(crl);
+        lv_obj_set_style_text_color(crl, THEME_COLOR_STATUS_WARN, 0);
+        lv_obj_add_event_cb(clr, _math_clear_cb, LV_EVENT_CLICKED, NULL);
+    }
+}
+
+static void _calc_btn_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!s_selected_ch_id[0]) return;
+    const channel_t *c = channel_manager_get(s_selected_ch_id);
+    if (c) _open_math_sheet(c);
 }
 
 static void _open_bind_sheet(const channel_t *c) {
