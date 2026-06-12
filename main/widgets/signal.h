@@ -33,6 +33,13 @@ extern "C" {
 #define MAX_SIGNAL_SUBSCRIBERS   16
 #define SIGNAL_TIMEOUT_MS     2000
 
+/* How long a manual test lock survives without a fresh inject. The editor
+ * re-injects while the user drags the Test Value slider, so an active test
+ * never expires mid-use; a FORGOTTEN one (browser closed, × never clicked)
+ * releases on its own instead of pinning the signal dead — on a moving car
+ * a gauge frozen at a fake value is a safety problem, not just a UX one. */
+#define SIGNAL_TEST_LOCK_TTL_MS (5 * 60 * 1000)
+
 /* ── Callback typedef ──────────────────────────────────────────────────── */
 
 /**
@@ -128,8 +135,11 @@ typedef struct {
                                    signal_dispatch_frame() drops matching CAN
                                    frames so the injected value sticks while
                                    the car is live on the bus. Cleared via
-                                   signal_set_test_lock(name, false) or by
-                                   layout reload (registry reset). */
+                                   signal_set_test_lock(name, false), on
+                                   re-registration (layout/channel reload),
+                                   or by TTL expiry once the editor stops
+                                   re-injecting (SIGNAL_TEST_LOCK_TTL_MS). */
+    uint64_t test_lock_ms;      /* last inject time — drives the lock TTL */
     uint64_t last_update_ms;
 
     signal_subscriber_t subscribers[MAX_SIGNAL_SUBSCRIBERS];

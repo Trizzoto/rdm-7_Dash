@@ -133,6 +133,18 @@ int16_t signal_register_with_source(const char *name, uint32_t can_id,
          * to match the new decode could swallow the first update. */
         cur->is_stale       = true;
         cur->last_update_ms = 0;
+        /* Release any test lock. Preserving it here while resetting the
+         * slot to stale created a ZOMBIE: dispatch kept skipping the signal
+         * (locked) and the staleness sweep kept skipping it too, so one
+         * forgotten editor Test Value + any layout/channel reload (the
+         * editor autosaves constantly) left the signal permanently dead
+         * showing "--" with no visible reason. Test locks are ephemeral
+         * editor state — a reload releases them. */
+        if (cur->test_locked) {
+            ESP_LOGI(TAG, "signal '%s': releasing test lock on re-register", name);
+            cur->test_locked  = false;
+            cur->test_lock_ms = 0;
+        }
         ESP_LOGD(TAG, "signal '%s' already registered — updating decode params", name);
         return existing;
     }
@@ -406,6 +418,10 @@ void signal_inject_test_value(const char *name, float value)
     sig->current_value  = value;
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
+    /* Re-arm the test-lock TTL: while the editor keeps injecting (slider
+     * drags re-send), the lock stays alive; once injects stop, the lock
+     * expires and live CAN data resumes (see signal_check_staleness). */
+    sig->test_lock_ms   = now_ms;
 
     /* Update peak/min tracking — skip when the simulator is driving OR
      * the signal is currently test-locked by the user. The sim's
@@ -480,12 +496,27 @@ void signal_check_timeouts(uint64_t current_time_ms)
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];
 
+        /* Test-locked signals are under manual user control — hold fresh
+         * so the injected value keeps rendering without the stale badge.
+         * BUT only while the editor is actively re-injecting: a forgotten
+         * Test Value (user never clicked ×, closed the browser, drove off)
+         * used to pin the signal dead forever. Expire the lock after the
+         * TTL so live CAN data resumes on its own. last_update_ms reset
+         * like signal_set_test_lock(false) — the next frame or the 2 s
+         * timeout decides fresh-vs-stale honestly. */
+        if (sig->test_locked) {
+            if (current_time_ms - sig->test_lock_ms > SIGNAL_TEST_LOCK_TTL_MS) {
+                ESP_LOGI(TAG, "signal '%s': test lock expired (no inject for %u s) — resuming live data",
+                         sig->name, (unsigned)(SIGNAL_TEST_LOCK_TTL_MS / 1000));
+                sig->test_locked    = false;
+                sig->test_lock_ms   = 0;
+                sig->last_update_ms = current_time_ms;
+            }
+            continue;
+        }
+
         /* Skip: already stale (already notified) or never received. */
         if (sig->is_stale || sig->last_update_ms == 0) continue;
-
-        /* Test-locked signals are under manual user control — hold fresh
-         * so the injected value keeps rendering without the stale badge. */
-        if (sig->test_locked) continue;
 
         if (current_time_ms - sig->last_update_ms > SIGNAL_TIMEOUT_MS) {
             sig->is_stale = true;
@@ -507,7 +538,13 @@ void signal_set_test_lock(const char *name, bool locked)
     signal_t *sig = &s_signals[idx];
     if (sig->test_locked == locked) return;
     sig->test_locked = locked;
+    if (locked) {
+        /* Arm the TTL even if the caller locks without injecting first —
+         * a zero timestamp would expire the lock on the next sweep tick. */
+        sig->test_lock_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    }
     if (!locked) {
+        sig->test_lock_ms = 0;
         /* Reset last_update_ms so the next real CAN frame (or 2s timeout)
          * decides fresh-vs-stale; don't hold the pre-lock timestamp. */
         sig->last_update_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
