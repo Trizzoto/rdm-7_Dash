@@ -19075,11 +19075,12 @@
                 ]);
                 let active = false;
                 let storage = 'lfs', sdMounted = false, lfsMax = 1024*1024;
-                let canrawActive = false, canrawLine = '';
+                let canrawActive = false, canrawLine = '', canrawStopReason = '';
                 if (canrawR && canrawR.ok) {
                     try {
                         const c = await canrawR.json();
                         canrawActive = !!c.active;
+                        canrawStopReason = c.stop_reason || '';
                         if (canrawActive) {
                             const where = c.storage === 'sd' ? 'SD' : 'flash';
                             canrawLine = ` • Raw: ${c.frames || 0} frames to ${where}`;
@@ -19103,6 +19104,16 @@
                         } else if (canrawActive) {
                             line.textContent = `Capturing raw CAN${canrawLine.replace(' • Raw: ', ': ')}`;
                             line.style.color = 'hsl(140,60%,55%)';
+                        } else if (s.stop_reason === 'write_failure' ||
+                                   canrawStopReason === 'write_failure') {
+                            /* Logger auto-stopped after repeated write errors
+                             * (typically the SD card was pulled mid-log) —
+                             * say so instead of a silent flip to Idle. */
+                            line.textContent = 'Stopped: storage write failure — SD card removed? Log saved up to the failure point.';
+                            line.style.color = 'hsl(0,70%,60%)';
+                        } else if (s.stop_reason === 'lfs_cap') {
+                            line.textContent = 'Stopped: internal-flash log reached its size cap.';
+                            line.style.color = 'hsl(40,80%,60%)';
                         } else {
                             line.textContent = 'Idle';
                             line.style.color = 'var(--text-muted)';

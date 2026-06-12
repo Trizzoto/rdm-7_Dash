@@ -188,18 +188,19 @@ static esp_err_t _log_status_handler(httpd_req_t *req) {
 	const char *p = strrchr(file, '/');
 	if (p) basename = p + 1;
 
-	char buf[320];
+	char buf[352];
 	snprintf(buf, sizeof(buf),
 			 "{\"active\":%s,\"file\":\"%s\",\"samples\":%lu,\"elapsed_ms\":%lu,"
 			 "\"rate_hz\":%u,\"storage\":\"%s\",\"lfs_max_bytes\":%lu,"
-			 "\"sd_mounted\":%s}",
+			 "\"sd_mounted\":%s,\"stop_reason\":\"%s\"}",
 			 active ? "true" : "false",
 			 basename,
 			 (unsigned long)samples, (unsigned long)elapsed,
 			 (unsigned)rate,
 			 storage,
 			 (unsigned long)lfs_cap,
-			 sd_manager_is_mounted() ? "true" : "false");
+			 sd_manager_is_mounted() ? "true" : "false",
+			 data_logger_last_stop_reason());
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;
@@ -499,16 +500,18 @@ static esp_err_t _canraw_status_handler(httpd_req_t *req) {
 	const char *p = strrchr(file, '/');
 	if (p) basename = p + 1;
 
-	char buf[256];
+	char buf[288];
 	snprintf(buf, sizeof(buf),
 	         "{\"active\":%s,\"file\":\"%s\",\"frames\":%lu,\"elapsed_ms\":%lu,"
-	         "\"storage\":\"%s\",\"lfs_max_bytes\":%lu,\"sd_mounted\":%s}",
+	         "\"storage\":\"%s\",\"lfs_max_bytes\":%lu,\"sd_mounted\":%s,"
+	         "\"stop_reason\":\"%s\"}",
 	         active ? "true" : "false",
 	         basename,
 	         (unsigned long)frames, (unsigned long)elapsed,
 	         storage,
 	         (unsigned long)data_logger_lfs_max_bytes(),
-	         sd_manager_is_mounted() ? "true" : "false");
+	         sd_manager_is_mounted() ? "true" : "false",
+	         can_raw_logger_last_stop_reason());
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;

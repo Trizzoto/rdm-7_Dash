@@ -48,6 +48,10 @@ esp_err_t can_raw_logger_start(void);
 esp_err_t can_raw_logger_stop(void);
 
 bool        can_raw_logger_is_active(void);
+
+/* "" (none/manual stop), "write_failure" (SD pulled / FS dead — capture
+ * auto-stopped) or "lfs_cap". Cleared on next start; in /api/canraw/status. */
+const char *can_raw_logger_last_stop_reason(void);
 const char *can_raw_logger_current_file(void);
 uint32_t    can_raw_logger_frame_count(void);
 uint32_t    can_raw_logger_elapsed_ms(void);

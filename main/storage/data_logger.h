@@ -37,6 +37,13 @@ esp_err_t data_logger_stop(void);
 /* Check if currently logging */
 bool data_logger_is_active(void);
 
+/* Why the last log stopped on its own: "" (none / manual stop),
+ * "write_failure" (repeated write errors — SD pulled or FS dead; the logger
+ * auto-stopped) or "lfs_cap" (per-file flash cap reached). Cleared on the
+ * next start. Surfaced in GET /api/log/status so the UI can explain an
+ * unexpected stop instead of silently flipping to Idle. */
+const char *data_logger_last_stop_reason(void);
+
 /* Get current log filename (or empty string if not logging) */
 const char *data_logger_current_file(void);
 
