@@ -12,6 +12,7 @@
 #include "web_server_internal.h"
 #include "cJSON.h"
 #include "can/can_manager.h"
+#include "can/can_bus_test.h"
 #include "widgets/signal.h"
 #include "widgets/signal_sim.h"
 #include "widgets/widget_registry.h"
@@ -388,6 +389,88 @@ static esp_err_t _perf_handler(httpd_req_t *req) {
 	return _send_json(req, root);
 }
 
+/* ── CAN bus scan: remote trigger + report ─────────────────────────────────
+ *
+ * The wizard/device-settings bitrate scan is touch-driven; these two
+ * endpoints make the same scan drivable over WiFi so a failing slot can be
+ * reproduced and diagnosed without the touchscreen (the serial console is
+ * owned by the desktop protocol ~2 s into boot, so the scan's error logs
+ * are invisible in the field). install_err carries the actual esp_err per
+ * bitrate — the on-device UI only shows a generic "CAN driver busy". */
+
+static esp_err_t _can_scan_start_handler(httpd_req_t *req) {
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	bool started = can_bus_test_start();
+	httpd_resp_sendstr(req, started ? "{\"started\":true}"
+	                                : "{\"started\":false,\"error\":\"scan already running\"}");
+	return ESP_OK;
+}
+
+static esp_err_t _can_scan_status_handler(httpd_req_t *req) {
+	const can_scan_report_t *r = can_bus_test_get_report();
+	static const char *state_names[] = {
+		"idle", "stopping", "testing", "restoring", "complete", "cancelled", "error"
+	};
+	static const char *br_names[] = { "125k", "250k", "500k", "1M" };
+
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	cJSON_AddBoolToObject(root, "running", can_bus_test_is_running());
+	cJSON_AddStringToObject(root, "state",
+		r->state <= CAN_SCAN_ERROR ? state_names[r->state] : "?");
+	cJSON_AddNumberToObject(root, "current_bitrate_idx", r->current_bitrate_idx);
+	cJSON_AddNumberToObject(root, "recommended_bitrate", r->recommended_bitrate);
+
+	cJSON *arr = cJSON_AddArrayToObject(root, "results");
+	for (int i = 0; i < 4; i++) {
+		const can_scan_bitrate_result_t *b = &r->results[i];
+		cJSON *e = cJSON_CreateObject();
+		if (!e) break;
+		cJSON_AddStringToObject(e, "bitrate", br_names[i]);
+		cJSON_AddNumberToObject(e, "frames", (double)b->frames_received);
+		cJSON_AddNumberToObject(e, "unique_ids", b->unique_id_count);
+		cJSON_AddBoolToObject(e, "traffic", b->traffic_detected);
+		cJSON_AddBoolToObject(e, "install_failed", b->bus_errors == 0xFFFFFFFFu);
+		cJSON_AddStringToObject(e, "install_err", esp_err_to_name(b->install_err));
+		if (b->bus_errors != 0xFFFFFFFFu)
+			cJSON_AddNumberToObject(e, "bus_errors", (double)b->bus_errors);
+
+		/* Step trace — which exact driver call failed, per attempt. */
+		esp_err_t pre_stop = 0, pre_uninst = 0, inst[3], strt[3];
+		can_bus_test_get_step_dbg((uint8_t)i, &pre_stop, &pre_uninst, inst, strt);
+		cJSON *dbg = cJSON_AddObjectToObject(e, "steps");
+		if (dbg) {
+			const esp_err_t NR = 0x7F7F7F7F;  /* memset 0x7F marker */
+			cJSON_AddStringToObject(dbg, "pre_stop",
+				pre_stop == NR ? "-" : esp_err_to_name(pre_stop));
+			cJSON_AddStringToObject(dbg, "pre_uninstall",
+				pre_uninst == NR ? "-" : esp_err_to_name(pre_uninst));
+			char key[12];
+			for (int a = 0; a < 3; a++) {
+				snprintf(key, sizeof(key), "install_%d", a + 1);
+				cJSON_AddStringToObject(dbg, key,
+					inst[a] == NR ? "-" : esp_err_to_name(inst[a]));
+				snprintf(key, sizeof(key), "start_%d", a + 1);
+				cJSON_AddStringToObject(dbg, key,
+					strt[a] == NR ? "-" : esp_err_to_name(strt[a]));
+			}
+		}
+		cJSON_AddItemToArray(arr, e);
+	}
+	return _send_json(req, root);
+}
+
+static const httpd_uri_t can_scan_start_uri = {
+	.uri = "/api/can/scan/start", .method = HTTP_POST,
+	.handler = _can_scan_start_handler, .user_ctx = NULL};
+static const httpd_uri_t can_scan_status_uri = {
+	.uri = "/api/can/scan/status", .method = HTTP_GET,
+	.handler = _can_scan_status_handler, .user_ctx = NULL};
+
 static const httpd_uri_t perf_uri = {
 	.uri = "/api/perf", .method = HTTP_GET,
 	.handler = _perf_handler, .user_ctx = NULL};
@@ -407,4 +490,6 @@ void web_server_test_register(httpd_handle_t server) {
 	REGISTER_URI(server, &widgets_uri);
 	REGISTER_URI(server, &selftest_uri);
 	REGISTER_URI(server, &perf_uri);
+	REGISTER_URI(server, &can_scan_start_uri);
+	REGISTER_URI(server, &can_scan_status_uri);
 }
