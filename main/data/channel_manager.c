@@ -19,6 +19,7 @@
 #include "channel_manager.h"
 #include "channel_math.h"
 #include "canonical_channels.h"
+#include "unit_convert.h"
 #include "signal.h"
 #include "layout/ecu_presets.h"
 #include "ui/lvgl_helpers.h"   /* rdm_lvgl_lock / rdm_lvgl_unlock */
@@ -272,6 +273,23 @@ channel_t *channel_manager_get(const char *id) {
 
 size_t channel_manager_count(void) {
 	return s_count;
+}
+
+void channel_format_display_value(const channel_t *c, int16_t signal_index,
+                                  float native_value, uint8_t decimals,
+                                  char *buf, size_t cap) {
+	if (!buf || cap == 0) return;
+	/* Convert only when the channel actually carries a different, convertible
+	 * display unit. unit_convert() is identity for unknown pairs, so the
+	 * strcmp gate is what keeps value→label-mapped channels (gear/mode, which
+	 * are unit-less so native==display) on the signal_format_value path. */
+	if (c && c->units_display[0] && c->units_native[0] &&
+	    strcmp(c->units_display, c->units_native) != 0) {
+		float vd = unit_convert(native_value, c->units_native, c->units_display);
+		snprintf(buf, cap, "%.*f", decimals, (double)vd);
+		return;
+	}
+	signal_format_value(signal_index, native_value, decimals, buf, cap);
 }
 
 channel_t *channel_manager_at(size_t idx) {

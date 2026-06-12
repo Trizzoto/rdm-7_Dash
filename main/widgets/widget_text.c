@@ -40,12 +40,12 @@ static void _text_on_signal(float value, bool is_stale, void *user_data) {
 	if (is_stale) {
 		strcpy(buf, "--");
 	} else {
-		/* Route through signal_format_value so an attached value→label map
-		 * on the bound signal renders here as the label (e.g. GEAR 0 -> "N")
-		 * rather than the raw integer. Falls back to decimals-aware numeric
-		 * formatting when no map / no match. */
-		signal_format_value(td ? td->signal_index : -1, value,
-							td ? td->decimals : 0, buf, sizeof(buf));
+		/* Render in the channel's display unit when set; else defer to
+		 * signal_format_value so a value→label map (GEAR 0 -> "N") still
+		 * renders. (channel NULL safely behaves like signal_format_value.) */
+		channel_format_display_value(td ? (const channel_t *)td->channel : NULL,
+		                             td ? td->signal_index : -1, value,
+		                             td ? td->decimals : 0, buf, sizeof(buf));
 	}
 	/* Skip the redundant set: lv_label_set_text invalidates the whole glyph
 	 * area even when the string is identical, so an unchanged GEAR/SPEED text
@@ -81,6 +81,10 @@ static void _text_on_channel_changed(channel_t *c, void *user_data) {
 		if (new_idx >= 0)
 			signal_subscribe(new_idx, _text_on_signal, w);
 	}
+	/* Re-format the displayed value now in case the display unit / decimals
+	 * changed — the signal only re-notifies on a value CHANGE, so a frozen
+	 * signal would otherwise keep the old unit until the value next moves. */
+	_text_on_signal(c->current_value, c->is_stale, w);
 	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 

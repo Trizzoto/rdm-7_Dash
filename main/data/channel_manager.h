@@ -161,6 +161,21 @@ channel_t *channel_manager_get(const char *id);
 /** Total number of channels currently active in the manager. */
 size_t channel_manager_count(void);
 
+/**
+ * Format a channel value for DISPLAY in a widget. When the channel's
+ * display unit differs from its native unit (and a conversion is known),
+ * converts @p native_value into the display unit and numeric-formats it with
+ * @p decimals. Otherwise defers to signal_format_value(@p signal_index, …)
+ * so value→label maps (gear/mode) and other signal formatting still apply.
+ * Pass @p c == NULL to behave exactly like signal_format_value().
+ *
+ * Thresholds/zones stay native — only the rendered NUMBER converts; a
+ * gauge's needle/fill position is ratio-preserving so it needs no change.
+ */
+void channel_format_display_value(const channel_t *c, int16_t signal_index,
+                                  float native_value, uint8_t decimals,
+                                  char *buf, size_t cap);
+
 /** Iterate: get channel at index 0..count-1, or NULL if out of range. */
 channel_t *channel_manager_at(size_t idx);
 

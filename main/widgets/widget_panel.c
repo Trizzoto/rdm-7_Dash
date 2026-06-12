@@ -385,6 +385,12 @@ static void _panel_on_channel_changed(channel_t *c, void *user_data) {
 	 * stale captured value (the "always red" bug). Only thresholds / range /
 	 * signal sync from the channel. */
 
+	/* Re-render the value now: a display-unit (or decimals) change must show
+	 * immediately, but the signal only re-notifies on a value CHANGE, so a
+	 * constant/frozen signal would otherwise keep the old unit until the
+	 * value next moves. Re-format the channel's current value in the new
+	 * unit (paint-memo lets it through since the string differs). */
+	_panel_on_signal(c->current_value, c->is_stale, w);
 	if (pd->box && lv_obj_is_valid(pd->box)) lv_obj_invalidate(pd->box);
 }
 
@@ -401,12 +407,13 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	if (is_stale) {
 		display_str = "--";
 	} else {
-		/* Goes through signal_format_value so a value→label map on the
-		 * signal (gear positions, drive modes, etc.) renders here as the
-		 * label string instead of the raw integer. Falls back to the
-		 * decimals-aware numeric format when no map / no match. */
-		signal_format_value(pd->signal_index, value, pd->decimals,
-							buf, sizeof(buf));
+		/* channel_format_display_value renders in the channel's display unit
+		 * when it differs from native (e.g. coolant in °F), else defers to
+		 * signal_format_value so a value→label map (gear/mode) still applies.
+		 * The warning thresholds below compare the NATIVE value, unchanged. */
+		channel_format_display_value((const channel_t *)pd->channel,
+		                             pd->signal_index, value, pd->decimals,
+		                             buf, sizeof(buf));
 		display_str = buf;
 	}
 

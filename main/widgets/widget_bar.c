@@ -301,8 +301,9 @@ void update_bar_ui(void *param) {
 		if (upd->is_timeout) {
 			strcpy(value_str, "--");
 		} else {
-			signal_format_value(sig_idx, (float)upd->final_value,
-								(uint8_t)decimals, value_str, sizeof(value_str));
+			channel_format_display_value(bd ? (const channel_t *)bd->channel : NULL,
+			                             sig_idx, (float)upd->final_value,
+			                             (uint8_t)decimals, value_str, sizeof(value_str));
 		}
 		lv_label_set_text(val_label, value_str);
 	}
@@ -342,8 +343,9 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 	lv_obj_t *val_label = (bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
-		signal_format_value(sig_idx, (float)final_value,
-							(uint8_t)decimals, value_str, sizeof(value_str));
+		channel_format_display_value(bd ? (const channel_t *)bd->channel : NULL,
+		                             sig_idx, (float)final_value,
+		                             (uint8_t)decimals, value_str, sizeof(value_str));
 		lv_label_set_text(val_label, value_str);
 	}
 
@@ -627,11 +629,13 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		if (is_stale) {
 			strcpy(value_str, "--");
 		} else {
-			/* signal_format_value honours any value-label map on the
-			 * bound signal (gear positions, modes, etc.); falls back to
-			 * the existing decimals-aware numeric format otherwise. */
-			signal_format_value(bd->signal_index, (float)final_value,
-								bd->decimals, value_str, sizeof(value_str));
+			/* Render in the channel display unit when set; else value-label
+			 * map / numeric via signal_format_value. The bar fill is set from
+			 * native min/max/value (ratio-preserving), so only this label
+			 * converts. */
+			channel_format_display_value((const channel_t *)bd->channel,
+			                             bd->signal_index, (float)final_value,
+			                             bd->decimals, value_str, sizeof(value_str));
 		}
 		/* Skip the realloc + label invalidate when the string is unchanged. */
 		if (!bd->_pc_valid || strcmp(bd->_pc_value_str, value_str) != 0) {
