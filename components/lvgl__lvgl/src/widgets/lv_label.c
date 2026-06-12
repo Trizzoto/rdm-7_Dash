@@ -82,12 +82,94 @@ lv_obj_t * lv_label_create(lv_obj_t * parent)
  * Setter functions
  *====================*/
 
+#if defined(ESP_PLATFORM)
+/* RDM7 PERF: tight text invalidation.
+ * Stock lv_label invalidates the WHOLE object on every text change. Dashboard
+ * value readouts sit in boxes far larger than their glyphs (a 240x230 speed
+ * box holding three digits) and those boxes overlap the gauges beneath, so
+ * every value tick repainted the full box plus everything under it. Compute
+ * the tight on-screen extent of the rendered text instead and invalidate only
+ * union(old extent, new extent). Any case the extent math doesn't model
+ * (scroll/dot long modes, scroll offsets, active selection, self-sizing
+ * labels) falls back to the stock full-object invalidate. The area is passed
+ * through lv_obj_invalidate_area, which truncates to the object and applies
+ * style transforms, so over-extent and zoomed labels stay correct.*/
+static bool label_tight_txt_area(lv_obj_t * obj, lv_area_t * out)
+{
+    lv_label_t * label = (lv_label_t *)obj;
+    if(label->text == NULL) return false;
+    if(label->long_mode != LV_LABEL_LONG_WRAP && label->long_mode != LV_LABEL_LONG_CLIP) return false;
+    if(label->offset.x != 0 || label->offset.y != 0) return false;
+#if LV_LABEL_TEXT_SELECTION
+    if(label->sel_start != LV_DRAW_LABEL_NO_TXT_SEL || label->sel_end != LV_DRAW_LABEL_NO_TXT_SEL) return false;
+#endif
+#if LV_USE_BIDI
+    if(lv_obj_get_style_base_dir(obj, LV_PART_MAIN) != LV_BASE_DIR_LTR) return false;
+#endif
+    /*Content-WIDTH labels gain nothing (the object is already glyph-tight) and
+     *their alignment math differs (LV_TEXT_FLAG_FIT), so keep them on the stock
+     *path. Content HEIGHT is fine: invalidation is truncated to the current
+     *object box either way, and height growth is covered by refr_size - exactly
+     *as with the stock full-object invalidate.*/
+    if(lv_obj_get_style_width(obj, LV_PART_MAIN) == LV_SIZE_CONTENT && !obj->w_layout) return false;
+
+    lv_area_t txt_coords;
+    lv_obj_get_content_coords(obj, &txt_coords);
+    lv_coord_t max_w = lv_area_get_width(&txt_coords);
+    const lv_font_t * font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
+    lv_coord_t line_space = lv_obj_get_style_text_line_space(obj, LV_PART_MAIN);
+    lv_coord_t letter_space = lv_obj_get_style_text_letter_space(obj, LV_PART_MAIN);
+    lv_text_flag_t flag = LV_TEXT_FLAG_NONE;
+    if(label->recolor != 0) flag |= LV_TEXT_FLAG_RECOLOR;
+    if(label->expand != 0) flag |= LV_TEXT_FLAG_EXPAND;
+    lv_point_t size;
+    lv_txt_get_size(&size, label->text, font, letter_space, line_space, max_w, flag);
+
+    /*lv_draw_label aligns each line within max_w; the longest line (size.x)
+     *bounds the horizontal union of all lines for every alignment*/
+    lv_coord_t x1;
+    lv_text_align_t align = lv_obj_calculate_style_text_align(obj, LV_PART_MAIN, label->text);
+    switch(align) {
+        case LV_TEXT_ALIGN_CENTER:
+            x1 = txt_coords.x1 + (max_w - size.x) / 2;
+            break;
+        case LV_TEXT_ALIGN_RIGHT:
+            x1 = txt_coords.x2 - size.x + 1;
+            break;
+        default:
+            x1 = txt_coords.x1;
+            break;
+    }
+    out->x1 = x1;
+    out->x2 = x1 + size.x - 1;
+    out->y1 = txt_coords.y1;
+    if(label->long_mode == LV_LABEL_LONG_WRAP) out->y1 -= lv_obj_get_scroll_top(obj);
+    out->y2 = out->y1 + size.y - 1;
+    /*Glyphs can overhang their advance width (italics, AA fringes, underline)*/
+    lv_coord_t pad = lv_font_get_line_height(font) / 8 + 2;
+    lv_area_increase(out, pad, pad);
+    return true;
+}
+
+/*Armed by the text setters immediately before lv_label_refr_text, consumed at
+ *its entry. LVGL is single-threaded so a pair of statics is safe.*/
+static bool s_tight_inv_pending = false;
+static lv_area_t s_tight_inv_old;
+#endif /*ESP_PLATFORM*/
+
 void lv_label_set_text(lv_obj_t * obj, const char * text)
 {
     LV_ASSERT_OBJ(obj, MY_CLASS);
     lv_label_t * label = (lv_label_t *)obj;
 
+#if defined(ESP_PLATFORM)
+    /*RDM7 PERF: capture the old text extent; the union is invalidated in refr_text*/
+    lv_area_t old_area = {0, 0, -1, -1};
+    bool tight = label_tight_txt_area(obj, &old_area);
+    if(!tight) lv_obj_invalidate(obj);
+#else
     lv_obj_invalidate(obj);
+#endif
 
     /*If text is NULL then just refresh with the current text*/
     if(text == NULL) text = label->text;
@@ -141,6 +223,10 @@ void lv_label_set_text(lv_obj_t * obj, const char * text)
         label->static_txt = 0;
     }
 
+#if defined(ESP_PLATFORM)
+    s_tight_inv_pending = tight;
+    if(tight) s_tight_inv_old = old_area;
+#endif
     lv_label_refr_text(obj);
 }
 
@@ -149,11 +235,23 @@ void lv_label_set_text_fmt(lv_obj_t * obj, const char * fmt, ...)
     LV_ASSERT_OBJ(obj, MY_CLASS);
     LV_ASSERT_NULL(fmt);
 
-    lv_obj_invalidate(obj);
     lv_label_t * label = (lv_label_t *)obj;
+
+#if defined(ESP_PLATFORM)
+    /*RDM7 PERF: capture the old text extent; the union is invalidated in refr_text*/
+    lv_area_t old_area = {0, 0, -1, -1};
+    bool tight = label_tight_txt_area(obj, &old_area);
+    if(!tight) lv_obj_invalidate(obj);
+#else
+    lv_obj_invalidate(obj);
+#endif
 
     /*If text is NULL then refresh*/
     if(fmt == NULL) {
+#if defined(ESP_PLATFORM)
+        s_tight_inv_pending = tight;
+        if(tight) s_tight_inv_old = old_area;
+#endif
         lv_label_refr_text(obj);
         return;
     }
@@ -169,6 +267,10 @@ void lv_label_set_text_fmt(lv_obj_t * obj, const char * fmt, ...)
     va_end(args);
     label->static_txt = 0; /*Now the text is dynamically allocated*/
 
+#if defined(ESP_PLATFORM)
+    s_tight_inv_pending = tight;
+    if(tight) s_tight_inv_old = old_area;
+#endif
     lv_label_refr_text(obj);
 }
 
@@ -176,6 +278,13 @@ void lv_label_set_text_static(lv_obj_t * obj, const char * text)
 {
     LV_ASSERT_OBJ(obj, MY_CLASS);
     lv_label_t * label = (lv_label_t *)obj;
+
+#if defined(ESP_PLATFORM)
+    /*RDM7 PERF: capture the old text extent; the union is invalidated in refr_text.
+     *Stock relies on refr_text's full invalidate to cover the old text too.*/
+    lv_area_t old_area = {0, 0, -1, -1};
+    bool tight = label_tight_txt_area(obj, &old_area);
+#endif
 
     if(label->static_txt == 0 && label->text != NULL) {
         lv_mem_free(label->text);
@@ -187,6 +296,10 @@ void lv_label_set_text_static(lv_obj_t * obj, const char * text)
         label->text       = (char *)text;
     }
 
+#if defined(ESP_PLATFORM)
+    s_tight_inv_pending = tight;
+    if(tight) s_tight_inv_old = old_area;
+#endif
     lv_label_refr_text(obj);
 }
 
@@ -894,6 +1007,13 @@ static void draw_main(lv_event_t * e)
  */
 static void lv_label_refr_text(lv_obj_t * obj)
 {
+#if defined(ESP_PLATFORM)
+    /*RDM7 PERF: consume the tight-invalidate request armed by the text setters.
+     *Cleared on entry so calls from other paths (style/size events) stay full.*/
+    bool tight_pending = s_tight_inv_pending;
+    lv_area_t tight_old = s_tight_inv_old;
+    s_tight_inv_pending = false;
+#endif
     lv_label_t * label = (lv_label_t *)obj;
     if(label->text == NULL) return;
 #if LV_LABEL_LONG_TXT_HINT
@@ -1165,7 +1285,20 @@ static void lv_label_refr_text(lv_obj_t * obj)
         /*Do nothing*/
     }
 
+#if defined(ESP_PLATFORM)
+    /*RDM7 PERF: invalidate only union(old text extent, new text extent) when
+     *both are computable; otherwise fall back to the stock full invalidate*/
+    lv_area_t tight_new;
+    if(tight_pending && label_tight_txt_area(obj, &tight_new)) {
+        _lv_area_join(&tight_new, &tight_new, &tight_old);
+        lv_obj_invalidate_area(obj, &tight_new);
+    }
+    else {
+        lv_obj_invalidate(obj);
+    }
+#else
     lv_obj_invalidate(obj);
+#endif
 }
 
 
