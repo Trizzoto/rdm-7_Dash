@@ -7360,6 +7360,7 @@
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
+                            { name: "ticks_on_top", label: "Ticks On Top", type: "checkbox", def: false, cat: "appearance" },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
@@ -7382,7 +7383,10 @@
                             { name: "arc_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "arc_alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
                             { name: "arc_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "arc_alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true },
                             { name: "arc_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "arc_alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
-                            { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "arc_alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true }
+                            { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "arc_alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true },
+                            { name: "redline_arc_width", label: "Redline Thickness", type: "stepper", def: 0, cat: "appearance", min: 0, max: 50 },
+                            { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "appearance" },
+                            { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance" }
                         ]
                     },
                     "toggle": {

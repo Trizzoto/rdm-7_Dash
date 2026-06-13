@@ -941,9 +941,19 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     d->tick_meter = m;
     d->tick_scale = scale;
 
-    /* Draw UNDER the arc fill: move the overlay to the back of the container
-     * so the (later-created or already-created) arc renders on top. */
-    lv_obj_move_background(m);
+    if (d->ticks_on_top) {
+        /* Render the tick ring + labels (baked img) and the value-line meter
+         * ON TOP of the arc track/fill — for thick-ring gauges where a
+         * behind-the-fill overlay would be fully occluded. tick_img first so
+         * the value-line (in m) sits above it. */
+        if (d->tick_img && lv_obj_is_valid(d->tick_img))
+            lv_obj_move_foreground(d->tick_img);
+        lv_obj_move_foreground(m);
+    } else {
+        /* Draw UNDER the arc fill: move the overlay to the back of the
+         * container so the arc renders on top (historical default). */
+        lv_obj_move_background(m);
+    }
 }
 
 /* Tear down + rebuild the overlay meter in place. Used by the night-apply
@@ -1389,6 +1399,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
         cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
+    if (d->ticks_on_top)
+        cJSON_AddBoolToObject(cfg, "ticks_on_top", true);
     if (d->label_gap != ARC_DEFAULT_LABEL_GAP)
         cJSON_AddNumberToObject(cfg, "label_gap", d->label_gap);
     if (d->tick_label_font[0] != '\0')
@@ -1596,6 +1608,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     /* Numeric tick labels */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
     if (cJSON_IsBool(item)) d->show_tick_labels = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "ticks_on_top");
+    if (cJSON_IsBool(item)) d->ticks_on_top = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
     if (cJSON_IsNumber(item)) d->label_gap = (int16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
@@ -1898,6 +1912,10 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "arc_image_full") == 0) { out->str = d->arc_image_full; return true; }
 	if (strcmp(name, "tick_label_font") == 0) { out->str = d->tick_label_font; return true; }
 	if (strcmp(name, "show_tick_labels") == 0) { out->b = d->show_tick_labels; return true; }
+	if (strcmp(name, "ticks_on_top") == 0)   { out->b = d->ticks_on_top;     return true; }
+	if (strcmp(name, "redline_arc_width") == 0) { out->i = d->redline_arc_width; return true; }
+	if (strcmp(name, "redline_color") == 0)  { out->color = lv_color_to32(d->redline_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "redline_recolor_fill") == 0) { out->b = d->redline_recolor_fill; return true; }
 	if (strcmp(name, "label_gap") == 0)      { out->i = d->label_gap;        return true; }
 	if (strcmp(name, "tick_label_divisor") == 0) { out->i = d->tick_label_divisor; return true; }
 	if (strcmp(name, "tick_label_color") == 0) { out->color = lv_color_to32(d->tick_label_color) & 0xFFFFFF; return true; }
@@ -2039,6 +2057,37 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "show_tick_labels") == 0) {
 		d->show_tick_labels = in->b;
 		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "ticks_on_top") == 0) {
+		d->ticks_on_top = in->b;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	/* Redline styling (widget-owned; threshold/enable come from the channel).
+	 * Width rebuilds the redline arc via the overlay path; colour + recolor
+	 * re-run the fill precedence so they land live. */
+	if (strcmp(name, "redline_arc_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
+		d->redline_arc_width = (uint8_t)v;
+		if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj)) {
+			uint8_t rw = d->redline_arc_width > 0 ? d->redline_arc_width : d->arc_width;
+			lv_obj_set_style_arc_width(d->redline_arc_obj, rw, LV_PART_INDICATOR);
+		}
+		return true;
+	}
+	if (strcmp(name, "redline_color") == 0) {
+		d->redline_color = lv_color_hex(in->color);
+		if (d->redline_arc_obj && lv_obj_is_valid(d->redline_arc_obj))
+			lv_obj_set_style_arc_color(d->redline_arc_obj, d->redline_color, LV_PART_INDICATOR);
+		if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "redline_recolor_fill") == 0) {
+		d->redline_recolor_fill = in->b;
+		if (d->arc_obj && lv_obj_is_valid(d->arc_obj))
+			_arc_apply_fill_color(d, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "label_gap") == 0) {
@@ -2198,6 +2247,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
+    d->ticks_on_top       = false;
     d->label_gap          = ARC_DEFAULT_LABEL_GAP;
     d->tick_label_color   = lv_color_hex(ARC_DEFAULT_TICK_LABEL_COLOR);
     d->tick_label_divisor = ARC_DEFAULT_TICK_LABEL_DIVISOR;

@@ -165,6 +165,11 @@ typedef struct {
     char       tick_label_font[32];     /* default: "" — empty = LVGL default */
     lv_color_t tick_label_color;        /* default: 0xFFFFFF */
     uint16_t   tick_label_divisor;      /* default: 1 — divides displayed value */
+    /* Draw the tick ring + labels (and value-line) ON TOP of the arc track and
+     * fill instead of behind them. Needed for thick-ring gauges (e.g. a MoTeC
+     * tacho) where a behind-the-fill overlay is fully occluded. Default false
+     * keeps the historical behind-the-fill z-order for existing layouts. */
+    bool       ticks_on_top;            /* default: false */
 
     /* ── Value line (needle) — reuses the SAME overlay lv_meter. When set
      * (even if show_ticks is off) the overlay meter is created and an

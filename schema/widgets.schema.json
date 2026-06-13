@@ -2270,6 +2270,13 @@
           "category": "appearance"
         },
         {
+          "name": "ticks_on_top",
+          "label": "Ticks On Top",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance"
+        },
+        {
           "name": "label_gap",
           "label": "Label Gap",
           "type": "stepper",
@@ -2424,6 +2431,29 @@
           "group": "arc_alerts",
           "enabled_by": "arc_alerts_enabled",
           "night_overridable": true
+        },
+        {
+          "name": "redline_arc_width",
+          "label": "Redline Thickness",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 50
+        },
+        {
+          "name": "redline_color",
+          "label": "Redline Color",
+          "type": "color",
+          "default": "#FF0000",
+          "category": "appearance"
+        },
+        {
+          "name": "redline_recolor_fill",
+          "label": "Redline Recolors Fill",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance"
         }
       ]
     },
