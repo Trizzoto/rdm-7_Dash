@@ -69,28 +69,32 @@ def stxt(wid, x, y, w, h, txt, font, color):
 
 def build():
     widgets = [
-        # ── Thick ring tacho: orange fill over a silver track, red redline ──
-        {"type": "arc", "id": "tacho", "x": 0, "y": -36, "w": 340, "h": 340,
+        # ── Thick ring tacho: orange fill over a silver track, red redline.
+        # Ticks/labels live in the dark gap between the ring inner edge and the
+        # centre disc (the overlay is z-behind the fill, so anything inside the
+        # ring band is occluded). Thin-ish ring + long ticks that poke past the
+        # inner edge + label_gap that seats numbers in the gap. ──
+        {"type": "arc", "id": "tacho", "x": 0, "y": -36, "w": 352, "h": 352,
          "config": {"signal_name": "RPM", "channel": "rpm",
                     "signal_min": 0, "signal_max": 7000,
                     "start_angle": 135, "end_angle": 45,
-                    "arc_width": 44, "bg_arc_width": 44,
+                    "arc_width": 30, "bg_arc_width": 30,
                     "arc_color": ORANGE, "bg_arc_color": SILVER,
                     "rounded_ends": False,
                     "show_ticks": True, "minor_tick_step": 250,
-                    "major_tick_step": 1000, "minor_tick_length": 10,
-                    "minor_tick_width": 2, "major_tick_length": 20,
+                    "major_tick_step": 1000, "minor_tick_length": 38,
+                    "minor_tick_width": 2, "major_tick_length": 44,
                     "major_tick_width": 3, "minor_tick_color": GREY,
                     "major_tick_color": WHITE,
                     "show_tick_labels": True, "tick_label_divisor": 1000,
                     "tick_label_font": TICKF, "tick_label_color": WHITE,
-                    "label_gap": 16,
+                    "label_gap": 12,
                     "redline_enabled": True, "redline_threshold": 6400,
-                    "redline_color": RED, "redline_arc_width": 44},
+                    "redline_color": RED, "redline_arc_width": 30},
          "signal": "RPM"},
         # ── Centre disc (circle) ──
-        {"type": "shape_panel", "id": "disc", "x": 0, "y": -36, "w": 200,
-         "h": 200, "config": {"shape_type": "circle", "bg_color": DARK,
+        {"type": "shape_panel", "id": "disc", "x": 0, "y": -36, "w": 176,
+         "h": 176, "config": {"shape_type": "circle", "bg_color": DARK,
                              "bg_opa": 255, "border_color": RING,
                              "border_width": 3}},
         # RACE badge pill.
