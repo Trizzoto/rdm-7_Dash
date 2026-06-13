@@ -150,6 +150,14 @@ typedef struct {
     uint8_t    major_tick_width;        /* default: 4  */
     lv_color_t minor_tick_color;        /* default: 0x9E9E9E */
     lv_color_t major_tick_color;        /* default: 0xFFFFFF */
+    /* ── Optional 3rd (medium) tick tier — e.g. a mark every 500 between the
+     * minor (250) and major (1000) ticks. Drawn as a SECOND lv_meter scale on
+     * the overlay so it composes with the minor/major scale. Disabled when
+     * mid_tick_count < 2 (default). */
+    uint8_t    mid_tick_count;          /* default: 0 (disabled) — total medium ticks across the range */
+    uint8_t    mid_tick_length;         /* default: 13 */
+    uint8_t    mid_tick_width;          /* default: 2  */
+    lv_color_t mid_tick_color;          /* default: 0xBDBDBD */
 
     /* ── Numeric tick labels (meter-parity). Drawn by the OVERLAY lv_meter at
      * its major ticks. lv_meter bakes the label colour/font into LV_PART_TICKS

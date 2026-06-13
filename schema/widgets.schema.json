@@ -2263,6 +2263,38 @@
           "enabled_by": "show_ticks"
         },
         {
+          "name": "mid_tick_step",
+          "label": "Medium Tick Step",
+          "type": "number",
+          "default": 0,
+          "category": "appearance"
+        },
+        {
+          "name": "mid_tick_length",
+          "label": "Medium Tick Length",
+          "type": "stepper",
+          "default": 13,
+          "category": "appearance",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "name": "mid_tick_width",
+          "label": "Medium Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 20
+        },
+        {
+          "name": "mid_tick_color",
+          "label": "Medium Tick Color",
+          "type": "color",
+          "default": "#BDBDBD",
+          "category": "appearance"
+        },
+        {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",

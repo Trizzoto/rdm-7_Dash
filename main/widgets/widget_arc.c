@@ -74,6 +74,9 @@ static const char *TAG = "widget_arc";
 #define ARC_DEFAULT_MAJOR_TICK_WIDTH   4
 #define ARC_DEFAULT_MINOR_TICK_COLOR   0x9E9E9E
 #define ARC_DEFAULT_MAJOR_TICK_COLOR   0xFFFFFF
+#define ARC_DEFAULT_MID_TICK_LENGTH    13
+#define ARC_DEFAULT_MID_TICK_WIDTH     2
+#define ARC_DEFAULT_MID_TICK_COLOR     0xBDBDBD
 #define ARC_DEFAULT_SHOW_TICK_LABELS   true
 #define ARC_DEFAULT_LABEL_GAP          10
 #define ARC_DEFAULT_TICK_LABEL_COLOR   0xFFFFFF
@@ -915,11 +918,36 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
     }
 
+    /* Optional 3rd (medium) tick tier — a second scale at mid_tick_count
+     * marks across the range, length between minor and major. Added BEFORE the
+     * bake so the snapshot captures it; stripped after the bake (below) so it
+     * doesn't also render live on top of the baked image. */
+    lv_meter_scale_t *mid_scale = NULL;
+    if (d->show_ticks && d->mid_tick_count >= 2) {
+        mid_scale = lv_meter_add_scale(m);
+        lv_meter_set_scale_range(m, mid_scale,
+                                 (int32_t)lroundf(d->signal_min),
+                                 (int32_t)lroundf(d->signal_max),
+                                 angle_range, (int32_t)d->start_angle);
+        lv_meter_set_scale_ticks(m, mid_scale, d->mid_tick_count,
+                                 d->mid_tick_width, d->mid_tick_length,
+                                 d->mid_tick_color);
+        /* No major ticks / labels on the medium scale (every=255 → none). */
+        lv_meter_set_scale_major_ticks(m, mid_scale, 255, 0, 0,
+                                       d->mid_tick_color, 0);
+    }
+
     /* Bake the tick ring into a sector image BEFORE the value-line needle
      * is added (the needle must stay live, not be frozen into the bake).
      * The relabel hook above is already registered so the snapshot carries
      * the divisor/anchor/reverse label text. No-op when show_ticks is off. */
     _arc_flatten_overlay(d, cont, m, scale, want_labels);
+
+    /* If the bake succeeded, the medium scale was captured into the image —
+     * strip its live ticks too (flatten only strips the primary scale). */
+    if (mid_scale && d->tick_img)
+        lv_meter_set_scale_ticks(m, mid_scale, d->mid_tick_count, 0, 0,
+                                 d->mid_tick_color);
 
     /* Value-line needle. */
     if (d->show_value_line) {
@@ -1395,6 +1423,15 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)d->minor_tick_color.full);
     if (d->major_tick_color.full != lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR).full)
         cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
+    /* Medium (3rd) tick tier — defaults-only. */
+    if (d->mid_tick_count != 0)
+        cJSON_AddNumberToObject(cfg, "mid_tick_count", d->mid_tick_count);
+    if (d->mid_tick_length != ARC_DEFAULT_MID_TICK_LENGTH)
+        cJSON_AddNumberToObject(cfg, "mid_tick_length", d->mid_tick_length);
+    if (d->mid_tick_width != ARC_DEFAULT_MID_TICK_WIDTH)
+        cJSON_AddNumberToObject(cfg, "mid_tick_width", d->mid_tick_width);
+    if (d->mid_tick_color.full != lv_color_hex(ARC_DEFAULT_MID_TICK_COLOR).full)
+        cJSON_AddNumberToObject(cfg, "mid_tick_color", (int)d->mid_tick_color.full);
 
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
@@ -1602,6 +1639,14 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->major_tick_width = (uint8_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_color");
     if (cJSON_IsNumber(item)) d->minor_tick_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_count");
+    if (cJSON_IsNumber(item)) d->mid_tick_count = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_length");
+    if (cJSON_IsNumber(item)) d->mid_tick_length = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_width");
+    if (cJSON_IsNumber(item)) d->mid_tick_width = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_color");
+    if (cJSON_IsNumber(item)) d->mid_tick_color.full = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
     if (cJSON_IsNumber(item)) d->major_tick_color.full = (uint16_t)item->valueint;
 
@@ -1953,6 +1998,15 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 		out->i = (int32_t)lroundf(mstep * (float)d->major_tick_every);
 		return true;
 	}
+	if (strcmp(name, "mid_tick_step") == 0) {
+		if (d->mid_tick_count < 2) { out->i = 0; return true; }
+		float range = d->signal_max - d->signal_min;
+		out->i = (int32_t)lroundf(range / (float)(d->mid_tick_count - 1));
+		return true;
+	}
+	if (strcmp(name, "mid_tick_length") == 0) { out->i = d->mid_tick_length; return true; }
+	if (strcmp(name, "mid_tick_width") == 0)  { out->i = d->mid_tick_width;  return true; }
+	if (strcmp(name, "mid_tick_color") == 0)  { out->color = lv_color_to32(d->mid_tick_color) & 0xFFFFFF; return true; }
 	return false;
 }
 
@@ -2139,6 +2193,38 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
+	/* Medium (3rd) tick tier. mid_tick_step 0 disables it; otherwise derive a
+	 * tick count across the range (like minor). Length/width/color are direct. */
+	if (strcmp(name, "mid_tick_step") == 0) {
+		float step = (float)in->i;
+		if (step <= 0) { d->mid_tick_count = 0; }
+		else {
+			float range = d->signal_max - d->signal_min;
+			int32_t cnt = (int32_t)lroundf(range / step) + 1;
+			if (cnt < 2) cnt = 2;
+			if (cnt > 200) cnt = 200;
+			d->mid_tick_count = (uint8_t)cnt;
+		}
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "mid_tick_length") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 100) v = 100;
+		d->mid_tick_length = (uint8_t)v;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "mid_tick_width") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 20) v = 20;
+		d->mid_tick_width = (uint8_t)v;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "mid_tick_color") == 0) {
+		d->mid_tick_color = lv_color_hex(in->color);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
 	/* Color alerts. Colours re-run the full fill precedence so the edit lands
 	 * immediately (even on an unbound arc with no signal ticks) and the paint
 	 * memo stays coherent — _arc_apply_fill_color updates _last_fill itself.
@@ -2244,6 +2330,10 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->major_tick_width   = ARC_DEFAULT_MAJOR_TICK_WIDTH;
     d->minor_tick_color   = lv_color_hex(ARC_DEFAULT_MINOR_TICK_COLOR);
     d->major_tick_color   = lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR);
+    d->mid_tick_count     = 0;   /* disabled by default */
+    d->mid_tick_length    = ARC_DEFAULT_MID_TICK_LENGTH;
+    d->mid_tick_width     = ARC_DEFAULT_MID_TICK_WIDTH;
+    d->mid_tick_color     = lv_color_hex(ARC_DEFAULT_MID_TICK_COLOR);
 
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
