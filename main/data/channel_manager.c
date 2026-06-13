@@ -1168,9 +1168,9 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 		cJSON *a  = cJSON_GetObjectItemCaseSensitive(m, "a");
 		cJSON *b  = cJSON_GetObjectItemCaseSensitive(m, "b");
 		cJSON *op = cJSON_GetObjectItemCaseSensitive(m, "op");
-		bool a_ch    = cJSON_IsString(a) && a->valuestring[0];
+		bool a_ch    = cJSON_IsString(a) && a->valuestring && a->valuestring[0];
 		bool a_const = cJSON_IsNumber(a);
-		bool b_ch    = cJSON_IsString(b) && b->valuestring[0];
+		bool b_ch    = cJSON_IsString(b) && b->valuestring && b->valuestring[0];
 		bool b_const = cJSON_IsNumber(b);
 		if ((a_ch || a_const) && (b_ch || b_const) && (a_ch || b_ch)) {
 			if (a_ch) safe_strcpy(c->math_a, a->valuestring, sizeof(c->math_a));
