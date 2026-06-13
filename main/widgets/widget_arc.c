@@ -1014,8 +1014,11 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         lv_meter_set_scale_ticks(m, mid_scale, mid_eff,
                                  d->mid_tick_width, d->mid_tick_length,
                                  d->mid_tick_color);
-        /* No major ticks / labels on the medium scale (every=255 → none). */
-        lv_meter_set_scale_major_ticks(m, mid_scale, 255, 0, 0,
+        /* No major ticks/labels on the medium scale. nth=0 makes lv_meter seed
+         * its major counter at 0xFFFF so NO tick is ever major — important
+         * because any nth>=1 makes the FIRST tick major (counter seeds at
+         * nth-1), which drew a second "0" label on top of the primary scale. */
+        lv_meter_set_scale_major_ticks(m, mid_scale, 0, 0, 0,
                                        d->mid_tick_color, 0);
     }
 
