@@ -46,6 +46,8 @@ typedef struct {
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	int8_t     label_y_offset;       /* default: -28 */
 	int8_t     value_y_offset;       /* default: 9 */
+	uint8_t    text_align;           /* 0=left, 1=center (default), 2=right —
+	                                  * aligns both the header label and value */
 	int8_t     custom_text_x_offset; /* default: 41 */
 	int8_t     custom_text_y_offset; /* default: 32 */
 	/* Peak hold display: when non-zero, render a small line below the value.

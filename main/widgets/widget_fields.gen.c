@@ -160,6 +160,12 @@ static const widget_field_option_t panel_show_peak_opts[] = {
     { 3, "Min/Max" },
 };
 
+static const widget_field_option_t panel_text_align_opts[] = {
+    { 0, "Left" },
+    { 1, "Center" },
+    { 2, "Right" },
+};
+
 static const widget_field_t panel_fields[] = {
     {
         .name = "label", .label = "Header Label",
@@ -428,6 +434,16 @@ static const widget_field_t panel_fields[] = {
         .default_int = 9, .default_float = 9.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "text_align", .label = "Text Align",
+        .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 1, .default_float = 1.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = panel_text_align_opts, .option_count = 3,
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },

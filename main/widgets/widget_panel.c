@@ -601,6 +601,13 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_add_event_cb(box, screen3_touch_event_cb,
 						LV_EVENT_RELEASED, NULL);
 
+	/* Header + value alignment: the labels are near-full-box width and aligned
+	 * LV_ALIGN_CENTER, so the text_align alone places the text at the box's
+	 * left / centre / right edge (used for MoTeC-style left & right columns). */
+	lv_text_align_t ta = (pd->text_align == 0) ? LV_TEXT_ALIGN_LEFT
+	                   : (pd->text_align == 2) ? LV_TEXT_ALIGN_RIGHT
+	                   : LV_TEXT_ALIGN_CENTER;
+
 	/* Header label */
 	lv_obj_t *hdr = lv_label_create(box);
 	lv_label_set_text(hdr, pd->label);
@@ -611,7 +618,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *lbl_font = widget_resolve_font(pd->label_font);
 	lv_obj_set_style_text_font(hdr, lbl_font ? lbl_font : THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(hdr, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_style_text_align(hdr, ta, 0);
 	lv_obj_set_width(hdr, w->w - 10);
 	lv_label_set_long_mode(hdr, LV_LABEL_LONG_CLIP);
 	lv_obj_set_x(hdr, 0);
@@ -628,7 +635,7 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *val_font = widget_resolve_font(pd->value_font);
 	lv_obj_set_style_text_font(val, val_font ? val_font : THEME_FONT_DASH_VALUE,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_set_style_text_align(val, ta, 0);
 	lv_obj_set_width(val, w->w - 15);
 	lv_label_set_long_mode(val, LV_LABEL_LONG_CLIP);
 	lv_obj_set_x(val, 0);
@@ -788,6 +795,8 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "label_y_offset", pd->label_y_offset);
 	if (pd->value_y_offset != 9)
 		cJSON_AddNumberToObject(cfg, "value_y_offset", pd->value_y_offset);
+	if (pd->text_align != 1)
+		cJSON_AddNumberToObject(cfg, "text_align", pd->text_align);
 	if (pd->custom_text_x_offset != 41)
 		cJSON_AddNumberToObject(cfg, "custom_text_x_offset", pd->custom_text_x_offset);
 	if (pd->custom_text_y_offset != 32)
@@ -904,6 +913,11 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) pd->label_y_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_y_offset");
 	if (cJSON_IsNumber(item)) pd->value_y_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "text_align");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint; if (v < 0 || v > 2) v = 1;
+		pd->text_align = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_x_offset");
 	if (cJSON_IsNumber(item)) pd->custom_text_x_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
@@ -1153,6 +1167,7 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "value_color") == 0)          { out->color = lv_color_to32(pd->value_color)  & 0xFFFFFF; return true; }
 	if (strcmp(name, "label_y_offset") == 0)       { out->i = pd->label_y_offset; return true; }
 	if (strcmp(name, "value_y_offset") == 0)       { out->i = pd->value_y_offset; return true; }
+	if (strcmp(name, "text_align") == 0)           { out->i = pd->text_align;     return true; }
 	if (strcmp(name, "custom_text_x_offset") == 0) { out->i = pd->custom_text_x_offset; return true; }
 	if (strcmp(name, "custom_text_y_offset") == 0) { out->i = pd->custom_text_y_offset; return true; }
 	return false;
@@ -1237,6 +1252,17 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_y(val, pd->value_y_offset);
 		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
 			lv_obj_set_y(pd->peak_label, pd->value_y_offset + 22);
+		return true;
+	}
+	if (strcmp(name, "text_align") == 0) {
+		int v = in->i; if (v < 0 || v > 2) v = 1;
+		pd->text_align = (uint8_t)v;
+		lv_text_align_t ta = (v == 0) ? LV_TEXT_ALIGN_LEFT
+		                   : (v == 2) ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_CENTER;
+		if (pd->header_label && lv_obj_is_valid(pd->header_label))
+			lv_obj_set_style_text_align(pd->header_label, ta, 0);
+		if (pd->value_label && lv_obj_is_valid(pd->value_label))
+			lv_obj_set_style_text_align(pd->value_label, ta, 0);
 		return true;
 	}
 	if (strcmp(name, "custom_text_x_offset") == 0) {
@@ -1335,6 +1361,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	pd->label_y_offset = -28;
 	pd->value_y_offset = 9;
+	pd->text_align = 1;   /* center (back-compat default) */
 	pd->custom_text_x_offset = 41;
 	pd->custom_text_y_offset = 32;
 

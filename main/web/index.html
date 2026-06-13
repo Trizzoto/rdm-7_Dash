@@ -7020,6 +7020,12 @@
                             { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                             { name: "label_y_offset", label: "Label Y Offset", type: "stepper", def: -28, cat: "appearance", min: -100, max: 100 },
                             { name: "value_y_offset", label: "Value Y Offset", type: "stepper", def: 9, cat: "appearance", min: -100, max: 100 },
+                            { name: "text_align", label: "Text Align", type: "select", def: 1, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Left" },
+                                  { v: 1, l: "Center" },
+                                  { v: 2, l: "Right" }
+                              ] },
                             { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", def: 41, cat: "appearance", min: -100, max: 100 },
                             { name: "custom_text_y_offset", label: "Unit Text Y", type: "stepper", def: 32, cat: "appearance", min: -100, max: 100 }
                         ]
