@@ -1055,10 +1055,16 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		if (v > 100) v = 100;
 		bd->anchor_position = (uint8_t)v;
 	}
+	/* Track explicit presence: only a threshold the layout actually carried
+	 * may migrate into the channel below. The in-memory defaults (0/100) look
+	 * like real thresholds the moment the range spans them — a center-fill
+	 * boost bar with Min -10 would otherwise adopt low_warn=0 into the channel
+	 * and turn blue the instant the value goes negative. */
+	bool bar_low_explicit = false, bar_high_explicit = false;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low");
-	if (cJSON_IsNumber(item)) bd->bar_low = (float)item->valuedouble;
+	if (cJSON_IsNumber(item)) { bd->bar_low = (float)item->valuedouble; bar_low_explicit = true; }
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high");
-	if (cJSON_IsNumber(item)) bd->bar_high = (float)item->valuedouble;
+	if (cJSON_IsNumber(item)) { bd->bar_high = (float)item->valuedouble; bar_high_explicit = true; }
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low_color");
 	if (cJSON_IsNumber(item)) bd->bar_low_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high_color");
@@ -1189,15 +1195,17 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		bool _ch_dirty = false;
 		if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
 			bd->bar_high = bound_c->high_warn;
-		} else if (bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
-			bound_c->high_warn = bd->bar_high;   /* real threshold, strictly in range */
+		} else if (bar_high_explicit &&
+		           bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
+			bound_c->high_warn = bd->bar_high;   /* real legacy threshold, strictly in range */
 			_ch_dirty = true;
 		} else {
-			bd->bar_high = bd->bar_max;          /* edge / unset → high alert inactive */
+			bd->bar_high = bd->bar_max;          /* edge / unset / default → high alert inactive */
 		}
 		if (bound_c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
 			bd->bar_low = bound_c->low_warn;
-		} else if (bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
+		} else if (bar_low_explicit &&
+		           bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
 			bound_c->low_warn = bd->bar_low;
 			_ch_dirty = true;
 		} else {
@@ -1210,7 +1218,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 			.signal_name = bd->signal_name,
 			.min = bd->bar_min,
 			.max = bd->bar_max,
-			.high_warn = bd->bar_high,
+			.high_warn = bar_high_explicit ? bd->bar_high : (float)INT32_MIN,
 			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
 			.color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF,
 		};
@@ -1220,15 +1228,16 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 			if (!decimals_overridden) bd->decimals = c->decimals;
 			/* Migrate the widget's legacy alert thresholds UP into the channel
 			 * when the channel doesn't already define them (a real threshold is
-			 * one inside the range; an edge value means "no alert"). Never
-			 * clobber an existing channel warn — that's the source of truth. */
-			if (c->high_warn == CHANNEL_THRESHOLD_UNSET_HIGH &&
+			 * one the layout explicitly carried, inside the range; an edge or
+			 * default value means "no alert"). Never clobber an existing
+			 * channel warn — that's the source of truth. */
+			if (bar_high_explicit && c->high_warn == CHANNEL_THRESHOLD_UNSET_HIGH &&
 			    bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
 				c->high_warn = bd->bar_high;
 				c->color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF;
 				channel_manager_mark_dirty();
 			}
-			if (c->low_warn == CHANNEL_THRESHOLD_UNSET_LOW &&
+			if (bar_low_explicit && c->low_warn == CHANNEL_THRESHOLD_UNSET_LOW &&
 			    bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
 				c->low_warn = bd->bar_low;
 				c->color_low_warn = lv_color_to32(bd->bar_low_color) & 0xFFFFFF;
