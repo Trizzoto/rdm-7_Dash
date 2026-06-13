@@ -1549,11 +1549,16 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->signal_name, item->valuestring, sizeof(d->signal_name));
 
+    /* Track explicit presence: an explicit widget signal_min/max is a DISPLAY
+     * SCALE choice and overrides the bound channel's data range below, so the
+     * scale can start below the channel min (e.g. a negative min to raise where
+     * the 0 mark sits on a tacho). Absent → fall back to the channel range. */
+    bool sig_min_explicit = false, sig_max_explicit = false;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_min");
-    if (cJSON_IsNumber(item)) d->signal_min = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) { d->signal_min = (float)item->valuedouble; sig_min_explicit = true; }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_max");
-    if (cJSON_IsNumber(item)) d->signal_max = (float)item->valuedouble;
+    if (cJSON_IsNumber(item)) { d->signal_max = (float)item->valuedouble; sig_max_explicit = true; }
 
     /* Image mode */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image");
@@ -1734,8 +1739,11 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
         d->channel = bound_c;
         safe_strncpy(d->signal_name, bound_c->signal_name, sizeof(d->signal_name));
         d->signal_index = bound_c->signal_index;
-        d->signal_min = (float)bound_c->min;
-        d->signal_max = (float)bound_c->max;
+        /* Channel range is the default scale; an explicit widget signal_min/max
+         * (display-scale override) wins so the gauge can extend below/above the
+         * channel's data range. */
+        if (!sig_min_explicit) d->signal_min = (float)bound_c->min;
+        if (!sig_max_explicit) d->signal_max = (float)bound_c->max;
         if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
             d->redline_enabled = true;
             d->redline_threshold = (float)bound_c->high_warn;
@@ -2047,8 +2055,21 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_apply_sector_crop(w);
 		return true;
 	}
-	if (strcmp(name, "signal_min") == 0) { d->signal_min = (float)in->i; return true; }
-	if (strcmp(name, "signal_max") == 0) { d->signal_max = (float)in->i; return true; }
+	/* signal_min/max define the display scale (may be negative). Rebuild the
+	 * overlay so the tick scale + labels + needle re-lay-out, and re-snap the
+	 * fill to the cached value against the new range. */
+	if (strcmp(name, "signal_min") == 0) {
+		d->signal_min = (float)in->i;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		_arc_recompute_value(w, d->_cached_value, false);
+		return true;
+	}
+	if (strcmp(name, "signal_max") == 0) {
+		d->signal_max = (float)in->i;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		_arc_recompute_value(w, d->_cached_value, false);
+		return true;
+	}
 	if (strcmp(name, "arc_width") == 0) {
 		int v = in->i; if (v < 1) v = 1; if (v > 50) v = 50;
 		d->arc_width = (uint8_t)v;

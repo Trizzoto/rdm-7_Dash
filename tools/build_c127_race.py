@@ -28,7 +28,7 @@ REDLINE = 63813                # redline (user's)
 DISCBG  = 6339                 # background circle + bottom panel fill (user's)
 DISCBD  = 10597                # their border colour
 MINORC  = 14824                # minor tick (user's)
-MIDC    = 12800                # medium tick (between minor & major)
+MIDC    = 12710                # medium tick — grey (NOT 12800, which is olive!)
 MAJORC  = 10565                # major tick (user's)
 TLBLC   = rgb(255, 255, 255)   # tick numbers white — readable in the dark gap
                                # (user had black, invisible against the dark centre)
@@ -93,13 +93,14 @@ def build():
                     "arc_color": ARC_ORG, "bg_arc_color": SILVER,
                     "rounded_ends": False,
                     "ticks_on_top": True, "show_ticks": True,
-                    # 3 tiers: minor every 250 (count 29), medium every 500
-                    # (count 15), major every 1000 (every 4th minor) + labels.
-                    "minor_tick_count": 29, "major_tick_every": 4,
+                    # 3 tiers: minor every 100 (count 71), medium every 500
+                    # (count 15), major every 1000 (every 10th minor) + labels.
+                    # Lengths give a clear hierarchy short<medium<long.
+                    "minor_tick_count": 71, "major_tick_every": 10,
                     "mid_tick_count": 15,
-                    "minor_tick_length": 14, "minor_tick_width": 2,
-                    "mid_tick_length": 24, "mid_tick_width": 2,
-                    "major_tick_length": 34, "major_tick_width": 3,
+                    "minor_tick_length": 8, "minor_tick_width": 2,
+                    "mid_tick_length": 18, "mid_tick_width": 2,
+                    "major_tick_length": 30, "major_tick_width": 3,
                     "minor_tick_color": MINORC, "mid_tick_color": MIDC,
                     "major_tick_color": MAJORC,
                     "show_tick_labels": True, "tick_label_divisor": 1000,
