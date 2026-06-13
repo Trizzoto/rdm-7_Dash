@@ -2116,6 +2116,20 @@
           "category": "data"
         },
         {
+          "name": "tick_min",
+          "label": "Tick Start Value",
+          "type": "number",
+          "default": 0,
+          "category": "data"
+        },
+        {
+          "name": "tick_max",
+          "label": "Tick End Value",
+          "type": "number",
+          "default": 0,
+          "category": "data"
+        },
+        {
           "name": "arc_width",
           "label": "Arc Width",
           "type": "stepper",

@@ -169,6 +169,13 @@ typedef struct {
      * anchor/reverse warp the fill uses. Default ON (matches the meter), so
      * an arc that enables ticks gets labels unless they're explicitly hidden. */
     bool       show_tick_labels;        /* default: true */
+    /* Tick window: when tick_max > tick_min, ticks + labels only draw for
+     * values within [tick_min, tick_max]; the ring + fill still span the full
+     * signal_min..signal_max sweep. Lets a scale extend past the meaningful
+     * range (e.g. a negative signal_min that raises where 0 sits) without
+     * showing ticks below the start or above the end. Default 0/0 = off. */
+    float      tick_min;                /* default: 0 */
+    float      tick_max;                /* default: 0 (<= tick_min → window off) */
     int16_t    label_gap;               /* default: 10  (range −150..+150) */
     char       tick_label_font[32];     /* default: "" — empty = LVGL default */
     lv_color_t tick_label_color;        /* default: 0xFFFFFF */

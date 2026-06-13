@@ -644,8 +644,24 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
     if (!d) return;
     lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
     if (!dsc || dsc->type != LV_METER_DRAW_PART_TICK) return;
-    /* Label-only hook: skip minor ticks (no label_dsc/text — only major ticks
-     * carry a label). */
+
+    /* Tick window: when tick_max > tick_min, hide tick MARKS and LABELS whose
+     * value falls outside [tick_min, tick_max]. Lets the scale (and so the
+     * ring + fill) extend past the meaningful range — e.g. a negative
+     * signal_min to raise where 0 sits — without drawing ticks below 0 or
+     * above the top number. Fires for both the primary and medium scales. */
+    if (d->tick_max > d->tick_min) {
+        float v = (float)dsc->value;
+        if (v < d->tick_min - 0.001f || v > d->tick_max + 0.001f) {
+            if (dsc->line_dsc) dsc->line_dsc->opa = LV_OPA_TRANSP;
+            if (dsc->label_dsc) dsc->label_dsc->opa = LV_OPA_TRANSP;
+            if (dsc->text) dsc->text[0] = '\0';
+            return;
+        }
+    }
+
+    /* Label-only hook below: skip minor ticks (no label_dsc/text — only major
+     * ticks carry a label). */
     if (dsc->label_dsc == NULL || dsc->text == NULL) return;
 
     /* Value the user should read at this tick (anchor / reverse aware). `shown`
@@ -911,10 +927,10 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         /* Suppress numeric tick labels entirely. */
         lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
     }
-    /* DRAW_PART_BEGIN hook — relabels major ticks using divisor/anchor/reverse.
-     * Registered only when labels are on. Pass arc_data_t* so the hook reads
-     * divisor/anchor/reverse without a widget_t round-trip. */
-    if (want_labels) {
+    /* DRAW_PART_BEGIN hook — relabels major ticks AND/OR clips ticks to the
+     * [tick_min, tick_max] window. Registered when labels are on OR a tick
+     * window is set. Pass arc_data_t* so the hook reads its config directly. */
+    if (want_labels || d->tick_max > d->tick_min) {
         lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
     }
 
@@ -1438,6 +1454,10 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
     if (d->ticks_on_top)
         cJSON_AddBoolToObject(cfg, "ticks_on_top", true);
+    if (d->tick_max > d->tick_min) {
+        cJSON_AddNumberToObject(cfg, "tick_min", (double)d->tick_min);
+        cJSON_AddNumberToObject(cfg, "tick_max", (double)d->tick_max);
+    }
     if (d->label_gap != ARC_DEFAULT_LABEL_GAP)
         cJSON_AddNumberToObject(cfg, "label_gap", d->label_gap);
     if (d->tick_label_font[0] != '\0')
@@ -1660,6 +1680,10 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsBool(item)) d->show_tick_labels = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "ticks_on_top");
     if (cJSON_IsBool(item)) d->ticks_on_top = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_min");
+    if (cJSON_IsNumber(item)) d->tick_min = (float)item->valuedouble;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_max");
+    if (cJSON_IsNumber(item)) d->tick_max = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
     if (cJSON_IsNumber(item)) d->label_gap = (int16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
@@ -1966,6 +1990,8 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tick_label_font") == 0) { out->str = d->tick_label_font; return true; }
 	if (strcmp(name, "show_tick_labels") == 0) { out->b = d->show_tick_labels; return true; }
 	if (strcmp(name, "ticks_on_top") == 0)   { out->b = d->ticks_on_top;     return true; }
+	if (strcmp(name, "tick_min") == 0)       { out->i = (int32_t)d->tick_min; return true; }
+	if (strcmp(name, "tick_max") == 0)       { out->i = (int32_t)d->tick_max; return true; }
 	if (strcmp(name, "redline_arc_width") == 0) { out->i = d->redline_arc_width; return true; }
 	if (strcmp(name, "redline_color") == 0)  { out->color = lv_color_to32(d->redline_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "redline_recolor_fill") == 0) { out->b = d->redline_recolor_fill; return true; }
@@ -2131,6 +2157,16 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	 * effect live — same path night mode uses. */
 	if (strcmp(name, "show_tick_labels") == 0) {
 		d->show_tick_labels = in->b;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_min") == 0) {
+		d->tick_min = (float)in->i;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_max") == 0) {
+		d->tick_max = (float)in->i;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
@@ -2359,6 +2395,8 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
     d->ticks_on_top       = false;
+    d->tick_min           = 0;   /* tick window off (tick_max <= tick_min) */
+    d->tick_max           = 0;
     d->label_gap          = ARC_DEFAULT_LABEL_GAP;
     d->tick_label_color   = lv_color_hex(ARC_DEFAULT_TICK_LABEL_COLOR);
     d->tick_label_divisor = ARC_DEFAULT_TICK_LABEL_DIVISOR;
