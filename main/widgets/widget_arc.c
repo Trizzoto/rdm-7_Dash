@@ -653,7 +653,13 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
     if (d->tick_max > d->tick_min) {
         float v = (float)dsc->value;
         if (v < d->tick_min - 0.001f || v > d->tick_max + 0.001f) {
-            if (dsc->line_dsc) dsc->line_dsc->opa = LV_OPA_TRANSP;
+            /* Hide the tick MARK via width (NOT opa): lv_meter shares one
+             * line_dsc across all ticks and resets only its color+width after
+             * each tick, never opa — so an opa change would persist and blank
+             * every later mark. width is reset per tick, so width 0 is safe. */
+            if (dsc->line_dsc) dsc->line_dsc->width = 0;
+            /* The label_dsc is a per-tick copy, so emptying its text (and opa)
+             * affects only this tick. */
             if (dsc->label_dsc) dsc->label_dsc->opa = LV_OPA_TRANSP;
             if (dsc->text) dsc->text[0] = '\0';
             return;
