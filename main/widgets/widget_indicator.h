@@ -35,7 +35,7 @@ typedef struct {
 	lv_color_t color_on;        /* default: amber 0xFFBF00 */
 	uint8_t    opa_on;          /* default: 255 (fully visible) */
 	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
-	uint8_t    opa_off;         /* default: 0 (invisible) */
+	uint8_t    opa_off;         /* default: 70 (dimmed but visible when off) */
 	lv_color_t base_color_on;
 	uint8_t    base_opa_on;
 	lv_color_t base_color_off;

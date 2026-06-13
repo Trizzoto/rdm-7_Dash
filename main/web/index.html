@@ -9244,8 +9244,35 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(buildFirmwarePayload())
                     });
+                    /* A preview push rebuilds every widget on the device, which
+                     * resets each banner's runtime test_override flag to false —
+                     * so a banner being previewed disappears the moment you move
+                     * or restyle anything. The sticky preview state is ours
+                     * (_bannerPreviewSticky), so re-assert it after the rebuild.
+                     * Ordering holds: the preview handler queues its async
+                     * rebuild before responding, so these /api/banner/test calls
+                     * (queued after) run after the banner is recreated. */
+                    await _reassertBannerPreviews();
                 } catch (e) { }
             }, 250); // 250ms debounce
+        }
+
+        /* Re-send the force-visible override for every banner the user has
+         * toggled "Show" on. Called after any preview rebuild. */
+        async function _reassertBannerPreviews() {
+            const ids = Object.keys(_bannerPreviewSticky);
+            if (!ids.length) return;
+            /* Drop stale ids whose widget no longer exists (deleted / id changed)
+             * so we don't keep pinging dead widgets forever. */
+            const live = new Set((currentLayout.widgets || []).map(w => w.id));
+            await Promise.all(ids.map(id => {
+                if (!live.has(id)) { delete _bannerPreviewSticky[id]; return Promise.resolve(); }
+                return fetch('/api/banner/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, active: true })
+                }).catch(() => {});
+            }));
         }
 
         /* Render a night-mode override control for a field (color or image_picker only).

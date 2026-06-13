@@ -1431,6 +1431,16 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "tick_color", (int)rd->tick_color.full);
 	if (rd->bar_bg_color.full != THEME_COLOR_RPM_BAR_BG.full)
 		cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)rd->bar_bg_color.full);
+	/* Numeric RPM readout (defaults: off / theme font / theme primary). The
+	 * night override of rpm_value_color was already serialized; the base
+	 * values were not — so enabling the readout or restyling it was lost on
+	 * reload. Defaults-only emit keeps untouched widgets empty. */
+	if (rd->show_rpm_value)         /* default false */
+		cJSON_AddBoolToObject(cfg, "show_rpm_value", true);
+	if (rd->rpm_value_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "rpm_value_font", rd->rpm_value_font);
+	if (rd->rpm_value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+		cJSON_AddNumberToObject(cfg, "rpm_value_color", (int)rd->rpm_value_color.full);
 
 	if (rd->signal_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "signal_name", rd->signal_name);
@@ -1519,6 +1529,13 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) rd->tick_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_bg_color");
 	if (cJSON_IsNumber(item)) rd->bar_bg_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_rpm_value");
+	if (cJSON_IsBool(item)) rd->show_rpm_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_font");
+	if (cJSON_IsString(item) && item->valuestring)
+		safe_strncpy(rd->rpm_value_font, item->valuestring, sizeof(rd->rpm_value_font));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "rpm_value_color");
+	if (cJSON_IsNumber(item)) rd->rpm_value_color.full = (uint32_t)item->valueint;
 	/* Clamp to the current 3-value enum. Older firmware versions had a
 	 * 7-value enum that included "circles" modes (now removed); the legacy
 	 * migration ladder lived here until 2026-04-27 and was deleted because
