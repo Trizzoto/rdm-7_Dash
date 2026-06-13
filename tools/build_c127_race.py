@@ -93,11 +93,12 @@ def build():
                     "arc_color": ARC_ORG, "bg_arc_color": SILVER,
                     "rounded_ends": False,
                     "ticks_on_top": True, "show_ticks": True,
-                    # 3 tiers: minor every 100 (count 71), medium every 500
-                    # (count 15), major every 1000 (every 10th minor) + labels.
-                    # Lengths give a clear hierarchy short<medium<long.
-                    "minor_tick_count": 71, "major_tick_every": 10,
-                    "mid_tick_count": 15,
+                    # 3 tiers via STEPS (range-independent): minor 100,
+                    # medium 500, major 1000. Counts are derived over the active
+                    # range at build, so they stay aligned + anchored to round
+                    # values even with a negative signal_min / tick window.
+                    "minor_tick_step": 100, "major_tick_step": 1000,
+                    "mid_tick_step": 500,
                     "minor_tick_length": 8, "minor_tick_width": 2,
                     "mid_tick_length": 18, "mid_tick_width": 2,
                     "major_tick_length": 30, "major_tick_width": 3,

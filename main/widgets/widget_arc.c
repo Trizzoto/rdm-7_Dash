@@ -910,13 +910,10 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     int32_t sc_max   = (int32_t)lroundf(d->signal_max);
     int32_t sc_angle = angle_range;
     int32_t sc_rot   = d->start_angle;
-    uint8_t mtc      = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
-    uint8_t mid_eff  = d->mid_tick_count;
     bool tick_window = (d->tick_max > d->tick_min) && !d->anchor_enabled &&
                        !d->reverse && (d->signal_max > d->signal_min);
     if (tick_window) {
         float sig_span = d->signal_max - d->signal_min;
-        float win_span = d->tick_max - d->tick_min;
         float f1 = (d->tick_min - d->signal_min) / sig_span;
         float f2 = (d->tick_max - d->signal_min) / sig_span;
         sc_min   = (int32_t)lroundf(d->tick_min);
@@ -924,23 +921,50 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         sc_rot   = (int32_t)lroundf(d->start_angle + f1 * (float)angle_range);
         sc_angle = (int32_t)lroundf((f2 - f1) * (float)angle_range);
         if (sc_angle < 1) sc_angle = 1;
-        if (d->minor_tick_count > 1) {
-            float step = sig_span / (float)(d->minor_tick_count - 1);
-            int32_t c = (int32_t)lroundf(win_span / step) + 1;
-            mtc = (uint8_t)(c < 2 ? 2 : (c > 255 ? 255 : c));
-        }
-        if (d->mid_tick_count > 1) {
-            float step = sig_span / (float)(d->mid_tick_count - 1);
-            int32_t c = (int32_t)lroundf(win_span / step) + 1;
-            mid_eff = (uint8_t)(c < 2 ? 0 : (c > 255 ? 255 : c));
-        }
     }
     lv_meter_set_scale_range(m, scale, sc_min, sc_max, sc_angle, sc_rot);
 
-    /* Tick marks. When show_ticks is off but a value-line is wanted, the
-     * scale still needs a (zero-width) tick setup so the needle's angle math
-     * works — mirror the meter's "zero the widths" approach. */
-    uint8_t mte = d->major_tick_every < 1 ? 1 : d->major_tick_every;
+    /* Tick counts. STEP-based when minor_tick_step is set (range-independent;
+     * computed over the active scale range [sc_min, sc_max], so minor/medium/
+     * major stay aligned and majors land on round multiples of major_step).
+     * Falls back to the legacy count fields (rescaled to the window) for older
+     * layouts that predate the step fields. */
+    float act_span = (float)(sc_max - sc_min);
+    uint8_t mtc, mte, mid_eff;
+    if (d->minor_tick_step > 0 && act_span > 0.0f) {
+        int32_t c = (int32_t)lroundf(act_span / (float)d->minor_tick_step) + 1;
+        mtc = (uint8_t)(c < 2 ? 2 : (c > 255 ? 255 : c));
+        int32_t every = (d->major_tick_step > 0)
+            ? (int32_t)lroundf((float)d->major_tick_step / (float)d->minor_tick_step)
+            : d->major_tick_every;
+        mte = (uint8_t)(every < 1 ? 1 : (every > 255 ? 255 : every));
+        if (d->mid_tick_step > 0) {
+            int32_t mc = (int32_t)lroundf(act_span / (float)d->mid_tick_step) + 1;
+            mid_eff = (uint8_t)(mc < 2 ? 0 : (mc > 255 ? 255 : mc));
+        } else {
+            mid_eff = 0;
+        }
+        d->minor_tick_count = mtc;   /* keep runtime counts coherent (relabel hook) */
+        d->major_tick_every = mte;
+    } else {
+        mtc = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
+        mte = d->major_tick_every < 1 ? 1 : d->major_tick_every;
+        mid_eff = d->mid_tick_count;
+        if (tick_window && d->signal_max > d->signal_min) {
+            float sig_span = d->signal_max - d->signal_min;
+            float win_span = d->tick_max - d->tick_min;
+            if (d->minor_tick_count > 1) {
+                float step = sig_span / (float)(d->minor_tick_count - 1);
+                int32_t c = (int32_t)lroundf(win_span / step) + 1;
+                mtc = (uint8_t)(c < 2 ? 2 : (c > 255 ? 255 : c));
+            }
+            if (d->mid_tick_count > 1) {
+                float step = sig_span / (float)(d->mid_tick_count - 1);
+                int32_t c = (int32_t)lroundf(win_span / step) + 1;
+                mid_eff = (uint8_t)(c < 2 ? 0 : (c > 255 ? 255 : c));
+            }
+        }
+    }
     lv_color_t mintc = NIGHT_PICK_COLOR(night_active, d->night, minor_tick_color, d->minor_tick_color);
     lv_color_t majtc = NIGHT_PICK_COLOR(night_active, d->night, major_tick_color, d->major_tick_color);
     uint8_t minor_w = d->show_ticks ? d->minor_tick_width  : 0;
@@ -1465,10 +1489,18 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Ticks (overlay meter) — defaults-only; bool only when true. */
     if (d->show_ticks)
         cJSON_AddBoolToObject(cfg, "show_ticks", true);
-    if (d->minor_tick_count != ARC_DEFAULT_MINOR_TICK_COUNT)
-        cJSON_AddNumberToObject(cfg, "minor_tick_count", d->minor_tick_count);
-    if (d->major_tick_every != ARC_DEFAULT_MAJOR_TICK_EVERY)
-        cJSON_AddNumberToObject(cfg, "major_tick_every", d->major_tick_every);
+    /* Tick spacing: prefer STEPS (range-independent). Emit counts only for
+     * legacy widgets that never set a step. */
+    if (d->minor_tick_step > 0) {
+        cJSON_AddNumberToObject(cfg, "minor_tick_step", d->minor_tick_step);
+        if (d->major_tick_step > 0)
+            cJSON_AddNumberToObject(cfg, "major_tick_step", d->major_tick_step);
+    } else {
+        if (d->minor_tick_count != ARC_DEFAULT_MINOR_TICK_COUNT)
+            cJSON_AddNumberToObject(cfg, "minor_tick_count", d->minor_tick_count);
+        if (d->major_tick_every != ARC_DEFAULT_MAJOR_TICK_EVERY)
+            cJSON_AddNumberToObject(cfg, "major_tick_every", d->major_tick_every);
+    }
     if (d->minor_tick_length != ARC_DEFAULT_MINOR_TICK_LENGTH)
         cJSON_AddNumberToObject(cfg, "minor_tick_length", d->minor_tick_length);
     if (d->minor_tick_width != ARC_DEFAULT_MINOR_TICK_WIDTH)
@@ -1481,8 +1513,10 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)d->minor_tick_color.full);
     if (d->major_tick_color.full != lv_color_hex(ARC_DEFAULT_MAJOR_TICK_COLOR).full)
         cJSON_AddNumberToObject(cfg, "major_tick_color", (int)d->major_tick_color.full);
-    /* Medium (3rd) tick tier — defaults-only. */
-    if (d->mid_tick_count != 0)
+    /* Medium (3rd) tick tier — prefer step, fall back to legacy count. */
+    if (d->mid_tick_step > 0)
+        cJSON_AddNumberToObject(cfg, "mid_tick_step", d->mid_tick_step);
+    else if (d->mid_tick_count != 0)
         cJSON_AddNumberToObject(cfg, "mid_tick_count", d->mid_tick_count);
     if (d->mid_tick_length != ARC_DEFAULT_MID_TICK_LENGTH)
         cJSON_AddNumberToObject(cfg, "mid_tick_length", d->mid_tick_length);
@@ -1692,6 +1726,14 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     /* Ticks (overlay lv_meter) */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
     if (cJSON_IsBool(item)) d->show_ticks = cJSON_IsTrue(item);
+    /* Tick spacing: STEPS preferred (range-independent). Counts kept for
+     * legacy layouts that predate the step fields. */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_step");
+    if (cJSON_IsNumber(item)) d->minor_tick_step = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_step");
+    if (cJSON_IsNumber(item)) d->major_tick_step = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_step");
+    if (cJSON_IsNumber(item)) d->mid_tick_step = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_count");
     if (cJSON_IsNumber(item)) d->minor_tick_count = (uint8_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_every");
@@ -2062,12 +2104,14 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	 * but exposed to the inspector as VALUE-SPACING to match the meter. Derive
 	 * the per-tick value step from the signal range and tick count. */
 	if (strcmp(name, "minor_tick_step") == 0) {
-		float range = d->signal_max - d->signal_min;
+		if (d->minor_tick_step > 0) { out->i = d->minor_tick_step; return true; }
+		float range = d->signal_max - d->signal_min;   /* legacy: derive from count */
 		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
 		out->i = (int32_t)lroundf(range / (float)denom);
 		return true;
 	}
 	if (strcmp(name, "major_tick_step") == 0) {
+		if (d->major_tick_step > 0) { out->i = d->major_tick_step; return true; }
 		float range = d->signal_max - d->signal_min;
 		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
 		float mstep = range / (float)denom;
@@ -2075,6 +2119,7 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "mid_tick_step") == 0) {
+		if (d->mid_tick_step > 0) { out->i = d->mid_tick_step; return true; }
 		if (d->mid_tick_count < 2) { out->i = 0; return true; }
 		float range = d->signal_max - d->signal_min;
 		out->i = (int32_t)lroundf(range / (float)(d->mid_tick_count - 1));
@@ -2265,45 +2310,24 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
-	/* VALUE-SPACING tick fields (mirror the meter). The struct stores
-	 * minor_tick_count / major_tick_every; derive those from the entered
-	 * value step and the signal range, then rebuild the overlay live. */
+	/* VALUE-SPACING tick fields. Stored as STEPS (value intervals) — range-
+	 * independent, so they survive signal_min/max edits. The overlay derives
+	 * counts from these over the active range at build time. */
 	if (strcmp(name, "minor_tick_step") == 0) {
-		float step = (float)in->i;
-		if (step <= 0) step = 1;
-		float range = d->signal_max - d->signal_min;
-		int32_t cnt = (int32_t)lroundf(range / step) + 1;
-		if (cnt < 2) cnt = 2;
-		if (cnt > 100) cnt = 100;
-		d->minor_tick_count = (uint8_t)cnt;
+		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
+		d->minor_tick_step = (uint16_t)v;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
 	if (strcmp(name, "major_tick_step") == 0) {
-		float majstep = (float)in->i;
-		float range = d->signal_max - d->signal_min;
-		int denom = d->minor_tick_count > 1 ? d->minor_tick_count - 1 : 1;
-		float minstep = range / (float)denom;
-		if (minstep <= 0) minstep = 1;
-		int32_t every = (int32_t)lroundf(majstep / minstep);
-		if (every < 1) every = 1;
-		if (every > 50) every = 50;
-		d->major_tick_every = (uint8_t)every;
+		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
+		d->major_tick_step = (uint16_t)v;
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
-	/* Medium (3rd) tick tier. mid_tick_step 0 disables it; otherwise derive a
-	 * tick count across the range (like minor). Length/width/color are direct. */
 	if (strcmp(name, "mid_tick_step") == 0) {
-		float step = (float)in->i;
-		if (step <= 0) { d->mid_tick_count = 0; }
-		else {
-			float range = d->signal_max - d->signal_min;
-			int32_t cnt = (int32_t)lroundf(range / step) + 1;
-			if (cnt < 2) cnt = 2;
-			if (cnt > 200) cnt = 200;
-			d->mid_tick_count = (uint8_t)cnt;
-		}
+		int v = in->i; if (v < 0) v = 0; if (v > 65535) v = 65535;
+		d->mid_tick_step = (uint16_t)v;   /* 0 = medium tier off */
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
@@ -2421,6 +2445,9 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Ticks (overlay meter) defaults — OFF by default. */
     d->show_ticks         = ARC_DEFAULT_SHOW_TICKS;
+    d->minor_tick_step    = 0;   /* 0 = use count fields (legacy default) */
+    d->major_tick_step    = 0;
+    d->mid_tick_step      = 0;
     d->minor_tick_count   = ARC_DEFAULT_MINOR_TICK_COUNT;
     d->major_tick_every   = ARC_DEFAULT_MAJOR_TICK_EVERY;
     d->minor_tick_length  = ARC_DEFAULT_MINOR_TICK_LENGTH;

@@ -142,8 +142,18 @@ typedef struct {
      * Default OFF so existing layouts pay no overhead. STANDARD mode only —
      * the overlay is never created in image modes. */
     bool       show_ticks;              /* default: false */
-    uint8_t    minor_tick_count;        /* default: 21 */
-    uint8_t    major_tick_every;        /* default: 5  */
+    /* Tick spacing source of truth = STEP in value units (range-independent, so
+     * it survives signal_min/max changes). When *_step > 0 the overlay derives
+     * tick counts from the step over the active range (tick window if set, else
+     * signal range), which keeps minor/medium/major aligned and anchors majors
+     * to round values. *_step == 0 falls back to the legacy count fields below
+     * (older layouts). minor_tick_count/major_tick_every/mid_tick_count are
+     * runtime-derived when steps are used. */
+    uint16_t   minor_tick_step;         /* value interval, 0 = use count */
+    uint16_t   major_tick_step;         /* value interval for major ticks + labels */
+    uint16_t   mid_tick_step;           /* value interval for medium ticks, 0 = off */
+    uint8_t    minor_tick_count;        /* default: 21 (legacy / runtime) */
+    uint8_t    major_tick_every;        /* default: 5  (legacy / runtime) */
     uint8_t    minor_tick_length;       /* default: 10 */
     uint8_t    minor_tick_width;        /* default: 2  */
     uint8_t    major_tick_length;       /* default: 15 */
