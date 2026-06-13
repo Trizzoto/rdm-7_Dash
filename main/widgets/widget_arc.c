@@ -894,15 +894,52 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     /* Angle span: identical computation to _value_to_angle's sweep. */
     int32_t angle_range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
     if (angle_range == 0 && d->start_angle != d->end_angle) angle_range = 360;
-    lv_meter_set_scale_range(m, scale,
-                             (int32_t)lroundf(d->signal_min),
-                             (int32_t)lroundf(d->signal_max),
-                             angle_range, (int32_t)d->start_angle);
+
+    /* Tick-scale geometry + counts. By default the scale spans the full signal
+     * range over the full sweep. When a tick window is set (and the gauge is
+     * not anchored/reversed), the scale instead spans [tick_min, tick_max] over
+     * the SUB-ARC those values occupy in the full sweep:
+     *   - anchors ticks to tick_min, so majors land on round values
+     *     (0/1000/2000) instead of being offset by a non-round signal_min;
+     *   - keeps the minor/medium/major scales aligned (no doubling).
+     * The fill (lv_arc) still uses signal_min..signal_max over the full sweep,
+     * and the sub-arc is derived from the same mapping, so ticks stay aligned
+     * with the fill. Counts are rescaled so the per-tick value STEP is
+     * preserved over the (smaller) window. */
+    int32_t sc_min   = (int32_t)lroundf(d->signal_min);
+    int32_t sc_max   = (int32_t)lroundf(d->signal_max);
+    int32_t sc_angle = angle_range;
+    int32_t sc_rot   = d->start_angle;
+    uint8_t mtc      = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
+    uint8_t mid_eff  = d->mid_tick_count;
+    bool tick_window = (d->tick_max > d->tick_min) && !d->anchor_enabled &&
+                       !d->reverse && (d->signal_max > d->signal_min);
+    if (tick_window) {
+        float sig_span = d->signal_max - d->signal_min;
+        float win_span = d->tick_max - d->tick_min;
+        float f1 = (d->tick_min - d->signal_min) / sig_span;
+        float f2 = (d->tick_max - d->signal_min) / sig_span;
+        sc_min   = (int32_t)lroundf(d->tick_min);
+        sc_max   = (int32_t)lroundf(d->tick_max);
+        sc_rot   = (int32_t)lroundf(d->start_angle + f1 * (float)angle_range);
+        sc_angle = (int32_t)lroundf((f2 - f1) * (float)angle_range);
+        if (sc_angle < 1) sc_angle = 1;
+        if (d->minor_tick_count > 1) {
+            float step = sig_span / (float)(d->minor_tick_count - 1);
+            int32_t c = (int32_t)lroundf(win_span / step) + 1;
+            mtc = (uint8_t)(c < 2 ? 2 : (c > 255 ? 255 : c));
+        }
+        if (d->mid_tick_count > 1) {
+            float step = sig_span / (float)(d->mid_tick_count - 1);
+            int32_t c = (int32_t)lroundf(win_span / step) + 1;
+            mid_eff = (uint8_t)(c < 2 ? 0 : (c > 255 ? 255 : c));
+        }
+    }
+    lv_meter_set_scale_range(m, scale, sc_min, sc_max, sc_angle, sc_rot);
 
     /* Tick marks. When show_ticks is off but a value-line is wanted, the
      * scale still needs a (zero-width) tick setup so the needle's angle math
      * works — mirror the meter's "zero the widths" approach. */
-    uint8_t mtc = d->minor_tick_count < 2 ? 2 : d->minor_tick_count;
     uint8_t mte = d->major_tick_every < 1 ? 1 : d->major_tick_every;
     lv_color_t mintc = NIGHT_PICK_COLOR(night_active, d->night, minor_tick_color, d->minor_tick_color);
     lv_color_t majtc = NIGHT_PICK_COLOR(night_active, d->night, major_tick_color, d->major_tick_color);
@@ -945,13 +982,12 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
      * bake so the snapshot captures it; stripped after the bake (below) so it
      * doesn't also render live on top of the baked image. */
     lv_meter_scale_t *mid_scale = NULL;
-    if (d->show_ticks && d->mid_tick_count >= 2) {
+    if (d->show_ticks && mid_eff >= 2) {
         mid_scale = lv_meter_add_scale(m);
-        lv_meter_set_scale_range(m, mid_scale,
-                                 (int32_t)lroundf(d->signal_min),
-                                 (int32_t)lroundf(d->signal_max),
-                                 angle_range, (int32_t)d->start_angle);
-        lv_meter_set_scale_ticks(m, mid_scale, d->mid_tick_count,
+        /* Same windowed range/angle as the primary scale so the medium ticks
+         * stay aligned (no doubling). */
+        lv_meter_set_scale_range(m, mid_scale, sc_min, sc_max, sc_angle, sc_rot);
+        lv_meter_set_scale_ticks(m, mid_scale, mid_eff,
                                  d->mid_tick_width, d->mid_tick_length,
                                  d->mid_tick_color);
         /* No major ticks / labels on the medium scale (every=255 → none). */
@@ -968,7 +1004,7 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     /* If the bake succeeded, the medium scale was captured into the image —
      * strip its live ticks too (flatten only strips the primary scale). */
     if (mid_scale && d->tick_img)
-        lv_meter_set_scale_ticks(m, mid_scale, d->mid_tick_count, 0, 0,
+        lv_meter_set_scale_ticks(m, mid_scale, mid_eff, 0, 0,
                                  d->mid_tick_color);
 
     /* Value-line needle. */
