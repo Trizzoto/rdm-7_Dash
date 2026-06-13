@@ -36,6 +36,9 @@ typedef struct {
 	bool       warning_low_apply_panel;
 	char       label_font[32];
 	char       value_font[32];
+	/* When set, append the bound channel's display unit to the value inline,
+	 * e.g. "40°C" / "482 kPa" — pulled from the channel, not hard-coded. */
+	bool       show_unit;            /* default: false */
 	/* ── Appearance overrides (defaults match legacy shared box_style) ── */
 	uint8_t    border_radius;        /* default: 7 */
 	uint8_t    border_width;         /* default: 3 */

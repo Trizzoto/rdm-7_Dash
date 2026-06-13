@@ -448,6 +448,16 @@ static const widget_field_t panel_fields[] = {
         .night_overridable = false,
     },
     {
+        .name = "show_unit", .label = "Show Unit Suffix",
+        .type = WF_TYPE_CHECKBOX, .category = WF_CAT_DATA,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "custom_text_x_offset", .label = "Unit Text X",
         .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -100, .max_int = 100, .step_int = 0,

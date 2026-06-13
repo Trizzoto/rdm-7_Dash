@@ -439,6 +439,13 @@
           ]
         },
         {
+          "name": "show_unit",
+          "label": "Show Unit Suffix",
+          "type": "checkbox",
+          "default": false,
+          "category": "data"
+        },
+        {
           "name": "custom_text_x_offset",
           "label": "Unit Text X",
           "type": "stepper",

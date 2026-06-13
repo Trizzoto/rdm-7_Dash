@@ -414,6 +414,20 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 		channel_format_display_value((const channel_t *)pd->channel,
 		                             pd->signal_index, value, pd->decimals,
 		                             buf, sizeof(buf));
+		/* Optional inline unit suffix pulled from the bound channel, e.g.
+		 * "40°C" / "482 kPa". No space before a degree unit, a space before
+		 * the rest. */
+		if (pd->show_unit && pd->channel) {
+			const char *u = ((const channel_t *)pd->channel)->units_display;
+			if (u && u[0]) {
+				size_t len = strnlen(buf, sizeof(buf));
+				bool deg = ((unsigned char)u[0] == 0xC2 &&
+				            (unsigned char)u[1] == 0xB0);
+				if (len < sizeof(buf) - 1)
+					snprintf(buf + len, sizeof(buf) - len, "%s%s",
+					         deg ? "" : " ", u);
+			}
+		}
 		display_str = buf;
 	}
 
@@ -797,6 +811,8 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "value_y_offset", pd->value_y_offset);
 	if (pd->text_align != 1)
 		cJSON_AddNumberToObject(cfg, "text_align", pd->text_align);
+	if (pd->show_unit)
+		cJSON_AddBoolToObject(cfg, "show_unit", true);
 	if (pd->custom_text_x_offset != 41)
 		cJSON_AddNumberToObject(cfg, "custom_text_x_offset", pd->custom_text_x_offset);
 	if (pd->custom_text_y_offset != 32)
@@ -918,6 +934,8 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 		int v = item->valueint; if (v < 0 || v > 2) v = 1;
 		pd->text_align = (uint8_t)v;
 	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_unit");
+	if (cJSON_IsBool(item)) pd->show_unit = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_x_offset");
 	if (cJSON_IsNumber(item)) pd->custom_text_x_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
@@ -1168,6 +1186,7 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "label_y_offset") == 0)       { out->i = pd->label_y_offset; return true; }
 	if (strcmp(name, "value_y_offset") == 0)       { out->i = pd->value_y_offset; return true; }
 	if (strcmp(name, "text_align") == 0)           { out->i = pd->text_align;     return true; }
+	if (strcmp(name, "show_unit") == 0)            { out->b = pd->show_unit;      return true; }
 	if (strcmp(name, "custom_text_x_offset") == 0) { out->i = pd->custom_text_x_offset; return true; }
 	if (strcmp(name, "custom_text_y_offset") == 0) { out->i = pd->custom_text_y_offset; return true; }
 	return false;
@@ -1263,6 +1282,11 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_text_align(pd->header_label, ta, 0);
 		if (pd->value_label && lv_obj_is_valid(pd->value_label))
 			lv_obj_set_style_text_align(pd->value_label, ta, 0);
+		return true;
+	}
+	if (strcmp(name, "show_unit") == 0) {
+		pd->show_unit = in->b;
+		pd->last_display[0] = '\0';   /* force value re-render on next tick */
 		return true;
 	}
 	if (strcmp(name, "custom_text_x_offset") == 0) {
@@ -1362,6 +1386,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->label_y_offset = -28;
 	pd->value_y_offset = 9;
 	pd->text_align = 1;   /* center (back-compat default) */
+	pd->show_unit = false;
 	pd->custom_text_x_offset = 41;
 	pd->custom_text_y_offset = 32;
 
