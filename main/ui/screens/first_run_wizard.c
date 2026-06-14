@@ -2103,7 +2103,7 @@ static signal_t *_wiz_selected_signal(void) {
  * doesn't dereference a registry slot that may have moved by the time it
  * runs. */
 typedef struct {
-    char     layout[64];
+    char     ch_id[32];
     char     name[32];
     char     unit[16];
     bool     has_unit;
@@ -2125,24 +2125,32 @@ typedef struct {
  * bit start/length). Deferring matches the web editor's path. */
 static void _wiz_persist_decode_async(void *arg) {
     wiz_decode_write_t *w = (wiz_decode_write_t *)arg;
-    ecu_preset_write_signal_to_layout(w->layout, w->name, w->can_id,
-        w->bit_start, w->bit_length, w->scale, w->offset,
-        w->is_signed, w->endian, w->has_unit ? w->unit : NULL, -1);
+    /* ADR-0005: the CHANNEL owns the decode (channels.json is authoritative);
+     * the layout no longer carries it. Write the edit onto the bound channel via
+     * the same path the web /api/channels/update {decode} handler uses — this
+     * re-registers the live signal AND persists channels.json. Writing only the
+     * live signal + layout (the old behaviour) left c->is_signed/etc. stale, so
+     * register_decoded_signals() clobbered the edit back on the next resolve or
+     * reboot — e.g. a Signed toggle silently reverted to Unsigned. */
+    channel_t *c = channel_manager_get(w->ch_id);
+    if (c) {
+        channel_manager_set_decode(c, w->can_id, w->bit_start, w->bit_length,
+            w->scale, w->offset, w->is_signed, w->endian,
+            w->has_unit ? w->unit : NULL, /* persist_now */ true);
+    }
     free(w);
 }
 
-/* Persist an (already mutated) signal's decode into the active layout's
- * signals[] so the edit survives reboot. The live effect is immediate
- * because we mutate the registry in place; this only schedules the JSON
- * rewrite (deferred — see _wiz_persist_decode_async). Decimals are omitted
- * (-1) — those are channel-owned now. */
+/* Persist an (already mutated) signal's decode onto its bound channel so the
+ * edit survives reboot. The live effect of the in-place registry mutation is
+ * immediate; this schedules the authoritative channel write + channels.json
+ * flush (deferred — see _wiz_persist_decode_async). Decimals are omitted —
+ * those are set separately via channel_manager_set_decimals. */
 static void _wiz_persist_signal_decode(const signal_t *s) {
-    if (!s || !s->name[0]) return;
-    char layout[64];
-    if (layout_manager_get_active(layout, sizeof(layout)) != ESP_OK) return;
+    if (!s || !s->name[0] || !s_selected_ch_id[0]) return;
     wiz_decode_write_t *w = calloc(1, sizeof(*w));
     if (!w) return;
-    strncpy(w->layout, layout, sizeof(w->layout) - 1);
+    strncpy(w->ch_id, s_selected_ch_id, sizeof(w->ch_id) - 1);
     strncpy(w->name, s->name, sizeof(w->name) - 1);
     if (s->unit[0]) { strncpy(w->unit, s->unit, sizeof(w->unit) - 1); w->has_unit = true; }
     w->can_id     = s->can_id;

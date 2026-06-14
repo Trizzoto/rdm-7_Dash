@@ -6940,7 +6940,17 @@
                 c.sweep_degrees = sweep === 0 ? 360 : sweep;
             }
             /* Back-compute value-spacing from any legacy count/every fields. */
-            if (c.auto_ticks == null) c.auto_ticks = (c.minor_tick_count == null);
+            /* Infer auto_ticks from the field the ARC firmware actually persists:
+             * it emits minor_tick_step (the STEP), and NEVER minor_tick_count when
+             * a step is set (see widget_arc.c to_json). So keying auto_ticks off
+             * minor_tick_count — as the meter does — wrongly reads as null on
+             * reload and re-derives 1000/5000, clobbering the user's spacing.
+             * Treat any explicit step (>0) OR a legacy count as user-set; only a
+             * config carrying neither is genuinely auto. */
+            if (c.auto_ticks == null) {
+                c.auto_ticks = !((typeof c.minor_tick_step === 'number' && c.minor_tick_step > 0) ||
+                                 (typeof c.minor_tick_count === 'number'));
+            }
             if (c.minor_tick_step == null && typeof c.minor_tick_count === 'number') {
                 const tmin = (typeof c.signal_min === 'number') ? c.signal_min : 0;
                 const tmax = (typeof c.signal_max === 'number') ? c.signal_max : 100;
@@ -7027,6 +7037,12 @@
                                   { v: 2, l: "Right" }
                               ] },
                             { name: "show_unit", label: "Show Unit Suffix", type: "checkbox", def: false, cat: "data" },
+                            { name: "unit_size", label: "Unit Size", type: "select", def: 2, cat: "data", enabledBy: "show_unit",
+                              options: [
+                                  { v: 0, l: "Small" },
+                                  { v: 1, l: "Medium" },
+                                  { v: 2, l: "Full" }
+                              ] },
                             { name: "custom_text_x_offset", label: "Unit Text X", type: "stepper", def: 41, cat: "appearance", min: -100, max: 100 },
                             { name: "custom_text_y_offset", label: "Unit Text Y", type: "stepper", def: 32, cat: "appearance", min: -100, max: 100 }
                         ]
@@ -17336,17 +17352,14 @@
             pushHistory();
             w.channel = channelId;
             w.signal = ch.signal || '';
-            /* Auto-fill the widget's header label from the channel when it's
-             * empty (or still the previously-bound channel's auto label), so a
-             * panel/bar shows the channel name without manual typing. A
-             * user-customized label is preserved. */
+            /* Update the widget's header label to the newly-bound channel's name
+             * so a panel/bar always reflects what it's showing. The user can
+             * re-type a custom label afterwards (it sticks until the next
+             * channel change). */
             const _wdef = WIDGET_DEFS[w.type];
             if (_wdef && _wdef.fields && _wdef.fields.some(f => f.name === 'label')) {
                 w.config = w.config || {};
-                const _curLbl = (w.config.label || '').trim();
-                if (_curLbl === '' || _curLbl === _prevChLabel) {
-                    w.config.label = ch.label || ch.id || '';
-                }
+                w.config.label = ch.label || ch.id || '';
             }
             /* Assigning a channel to an indicator implies CAN-driven: flip its
              * Input Source to CAN, else firmware keeps reading the GPIO wire and

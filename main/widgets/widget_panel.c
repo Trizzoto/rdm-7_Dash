@@ -394,6 +394,38 @@ static void _panel_on_channel_changed(channel_t *c, void *user_data) {
 	if (pd->box && lv_obj_is_valid(pd->box)) lv_obj_invalidate(pd->box);
 }
 
+/* ── Unit-suffix helpers ────────────────────────────────────────────────── */
+/* The bound channel's display unit, or NULL when not shown / unavailable. */
+static const char *_panel_unit_str(const panel_data_t *pd) {
+	if (!pd->show_unit || !pd->channel) return NULL;
+	const char *u = ((const channel_t *)pd->channel)->units_display;
+	return (u && u[0]) ? u : NULL;
+}
+/* A smaller font for the unit derived from the value font: small ~0.5x,
+ * medium ~0.72x. Falls back to theme fonts when value_font is the theme
+ * default ("Family:size" is the dynamic-TTF form the size is parsed from). */
+static const lv_font_t *_panel_unit_font(const char *value_font, uint8_t size_mode) {
+	if (value_font && value_font[0]) {
+		const char *colon = strrchr(value_font, ':');
+		if (colon) {
+			int sz = atoi(colon + 1);
+			if (sz > 0) {
+				int nsz = (size_mode == 0) ? (sz * 50) / 100 : (sz * 72) / 100;
+				if (nsz < 8) nsz = 8;
+				size_t fl = (size_t)(colon - value_font);
+				if (fl < 40) {
+					char b[48];
+					memcpy(b, value_font, fl);
+					snprintf(b + fl, sizeof(b) - fl, ":%d", nsz);
+					const lv_font_t *f = widget_resolve_font(b);
+					if (f) return f;
+				}
+			}
+		}
+	}
+	return (size_mode == 0) ? THEME_FONT_SMALL : THEME_FONT_MEDIUM;
+}
+
 /* create vtable adapter: creates a single panel box for the given slot.
  * Only panels present in the JSON layout will be created. */
 static void _panel_on_signal(float value, bool is_stale, void *user_data) {
@@ -414,10 +446,10 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 		channel_format_display_value((const channel_t *)pd->channel,
 		                             pd->signal_index, value, pd->decimals,
 		                             buf, sizeof(buf));
-		/* Optional inline unit suffix pulled from the bound channel, e.g.
-		 * "40°C" / "482 kPa". No space before a degree unit, a space before
-		 * the rest. */
-		if (pd->show_unit && pd->channel) {
+		/* Full-size unit: append inline to the value ("40°C" / "482 kPa"); no
+		 * space before a degree unit, a space before the rest. Small/medium
+		 * units are a separate label (positioned below), so don't append. */
+		if (pd->show_unit && pd->unit_size == 2 && pd->channel) {
 			const char *u = ((const channel_t *)pd->channel)->units_display;
 			if (u && u[0]) {
 				size_t len = strnlen(buf, sizeof(buf));
@@ -495,6 +527,8 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 	 * once in _panel_create and not touched here. */
 	if (text_changed && pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_label_set_text(pd->value_label, display_str);
+		/* The small/medium unit lives in a flex row beside the value, so LVGL
+		 * keeps it adjacent automatically when the value text resizes. */
 	}
 	if (state_changed) {
 		if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
@@ -656,6 +690,58 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_y(val, pd->value_y_offset);
 	lv_obj_set_align(val, LV_ALIGN_CENTER);
 
+	/* Small/medium unit suffix: a separate, smaller label sitting just to the
+	 * right of the value text. (Full-size units are appended inline in the
+	 * value text instead — see _panel_on_signal.) Value + unit live in a
+	 * transparent flex row so LVGL keeps them adjacent on every layout pass —
+	 * an earlier align_to() approach baked the unit's position once at create,
+	 * before the content-width value had settled, and pinned it to the box's
+	 * left edge until a value change happened to re-trigger it. */
+	pd->unit_label = NULL;
+	pd->value_row  = NULL;
+	{
+		const char *unit_str = _panel_unit_str(pd);
+		if (unit_str && pd->unit_size < 2) {
+			lv_obj_t *row = lv_obj_create(box);
+			lv_obj_remove_style_all(row);
+			lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+			lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+			lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+			/* main axis: pack left; cross axis: END so the smaller unit sits on
+			 * the value's baseline rather than its vertical centre. */
+			lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
+			                      LV_FLEX_ALIGN_START);
+			lv_obj_set_style_pad_column(row, 3, 0);
+
+			/* value becomes a content-width flex item; flex drives its pos */
+			lv_obj_set_width(val, LV_SIZE_CONTENT);
+			lv_obj_set_parent(val, row);
+			lv_obj_set_align(val, LV_ALIGN_TOP_LEFT);
+			lv_obj_set_pos(val, 0, 0);
+
+			lv_obj_t *us = lv_label_create(row);
+			lv_label_set_text(us, unit_str);
+			lv_obj_set_style_text_font(us,
+				_panel_unit_font(pd->value_font, pd->unit_size),
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_obj_set_style_text_color(us, pd->value_color,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+			lv_label_set_long_mode(us, LV_LABEL_LONG_CLIP);
+			/* lift the unit a hair off the bottom so a degree glyph clears the
+			 * value's descenders/baseline cleanly. */
+			lv_obj_set_style_pad_bottom(us, 2, 0);
+
+			/* place the whole row within the box per text_align */
+			lv_align_t va = (pd->text_align == 0) ? LV_ALIGN_LEFT_MID
+			              : (pd->text_align == 2) ? LV_ALIGN_RIGHT_MID
+			              : LV_ALIGN_CENTER;
+			lv_obj_align(row, va, 0, pd->value_y_offset);
+
+			pd->value_row  = row;
+			pd->unit_label = us;
+		}
+	}
+
 	/* Custom unit text */
 	lv_obj_t *ctxt = lv_label_create(box);
 	lv_label_set_text(ctxt, pd->custom_text);
@@ -813,6 +899,8 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "text_align", pd->text_align);
 	if (pd->show_unit)
 		cJSON_AddBoolToObject(cfg, "show_unit", true);
+	if (pd->unit_size != 2)
+		cJSON_AddNumberToObject(cfg, "unit_size", pd->unit_size);
 	if (pd->custom_text_x_offset != 41)
 		cJSON_AddNumberToObject(cfg, "custom_text_x_offset", pd->custom_text_x_offset);
 	if (pd->custom_text_y_offset != 32)
@@ -936,6 +1024,11 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_unit");
 	if (cJSON_IsBool(item)) pd->show_unit = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "unit_size");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint; if (v < 0 || v > 2) v = 2;
+		pd->unit_size = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_x_offset");
 	if (cJSON_IsNumber(item)) pd->custom_text_x_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
@@ -1187,6 +1280,7 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "value_y_offset") == 0)       { out->i = pd->value_y_offset; return true; }
 	if (strcmp(name, "text_align") == 0)           { out->i = pd->text_align;     return true; }
 	if (strcmp(name, "show_unit") == 0)            { out->b = pd->show_unit;      return true; }
+	if (strcmp(name, "unit_size") == 0)            { out->i = pd->unit_size;      return true; }
 	if (strcmp(name, "custom_text_x_offset") == 0) { out->i = pd->custom_text_x_offset; return true; }
 	if (strcmp(name, "custom_text_y_offset") == 0) { out->i = pd->custom_text_y_offset; return true; }
 	return false;
@@ -1257,6 +1351,8 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 		pd->value_color = lv_color_hex(in->color);
 		if (val && lv_obj_is_valid(val))
 			lv_obj_set_style_text_color(val, pd->value_color, 0);
+		if (pd->unit_label && lv_obj_is_valid(pd->unit_label))
+			lv_obj_set_style_text_color(pd->unit_label, pd->value_color, 0);
 		return true;
 	}
 	if (strcmp(name, "label_y_offset") == 0) {
@@ -1267,8 +1363,12 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "value_y_offset") == 0) {
 		pd->value_y_offset = (int8_t)in->i;
-		if (val && lv_obj_is_valid(val))
-			lv_obj_set_y(val, pd->value_y_offset);
+		/* In small/medium-unit mode the value lives inside the flex row, so
+		 * move the row (the positioned object); otherwise move the value. */
+		lv_obj_t *vpos = (pd->value_row && lv_obj_is_valid(pd->value_row))
+		                 ? pd->value_row : val;
+		if (vpos && lv_obj_is_valid(vpos))
+			lv_obj_set_y(vpos, pd->value_y_offset);
 		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
 			lv_obj_set_y(pd->peak_label, pd->value_y_offset + 22);
 		return true;
@@ -1282,11 +1382,24 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_text_align(pd->header_label, ta, 0);
 		if (pd->value_label && lv_obj_is_valid(pd->value_label))
 			lv_obj_set_style_text_align(pd->value_label, ta, 0);
+		/* small/medium unit: the value is content-width inside the flex row, so
+		 * text_align has no effect there — re-align the row within the box. */
+		if (pd->value_row && lv_obj_is_valid(pd->value_row)) {
+			lv_align_t va = (v == 0) ? LV_ALIGN_LEFT_MID
+			              : (v == 2) ? LV_ALIGN_RIGHT_MID : LV_ALIGN_CENTER;
+			lv_obj_align(pd->value_row, va, 0, pd->value_y_offset);
+		}
 		return true;
 	}
 	if (strcmp(name, "show_unit") == 0) {
 		pd->show_unit = in->b;
 		pd->last_display[0] = '\0';   /* force value re-render on next tick */
+		return true;
+	}
+	if (strcmp(name, "unit_size") == 0) {
+		int v = in->i; if (v < 0 || v > 2) v = 2;
+		pd->unit_size = (uint8_t)v;
+		pd->last_display[0] = '\0';   /* full<->small/medium changes layout; web rebuilds */
 		return true;
 	}
 	if (strcmp(name, "custom_text_x_offset") == 0) {
@@ -1387,6 +1500,7 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->value_y_offset = 9;
 	pd->text_align = 1;   /* center (back-compat default) */
 	pd->show_unit = false;
+	pd->unit_size = 2;    /* full (inline) */
 	pd->custom_text_x_offset = 41;
 	pd->custom_text_y_offset = 32;
 

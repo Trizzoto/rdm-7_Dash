@@ -166,6 +166,12 @@ static const widget_field_option_t panel_text_align_opts[] = {
     { 2, "Right" },
 };
 
+static const widget_field_option_t panel_unit_size_opts[] = {
+    { 0, "Small" },
+    { 1, "Medium" },
+    { 2, "Full" },
+};
+
 static const widget_field_t panel_fields[] = {
     {
         .name = "label", .label = "Header Label",
@@ -455,6 +461,16 @@ static const widget_field_t panel_fields[] = {
         .default_str = NULL,
         .options = NULL, .option_count = 0,
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "unit_size", .label = "Unit Size",
+        .type = WF_TYPE_SELECT, .category = WF_CAT_DATA,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 2, .default_float = 2.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = panel_unit_size_opts, .option_count = 3,
+        .enabled_by = "show_unit", .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
     {

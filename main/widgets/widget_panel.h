@@ -39,6 +39,12 @@ typedef struct {
 	/* When set, append the bound channel's display unit to the value inline,
 	 * e.g. "40°C" / "482 kPa" — pulled from the channel, not hard-coded. */
 	bool       show_unit;            /* default: false */
+	/* Unit suffix size: 0=small, 1=medium, 2=full (default). full = inline in
+	 * the value label at the value's size; small/medium = a separate, smaller
+	 * label sitting just to the right of the value (derived from value_font). */
+	uint8_t    unit_size;            /* default: 2 (full) */
+	lv_obj_t  *unit_label;           /* runtime: separate unit label (small/medium) */
+	lv_obj_t  *value_row;            /* runtime: flex row wrapping value+unit (small/medium) */
 	/* ── Appearance overrides (defaults match legacy shared box_style) ── */
 	uint8_t    border_radius;        /* default: 7 */
 	uint8_t    border_width;         /* default: 3 */

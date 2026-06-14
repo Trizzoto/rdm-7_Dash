@@ -30,6 +30,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "../rdm7-studio-web/public", "-l", "3002", "--cors"],
       "port": 3002
+    },
+    {
+      "name": "homepage-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-homepage-demo", "-l", "5174", "--cors"],
+      "port": 5174
     }
   ]
 }
