@@ -7007,6 +7007,9 @@
                                   { v: 2, l: "Min" },
                                   { v: 3, l: "Min/Max" }
                               ] },
+                            { name: "peak_font", label: "Peak Font", type: "font", def: "", cat: "data", enabledBy: "show_peak" },
+                            { name: "peak_x_offset", label: "Peak X Offset", type: "stepper", def: 0, cat: "data", min: -100, max: 100, enabledBy: "show_peak" },
+                            { name: "peak_y_offset", label: "Peak Y Offset", type: "stepper", def: 31, cat: "data", min: -100, max: 100, enabledBy: "show_peak" },
                             { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "high" },
                             { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "high", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
                             { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "high" },

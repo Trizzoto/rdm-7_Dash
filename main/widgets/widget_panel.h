@@ -68,6 +68,13 @@ typedef struct {
 	 * — these reset on every boot. The Peaks screen shows the all-time
 	 * persisted peaks instead. Reset is signal-wide via signal_reset_peak. */
 	uint8_t    show_peak;
+	/* Peak line placement + font (only meaningful when show_peak != 0).
+	 * Offsets are from box centre, matching value_y_offset / custom_text_*.
+	 * peak_font empty → THEME_FONT_TINY. The peak follows text_align like the
+	 * header/value, so these offsets fine-tune on top of left/centre/right. */
+	char       peak_font[32];        /* default: "" (tiny theme font) */
+	int8_t     peak_x_offset;        /* default: 0 */
+	int8_t     peak_y_offset;        /* default: 31 (== legacy value_y_offset 9 + 22) */
 	char       signal_name[32];
 	int16_t    signal_index;
 	/* ── v14 channel binding ─────────────────────────────────────

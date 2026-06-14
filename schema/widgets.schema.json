@@ -219,6 +219,34 @@
           ]
         },
         {
+          "name": "peak_font",
+          "label": "Peak Font",
+          "type": "font",
+          "default": "",
+          "category": "data",
+          "enabled_by": "show_peak"
+        },
+        {
+          "name": "peak_x_offset",
+          "label": "Peak X Offset",
+          "type": "stepper",
+          "default": 0,
+          "category": "data",
+          "min": -100,
+          "max": 100,
+          "enabled_by": "show_peak"
+        },
+        {
+          "name": "peak_y_offset",
+          "label": "Peak Y Offset",
+          "type": "stepper",
+          "default": 31,
+          "category": "data",
+          "min": -100,
+          "max": 100,
+          "enabled_by": "show_peak"
+        },
+        {
           "name": "warning_high_enabled",
           "label": "High Alert",
           "type": "checkbox",

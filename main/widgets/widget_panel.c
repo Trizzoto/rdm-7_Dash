@@ -770,16 +770,17 @@ static void _panel_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_style_text_color(pk, THEME_COLOR_TEXT_MUTED,
 	                             LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_opa(pk, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_font(pk, THEME_FONT_TINY,
+	const lv_font_t *pk_font = widget_resolve_font(pd->peak_font);
+	lv_obj_set_style_text_font(pk, pk_font ? pk_font : THEME_FONT_TINY,
 	                            LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_text_align(pk, LV_TEXT_ALIGN_CENTER,
-	                             LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Follow the panel's text alignment (left/centre/right) like the header and
+	 * value, so the peak hugs the same edge in MoTeC-style columns; peak_x/y
+	 * offsets fine-tune on top of that. */
+	lv_obj_set_style_text_align(pk, ta, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_width(pk, w->w - 10);
 	lv_label_set_long_mode(pk, LV_LABEL_LONG_CLIP);
-	lv_obj_set_x(pk, 0);
-	/* Position just below the value label — value_y_offset is typically +9
-	 * relative to centre, so peak goes at value+22 to clear the digits. */
-	lv_obj_set_y(pk, pd->value_y_offset + 22);
+	lv_obj_set_x(pk, pd->peak_x_offset);
+	lv_obj_set_y(pk, pd->peak_y_offset);
 	lv_obj_set_align(pk, LV_ALIGN_CENTER);
 	if (pd->show_peak == 0)
 		lv_obj_add_flag(pk, LV_OBJ_FLAG_HIDDEN);
@@ -846,6 +847,13 @@ static void _panel_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "decimals", pd->decimals);
 	if (pd->show_peak != 0)
 		cJSON_AddNumberToObject(cfg, "show_peak", pd->show_peak);
+	/* Peak placement/font — defaults-only. */
+	if (pd->peak_font[0] != '\0')
+		cJSON_AddStringToObject(cfg, "peak_font", pd->peak_font);
+	if (pd->peak_x_offset != 0)
+		cJSON_AddNumberToObject(cfg, "peak_x_offset", pd->peak_x_offset);
+	if (pd->peak_y_offset != 31)
+		cJSON_AddNumberToObject(cfg, "peak_y_offset", pd->peak_y_offset);
 	/* Alert COLOURS + apply-flags are widget-owned styling and DO round-trip
 	 * in the layout. The threshold VALUES + enabled state live on the bound
 	 * channel (channels.json) and are intentionally NOT persisted here — so
@@ -1033,6 +1041,19 @@ static void _panel_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) pd->custom_text_x_offset = (int8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "custom_text_y_offset");
 	if (cJSON_IsNumber(item)) pd->custom_text_y_offset = (int8_t)item->valueint;
+
+	/* Peak placement/font. peak_y_offset back-compat: layouts saved before this
+	 * field existed positioned the peak at value_y_offset + 22, so when the key
+	 * is absent derive it from the (already-parsed) value offset to keep the
+	 * exact same look; new layouts carry an explicit value. */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "peak_font");
+	if (cJSON_IsString(item))
+		safe_strncpy(pd->peak_font, item->valuestring, sizeof(pd->peak_font));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "peak_x_offset");
+	if (cJSON_IsNumber(item)) pd->peak_x_offset = (int8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "peak_y_offset");
+	if (cJSON_IsNumber(item)) pd->peak_y_offset = (int8_t)item->valueint;
+	else                      pd->peak_y_offset = (int8_t)(pd->value_y_offset + 22);
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -1266,6 +1287,9 @@ static bool _panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "custom_text") == 0)          { out->str = pd->custom_text;  return true; }
 	if (strcmp(name, "decimals") == 0)             { out->i = pd->decimals;       return true; }
 	if (strcmp(name, "show_peak") == 0)            { out->i = pd->show_peak;      return true; }
+	if (strcmp(name, "peak_font") == 0)            { out->str = pd->peak_font;    return true; }
+	if (strcmp(name, "peak_x_offset") == 0)        { out->i = pd->peak_x_offset;  return true; }
+	if (strcmp(name, "peak_y_offset") == 0)        { out->i = pd->peak_y_offset;  return true; }
 	if (strcmp(name, "signal_name") == 0)          { out->str = pd->signal_name;  return true; }
 	if (strcmp(name, "label_font") == 0)           { out->str = pd->label_font;   return true; }
 	if (strcmp(name, "value_font") == 0)           { out->str = pd->value_font;   return true; }
@@ -1309,6 +1333,26 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			else
 				lv_obj_clear_flag(pd->peak_label, LV_OBJ_FLAG_HIDDEN);
 		}
+		return true;
+	}
+	if (strcmp(name, "peak_font") == 0) {
+		safe_strncpy(pd->peak_font, in->str ? in->str : "", sizeof(pd->peak_font));
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label)) {
+			const lv_font_t *f = widget_resolve_font(pd->peak_font);
+			lv_obj_set_style_text_font(pd->peak_label, f ? f : THEME_FONT_TINY, 0);
+		}
+		return true;
+	}
+	if (strcmp(name, "peak_x_offset") == 0) {
+		pd->peak_x_offset = (int8_t)in->i;
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
+			lv_obj_set_x(pd->peak_label, pd->peak_x_offset);
+		return true;
+	}
+	if (strcmp(name, "peak_y_offset") == 0) {
+		pd->peak_y_offset = (int8_t)in->i;
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
+			lv_obj_set_y(pd->peak_label, pd->peak_y_offset);
 		return true;
 	}
 	if (strcmp(name, "border_radius") == 0) {
@@ -1369,8 +1413,7 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 		                 ? pd->value_row : val;
 		if (vpos && lv_obj_is_valid(vpos))
 			lv_obj_set_y(vpos, pd->value_y_offset);
-		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
-			lv_obj_set_y(pd->peak_label, pd->value_y_offset + 22);
+		/* Peak has its own peak_y_offset now — it no longer rides on the value. */
 		return true;
 	}
 	if (strcmp(name, "text_align") == 0) {
@@ -1382,6 +1425,8 @@ static bool _panel_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_text_align(pd->header_label, ta, 0);
 		if (pd->value_label && lv_obj_is_valid(pd->value_label))
 			lv_obj_set_style_text_align(pd->value_label, ta, 0);
+		if (pd->peak_label && lv_obj_is_valid(pd->peak_label))
+			lv_obj_set_style_text_align(pd->peak_label, ta, 0);
 		/* small/medium unit: the value is content-width inside the flex row, so
 		 * text_align has no effect there — re-align the row within the box. */
 		if (pd->value_row && lv_obj_is_valid(pd->value_row)) {
@@ -1503,6 +1548,9 @@ widget_t *widget_panel_create_instance(uint8_t slot) {
 	pd->unit_size = 2;    /* full (inline) */
 	pd->custom_text_x_offset = 41;
 	pd->custom_text_y_offset = 32;
+	pd->peak_font[0] = '\0';   /* tiny theme font */
+	pd->peak_x_offset = 0;
+	pd->peak_y_offset = 31;    /* legacy: value_y_offset(9) + 22 */
 
 	w->type = WIDGET_PANEL;
 	w->slot = pd->slot;
