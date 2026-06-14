@@ -192,15 +192,30 @@ static float _bar_apply_anchor(const bar_data_t *bd, float v) {
 /* Forward decl — used by widget_bar_sync_range to re-push the current value. */
 static void _bar_on_signal(float value, bool is_stale, void *user_data);
 
-void widget_bar_sync_range(bar_data_t *bd) {
-	if (!bd) return;
-	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
-		int32_t scale = _bar_resolution_scale(bd);
+/* Push the LVGL bar range. Normal mode uses the scaled [bar_min..bar_max].
+ * Center-fill uses a SYMMETRICAL range about the data midpoint (±half) so the
+ * fill emanates from the bar's geometric centre for ANY configured range —
+ * LVGL only treats SYMMETRICAL as centred when min<0<max and fills from data
+ * zero, so a positive-only or asymmetric range would otherwise degrade to a
+ * plain left-fill. _bar_on_signal feeds (value - midpoint) to match. */
+static void _bar_set_lv_range(bar_data_t *bd) {
+	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+	int32_t scale = _bar_resolution_scale(bd);
+	if (bd->center_fill) {
+		int32_t half = lroundf((bd->bar_max - bd->bar_min) * 0.5f * (float)scale);
+		if (half < 1) half = 1;
+		lv_bar_set_range(bd->bar_obj, -half, half);
+	} else {
 		int32_t lo = lroundf(bd->bar_min * (float)scale);
 		int32_t hi = lroundf(bd->bar_max * (float)scale);
 		if (hi <= lo) { lo = 0; hi = 100 * scale; }
 		lv_bar_set_range(bd->bar_obj, lo, hi);
 	}
+}
+
+void widget_bar_sync_range(bar_data_t *bd) {
+	if (!bd) return;
+	_bar_set_lv_range(bd);
 	/* Range / decimals just changed → the cached scaled value (standard mode)
 	 * or clip width (image mode) no longer maps to the right fill. Drop the
 	 * paint memo and re-push the current value NOW: a parked/steady signal
@@ -509,11 +524,13 @@ static void _bar_on_channel_changed(channel_t *c, void *user_data) {
 	/* Bar zone colours are widget-owned (Widget settings → ALERTS) — never
 	 * driven by the channel. Only range/thresholds/signal sync above. */
 
-	/* Bounds changed → the cached scaled display value / color buckets are
-	 * stale; force the next tick to re-apply everything. */
-	bd->_pc_valid = false;
-	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
-		lv_obj_invalidate(bd->bar_obj);
+	/* Bounds changed → re-push the LVGL range (standard mode) and re-render the
+	 * current value. The lv_bar's range is set at create from bar_min/max; the
+	 * old code only re-snapshotted the fields and dropped the paint memo, so the
+	 * standard bar kept its create-time range and the fill mis-scaled / clamped
+	 * after a runtime rebind or a channel range edit. sync_range also clears the
+	 * memo and re-pushes the value, so the fill snaps to the new bounds now. */
+	widget_bar_sync_range(bd);
 }
 
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
@@ -552,16 +569,28 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		}
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
-		/* Invert is implemented by reflecting the value about the midpoint:
-		 * (min + max - value) keeps the bar filling left→right but maps a
-		 * "full" reading to an empty fill and vice versa. We do this on the
-		 * already-scaled bar_value because the LVGL bar's range is also
-		 * scaled (see _bar_resolution_scale). Stale → 0 anyway, no flip. */
-		int32_t display_value = bar_value;
-		if (bd->invert_bar_value && !is_stale) {
-			int32_t scaled_min = lroundf(bd->bar_min * (float)scale);
-			int32_t scaled_max = lroundf(bd->bar_max * (float)scale);
-			display_value = scaled_min + scaled_max - bar_value;
+		int32_t display_value;
+		if (is_stale) {
+			display_value = 0;   /* SYMMETRICAL → centre pill; NORMAL → empty */
+		} else if (bd->center_fill) {
+			/* Center-fill: feed the offset from the range midpoint so the
+			 * SYMMETRICAL fill grows outward from the bar's centre (range set
+			 * symmetric in _bar_set_lv_range). Invert reflects about centre. */
+			float mid = (bd->bar_min + bd->bar_max) * 0.5f;
+			display_value = (int32_t)((fill_value - mid) * (float)scale);
+			if (bd->invert_bar_value) display_value = -display_value;
+		} else {
+			/* Invert is implemented by reflecting the value about the midpoint:
+			 * (min + max - value) keeps the bar filling left→right but maps a
+			 * "full" reading to an empty fill and vice versa. We do this on the
+			 * already-scaled bar_value because the LVGL bar's range is also
+			 * scaled (see _bar_resolution_scale). */
+			display_value = bar_value;
+			if (bd->invert_bar_value) {
+				int32_t scaled_min = lroundf(bd->bar_min * (float)scale);
+				int32_t scaled_max = lroundf(bd->bar_max * (float)scale);
+				display_value = scaled_min + scaled_max - bar_value;
+			}
 		}
 		/* Value-gate: lv_bar_set_value (LV_ANIM_OFF) invalidates the WHOLE
 		 * bar bbox every call — the dominant per-frame cost. Skip it when the
@@ -756,8 +785,6 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	if (!has_fill) {
 		/* Standard lv_bar for fill indicator */
 		lv_obj_t *bar = lv_bar_create(parent);
-		lv_bar_set_range(bar, b_min, b_max);
-		lv_bar_set_value(bar, b_min, LV_ANIM_OFF);
 		lv_obj_set_width(bar, w->w);
 		lv_obj_set_height(bar, w->h);
 		lv_obj_set_align(bar, LV_ALIGN_CENTER);
@@ -787,12 +814,18 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
 		bd->bar_obj = bar;
-		/* Center Fill: SYMMETRICAL draws the indicator from the zero value to the
-		 * current value (fills outward from center). Default lv_bar mode is NORMAL,
+		/* Center Fill: SYMMETRICAL draws the indicator from the (symmetric) range
+		 * midpoint outward to the current value. Default lv_bar mode is NORMAL,
 		 * so only set it when center_fill is enabled. Standard-bar path only —
-		 * image-mode bars have no lv_bar and recompute the clip width themselves. */
+		 * image-mode bars have no lv_bar and recompute the clip width themselves.
+		 * Set the mode BEFORE the range so SYMMETRICAL's start_value tracks the
+		 * new (negative) min and LVGL's centre test (min<0<max) holds. */
 		if (bd->center_fill)
 			lv_bar_set_mode(bar, LV_BAR_MODE_SYMMETRICAL);
+		_bar_set_lv_range(bd);
+		/* Resting value: centre (0) for center-fill, else the low end. The
+		 * initial-snap below overrides this once a bound signal's value is read. */
+		lv_bar_set_value(bar, bd->center_fill ? 0 : b_min, LV_ANIM_OFF);
 		if (!w->root) w->root = bar;
 	}
 
@@ -1573,16 +1606,16 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "center_fill") == 0) {
 		bd->center_fill = in->b;
-		/* Live: SYMMETRICAL fills from the zero value, NORMAL from the start.
+		/* Live: SYMMETRICAL fills outward from the range midpoint, NORMAL from
+		 * the start. Set the mode, then re-range (center-aware) + re-push the
+		 * current value via sync_range so the fill redraws from the new origin
+		 * immediately — a parked signal produces no further tick to self-heal.
 		 * Standard-bar path only (image-mode bars have no bd->bar_obj). */
 		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 			lv_bar_set_mode(bd->bar_obj,
 				bd->center_fill ? LV_BAR_MODE_SYMMETRICAL : LV_BAR_MODE_NORMAL);
-			lv_obj_invalidate(bd->bar_obj);
 		}
-		/* Fill origin moved — drop the paint memo so the next signal tick
-		 * re-pushes the value/colour and the fill redraws from the new origin. */
-		bd->_pc_valid = false;
+		widget_bar_sync_range(bd);
 		return true;
 	}
 	if (strcmp(name, "show_bar_label") == 0) {
