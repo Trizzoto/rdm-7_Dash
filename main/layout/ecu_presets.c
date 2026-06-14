@@ -398,14 +398,17 @@ const ecu_preset_t ECU_PRESETS[] = {
      * MaxxECU 1.2 - base 0x520, Intel LE
      * Subset of 1.3 (no oil temp/pressure/fuel pressure broadcast).
      *
-     * Sign conventions cross-checked against the official MaxxECU v1.3
-     * DBC file (the v1.2 DBC isn't published separately; 1.3 is a strict
-     * superset for the fields 1.2 supports). The DBC uses `@1+` (Intel
-     * unsigned) for every field at 0x520/0x521/0x530/0x531 except oil
-     * temperature on 0x536 (1.3 only). The four fields below were
-     * incorrectly flagged is_signed=true in an earlier revision — that
-     * read garbage for any raw value with bit 15 set (e.g. fuel trim
-     * raw ≥ 32768). Confirmed against MaxxECU MTune behaviour.
+     * Bit/scale/offset/id verified against the official
+     * MaxxECU_Default_CAN_protocol_v1.2.dbc — every mapped field matches.
+     * The v1.2 DBC marks ALL fields `@1+` (Intel unsigned).
+     *
+     * SIGN — same deliberate deviation as the 1.3 preset (see below):
+     * COOLANT_TEMP, INTAKE_AIR_TEMP and IGNITION are forced is_signed=true
+     * so sub-zero temps / ignition retard (which the ECU sends as
+     * two's-complement) decode correctly instead of reading ~6500. Signed
+     * is identical to unsigned for their positive range (raw never sets
+     * bit 15 below 3276.7), so this is safe. FUEL_TRIM stays unsigned
+     * (positive multiplier, 100% = no correction). Confirmed in-vehicle.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -415,13 +418,13 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,  /* not in 1.2 */
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
@@ -578,17 +581,30 @@ const ecu_preset_t ECU_PRESETS[] = {
      * MaxxECU 1.3 - base 0x520, Intel LE
      * Source: MaxxECU_Default_CAN_protocol_v1.3.dbc (official download).
      *
-     * DBC byte-order spec: every field is `@1+` (Intel unsigned) EXCEPT
-     * Engine_Oil_Temperature at 0x536 byte 48, which is `@1-` (signed).
-     * An earlier revision had four fields flagged is_signed=true that the
-     * DBC clearly marks unsigned (COOLANT_TEMP, INTAKE_AIR_TEMP, IGNITION,
-     * FUEL_TRIM) — corrected to match the DBC.
+     * Bit/scale/offset/id all verified against the official
+     * MaxxECU_Default_CAN_protocol_v1.3.dbc — every mapped field matches.
      *
-     * FUEL_TRIM is "fraction:%" with offset 0 and range [0..6553.5]:
-     * MaxxECU encodes fuel trim as a multiplier where 100% = no
-     * correction (matching MTune's display). Keep offset 0 here so the
-     * dash mirrors MTune; users wanting OBD2 STFT/LTFT ±delta style can
-     * add an offset=-100 override in their layout's Signals modal.
+     * SIGN — deliberate deviation from the DBC for three fields:
+     * The DBC (AEM-template-derived, note its auto-generated [0|6553.5]
+     * ranges) marks every field `@1+` (Intel unsigned) EXCEPT
+     * Engine_Oil_Temperature (0x536 b48, `@1-`). But CoolantTemp,
+     * IntakeAirTemp and Ignition_Timing all read negative in-vehicle —
+     * temps below 0°C on a cold start, ignition retarding past TDC — which
+     * the ECU can only put on the wire as two's-complement. The DBC's
+     * `@1+` then misreads those as ~6500. Their raw never legitimately
+     * sets bit 15 in range (120°C = 1200, 50° adv = 500), so reading them
+     * SIGNED is identical for all positive values and correct for the
+     * negatives. We therefore force is_signed=true on COOLANT_TEMP,
+     * INTAKE_AIR_TEMP and IGNITION (matching the DBC's own treatment of
+     * Engine_Oil_Temperature — the same kind of sensor). Confirmed
+     * in-vehicle on a MaxxECU. GearPosn stays unsigned: it's a 0..N index,
+     * never two's-complement negative, so signed would gain nothing.
+     *
+     * FUEL_TRIM stays UNSIGNED (matches DBC): MaxxECU's FuelTrimTotal is a
+     * multiplier where 100% = no correction (range [0..6553.5], always
+     * positive), matching MTune's display. A ±delta (OBD2 STFT/LTFT) style
+     * comes from an offset=-100 override in the Signals modal, not the
+     * sign bit.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -598,14 +614,14 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             /* Engine_Oil_Temperature: the one signed field in this block. */
             [ECU_SIG_OIL_TEMP]        = { 0x536, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_OIL_PRESSURE]    = { 0x536, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
             [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
