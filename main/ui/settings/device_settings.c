@@ -75,6 +75,8 @@ static lv_obj_t *s_log_rate_dd = NULL;
 
 /* Signal simulator toggle (demo mode) */
 static lv_obj_t *s_sim_btn_label = NULL;
+/* Stat label of the DEVICE-grid "Simulator" card (tap toggles sim ON/OFF) */
+static lv_obj_t *s_sim_card_stat = NULL;
 
 /* Display rotation + night-mode (#23) */
 static lv_obj_t *s_rotation_btn_label = NULL;
@@ -2108,6 +2110,25 @@ static void _sim_toggle_btn_cb(lv_event_t *e) {
     }
 }
 
+/* DEVICE-grid "Simulator" card tap handler. Tapping the card toggles the
+ * signal simulator and repaints the card's stat label (ON green / OFF blue).
+ * Standalone card so the demo sweep is a top-level action, not buried in the
+ * Peak Hold popup. */
+static void _sim_card_cb(lv_event_t *e) {
+    (void)e;
+    if (signal_sim_is_active()) {
+        signal_sim_stop();
+    } else {
+        signal_sim_start();
+    }
+    if (s_sim_card_stat && lv_obj_is_valid(s_sim_card_stat)) {
+        bool on = signal_sim_is_active();
+        lv_label_set_text(s_sim_card_stat, on ? "ON" : "OFF");
+        lv_obj_set_style_text_color(s_sim_card_stat,
+            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_ACCENT, 0);
+    }
+}
+
 static void _reset_peaks_btn_cb(lv_event_t *e) {
     (void)e;
     signal_reset_peaks();
@@ -3118,7 +3139,7 @@ static void _testing_popup_close(lv_event_t *e) {
 static void _testing_popup_open(lv_event_t *e) {
     (void)e;
     if (s_testing_overlay && lv_obj_is_valid(s_testing_overlay)) return;
-    s_testing_overlay = _make_popup_shell(560, 320, "Peak Hold & Testing",
+    s_testing_overlay = _make_popup_shell(560, 190, "Peak Hold",
                                           _testing_popup_close);
 
     /* Peak Hold row */
@@ -3154,54 +3175,13 @@ static void _testing_popup_open(lv_event_t *e) {
     lv_obj_set_style_text_color(reset_lbl, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_add_event_cb(reset_btn, _reset_peaks_btn_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Sim + Wire Inputs row */
-    lv_obj_t *sim_btn = lv_btn_create(s_testing_overlay);
-    lv_obj_set_size(sim_btn, 150, 32);
-    lv_obj_align(sim_btn, LV_ALIGN_TOP_LEFT, 0, 110);
-    lv_obj_set_style_bg_color(sim_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(sim_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(sim_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(sim_btn, 1, 0);
-    lv_obj_set_style_border_color(sim_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(sim_btn, 0, 0);
-    s_sim_btn_label = lv_label_create(sim_btn);
-    {
-        bool on = signal_sim_is_active();
-        lv_label_set_text(s_sim_btn_label, on ? "Sim: ON" : "Sim: OFF");
-        lv_obj_set_style_text_color(s_sim_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-    lv_obj_center(s_sim_btn_label);
-    lv_obj_set_style_text_font(s_sim_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(sim_btn, _sim_toggle_btn_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *wire_btn = lv_btn_create(s_testing_overlay);
-    lv_obj_set_size(wire_btn, 170, 32);
-    lv_obj_align(wire_btn, LV_ALIGN_TOP_LEFT, 160, 110);
-    lv_obj_set_style_bg_color(wire_btn, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(wire_btn, LV_OPA_80, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(wire_btn, THEME_RADIUS_NORMAL, 0);
-    lv_obj_set_style_border_width(wire_btn, 1, 0);
-    lv_obj_set_style_border_color(wire_btn, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_shadow_width(wire_btn, 0, 0);
-    s_wire_input_btn_label = lv_label_create(wire_btn);
-    {
-        bool on = false;
-        config_store_load_wire_input_mode(&on);
-        lv_label_set_text(s_wire_input_btn_label, on ? "Wire Inputs: ON" : "Wire Inputs: OFF");
-        lv_obj_set_style_text_color(s_wire_input_btn_label,
-            on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-    lv_obj_center(s_wire_input_btn_label);
-    lv_obj_set_style_text_font(s_wire_input_btn_label, THEME_FONT_SMALL, 0);
-    lv_obj_add_event_cb(wire_btn, _wire_input_mode_btn_cb, LV_EVENT_CLICKED, NULL);
-
     lv_obj_t *note = lv_label_create(s_testing_overlay);
     lv_label_set_text(note,
-        "Sim replays fake CAN frames. Wire Inputs uses GPIO 43/44 as turn-signal inputs.");
+        "Tracks the highest and lowest value seen for every signal. "
+        "View shows the table; Reset clears all peaks.");
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(note, 500);
-    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 170);
+    lv_obj_align(note, LV_ALIGN_TOP_LEFT, 0, 104);
     lv_obj_set_style_text_font(note, THEME_FONT_TINY, 0);
     lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_MUTED, 0);
 }
@@ -3258,6 +3238,9 @@ static void _odo_popup_open(lv_event_t *e) {
 
 static void _can_bus_popup_close(lv_event_t *e) {
     (void)e;
+    /* Stop the embedded live-CAN refresh timer BEFORE deleting the overlay,
+     * so the timer can't fire against rows that are about to be freed. */
+    can_list_ui_embed_stop();
     if (s_can_bus_overlay && lv_obj_is_valid(s_can_bus_overlay)) lv_obj_del(s_can_bus_overlay);
     s_can_bus_overlay     = NULL;
     s_bitrate_dropdown    = NULL;
@@ -3272,7 +3255,7 @@ static void _can_bus_popup_close(lv_event_t *e) {
 static void _can_bus_popup_open(lv_event_t *e) {
     (void)e;
     if (s_can_bus_overlay && lv_obj_is_valid(s_can_bus_overlay)) return;
-    s_can_bus_overlay = _make_popup_shell(680, 420, "CAN Bus",
+    s_can_bus_overlay = _make_popup_shell(700, 460, "CAN Bus",
                                           _can_bus_popup_close);
 
     lv_obj_t *bitrate_label = lv_label_create(s_can_bus_overlay);
@@ -3301,18 +3284,22 @@ static void _can_bus_popup_open(lv_event_t *e) {
     config_store_load_bitrate(&saved_bitrate);
     lv_dropdown_set_selected(s_bitrate_dropdown, saved_bitrate);
 
-    /* Live CAN diagnostics panel — populated by refresh_can_diagnostics()
-     * which already NULL-checks every static. Build it into a sub-container
-     * inside the popup body. */
-    lv_obj_t *diag_host = lv_obj_create(s_can_bus_overlay);
-    lv_obj_set_size(diag_host, 640, 250);
-    lv_obj_align(diag_host, LV_ALIGN_TOP_LEFT, 0, 126);
-    lv_obj_set_style_bg_opa(diag_host, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(diag_host, 0, 0);
-    lv_obj_set_style_pad_all(diag_host, 0, 0);
-    lv_obj_clear_flag(diag_host, LV_OBJ_FLAG_SCROLLABLE);
-    _build_section_can_diagnostics(diag_host);
-    refresh_can_diagnostics();
+    /* Live CAN feed — embed the same scrolling ID/Hz/DLC/bytes table that
+     * the full-screen viewer uses, directly in the popup body. Replaces the
+     * old health-status panel ("No CAN traffic detected" + Show Details):
+     * the live table makes bus activity self-evident at a glance. Torn down
+     * in _can_bus_popup_close via can_list_ui_embed_stop(). */
+    lv_obj_t *feed_host = lv_obj_create(s_can_bus_overlay);
+    lv_obj_set_size(feed_host, 664, 300);
+    lv_obj_align(feed_host, LV_ALIGN_TOP_LEFT, 0, 120);
+    lv_obj_set_style_bg_opa(feed_host, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(feed_host, THEME_COLOR_BORDER, 0);
+    lv_obj_set_style_border_width(feed_host, 1, 0);
+    lv_obj_set_style_radius(feed_host, THEME_RADIUS_NORMAL, 0);
+    lv_obj_set_style_pad_all(feed_host, 0, 0);
+    lv_obj_set_style_clip_corner(feed_host, true, 0);
+    lv_obj_clear_flag(feed_host, LV_OBJ_FLAG_SCROLLABLE);
+    can_list_ui_embed(feed_host);
 }
 
 /* =========================================================================
@@ -3416,9 +3403,20 @@ static void _build_device_grid(lv_obj_t *content) {
         "Signal log + Raw CAN capture + share.",
         "IDLE", _logger_popup_open);
 
-    _make_setup_card(grid, LV_SYMBOL_PLAY, "Peak Hold & Testing",
-        "Peak readings, sim sweep, wire inputs.",
-        "TOOLS", _testing_popup_open);
+    _make_setup_card(grid, LV_SYMBOL_UP, "Peak Hold",
+        "Min/max peak readings for every signal.",
+        "PEAKS", _testing_popup_open);
+
+    /* Simulator — moved out of the old Peak Hold & Testing popup into its own
+     * card. Tapping it toggles the demo sweep directly; the stat shows the
+     * live ON/OFF state. */
+    bool sim_on = signal_sim_is_active();
+    setup_card_t sim = _make_setup_card(grid, LV_SYMBOL_PLAY, "Simulator",
+        "Replay fake CAN frames to preview the dash.",
+        sim_on ? "ON" : "OFF", _sim_card_cb);
+    s_sim_card_stat = sim.stat_label;
+    lv_obj_set_style_text_color(s_sim_card_stat,
+        sim_on ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_ACCENT, 0);
 }
 
 __attribute__((unused))
@@ -3981,6 +3979,10 @@ static void _build_section_developer(lv_obj_t *row) {
     lv_obj_set_style_text_color(wire_note, THEME_COLOR_TEXT_MUTED, 0);
 }
 
+/* Legacy CAN health panel (dot + summary + Show Details). Superseded by the
+ * embedded live-CAN feed in _can_bus_popup_open; kept compiled in case the
+ * at-a-glance health summary is wanted again. Unused-attr silences the warn. */
+__attribute__((unused))
 static void _build_section_can_diagnostics(lv_obj_t *content) {
     lv_obj_t *s = lv_obj_create(content);
     lv_obj_set_size(s, lv_pct(100), LV_SIZE_CONTENT);
@@ -4194,6 +4196,7 @@ static void _settings_screen_delete_cb(lv_event_t *e) {
     s_canraw_btn_label   = NULL;
     s_canraw_status_label= NULL;
     s_sim_btn_label      = NULL;
+    s_sim_card_stat      = NULL;
     s_rotation_btn_label = NULL;
     s_night_btn_label    = NULL;
     s_wire_input_btn_label = NULL;

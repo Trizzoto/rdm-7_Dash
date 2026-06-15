@@ -835,6 +835,43 @@ static void _migrate_layout_root(cJSON *root, int from_ver) {
  * @param caller   Tag string for log messages (e.g. "layout_load", "apply_json")
  * @return ESP_OK on success, ESP_FAIL if "widgets" array is missing
  */
+/* Post-pass: after all widgets exist + are positioned, give each transparent
+ * meter a small, cache-friendly face sliced from the full-screen background
+ * image. The meter then occludes the big background beneath it, so the bg isn't
+ * re-read (strided, cache-hostile) under every moving needle — ~2x fps, same
+ * look. Re-runs on every layout apply; the slice cache means only meters whose
+ * geometry actually changed re-slice, so moving one meter stays cheap. No-op
+ * when there's no full-screen bg image, and meters with their own face are
+ * left untouched. */
+static void _autoslice_from_bg(void) {
+	widget_t *snap[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(snap, WIDGET_REGISTRY_MAX, &n);
+	widget_t *bgw = NULL;
+	for (uint8_t i = 0; i < n; i++) {
+		widget_t *w = snap[i];
+		if (w && w->type == WIDGET_IMAGE &&
+		    w->w >= (uint16_t)(SCREEN_W * 9 / 10) &&
+		    w->h >= (uint16_t)(SCREEN_H * 9 / 10)) {
+			bgw = w;
+			break;
+		}
+	}
+	if (!bgw) return;
+	lv_img_dsc_t *bg = NULL;
+	lv_area_t disp;
+	uint16_t nw = 0, nh = 0;
+	if (!widget_image_get_bg_geometry(bgw, &bg, &disp, &nw, &nh)) return;
+	ESP_LOGI(TAG, "autoslice: bg '%s' on screen [%d,%d %dx%d]", bgw->id,
+	         (int)disp.x1, (int)disp.y1, (int)(disp.x2 - disp.x1 + 1), (int)(disp.y2 - disp.y1 + 1));
+	for (uint8_t i = 0; i < n; i++) {
+		if (snap[i] && snap[i]->type == WIDGET_METER) {
+			widget_meter_autoface(snap[i], bg, &disp, nw, nh);
+			vTaskDelay(1);  /* yield between large slices so IDLE/WDT stay happy */
+		}
+	}
+}
+
 static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 									  const char *caller) {
 	/* Stop any active loggers / replay BEFORE wiping the signal registry.
@@ -985,6 +1022,9 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 		ESP_LOGD(TAG, "%s: loaded widget id=%s type=%d at (%d,%d)", caller,
 				 w->id, (int)wtype, (int)w->x, (int)w->y);
 	}
+
+	/* Optimise: auto-slice meter faces from the full-screen background (if any). */
+	_autoslice_from_bg();
 
 	return ESP_OK;
 }

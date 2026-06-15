@@ -9,6 +9,7 @@
 #include "widget_image.h"
 #include "widget_rules.h"
 #include "system/night_mode.h"
+#include "screen_config.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include <math.h>
@@ -389,6 +390,45 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 			_meter_inv_shadow(md->meter, md->scale, v,     md);
 		}
 	}
+}
+
+/* Auto-slice: cut this meter's face out of the shared full-screen background and
+ * use it as an opaque, cache-friendly bg image — then the meter occludes the
+ * big background under it (radius 0 + opaque). Same look as a full-screen image
+ * showing through a transparent meter, but ~2x the frame rate. Only applies to
+ * transparent meters (meter_bg_opa == 0, no explicit bg_image); meters with
+ * their own face are left untouched. Re-run on every layout apply; the slice
+ * cache means only meters whose geometry changed actually re-slice. */
+void widget_meter_autoface(widget_t *w, lv_img_dsc_t *bg, const lv_area_t *bg_disp,
+                           uint16_t bg_nw, uint16_t bg_nh) {
+	if (!w || w->type != WIDGET_METER || !bg || !bg_disp) return;
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !md->meter || !lv_obj_is_valid(md->meter)) return;
+	if (md->bg_image_name[0] != '\0') return;  /* explicit bg image — leave it */
+	if (md->meter_bg_opa != 0)        return;  /* opaque own face — leave it */
+	if (md->bg_img_dsc)               return;  /* already faced */
+	if (w->w == 0 || w->h == 0)       return;
+
+	int disp_w = bg_disp->x2 - bg_disp->x1 + 1;
+	int disp_h = bg_disp->y2 - bg_disp->y1 + 1;
+	if (disp_w <= 0 || disp_h <= 0) return;
+
+	int mx1 = SCREEN_ORIGIN_X + w->x - w->w / 2;
+	int my1 = SCREEN_ORIGIN_Y + w->y - w->h / 2;
+	int sx = (int)((int64_t)(mx1 - bg_disp->x1) * bg_nw / disp_w);
+	int sy = (int)((int64_t)(my1 - bg_disp->y1) * bg_nh / disp_h);
+	int sw = (int)((int64_t)w->w * bg_nw / disp_w);
+	int sh = (int)((int64_t)w->h * bg_nh / disp_h);
+
+	lv_img_dsc_t *face = rdm_image_slice(bg, sx, sy, sw, sh, w->w, w->h);
+	if (!face) return;
+	md->bg_img_dsc = face;  /* freed on destroy via rdm_image_free (slice cache) */
+	lv_obj_set_style_bg_img_src(md->meter, face, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(md->meter, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(md->meter, 0, LV_PART_MAIN | LV_STATE_DEFAULT);  /* occlude bg beneath */
+	lv_obj_invalidate(md->meter);
+	ESP_LOGI(TAG, "autoface %s: %ux%u face from bg src(%d,%d %dx%d)",
+	         w->id, w->w, w->h, sx, sy, sw, sh);
 }
 
 /* Forward declarations — used by _meter_create / _meter_destroy below. */

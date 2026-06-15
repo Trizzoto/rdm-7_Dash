@@ -55,9 +55,25 @@ typedef struct {
 lv_img_dsc_t *rdm_image_load(const char *name);
 
 /**
- * Free an image descriptor returned by rdm_image_load().
+ * Free an image descriptor returned by rdm_image_load() or rdm_image_slice().
  */
 void rdm_image_free(lv_img_dsc_t *dsc);
+
+/**
+ * Sample a source rect [sx,sy,sw,sh] of @p src into a fresh dw×dh opaque
+ * (TRUE_COLOR) descriptor — a small, cache-friendly "face" cut from a larger
+ * image. Refcounted/cached by (src, rect, dest-size); free with rdm_image_free().
+ */
+lv_img_dsc_t *rdm_image_slice(const lv_img_dsc_t *src,
+                              int sx, int sy, int sw, int sh, int dw, int dh);
+
+/**
+ * For a full-screen background image widget, return its loaded descriptor, the
+ * on-screen rect it occupies (after auto_size zoom) and its native pixel size.
+ * Returns false if @p w isn't an image widget or has no image loaded.
+ */
+bool widget_image_get_bg_geometry(widget_t *w, lv_img_dsc_t **dsc,
+                                  lv_area_t *disp, uint16_t *nw, uint16_t *nh);
 
 /**
  * Factory function.

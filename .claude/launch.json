@@ -36,6 +36,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "../rdm7-homepage-demo", "-l", "5174", "--cors"],
       "port": 5174
+    },
+    {
+      "name": "altezza",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-wasm-editor", "-l", "8899", "--cors", "--no-clipboard"],
+      "port": 8899
     }
   ]
 }

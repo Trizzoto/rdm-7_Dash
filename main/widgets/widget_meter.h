@@ -265,6 +265,15 @@ widget_t *widget_meter_create_instance(uint8_t value_idx);
 /** Return value index for meter widget. */
 uint8_t widget_meter_get_value_idx(const widget_t *w);
 
+/**
+ * Auto-slice a transparent meter's face out of the shared full-screen
+ * background @p bg (with on-screen rect @p bg_disp, native size bg_nw×bg_nh)
+ * and apply it as an opaque, cache-friendly face that also occludes the
+ * background beneath. No-op for meters with an explicit/opaque face.
+ */
+void widget_meter_autoface(widget_t *w, lv_img_dsc_t *bg, const lv_area_t *bg_disp,
+                           uint16_t bg_nw, uint16_t bg_nh);
+
 /** Composite a decorative overlay object INTO this meter's cached face image
  *  (day + night, if built), so it renders once instead of every frame. The
  *  caller hides the live overlay afterwards. Requires the meter to have a

@@ -41,8 +41,131 @@ static uint16_t _fit_zoom(uint16_t cw, uint16_t ch, uint16_t iw, uint16_t ih) {
 	return z;
 }
 
+/* ── Reference-counted image cache ───────────────────────────────────────────
+ * rdm_image_load() used to allocate a fresh PSRAM copy of the pixel data on
+ * EVERY call, so the same image placed on N widgets cost N× the memory — and
+ * once PSRAM ran out the extra copies silently failed to load (the image only
+ * appeared on one widget). Cache decoded descriptors by name with a refcount so
+ * every widget referencing an image shares ONE buffer; freed when the last user
+ * releases it. All access is on the LVGL task (layout load / widget create /
+ * destroy), so no locking is needed. Updated image files are picked up on the
+ * next layout reload, when all widgets free their refs and the entry drops. */
+#define IMG_CACHE_MAX 24
+typedef struct {
+	char          name[40];
+	lv_img_dsc_t *dsc;
+	uint16_t      refs;
+} img_cache_entry_t;
+static img_cache_entry_t s_img_cache[IMG_CACHE_MAX];
+
+static lv_img_dsc_t *_img_cache_acquire(const char *name) {
+	for (int i = 0; i < IMG_CACHE_MAX; i++) {
+		if (s_img_cache[i].dsc && strcmp(s_img_cache[i].name, name) == 0) {
+			s_img_cache[i].refs++;
+			ESP_LOGD(TAG, "Shared image '%s' (refs=%u)", name, s_img_cache[i].refs);
+			return s_img_cache[i].dsc;
+		}
+	}
+	return NULL;
+}
+
+static void _img_cache_store(const char *name, lv_img_dsc_t *dsc) {
+	for (int i = 0; i < IMG_CACHE_MAX; i++) {
+		if (!s_img_cache[i].dsc) {
+			strncpy(s_img_cache[i].name, name, sizeof(s_img_cache[i].name) - 1);
+			s_img_cache[i].name[sizeof(s_img_cache[i].name) - 1] = '\0';
+			s_img_cache[i].dsc  = dsc;
+			s_img_cache[i].refs = 1;
+			return;
+		}
+	}
+	/* Cache full (>24 distinct images): leave this one uncached — still valid,
+	 * just unshared; rdm_image_free() frees it directly when released. */
+	ESP_LOGW(TAG, "Image cache full; '%s' loaded unshared", name);
+}
+
+/* ── Slice cache: meter-sized opaque crops of a larger image ─────────────────
+ * Reading a sub-rectangle of a big full-screen background is cache-hostile
+ * (each scanline jumps the full image width), so redrawing it under a moving
+ * needle is slow. A small meter-SIZED crop fits the data cache → ~2x faster.
+ * rdm_image_slice() samples a source rect into a contiguous opaque (TRUE_COLOR)
+ * face, cached + refcounted by (src, rect, dest-size) so re-applying a layout
+ * only re-slices the meters whose geometry actually changed. */
+#define SLICE_CACHE_MAX 24
+typedef struct {
+	const lv_img_dsc_t *src;
+	int16_t  sx, sy, sw, sh, dw, dh;
+	lv_img_dsc_t *dsc;
+	uint16_t refs;
+} slice_cache_entry_t;
+static slice_cache_entry_t s_slice_cache[SLICE_CACHE_MAX];
+
+static lv_img_dsc_t *_slice_cache_acquire(const lv_img_dsc_t *src,
+		int sx, int sy, int sw, int sh, int dw, int dh) {
+	for (int i = 0; i < SLICE_CACHE_MAX; i++) {
+		slice_cache_entry_t *e = &s_slice_cache[i];
+		if (e->dsc && e->src == src && e->sx == sx && e->sy == sy &&
+		    e->sw == sw && e->sh == sh && e->dw == dw && e->dh == dh) {
+			e->refs++;
+			return e->dsc;
+		}
+	}
+	return NULL;
+}
+
+static void _slice_cache_store(const lv_img_dsc_t *src,
+		int sx, int sy, int sw, int sh, int dw, int dh, lv_img_dsc_t *dsc) {
+	for (int i = 0; i < SLICE_CACHE_MAX; i++) {
+		if (!s_slice_cache[i].dsc) {
+			s_slice_cache[i].src = src;
+			s_slice_cache[i].sx = (int16_t)sx; s_slice_cache[i].sy = (int16_t)sy;
+			s_slice_cache[i].sw = (int16_t)sw; s_slice_cache[i].sh = (int16_t)sh;
+			s_slice_cache[i].dw = (int16_t)dw; s_slice_cache[i].dh = (int16_t)dh;
+			s_slice_cache[i].dsc = dsc; s_slice_cache[i].refs = 1;
+			return;
+		}
+	}
+}
+
+lv_img_dsc_t *rdm_image_slice(const lv_img_dsc_t *src,
+		int sx, int sy, int sw, int sh, int dw, int dh) {
+	if (!src || !src->data || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return NULL;
+	lv_img_dsc_t *cached = _slice_cache_acquire(src, sx, sy, sw, sh, dw, dh);
+	if (cached) return cached;
+
+	int snw = src->header.w, snh = src->header.h;
+	int bpp = (src->header.cf == LV_IMG_CF_TRUE_COLOR_ALPHA) ? 3 : 2;  /* read RGB565, skip alpha */
+	size_t out_sz = (size_t)dw * dh * 2;
+	uint8_t *out = heap_caps_malloc(out_sz, MALLOC_CAP_SPIRAM);
+	if (!out) return NULL;
+	const uint8_t *sd = (const uint8_t *)src->data;
+	for (int dy = 0; dy < dh; dy++) {
+		int syp = sy + (int)((int64_t)dy * sh / dh);
+		if (syp < 0) syp = 0; else if (syp >= snh) syp = snh - 1;
+		const uint8_t *srow = sd + (size_t)syp * snw * bpp;
+		uint8_t *orow = out + (size_t)dy * dw * 2;
+		for (int dx = 0; dx < dw; dx++) {
+			int sxp = sx + (int)((int64_t)dx * sw / dw);
+			if (sxp < 0) sxp = 0; else if (sxp >= snw) sxp = snw - 1;
+			const uint8_t *sp = srow + (size_t)sxp * bpp;
+			orow[dx * 2] = sp[0]; orow[dx * 2 + 1] = sp[1];
+		}
+	}
+	lv_img_dsc_t *dsc = calloc(1, sizeof(lv_img_dsc_t));
+	if (!dsc) { heap_caps_free(out); return NULL; }
+	dsc->header.always_zero = 0;
+	dsc->header.w = dw; dsc->header.h = dh;
+	dsc->header.cf = LV_IMG_CF_TRUE_COLOR;
+	dsc->data_size = out_sz; dsc->data = out;
+	_slice_cache_store(src, sx, sy, sw, sh, dw, dh, dsc);
+	return dsc;
+}
+
 lv_img_dsc_t *rdm_image_load(const char *name) {
 	if (!name || name[0] == '\0') return NULL;
+
+	lv_img_dsc_t *shared = _img_cache_acquire(name);
+	if (shared) return shared;
 
 	char path[80];
 	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
@@ -95,6 +218,32 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 		return NULL;
 	}
 
+	/* Opaque fast-path: RDMIMG always stores TRUE_COLOR_ALPHA (3 B/px), which
+	 * forces LVGL down the per-pixel alpha-blend draw path — expensive when a
+	 * large background is re-composited from PSRAM under every moving needle.
+	 * If the alpha channel is fully opaque (no pixel < 255), repack to
+	 * TRUE_COLOR (2 B/px) so LVGL uses a straight opaque blit instead. The
+	 * colour bytes are byte-identical to the alpha format, so the image renders
+	 * the same. Compaction is done IN PLACE (2 B/px < 3 B/px, write index always
+	 * trails read index) to avoid a transient second large PSRAM allocation. */
+	lv_img_cf_t cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+	bool opaque = true;
+	for (size_t i = 2; i < px_size; i += LV_IMG_PX_SIZE_ALPHA_BYTE) {
+		if (px_data[i] != 0xFF) { opaque = false; break; }
+	}
+	if (opaque) {
+		size_t j = 0;
+		for (size_t i = 0; i < px_size; i += LV_IMG_PX_SIZE_ALPHA_BYTE) {
+			px_data[j++] = px_data[i];
+			px_data[j++] = px_data[i + 1];
+		}
+		size_t tc_size = (size_t)hdr.width * hdr.height * sizeof(lv_color_t);
+		uint8_t *shrunk = heap_caps_realloc(px_data, tc_size, MALLOC_CAP_SPIRAM);
+		if (shrunk) px_data = shrunk;   /* shrink can't fail in practice; keep old ptr if it does */
+		px_size = tc_size;
+		cf = LV_IMG_CF_TRUE_COLOR;
+	}
+
 	/* Yield to let the idle tasks run after a potentially-long fread().
 	 * A 1+ MB read from LittleFS can take several hundred ms, especially
 	 * with flash wear-leveling lookups; chaining multiple large images
@@ -113,18 +262,68 @@ lv_img_dsc_t *rdm_image_load(const char *name) {
 	dsc->header.always_zero = 0;
 	dsc->header.w = hdr.width;
 	dsc->header.h = hdr.height;
-	dsc->header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+	dsc->header.cf = cf;
 	dsc->data_size = px_size;
 	dsc->data = px_data;
 
-	ESP_LOGI(TAG, "Loaded image '%s' (%ux%u, %u bytes)", name, hdr.width, hdr.height, (unsigned)px_size);
+	ESP_LOGI(TAG, "Loaded image '%s' (%ux%u, %u bytes, %s)", name, hdr.width, hdr.height,
+	         (unsigned)px_size, cf == LV_IMG_CF_TRUE_COLOR ? "opaque" : "alpha");
+	_img_cache_store(name, dsc);
 	return dsc;
 }
 
 void rdm_image_free(lv_img_dsc_t *dsc) {
 	if (!dsc) return;
+	for (int i = 0; i < IMG_CACHE_MAX; i++) {
+		if (s_img_cache[i].dsc == dsc) {
+			if (s_img_cache[i].refs > 0) s_img_cache[i].refs--;
+			if (s_img_cache[i].refs == 0) {
+				heap_caps_free((void *)dsc->data);
+				free(dsc);
+				s_img_cache[i].dsc = NULL;
+				s_img_cache[i].name[0] = '\0';
+			}
+			return;
+		}
+	}
+	/* Slice cache (auto-faces cut from a larger image). */
+	for (int i = 0; i < SLICE_CACHE_MAX; i++) {
+		if (s_slice_cache[i].dsc == dsc) {
+			if (s_slice_cache[i].refs > 0) s_slice_cache[i].refs--;
+			if (s_slice_cache[i].refs == 0) {
+				heap_caps_free((void *)dsc->data);
+				free(dsc);
+				s_slice_cache[i].dsc = NULL;
+				s_slice_cache[i].src = NULL;
+			}
+			return;
+		}
+	}
+	/* Not in any cache — free directly. */
 	heap_caps_free((void *)dsc->data);
 	free(dsc);
+}
+
+/* Return the bottom screen-background image's descriptor + the rect it actually
+ * occupies on screen (after auto_size zoom) + its native size. Used by the
+ * meter auto-slice pass to cut each gauge's face from the shared background. */
+bool widget_image_get_bg_geometry(widget_t *w, lv_img_dsc_t **dsc,
+                                  lv_area_t *disp, uint16_t *nw, uint16_t *nh) {
+	if (!w || w->type != WIDGET_IMAGE || !dsc || !disp) return false;
+	image_data_t *id = (image_data_t *)w->type_data;
+	if (!id || !id->img_dsc) return false;
+	uint16_t native_w = id->native_w ? id->native_w : id->img_dsc->header.w;
+	uint16_t native_h = id->native_h ? id->native_h : id->img_dsc->header.h;
+	uint16_t zoom = id->auto_size ? _fit_zoom(w->w, w->h, native_w, native_h)
+	                              : (id->image_scale ? id->image_scale : 256);
+	int disp_w = (int)native_w * zoom / 256;
+	int disp_h = (int)native_h * zoom / 256;
+	int cx = SCREEN_ORIGIN_X + w->x;   /* image root is center-aligned */
+	int cy = SCREEN_ORIGIN_Y + w->y;
+	disp->x1 = cx - disp_w / 2; disp->y1 = cy - disp_h / 2;
+	disp->x2 = disp->x1 + disp_w - 1; disp->y2 = disp->y1 + disp_h - 1;
+	*dsc = id->img_dsc; *nw = native_w; *nh = native_h;
+	return true;
 }
 
 /* Forward declarations — used by _image_create / _image_destroy below. */

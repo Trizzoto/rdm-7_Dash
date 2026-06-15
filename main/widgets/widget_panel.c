@@ -535,6 +535,14 @@ static void _panel_on_signal(float value, bool is_stale, void *user_data) {
 			lv_color_t val_color = apply_value ? warn_color : pd->value_color;
 			lv_obj_set_style_text_color(pd->value_label, val_color,
 										LV_PART_MAIN | LV_STATE_DEFAULT);
+			/* The small/medium unit suffix is a separate label — recolor it to
+			 * match the value so the warning color tracks across both, not just
+			 * the number. (full/inline unit_size has no unit_label and rides the
+			 * value string's color automatically.) */
+			if (pd->unit_label && lv_obj_is_valid(pd->unit_label)) {
+				lv_obj_set_style_text_color(pd->unit_label, val_color,
+											LV_PART_MAIN | LV_STATE_DEFAULT);
+			}
 		}
 		if (pd->header_label && lv_obj_is_valid(pd->header_label)) {
 			lv_color_t lbl_color = apply_label ? warn_color : pd->label_color;
@@ -1230,6 +1238,10 @@ static void _panel_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 		lv_obj_set_style_text_font(pd->value_label,
 			vf ? vf : THEME_FONT_DASH_VALUE, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+	/* Keep the small/medium unit suffix in lock-step with the value color. */
+	if (pd->unit_label && lv_obj_is_valid(pd->unit_label)) {
+		lv_obj_set_style_text_color(pd->unit_label, value_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 }
 
 /* Re-apply colors based on current night-mode state. Called by night_mode
@@ -1254,6 +1266,9 @@ static void _panel_apply_night_mode(widget_t *w, bool active) {
 	}
 	if (pd->value_label && lv_obj_is_valid(pd->value_label)) {
 		lv_obj_set_style_text_color(pd->value_label, valc, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (pd->unit_label && lv_obj_is_valid(pd->unit_label)) {
+		lv_obj_set_style_text_color(pd->unit_label, valc, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 }
 
