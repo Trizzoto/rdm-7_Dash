@@ -1,0 +1,25 @@
+{
+ "name": "altezza",
+ "image_name": "cluster_bg",
+ "image_file": "cluster_bg.rdmimg",
+ "layout_file": "altezza_layout.json",
+ "states": {
+  "idle": {
+   "RPM": 850,
+   "VEHICLE_SPEED": 0,
+   "FUEL_LEVEL": 86,
+   "BATT_VOLT": 14.2,
+   "OIL_PRESS": 4.5,
+   "COOLANT_TEMP": 88
+  },
+  "driving": {
+   "RPM": 4800,
+   "VEHICLE_SPEED": 128,
+   "FUEL_LEVEL": 64,
+   "BATT_VOLT": 13.9,
+   "OIL_PRESS": 6,
+   "COOLANT_TEMP": 95
+  }
+ },
+ "default_state": "idle"
+}

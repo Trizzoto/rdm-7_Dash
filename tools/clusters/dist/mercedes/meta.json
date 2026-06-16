@@ -1,0 +1,24 @@
+{
+ "name": "mercedes",
+ "image_name": "mercedes_bg",
+ "image_file": "mercedes_bg.rdmimg",
+ "layout_file": "mercedes_layout.json",
+ "states": {
+  "idle": {
+   "RPM": 800,
+   "GEAR": 0,
+   "COOLANT_TEMP": 88
+  },
+  "driving": {
+   "RPM": 4000,
+   "GEAR": 4,
+   "COOLANT_TEMP": 90
+  },
+  "redline": {
+   "RPM": 6500,
+   "GEAR": 6,
+   "COOLANT_TEMP": 92
+  }
+ },
+ "default_state": "driving"
+}

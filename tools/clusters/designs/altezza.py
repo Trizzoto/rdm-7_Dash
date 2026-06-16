@@ -1,26 +1,30 @@
-"""Generate the Toyota Altezza cluster: one baked 800x480 background image
-(housing, all gauge faces, ticks, amber EL numerals, redline, icons, LCD frame)
-plus the layout.json + manifest.json that overlay live needles and digits.
+"""Toyota Altezza / Lexus IS200 optitron cluster.
 
-Run:  python tools/altezza/gen.py
-Then in the preview harness call window.reloadScene().
+Bakes the housing, all gauge faces, amber EL ticks/numerals, redline, sub-dials,
+icons and LCD frame into one 800x480 background; overlays live needles (meter
+widgets, needle-only) + a live digital speed text.
+
+Also emits a browser-preview bundle (layout.json + manifest.json + fonts + bg)
+into the sibling rdm7-wasm-editor repo for the WASM preview harness -- see
+emit_preview() and the `--preview` flag on gen.py.
 """
 import json
-import math
 import shutil
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from altezza_lib import (
-    SS, REPO, OUT, IMG_OUT, FONT_OUT, FONT_DIR,
-    FACE, FACE_EDGE, HOUSING, HOUSING_HI, BEZEL_HI, BEZEL_LO, CHROME_LIP,
-    AMBER, AMBER_HOT, AMBER_DIM, RED, RED_HOT, ORANGE_HOT, NEEDLE_RGB, CREAM,
-    LCD_AMBER, LCD_GHOST, LCD_BG, WHITE,
+from cluster_lib import (
+    SS, S, REPO, PREVIEW_OUT, PREVIEW_IMG, PREVIEW_FONT, FONT_DIR,
+    FACE, HOUSING, HOUSING_HI, BEZEL_HI, BEZEL_LO, CHROME_LIP,
+    AMBER, RED, ORANGE_HOT, NEEDLE_RGB, CREAM, LCD_AMBER, LCD_BG,
     rgb565, save_rdmimg, font, MANROPE, FUGAZ, MONT,
     polar, val_to_deg, text_centered, thick_line, composite_glow,
-    radial_alpha, brushed_noise, vgrad_alpha,
+    radial_alpha, brushed_noise, vgrad_alpha, fill_gradient,
+    cx_to_center, cy_to_center,
 )
 
+NAME = "altezza"
+IMAGE_NAME = "cluster_bg"
 W, H = 800, 480
 CW, CH = W * SS, H * SS
 
@@ -36,13 +40,17 @@ OIL = dict(cx=406, cy=123, r_out=50, start=215, sweep=110)
 VOLT = dict(cx=525, cy=246, r_out=50, start=215, sweep=110)
 TEMP = dict(cx=406, cy=352, r_out=48, start=215, sweep=110)
 
+STATES = {
+    "idle": {"RPM": 850, "VEHICLE_SPEED": 0, "FUEL_LEVEL": 86,
+             "BATT_VOLT": 14.2, "OIL_PRESS": 4.5, "COOLANT_TEMP": 88},
+    "driving": {"RPM": 4800, "VEHICLE_SPEED": 128, "FUEL_LEVEL": 64,
+                "BATT_VOLT": 13.9, "OIL_PRESS": 6, "COOLANT_TEMP": 95},
+}
+DEFAULT_STATE = "idle"
 
-def S(v):
-    return int(round(v * SS))
 
-
+# ---------------------------------------------------------------- pods / housing
 def glass_highlight(base, cx, cy, r_face, alpha=24):
-    """Soft diagonal glass sheen clipped to a gauge face (drawn over everything)."""
     cx, cy, r = S(cx), S(cy), S(r_face)
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
     ld = ImageDraw.Draw(layer)
@@ -55,24 +63,9 @@ def glass_highlight(base, cx, cy, r_face, alpha=24):
     base.paste(layer, (0, 0), clipped)
 
 
-# ---------------------------------------------------------------- pods / housing
-def fill_gradient(size, top, bot):
-    g = Image.new("RGBA", size)
-    px = g.load()
-    wd, ht = size
-    for y in range(ht):
-        t = y / max(1, ht - 1)
-        px_row = tuple(int(top[i] + (bot[i] - top[i]) * t) for i in range(3)) + (255,)
-        for x in range(wd):
-            px[x, y] = px_row
-    return g
-
-
 def draw_pod(base, cx, cy, r_face, ring=11, face=FACE):
-    """Chrome bezel ring + dark face (with vignette) for a circular pod."""
     cx, cy, r_face, ring = S(cx), S(cy), S(r_face), S(ring)
     r_out = r_face + ring
-    # bezel: vertical chrome gradient through an annulus mask
     grad = fill_gradient((2 * r_out, 2 * r_out), BEZEL_HI, BEZEL_LO)
     mask = Image.new("L", (2 * r_out, 2 * r_out), 0)
     md = ImageDraw.Draw(mask)
@@ -80,19 +73,16 @@ def draw_pod(base, cx, cy, r_face, ring=11, face=FACE):
     md.ellipse([ring, ring, 2 * r_out - ring, 2 * r_out - ring], fill=0)
     base.paste(grad, (cx - r_out, cy - r_out), mask)
     d = ImageDraw.Draw(base)
-    # face
     d.ellipse([cx - r_face, cy - r_face, cx + r_face, cy + r_face], fill=face + (255,))
-    # radial vignette baked onto the face (depth)
     vig = radial_alpha(r_face, inner=0, outer=150, color=(0, 0, 0), power=2.6)
     fmask = Image.new("L", (2 * r_face, 2 * r_face), 0)
     ImageDraw.Draw(fmask).ellipse([0, 0, 2 * r_face, 2 * r_face], fill=255)
-    base.paste(vig, (cx - r_face, cy - r_face), Image.composite(vig.split()[3], Image.new("L", vig.size, 0), fmask))
-    # chrome lip: bright thin ring at the inner edge of the bezel
+    base.paste(vig, (cx - r_face, cy - r_face),
+               Image.composite(vig.split()[3], Image.new("L", vig.size, 0), fmask))
     d.ellipse([cx - r_face, cy - r_face, cx + r_face, cy + r_face],
               outline=CHROME_LIP + (200,), width=max(1, S(1)))
     d.ellipse([cx - r_face - S(1), cy - r_face - S(1), cx + r_face + S(1), cy + r_face + S(1)],
               outline=(0, 0, 0, 180), width=max(1, S(1)))
-    # glassy highlight arc top-left of the bezel; shadow bottom-right
     d.arc([cx - r_out + S(2), cy - r_out + S(2), cx + r_out - S(2), cy + r_out - S(2)],
           195, 320, fill=(220, 222, 232, 150), width=S(2))
     d.arc([cx - r_out + S(2), cy - r_out + S(2), cx + r_out - S(2), cy + r_out - S(2)],
@@ -101,23 +91,21 @@ def draw_pod(base, cx, cy, r_face, ring=11, face=FACE):
 
 # ---------------------------------------------------------------- gauge ticks/numbers
 def draw_gauge(sharp_d, red_d, g, *, number_size, minor_w=2.0, major_w=4.0,
-               label_color=AMBER, show_numbers=True, redline_color=RED):
+               label_color=AMBER, show_numbers=True):
     cx, cy = g["cx"], g["cy"]
     vmin, vmax, start, sweep = g["vmin"], g["vmax"], g["start"], g["sweep"]
     major, minor = g["major"], g["minor"]
     r_out, r_minor, r_major, r_label = g["r_out"], g["r_minor"], g["r_major"], g["r_label"]
-    redline = g.get("redline", None)      # caution (orange) start
-    redline2 = g.get("redline2", None)    # danger (red) start
+    redline = g.get("redline", None)
+    redline2 = g.get("redline2", None)
 
     def tier(v, base):
-        """Return (color, draw-layer) for a value, applying the redline tiers."""
         if redline2 is not None and v >= redline2 - 1e-6:
             return RED, red_d
         if redline is not None and v >= redline - 1e-6:
             return ORANGE_HOT, red_d
         return base, sharp_d
 
-    # ticks
     v = vmin
     while v <= vmax + 1e-6:
         deg = val_to_deg(v, vmin, vmax, start, sweep)
@@ -130,7 +118,6 @@ def draw_gauge(sharp_d, red_d, g, *, number_size, minor_w=2.0, major_w=4.0,
             thick_line(d, p0, polar(S(cx), S(cy), S(r_minor), deg), col + (255,), minor_w * SS)
         v += minor
 
-    # numbers at majors
     if show_numbers:
         fnt = font(MANROPE, S(number_size))
         v = vmin
@@ -143,10 +130,8 @@ def draw_gauge(sharp_d, red_d, g, *, number_size, minor_w=2.0, major_w=4.0,
             v += major
 
 
-# ---------------------------------------------------------------- mini gauge (L/H etc.)
 def draw_mini(base, sharp_d, g, left_lbl, right_lbl, *, ticks=7):
     cx, cy, r_out, start, sweep = g["cx"], g["cy"], g["r_out"], g["start"], g["sweep"]
-    # inset sub-dial: faint recessed circle on the housing/base
     bd = ImageDraw.Draw(base)
     bd.ellipse([S(cx - r_out - 4), S(cy - r_out - 4), S(cx + r_out + 4), S(cy + r_out + 4)],
                fill=(11, 11, 13, 255), outline=(40, 40, 46, 255), width=S(1))
@@ -171,17 +156,13 @@ def draw_mini(base, sharp_d, g, left_lbl, right_lbl, *, ticks=7):
         text_centered(sharp_d, rp, right_lbl, fnt, AMBER + (255,))
 
 
-# ---------------------------------------------------------------- icons (simple vector)
+# ---------------------------------------------------------------- icons
 def icon_oilcan(d, cx, cy, col):
     cx, cy = S(cx), S(cy)
     c = col + (255,)
-    # body
     d.rounded_rectangle([cx - S(10), cy - S(3), cx + S(6), cy + S(6)], radius=S(2), fill=c)
-    # spout
     d.line([(cx + S(6), cy - S(1)), (cx + S(15), cy - S(7))], fill=c, width=S(2))
-    # handle
     d.arc([cx - S(9), cy - S(9), cx - S(1), cy - S(1)], 180, 350, fill=c, width=S(2))
-    # drip
     d.ellipse([cx + S(14), cy - S(2), cx + S(18), cy + S(3)], fill=c)
 
 
@@ -200,12 +181,10 @@ def icon_battery(d, cx, cy, col):
 def icon_temp(d, cx, cy, col):
     cx, cy = S(cx), S(cy)
     c = col + (255,)
-    # thermometer: stem + bulb (tilted), with a water wave under it
     d.line([(cx - S(4), cy - S(9)), (cx - S(4), cy + S(3))], fill=c, width=S(3))
     d.ellipse([cx - S(8), cy + S(2), cx, cy + S(10)], fill=c)
     d.line([(cx + S(2), cy - S(7)), (cx + S(8), cy - S(7))], fill=c, width=S(2))
     d.line([(cx + S(2), cy - S(3)), (cx + S(8), cy - S(3))], fill=c, width=S(2))
-    # wave
     d.arc([cx - S(2), cy + S(9), cx + S(6), cy + S(15)], 180, 360, fill=c, width=S(2))
     d.arc([cx + S(6), cy + S(9), cx + S(14), cy + S(15)], 0, 180, fill=c, width=S(2))
 
@@ -213,41 +192,33 @@ def icon_temp(d, cx, cy, col):
 def icon_fuel(d, cx, cy, col):
     cx, cy = S(cx), S(cy)
     c = col + (255,)
-    # pump body
     d.rounded_rectangle([cx - S(10), cy - S(9), cx + S(2), cy + S(9)], radius=S(2),
                         outline=c, width=S(2))
-    d.line([(cx - S(7), cy - S(4)), (cx - S(1), cy - S(4))], fill=c, width=S(2))  # window
-    # nozzle/hose
+    d.line([(cx - S(7), cy - S(4)), (cx - S(1), cy - S(4))], fill=c, width=S(2))
     d.line([(cx + S(2), cy - S(5)), (cx + S(8), cy - S(5))], fill=c, width=S(2))
     d.line([(cx + S(8), cy - S(5)), (cx + S(8), cy + S(6))], fill=c, width=S(2))
     d.line([(cx + S(8), cy + S(6)), (cx + S(11), cy + S(6))], fill=c, width=S(2))
 
 
-# ---------------------------------------------------------------- LCD panel
 def draw_lcd(base):
     d = ImageDraw.Draw(base)
     x0, y0, x1, y1 = S(600), S(300), S(798), S(432)
-    # recessed panel
     d.rounded_rectangle([x0, y0, x1, y1], radius=S(8), fill=LCD_BG + (255,),
                         outline=(70, 40, 6, 255), width=S(2))
     sharp = Image.new("RGBA", base.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(sharp)
-    # ODO row (top)
     sd.text((S(612), S(320)), "ODO", font=font(MANROPE, S(15)), fill=LCD_AMBER + (255,), anchor="lm")
     sd.text((S(788), S(320)), "114239", font=font(FUGAZ, S(28)), fill=LCD_AMBER + (255,), anchor="rm")
-    # bottom row labels (the big speed number is a live text widget, centered above)
     sd.text((S(612), S(414)), "SPEED", font=font(MANROPE, S(15)), fill=LCD_AMBER + (255,), anchor="lm")
     sd.text((S(788), S(414)), "km/h", font=font(MANROPE, S(16)), fill=LCD_AMBER + (255,), anchor="rm")
     out = composite_glow(base, sharp, radii=(6, 16), gains=(0.9, 0.5))
     base.paste(out, (0, 0))
 
 
-# ---------------------------------------------------------------- ALTEZZA wordmark
 def draw_altezza(sharp_d):
     fnt = font(MONT, S(19))
     txt = "ALTEZZA"
     base_x, base_y = S(330), S(252)
-    # simple letterspacing
     spacing = S(3)
     total = 0
     widths = []
@@ -264,34 +235,25 @@ def draw_altezza(sharp_d):
 # ================================================================ build
 def build_background():
     base = Image.new("RGBA", (CW, CH), HOUSING + (255,))
-    # vignette: subtle lighter center band, darker corners
-    vd = ImageDraw.Draw(base)
-    # broad soft top highlight
     hl = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
     hld = ImageDraw.Draw(hl)
     hld.ellipse([S(-200), S(-380), S(1000), S(260)], fill=HOUSING_HI + (40,))
-    from PIL import ImageFilter
     hl = hl.filter(ImageFilter.GaussianBlur(S(60)))
     base = Image.alpha_composite(base, hl)
-    # faint brushed grain over the housing
     base = Image.alpha_composite(base, brushed_noise((CW, CH), amp=6))
-    # cowl shadow (hood) top + soft floor bottom
     base.alpha_composite(vgrad_alpha(CW, S(96), 150, 0), (0, 0))
     base.alpha_composite(vgrad_alpha(CW, S(80), 0, 120), (0, CH - S(80)))
 
-    # pods (bezel + face)
     draw_pod(base, **{"cx": SPEEDO["cx"], "cy": SPEEDO["cy"], "r_face": SPEEDO["r_out"] + 6})
     draw_pod(base, **{"cx": TACH["cx"], "cy": TACH["cy"], "r_face": TACH["r_out"] + 8, "ring": 13})
     draw_pod(base, **{"cx": FUEL["cx"], "cy": FUEL["cy"], "r_face": FUEL["r_out"] + 5, "ring": 8})
 
-    # faint inner ring on the main gauges (connects tick roots)
     bd = ImageDraw.Draw(base)
     for g in (TACH, SPEEDO):
         rr = S(g["r_minor"])
         bd.ellipse([S(g["cx"]) - rr, S(g["cy"]) - rr, S(g["cx"]) + rr, S(g["cy"]) + rr],
                    outline=(96, 54, 10, 170), width=max(1, S(1)))
 
-    # sharp amber + red layers for glow
     sharp = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
     red = Image.new("RGBA", (CW, CH), (0, 0, 0, 0))
     sd = ImageDraw.Draw(sharp)
@@ -301,7 +263,6 @@ def build_background():
     draw_gauge(sd, rd, SPEEDO, number_size=22, minor_w=1.8, major_w=3.2, label_color=CREAM)
     draw_gauge(sd, rd, FUEL, number_size=0, minor_w=1.8, major_w=3.0, show_numbers=False)
 
-    # tach danger band on the outer rim: orange (caution) -> red (danger), both glow
     def band(v_from, v_to, color):
         a0 = val_to_deg(v_from, TACH["vmin"], TACH["vmax"], TACH["start"], TACH["sweep"]) % 360
         a1 = val_to_deg(v_to, TACH["vmin"], TACH["vmax"], TACH["start"], TACH["sweep"]) % 360
@@ -311,20 +272,16 @@ def build_background():
     band(TACH["redline"], TACH["redline2"], ORANGE_HOT)
     band(TACH["redline2"], TACH["vmax"], RED)
 
-    # tach unit label (bottom gap, below temp sub-dial)
     text_centered(sd, (S(TACH["cx"]), S(TACH["cy"] + 162)), "x1000 r/min",
                   font(MANROPE, S(15)), AMBER + (255,))
-    # speedo unit label
     text_centered(sd, (S(SPEEDO["cx"]), S(SPEEDO["cy"] + 54)), "km/h",
                   font(MANROPE, S(13)), AMBER + (255,))
-    # fuel E / F
     ep = polar(S(FUEL["cx"]), S(FUEL["cy"]), S(FUEL["r_label"]), FUEL["start"])
     fp = polar(S(FUEL["cx"]), S(FUEL["cy"]), S(FUEL["r_label"]), FUEL["start"] + FUEL["sweep"])
     text_centered(sd, ep, "E", font(MANROPE, S(18)), AMBER + (255,))
     text_centered(sd, fp, "F", font(MANROPE, S(18)), AMBER + (255,))
     icon_fuel(sd, FUEL["cx"], FUEL["cy"] + 10, AMBER)
 
-    # mini gauges
     draw_mini(base, sd, OIL, "L", "H")
     icon_oilcan(sd, OIL["cx"], OIL["cy"] + 24, AMBER)
     draw_mini(base, sd, VOLT, "", "")
@@ -335,34 +292,22 @@ def build_background():
 
     draw_altezza(sd)
 
-    # central hubs (dark caps that sit over needle pivots are drawn by widgets;
-    # here just a faint ring so the baked center isn't empty)
     base = composite_glow(base, red, radii=(9, 22), gains=(1.0, 0.7))
     base = composite_glow(base, sharp, radii=(8, 20), gains=(0.85, 0.55))
 
-    # glass sheen over the cover glass of each pod
     glass_highlight(base, TACH["cx"], TACH["cy"], TACH["r_out"] + 6, alpha=22)
     glass_highlight(base, SPEEDO["cx"], SPEEDO["cy"], SPEEDO["r_out"] + 5, alpha=20)
     glass_highlight(base, FUEL["cx"], FUEL["cy"], FUEL["r_out"] + 4, alpha=20)
 
     draw_lcd(base)
-    return base  # big (supersampled) RGBA; caller downscales
+    return base
 
 
-# ---------------------------------------------------------------- layout emit
-def cx_to_center(px):  # pixel x -> center-origin x
-    return int(round(px - 400))
-
-def cy_to_center(py):
-    return int(round(py - 240))
-
-
-def meter_needle(wid, g, signal, *, w_extra=0, needle_w=5, r_mod=-18, ball=20,
-                 redline=None):
+# ---------------------------------------------------------------- needle helpers
+def meter_needle(wid, g, signal, *, w_extra=0, needle_w=5, r_mod=-18, ball=20, redline=None):
     cfg = {
         "slot": 0, "signal_name": signal,
-        "min": g["vmin"] if "vmin" in g else 0,
-        "max": g["vmax"] if "vmax" in g else 100,
+        "min": g.get("vmin", 0), "max": g.get("vmax", 100),
         "start_angle": int(g["start"]) % 360,
         "end_angle": int(g["start"] + g["sweep"]) % 360,
         "show_ticks": False, "show_tick_labels": False,
@@ -386,10 +331,14 @@ def meter_needle(wid, g, signal, *, w_extra=0, needle_w=5, r_mod=-18, ball=20,
             "w": size, "h": size, "config": cfg}
 
 
+def mini_meter(wid, g, signal, vmin, vmax):
+    gg = dict(g); gg["vmin"] = vmin; gg["vmax"] = vmax
+    return meter_needle(wid, gg, signal, needle_w=3, r_mod=-8, ball=10)
+
+
 def draw_needle(base, g, value, vmin=None, vmax=None, *, color=NEEDLE_RGB,
                 width_base=8, length_frac=0.9, rear_frac=0.14, hub=15,
                 hub_color=(30, 30, 34)):
-    """Render a glowing tapered needle onto the (supersampled) base image."""
     import math as _m
     vmin = g.get("vmin", 0) if vmin is None else vmin
     vmax = g.get("vmax", 100) if vmax is None else vmax
@@ -430,11 +379,7 @@ def render_mock(base_big, state, out_path):
     b.resize((W, H), Image.LANCZOS).convert("RGB").save(out_path)
 
 
-def mini_meter(wid, g, signal, vmin, vmax):
-    gg = dict(g); gg["vmin"] = vmin; gg["vmax"] = vmax
-    return meter_needle(wid, gg, signal, needle_w=3, r_mod=-8, ball=10)
-
-
+# ---------------------------------------------------------------- layout
 def build_layout():
     signals = [
         {"name": "RPM", "can_id": 256, "bit_start": 0, "bit_length": 16, "scale": 1, "offset": 0, "is_signed": False, "endian": 1, "unit": "rpm"},
@@ -444,68 +389,45 @@ def build_layout():
         {"name": "OIL_PRESS", "can_id": 257, "bit_start": 24, "bit_length": 8, "scale": 1, "offset": 0, "is_signed": False, "endian": 1, "unit": "bar"},
         {"name": "COOLANT_TEMP", "can_id": 257, "bit_start": 32, "bit_length": 16, "scale": 0.1, "offset": 0, "is_signed": False, "endian": 1, "unit": "degC"},
     ]
-    widgets = []
-    # index 0: full background
-    widgets.append({"type": "image", "id": "bg", "x": 0, "y": 0, "w": 800, "h": 480,
-                    "config": {"image_name": "cluster_bg", "auto_size": True}})
-    # needles
-    widgets.append(meter_needle("tach", TACH, "RPM", needle_w=6, r_mod=-14, ball=26, redline=TACH["redline"]))
-    widgets.append(meter_needle("speedo", SPEEDO, "VEHICLE_SPEED", needle_w=5, r_mod=-12, ball=20))
-    widgets.append(meter_needle("fuel", FUEL, "FUEL_LEVEL", needle_w=3, r_mod=-8, ball=10))
-    widgets.append(mini_meter("oil", OIL, "OIL_PRESS", 0, 10))
-    widgets.append(mini_meter("volt", VOLT, "BATT_VOLT", 8, 18))
-    widgets.append(mini_meter("temp", TEMP, "COOLANT_TEMP", 40, 120))
-    # live digital speed on the LCD (centered, big)
-    widgets.append({"type": "text", "id": "lcd_speed",
-                    "x": cx_to_center(699), "y": cy_to_center(368),
-                    "w": 184, "h": 78,
-                    "config": {"slot": 0, "signal_name": "VEHICLE_SPEED", "decimals": 0,
-                               "static_text": "", "font": "Fugaz One:60",
-                               "text_color": rgb565(LCD_AMBER)}})
-
-    layout = {"schema_version": 14, "name": "Altezza", "screen_w": 800, "screen_h": 480,
-              "ecu": "", "ecu_version": "", "signals": signals, "widgets": widgets}
-    return layout
+    widgets = [
+        {"type": "image", "id": "bg", "x": 0, "y": 0, "w": 800, "h": 480,
+         "config": {"image_name": IMAGE_NAME, "auto_size": True}},
+        meter_needle("tach", TACH, "RPM", needle_w=6, r_mod=-14, ball=26, redline=TACH["redline"]),
+        meter_needle("speedo", SPEEDO, "VEHICLE_SPEED", needle_w=5, r_mod=-12, ball=20),
+        meter_needle("fuel", FUEL, "FUEL_LEVEL", needle_w=3, r_mod=-8, ball=10),
+        mini_meter("oil", OIL, "OIL_PRESS", 0, 10),
+        mini_meter("volt", VOLT, "BATT_VOLT", 8, 18),
+        mini_meter("temp", TEMP, "COOLANT_TEMP", 40, 120),
+        {"type": "text", "id": "lcd_speed",
+         "x": cx_to_center(699), "y": cy_to_center(368), "w": 184, "h": 78,
+         "config": {"slot": 0, "signal_name": "VEHICLE_SPEED", "decimals": 0,
+                    "static_text": "", "font": "Fugaz One:60",
+                    "text_color": rgb565(LCD_AMBER)}},
+    ]
+    return {"schema_version": 14, "name": "Altezza", "screen_w": 800, "screen_h": 480,
+            "ecu": "", "ecu_version": "", "signals": signals, "widgets": widgets}
 
 
 def write_manifest():
     return {
-        "fonts": [
-            {"name": "Fugaz One", "file": "fonts/fugaz_one.ttf"},
-        ],
-        "images": [{"name": "cluster_bg", "file": "img/cluster_bg.rdmimg"}],
+        "fonts": [{"name": "Fugaz One", "file": "fonts/fugaz_one.ttf"}],
+        "images": [{"name": IMAGE_NAME, "file": f"img/{IMAGE_NAME}.rdmimg"}],
         "layout": "layout.json",
         "signals": {"RPM": 850, "VEHICLE_SPEED": 0, "FUEL_LEVEL": 86,
                     "BATT_VOLT": 14.2, "OIL_PRESS": 4.5, "COOLANT_TEMP": 88},
     }
 
 
-HERE = REPO / "tools" / "altezza"
-
-IDLE = {"RPM": 850, "VEHICLE_SPEED": 0, "FUEL_LEVEL": 86, "BATT_VOLT": 14.2,
-        "OIL_PRESS": 4.5, "COOLANT_TEMP": 88}
-DRIVING = {"RPM": 4800, "VEHICLE_SPEED": 128, "FUEL_LEVEL": 64, "BATT_VOLT": 13.9,
-           "OIL_PRESS": 6, "COOLANT_TEMP": 95}
-
-
-def main():
-    IMG_OUT.mkdir(parents=True, exist_ok=True)
-    FONT_OUT.mkdir(parents=True, exist_ok=True)
-    big = build_background()
+def emit_preview(big=None):
+    """Write the WASM browser-preview bundle into the sibling rdm7-wasm-editor repo."""
+    if big is None:
+        big = build_background()
+    PREVIEW_IMG.mkdir(parents=True, exist_ok=True)
+    PREVIEW_FONT.mkdir(parents=True, exist_ok=True)
     final = big.resize((W, H), Image.LANCZOS)
-    w, h, n = save_rdmimg(final, IMG_OUT / "cluster_bg.rdmimg")
-    final.convert("RGB").save(IMG_OUT / "cluster_bg.png")
-    print(f"cluster_bg: {w}x{h}, {n} bytes")
-    # standalone hero previews (needles + live speed composited)
-    render_mock(big, IDLE, HERE / "preview_idle.png")
-    render_mock(big, DRIVING, HERE / "preview_driving.png")
-    # runtime font for the live LCD digits (family "Fugaz One" already on device)
-    shutil.copyfile(FONT_DIR / FUGAZ, FONT_OUT / "fugaz_one.ttf")
-    # layout + manifest
-    (OUT / "layout.json").write_text(json.dumps(build_layout(), indent=1))
-    (OUT / "manifest.json").write_text(json.dumps(write_manifest(), indent=1))
-    print("wrote layout.json + manifest.json + fonts + previews ->", OUT)
-
-
-if __name__ == "__main__":
-    main()
+    save_rdmimg(final, PREVIEW_IMG / f"{IMAGE_NAME}.rdmimg")
+    final.convert("RGB").save(PREVIEW_IMG / f"{IMAGE_NAME}.png")
+    shutil.copyfile(FONT_DIR / FUGAZ, PREVIEW_FONT / "fugaz_one.ttf")
+    (PREVIEW_OUT / "layout.json").write_text(json.dumps(build_layout(), indent=1))
+    (PREVIEW_OUT / "manifest.json").write_text(json.dumps(write_manifest(), indent=1))
+    print(f"preview bundle -> {PREVIEW_OUT}")
