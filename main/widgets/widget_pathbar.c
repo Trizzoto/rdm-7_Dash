@@ -97,6 +97,49 @@ static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float f
     }
 }
 
+/* ── Targeted invalidate ────────────────────────────────────────────────────
+ * Only redraw the region the fill front actually moved through (the path arc
+ * between fractions fa..fb, expanded by the band half-width). Without this, every
+ * value change invalidates the whole L-shaped bbox -> the full band re-rasterises
+ * (round-cap overdraw over every segment) AND the bg slice under it re-blits, so
+ * one moving needle costs ~63% of the screen. Clipping to the delta turns that
+ * into a small rect: LVGL clip-rejects the segments outside it for free. */
+static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
+    pathbar_data_t *pd = (pathbar_data_t *)w->type_data;
+    if (!w->root || !lv_obj_is_valid(w->root)) return;
+    if (pd->n_pts < 2 || pd->total_len <= 0.0f) { lv_obj_invalidate(w->root); return; }
+
+    float lo = fa < fb ? fa : fb;
+    float hi = fa < fb ? fb : fa;
+    float a = lo * pd->total_len;
+    float b = hi * pd->total_len;
+
+    lv_coord_t x0 = LV_COORD_MAX, y0 = LV_COORD_MAX, x1 = LV_COORD_MIN, y1 = LV_COORD_MIN;
+    bool any = false;
+    for (uint16_t i = 1; i < pd->n_pts; i++) {
+        float c0 = pd->cum[i - 1], c1 = pd->cum[i];
+        if (c1 < a) continue;
+        if (c0 > b) break;
+        float seg = c1 - c0;
+        if (seg <= 0.0f) continue;
+        float sa = a > c0 ? (a - c0) / seg : 0.0f;
+        float sb = b < c1 ? (b - c0) / seg : 1.0f;
+        lv_point_t p0 = pd->pts[i - 1], p1 = pd->pts[i];
+        lv_coord_t ax = (lv_coord_t)(p0.x + (p1.x - p0.x) * sa);
+        lv_coord_t ay = (lv_coord_t)(p0.y + (p1.y - p0.y) * sa);
+        lv_coord_t bx = (lv_coord_t)(p0.x + (p1.x - p0.x) * sb);
+        lv_coord_t by = (lv_coord_t)(p0.y + (p1.y - p0.y) * sb);
+        x0 = LV_MIN(x0, LV_MIN(ax, bx));  y0 = LV_MIN(y0, LV_MIN(ay, by));
+        x1 = LV_MAX(x1, LV_MAX(ax, bx));  y1 = LV_MAX(y1, LV_MAX(ay, by));
+        any = true;
+    }
+    if (!any) { lv_obj_invalidate(w->root); return; }
+
+    lv_coord_t m = (lv_coord_t)(pd->band_width / 2) + 3;
+    lv_area_t area = { x0 - m, y0 - m, x1 + m, y1 + m };
+    lv_obj_invalidate_area(w->root, &area);
+}
+
 /* ── Draw callback ──────────────────────────────────────────────────────── */
 static void _pathbar_draw_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
@@ -135,6 +178,7 @@ static void _pathbar_anim_cb(lv_timer_t *t) {
     widget_t *w = (widget_t *)t->user_data;
     pathbar_data_t *pd = (pathbar_data_t *)w->type_data;
     if (!pd) { lv_timer_pause(t); return; }
+    float old = pd->cur_frac;
     float d = pd->target_frac - pd->cur_frac;
     float k = pd->smoothing_ms ? (float)PATHBAR_ANIM_MS / (float)pd->smoothing_ms : 1.0f;
     if (k > 1.0f) k = 1.0f;
@@ -143,7 +187,7 @@ static void _pathbar_anim_cb(lv_timer_t *t) {
         pd->cur_frac = pd->target_frac;
         lv_timer_pause(t);
     }
-    if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+    _pathbar_invalidate_range(w, old, pd->cur_frac);
 }
 
 static void _pathbar_ensure_anim(widget_t *w) {
@@ -167,11 +211,12 @@ static void _pathbar_on_signal(float value, bool is_stale, void *user_data) {
         if (f < 0.0f) f = 0.0f;
         if (f > 1.0f) f = 1.0f;
     }
+    float old = pd->cur_frac;
     pd->target_frac = f;
 
     if (pd->smoothing_ms == 0 || is_stale) {
         pd->cur_frac = f;
-        if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+        _pathbar_invalidate_range(w, old, f);
     } else {
         _pathbar_ensure_anim(w);
         if (pd->anim_timer) lv_timer_resume(pd->anim_timer);
