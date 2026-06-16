@@ -1120,6 +1120,39 @@
             z-index: 20;
         }
 
+        /* pathbar custom-path waypoint editor */
+        .path-handle {
+            position: absolute;
+            width: 13px;
+            height: 13px;
+            background: hsl(0, 0%, 100%);
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            pointer-events: auto;
+            cursor: grab;
+            z-index: 30;
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+        }
+        .path-handle:hover { background: var(--accent); }
+        .path-add-handle {
+            position: absolute;
+            width: 11px;
+            height: 11px;
+            line-height: 9px;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent);
+            background: rgba(20,22,28,0.85);
+            border: 1px dashed var(--accent);
+            border-radius: 50%;
+            pointer-events: auto;
+            cursor: copy;
+            z-index: 29;
+            user-select: none;
+        }
+        .path-add-handle:hover { background: var(--accent); color: #000; }
+
         .resize-handle.nw {
             top: -5px;
             left: -5px;
@@ -7532,7 +7565,8 @@
                               options: [
                                   { v: 0, l: "Custom" },
                                   { v: 1, l: "L-Bend" },
-                                  { v: 2, l: "Straight" }
+                                  { v: 2, l: "Straight" },
+                                  { v: 3, l: "45° Bend" }
                               ] },
                             { name: "orientation", label: "Orientation", type: "select", def: 0, cat: "appearance",
                               options: [
@@ -8152,6 +8186,12 @@
                 };
 
                 interactionLayer.appendChild(box);
+
+                /* Custom-path pathbar: draggable waypoint handles overlaid on the bar */
+                if (w.type === 'pathbar' && selectedIndices.size === 1 &&
+                    selectedIndices.has(index) && !w.locked && _pathbarIsCustom(w)) {
+                    _renderPathHandles(w, index);
+                }
             });
 
             // Empty state when no widgets
@@ -8164,6 +8204,123 @@
 
             updateFooterCounts();
             renderLayerTree();
+        }
+
+        /* ── pathbar custom-path waypoint editor ───────────────────────────
+         * Path points are absolute screen px == interactionLayer canvas px, so
+         * handles sit at the point coords directly. The firmware clips the bar
+         * to the widget box, so after any edit we re-fit the box to the path. */
+        function _pathbarIsCustom(w) {
+            const s = w.config ? w.config.shape : undefined;
+            const custom = (s === 0 || s === undefined);
+            if (custom && (!w.config || !Array.isArray(w.config.path) || w.config.path.length < 4)) {
+                _seedPathbarPath(w);   // first time: start from a sensible L
+                _fitPathbarBox(w);
+            }
+            return custom;
+        }
+        function _seedPathbarPath(w) {
+            const cfg = w.config || (w.config = {});
+            const band = cfg.band_width || 22;
+            const inset = band / 2 + 2;
+            const cxs = w.x + ORIGIN_X, cys = w.y + ORIGIN_Y;
+            const L = cxs - w.w / 2 + inset, T = cys - w.h / 2 + inset;
+            const R = cxs + w.w / 2 - inset, B = cys + w.h / 2 - inset;
+            cfg.path = [Math.round(L), Math.round(B), Math.round(L), Math.round(T), Math.round(R), Math.round(T)];
+        }
+        function _fitPathbarBox(w) {
+            const path = w.config.path;
+            if (!Array.isArray(path) || path.length < 4) return;
+            let minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9;
+            for (let i = 0; i < path.length; i += 2) {
+                minx = Math.min(minx, path[i]); maxx = Math.max(maxx, path[i]);
+                miny = Math.min(miny, path[i + 1]); maxy = Math.max(maxy, path[i + 1]);
+            }
+            const m = (w.config.band_width || 22) / 2 + 6;
+            minx = Math.max(0, minx - m); miny = Math.max(0, miny - m);
+            maxx = Math.min(CANVAS_W, maxx + m); maxy = Math.min(CANVAS_H, maxy + m);
+            w.w = Math.round(maxx - minx); w.h = Math.round(maxy - miny);
+            w.x = Math.round((minx + maxx) / 2 - ORIGIN_X);
+            w.y = Math.round((miny + maxy) / 2 - ORIGIN_Y);
+        }
+        function _snap45(ax, ay, bx, by) {
+            const dx = bx - ax, dy = by - ay;
+            if (Math.hypot(dx, dy) < 1) return [bx, by];
+            const step = Math.PI / 4;
+            const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+            const proj = dx * Math.cos(ang) + dy * Math.sin(ang);
+            return [ax + proj * Math.cos(ang), ay + proj * Math.sin(ang)];
+        }
+        function _pathbarPreview() {
+            if (document.getElementById('livePreviewToggle') &&
+                document.getElementById('livePreviewToggle').checked &&
+                typeof triggerPreview === 'function') triggerPreview();
+        }
+        function _renderPathHandles(w, idx) {
+            const path = w.config.path;
+            const n = path.length / 2;
+            for (let i = 0; i < n; i++) {
+                const px = path[i * 2], py = path[i * 2 + 1];
+                const h = document.createElement('div');
+                h.className = 'path-handle';
+                h.style.left = (px - 7) + 'px'; h.style.top = (py - 7) + 'px';
+                h.title = 'Drag to move · double-click to remove · hold Shift for free angle';
+                h.onmousedown = (e) => { if (e.button === 0) _startPathDrag(e, idx, i); };
+                h.ondblclick = (e) => { e.stopPropagation(); e.preventDefault(); _removePathPoint(idx, i); };
+                interactionLayer.appendChild(h);
+                if (i < n - 1) {
+                    const mx = (px + path[(i + 1) * 2]) / 2, my = (py + path[(i + 1) * 2 + 1]) / 2;
+                    const a = document.createElement('div');
+                    a.className = 'path-add-handle'; a.textContent = '+';
+                    a.style.left = (mx - 6) + 'px'; a.style.top = (my - 6) + 'px';
+                    a.title = 'Add a point here';
+                    a.onmousedown = (e) => { e.stopPropagation(); e.preventDefault(); _addPathPoint(idx, i, mx, my); };
+                    interactionLayer.appendChild(a);
+                }
+            }
+        }
+        function _startPathDrag(e, idx, ptIdx) {
+            e.stopPropagation(); e.preventDefault();
+            const w = currentLayout.widgets[idx];
+            const path = w.config.path;
+            pushHistory();
+            const rect = interactionLayer.getBoundingClientRect();
+            const move = (ev) => {
+                let cx = (ev.clientX - rect.left) / zoomLevel;
+                let cy = (ev.clientY - rect.top) / zoomLevel;
+                cx = Math.max(0, Math.min(CANVAS_W, cx));
+                cy = Math.max(0, Math.min(CANVAS_H, cy));
+                if (!ev.shiftKey && ptIdx > 0) {
+                    const s = _snap45(path[(ptIdx - 1) * 2], path[(ptIdx - 1) * 2 + 1], cx, cy);
+                    cx = s[0]; cy = s[1];
+                }
+                path[ptIdx * 2] = Math.round(cx); path[ptIdx * 2 + 1] = Math.round(cy);
+                _fitPathbarBox(w);
+                renderEditor();
+            };
+            const up = () => {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                updateInspector();
+                _pathbarPreview();
+            };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        }
+        function _removePathPoint(idx, ptIdx) {
+            const w = currentLayout.widgets[idx], path = w.config.path;
+            if (path.length / 2 <= 2) { updateStatus('Path needs at least 2 points'); return; }
+            pushHistory();
+            path.splice(ptIdx * 2, 2);
+            _fitPathbarBox(w);
+            renderEditor(); updateInspector(); _pathbarPreview();
+        }
+        function _addPathPoint(idx, afterIdx, mx, my) {
+            const w = currentLayout.widgets[idx], path = w.config.path;
+            pushHistory();
+            path.splice((afterIdx + 1) * 2, 0, Math.round(mx), Math.round(my));
+            _fitPathbarBox(w);
+            renderEditor(); updateInspector(); _pathbarPreview();
         }
 
         /* Layout Settings box (hidden, display:none). Night-mode trigger UI

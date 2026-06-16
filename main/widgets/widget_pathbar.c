@@ -94,7 +94,7 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
             float cy = (t + b) / 2.0f;
             PB_EMIT(l, cy); PB_EMIT(r, cy);
         }
-    } else {                               /* L-bend (shape 1) */
+    } else {                               /* L-bend: shape 1 (rounded) or 3 (45° bevel) */
         float ax, ay, cx, cy, ex, ey;      /* A (start) - C (corner) - B (end) */
         switch (pd->orientation) {
         case 1: ax = r; ay = b; cx = r; cy = t; ex = l; ey = t; break;  /* TR */
@@ -116,7 +116,8 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
         float cnx = cx + (a1x + b1x) * rad, cny = cy + (a1y + b1y) * rad;
         PB_EMIT(ax, ay);
         PB_EMIT(t1x, t1y);
-        if (rad > 1.0f) {
+        /* shape 3 = a straight 45° chamfer (t1 -> t2 direct, no arc) */
+        if (rad > 1.0f && pd->shape != 3) {
             float a0 = atan2f(t1y - cny, t1x - cnx);
             float a2 = atan2f(t2y - cny, t2x - cnx);
             float d = a2 - a0;
@@ -412,7 +413,7 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "band_width");
     if (cJSON_IsNumber(item)) pd->band_width = (uint8_t)LV_CLAMP(1, item->valueint, 80);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shape");
-    if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 2);
+    if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 3);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "orientation");
     if (cJSON_IsNumber(item)) pd->orientation = (uint8_t)LV_CLAMP(0, item->valueint, 3);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "corner_radius");

@@ -3243,7 +3243,8 @@
           "options": [
             { "value": 0, "label": "Custom" },
             { "value": 1, "label": "L-Bend" },
-            { "value": 2, "label": "Straight" }
+            { "value": 2, "label": "Straight" },
+            { "value": 3, "label": "45° Bend" }
           ]
         },
         {
