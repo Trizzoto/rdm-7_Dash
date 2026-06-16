@@ -23,6 +23,7 @@
 #include "widget_arc.h"
 #include "widget_button.h"
 #include "widget_shift_light.h"
+#include "widget_pathbar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -94,6 +95,7 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = SCREEN_W, .max_h =  60 },
     /* WIDGET_LINE        */ { .min_w =   2, .min_h =  2, .max_w = SCREEN_W, .max_h = SCREEN_H },
     /* WIDGET_BANNER      */ { .min_w = 100, .min_h = 24, .max_w = SCREEN_W, .max_h = 160 },
+    /* WIDGET_PATHBAR     */ { .min_w =  20, .min_h = 20, .max_w = SCREEN_W, .max_h = SCREEN_H },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -116,6 +118,7 @@ const char *widget_type_name(widget_type_t type)
         "shift_light",
         "line",
         "banner",
+        "pathbar",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];
@@ -174,6 +177,7 @@ char *widget_get_signal_name_buf(widget_t *w)
         case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->signal_name;
         case WIDGET_TOGGLE:    return ((toggle_data_t *)w->type_data)->signal_name;
         case WIDGET_SHIFT_LIGHT: return ((shift_light_data_t *)w->type_data)->signal_name;
+        case WIDGET_PATHBAR:   return ((pathbar_data_t *)w->type_data)->signal_name;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:
@@ -195,6 +199,7 @@ int16_t *widget_get_signal_index_ptr(widget_t *w)
         case WIDGET_WARNING:   return &((warning_data_t *)w->type_data)->signal_index;
         case WIDGET_TOGGLE:    return &((toggle_data_t *)w->type_data)->signal_index;
         case WIDGET_SHIFT_LIGHT: return &((shift_light_data_t *)w->type_data)->signal_index;
+        case WIDGET_PATHBAR:   return &((pathbar_data_t *)w->type_data)->signal_index;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:

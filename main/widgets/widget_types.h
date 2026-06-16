@@ -52,6 +52,7 @@ typedef enum {
     WIDGET_SHIFT_LIGHT = 12,
     WIDGET_LINE        = 13,
     WIDGET_BANNER      = 14,
+    WIDGET_PATHBAR     = 15,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 

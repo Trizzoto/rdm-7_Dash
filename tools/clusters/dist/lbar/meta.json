@@ -1,0 +1,30 @@
+{
+ "name": "lbar",
+ "image_name": "lbar_bg",
+ "image_file": "lbar_bg.rdmimg",
+ "images": [
+  {
+   "name": "lbar_bg",
+   "file": "lbar_bg.rdmimg"
+  }
+ ],
+ "layout_file": "lbar_layout.json",
+ "states": {
+  "idle": {
+   "RPM": 1100,
+   "VEHICLE_SPEED": 0,
+   "GEAR": 0
+  },
+  "drive": {
+   "RPM": 6200,
+   "VEHICLE_SPEED": 96,
+   "GEAR": 3
+  },
+  "redline": {
+   "RPM": 10600,
+   "VEHICLE_SPEED": 152,
+   "GEAR": 5
+  }
+ },
+ "default_state": "drive"
+}
