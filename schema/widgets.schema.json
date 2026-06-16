@@ -3218,6 +3218,142 @@
           "step": 0.05
         }
       ]
+    },
+    {
+      "name": "pathbar",
+      "display_name": "Path Bar",
+      "singleton": false,
+      "default_size": {
+        "w": 400,
+        "h": 260
+      },
+      "constraints": {
+        "min_w": 20,
+        "min_h": 20,
+        "max_w": "screen_w",
+        "max_h": "screen_h"
+      },
+      "fields": [
+        {
+          "name": "shape",
+          "label": "Shape",
+          "type": "select",
+          "default": 1,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Custom" },
+            { "value": 1, "label": "L-Bend" },
+            { "value": 2, "label": "Straight" }
+          ]
+        },
+        {
+          "name": "orientation",
+          "label": "Orientation",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Top-Left / Horizontal" },
+            { "value": 1, "label": "Top-Right / Vertical" },
+            { "value": 2, "label": "Bottom-Left" },
+            { "value": 3, "label": "Bottom-Right" }
+          ]
+        },
+        {
+          "name": "corner_radius",
+          "label": "Corner Radius",
+          "type": "stepper",
+          "default": 40,
+          "category": "appearance",
+          "min": 0,
+          "max": 400
+        },
+        {
+          "name": "band_width",
+          "label": "Band Width",
+          "type": "stepper",
+          "default": 22,
+          "category": "appearance",
+          "min": 2,
+          "max": 80
+        },
+        {
+          "name": "glow_width",
+          "label": "Glow",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 40
+        },
+        {
+          "name": "rounded",
+          "label": "Rounded Caps",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance"
+        },
+        {
+          "name": "lit_color",
+          "label": "Fill Color",
+          "type": "color",
+          "default": "#2EE4C8",
+          "category": "appearance"
+        },
+        {
+          "name": "dim_color",
+          "label": "Track Color",
+          "type": "color",
+          "default": "#2E323A",
+          "category": "appearance"
+        },
+        {
+          "name": "dim_opa",
+          "label": "Track Opacity",
+          "type": "slider",
+          "default": 90,
+          "category": "appearance",
+          "min": 0,
+          "max": 255
+        },
+        {
+          "name": "redline_color",
+          "label": "Redline Color",
+          "type": "color",
+          "default": "#FF5C32",
+          "category": "appearance"
+        },
+        {
+          "name": "min",
+          "label": "Min Value",
+          "type": "number",
+          "default": 0,
+          "category": "data"
+        },
+        {
+          "name": "max",
+          "label": "Max Value",
+          "type": "number",
+          "default": 11000,
+          "category": "data"
+        },
+        {
+          "name": "redline",
+          "label": "Redline",
+          "type": "number",
+          "default": 10000,
+          "category": "data"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 90,
+          "category": "appearance",
+          "min": 0,
+          "max": 500
+        }
+      ]
     }
   ]
 }

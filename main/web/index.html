@@ -7524,6 +7524,36 @@
                             { name: "threshold_mid", label: "Mid Threshold", type: "number", def: 0.5, cat: "thresholds", min: 0, max: 1, step: 0.05 },
                             { name: "threshold_high", label: "High Threshold", type: "number", def: 0.8, cat: "thresholds", min: 0, max: 1, step: 0.05 }
                         ]
+                    },
+                    "pathbar": {
+                        displayName: "Path Bar", defW: 400, defH: 260,
+                        fields: [
+                            { name: "shape", label: "Shape", type: "select", def: 1, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Custom" },
+                                  { v: 1, l: "L-Bend" },
+                                  { v: 2, l: "Straight" }
+                              ] },
+                            { name: "orientation", label: "Orientation", type: "select", def: 0, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Top-Left / Horizontal" },
+                                  { v: 1, l: "Top-Right / Vertical" },
+                                  { v: 2, l: "Bottom-Left" },
+                                  { v: 3, l: "Bottom-Right" }
+                              ] },
+                            { name: "corner_radius", label: "Corner Radius", type: "stepper", def: 40, cat: "appearance", min: 0, max: 400 },
+                            { name: "band_width", label: "Band Width", type: "stepper", def: 22, cat: "appearance", min: 2, max: 80 },
+                            { name: "glow_width", label: "Glow", type: "stepper", def: 0, cat: "appearance", min: 0, max: 40 },
+                            { name: "rounded", label: "Rounded Caps", type: "checkbox", def: true, cat: "appearance" },
+                            { name: "lit_color", label: "Fill Color", type: "color", def: 0x2EE4C8, cat: "appearance" },
+                            { name: "dim_color", label: "Track Color", type: "color", def: 0x2E323A, cat: "appearance" },
+                            { name: "dim_opa", label: "Track Opacity", type: "slider", def: 90, cat: "appearance", min: 0, max: 255 },
+                            { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF5C32, cat: "appearance" },
+                            { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
+                            { name: "max", label: "Max Value", type: "number", def: 11000, cat: "data" },
+                            { name: "redline", label: "Redline", type: "number", def: 10000, cat: "data" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "appearance", min: 0, max: 500 }
+                        ]
                     }
                 };
         // AUTO-GENERATED END: WIDGET_DEFS
@@ -7746,7 +7776,8 @@
             toggle:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="13" cy="8" r="2.5" fill="currentColor" opacity="0.6"/></svg>',
             button:      '<svg viewBox="0 0 20 16"><rect x="2" y="4" width="16" height="8" rx="2" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.2"/><text x="5" y="11" font-size="6" fill="currentColor" opacity="0.7">OK</text></svg>',
             shift_light: '<svg viewBox="0 0 20 16"><rect x="1" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="5" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="9" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="13" y="5" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.2"/></svg>',
-            banner:      '<svg viewBox="0 0 20 16"><rect x="1" y="11" width="18" height="4" rx="0.6" fill="currentColor" opacity="0.5"/><text x="3" y="14.3" font-size="3.5" font-weight="bold" fill="#000">WARNING</text></svg>'
+            banner:      '<svg viewBox="0 0 20 16"><rect x="1" y="11" width="18" height="4" rx="0.6" fill="currentColor" opacity="0.5"/><text x="3" y="14.3" font-size="3.5" font-weight="bold" fill="#000">WARNING</text></svg>',
+            pathbar:     '<svg viewBox="0 0 20 16"><path d="M4,14 L4,7 Q4,4 7,4 L17,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity="0.25"/><path d="M4,14 L4,7 Q4,4 7,4 L11,4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>'
         };
 
         function setSplashUIVisibility(isSplash) {
