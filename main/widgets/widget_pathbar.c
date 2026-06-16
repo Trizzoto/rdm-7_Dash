@@ -11,6 +11,7 @@
  */
 #include "widget_pathbar.h"
 #include "signal.h"
+#include "screen_config.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -21,6 +22,10 @@
 #include <string.h>
 
 static const char *TAG = "widget_pathbar";
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /* ── Defaults ───────────────────────────────────────────────────────────── */
 #define DEF_MIN          0.0f
@@ -64,26 +69,89 @@ static void _pathbar_build_cum(pathbar_data_t *pd) {
     pd->total_len = pd->cum[pd->n_pts - 1];
 }
 
-/* ── Draw one band between arc-length fractions [fa, fb] ─────────────────── */
-static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
-                       lv_color_t color, lv_opa_t opa, lv_opa_t master) {
-    if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
-    float a = fa * pd->total_len;
-    float b = fb * pd->total_len;
+/* Generate the path points for a parametric shape, fit to the widget box (so
+ * the editor only needs a shape + radius, no point array). box is absolute
+ * screen px. Replaces pd->pts/cum. */
+static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
+                               lv_coord_t bw, lv_coord_t bh) {
+    lv_point_t buf[PATHBAR_MAX_POINTS];
+    int n = 0;
+    #define PB_EMIT(X, Y) do { \
+        lv_coord_t _x = (lv_coord_t)(X), _y = (lv_coord_t)(Y); \
+        if ((n == 0 || _x != buf[n - 1].x || _y != buf[n - 1].y) && n < PATHBAR_MAX_POINTS) { \
+            buf[n].x = _x; buf[n].y = _y; n++; } \
+    } while (0)
 
-    lv_draw_line_dsc_t dsc;
-    lv_draw_line_dsc_init(&dsc);
-    dsc.color = color;
-    dsc.width = pd->band_width;
-    dsc.round_start = pd->rounded ? 1 : 0;
-    dsc.round_end   = pd->rounded ? 1 : 0;
-    dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)opa * master) >> 8) : opa;
-    if (dsc.opa <= LV_OPA_MIN) return;
+    float inset = pd->band_width / 2.0f + pd->glow_width + 2.0f;
+    float l = bx + inset, t = by + inset;
+    float r = bx + bw - inset, b = by + bh - inset;
 
+    if (pd->shape == 2) {                  /* straight */
+        if (pd->orientation == 1) {        /* vertical: bottom -> top */
+            float cx = (l + r) / 2.0f;
+            PB_EMIT(cx, b); PB_EMIT(cx, t);
+        } else {                           /* horizontal: left -> right */
+            float cy = (t + b) / 2.0f;
+            PB_EMIT(l, cy); PB_EMIT(r, cy);
+        }
+    } else {                               /* L-bend (shape 1) */
+        float ax, ay, cx, cy, ex, ey;      /* A (start) - C (corner) - B (end) */
+        switch (pd->orientation) {
+        case 1: ax = r; ay = b; cx = r; cy = t; ex = l; ey = t; break;  /* TR */
+        case 2: ax = l; ay = t; cx = l; cy = b; ex = r; ey = b; break;  /* BL */
+        case 3: ax = r; ay = t; cx = r; cy = b; ex = l; ey = b; break;  /* BR */
+        default: ax = l; ay = b; cx = l; cy = t; ex = r; ey = t; break; /* TL (KTM) */
+        }
+        float leg1 = fabsf(ay - cy) + fabsf(ax - cx);   /* legs are axis-aligned */
+        float leg2 = fabsf(ey - cy) + fabsf(ex - cx);
+        float rad = (float)pd->corner_radius;
+        float maxr = (leg1 < leg2 ? leg1 : leg2) - 2.0f;
+        if (rad > maxr) rad = maxr;
+        if (rad < 0.0f) rad = 0.0f;
+        /* unit directions corner->endpoint (axis-aligned, so just signs) */
+        float a1x = (ax > cx) - (ax < cx), a1y = (ay > cy) - (ay < cy);
+        float b1x = (ex > cx) - (ex < cx), b1y = (ey > cy) - (ey < cy);
+        float t1x = cx + a1x * rad, t1y = cy + a1y * rad;
+        float t2x = cx + b1x * rad, t2y = cy + b1y * rad;
+        float cnx = cx + (a1x + b1x) * rad, cny = cy + (a1y + b1y) * rad;
+        PB_EMIT(ax, ay);
+        PB_EMIT(t1x, t1y);
+        if (rad > 1.0f) {
+            float a0 = atan2f(t1y - cny, t1x - cnx);
+            float a2 = atan2f(t2y - cny, t2x - cnx);
+            float d = a2 - a0;
+            while (d >  (float)M_PI) d -= 2.0f * (float)M_PI;
+            while (d < -(float)M_PI) d += 2.0f * (float)M_PI;
+            int steps = (int)(rad * 0.25f) + 4;
+            for (int i = 1; i < steps; i++) {
+                float ang = a0 + d * (float)i / (float)steps;
+                PB_EMIT(cnx + rad * cosf(ang), cny + rad * sinf(ang));
+            }
+        }
+        PB_EMIT(t2x, t2y);
+        PB_EMIT(ex, ey);
+    }
+    #undef PB_EMIT
+
+    _pathbar_free_path(pd);
+    if (n < 2) return;
+    pd->pts = heap_caps_calloc(n, sizeof(lv_point_t), MALLOC_CAP_SPIRAM);
+    pd->cum = heap_caps_calloc(n, sizeof(float), MALLOC_CAP_SPIRAM);
+    if (!pd->pts || !pd->cum) { _pathbar_free_path(pd); return; }
+    for (int i = 0; i < n; i++) pd->pts[i] = buf[i];
+    pd->n_pts = (uint16_t)n;
+    _pathbar_build_cum(pd);
+}
+
+/* Stroke every path segment overlapping arc-length [a, b] with the given dsc.
+ * LVGL clips each segment to the draw clip area, so off-region segments cost
+ * only a clip-reject (cheap with targeted invalidate). */
+static void _stroke_range(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float a, float b,
+                          const lv_draw_line_dsc_t *dsc) {
     for (uint16_t i = 1; i < pd->n_pts; i++) {
         float c0 = pd->cum[i - 1], c1 = pd->cum[i];
-        if (c1 <= a) continue;        /* segment entirely before the range */
-        if (c0 >= b) break;           /* and the rest are after it */
+        if (c1 <= a) continue;
+        if (c0 >= b) break;
         float seg = c1 - c0;
         if (seg <= 0.0f) continue;
         float sa = a > c0 ? (a - c0) / seg : 0.0f;
@@ -93,8 +161,45 @@ static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float f
                           (lv_coord_t)(p0.y + (p1.y - p0.y) * sa) };
         lv_point_t q1 = { (lv_coord_t)(p0.x + (p1.x - p0.x) * sb),
                           (lv_coord_t)(p0.y + (p1.y - p0.y) * sb) };
-        lv_draw_line(ctx, &dsc, &q0, &q1);
+        lv_draw_line(ctx, dsc, &q0, &q1);
     }
+}
+
+/* ── Draw one band between arc-length fractions [fa, fb] ─────────────────────
+ * Optional neon glow: two wider, translucent passes in the band colour under
+ * the sharp core. The band is many overlapping rounded segments, so a single
+ * translucent pass already accumulates dense near the centreline and faint at
+ * the rim — a soft falloff that reads as a glow (the rounded leading cap glows
+ * into a dot too). */
+static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
+                       lv_color_t color, lv_opa_t opa, lv_opa_t master, bool with_glow) {
+    if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
+    float a = fa * pd->total_len;
+    float b = fb * pd->total_len;
+
+    lv_draw_line_dsc_t dsc;
+    lv_draw_line_dsc_init(&dsc);
+    dsc.color = color;
+    dsc.round_start = pd->rounded ? 1 : 0;
+    dsc.round_end   = pd->rounded ? 1 : 0;
+
+    if (with_glow && pd->glow_width > 0) {
+        /* ONE wide translucent pass. The band is many overlapping rounded
+         * segments, so the alpha accumulates denser near the centreline and
+         * faint at the rim -> a soft falloff, for half the cost of two passes.
+         * Square caps on the (invisible-cored) glow halve the wide-cap fill. */
+        dsc.width = pd->band_width + pd->glow_width * 2;
+        dsc.round_start = 0;
+        dsc.round_end = 0;
+        dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)90 * master) >> 8) : 90;
+        if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc);
+        dsc.round_start = pd->rounded ? 1 : 0;
+        dsc.round_end   = pd->rounded ? 1 : 0;
+    }
+
+    dsc.width = pd->band_width;
+    dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)opa * master) >> 8) : opa;
+    if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc);
 }
 
 /* ── Targeted invalidate ────────────────────────────────────────────────────
@@ -135,7 +240,7 @@ static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
     }
     if (!any) { lv_obj_invalidate(w->root); return; }
 
-    lv_coord_t m = (lv_coord_t)(pd->band_width / 2) + 3;
+    lv_coord_t m = (lv_coord_t)(pd->band_width / 2 + pd->glow_width) + 3;
     lv_area_t area = { x0 - m, y0 - m, x1 + m, y1 + m };
     lv_obj_invalidate_area(w->root, &area);
 }
@@ -152,8 +257,8 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     lv_opa_t master = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
     if (master <= LV_OPA_MIN) return;
 
-    /* dim full-path track */
-    _draw_band(ctx, pd, 0.0f, 1.0f, pd->dim_color, pd->dim_opa, master);
+    /* dim full-path track (no glow) */
+    _draw_band(ctx, pd, 0.0f, 1.0f, pd->dim_color, pd->dim_opa, master, false);
 
     float f = pd->cur_frac;
     if (f <= 0.0f) return;
@@ -166,10 +271,10 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     if (rl > 1.0f) rl = 1.0f;
 
     if (f <= rl) {
-        _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master);
+        _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master, true);
     } else {
-        _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
-        _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
+        _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master, true);
+        _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master, true);
     }
 }
 
@@ -250,6 +355,13 @@ static void _pathbar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
         lv_obj_set_size(w->root, nw, nh);
     w->w = nw;
     w->h = nh;
+    pathbar_data_t *pd = (pathbar_data_t *)w->type_data;
+    if (pd && pd->shape != 0) {       /* refit a parametric shape to the new box */
+        lv_coord_t bx = SCREEN_ORIGIN_X + w->x - (lv_coord_t)(nw / 2);
+        lv_coord_t by = SCREEN_ORIGIN_Y + w->y - (lv_coord_t)(nh / 2);
+        _pathbar_gen_shape(pd, bx, by, nw, nh);
+        if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+    }
 }
 
 static void _pathbar_open_settings(widget_t *w) { (void)w; }
@@ -270,6 +382,13 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "redline", pd->redline);
     if (pd->band_width != DEF_BAND_WIDTH)
         cJSON_AddNumberToObject(cfg, "band_width", pd->band_width);
+    if (pd->glow_width != 0)
+        cJSON_AddNumberToObject(cfg, "glow_width", pd->glow_width);
+    if (pd->shape != 0) {
+        cJSON_AddNumberToObject(cfg, "shape", pd->shape);
+        if (pd->orientation != 0) cJSON_AddNumberToObject(cfg, "orientation", pd->orientation);
+        cJSON_AddNumberToObject(cfg, "corner_radius", pd->corner_radius);
+    }
     if (!pd->rounded) cJSON_AddBoolToObject(cfg, "rounded", false);
     if (_color_to_u32(pd->dim_color) != _color_to_u32(_u32_to_color(DEF_DIM_COLOR)))
         cJSON_AddNumberToObject(cfg, "dim_color", _color_to_u32(pd->dim_color));
@@ -282,7 +401,8 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
     if (pd->smoothing_ms != 0)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", pd->smoothing_ms);
 
-    if (pd->pts && pd->n_pts > 0) {
+    /* Only custom shapes carry an explicit path; parametric shapes regenerate. */
+    if (pd->shape == 0 && pd->pts && pd->n_pts > 0) {
         cJSON *path = cJSON_AddArrayToObject(cfg, "path");
         for (uint16_t i = 0; i < pd->n_pts; i++) {
             cJSON_AddItemToArray(path, cJSON_CreateNumber(pd->pts[i].x));
@@ -311,6 +431,14 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) pd->redline = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "band_width");
     if (cJSON_IsNumber(item)) pd->band_width = (uint8_t)LV_CLAMP(1, item->valueint, 80);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "glow_width");
+    if (cJSON_IsNumber(item)) pd->glow_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "shape");
+    if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 2);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "orientation");
+    if (cJSON_IsNumber(item)) pd->orientation = (uint8_t)LV_CLAMP(0, item->valueint, 3);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "corner_radius");
+    if (cJSON_IsNumber(item)) pd->corner_radius = (uint16_t)LV_CLAMP(0, item->valueint, 1000);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "rounded");
     if (cJSON_IsBool(item)) pd->rounded = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "dim_color");
@@ -348,6 +476,14 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
         }
     }
 
+    /* Parametric shape: generate the path to fit the widget box (overrides any
+     * explicit `path`). widget_base_from_json already set w->x/y/w/h above. */
+    if (pd->shape != 0) {
+        lv_coord_t bx = SCREEN_ORIGIN_X + w->x - (lv_coord_t)(w->w / 2);
+        lv_coord_t by = SCREEN_ORIGIN_Y + w->y - (lv_coord_t)(w->h / 2);
+        _pathbar_gen_shape(pd, bx, by, (lv_coord_t)w->w, (lv_coord_t)w->h);
+    }
+
     if (pd->signal_name[0])
         pd->signal_index = signal_find_by_name(pd->signal_name);
 }
@@ -383,7 +519,11 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->val_max       = DEF_MAX;
     pd->redline       = DEF_MAX;     /* off by default */
     pd->band_width    = DEF_BAND_WIDTH;
+    pd->glow_width    = 0;
     pd->rounded       = true;
+    pd->shape         = 0;            /* custom (explicit path) */
+    pd->orientation   = 0;
+    pd->corner_radius = 40;
     pd->dim_color     = _u32_to_color(DEF_DIM_COLOR);
     pd->lit_color     = _u32_to_color(DEF_LIT_COLOR);
     pd->redline_color = _u32_to_color(DEF_RED_COLOR);

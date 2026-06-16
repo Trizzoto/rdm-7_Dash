@@ -1,8 +1,8 @@
-"""KTM Duke-style L-shaped RPM bar demo (the new `pathbar` widget).
+"""KTM Duke-style L-shaped RPM bar demo (the `pathbar` widget) — dark/neon.
 
-"Just the bar": a light 'STREET' background with the 0..11 scale baked along the
-path, plus the live `pathbar` widget whose smooth continuous fill follows the
-path -- vertical up the left, around a radius, then horizontal across the top.
+"Just the bar": a dark background with the 0..11 scale baked along the path, plus
+the live `pathbar` widget whose smooth continuous fill (with neon glow) follows
+the path -- vertical up the left, around a radius, then horizontal across the top.
 
 The SAME centerline is used to (a) emit the widget's `path` points and (b) place
 the baked numbers, so the fill and the scale stay aligned.
@@ -12,7 +12,7 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-from cluster_lib import S, F, rgb565, cx_to_center, cy_to_center, MANROPE, FUGAZ, MONT
+from cluster_lib import S, F, rgb565, fill_gradient, cx_to_center, cy_to_center, MANROPE, FUGAZ, MONT
 
 NAME = "lbar"
 IMAGE_NAME = "lbar_bg"
@@ -20,13 +20,16 @@ W, H = 800, 480
 RPM_MAX = 11000
 REDLINE = 10000
 
-# Light "STREET" theme
-BG = (244, 245, 246)
-INK = (28, 30, 34)
-DIM = (200, 203, 207)
-LIT = (32, 35, 40)
-ORANGE = (242, 110, 16)
-GREY = (122, 127, 134)
+# Dark / neon theme (glow needs a dark bg to read)
+BG_TOP = (18, 20, 25)
+BG_BOT = (9, 10, 13)
+TEAL = (48, 228, 200)        # neon fill
+DIM_TRACK = (46, 50, 58)     # empty track
+ORANGE = (255, 92, 50)       # redline
+NUM = (206, 211, 218)
+NUM_RED = (255, 120, 74)
+WHITE = (238, 241, 245)
+GREY = (120, 126, 135)
 
 STATES = {
     "idle": {"RPM": 1100, "VEHICLE_SPEED": 0, "GEAR": 0},
@@ -48,7 +51,6 @@ def centerline():
         pts.append((cx + r * math.cos(ar), cy + r * math.sin(ar)))
     for t in np.linspace(0, 1, 92):
         pts.append((228 + (760 - 228) * t, 98.0))
-    # de-duplicate near-identical consecutive points
     out = [pts[0]]
     for p in pts[1:]:
         if abs(p[0] - out[-1][0]) > 0.4 or abs(p[1] - out[-1][1]) > 0.4:
@@ -79,7 +81,8 @@ def at_fraction(pts, cum, f):
 
 # ---------------------------------------------------------------- background
 def build_background():
-    base = Image.new("RGB", (W * 3, H * 3), BG)
+    base = Image.new("RGBA", (W * 3, H * 3), BG_BOT + (255,))
+    base = Image.alpha_composite(base, fill_gradient((W * 3, H * 3), BG_TOP, BG_BOT))
     d = ImageDraw.Draw(base)
     pts = centerline()
     cum = _arclen(pts)
@@ -87,17 +90,14 @@ def build_background():
     for k in range(0, 12):
         f = k / 11.0
         (px, py), (tx, ty) = at_fraction(pts, cum, f)
-        nx, ny = -ty, tx                      # outward normal
-        lx, ly = px - nx * 26, py - ny * 26   # numbers on the inner side
-        col = ORANGE if k >= 10 else INK
-        d.text((S(lx), S(ly)), str(k), font=fn, fill=col, anchor="mm")
-    # labels for context
-    d.text((S(600), S(160)), "STREET", font=F(MONT, 18), fill=INK, anchor="lm")
+        nx, ny = -ty, tx
+        lx, ly = px - nx * 26, py - ny * 26
+        d.text((S(lx), S(ly)), str(k), font=fn, fill=(NUM_RED if k >= 10 else NUM), anchor="mm")
+    d.text((S(600), S(160)), "STREET", font=F(MONT, 18), fill=WHITE, anchor="lm")
     d.text((S(600), S(182)), "RPM x1000", font=F(MONT, 14), fill=GREY, anchor="lm")
-    # gear box (gear digit is a live text overlay)
-    d.rounded_rectangle([S(470), S(150), S(556), S(236)], radius=S(8), outline=INK, width=max(1, S(4)))
+    d.rounded_rectangle([S(470), S(150), S(556), S(236)], radius=S(8), outline=TEAL, width=max(1, S(3)))
     d.text((S(600), S(420)), "KM/H", font=F(MONT, 15), fill=GREY, anchor="lm")
-    return base.convert("RGBA")
+    return base
 
 
 # ---------------------------------------------------------------- layout
@@ -106,16 +106,42 @@ def _bbox(pts, margin):
     return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
 
 
+# True = let the FIRMWARE generate the L from shape+corner_radius fit to the box
+# (the editor-authoring path); False = ship the explicit point array (tooling).
+PARAMETRIC = True
+
+
 def build_layout():
-    pts = centerline()
     band = 26
-    x0, y0, x1, y1 = _bbox(pts, band / 2 + 6)
-    cx = (x0 + x1) / 2.0
-    cy = (y0 + y1) / 2.0
-    flat = []
-    for (px, py) in pts:
-        flat.append(round(px, 1))
-        flat.append(round(py, 1))
+    glow = 10
+    if PARAMETRIC:
+        # Box derived so the firmware L (inset = band/2+glow+2) lands on the SAME
+        # geometry as the baked numbers: vertical x=158, horizontal y=98, r=70.
+        inset = band / 2 + glow + 2
+        bx = 158 - inset           # left leg x  - inset
+        by = 98 - inset            # top leg y   - inset
+        bw = 760 - 158 + 2 * inset
+        bh = 392 - 98 + 2 * inset
+        cx = bx + bw / 2.0
+        cy = by + bh / 2.0
+        pathbar_cfg = {"signal_name": "RPM", "min": 0, "max": RPM_MAX,
+                       "redline": REDLINE, "band_width": band, "glow_width": glow,
+                       "rounded": True, "shape": 1, "orientation": 0, "corner_radius": 70,
+                       "dim_color": rgb565(DIM_TRACK), "lit_color": rgb565(TEAL),
+                       "redline_color": rgb565(ORANGE), "dim_opa": 120, "smoothing_ms": 90}
+    else:
+        pts = centerline()
+        x0, y0, x1, y1 = _bbox(pts, band / 2 + glow + 8)
+        bw, bh = x1 - x0, y1 - y0
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        flat = []
+        for (px, py) in pts:
+            flat.append(round(px, 1)); flat.append(round(py, 1))
+        pathbar_cfg = {"signal_name": "RPM", "min": 0, "max": RPM_MAX,
+                       "redline": REDLINE, "band_width": band, "glow_width": glow,
+                       "rounded": True, "dim_color": rgb565(DIM_TRACK),
+                       "lit_color": rgb565(TEAL), "redline_color": rgb565(ORANGE),
+                       "dim_opa": 120, "smoothing_ms": 90, "path": flat}
     return {
         "schema_version": 14,
         "name": "LBar",
@@ -133,25 +159,20 @@ def build_layout():
         "widgets": [
             {"type": "image", "id": "bg", "x": 0, "y": 0, "w": 800, "h": 480,
              "config": {"image_name": IMAGE_NAME, "auto_size": True}},
-            # THE BAR: smooth continuous fill following the L-path.
+            # THE BAR: smooth continuous neon fill (with glow) following the L-path.
             {"type": "pathbar", "id": "rpm_path",
              "x": cx_to_center(cx), "y": cy_to_center(cy),
-             "w": int(round(x1 - x0)), "h": int(round(y1 - y0)),
-             "config": {"signal_name": "RPM", "min": 0, "max": RPM_MAX,
-                        "redline": REDLINE, "band_width": band, "rounded": True,
-                        "dim_color": rgb565(DIM), "lit_color": rgb565(LIT),
-                        "redline_color": rgb565(ORANGE), "dim_opa": 90,
-                        "smoothing_ms": 90, "path": flat}},
-            # live gear in the box + speed for a bit of context
+             "w": int(round(bw)), "h": int(round(bh)),
+             "config": pathbar_cfg},
             {"type": "text", "id": "gear",
              "x": cx_to_center(513), "y": cy_to_center(193), "w": 80, "h": 80,
              "config": {"slot": 0, "signal_name": "GEAR", "decimals": 0,
                         "static_text": "", "font": "Fugaz One:60",
-                        "text_color": rgb565(INK)}},
+                        "text_color": rgb565(WHITE)}},
             {"type": "text", "id": "speed",
              "x": cx_to_center(690), "y": cy_to_center(395), "w": 180, "h": 60,
              "config": {"slot": 0, "signal_name": "VEHICLE_SPEED", "decimals": 0,
                         "static_text": "", "font": "Manrope Bold:44",
-                        "text_color": rgb565(INK)}},
+                        "text_color": rgb565(WHITE)}},
         ],
     }

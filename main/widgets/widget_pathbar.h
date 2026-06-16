@@ -28,7 +28,15 @@ typedef struct {
     float       redline;              /* value; >= val_max disables the redline */
 
     uint8_t     band_width;           /* stroke thickness px (default 22) */
+    uint8_t     glow_width;           /* neon glow radius beyond the band (0 = off) */
     bool        rounded;              /* rounded caps/joins (default true) */
+
+    /* Parametric shape: when shape != 0 the path is GENERATED to fit the widget
+     * box (so the editor only needs a shape + radius, no point array). shape 0
+     * = custom (use the explicit `path` below, e.g. tooling-authored). */
+    uint8_t     shape;                /* 0=custom, 1=L-bend, 2=straight */
+    uint8_t     orientation;          /* L: 0=TL 1=TR 2=BL 3=BR ; straight: 0=horiz 1=vert */
+    uint16_t    corner_radius;        /* L-bend fillet radius px */
     lv_color_t  dim_color;            /* empty track */
     lv_color_t  lit_color;            /* fill */
     lv_color_t  redline_color;        /* fill beyond redline */
