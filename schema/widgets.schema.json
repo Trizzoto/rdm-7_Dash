@@ -774,6 +774,24 @@
           "night_overridable": true
         },
         {
+          "name": "fill_edge_width",
+          "label": "Fill Edge Width",
+          "type": "stepper",
+          "default": 0,
+          "min": 0,
+          "max": 20,
+          "category": "appearance",
+          "enabled_by": "bar_image_full"
+        },
+        {
+          "name": "fill_edge_color",
+          "label": "Fill Edge Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "bar_image_full"
+        },
+        {
           "name": "bar_alerts_enabled",
           "label": "Color Alerts",
           "type": "checkbox",

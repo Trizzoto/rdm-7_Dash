@@ -17,6 +17,7 @@ REGISTRY = {
     "altezza": "designs.altezza",
     "ktm": "designs.ktm",
     "mercedes": "designs.mercedes",
+    "race": "designs.race",
 }
 
 

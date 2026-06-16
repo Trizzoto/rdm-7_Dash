@@ -7097,6 +7097,8 @@
                             { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", nightOverridable: true },
                             { name: "bar_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                            { name: "fill_edge_width", label: "Fill Edge Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 20, enabledBy: "bar_image_full" },
+                            { name: "fill_edge_color", label: "Fill Edge Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "bar_image_full" },
                             { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "bar_alerts" },
                             { name: "bar_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "bar_alerts", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
                             { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "bar_alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true },

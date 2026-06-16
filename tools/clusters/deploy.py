@@ -32,12 +32,26 @@ def _req(url, data=None, ctype=None, timeout=30, method=None):
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        try:
+            body = e.read()
+        except Exception:
+            body = b"(error body unreadable)"
+        return e.code, body
     except urllib.error.URLError as e:
         return None, str(e.reason).encode()
     except OSError as e:
         # ConnectionResetError etc. -- device dropped us (often PSRAM OOM mid-upload)
         return None, str(e).encode()
+
+
+# A minimal no-image layout. Saving it frees ALL baked-image PSRAM so a large
+# image can be uploaded into the freed space (the dash buffers the whole file).
+BLANK_LAYOUT = {
+    "schema_version": 14, "name": "_blank", "screen_w": 800, "screen_h": 480,
+    "signals": [],
+    "widgets": [{"type": "text", "id": "t", "x": 0, "y": 0, "w": 120, "h": 40,
+                 "config": {"static_text": " ", "font": "Manrope Bold:20"}}],
+}
 
 
 def post_bytes(host, path, data, ctype, timeout=40):
@@ -75,6 +89,7 @@ def main():
     ap.add_argument("--no-shot", action="store_true", help="skip the screenshot")
     ap.add_argument("--skip-upload", action="store_true", help="don't re-upload the baked image (already on device)")
     ap.add_argument("--skip-save", action="store_true", help="don't save/activate the layout")
+    ap.add_argument("--free-first", action="store_true", help="push a blank no-image layout before uploading to free PSRAM (large images on low-RAM devices)")
     args = ap.parse_args()
 
     out = DIST / args.name
@@ -84,18 +99,27 @@ def main():
     meta = json.loads(meta_p.read_text())
     host = args.host
 
-    # 1) upload baked image (retry on OOM: switching layout away frees PSRAM)
+    # 0) optionally free PSRAM by activating a blank no-image layout first
+    if not args.skip_upload and args.free_first:
+        status, body = post_bytes(host, "/api/layout/save",
+                                  json.dumps(BLANK_LAYOUT).encode(), "application/json")
+        print(f"free: {status} {body.decode(errors='replace')[:80]}")
+        time.sleep(1.3)
+
+    # 1) upload every baked image (retry on OOM: switching layout away frees PSRAM)
     if not args.skip_upload:
-        img = (out / meta["image_file"]).read_bytes()
-        for attempt in range(3):
-            status, body = post_bytes(host, f"/api/image/upload?name={meta['image_name']}",
-                                      img, "application/octet-stream")
-            print(f"upload[{attempt}]: {status} {body.decode(errors='replace')[:120]}")
-            if status == 200:
-                break
-            time.sleep(1.5)
-        else:
-            raise SystemExit("image upload failed (out of PSRAM? try a smaller active layout first)")
+        imgs = meta.get("images") or [{"name": meta["image_name"], "file": meta["image_file"]}]
+        for spec in imgs:
+            data = (out / spec["file"]).read_bytes()
+            for attempt in range(3):
+                status, body = post_bytes(host, f"/api/image/upload?name={spec['name']}",
+                                          data, "application/octet-stream")
+                print(f"upload {spec['name']}[{attempt}]: {status} {body.decode(errors='replace')[:100]}")
+                if status == 200:
+                    break
+                time.sleep(1.5)
+            else:
+                raise SystemExit(f"upload '{spec['name']}' failed (out of PSRAM? try a smaller active layout first)")
 
     # 2) save + activate layout
     if not args.skip_save:

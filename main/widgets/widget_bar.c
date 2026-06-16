@@ -599,6 +599,9 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		lv_coord_t clip_w = (lv_coord_t)((pct * w->w) / 100);
 		if (!bd->_pc_valid || bd->_pc_clip_w != clip_w) {
 			lv_obj_set_width(bd->img_clip_obj, clip_w);
+			/* Leading-edge highlight rides the fill front. */
+			if (bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj))
+				lv_obj_set_x(bd->fill_tip_obj, clip_w - bd->fill_edge_width);
 			bd->_pc_clip_w = clip_w;
 		}
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
@@ -837,6 +840,23 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 			if (bd->bar_img_full_dsc->header.w > 0)
 				lv_img_set_zoom(fill_img, (uint16_t)(256 * w->w / bd->bar_img_full_dsc->header.w));
 			bd->img_full_obj = fill_img;
+
+			/* Leading-edge highlight ("first class" tip): a thin coloured child
+			 * pinned to the clip's right edge. As the clip width tracks the fill,
+			 * the right-aligned child rides the fill front. A child (not a border)
+			 * avoids the border's content-inset, which would shift the fill img. */
+			if (bd->fill_edge_width > 0) {
+				lv_obj_t *tip = lv_obj_create(clip);
+				lv_obj_remove_style_all(tip);
+				lv_obj_set_size(tip, bd->fill_edge_width, w->h);
+				lv_obj_set_align(tip, LV_ALIGN_TOP_LEFT);
+				lv_obj_set_pos(tip, -bd->fill_edge_width, 0);  /* off-left until first value */
+				lv_obj_set_style_bg_color(tip, bd->fill_edge_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+				lv_obj_move_foreground(tip);
+				bd->fill_tip_obj = tip;
+			}
 		} else {
 			ESP_LOGW(TAG, "Failed to load fill image '%s', using color fill", bd->bar_image_full);
 			has_fill = false;
@@ -1146,6 +1166,10 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "bar_image", bd->bar_image);
 		if (bd->bar_image_full[0] != '\0')
 			cJSON_AddStringToObject(cfg, "bar_image_full", bd->bar_image_full);
+		if (bd->fill_edge_width > 0) {
+			cJSON_AddNumberToObject(cfg, "fill_edge_width", bd->fill_edge_width);
+			cJSON_AddNumberToObject(cfg, "fill_edge_color", bd->fill_edge_color.full);
+		}
 		/* Night-mode overrides — emit only fields that have an override set */
 		cJSON *n = cJSON_CreateObject();
 		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_low_color);
@@ -1297,6 +1321,10 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_image_full");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(bd->bar_image_full, item->valuestring, sizeof(bd->bar_image_full));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_edge_color");
+	if (cJSON_IsNumber(item)) bd->fill_edge_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_edge_width");
+	if (cJSON_IsNumber(item)) bd->fill_edge_width = (uint8_t)item->valueint;
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -1417,9 +1445,11 @@ static void _bar_destroy(widget_t *w) {
 		lv_obj_del(bd->value_obj);
 	/* Tick marks are siblings of root too — delete explicitly + NULL them. */
 	if (bd) _bar_free_ticks(bd);
-	/* Clip container is always a sibling of root — delete explicitly */
+	/* Clip container is always a sibling of root — delete explicitly (this
+	 * also frees its child fill-tip). */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
+	if (bd) bd->fill_tip_obj = NULL;
 	/* In track-image + color-fill mode, bar_obj is a sibling of root */
 	if (bd && bd->bar_obj && lv_obj_is_valid(bd->bar_obj) && (lv_obj_t *)bd->bar_obj != w->root)
 		lv_obj_del(bd->bar_obj);
@@ -1948,6 +1978,8 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->show_bar_label = true;        /* show the text label above the bar by default */
+	bd->fill_edge_color = lv_color_hex(0xFFFFFF);  /* image-fill leading-edge highlight */
+	bd->fill_edge_width = 0;          /* 0 = off (no leading-edge line) */
 	bd->center_fill = false;          /* NORMAL fill (left→right); SYMMETRICAL only when enabled */
 	bd->fill_dir = 0;                 /* Left → Right */
 	/* Tick-mark defaults (off by default so existing layouts are unaffected) */

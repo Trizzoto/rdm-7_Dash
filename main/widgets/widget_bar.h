@@ -97,11 +97,14 @@ typedef struct {
 	bool     anchor_enabled;         /* false (default) = linear pass-through */
 	char     bar_image[64];          /* track/background image name (default: "") */
 	char     bar_image_full[64];     /* fill image name (default: "") */
+	lv_color_t fill_edge_color;      /* image-fill leading-edge highlight color */
+	uint8_t    fill_edge_width;      /* 0 = off (default); px width of the edge line */
 	lv_img_dsc_t *bar_img_dsc;      /* runtime: loaded track image descriptor */
 	lv_img_dsc_t *bar_img_full_dsc;  /* runtime: loaded fill image descriptor */
 	lv_obj_t *img_bg_obj;            /* runtime: background image LVGL object */
 	lv_obj_t *img_full_obj;          /* runtime: full image LVGL object */
 	lv_obj_t *img_clip_obj;          /* runtime: clipping container for fill */
+	lv_obj_t *fill_tip_obj;          /* runtime: leading-edge highlight (rides fill front) */
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* ── v14 channel binding ─────────────────────────────────────

@@ -32,11 +32,23 @@ def build_one(name, *, preview=False, mock=False):
     out = DIST / name
     out.mkdir(parents=True, exist_ok=True)
 
+    images = []  # [{name, file}] -- everything deploy.py must upload
+
     big = mod.build_background()
     final = big.resize((800, 480), Image.LANCZOS).convert("RGBA")
     final.putalpha(255)  # opaque -> firmware opaque-image fast path
     final.convert("RGB").save(out / f"{mod.IMAGE_NAME}.png")
     w, h, n = save_rdmimg(final, out / f"{mod.IMAGE_NAME}.rdmimg")
+    images.append({"name": mod.IMAGE_NAME, "file": f"{mod.IMAGE_NAME}.rdmimg"})
+
+    # Extra images (e.g. a fill-ribbon overlay) keep their alpha -- NOT forced opaque.
+    if hasattr(mod, "build_extra_images"):
+        for iname, im in mod.build_extra_images():
+            im = im.convert("RGBA")
+            im.save(out / f"{iname}.png")
+            ew, eh, en = save_rdmimg(im, out / f"{iname}.rdmimg")
+            images.append({"name": iname, "file": f"{iname}.rdmimg"})
+            print(f"[{name}] extra {iname} {ew}x{eh} {en} B")
 
     layout = mod.build_layout()
     (out / f"{name}_layout.json").write_text(json.dumps(layout, separators=(",", ":")))
@@ -45,6 +57,7 @@ def build_one(name, *, preview=False, mock=False):
         "name": name,
         "image_name": mod.IMAGE_NAME,
         "image_file": f"{mod.IMAGE_NAME}.rdmimg",
+        "images": images,
         "layout_file": f"{name}_layout.json",
         "states": getattr(mod, "STATES", {}),
         "default_state": getattr(mod, "DEFAULT_STATE", None),

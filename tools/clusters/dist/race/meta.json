@@ -1,0 +1,39 @@
+{
+ "name": "race",
+ "image_name": "race_bg",
+ "image_file": "race_bg.rdmimg",
+ "images": [
+  {
+   "name": "race_bg",
+   "file": "race_bg.rdmimg"
+  },
+  {
+   "name": "race_fill",
+   "file": "race_fill.rdmimg"
+  }
+ ],
+ "layout_file": "race_layout.json",
+ "states": {
+  "idle": {
+   "RPM": 0,
+   "VEHICLE_SPEED": 0,
+   "GEAR": 0
+  },
+  "driving": {
+   "RPM": 6500,
+   "VEHICLE_SPEED": 142,
+   "GEAR": 4
+  },
+  "launch": {
+   "RPM": 5200,
+   "VEHICLE_SPEED": 0,
+   "GEAR": 1
+  },
+  "redline": {
+   "RPM": 9200,
+   "VEHICLE_SPEED": 188,
+   "GEAR": 6
+  }
+ },
+ "default_state": "driving"
+}
