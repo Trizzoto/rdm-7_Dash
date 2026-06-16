@@ -871,10 +871,39 @@ static void _autoslice_from_bg(void) {
 	ESP_LOGI(TAG, "autoslice: bg '%s' on screen [%d,%d %dx%d]", bgw->id,
 	         (int)disp.x1, (int)disp.y1, (int)(disp.x2 - disp.x1 + 1), (int)(disp.y2 - disp.y1 + 1));
 	for (uint8_t i = 0; i < n; i++) {
-		if (snap[i] && snap[i]->type == WIDGET_METER) {
-			widget_meter_autoface(snap[i], bg, &disp, nw, nh);
-			vTaskDelay(1);  /* yield between large slices so IDLE/WDT stay happy */
+		if (!snap[i] || snap[i]->type != WIDGET_METER) continue;
+		/* Auto-slicing makes a meter's face OPAQUE so it occludes the bg — but an
+		 * opaque rect also occludes any LOWER-z widget the meter sits on top of.
+		 * If this meter substantially covers a widget below it (e.g. a big centre
+		 * gauge moved above the little sub-dials inside it), skip the slice and
+		 * leave it transparent so only its needle draws over those widgets. The
+		 * covered widgets keep their own optimisation; just this meter pays the
+		 * bg re-blend under its needle. */
+		const widget_t *m = snap[i];
+		int mx1 = SCREEN_ORIGIN_X + m->x - m->w / 2;
+		int my1 = SCREEN_ORIGIN_Y + m->y - m->h / 2;
+		int mx2 = mx1 + m->w - 1, my2 = my1 + m->h - 1;
+		bool covers_lower = false;
+		for (uint8_t j = 0; j < i; j++) {
+			const widget_t *o = snap[j];
+			if (!o || o == bgw) continue;
+			int ox1 = SCREEN_ORIGIN_X + o->x - o->w / 2;
+			int oy1 = SCREEN_ORIGIN_Y + o->y - o->h / 2;
+			int ox2 = ox1 + o->w - 1, oy2 = oy1 + o->h - 1;
+			int ix1 = mx1 > ox1 ? mx1 : ox1, iy1 = my1 > oy1 ? my1 : oy1;
+			int ix2 = mx2 < ox2 ? mx2 : ox2, iy2 = my2 < oy2 ? my2 : oy2;
+			if (ix2 < ix1 || iy2 < iy1) continue;        /* no overlap */
+			long ov = (long)(ix2 - ix1 + 1) * (iy2 - iy1 + 1);
+			long oa = (long)o->w * o->h;
+			if (oa > 0 && ov * 2 >= oa) { covers_lower = true; break; }  /* >50% covered */
 		}
+		if (covers_lower) {
+			ESP_LOGI(TAG, "autoslice: skip '%s' (would occlude a lower widget) — needle stays on top",
+			         m->id);
+			continue;
+		}
+		widget_meter_autoface(snap[i], bg, &disp, nw, nh);
+		vTaskDelay(1);  /* yield between large slices so IDLE/WDT stay happy */
 	}
 }
 
