@@ -24,7 +24,16 @@ Changes that have landed on `master` since the last tagged version.
   - **Tests**: `tests/native/test_ecu_preset_match.c` — 16 mirror-pattern tests covering degenerate inputs, intersection math, the 30% threshold boundary, rounding, de-duplication, and two realistic preset shapes. Suite now **157 tests, all green**.
 
 ### Changed
-- _nothing yet_
+- **Widget schema re-synced with the firmware web editor — codegen drift cleared.** `schema/widgets.schema.json` (the shared source-of-truth consumed by the firmware web editor, the field inspector, and the desktop/web Studio) had fallen behind the hand-edited `WIDGET_DEFS` in `main/web/index.html`, leaving `tools/check_widget_codegen.py` red. The schema now carries every widget field the firmware actually supports, and both codegen targets (`main/web/index.html` WIDGET_DEFS and `main/widgets/widget_fields.gen.c`) were regenerated from it. Schema field count 228 → 248. Specifically the schema gained:
+  - **arc** — full redline zone (`redline_enabled`, `redline_threshold`, `redline_color`, `redline_arc_width`, `redline_recolor_fill`), limiter (`limiter_effect`, `limiter_value`, `limiter_color`, `flash_speed_ms`), and center value overlay (`show_value`, `value_font`, `value_color`, `value_y_offset`, `value_decimals`, `value_unit`).
+  - **bar** — `bar_bg_opa` (Track Opacity).
+  - **meter** — `tick_label_divisor`; `needle_ball_size` max raised 40 → 80 to match the editor.
+  - **image** — `auto_size` (with `image_scale` now gated by `!auto_size`).
+  - **toggle** — `momentary`; `tx_rate_hz` default corrected 0 → 10 to match firmware `DEF_TX_RATE_HZ`.
+  - **button** — `pressed_image_name`; `tx_rate_hz` default 0 → 10 and `tx_send_release` default false → true to match firmware (`DEF_TX_RATE_HZ`, `DEF_TX_SEND_REL`).
+  - **shape_panel** — `border_radius` was already in the schema but missing from the generated `index.html`; the regenerated editor now exposes it (firmware already supports it).
+
+  `tools/check_widget_codegen.py` is green again (schema valid, both codegen outputs in sync). The separate web/desktop Studio copies still need the same field additions applied in their own repos.
 
 ### Fixed
 - **`web_server_name_is_safe` / `web_server_filename_is_safe` UTF-8 portability**: cast input byte to `(unsigned char)` before the `< 0x20` control-char check. Pins the signedness behaviour across host gcc and ARM toolchains so UTF-8 multi-byte sequences are consistently accepted everywhere. `tests/native/test_web_path_safety.c::test_name_utf8_is_accepted` (formerly `test_name_high_ascii_rejected_when_char_is_signed`) flipped to assert TRUE for `éclair` and `日本` and locks the cast in.

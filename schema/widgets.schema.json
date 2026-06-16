@@ -91,6 +91,7 @@
         { "name": "label_font",       "label": "Label Font",  "type": "font",     "default": "",   "category": "appearance" },
         { "name": "value_font",       "label": "Value Font",  "type": "font",     "default": "",   "category": "appearance" },
         { "name": "bar_bg_color",     "label": "Track Color", "type": "color",    "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
+        { "name": "bar_bg_opa",       "label": "Track Opacity","type": "slider",  "default": 255,  "category": "appearance", "min": 0, "max": 255 },
         { "name": "bar_radius",       "label": "Bar Radius",  "type": "stepper",  "default": 5,    "category": "appearance", "min": 0, "max": 50 },
         { "name": "bar_border_width", "label": "Border Width", "type": "stepper", "default": 2,    "category": "appearance", "min": 0, "max": 20 },
         { "name": "bar_border_color", "label": "Border Color", "type": "color",   "default": "#2E2F2E", "category": "appearance", "night_overridable": true },
@@ -225,6 +226,8 @@
         { "name": "label_gap",         "label": "Label Gap",     "type": "stepper", "default": 10, "category": "appearance", "min": -150, "max": 150, "enabled_by": "show_tick_labels" },
         { "name": "tick_label_font",   "label": "Tick Label Font","type": "font", "default": "", "category": "appearance", "enabled_by": "show_tick_labels" },
         { "name": "tick_label_color",  "label": "Tick Label Color","type": "color", "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_tick_labels", "night_overridable": true },
+        { "name": "tick_label_divisor", "label": "Tick Label Divisor", "type": "number", "default": 1, "category": "appearance", "enabled_by": "show_tick_labels",
+          "_doc": "Tick label divisor: divides each tick label by\nthis factor for display. e.g. tach 0..7000\nwith divisor=1000 reads \"0..7\". 1 = no scaling." },
         { "name": "needle_image_name", "label": "Needle Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
         { "name": "needle_pivot_x",    "label": "Needle Pivot X","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
         { "name": "needle_pivot_y",    "label": "Needle Pivot Y","type": "stepper", "default": 0, "category": "appearance", "min": -400, "max": 400, "enabled_by": "needle_image_name" },
@@ -255,7 +258,7 @@
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
           } },
-        { "name": "needle_ball_size", "label": "Needle Ball Size", "type": "stepper", "default": 10, "category": "appearance", "min": 0, "max": 40 },
+        { "name": "needle_ball_size", "label": "Needle Ball Size", "type": "stepper", "default": 10, "category": "appearance", "min": 0, "max": 80 },
         { "name": "needle_ball_color","label": "Needle Ball Color","type": "color", "default": "#FFFFFF", "category": "appearance", "night_overridable": true }
       ]
     },
@@ -268,7 +271,8 @@
       "constraints": { "min_w": 10, "min_h": 10, "max_w": "screen_w", "max_h": "screen_h" },
       "fields": [
         { "name": "image_name",  "label": "Image",                 "type": "image_picker", "default": "",   "category": "data", "night_overridable": true },
-        { "name": "image_scale", "label": "Scale %",               "type": "stepper",      "default": 100,  "category": "appearance", "min": 10, "max": 200 },
+        { "name": "auto_size",   "label": "Auto Size",             "type": "checkbox",     "default": true, "category": "appearance" },
+        { "name": "image_scale", "label": "Scale %",               "type": "stepper",      "default": 100,  "category": "appearance", "min": 10, "max": 200, "enabled_by": "!auto_size" },
         { "name": "opacity",     "label": "Opacity (0-255)",       "type": "stepper",      "default": 255,  "category": "appearance", "min": 0, "max": 255 },
         { "name": "recolor",     "label": "Color Overlay",         "type": "color",        "default": "#000000", "category": "appearance", "night_overridable": true },
         { "name": "recolor_opa", "label": "Overlay Strength (0-255)", "type": "stepper",   "default": 0,    "category": "appearance", "min": 0, "max": 255 }
@@ -352,7 +356,39 @@
         { "name": "bg_arc_width",   "label": "Track Width", "type": "stepper",  "default": 10,  "category": "appearance", "min": 1, "max": 50 },
         { "name": "rounded_ends",   "label": "Rounded Ends","type": "checkbox", "default": false,"category": "appearance" },
         { "name": "arc_image",      "label": "Track Image", "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
-        { "name": "arc_image_full", "label": "Fill Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true }
+        { "name": "arc_image_full", "label": "Fill Image",  "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
+        { "name": "redline_enabled",      "label": "Redline",             "type": "checkbox", "default": false, "category": "alerts",
+          "_doc": "Redline zone — a static red arc segment from\nredline_threshold to signal_max, drawn on top\nof the track. The moving fill also recolors\nred while value >= threshold when\nredline_recolor_fill is true." },
+        { "name": "redline_threshold",    "label": "Redline Threshold",   "type": "number",   "default": 80,    "category": "alerts", "enabled_by": "redline_enabled" },
+        { "name": "redline_color",        "label": "Redline Color",       "type": "color",    "default": "#FF0000", "category": "alerts", "enabled_by": "redline_enabled", "night_overridable": true },
+        { "name": "redline_arc_width",    "label": "Redline Width",       "type": "stepper",  "default": 0,     "category": "alerts", "min": 0, "max": 50, "enabled_by": "redline_enabled" },
+        { "name": "redline_recolor_fill", "label": "Recolor Fill in Zone","type": "checkbox", "default": true,  "category": "alerts", "enabled_by": "redline_enabled" },
+        { "name": "limiter_effect",       "label": "Limiter Effect",      "type": "select",   "default": 0,     "category": "alerts",
+          "_doc": "Limiter — applied when value >= limiter_value.\nEffect 0=None, 1=Flash (toggles every flash_speed_ms),\n2=Solid (steady limiter_color).",
+          "options": [
+            { "value": 0, "label": "None" },
+            { "value": 1, "label": "Flash" },
+            { "value": 2, "label": "Solid" }
+          ] },
+        { "name": "limiter_value",        "label": "Limiter Value",       "type": "number",   "default": 90,    "category": "alerts", "enabled_by": "limiter_effect" },
+        { "name": "limiter_color",        "label": "Limiter Color",       "type": "color",    "default": "#FF0000", "category": "alerts", "enabled_by": "limiter_effect" },
+        { "name": "flash_speed_ms",       "label": "Flash Speed (ms)",    "type": "select",   "default": 200,   "category": "alerts", "enabled_by": "limiter_effect",
+          "options": [
+            { "value": 50,   "label": "50 ms (very fast)" },
+            { "value": 100,  "label": "100 ms (fast)" },
+            { "value": 150,  "label": "150 ms" },
+            { "value": 200,  "label": "200 ms (default)" },
+            { "value": 300,  "label": "300 ms" },
+            { "value": 500,  "label": "500 ms (slow)" },
+            { "value": 1000, "label": "1 s (very slow)" }
+          ] },
+        { "name": "show_value",     "label": "Show Value",    "type": "checkbox", "default": false, "category": "appearance",
+          "_doc": "Center value text overlay — optional label\nshowing current value with optional decimals\nand unit suffix. Sits on top of the arc at\nvalue_y_offset from center." },
+        { "name": "value_font",     "label": "Value Font",    "type": "font",    "default": "",     "category": "appearance", "enabled_by": "show_value" },
+        { "name": "value_color",    "label": "Value Color",   "type": "color",   "default": "#FFFFFF", "category": "appearance", "enabled_by": "show_value", "night_overridable": true },
+        { "name": "value_y_offset", "label": "Value Y Offset","type": "stepper", "default": 0,       "category": "appearance", "min": -200, "max": 200, "enabled_by": "show_value" },
+        { "name": "value_decimals", "label": "Decimals",      "type": "stepper", "default": 0,       "category": "appearance", "min": 0, "max": 4, "enabled_by": "show_value" },
+        { "name": "value_unit",     "label": "Unit Suffix",   "type": "text",    "default": "",     "category": "appearance", "enabled_by": "show_value" }
       ]
     },
     {
@@ -374,7 +410,8 @@
             { "value": 0, "label": "Big Endian" },
             { "value": 1, "label": "Little Endian" }
           ] },
-        { "name": "tx_rate_hz",           "label": "TX Rate (Hz)",  "type": "stepper",  "default": 0,    "category": "data", "min": 0, "max": 50 },
+        { "name": "tx_rate_hz",           "label": "TX Rate (Hz)",  "type": "stepper",  "default": 10,   "category": "data", "min": 0, "max": 50 },
+        { "name": "momentary",            "label": "Momentary (hold=ON, release=OFF)", "type": "checkbox", "default": false, "category": "data" },
         { "name": "image_name",           "label": "Image",         "type": "image_picker", "default": "", "category": "appearance", "night_overridable": true },
         { "name": "active_color",         "label": "Active Color",  "type": "color",    "default": "#00FF00", "category": "appearance", "night_overridable": true },
         { "name": "inactive_color",       "label": "Inactive Color","type": "color",    "default": "#555555", "category": "appearance", "night_overridable": true },
@@ -411,9 +448,10 @@
             { "value": 0, "label": "Big Endian" },
             { "value": 1, "label": "Little Endian" }
           ] },
-        { "name": "tx_rate_hz",       "label": "TX Rate (Hz)",  "type": "stepper",  "default": 0,     "category": "data", "min": 0, "max": 50 },
-        { "name": "tx_send_release",  "label": "Send on Release","type": "checkbox", "default": false,"category": "data", "enabled_by": "!latch" },
+        { "name": "tx_rate_hz",       "label": "TX Rate (Hz)",  "type": "stepper",  "default": 10,    "category": "data", "min": 0, "max": 50 },
+        { "name": "tx_send_release",  "label": "Send on Release","type": "checkbox", "default": true, "category": "data", "enabled_by": "!latch" },
         { "name": "image_name",       "label": "Image",         "type": "image_picker", "default": "","category": "appearance", "night_overridable": true },
+        { "name": "pressed_image_name","label": "Pressed Image","type": "image_picker", "default": "","category": "appearance" },
         { "name": "bg_color",         "label": "Background",    "type": "color",    "default": "#333333", "category": "appearance", "night_overridable": true },
         { "name": "text_color",       "label": "Text Color",    "type": "color",    "default": "#FFFFFF", "category": "appearance", "night_overridable": true },
         { "name": "pressed_color",    "label": "Pressed Color", "type": "color",    "default": "#555555", "category": "appearance", "night_overridable": true },

@@ -5241,7 +5241,7 @@
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },
                             { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
-                            { name: "bar_bg_opa", label: "Track Opacity", type: "slider", def: 255, min: 0, max: 255, cat: "appearance" },
+                            { name: "bar_bg_opa", label: "Track Opacity", type: "slider", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "bar_radius", label: "Bar Radius", type: "stepper", def: 5, cat: "appearance", min: 0, max: 50 },
                             { name: "bar_border_width", label: "Border Width", type: "stepper", def: 2, cat: "appearance", min: 0, max: 20 },
                             { name: "bar_border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
@@ -5458,6 +5458,7 @@
                             { name: "bg_opa", label: "Opacity (0-255)", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", nightOverridable: true },
                             { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 20 },
+                            { name: "border_radius", label: "Border Radius", type: "stepper", def: 10, cat: "appearance", min: 0, max: 200 },
                             { name: "shadow_width", label: "Shadow Width", type: "stepper", def: 0, cat: "appearance", min: 0, max: 50 },
                             { name: "shadow_color", label: "Shadow Color", type: "color", def: 0x000000, cat: "appearance", nightOverridable: true },
                             { name: "shadow_opa", label: "Shadow Opacity", type: "stepper", def: 128, cat: "appearance", min: 0, max: 255 },
@@ -5504,7 +5505,7 @@
                             { name: "redline_enabled", label: "Redline", type: "checkbox", def: false, cat: "alerts" },
                             { name: "redline_threshold", label: "Redline Threshold", type: "number", def: 80, cat: "alerts", enabledBy: "redline_enabled" },
                             { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "alerts", enabledBy: "redline_enabled", nightOverridable: true },
-                            { name: "redline_arc_width", label: "Redline Width", type: "stepper", def: 0, cat: "alerts", min: 0, max: 50, enabledBy: "redline_enabled", help: "0 = match Arc Width" },
+                            { name: "redline_arc_width", label: "Redline Width", type: "stepper", def: 0, cat: "alerts", min: 0, max: 50, enabledBy: "redline_enabled" },
                             { name: "redline_recolor_fill", label: "Recolor Fill in Zone", type: "checkbox", def: true, cat: "alerts", enabledBy: "redline_enabled" },
                             /* Limiter — applied when value >= limiter_value.
                              * Effect 0=None, 1=Flash (toggles every flash_speed_ms),
@@ -5519,7 +5520,7 @@
                             { name: "limiter_color", label: "Limiter Color", type: "color", def: 0xFF0000, cat: "alerts", enabledBy: "limiter_effect" },
                             { name: "flash_speed_ms", label: "Flash Speed (ms)", type: "select", def: 200, cat: "alerts", enabledBy: "limiter_effect",
                               options: [
-                                  { v: 50,  l: "50 ms (very fast)" },
+                                  { v: 50, l: "50 ms (very fast)" },
                                   { v: 100, l: "100 ms (fast)" },
                                   { v: 150, l: "150 ms" },
                                   { v: 200, l: "200 ms (default)" },
@@ -5536,7 +5537,7 @@
                             { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_value", nightOverridable: true },
                             { name: "value_y_offset", label: "Value Y Offset", type: "stepper", def: 0, cat: "appearance", min: -200, max: 200, enabledBy: "show_value" },
                             { name: "value_decimals", label: "Decimals", type: "stepper", def: 0, cat: "appearance", min: 0, max: 4, enabledBy: "show_value" },
-                            { name: "value_unit", label: "Unit Suffix", type: "text", def: "", cat: "appearance", enabledBy: "show_value", help: "e.g. RPM, °C, kPa" }
+                            { name: "value_unit", label: "Unit Suffix", type: "text", def: "", cat: "appearance", enabledBy: "show_value" }
                         ]
                     },
                     "toggle": {
