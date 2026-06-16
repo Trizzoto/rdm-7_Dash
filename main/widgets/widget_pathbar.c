@@ -82,7 +82,7 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
             buf[n].x = _x; buf[n].y = _y; n++; } \
     } while (0)
 
-    float inset = pd->band_width / 2.0f + pd->glow_width + 2.0f;
+    float inset = pd->band_width / 2.0f + 2.0f;
     float l = bx + inset, t = by + inset;
     float r = bx + bw - inset, b = by + bh - inset;
 
@@ -122,7 +122,8 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
             float d = a2 - a0;
             while (d >  (float)M_PI) d -= 2.0f * (float)M_PI;
             while (d < -(float)M_PI) d += 2.0f * (float)M_PI;
-            int steps = (int)(rad * 0.25f) + 4;
+            int steps = (int)(rad * 0.5f) + 8;   /* finer arc = smoother bend */
+            if (steps > 72) steps = 72;
             for (int i = 1; i < steps; i++) {
                 float ang = a0 + d * (float)i / (float)steps;
                 PB_EMIT(cnx + rad * cosf(ang), cny + rad * sinf(ang));
@@ -166,13 +167,9 @@ static void _stroke_range(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float a, float
 }
 
 /* ── Draw one band between arc-length fractions [fa, fb] ─────────────────────
- * Optional neon glow: two wider, translucent passes in the band colour under
- * the sharp core. The band is many overlapping rounded segments, so a single
- * translucent pass already accumulates dense near the centreline and faint at
- * the rim — a soft falloff that reads as a glow (the rounded leading cap glows
- * into a dot too). */
+ */
 static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
-                       lv_color_t color, lv_opa_t opa, lv_opa_t master, bool with_glow) {
+                       lv_color_t color, lv_opa_t opa, lv_opa_t master) {
     if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
     float a = fa * pd->total_len;
     float b = fb * pd->total_len;
@@ -182,21 +179,6 @@ static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float f
     dsc.color = color;
     dsc.round_start = pd->rounded ? 1 : 0;
     dsc.round_end   = pd->rounded ? 1 : 0;
-
-    if (with_glow && pd->glow_width > 0) {
-        /* ONE wide translucent pass. The band is many overlapping rounded
-         * segments, so the alpha accumulates denser near the centreline and
-         * faint at the rim -> a soft falloff, for half the cost of two passes.
-         * Square caps on the (invisible-cored) glow halve the wide-cap fill. */
-        dsc.width = pd->band_width + pd->glow_width * 2;
-        dsc.round_start = 0;
-        dsc.round_end = 0;
-        dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)90 * master) >> 8) : 90;
-        if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc);
-        dsc.round_start = pd->rounded ? 1 : 0;
-        dsc.round_end   = pd->rounded ? 1 : 0;
-    }
-
     dsc.width = pd->band_width;
     dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)opa * master) >> 8) : opa;
     if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc);
@@ -240,7 +222,7 @@ static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
     }
     if (!any) { lv_obj_invalidate(w->root); return; }
 
-    lv_coord_t m = (lv_coord_t)(pd->band_width / 2 + pd->glow_width) + 3;
+    lv_coord_t m = (lv_coord_t)(pd->band_width / 2) + 3;
     lv_area_t area = { x0 - m, y0 - m, x1 + m, y1 + m };
     lv_obj_invalidate_area(w->root, &area);
 }
@@ -257,8 +239,8 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     lv_opa_t master = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
     if (master <= LV_OPA_MIN) return;
 
-    /* dim full-path track (no glow) */
-    _draw_band(ctx, pd, 0.0f, 1.0f, pd->dim_color, pd->dim_opa, master, false);
+    /* dim full-path track */
+    _draw_band(ctx, pd, 0.0f, 1.0f, pd->dim_color, pd->dim_opa, master);
 
     float f = pd->cur_frac;
     if (f <= 0.0f) return;
@@ -271,10 +253,10 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     if (rl > 1.0f) rl = 1.0f;
 
     if (f <= rl) {
-        _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master, true);
+        _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master);
     } else {
-        _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master, true);
-        _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master, true);
+        _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
+        _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
     }
 }
 
@@ -382,8 +364,6 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "redline", pd->redline);
     if (pd->band_width != DEF_BAND_WIDTH)
         cJSON_AddNumberToObject(cfg, "band_width", pd->band_width);
-    if (pd->glow_width != 0)
-        cJSON_AddNumberToObject(cfg, "glow_width", pd->glow_width);
     if (pd->shape != 0) {
         cJSON_AddNumberToObject(cfg, "shape", pd->shape);
         if (pd->orientation != 0) cJSON_AddNumberToObject(cfg, "orientation", pd->orientation);
@@ -431,8 +411,6 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) pd->redline = (float)item->valuedouble;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "band_width");
     if (cJSON_IsNumber(item)) pd->band_width = (uint8_t)LV_CLAMP(1, item->valueint, 80);
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "glow_width");
-    if (cJSON_IsNumber(item)) pd->glow_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shape");
     if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 2);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "orientation");
@@ -519,7 +497,6 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->val_max       = DEF_MAX;
     pd->redline       = DEF_MAX;     /* off by default */
     pd->band_width    = DEF_BAND_WIDTH;
-    pd->glow_width    = 0;
     pd->rounded       = true;
     pd->shape         = 0;            /* custom (explicit path) */
     pd->orientation   = 0;

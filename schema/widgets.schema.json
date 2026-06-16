@@ -3278,15 +3278,6 @@
           "max": 80
         },
         {
-          "name": "glow_width",
-          "label": "Glow",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": 0,
-          "max": 40
-        },
-        {
           "name": "rounded",
           "label": "Rounded Caps",
           "type": "checkbox",

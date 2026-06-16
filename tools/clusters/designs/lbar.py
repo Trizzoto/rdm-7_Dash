@@ -1,7 +1,7 @@
 """KTM Duke-style L-shaped RPM bar demo (the `pathbar` widget) — dark/neon.
 
 "Just the bar": a dark background with the 0..11 scale baked along the path, plus
-the live `pathbar` widget whose smooth continuous fill (with neon glow) follows
+the live `pathbar` widget whose smooth continuous fill follows
 the path -- vertical up the left, around a radius, then horizontal across the top.
 
 The SAME centerline is used to (a) emit the widget's `path` points and (b) place
@@ -20,7 +20,7 @@ W, H = 800, 480
 RPM_MAX = 11000
 REDLINE = 10000
 
-# Dark / neon theme (glow needs a dark bg to read)
+# Dark theme
 BG_TOP = (18, 20, 25)
 BG_BOT = (9, 10, 13)
 TEAL = (48, 228, 200)        # neon fill
@@ -113,11 +113,10 @@ PARAMETRIC = True
 
 def build_layout():
     band = 26
-    glow = 10
     if PARAMETRIC:
-        # Box derived so the firmware L (inset = band/2+glow+2) lands on the SAME
+        # Box derived so the firmware L (inset = band/2+2) lands on the SAME
         # geometry as the baked numbers: vertical x=158, horizontal y=98, r=70.
-        inset = band / 2 + glow + 2
+        inset = band / 2 + 2
         bx = 158 - inset           # left leg x  - inset
         by = 98 - inset            # top leg y   - inset
         bw = 760 - 158 + 2 * inset
@@ -125,20 +124,20 @@ def build_layout():
         cx = bx + bw / 2.0
         cy = by + bh / 2.0
         pathbar_cfg = {"signal_name": "RPM", "min": 0, "max": RPM_MAX,
-                       "redline": REDLINE, "band_width": band, "glow_width": glow,
+                       "redline": REDLINE, "band_width": band,
                        "rounded": True, "shape": 1, "orientation": 0, "corner_radius": 70,
                        "dim_color": rgb565(DIM_TRACK), "lit_color": rgb565(TEAL),
                        "redline_color": rgb565(ORANGE), "dim_opa": 120, "smoothing_ms": 90}
     else:
         pts = centerline()
-        x0, y0, x1, y1 = _bbox(pts, band / 2 + glow + 8)
+        x0, y0, x1, y1 = _bbox(pts, band / 2 + 8)
         bw, bh = x1 - x0, y1 - y0
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         flat = []
         for (px, py) in pts:
             flat.append(round(px, 1)); flat.append(round(py, 1))
         pathbar_cfg = {"signal_name": "RPM", "min": 0, "max": RPM_MAX,
-                       "redline": REDLINE, "band_width": band, "glow_width": glow,
+                       "redline": REDLINE, "band_width": band,
                        "rounded": True, "dim_color": rgb565(DIM_TRACK),
                        "lit_color": rgb565(TEAL), "redline_color": rgb565(ORANGE),
                        "dim_opa": 120, "smoothing_ms": 90, "path": flat}
@@ -159,7 +158,7 @@ def build_layout():
         "widgets": [
             {"type": "image", "id": "bg", "x": 0, "y": 0, "w": 800, "h": 480,
              "config": {"image_name": IMAGE_NAME, "auto_size": True}},
-            # THE BAR: smooth continuous neon fill (with glow) following the L-path.
+            # THE BAR: smooth continuous fill following the L-path.
             {"type": "pathbar", "id": "rpm_path",
              "x": cx_to_center(cx), "y": cy_to_center(cy),
              "w": int(round(bw)), "h": int(round(bh)),

@@ -28,7 +28,6 @@ typedef struct {
     float       redline;              /* value; >= val_max disables the redline */
 
     uint8_t     band_width;           /* stroke thickness px (default 22) */
-    uint8_t     glow_width;           /* neon glow radius beyond the band (0 = off) */
     bool        rounded;              /* rounded caps/joins (default true) */
 
     /* Parametric shape: when shape != 0 the path is GENERATED to fit the widget
