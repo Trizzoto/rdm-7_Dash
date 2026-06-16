@@ -39,6 +39,12 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value);
 /* Missing static state variables */
 static lv_obj_t *rpm_lines_parent = NULL;
 static lv_obj_t *s_rpm_container = NULL;
+/* Right-half mirror bar — only created for fill_dir 2 (Center→Out) and
+ * 3 (Edges→In). NULL for the single-bar modes (0 = L→R, 1 = R→L). It is a
+ * child of s_rpm_container, so the destroy cascade frees it; we only NULL the
+ * pointer ourselves. set_rpm_value / _apply_limiter_effect / resize all mirror
+ * onto it when present. */
+static lv_obj_t *rpm_bar_gauge2 = NULL;
 
 /* Live container dimensions — drive proportional scaling of the bar gauge,
  * Panel9 colour swatch, redline zone, and tick marks/labels. Defaults to the
@@ -70,6 +76,7 @@ void widget_rpm_bar_clear_stale_pointers(void) {
 	num_rpm_lines = 0;
 	rpm_lines_parent = NULL;
 	s_rpm_container = NULL;
+	rpm_bar_gauge2 = NULL;   /* freed with the screen; drop the dangling ptr */
 }
 
 /* ── Helper: look up rpm_bar_data_t via registry (singleton, slot 0) ──── */
@@ -551,18 +558,28 @@ void set_rpm_value(int rpm) {
 	// Store the current CAN bus RPM value
 	current_canbus_rpm = rpm;
 
-	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
-		// Map RPM to extended bar range to properly fill the extended
-		// bar width When RPM reaches rpm_gauge_max, the bar should be
-		// completely filled
-		const float bar_extension_ratio = 782.5f / 765.0f;
-		int32_t extended_rpm_max =
-			(int32_t)(rpm_gauge_max * bar_extension_ratio);
+	rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+	uint8_t fill_dir = rd ? rd->fill_dir : 0;
 
-		// Scale the RPM value to the extended range
-		int32_t scaled_rpm = (rpm * extended_rpm_max) / rpm_gauge_max;
-
-		lv_bar_set_value(rpm_bar_gauge, scaled_rpm, LV_ANIM_OFF);
+	if (fill_dir == 0) {
+		/* Classic mode — map RPM onto the extended bar range so the fill
+		 * reaches the very right edge at gauge_max (legacy 782.5/765 hack). */
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge) && rpm_gauge_max > 0) {
+			const float bar_extension_ratio = 782.5f / 765.0f;
+			int32_t extended_rpm_max =
+				(int32_t)(rpm_gauge_max * bar_extension_ratio);
+			int32_t scaled_rpm = (rpm * extended_rpm_max) / rpm_gauge_max;
+			lv_bar_set_value(rpm_bar_gauge, scaled_rpm, LV_ANIM_OFF);
+		}
+	} else {
+		/* R→L (1) / Center→Out (2) / Edges→In (3): plain [0,gauge_max] range,
+		 * same value on both halves — each half's base_dir picks the direction. */
+		int32_t v = rpm;
+		if (rpm_gauge_max > 0 && v > rpm_gauge_max) v = rpm_gauge_max;
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
+			lv_bar_set_value(rpm_bar_gauge, v, LV_ANIM_OFF);
+		if (rpm_bar_gauge2 && lv_obj_is_valid(rpm_bar_gauge2))
+			lv_bar_set_value(rpm_bar_gauge2, v, LV_ANIM_OFF);
 	}
 
 	// Limiter overlay: repaint the bar based on whether we crossed the limiter.
@@ -606,6 +623,28 @@ static struct {
  * stops array swapped in). */
 static void _invalidate_paint_cache(void) { s_paint_cache.valid = false; }
 
+/* Paint one bar's indicator (solid fill, or the multi-stop gradient when
+ * grad_active). Factored out so the mirror modes (fill_dir 2/3) can paint both
+ * halves identically. See the long note in _apply_limiter_effect for why
+ * dsc.dir must be cleared on the solid path. */
+static void _rpm_paint_indicator(lv_obj_t *bar, lv_color_t fill,
+                                 bool grad_active, rpm_bar_data_t *rd) {
+	if (!bar || !lv_obj_is_valid(bar)) return;
+	lv_obj_set_style_bg_color(bar, fill, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	if (grad_active && rd &&
+	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
+	                                  LV_GRAD_DIR_HOR)) {
+		lv_obj_set_style_bg_grad(bar, &rd->grad_lv_dsc,
+		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	} else {
+		if (rd) rd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
+		lv_obj_set_style_bg_grad_color(bar, fill,
+		                               LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE,
+		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
+}
+
 static void _apply_limiter_effect(void) {
 	if (!rpm_bar_gauge || !lv_obj_is_valid(rpm_bar_gauge)) return;
 
@@ -647,8 +686,6 @@ static void _apply_limiter_effect(void) {
 		return;
 	}
 
-	lv_obj_set_style_bg_color(rpm_bar_gauge, fill,
-	                           LV_PART_INDICATOR | LV_STATE_DEFAULT);
 	/* Multi-stop gradient via LVGL's native lv_grad_dsc_t — suppressed
 	 * while flashing or over-limiter so the alert visual stays solid
 	 * and unambiguous. sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8 so a
@@ -658,26 +695,11 @@ static void _apply_limiter_effect(void) {
 	 *
 	 * lv_obj_set_style_bg_grad stores the dsc POINTER, not a copy — the
 	 * descriptor must outlive the style. rpm_bar_data_t.grad_lv_dsc
-	 * lives as long as the widget.
-	 *
-	 * LVGL's draw_dsc init (lv_obj_draw.c) checks `grad->dir != NONE`
-	 * on the descriptor itself before falling back to bg_grad_dir, so
-	 * we MUST zero dsc.dir on the off-path; setting only the separate
-	 * bg_grad_dir style property would leave the descriptor's internal
-	 * HOR active from the previous render and the limiter override
-	 * would never take effect. */
-	if (grad_active &&
-	    gradient_stops_to_lv_grad_dsc(&rd->grad_stops, &rd->grad_lv_dsc,
-	                                  LV_GRAD_DIR_HOR)) {
-		lv_obj_set_style_bg_grad(rpm_bar_gauge, &rd->grad_lv_dsc,
-		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	} else {
-		if (rd) rd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
-		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, fill,
-		                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-		                              LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	}
+	 * lives as long as the widget. Painted on both halves in the mirror
+	 * modes (rpm_bar_gauge2) via _rpm_paint_indicator. */
+	_rpm_paint_indicator(rpm_bar_gauge, fill, grad_active, rd);
+	if (rpm_bar_gauge2)
+		_rpm_paint_indicator(rpm_bar_gauge2, fill, grad_active, rd);
 
 	/* PART_MAIN bg_color is set ONCE at create (widget_rpm_bar_create →
 	 * lv_obj_set_style_bg_color(rpm_bar_gauge, THEME_COLOR_RPM_BAR_BG,
@@ -705,6 +727,16 @@ static void _apply_limiter_effect(void) {
 void update_redline_position(void) {
 	if (!rpm_redline_zone)
 		return;
+
+	/* Redline-zone overlay is the classic L→R bar's feature; keep it hidden
+	 * for every other fill direction (mirror/RTL bake redline into art). */
+	{
+		rpm_bar_data_t *rd = _lookup_rpm_bar_data();
+		if (rd && rd->fill_dir != 0) {
+			lv_obj_add_flag(rpm_redline_zone, LV_OBJ_FLAG_HIDDEN);
+			return;
+		}
+	}
 
 	// Calculate redline position as percentage of max RPM
 	float redline_percentage = (float)rpm_redline_value / (float)rpm_gauge_max;
@@ -798,52 +830,109 @@ void update_rpm_ui_immediate(const char *rpm_str, int rpm_value) {
 	set_rpm_value(rpm_value);
 	update_menu_rpm_value_text(rpm_value);
 }
+/* Apply the standard RPM-bar track + indicator styling to one lv_bar. Used for
+ * the single bar (modes 0/1) and for each half in the mirror modes (2/3). */
+static void _rpm_style_bar(lv_obj_t *bar, lv_color_t track_bg, lv_color_t indic) {
+	lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
+	lv_obj_set_style_radius(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, track_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(bar, 0, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, indic, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_grad_color(bar, indic, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+}
+
+/* Size + position the bar(s) for the current container size and fill direction.
+ * Shared by create_rpm_bar_gauge and _rpm_bar_resize so geometry stays in one
+ * place. base_dir per mode controls which way the fill grows:
+ *   mode 1  : single bar, RTL  → fill from the right.
+ *   mode 2  : left half RTL + right half LTR → both grow OUT from the centre.
+ *   mode 3  : left half LTR + right half RTL → both grow IN toward the centre. */
+static void _rpm_layout_bars(int cw, int ch, uint8_t fill_dir) {
+	if (fill_dir == 2 || fill_dir == 3) {
+		int half = cw / 2;
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+			lv_obj_set_size(rpm_bar_gauge, half, ch);
+			lv_obj_align(rpm_bar_gauge, LV_ALIGN_LEFT_MID, 0, 0);
+			lv_obj_set_style_base_dir(rpm_bar_gauge,
+				fill_dir == 2 ? LV_BASE_DIR_RTL : LV_BASE_DIR_LTR,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+		if (rpm_bar_gauge2 && lv_obj_is_valid(rpm_bar_gauge2)) {
+			lv_obj_set_size(rpm_bar_gauge2, cw - half, ch);
+			lv_obj_align(rpm_bar_gauge2, LV_ALIGN_RIGHT_MID, 0, 0);
+			lv_obj_set_style_base_dir(rpm_bar_gauge2,
+				fill_dir == 2 ? LV_BASE_DIR_LTR : LV_BASE_DIR_RTL,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+	} else if (fill_dir == 1) {
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+			lv_obj_set_size(rpm_bar_gauge, cw, ch);
+			lv_obj_align(rpm_bar_gauge, LV_ALIGN_CENTER, 0, 0);
+			lv_obj_set_style_base_dir(rpm_bar_gauge, LV_BASE_DIR_RTL,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+	} else {
+		/* Mode 0 — legacy extended-width geometry (Panel9 + 20px nudge). */
+		float sx = (float)cw / 800.0f;
+		if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
+			lv_obj_set_size(rpm_bar_gauge, (lv_coord_t)(783.0f * sx + 0.5f), ch);
+			lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID,
+						 (lv_coord_t)(20.0f * sx + 0.5f), 0);
+			lv_obj_set_style_base_dir(rpm_bar_gauge, LV_BASE_DIR_LTR,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+		}
+	}
+}
+
 void create_rpm_bar_gauge(lv_obj_t *container) {
 	rpm_bar_data_t *rd_bar = _lookup_rpm_bar_data();
 	lv_color_t saved_color = rd_bar ? rd_bar->bar_color : THEME_COLOR_GREEN;
+	lv_color_t track_bg = rd_bar ? rd_bar->bar_bg_color : THEME_COLOR_RPM_BAR_BG;
+	uint8_t fill_dir = rd_bar ? rd_bar->fill_dir : 0;
+	bool mirror = (fill_dir == 2 || fill_dir == 3);
 
-	/* Scale Panel9 + bar geometry to the live container size (default 800x55). */
-	float sx = (float)s_container_w / 800.0f;
+	/* Scale Panel9 geometry to the live container size (default 800x55). */
 	float sy = (float)s_container_h / 55.0f;
 
 	/* Panel9 — colour indicator square hugging the container's left edge.
-	 * Square sized to container height; positioned in center-relative coords. */
+	 * Only meaningful for the classic L→R bar; hidden (kept valid) for every
+	 * other fill direction so the mirror/RTL fills span the full width. */
 	int panel_sq = s_container_h;
 	int panel_x  = -(s_container_w - panel_sq) / 2;
 	ui_Panel9 = create_panel(container, panel_sq, panel_sq, panel_x, 0, 0, saved_color, 0);
+	if (fill_dir != 0) lv_obj_add_flag(ui_Panel9, LV_OBJ_FLAG_HIDDEN);
 
+	/* Range: mode 0 keeps the legacy extended-width hack so the fill reaches
+	 * the very right edge; every other mode uses a plain [0,gauge_max]. */
 	const float bar_extension_ratio = 782.5f / 765.0f;
-	int32_t extended_rpm_max = (int32_t)(rpm_gauge_max * bar_extension_ratio);
+	int32_t bar_max = mirror || fill_dir == 1
+		? rpm_gauge_max
+		: (int32_t)(rpm_gauge_max * bar_extension_ratio);
 
 	rpm_bar_gauge = lv_bar_create(container);
-	lv_bar_set_range(rpm_bar_gauge, 0, extended_rpm_max);
+	lv_bar_set_range(rpm_bar_gauge, 0, bar_max);
 	lv_bar_set_value(rpm_bar_gauge, 0, LV_ANIM_OFF);
-	lv_obj_set_size(rpm_bar_gauge, (lv_coord_t)(783.0f * sx + 0.5f), s_container_h);
-	lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID, (lv_coord_t)(20.0f * sx + 0.5f), 0);
-	lv_obj_clear_flag(rpm_bar_gauge, LV_OBJ_FLAG_CLICKABLE); /* pass touch to parent */
+	_rpm_style_bar(rpm_bar_gauge, track_bg, saved_color);
 
-	lv_color_t track_bg = rd_bar ? rd_bar->bar_bg_color : THEME_COLOR_RPM_BAR_BG;
-	lv_obj_set_style_radius(rpm_bar_gauge, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(rpm_bar_gauge, track_bg,
-							  LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
-							LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (mirror) {
+		rpm_bar_gauge2 = lv_bar_create(container);
+		lv_bar_set_range(rpm_bar_gauge2, 0, bar_max);
+		lv_bar_set_value(rpm_bar_gauge2, 0, LV_ANIM_OFF);
+		_rpm_style_bar(rpm_bar_gauge2, track_bg, saved_color);
+	} else {
+		rpm_bar_gauge2 = NULL;
+	}
 
-	lv_obj_set_style_radius(rpm_bar_gauge, 0,
-							LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_color(rpm_bar_gauge, saved_color,
-							  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_opa(rpm_bar_gauge, 255,
-							LV_PART_INDICATOR | LV_STATE_DEFAULT);
-
-	lv_obj_set_style_bg_grad_color(rpm_bar_gauge, saved_color,
-								   LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-								 LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	_rpm_layout_bars(s_container_w, s_container_h, fill_dir);
 
 	/* Redline zone — inside container, center-relative y. Originally height=12
 	 * with y=22 inside the 55px container; scale both so it stays anchored to
-	 * the lower portion of the bar at any height. */
+	 * the lower portion of the bar at any height. Hidden for non-default fill
+	 * directions (it only makes sense for the L→R bar; bake redline into art
+	 * or use the limiter effect for the mirror/RTL modes). */
 	rpm_redline_zone = lv_obj_create(container);
 	lv_obj_set_height(rpm_redline_zone, (lv_coord_t)(12.0f * sy + 0.5f));
 	lv_obj_set_y(rpm_redline_zone, (lv_coord_t)(22.0f * sy + 0.5f));
@@ -857,6 +946,7 @@ void create_rpm_bar_gauge(lv_obj_t *container) {
 							LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(rpm_redline_zone, 0,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (fill_dir != 0) lv_obj_add_flag(rpm_redline_zone, LV_OBJ_FLAG_HIDDEN);
 
 	/* (The optional numeric RPM readout that used to live on the bar was
 	 * removed — the dashboard never creates ui_RPM_Value, so the bar shows no
@@ -1290,8 +1380,23 @@ static void _rpm_bar_on_channel_changed(channel_t *c, void *user_data) {
 	}
 }
 
+/* Smoothing: re-feed the eased value, bypassing the intercept (no recursion). */
+static void _rpm_bar_smooth_apply(widget_t *w, float v) {
+	rpm_bar_data_t *rd = w ? (rpm_bar_data_t *)w->type_data : NULL;
+	if (!rd) return;
+	rd->smooth_bypass = true;
+	_rpm_bar_on_signal(v, false, w);
+	rd->smooth_bypass = false;
+}
+
 static void _rpm_bar_on_signal(float value, bool is_stale, void *user_data) {
-	(void)user_data;
+	widget_t *w = (widget_t *)user_data;
+	rpm_bar_data_t *rd = w ? (rpm_bar_data_t *)w->type_data : NULL;
+	/* Value smoothing: ease the fill at the refresh rate. */
+	if (rd && rd->smooth.smoothing_ms != 0 && !rd->smooth_bypass) {
+		if (is_stale) widget_smooth_reset(&rd->smooth);
+		else { widget_smooth_set(&rd->smooth, value, false); return; }
+	}
 	if (is_stale) {
 		update_rpm_ui_immediate("--", 0);
 		return;
@@ -1330,6 +1435,11 @@ static void _rpm_bar_create(widget_t *w, lv_obj_t *parent) {
 		channel_manager_subscribe((channel_t *)rbd->channel,
 		                           _rpm_bar_on_channel_changed, w);
 
+	/* Wire up optional value smoothing (eases the fill at refresh rate). */
+	if (rbd)
+		widget_smooth_config(&rbd->smooth, w, _rpm_bar_smooth_apply,
+		                     (float)rbd->gauge_max);
+
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
 	 * was created while night-mode is already active. */
@@ -1360,20 +1470,20 @@ static void _rpm_bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 	float sx = (float)nw / 800.0f;
 	float sy = (float)nh / 55.0f;
 
-	/* Panel9 — keep it square-ish flush against the left edge of the container. */
-	if (ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
+	rpm_bar_data_t *rd_rs = _lookup_rpm_bar_data();
+	uint8_t fill_dir = rd_rs ? rd_rs->fill_dir : 0;
+
+	/* Panel9 — only shown for the classic L→R bar (hidden otherwise); only
+	 * track its square geometry in that mode. */
+	if (fill_dir == 0 && ui_Panel9 && lv_obj_is_valid(ui_Panel9)) {
 		int panel_sq = nh;
 		int panel_x  = -((int)nw - panel_sq) / 2;
 		lv_obj_set_size(ui_Panel9, panel_sq, panel_sq);
 		lv_obj_set_pos(ui_Panel9, panel_x, 0);
 	}
 
-	/* RPM bar gauge — width follows sx, height matches container. */
-	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
-		lv_obj_set_size(rpm_bar_gauge, (lv_coord_t)(783.0f * sx + 0.5f), nh);
-		lv_obj_align(rpm_bar_gauge, LV_ALIGN_TOP_MID,
-					 (lv_coord_t)(20.0f * sx + 0.5f), 0);
-	}
+	/* RPM bar gauge(s) — size + position + base_dir per fill direction. */
+	_rpm_layout_bars(nw, nh, fill_dir);
 
 	/* Redline zone — height + vertical anchor scale with sy; width/x are
 	 * recomputed by update_redline_position() against the new container width. */
@@ -1415,6 +1525,10 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
 	cJSON_AddNumberToObject(cfg, "flash_speed", rd->flash_speed_ms);
+	if (rd->smooth.smoothing_ms != 0)   /* default 0 (off) — defaults-only emit */
+		cJSON_AddNumberToObject(cfg, "smoothing_ms", rd->smooth.smoothing_ms);
+	if (rd->fill_dir != 0)              /* default 0 (L→R) — defaults-only emit */
+		cJSON_AddNumberToObject(cfg, "fill_dir", rd->fill_dir);
 
 	/* ── Appearance — defaults-only emit (keeps untouched widgets empty so
 	 * the 32 KB layout budget isn't burned). Defaults mirror the historical
@@ -1474,6 +1588,15 @@ static void _rpm_bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item) && item->valueint >= 0) {
 		rd->redline = item->valueint;
 		rpm_redline_value = rd->redline; /* sync global for config_modal */
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
+	if (cJSON_IsNumber(item) && item->valueint >= 0)
+		rd->smooth.smoothing_ms = (uint16_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_dir");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0 || v > 3) v = 0;
+		rd->fill_dir = (uint8_t)v;
 	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_color");
 	if (cJSON_IsNumber(item)) rd->bar_color.full = (uint32_t)item->valueint;
@@ -1615,15 +1738,10 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 		}
 	}
 
-	/* Apply bar indicator color */
-	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
-		lv_obj_set_style_bg_color(rpm_bar_gauge, bar_col,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, bar_col,
-									   LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-									 LV_PART_INDICATOR | LV_STATE_DEFAULT);
-	}
+	/* Apply bar indicator color (both halves in the mirror modes). */
+	_rpm_paint_indicator(rpm_bar_gauge, bar_col, false, rd);
+	if (rpm_bar_gauge2)
+		_rpm_paint_indicator(rpm_bar_gauge2, bar_col, false, rd);
 
 	/* Apply redline/limiter zone color */
 	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
@@ -1635,6 +1753,7 @@ static void _rpm_bar_apply_overrides(widget_t *w, const rule_override_t *ov, uin
 static void _rpm_bar_destroy(widget_t *w) {
 	if (w) {
 		rpm_bar_data_t *rbd = (rpm_bar_data_t *)w->type_data;
+		if (rbd) widget_smooth_free(&rbd->smooth);
 		if (rbd && rbd->signal_index >= 0)
 			signal_unsubscribe(rbd->signal_index, _rpm_bar_on_signal, w);
 		if (rbd && rbd->channel) {
@@ -1656,6 +1775,9 @@ static void _rpm_bar_destroy(widget_t *w) {
 		 * object — mirrors how ui_Screen3.c NULLs ui_RPM_Value on rebuild. */
 		if (rbd) rbd->rpm_value_obj = NULL;
 		ui_RPM_Value = NULL;
+		/* rpm_bar_gauge2 is a child of w->root (the container) — freed by the
+		 * cascade below; just drop our dangling pointer. */
+		rpm_bar_gauge2 = NULL;
 		if (w->root && lv_obj_is_valid(w->root))
 			lv_obj_del(w->root);
 		w->root = NULL;
@@ -1677,17 +1799,17 @@ static void _rpm_bar_apply_night_mode(widget_t *w, bool active) {
 	lv_color_t bg_col  = NIGHT_PICK_COLOR(active, rd->night, bar_bg_color,  rd->bar_bg_color);
 	lv_color_t val_col = NIGHT_PICK_COLOR(active, rd->night, rpm_value_color, rd->rpm_value_color);
 
-	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge)) {
-		lv_obj_set_style_bg_color(rpm_bar_gauge, bar_col,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_color(rpm_bar_gauge, bar_col,
-									   LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_grad_dir(rpm_bar_gauge, LV_GRAD_DIR_NONE,
-									 LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		/* Track background (unfilled portion) — plain style write. */
+	/* Indicator colour — both halves in the mirror modes. */
+	_rpm_paint_indicator(rpm_bar_gauge, bar_col, false, rd);
+	if (rpm_bar_gauge2)
+		_rpm_paint_indicator(rpm_bar_gauge2, bar_col, false, rd);
+	/* Track background (unfilled portion) — plain style write on each bar. */
+	if (rpm_bar_gauge && lv_obj_is_valid(rpm_bar_gauge))
 		lv_obj_set_style_bg_color(rpm_bar_gauge, bg_col,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
-	}
+	if (rpm_bar_gauge2 && lv_obj_is_valid(rpm_bar_gauge2))
+		lv_obj_set_style_bg_color(rpm_bar_gauge2, bg_col,
+								  LV_PART_MAIN | LV_STATE_DEFAULT);
 	if (rpm_redline_zone && lv_obj_is_valid(rpm_redline_zone)) {
 		lv_obj_set_style_bg_color(rpm_redline_zone, lim_col,
 								  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1734,6 +1856,8 @@ static bool _rpm_bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "limiter_effect") == 0) { out->i = rd->limiter_effect;  return true; }
 	if (strcmp(name, "limiter_value") == 0)  { out->i = rd->limiter_value;   return true; }
 	if (strcmp(name, "flash_speed") == 0)    { out->i = rd->flash_speed_ms;  return true; }
+	if (strcmp(name, "smoothing_ms") == 0)   { out->i = rd->smooth.smoothing_ms; return true; }
+	if (strcmp(name, "fill_dir") == 0)       { out->i = rd->fill_dir;        return true; }
 	if (strcmp(name, "bar_color") == 0)      { out->color = lv_color_to32(rd->bar_color)     & 0xFFFFFF; return true; }
 	if (strcmp(name, "limiter_color") == 0)  { out->color = lv_color_to32(rd->limiter_color) & 0xFFFFFF; return true; }
 	/* Appearance fields */
@@ -1785,6 +1909,22 @@ static bool _rpm_bar_inspector_set(widget_t *w, const char *name,
 		rd->redline = v;
 		rpm_redline_value = v;
 		update_redline_position();
+		return true;
+	}
+	if (strcmp(name, "smoothing_ms") == 0) {
+		int v = in->i;
+		if (v < 0)   v = 0;
+		if (v > 500) v = 500;
+		rd->smooth.smoothing_ms = (uint16_t)v;
+		if (v == 0) widget_smooth_reset(&rd->smooth);  /* snap to live on next sample */
+		return true;
+	}
+	if (strcmp(name, "fill_dir") == 0) {
+		int v = in->i;
+		if (v < 0 || v > 3) v = 0;
+		/* Structural change (single vs two-bar) — stored now, applied on the
+		 * next layout reload (the web editor saves + hot-reloads after edits). */
+		rd->fill_dir = (uint8_t)v;
 		return true;
 	}
 	if (strcmp(name, "bar_color") == 0) {
@@ -1913,6 +2053,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	rd->limiter_value = 7500;
 	rd->limiter_color = lv_color_hex(0xFF0000);  /* red */
 	rd->flash_speed_ms = 200;
+	rd->fill_dir = 0;   /* Left → Right (classic single bar) */
 
 	/* Appearance defaults — chosen so they reproduce the previously-hardcoded
 	 * look exactly, keeping to_json empty for untouched widgets. */

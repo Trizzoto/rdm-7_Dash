@@ -199,18 +199,25 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data);
  * zero, so a positive-only or asymmetric range would otherwise degrade to a
  * plain left-fill. _bar_on_signal feeds (value - midpoint) to match. */
 static void _bar_set_lv_range(bar_data_t *bd) {
-	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+	if (!bd) return;
 	int32_t scale = _bar_resolution_scale(bd);
-	if (bd->center_fill) {
+	int32_t lo, hi;
+	/* Mirror modes (fill_dir 2/3) own the geometry and use plain min..max on
+	 * each half — center_fill's symmetric ±half range does not apply there. */
+	bool mirror = (bd->fill_dir == 2 || bd->fill_dir == 3);
+	if (bd->center_fill && !mirror) {
 		int32_t half = lroundf((bd->bar_max - bd->bar_min) * 0.5f * (float)scale);
 		if (half < 1) half = 1;
-		lv_bar_set_range(bd->bar_obj, -half, half);
+		lo = -half; hi = half;
 	} else {
-		int32_t lo = lroundf(bd->bar_min * (float)scale);
-		int32_t hi = lroundf(bd->bar_max * (float)scale);
+		lo = lroundf(bd->bar_min * (float)scale);
+		hi = lroundf(bd->bar_max * (float)scale);
 		if (hi <= lo) { lo = 0; hi = 100 * scale; }
-		lv_bar_set_range(bd->bar_obj, lo, hi);
 	}
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+		lv_bar_set_range(bd->bar_obj, lo, hi);
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
+		lv_bar_set_range(bd->bar_obj2, lo, hi);
 }
 
 void widget_bar_sync_range(bar_data_t *bd) {
@@ -533,10 +540,31 @@ static void _bar_on_channel_changed(channel_t *c, void *user_data) {
 	widget_bar_sync_range(bd);
 }
 
+/* Smoothing: re-feed the eased value through the normal path, bypassing the
+ * intercept below so there's no recursion. */
+static void _bar_smooth_apply(widget_t *w, float v) {
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+	bd->smooth_bypass = true;
+	_bar_on_signal(v, false, w);
+	bd->smooth_bypass = false;
+}
+
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
+
+	/* Needle/fill smoothing: ease the live value at the refresh rate (uses spare
+	 * CPU for a glide). Stale resets so the next live value snaps. */
+	if (bd->smooth.smoothing_ms != 0 && !bd->smooth_bypass) {
+		if (is_stale) {
+			widget_smooth_reset(&bd->smooth);
+		} else {
+			widget_smooth_set(&bd->smooth, value, false);
+			return;
+		}
+	}
 
 	double final_value = is_stale ? 0.0 : (double)value;
 	/* Apply anchor curve once for the FILL POSITION calculation. Threshold
@@ -697,6 +725,47 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 static void _bar_apply_night_mode(widget_t *w, bool active);
 static void _bar_night_cb(bool active, void *user_data);
 
+/* Apply the standard track + indicator styling to one lv_bar. Shared by the
+ * single-bar path and by each half in the mirror modes (fill_dir 2/3). */
+static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track) {
+	lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (has_track) {
+		/* Track image is the visual background — make lv_bar body transparent */
+		lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+	} else {
+		lv_obj_set_style_bg_color(bar, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(bar, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bar, bd->bar_border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, bd->bar_in_range_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+}
+
+/* Paint one bar's indicator: solid color, or the multi-stop gradient when
+ * grad_on (and ≥2 stops). Factored out so the mirror modes paint both halves.
+ * Mutates bd->grad_lv_dsc.dir on the solid path (see the long note in
+ * _bar_on_signal about LVGL's draw_dsc grad->dir fallback). */
+static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
+                                 lv_color_t color, bool grad_on) {
+	if (!bar || !lv_obj_is_valid(bar)) return;
+	lv_obj_set_style_bg_color(bar, color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	if (grad_on && bd->grad_stops.count >= 2 &&
+	    gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &bd->grad_lv_dsc,
+	                                  LV_GRAD_DIR_HOR)) {
+		lv_obj_set_style_bg_grad(bar, &bd->grad_lv_dsc,
+		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	} else {
+		bd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
+		lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE,
+		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
+}
+
 /* ── _bar_create: create a single bar per slot, positioned by layout ──────── */
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
@@ -783,50 +852,71 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	}
 
 	if (!has_fill) {
-		/* Standard lv_bar for fill indicator */
-		lv_obj_t *bar = lv_bar_create(parent);
-		lv_obj_set_width(bar, w->w);
-		lv_obj_set_height(bar, w->h);
-		lv_obj_set_align(bar, LV_ALIGN_CENTER);
-		lv_obj_set_pos(bar, w->x, w->y);
-		lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
-		if (has_track) {
-			/* Track image is the visual background — make lv_bar body transparent */
-			lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+		/* Fill direction: 0=L→R, 1=R→L (base_dir), 2=Center→Out, 3=Edges→In.
+		 * Modes 2/3 split the bar into two mirrored half-bars whose base_dir
+		 * decides which way each half grows; center_fill yields to the mirror. */
+		uint8_t fdir = bd ? bd->fill_dir : 0;
+		bool mirror = (fdir == 2 || fdir == 3);
+		if (!mirror) {
+			/* Standard single lv_bar for fill indicator */
+			lv_obj_t *bar = lv_bar_create(parent);
+			lv_obj_set_width(bar, w->w);
+			lv_obj_set_height(bar, w->h);
+			lv_obj_set_align(bar, LV_ALIGN_CENTER);
+			lv_obj_set_pos(bar, w->x, w->y);
+			_bar_style_indicator(bar, bd, has_track);
+			if (fdir == 1)
+				lv_obj_set_style_base_dir(bar, LV_BASE_DIR_RTL,
+				                          LV_PART_MAIN | LV_STATE_DEFAULT);
+			bd->bar_obj = bar;
+			/* Center Fill: SYMMETRICAL draws the indicator from the (symmetric)
+			 * range midpoint outward. Default lv_bar mode is NORMAL, so only set
+			 * it when center_fill is enabled. Set mode BEFORE the range so
+			 * SYMMETRICAL's start_value tracks the new (negative) min. */
+			if (bd->center_fill)
+				lv_bar_set_mode(bar, LV_BAR_MODE_SYMMETRICAL);
+			_bar_set_lv_range(bd);
+			/* Resting value: centre (0) for center-fill, else the low end. The
+			 * initial-snap below overrides this once a bound signal is read. */
+			lv_bar_set_value(bar, bd->center_fill ? 0 : b_min, LV_ANIM_OFF);
+			if (!w->root) w->root = bar;
 		} else {
-			lv_obj_set_style_bg_color(bar, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_opa(bar, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_color(bar, bd->bar_border_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			/* Two mirrored half-bars. Geometry is in center-origin coords:
+			 * the whole bar spans [x-w/2, x+w/2]; split at the centre. */
+			lv_coord_t leftW  = w->w / 2;
+			lv_coord_t rightW = w->w - leftW;
+			lv_coord_t leftX  = w->x - (w->w / 2) + (leftW / 2);
+			lv_coord_t rightX = w->x + (w->w / 2) - (rightW / 2);
+
+			lv_obj_t *barL = lv_bar_create(parent);
+			lv_obj_set_size(barL, leftW, w->h);
+			lv_obj_set_align(barL, LV_ALIGN_CENTER);
+			lv_obj_set_pos(barL, leftX, w->y);
+			_bar_style_indicator(barL, bd, has_track);
+			/* Center→Out: left grows from the centre (right edge) → RTL.
+			 * Edges→In:   left grows from the left edge → LTR. */
+			lv_obj_set_style_base_dir(barL,
+				fdir == 2 ? LV_BASE_DIR_RTL : LV_BASE_DIR_LTR,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+
+			lv_obj_t *barR = lv_bar_create(parent);
+			lv_obj_set_size(barR, rightW, w->h);
+			lv_obj_set_align(barR, LV_ALIGN_CENTER);
+			lv_obj_set_pos(barR, rightX, w->y);
+			_bar_style_indicator(barR, bd, has_track);
+			/* Center→Out: right grows from the centre (left edge) → LTR.
+			 * Edges→In:   right grows from the right edge → RTL. */
+			lv_obj_set_style_base_dir(barR,
+				fdir == 2 ? LV_BASE_DIR_LTR : LV_BASE_DIR_RTL,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+
+			bd->bar_obj  = barL;
+			bd->bar_obj2 = barR;
+			_bar_set_lv_range(bd);   /* applies to both halves */
+			lv_bar_set_value(barL, b_min, LV_ANIM_OFF);
+			lv_bar_set_value(barR, b_min, LV_ANIM_OFF);
+			if (!w->root) w->root = barL;
 		}
-		lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		/* Initialise the indicator to the configured in-range colour rather than
-		 * a hardcoded green, so an unbound bar — or one whose signal hasn't
-		 * delivered a frame yet (engine off / no CAN) — shows the user's colour
-		 * instead of green. _bar_on_signal overrides this per-value once data
-		 * arrives. Most visible with Center Fill, which paints a fill at the
-		 * resting value where NORMAL mode paints nothing. */
-		lv_obj_set_style_bg_color(bar, bd ? bd->bar_in_range_color : THEME_COLOR_GREEN_BRIGHT,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		bd->bar_obj = bar;
-		/* Center Fill: SYMMETRICAL draws the indicator from the (symmetric) range
-		 * midpoint outward to the current value. Default lv_bar mode is NORMAL,
-		 * so only set it when center_fill is enabled. Standard-bar path only —
-		 * image-mode bars have no lv_bar and recompute the clip width themselves.
-		 * Set the mode BEFORE the range so SYMMETRICAL's start_value tracks the
-		 * new (negative) min and LVGL's centre test (min<0<max) holds. */
-		if (bd->center_fill)
-			lv_bar_set_mode(bar, LV_BAR_MODE_SYMMETRICAL);
-		_bar_set_lv_range(bd);
-		/* Resting value: centre (0) for center-fill, else the low end. The
-		 * initial-snap below overrides this once a bound signal's value is read. */
-		lv_bar_set_value(bar, bd->center_fill ? 0 : b_min, LV_ANIM_OFF);
-		if (!w->root) w->root = bar;
 	}
 
 	/* Create the label above the bar */
@@ -894,6 +984,10 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		ui_Bar_2_Label = lbl;
 		ui_Bar_2_Value = val;
 	}
+
+	/* Wire up needle/fill smoothing (range used for the settle epsilon). */
+	if (bd)
+		widget_smooth_config(&bd->smooth, w, _bar_smooth_apply, bd->bar_max - bd->bar_min);
 
 	/* Subscribe to signal if bound */
 	if (bd && bd->signal_index >= 0)
@@ -963,6 +1057,8 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "label", bd->label);
 		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
 		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
+		if (bd->smooth.smoothing_ms != 0)
+			cJSON_AddNumberToObject(cfg, "smoothing_ms", bd->smooth.smoothing_ms);
 		if (bd->anchor_enabled)
 			cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
 		if (bd->anchor_enabled || bd->anchor_value != (bd->bar_min + bd->bar_max) / 2)
@@ -1077,6 +1173,8 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) bd->bar_min = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
 	if (cJSON_IsNumber(item)) bd->bar_max = (float)item->valuedouble;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
+	if (cJSON_IsNumber(item)) bd->smooth.smoothing_ms = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
 	if (cJSON_IsBool(item)) bd->anchor_enabled = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
@@ -1286,6 +1384,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 static void _bar_destroy(widget_t *w) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	uint8_t slot = bd ? bd->slot : 0;
+	if (bd) widget_smooth_free(&bd->smooth);
 	if (bd && bd->signal_index >= 0)
 		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
 	if (bd && bd->channel) {
@@ -1527,6 +1626,7 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 		out->b = (bd->bar_low != 0 || bd->bar_high != 0);
 		return true;
 	}
+	if (strcmp(name, "smoothing_ms") == 0)       { out->i = bd->smooth.smoothing_ms;  return true; }
 	return false;
 }
 
@@ -1768,6 +1868,12 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 			bd->bar_low  = 0;
 			bd->bar_high = 0;
 		}
+		return true;
+	}
+	if (strcmp(name, "smoothing_ms") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 500) v = 500;
+		bd->smooth.smoothing_ms = (uint16_t)v;
+		if (v == 0) widget_smooth_reset(&bd->smooth);
 		return true;
 	}
 	return false;

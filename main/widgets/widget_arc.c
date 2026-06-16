@@ -410,9 +410,21 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
 
 /* ── Signal callback ───────────────────────────────────────────────────── */
 
+/* Smoothing apply: push the eased value straight to the display path (no
+ * recursion — _arc_recompute_value isn't the signal entry point). */
+static void _arc_smooth_apply(widget_t *w, float v) {
+    _arc_recompute_value(w, v, false);
+}
+
 static void _arc_on_signal(float value, bool is_stale, void *user_data) {
     widget_t *w = (widget_t *)user_data;
     if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    /* Value smoothing: ease the fill/value-line at the refresh rate. */
+    if (d && d->smooth.smoothing_ms != 0) {
+        if (is_stale) widget_smooth_reset(&d->smooth);
+        else { widget_smooth_set(&d->smooth, value, false); return; }
+    }
     _arc_recompute_value(w, value, is_stale);
 }
 
@@ -1316,6 +1328,9 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
         _arc_create_standard(w, parent);
     }
 
+    /* Wire up optional value smoothing (range used for the settle epsilon). */
+    widget_smooth_config(&d->smooth, w, _arc_smooth_apply, d->signal_max - d->signal_min);
+
     /* Subscribe to signal after w->root is set */
     if (d->signal_index >= 0)
         signal_subscribe(d->signal_index, _arc_on_signal, w);
@@ -1434,6 +1449,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "signal_min", (double)d->signal_min);
     if (d->signal_max != ARC_DEFAULT_SIG_MAX)
         cJSON_AddNumberToObject(cfg, "signal_max", (double)d->signal_max);
+    if (d->smooth.smoothing_ms != 0)
+        cJSON_AddNumberToObject(cfg, "smoothing_ms", d->smooth.smoothing_ms);
 
     /* Image mode */
     if (d->arc_image[0] != '\0')
@@ -1658,6 +1675,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_max");
     if (cJSON_IsNumber(item)) { d->signal_max = (float)item->valuedouble; sig_max_explicit = true; }
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
+    if (cJSON_IsNumber(item)) d->smooth.smoothing_ms = (uint16_t)item->valueint;
 
     /* Image mode */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image");
@@ -1892,6 +1911,7 @@ static void _arc_destroy(widget_t *w) {
     if (!w) return;
     arc_data_t *d = (arc_data_t *)w->type_data;
 
+    if (d) widget_smooth_free(&d->smooth);
     /* Unsubscribe signal before deleting LVGL objects */
     if (d && d->signal_index >= 0)
         signal_unsubscribe(d->signal_index, _arc_on_signal, w);
@@ -2131,6 +2151,7 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "mid_tick_length") == 0) { out->i = d->mid_tick_length; return true; }
 	if (strcmp(name, "mid_tick_width") == 0)  { out->i = d->mid_tick_width;  return true; }
 	if (strcmp(name, "mid_tick_color") == 0)  { out->color = lv_color_to32(d->mid_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "smoothing_ms") == 0)    { out->i = d->smooth.smoothing_ms; return true; }
 	return false;
 }
 
@@ -2384,6 +2405,12 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		d->arc_high_color = lv_color_hex(in->color);
 		if (a && lv_obj_is_valid(a))
 			_arc_apply_fill_color(d, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "smoothing_ms") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 500) v = 500;
+		d->smooth.smoothing_ms = (uint16_t)v;
+		if (v == 0) widget_smooth_reset(&d->smooth);
 		return true;
 	}
 	return false;

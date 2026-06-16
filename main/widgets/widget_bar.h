@@ -3,6 +3,7 @@
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "widget_smooth.h"
 #include "gradient_stops.h"
 #include <stdbool.h>
 #ifdef __cplusplus
@@ -54,6 +55,14 @@ typedef struct {
 	bool     invert_bar_value;
 	bool     center_fill;           /* default: false — lv_bar SYMMETRICAL: fill from
 	                                 * zero outward (set Min<0<Max for a centered split) */
+	/* Fill direction (standard colour-bar path only):
+	 *   0 = Left → Right (default)   1 = Right → Left (base_dir RTL)
+	 *   2 = Center → Out ("inside to outside")
+	 *   3 = Edges → In   ("outside to inside")
+	 * Modes 2/3 render as two mirrored half-bars (bar_obj + bar_obj2). When a
+	 * mirror mode is active center_fill is ignored (the mirror owns geometry).
+	 * Image-mode bars only honour mode 0/1. */
+	uint8_t  fill_dir;
 	uint8_t  decimals;
 	char     label_font[32];
 	char     value_font[32];
@@ -103,6 +112,7 @@ typedef struct {
 	void    *channel;     /* channel_t* — opaque */
 	/* LVGL object pointers (runtime only, per-instance) */
 	lv_obj_t *bar_obj;
+	lv_obj_t *bar_obj2;             /* right-half mirror bar (fill_dir 2/3 only) */
 	lv_obj_t *label_obj;
 	lv_obj_t *value_obj;
 	/* Tick-mark objects — siblings of the bar (children of the same parent),
@@ -131,6 +141,9 @@ typedef struct {
 	bool       _pc_grad_active;
 	uint16_t   _pc_grad_first;
 	char       _pc_value_str[16];
+	/* Optional needle/fill smoothing (eases the value at refresh rate). */
+	widget_smooth_t smooth;
+	bool            smooth_bypass;   /* true while the easing timer re-feeds on_signal */
 } bar_data_t;
 
 /** Create BAR1 and BAR2 horizontal bar widgets and their labels on parent. */

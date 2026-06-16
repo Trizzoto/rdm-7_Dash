@@ -3,6 +3,7 @@
 #include "gradient_stops.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "widget_smooth.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
@@ -44,6 +45,18 @@ typedef struct {
 	int32_t  limiter_value;
 	lv_color_t limiter_color;
 	uint16_t flash_speed_ms;   /* default 200, range 50..1000 — flash period for effect=1 */
+	/* Fill direction:
+	 *   0 = Left → Right   (default; classic single-bar look)
+	 *   1 = Right → Left   (single bar, base_dir RTL)
+	 *   2 = Center → Out   ("inside to outside" — two mirrored half-bars grow
+	 *                       outward from the centre)
+	 *   3 = Edges → In     ("outside to inside" — two mirrored half-bars grow
+	 *                       inward from both outer edges; the KTM-cluster look)
+	 * Modes 2/3 render the fill as TWO lv_bar halves (rpm_bar_gauge +
+	 * rpm_bar_gauge2). Any non-default mode hides the legacy Panel9 colour
+	 * swatch + the redline-zone overlay (both designed for the L→R bar only)
+	 * and uses a plain [0,gauge_max] range instead of the extended-width hack. */
+	uint8_t  fill_dir;
 	char     signal_name[32];
 	int16_t  signal_index;
 	/* ── Appearance customization (v-compatible, all defaults match the
@@ -69,6 +82,9 @@ typedef struct {
 	void    *channel;     /* channel_t* — opaque */
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	rpm_bar_night_overrides_t night;
+	/* Optional value smoothing (eases the fill at refresh rate). */
+	widget_smooth_t smooth;
+	bool            smooth_bypass;
 } rpm_bar_data_t;
 
 /** Create the RPM widget container with bar gauge, redline, tick marks, Panel9.

@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "widget_smooth.h"
 #include "gradient_stops.h"
 #include <stdint.h>
 
@@ -262,6 +263,8 @@ typedef struct {
 
     /* Night-mode appearance overrides (only applied when night_mode active) */
     arc_night_overrides_t night;
+    /* Optional value smoothing (eases the fill/value-line at refresh rate). */
+    widget_smooth_t smooth;
 } arc_data_t;
 
 widget_t *widget_arc_create_instance(uint8_t slot);

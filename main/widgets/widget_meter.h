@@ -45,6 +45,15 @@ typedef struct {
 	 * post-create paint, after a rebuild, or after a forced repaint). */
 	int32_t  _last_needle_v;     /* paint memo: last value pushed to lv_meter */
 	bool     _last_needle_valid; /* false => force next paint */
+	/* Needle smoothing: ease the displayed value toward the live value at the
+	 * refresh rate instead of stepping at the (slower) data rate — uses spare
+	 * CPU to make the needle glide. 0 = off (instant, original behaviour). */
+	uint16_t     smoothing_ms;   /* exp-ease time constant in ms; 0 = instant */
+	float        anim_target;    /* latest signal value (display units) */
+	float        anim_current;   /* eased displayed value */
+	bool         anim_active;    /* currently easing */
+	bool         anim_inited;    /* first value snaps (no glide from 0) */
+	lv_timer_t  *anim_timer;     /* ~refresh-rate easing timer (NULL if off) */
 	/* ── Appearance overrides ── */
 	/* Ticks */
 	uint8_t    minor_tick_count;     /* default: 21 */

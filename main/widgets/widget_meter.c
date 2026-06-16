@@ -297,6 +297,90 @@ static float _meter_apply_anchor(const meter_data_t *md, float v) {
 	}
 }
 
+#define METER_ANIM_PERIOD_MS 16   /* easing tick ≈ display refresh */
+
+/* Push a display value (display units; already clamped/anchored/reversed) to the
+ * needle, value-gated to ~1 tip-pixel so steady/sub-pixel values don't repaint.
+ * Mirrors the inline snap path in _meter_on_signal; used by the easing timer.
+ * (The two paths are mutually exclusive per meter: smoothing on => only the
+ *  timer drives; smoothing off => only the inline path. They share the
+ *  _last_needle_v paint memo, so there's no conflict.) */
+static void _meter_show_value(widget_t *w, meter_data_t *md, float fv) {
+	int32_t v = lroundf(fv * (float)md->value_scale);
+	int32_t range_v = lroundf((md->max - md->min) * (float)md->value_scale);
+	if (range_v < 1) range_v = 1;
+	int32_t r_px  = (w->w < w->h ? w->w : w->h) / 2;
+	int32_t steps = (int32_t)((float)_meter_compute_angle_range(md) * 0.01745f * (float)r_px);
+	if (steps < 1) steps = 1;
+	int32_t quant = range_v / steps;
+	if (quant < 1) quant = 1;
+	int32_t vq = v / quant;
+	if (md->_last_needle_valid && md->_last_needle_v == vq) return;
+	md->_last_needle_v = vq;
+	md->_last_needle_valid = true;
+	if (md->night_meter && md->night_needle && lv_obj_is_valid(md->night_meter) &&
+	    !lv_obj_has_flag(md->night_meter, LV_OBJ_FLAG_HIDDEN)) {
+		int32_t old_v = md->night_needle->end_value;
+		lv_meter_set_indicator_value(md->night_meter, md->night_needle, v);
+		if (md->needle_rear_length > 0) {
+			_meter_inv_rear(md->night_meter, md->night_scale, old_v,
+			                md->needle_rear_length, md->needle_width, md->needle_inner_radius);
+			_meter_inv_rear(md->night_meter, md->night_scale, v,
+			                md->needle_rear_length, md->needle_width, md->needle_inner_radius);
+		}
+		if (md->shadow_enabled && md->night_shadow_needle) {
+			lv_meter_set_indicator_value(md->night_meter, md->night_shadow_needle, v);
+			_meter_inv_shadow(md->night_meter, md->night_scale, old_v, md);
+			_meter_inv_shadow(md->night_meter, md->night_scale, v,     md);
+		}
+	} else if (md->meter && md->needle &&
+	           !lv_obj_has_flag(md->meter, LV_OBJ_FLAG_HIDDEN)) {
+		int32_t old_v = md->needle->end_value;
+		lv_meter_set_indicator_value(md->meter, md->needle, v);
+		if (md->needle_rear_length > 0) {
+			_meter_inv_rear(md->meter, md->scale, old_v,
+			                md->needle_rear_length, md->needle_width, md->needle_inner_radius);
+			_meter_inv_rear(md->meter, md->scale, v,
+			                md->needle_rear_length, md->needle_width, md->needle_inner_radius);
+		}
+		if (md->shadow_enabled && md->shadow_needle) {
+			lv_meter_set_indicator_value(md->meter, md->shadow_needle, v);
+			_meter_inv_shadow(md->meter, md->scale, old_v, md);
+			_meter_inv_shadow(md->meter, md->scale, v,     md);
+		}
+	}
+}
+
+/* Smoothing timer: each refresh tick, ease the displayed value toward the live
+ * target, then repaint (value-gated). Self-pauses once settled, so a steady
+ * needle costs nothing. Uses spare CPU to make the needle glide at ~60 fps even
+ * when the data updates slower. */
+static void _meter_anim_cb(lv_timer_t *t) {
+	widget_t *w = (widget_t *)t->user_data;
+	if (!w) { lv_timer_pause(t); return; }
+	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (!md || !md->anim_active || !w->root || !lv_obj_is_valid(w->root) ||
+	    !md->meter || !md->needle) {
+		if (md) md->anim_active = false;
+		lv_timer_pause(t);
+		return;
+	}
+	float diff = md->anim_target - md->anim_current;
+	float settle = (md->max - md->min) * 0.0008f;
+	if (settle < 1e-4f) settle = 1e-4f;
+	if (fabsf(diff) <= settle) {
+		md->anim_current = md->anim_target;
+		md->anim_active = false;
+		lv_timer_pause(t);
+	} else {
+		float k = md->smoothing_ms ? (float)METER_ANIM_PERIOD_MS / (float)md->smoothing_ms : 1.0f;
+		if (k > 1.0f) k = 1.0f;
+		if (k < 0.05f) k = 0.05f;
+		md->anim_current += diff * k;
+	}
+	_meter_show_value(w, md, md->anim_current);
+}
+
 static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	meter_data_t *md = (meter_data_t *)w->type_data;
@@ -315,6 +399,29 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 	}
 	fv = _meter_apply_anchor(md, fv);
 	if (md->reverse) fv = md->max + md->min - fv;
+
+	/* Needle smoothing: ease toward the live value instead of snapping. Snap on
+	 * the first value (no glide up from 0), when smoothing is off, or when stale.
+	 * The easing timer is created lazily on first use and self-pauses when idle. */
+	if (!is_stale && md->smoothing_ms != 0) {
+		if (!md->anim_timer) {
+			md->anim_timer = lv_timer_create(_meter_anim_cb, METER_ANIM_PERIOD_MS, w);
+			if (md->anim_timer) lv_timer_pause(md->anim_timer);
+		}
+		if (md->anim_inited) {
+			md->anim_target = fv;
+			if (!md->anim_active && md->anim_timer) {
+				md->anim_active = true;
+				lv_timer_resume(md->anim_timer);
+			}
+			return;  /* timer eases + repaints */
+		}
+		/* first value: seed the eased state, then fall through to snap-paint */
+		md->anim_current = fv;
+		md->anim_target  = fv;
+		md->anim_inited  = true;
+	}
+
 	int32_t v = lroundf(fv * (float)md->value_scale);
 	/* Value-gate: suppress repaints that wouldn't visibly move the needle.
 	 * v carries (max-min)*value_scale resolution — 1 rpm on a 0-7000 tach is
@@ -1697,6 +1804,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "scale_padding", md->scale_padding);
 	if (md->label_gap != 10)
 		cJSON_AddNumberToObject(cfg, "label_gap", md->label_gap);
+	if (md->smoothing_ms != 0)
+		cJSON_AddNumberToObject(cfg, "smoothing_ms", md->smoothing_ms);
 	if (md->tick_label_font[0] != '\0')
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
 	if (md->tick_label_color.full != lv_color_white().full)
@@ -1890,6 +1999,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->scale_padding = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
 	if (cJSON_IsNumber(ap)) md->label_gap = (int16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
+	if (cJSON_IsNumber(ap)) md->smoothing_ms = (uint16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_font");
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->tick_label_font, ap->valuestring, sizeof(md->tick_label_font));
@@ -2008,6 +2119,10 @@ static void _meter_destroy(widget_t *w) {
 	if (!w)
 		return;
 	meter_data_t *md = (meter_data_t *)w->type_data;
+	if (md && md->anim_timer) {        /* stop easing before the widget is freed */
+		lv_timer_del(md->anim_timer);
+		md->anim_timer = NULL;
+	}
 	if (md && md->signal_index >= 0)
 		signal_unsubscribe(md->signal_index, _meter_on_signal, w);
 	if (md && md->channel) {
@@ -2325,6 +2440,7 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "shadow_opa") == 0)         { out->i = md->shadow_opa;          return true; }
 	if (strcmp(name, "shadow_width_extra") == 0) { out->i = md->shadow_width_extra;  return true; }
 	if (strcmp(name, "shadow_color") == 0)       { out->color = lv_color_to32(md->shadow_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "smoothing_ms") == 0)       { out->i = md->smoothing_ms;        return true; }
 	return false;
 }
 
@@ -2536,6 +2652,11 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "shadow_color") == 0) {
 		md->shadow_color = lv_color_hex(in->color);
 		if (LV_VALID(m)) lv_obj_invalidate(m);
+		return true;
+	}
+	if (strcmp(name, "smoothing_ms") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 500) v = 500;
+		md->smoothing_ms = (uint16_t)v;
 		return true;
 	}
 	#undef LV_VALID

@@ -6971,6 +6971,7 @@
                         fields: [
                             { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data" },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "appearance", min: 0, max: 300, step: 10 },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                             { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "appearance",
                               options: [
@@ -7056,6 +7057,7 @@
                             { name: "label", label: "Label", type: "text", def: "", cat: "data" },
                             { name: "bar_min", label: "Min Value", type: "number", def: 0, cat: "data" },
                             { name: "bar_max", label: "Max Value", type: "number", def: 100, cat: "data" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "appearance", min: 0, max: 300, step: 10 },
                             { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data" },
                             { name: "decimals", label: "Decimals", type: "number", def: 0, cat: "data" },
                             /* Anchor-based non-linear scale. "Pin THIS data value to
@@ -7161,6 +7163,7 @@
                         fields: [
                             { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
                             { name: "max", label: "Max Value", type: "number", def: 100, cat: "data" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "appearance", min: 0, max: 300, step: 10 },
                             /* User-coord start angle: 0° = 12 o'clock, CW positive.
                              * _meterSyncDerived translates this into the LVGL
                              * start_angle/end_angle pair the firmware reads. */
@@ -7362,6 +7365,7 @@
                             { name: "sweep_degrees", label: "Sweep (°)", type: "slider", def: 270, cat: "data", min: 30, max: 360, step: 5 },
                             { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data" },
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "appearance", min: 0, max: 300, step: 10 },
                             { name: "tick_min", label: "Tick Start Value", type: "number", def: 0, cat: "data" },
                             { name: "tick_max", label: "Tick End Value", type: "number", def: 0, cat: "data" },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },

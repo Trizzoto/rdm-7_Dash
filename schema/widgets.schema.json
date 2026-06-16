@@ -35,6 +35,16 @@
           "category": "data"
         },
         {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "appearance",
+          "min": 0,
+          "max": 300,
+          "step": 10
+        },
+        {
           "name": "bar_color",
           "label": "Bar Color",
           "type": "color",
@@ -551,6 +561,16 @@
           "type": "number",
           "default": 100,
           "category": "data"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "appearance",
+          "min": 0,
+          "max": 300,
+          "step": 10
         },
         {
           "name": "show_bar_value",
@@ -1172,6 +1192,16 @@
           "type": "number",
           "default": 100,
           "category": "data"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "appearance",
+          "min": 0,
+          "max": 300,
+          "step": 10
         },
         {
           "name": "start_angle_user",
@@ -2171,6 +2201,16 @@
           "type": "number",
           "default": 100,
           "category": "data"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "appearance",
+          "min": 0,
+          "max": 300,
+          "step": 10
         },
         {
           "name": "tick_min",

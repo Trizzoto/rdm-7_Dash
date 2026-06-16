@@ -91,6 +91,7 @@ idf_component_register(
         "widgets/widget_line.c"
         "widgets/widget_banner.c"
         "widgets/widget_rules.c"
+        "widgets/widget_smooth.c"
         "widgets/widget_fields.c"
         "widgets/widget_fields.gen.c"
         "widgets/font_manager.c"
