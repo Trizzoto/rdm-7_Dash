@@ -53,6 +53,31 @@
           "night_overridable": true
         },
         {
+          "name": "fill_dir",
+          "label": "Fill Direction",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            {
+              "value": 0,
+              "label": "Left to Right"
+            },
+            {
+              "value": 1,
+              "label": "Right to Left"
+            },
+            {
+              "value": 2,
+              "label": "Center Out"
+            },
+            {
+              "value": 3,
+              "label": "Edges In"
+            }
+          ]
+        },
+        {
           "name": "limiter_effect",
           "label": "Limiter Effect",
           "type": "select",
@@ -625,6 +650,31 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance"
+        },
+        {
+          "name": "fill_dir",
+          "label": "Fill Direction",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            {
+              "value": 0,
+              "label": "Left to Right"
+            },
+            {
+              "value": 1,
+              "label": "Right to Left"
+            },
+            {
+              "value": 2,
+              "label": "Center Out"
+            },
+            {
+              "value": 3,
+              "label": "Edges In"
+            }
+          ]
         },
         {
           "name": "bar_in_range_color",

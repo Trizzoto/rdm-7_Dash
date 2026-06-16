@@ -236,6 +236,12 @@ void widget_bar_sync_range(bar_data_t *bd) {
 	}
 }
 
+/* Indicator styling/paint helpers (defined near _bar_create) — forward-declared
+ * here so _bar_on_signal (above their definitions) can paint both mirror halves. */
+static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track);
+static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
+                                 lv_color_t color, bool grad_on);
+
 /* ── Helpers: look up bar_data_t by slot or value_id via registry ──────── */
 static bar_data_t *_lookup_bar_data(uint8_t slot) {
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_BAR, slot);
@@ -597,10 +603,11 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		}
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
+		bool mirror = (bd->fill_dir == 2 || bd->fill_dir == 3);
 		int32_t display_value;
 		if (is_stale) {
 			display_value = 0;   /* SYMMETRICAL → centre pill; NORMAL → empty */
-		} else if (bd->center_fill) {
+		} else if (bd->center_fill && !mirror) {
 			/* Center-fill: feed the offset from the range midpoint so the
 			 * SYMMETRICAL fill grows outward from the bar's centre (range set
 			 * symmetric in _bar_set_lv_range). Invert reflects about centre. */
@@ -626,6 +633,8 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 		 * signals), which removes the whole-bar dirty rect entirely. */
 		if (!bd->_pc_valid || bd->_pc_display_value != display_value) {
 			lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
+			if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
+				lv_bar_set_value(bd->bar_obj2, display_value, LV_ANIM_OFF);
 			bd->_pc_display_value = display_value;
 		}
 		bool night_active = night_mode_is_active();
@@ -647,33 +656,16 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			(bd->grad_stops.count >= 1) ? bd->grad_stops.stops[0].color : 0;
 		if (!bd->_pc_valid || bd->_pc_bg.full != new_color.full ||
 		    bd->_pc_grad_active != grad_now || bd->_pc_grad_first != grad_first_now) {
-		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		/* Multi-stop horizontal gradient on the indicator, in-range only.
-		 * Uses LVGL's native lv_grad_dsc_t (cap raised to 8 stops in
-		 * sdkconfig) — LVGL renders the gradient INTO the indicator
-		 * rectangle directly, so as the bar fills from 0 → 100 % the
-		 * gradient grows with it without the centering/tiling artifacts
-		 * that bg_img has. Low/high alert states still paint solid over
-		 * the top via the bg_color set just above.
-		 *
-		 * lv_obj_set_style_bg_grad stores the dsc POINTER, not a copy —
-		 * the descriptor must outlive the style. We keep it in
-		 * bar_data_t.grad_lv_dsc so it survives every redraw. */
-		if (in_range && bd->grad_stops.count >= 2 &&
-		    gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &bd->grad_lv_dsc,
-		                                  LV_GRAD_DIR_HOR)) {
-			lv_obj_set_style_bg_grad(bd->bar_obj, &bd->grad_lv_dsc,
-			                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		} else {
-			/* MUST clear dsc.dir as well — LVGL's draw_dsc init checks
-			 * grad->dir on the descriptor before falling back to the
-			 * bg_grad_dir property, so leaving HOR here would keep the
-			 * gradient painting over the alert colour. */
-			bd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
-			lv_obj_set_style_bg_grad_dir(bd->bar_obj, LV_GRAD_DIR_NONE,
-										 LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		}
+			/* Multi-stop horizontal gradient on the indicator, in-range only.
+			 * Uses LVGL's native lv_grad_dsc_t (cap raised to 8 stops in
+			 * sdkconfig) — rendered INTO the indicator rect so it grows with the
+			 * fill. Low/high alert states paint solid. Painted on both halves in
+			 * the mirror modes (bar_obj2) via _bar_paint_indicator. The helper
+			 * clears grad_lv_dsc.dir on the solid path because LVGL's draw_dsc
+			 * init checks grad->dir before falling back to bg_grad_dir. */
+			_bar_paint_indicator(bd->bar_obj, bd, new_color, in_range);
+			if (bd->bar_obj2)
+				_bar_paint_indicator(bd->bar_obj2, bd, new_color, in_range);
 			bd->_pc_bg = new_color;
 			bd->_pc_grad_active = grad_now;
 			bd->_pc_grad_first = grad_first_now;
@@ -1022,14 +1014,30 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	}
 }
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
-	if (w->root && lv_obj_is_valid(w->root))
-		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	/* Mirror modes: re-split the new width into two centred halves. Otherwise
+	 * the single root bar (or image stack) just takes the full size. */
+	if (bd && (bd->fill_dir == 2 || bd->fill_dir == 3) && bd->bar_obj2) {
+		lv_coord_t leftW  = nw / 2;
+		lv_coord_t rightW = nw - leftW;
+		lv_coord_t leftX  = w->x - (nw / 2) + (leftW / 2);
+		lv_coord_t rightX = w->x + (nw / 2) - (rightW / 2);
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+			lv_obj_set_size(bd->bar_obj, leftW, nh);
+			lv_obj_set_pos(bd->bar_obj, leftX, w->y);
+		}
+		if (lv_obj_is_valid(bd->bar_obj2)) {
+			lv_obj_set_size(bd->bar_obj2, rightW, nh);
+			lv_obj_set_pos(bd->bar_obj2, rightX, w->y);
+		}
+	} else if (w->root && lv_obj_is_valid(w->root)) {
+		lv_obj_set_size(w->root, nw, nh);
+	}
 	/* Keep the label + value glued to their relative positions when the bar
 	 * grows / shrinks live in the editor. Without this the value label stays
 	 * pinned to the original right-edge x and drifts off the bar end. */
-	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (bd && bd->label_obj && lv_obj_is_valid(bd->label_obj))
 		lv_obj_set_pos(bd->label_obj, w->x, w->y - 28);
 	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
@@ -1088,6 +1096,8 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		/* Defaults-only: emit center_fill only when enabled (default false). */
 		if (bd->center_fill)
 			cJSON_AddBoolToObject(cfg, "center_fill", true);
+		if (bd->fill_dir != 0)   /* default 0 (L→R) — defaults-only emit */
+			cJSON_AddNumberToObject(cfg, "fill_dir", bd->fill_dir);
 		/* Decimals: per-widget override only — omit when it matches the bound
 		 * channel's decimals so it follows the channel by default. */
 		if (!bd->channel || bd->decimals != ((channel_t *)bd->channel)->decimals)
@@ -1221,6 +1231,12 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "center_fill");
 	if (cJSON_IsBool(item)) bd->center_fill = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_dir");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0 || v > 3) v = 0;
+		bd->fill_dir = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
 	bool decimals_overridden = cJSON_IsNumber(item);
 	if (decimals_overridden) bd->decimals = (uint8_t)item->valueint;
@@ -1407,6 +1423,9 @@ static void _bar_destroy(widget_t *w) {
 	/* In track-image + color-fill mode, bar_obj is a sibling of root */
 	if (bd && bd->bar_obj && lv_obj_is_valid(bd->bar_obj) && (lv_obj_t *)bd->bar_obj != w->root)
 		lv_obj_del(bd->bar_obj);
+	/* Mirror mode: bar_obj2 (right half) is a sibling of root — free explicitly. */
+	if (bd && bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2) && (lv_obj_t *)bd->bar_obj2 != w->root)
+		lv_obj_del(bd->bar_obj2);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -1424,6 +1443,7 @@ static void _bar_destroy(widget_t *w) {
 		bd->label_obj = NULL;
 		bd->value_obj = NULL;
 		bd->bar_obj = NULL;
+		bd->bar_obj2 = NULL;
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
 	}
@@ -1473,6 +1493,11 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(bd->bar_obj, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2)) {
+		lv_obj_set_style_bg_color(bd->bar_obj2, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj2, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bd->bar_obj2, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 	/* Fill-image mode: plain track lv_obj stored in img_bg_obj */
 	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
 		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1513,6 +1538,10 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2)) {
+		lv_obj_set_style_bg_color(bd->bar_obj2, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj2, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
 		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1598,6 +1627,7 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "show_bar_value") == 0)     { out->b = bd->show_bar_value;       return true; }
 	if (strcmp(name, "invert_bar_value") == 0)   { out->b = bd->invert_bar_value;     return true; }
 	if (strcmp(name, "center_fill") == 0)        { out->b = bd->center_fill;          return true; }
+	if (strcmp(name, "fill_dir") == 0)           { out->i = bd->fill_dir;             return true; }
 	if (strcmp(name, "show_bar_label") == 0)     { out->b = bd->show_bar_label;       return true; }
 	if (strcmp(name, "anchor_enabled") == 0)     { out->b = bd->anchor_enabled;       return true; }
 	if (strcmp(name, "anchor_value") == 0)       { out->i = bd->anchor_value;         return true; }
@@ -1716,6 +1746,14 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 				bd->center_fill ? LV_BAR_MODE_SYMMETRICAL : LV_BAR_MODE_NORMAL);
 		}
 		widget_bar_sync_range(bd);
+		return true;
+	}
+	if (strcmp(name, "fill_dir") == 0) {
+		int v = in->i;
+		if (v < 0 || v > 3) v = 0;
+		/* Structural (single vs two-bar) — stored now, applied on the next
+		 * layout reload (the web editor saves + hot-reloads after edits). */
+		bd->fill_dir = (uint8_t)v;
 		return true;
 	}
 	if (strcmp(name, "show_bar_label") == 0) {
@@ -1911,6 +1949,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->show_bar_label = true;        /* show the text label above the bar by default */
 	bd->center_fill = false;          /* NORMAL fill (left→right); SYMMETRICAL only when enabled */
+	bd->fill_dir = 0;                 /* Left → Right */
 	/* Tick-mark defaults (off by default so existing layouts are unaffected) */
 	bd->show_ticks  = false;
 	bd->tick_count  = 5;

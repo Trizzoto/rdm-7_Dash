@@ -6973,6 +6973,13 @@
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data" },
                             { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "appearance", min: 0, max: 300, step: 10 },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
+                            { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Left to Right" },
+                                  { v: 1, l: "Right to Left" },
+                                  { v: 2, l: "Center Out" },
+                                  { v: 3, l: "Edges In" }
+                              ] },
                             { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "appearance",
                               options: [
                                   { v: 0, l: "None" },
@@ -7071,6 +7078,13 @@
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance" },
                             { name: "center_fill", label: "Center Fill (±)", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance",
+                              options: [
+                                  { v: 0, l: "Left to Right" },
+                                  { v: 1, l: "Right to Left" },
+                                  { v: 2, l: "Center Out" },
+                                  { v: 3, l: "Edges In" }
+                              ] },
                             { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", nightOverridable: true },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance" },
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance" },

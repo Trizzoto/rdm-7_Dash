@@ -8,6 +8,13 @@
  */
 #include "widgets/widget_fields.h"
 
+static const widget_field_option_t rpm_bar_fill_dir_opts[] = {
+    { 0, "Left to Right" },
+    { 1, "Right to Left" },
+    { 2, "Center Out" },
+    { 3, "Edges In" },
+};
+
 static const widget_field_option_t rpm_bar_limiter_effect_opts[] = {
     { 0, "None" },
     { 1, "Bar Flash" },
@@ -60,6 +67,16 @@ static const widget_field_t rpm_bar_fields[] = {
         .options = NULL, .option_count = 0,
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
         .night_overridable = true,
+    },
+    {
+        .name = "fill_dir", .label = "Fill Direction",
+        .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = rpm_bar_fill_dir_opts, .option_count = 4,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
     },
     {
         .name = "limiter_effect", .label = "Limiter Effect",
@@ -535,6 +552,13 @@ static const widget_field_t panel_fields[] = {
     },
 };
 
+static const widget_field_option_t bar_fill_dir_opts[] = {
+    { 0, "Left to Right" },
+    { 1, "Right to Left" },
+    { 2, "Center Out" },
+    { 3, "Edges In" },
+};
+
 static const widget_field_option_t bar_tick_side_opts[] = {
     { 0, "Top" },
     { 1, "Bottom" },
@@ -649,6 +673,16 @@ static const widget_field_t bar_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
+        .enabled_by = NULL, .group = NULL, .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
+        .name = "fill_dir", .label = "Fill Direction",
+        .type = WF_TYPE_SELECT, .category = WF_CAT_APPEARANCE,
+        .min_int = 0, .max_int = 0, .step_int = 0,
+        .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = bar_fill_dir_opts, .option_count = 4,
         .enabled_by = NULL, .group = NULL, .inline_key = NULL,
         .night_overridable = false,
     },
