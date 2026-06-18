@@ -765,9 +765,9 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
     dsc.rounded = 0;
     if (dsc.width <= 0) return;
 
-    int segs = (int)(ind_span / 8.0f) + 1;
+    int segs = (int)(ind_span / 12.0f) + 1;   /* ~12deg sub-bands: fewer lv_draw_arc calls, fade still smooth */
     if (segs < 2)  segs = 2;
-    if (segs > 48) segs = 48;
+    if (segs > 32) segs = 32;
     float dstep = ind_span / (float)segs;
     for (int i = 0; i < segs; i++) {
         float o0  = dstep * i;
@@ -1330,9 +1330,13 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
     lv_arc_set_value(obj, d->signal_index >= 0 ? 0 : 100);
     d->arc_obj = obj;
     /* Positional fade overlay — only hook the draw when enabled so plain arcs
-     * pay nothing. Paints dim->bright sub-bands over the native fill. */
-    if (d->fade_fill)
+     * pay nothing. Paints dim->bright sub-bands over the native fill, and hides
+     * the native indicator (which the overlay fully covers) so we don't pay for
+     * drawing it twice every frame. */
+    if (d->fade_fill) {
         lv_obj_add_event_cb(obj, _arc_fade_draw_cb, LV_EVENT_DRAW_MAIN_END, d);
+        lv_obj_set_style_arc_opa(obj, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    }
 
     /* Redline zone marker — separate arc spanning [threshold_angle..end_angle].
      * Drawn ON TOP of the main arc so it stays visible regardless of fill
@@ -2348,10 +2352,12 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "fade_fill") == 0) {
 		d->fade_fill = in->b;
 		if (a && lv_obj_is_valid(a)) {
-			/* (re)attach the overlay draw hook for live editor toggling */
+			/* (re)attach the overlay draw hook + hide/show the native
+			 * indicator (overlay covers it) for live editor toggling */
 			lv_obj_remove_event_cb(a, _arc_fade_draw_cb);
 			if (d->fade_fill)
 				lv_obj_add_event_cb(a, _arc_fade_draw_cb, LV_EVENT_DRAW_MAIN_END, d);
+			lv_obj_set_style_arc_opa(a, d->fade_fill ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_INDICATOR);
 			lv_obj_invalidate(a);
 		}
 		return true;

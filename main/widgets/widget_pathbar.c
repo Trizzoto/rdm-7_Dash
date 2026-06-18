@@ -211,11 +211,12 @@ static void _draw_band_faded(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, f
                              lv_color_t bright, lv_opa_t master) {
     if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
     lv_color_t dim = lv_color_mix(bright, lv_color_black(), 66);   /* 26% of bright — matches studio _pvDarken(col,0.26) */
-    /* ~8px sub-bands along the lit span; clamp so very long/short bands stay sane */
+    /* ~13px sub-bands along the lit span: fewer lv_draw_line passes (cheaper
+     * redraw) while the fade stays visually smooth. Clamp for sanity. */
     float span_px = (fb - fa) * pd->total_len;
-    int segs = (int)(span_px / 8.0f) + 1;
+    int segs = (int)(span_px / 13.0f) + 1;
     if (segs < 2)  segs = 2;
-    if (segs > 64) segs = 64;
+    if (segs > 40) segs = 40;
     float dstep = (fb - fa) / (float)segs;
     for (int i = 0; i < segs; i++) {
         float p0 = fa + dstep * i;
