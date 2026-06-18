@@ -36,9 +36,10 @@ static const char *TAG = "dashboard";
 
 /* ── Internal widget registry snapshot ───────────────────────────────────── */
 
-/* Maximum widgets the dashboard tracks (5 types × worst-case instances):
- *   panel×8, rpm_bar×1, bar×2, indicator×2, warning×8, text×N, meter×N */
-#define DASHBOARD_MAX_WIDGETS 32
+/* Maximum widgets the dashboard tracks. Must be >= WIDGET_REGISTRY_MAX so the
+ * snapshot here sees every registered widget — a dense cluster (Ford-style
+ * layout) runs ~38, and 32 silently dropped the tail. */
+#define DASHBOARD_MAX_WIDGETS 64
 
 static widget_t *s_widgets[DASHBOARD_MAX_WIDGETS];
 static uint8_t s_widget_count = 0;

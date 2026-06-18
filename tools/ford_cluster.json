@@ -533,6 +533,51 @@
       "signal": "OIL_TEMP"
     },
     {
+      "type": "image",
+      "id": "ic_oilp",
+      "x": -60,
+      "y": -34,
+      "w": 24,
+      "h": 24,
+      "config": {
+        "image_name": "ic_oilp",
+        "image_scale": 256,
+        "opacity": 255,
+        "recolor": 52891,
+        "recolor_opa": 255
+      }
+    },
+    {
+      "type": "image",
+      "id": "ic_ect",
+      "x": 8,
+      "y": -34,
+      "w": 24,
+      "h": 24,
+      "config": {
+        "image_name": "ic_ect",
+        "image_scale": 256,
+        "opacity": 255,
+        "recolor": 52891,
+        "recolor_opa": 255
+      }
+    },
+    {
+      "type": "image",
+      "id": "ic_oilt",
+      "x": 76,
+      "y": -34,
+      "w": 24,
+      "h": 24,
+      "config": {
+        "image_name": "ic_oilt",
+        "image_scale": 256,
+        "opacity": 255,
+        "recolor": 52891,
+        "recolor_opa": 255
+      }
+    },
+    {
       "type": "text",
       "id": "oilp_lo",
       "x": -86,
@@ -796,7 +841,7 @@
       "w": 150,
       "h": 12,
       "config": {
-        "label": "",
+        "label": " ",
         "bar_min": 0,
         "bar_max": 120,
         "smoothing_ms": 80,
@@ -873,7 +918,7 @@
       "w": 150,
       "h": 12,
       "config": {
-        "label": "",
+        "label": " ",
         "bar_min": 0,
         "bar_max": 100,
         "smoothing_ms": 80,
