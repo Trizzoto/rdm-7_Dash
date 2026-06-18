@@ -37,6 +37,7 @@ typedef struct {
 	int16_t end_angle;
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
+	lv_meter_scale_t *mid_scale;     /* runtime: 2nd scale for medium ticks (NULL = off) */
 	lv_meter_indicator_t *needle;
 	/* Paint memo: value-gate the signal callback so a steady (or, in sim
 	 * mode, sub-pixel-stepping) value doesn't repaint the needle every
@@ -64,6 +65,15 @@ typedef struct {
 	uint8_t    major_tick_length;    /* default: 15 */
 	lv_color_t minor_tick_color;     /* default: LV_PALETTE_GREY */
 	lv_color_t major_tick_color;     /* default: white (0xFFFFFF) */
+	/* Medium (3rd) tick tier. Drawn as a SECOND lv_meter scale over the same
+	 * range/angle as the primary scale, with a length between minor and major.
+	 * mid_tick_step is the value interval in DISPLAY units (e.g. "every 500
+	 * RPM"); the tick count is derived from (max-min)/step at build time.
+	 * 0 disables the tier. Mirrors the arc widget's medium ticks. */
+	uint16_t   mid_tick_step;        /* default: 0 (disabled) */
+	uint8_t    mid_tick_length;      /* default: 13 */
+	uint8_t    mid_tick_width;       /* default: 2 */
+	lv_color_t mid_tick_color;       /* default: 0xBDBDBD */
 	/* Needle */
 	uint8_t    needle_width;         /* default: 4 */
 	lv_color_t needle_color;         /* default: white (0xFFFFFF) */
@@ -253,6 +263,7 @@ typedef struct {
 	 * updates both needles in lock-step. */
 	lv_obj_t            *night_meter;        /* sibling night meter (or NULL) */
 	lv_meter_scale_t    *night_scale;
+	lv_meter_scale_t    *night_mid_scale;    /* runtime: night medium-tick scale (or NULL) */
 	lv_meter_indicator_t *night_needle;
 	lv_meter_scale_t    *night_needle_scale; /* for offset-rotated needle */
 	lv_img_dsc_t        *night_needle_img_dsc;

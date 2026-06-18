@@ -1076,6 +1076,18 @@ static void _indicator_destroy(widget_t *w) {
 	}
 	night_mode_unsubscribe(_indicator_night_cb, w);
 	widget_rules_free(w);
+	/* The indicator image is a separate global lv_img created on `parent` (a
+	 * sibling of the touch-area root), so lv_obj_del(w->root) below doesn't reach
+	 * it. Delete it + clear the global, else it orphans on the screen and leaks
+	 * across every layout switch (turn-signal arrows bleeding onto layouts that
+	 * have no indicators). Its descriptor is a static built-in PNG, so there's
+	 * nothing to rdm_image_free — unlike the warning image this leaked rather
+	 * than dangled. */
+	if (id && id->slot < 2) {
+		lv_obj_t **gp = (id->slot == 0) ? &ui_Indicator_Left : &ui_Indicator_Right;
+		if (*gp && lv_obj_is_valid(*gp)) lv_obj_del(*gp);
+		*gp = NULL;
+	}
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;

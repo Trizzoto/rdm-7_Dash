@@ -22,6 +22,7 @@
 #include "data/channel_manager.h"
 #include "widgets/font_manager.h"
 #include "system/render_perf.h"
+#include "system/crash_log.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
@@ -297,6 +298,11 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(heap, "min_free", esp_get_minimum_free_heap_size());
 	cJSON_AddNumberToObject(heap, "psram_free",
 	                        (double)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+	/* Largest contiguous PSRAM block — the real ceiling for a single big
+	 * allocation (e.g. a full-screen image buffer). Can be far below psram_free
+	 * once the heap is fragmented by loaded image caches. */
+	cJSON_AddNumberToObject(heap, "psram_largest_free",
+	                        (double)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 
 	/* Registry / signals / fonts under the LVGL lock; the acquire time doubles
 	 * as a responsiveness probe. */
@@ -363,6 +369,21 @@ static esp_err_t _selftest_handler(httpd_req_t *req) {
 		cJSON_AddStringToObject(ota, "state", st_name);
 		cJSON_AddBoolToObject(ota, "rollback_pending",
 		                      st == ESP_OTA_IMG_PENDING_VERIFY);
+	}
+
+	/* Previous-boot crash snapshot (from NVS). panic_count is the lifetime
+	 * crash-reboot tally — polling it across an action reliably reveals a crash
+	 * even when the serial console isn't being captured. */
+	{
+		const crash_log_record_t *cl = crash_log_get();
+		cJSON *crash = cJSON_AddObjectToObject(root, "crash");
+		if (cl) {
+			cJSON_AddNumberToObject(crash, "panic_count", cl->panic_count);
+			cJSON_AddBoolToObject(crash, "prev_was_crash", cl->was_crash);
+			cJSON_AddNumberToObject(crash, "prev_reason", (double)cl->reason);
+			cJSON_AddNumberToObject(crash, "prev_uptime_s", cl->last_uptime_s);
+			cJSON_AddStringToObject(crash, "prev_fw", cl->last_fw);
+		}
 	}
 
 	cJSON_AddBoolToObject(root, "ok", overall);

@@ -1338,6 +1338,19 @@ bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay) {
  * meter has its real (w,h). use_night picks which snapshot slot we're
  * writing — there's a separate pair for day and night so the night
  * meter can flatten independently when it gets built on demand. */
+/* The static-tick flatten pre-rasterises the EXPENSIVE-per-frame layers — tick
+ * marks, numeric labels, the redline arc — into one bg-image blit so only the
+ * needle redraws. When NONE of those are drawn there is nothing worth baking:
+ * the snapshot would just copy the (already static) bg image / fill, which is
+ * pure cost. Worse, for a meter carrying a full-screen bg image that snapshot is
+ * a multi-second, memory-hungry lv_snapshot_take — it ran ~13 s on the LVGL task
+ * during a live-preview rebuild and tripped the task watchdog (→ reboot). Skip
+ * the flatten in that case: the needle is added inline and the bg image stays a
+ * normal static bg_img (LVGL only re-blends it under the needle's small area). */
+static inline bool _meter_static_layer_worth_baking(const meter_data_t *md) {
+	return md->show_ticks || md->show_tick_labels || md->redline_show_arc;
+}
+
 static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool use_night) {
 	(void)parent;   /* no longer needed — snapshot lives on the meter itself */
 	if (!md) return;
@@ -1401,6 +1414,10 @@ static void _meter_flatten_static_ticks(meter_data_t *md, lv_obj_t *parent, bool
 	uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
 	lv_meter_set_scale_ticks(m, scale, mtc, 0, 0, lv_color_black());
 	lv_meter_set_scale_major_ticks(m, scale, mte, 0, 0, lv_color_black(), 0);
+	/* Medium scale — collapse its ticks too (they're baked into the snapshot,
+	 * leaving them live would double-render against the face image). */
+	lv_meter_scale_t *mid_sc = use_night ? md->night_mid_scale : md->mid_scale;
+	if (mid_sc) lv_meter_set_scale_ticks(m, mid_sc, 2, 0, 0, lv_color_black());
 	lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
 	lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_border_width(m, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -1495,6 +1512,36 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 	uint8_t major_l = md->show_ticks ? md->major_tick_length : 0;
 	lv_meter_set_scale_ticks(m, scale, mtc, minor_w, minor_l, mintc);
 	lv_meter_set_scale_major_ticks(m, scale, mte, major_w, major_l, majtc, md->label_gap);
+
+	/* Optional medium (3rd) tick tier — a SECOND scale at the same range /
+	 * angle as the primary so the medium ticks stay aligned (no doubling).
+	 * mid_tick_step is in display units; the count is derived from the range.
+	 * Captured by the static-ticks snapshot, then stripped (see
+	 * _meter_flatten_static_ticks) so it doesn't double-render live on top of
+	 * the baked face. Respects show_ticks like the minor/major widths. */
+	lv_meter_scale_t *mid_scale = NULL;
+	if (md->show_ticks && md->mid_tick_step > 0 && md->max > md->min) {
+		float span = md->max - md->min;
+		int32_t mc = (int32_t)lroundf(span / (float)md->mid_tick_step) + 1;
+		if (mc >= 2) {
+			if (mc > 255) mc = 255;
+			mid_scale = lv_meter_add_scale(m);
+			lv_meter_set_scale_range(m, mid_scale,
+			                         lroundf(md->min * (float)md->value_scale),
+			                         lroundf(md->max * (float)md->value_scale),
+			                         angle_range, (int32_t)md->start_angle);
+			lv_meter_set_scale_ticks(m, mid_scale, (uint8_t)mc,
+			                         md->mid_tick_width, md->mid_tick_length,
+			                         md->mid_tick_color);
+			/* nth=0 makes lv_meter seed its major counter at 0xFFFF so NO tick
+			 * is ever major — important because any nth>=1 makes the FIRST tick
+			 * major (counter seeds at nth-1) and draws a duplicate "0" label. */
+			lv_meter_set_scale_major_ticks(m, mid_scale, 0, 0, 0,
+			                               md->mid_tick_color, 0);
+		}
+	}
+	if (use_night) md->night_mid_scale = mid_scale;
+	else           md->mid_scale       = mid_scale;
 
 	/* Tick label color/font */
 	lv_obj_set_style_text_color(m, tlc, LV_PART_TICKS);
@@ -1604,7 +1651,7 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 	lv_meter_scale_t *scale = NULL;
 	lv_meter_indicator_t *needle = NULL;
 	lv_meter_scale_t *needle_scale = NULL;
-	bool defer_needle_day = md->static_ticks;
+	bool defer_needle_day = md->static_ticks && _meter_static_layer_worth_baking(md);
 	_meter_build_one(md, meter_parent, false, !defer_needle_day,
 	                 &m, &scale, &needle, &needle_scale,
 	                 &md->needle_img_dsc, &md->bg_img_dsc);
@@ -1739,6 +1786,15 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "minor_tick_color", (int)md->minor_tick_color.full);
 	if (md->major_tick_color.full != lv_color_white().full)
 		cJSON_AddNumberToObject(cfg, "major_tick_color", (int)md->major_tick_color.full);
+	/* Medium (3rd) tick tier — defaults-only emit (step 0 = disabled). */
+	if (md->mid_tick_step != 0)
+		cJSON_AddNumberToObject(cfg, "mid_tick_step", md->mid_tick_step);
+	if (md->mid_tick_length != 13)
+		cJSON_AddNumberToObject(cfg, "mid_tick_length", md->mid_tick_length);
+	if (md->mid_tick_width != 2)
+		cJSON_AddNumberToObject(cfg, "mid_tick_width", md->mid_tick_width);
+	if (md->mid_tick_color.full != lv_color_hex(0xBDBDBD).full)
+		cJSON_AddNumberToObject(cfg, "mid_tick_color", (int)md->mid_tick_color.full);
 	if (!md->show_needle)
 		cJSON_AddBoolToObject(cfg, "show_needle", false);
 	if (!md->show_needle_ball)
@@ -1930,6 +1986,15 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(ap)) md->minor_tick_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
 	if (cJSON_IsNumber(ap)) md->major_tick_color.full = (uint32_t)ap->valueint;
+	/* Medium (3rd) tick tier */
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_step");
+	if (cJSON_IsNumber(ap)) md->mid_tick_step = (uint16_t)LV_CLAMP(0, ap->valueint, 65535);
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_length");
+	if (cJSON_IsNumber(ap)) md->mid_tick_length = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_width");
+	if (cJSON_IsNumber(ap)) md->mid_tick_width = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_color");
+	if (cJSON_IsNumber(ap)) md->mid_tick_color.full = (uint32_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_needle");
 	if (cJSON_IsBool(ap)) md->show_needle = cJSON_IsTrue(ap);
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "show_needle_ball");
@@ -2229,7 +2294,7 @@ static void _meter_build_night_lazy(widget_t *w) {
 	/* Same defer-needle-for-snapshot dance as the day meter — the
 	 * static-tick flatten step runs after we size + position the
 	 * night meter so the snapshot captures the correct dimensions. */
-	bool defer_needle_night = md->static_ticks;
+	bool defer_needle_night = md->static_ticks && _meter_static_layer_worth_baking(md);
 	_meter_build_one(md, parent, true, !defer_needle_night,
 	                 &nm, &nscale, &nneedle, &nneedle_scale,
 	                 &md->night_needle_img_dsc, &md->night_bg_img_dsc);
@@ -2417,6 +2482,11 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_length") == 0)  { out->i = md->major_tick_length;   return true; }
 	if (strcmp(name, "minor_tick_color") == 0)   { out->color = lv_color_to32(md->minor_tick_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "major_tick_color") == 0)   { out->color = lv_color_to32(md->major_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "mid_tick_step") == 0)      { out->i = md->mid_tick_step;       return true; }
+	if (strcmp(name, "mid_tick_length") == 0)    { out->i = md->mid_tick_length;     return true; }
+	if (strcmp(name, "mid_tick_width") == 0)     { out->i = md->mid_tick_width;      return true; }
+	if (strcmp(name, "mid_tick_color") == 0)     { out->color = lv_color_to32(md->mid_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "tick_label_divisor") == 0) { out->i = md->tick_label_divisor;  return true; }
 	if (strcmp(name, "show_needle") == 0)        { out->b = md->show_needle;         return true; }
 	if (strcmp(name, "show_needle_ball") == 0)   { out->b = md->show_needle_ball;    return true; }
 	if (strcmp(name, "needle_width") == 0)       { out->i = md->needle_width;        return true; }
@@ -2572,6 +2642,11 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_length") == 0) { md->major_tick_length = (uint8_t)in->i; return true; }
 	if (strcmp(name, "minor_tick_color") == 0)  { md->minor_tick_color = lv_color_hex(in->color); return true; }
 	if (strcmp(name, "major_tick_color") == 0)  { md->major_tick_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "mid_tick_step") == 0)     { md->mid_tick_step = (uint16_t)LV_CLAMP(0, in->i, 65535); return true; }
+	if (strcmp(name, "mid_tick_length") == 0)   { md->mid_tick_length = (uint8_t)LV_CLAMP(0, in->i, 100); return true; }
+	if (strcmp(name, "mid_tick_width") == 0)    { md->mid_tick_width = (uint8_t)LV_CLAMP(0, in->i, 20);   return true; }
+	if (strcmp(name, "mid_tick_color") == 0)    { md->mid_tick_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "tick_label_divisor") == 0){ md->tick_label_divisor = (uint16_t)LV_CLAMP(1, in->i, 65535); return true; }
 	/* show_needle / show_needle_ball create or skip indicators at meter-build
 	 * time (LVGL v8 has no remove-indicator API), so toggling them needs a
 	 * meter rebuild. Store the value; the dashboard reloads on layout save and
@@ -2697,6 +2772,13 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->major_tick_length = 15;
 	md->minor_tick_color = lv_palette_main(LV_PALETTE_GREY);
 	md->major_tick_color = lv_color_white();
+	/* Medium (3rd) tick tier — disabled by default (step 0) */
+	md->mid_tick_step    = 0;
+	md->mid_tick_length  = 13;
+	md->mid_tick_width   = 2;
+	md->mid_tick_color   = lv_color_hex(0xBDBDBD);
+	md->mid_scale        = NULL;
+	md->night_mid_scale  = NULL;
 	/* Needle defaults */
 	md->needle_width = 4;
 	md->needle_color = lv_color_white();

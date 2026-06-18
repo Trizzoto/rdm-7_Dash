@@ -12,6 +12,8 @@
 #include "ui_Screen3.h"
 #include "storage/config_store.h"
 #include "ui_styles.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 
 ///////////////////// VARIABLES ////////////////////
 
@@ -141,6 +143,8 @@ void ui_init(void)
      * no-fade branch of splash_screen.c's _splash_transition_cb. */
     bool splash_enabled = true;
     config_store_load_splash_enabled(&splash_enabled);
+    ESP_LOGI("BOOTPERF", "ui_init: splash_enabled=%d @ %lld ms",
+             splash_enabled, esp_timer_get_time() / 1000);
     if (splash_enabled) {
         show_splash_screen();
     } else {

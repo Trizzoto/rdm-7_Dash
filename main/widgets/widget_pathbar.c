@@ -18,6 +18,7 @@
 #include "lvgl.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,6 +39,10 @@ static const char *TAG = "widget_pathbar";
 #define DEF_W            560
 #define DEF_H            320
 #define PATHBAR_ANIM_MS  16
+/* Tick-scale defaults (RGB565 raw, matching how the layout stores colours). */
+#define DEF_TICK_COLOR        0x9CF3   /* mid grey */
+#define DEF_MAJ_TICK_COLOR    0xFFFF   /* white    */
+#define DEF_LABEL_COLOR       0xFFFF   /* white    */
 
 /* ── Color helpers (layout colours are raw RGB565) ──────────────────────── */
 static inline uint32_t _color_to_u32(lv_color_t c) { return (uint32_t)c.full; }
@@ -147,9 +152,16 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
 
 /* Stroke every path segment overlapping arc-length [a, b] with the given dsc.
  * LVGL clips each segment to the draw clip area, so off-region segments cost
- * only a clip-reject (cheap with targeted invalidate). */
+ * only a clip-reject (cheap with targeted invalidate).
+ *
+ * round_ends controls only the band's two OUTER caps (start at a, end at b).
+ * Internal joints between segments are ALWAYS rounded: lv_draw_line has no join
+ * support, so a smooth bend is just consecutive round caps overlapping. With
+ * butt caps everywhere, each bend leaves a triangular gap on its outer side ->
+ * a frayed/saw-tooth edge along curves. dsc is mutated per segment. */
 static void _stroke_range(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float a, float b,
-                          const lv_draw_line_dsc_t *dsc) {
+                          lv_draw_line_dsc_t *dsc, bool round_ends) {
+    bool first = true;
     for (uint16_t i = 1; i < pd->n_pts; i++) {
         float c0 = pd->cum[i - 1], c1 = pd->cum[i];
         if (c1 <= a) continue;
@@ -163,7 +175,11 @@ static void _stroke_range(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float a, float
                           (lv_coord_t)(p0.y + (p1.y - p0.y) * sa) };
         lv_point_t q1 = { (lv_coord_t)(p0.x + (p1.x - p0.x) * sb),
                           (lv_coord_t)(p0.y + (p1.y - p0.y) * sb) };
+        bool is_last = (b <= c1);                 /* this segment holds the band end */
+        dsc->round_start = first   ? (round_ends ? 1 : 0) : 1;
+        dsc->round_end   = is_last ? (round_ends ? 1 : 0) : 1;
         lv_draw_line(ctx, dsc, &q0, &q1);
+        first = false;
     }
 }
 
@@ -178,11 +194,41 @@ static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float f
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
     dsc.color = color;
-    dsc.round_start = pd->rounded ? 1 : 0;
-    dsc.round_end   = pd->rounded ? 1 : 0;
     dsc.width = pd->band_width;
     dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)opa * master) >> 8) : opa;
-    if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc);
+    if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc, pd->rounded);
+}
+
+/* ── Positional fade fill ────────────────────────────────────────────────────
+ * Draw [fa, fb] as a series of opaque sub-bands tinted dim->bright by their
+ * ABSOLUTE position along the path (not by value), so it stays targeted-
+ * invalidate cheap: each lv_draw_line is clipped to the dirty rect, and the
+ * colour at a given path position never changes as the value moves. Brightness
+ * ramps from `dim` at fraction 0 to full `bright` by PATHBAR_FADE_FULL of the
+ * path — matching the studio preview. */
+#define PATHBAR_FADE_FULL 0.45f
+static void _draw_band_faded(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
+                             lv_color_t bright, lv_opa_t master) {
+    if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
+    lv_color_t dim = lv_color_mix(bright, lv_color_black(), 189);   /* ~74% of bright */
+    /* ~8px sub-bands along the lit span; clamp so very long/short bands stay sane */
+    float span_px = (fb - fa) * pd->total_len;
+    int segs = (int)(span_px / 8.0f) + 1;
+    if (segs < 2)  segs = 2;
+    if (segs > 64) segs = 64;
+    float dstep = (fb - fa) / (float)segs;
+    for (int i = 0; i < segs; i++) {
+        float p0 = fa + dstep * i;
+        /* overlap into the next (brighter) sub-band so butt-cap joints can't
+         * leave a thin dark gap on curves — the next band paints over it. */
+        float p1 = fa + dstep * (i + 1) + (i < segs - 1 ? dstep * 0.5f : 0.0f);
+        float pc = p0 + dstep * 0.5f;                       /* centre fraction */
+        float t  = pc / PATHBAR_FADE_FULL;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        lv_color_t col = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
+        _draw_band(ctx, pd, p0, p1, col, LV_OPA_COVER, master);
+    }
 }
 
 /* ── Targeted invalidate ────────────────────────────────────────────────────
@@ -228,6 +274,103 @@ static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
     lv_obj_invalidate_area(w->root, &area);
 }
 
+/* Point + unit normal at arc length s along the path. Returns false if the
+ * path is empty. The normal is the left-hand perpendicular of the local
+ * tangent — used to lay ticks across the band and push labels off it. */
+static bool _pathbar_sample(pathbar_data_t *pd, float s,
+                            float *x, float *y, float *nx, float *ny) {
+    if (pd->n_pts < 2) return false;
+    if (s < 0.0f) s = 0.0f;
+    if (s > pd->total_len) s = pd->total_len;
+    for (uint16_t i = 1; i < pd->n_pts; i++) {
+        if (pd->cum[i] >= s) {
+            float seg = pd->cum[i] - pd->cum[i - 1];
+            float f = seg > 0.0f ? (s - pd->cum[i - 1]) / seg : 0.0f;
+            float p0x = pd->pts[i - 1].x, p0y = pd->pts[i - 1].y;
+            float p1x = pd->pts[i].x,     p1y = pd->pts[i].y;
+            *x = p0x + (p1x - p0x) * f;   *y = p0y + (p1y - p0y) * f;
+            float tx = p1x - p0x, ty = p1y - p0y;
+            float L = sqrtf(tx * tx + ty * ty); if (L <= 0.0f) L = 1.0f;
+            *nx = -ty / L; *ny = tx / L;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ── Draw the optional tick + number scale along the path ────────────────────
+ * Ticks are perpendicular marks centred on the band; major-tick numbers sit
+ * just off the band toward the path centroid (so they read on the inside of a
+ * curve, exactly like the Ford-style tach). All in absolute screen px, matching
+ * the bands. Cheap because LVGL clip-rejects marks outside the redraw area. */
+static void _pathbar_draw_scale(lv_draw_ctx_t *ctx, pathbar_data_t *pd) {
+    if (!pd->show_ticks || pd->minor_tick_step <= 0.0f ||
+        pd->val_max <= pd->val_min || pd->n_pts < 2 || pd->total_len <= 0.0f)
+        return;
+
+    float range = pd->val_max - pd->val_min;
+    int N = (int)lroundf(range / pd->minor_tick_step);
+    if (N < 1) N = 1;
+    if (N > 500) N = 500;
+    int majEvery = pd->major_tick_step > 0.0f
+                 ? (int)lroundf(pd->major_tick_step / pd->minor_tick_step) : 1;
+    if (majEvery < 1) majEvery = 1;
+
+    /* path centroid → which way the numbers face */
+    float cgx = 0, cgy = 0;
+    for (uint16_t i = 0; i < pd->n_pts; i++) { cgx += pd->pts[i].x; cgy += pd->pts[i].y; }
+    cgx /= pd->n_pts; cgy /= pd->n_pts;
+
+    const lv_font_t *lf = pd->label_font[0] ? widget_resolve_font(pd->label_font) : NULL;
+    if (!lf) lf = LV_FONT_DEFAULT;
+
+    lv_draw_line_dsc_t td; lv_draw_line_dsc_init(&td);
+    td.round_start = 1; td.round_end = 1;
+    lv_draw_label_dsc_t ld; lv_draw_label_dsc_init(&ld);
+    ld.font = lf; ld.color = pd->label_color;
+
+    uint16_t div = pd->tick_label_divisor ? pd->tick_label_divisor : 1;
+
+    for (int i = 0; i <= N; i++) {
+        float v = pd->val_min + (float)i * pd->minor_tick_step;
+        float fr = (v - pd->val_min) / range;
+        if (fr < 0.0f) fr = 0.0f;
+        if (fr > 1.0f) fr = 1.0f;
+        float px, py, nx, ny;
+        if (!_pathbar_sample(pd, fr * pd->total_len, &px, &py, &nx, &ny)) continue;
+
+        bool isMaj = (i % majEvery) == 0;
+        uint8_t len = isMaj ? pd->major_tick_len   : pd->tick_len;
+        uint8_t wdt = isMaj ? pd->major_tick_width : pd->tick_width;
+        lv_color_t col = isMaj ? pd->major_tick_color : pd->tick_color;
+        if (pd->redline_recolor_ticks && pd->redline < pd->val_max && v >= pd->redline)
+            col = pd->redline_color;
+
+        if (len > 0 && wdt > 0) {
+            td.color = col; td.width = wdt;
+            lv_point_t a = { (lv_coord_t)(px - nx * len / 2.0f), (lv_coord_t)(py - ny * len / 2.0f) };
+            lv_point_t b = { (lv_coord_t)(px + nx * len / 2.0f), (lv_coord_t)(py + ny * len / 2.0f) };
+            lv_draw_line(ctx, &td, &a, &b);
+        }
+
+        if (isMaj && pd->show_labels) {
+            float sgn = ((cgx - px) * nx + (cgy - py) * ny) >= 0.0f ? 1.0f : -1.0f;
+            float off = pd->band_width / 2.0f + (float)pd->label_gap;
+            float lx = px + nx * sgn * off, ly = py + ny * sgn * off;
+            char buf[16];
+            float dv = v / (float)div;
+            if (fabsf(dv - lroundf(dv)) < 0.05f) snprintf(buf, sizeof buf, "%d", (int)lroundf(dv));
+            else                                 snprintf(buf, sizeof buf, "%.1f", dv);
+            lv_point_t ts;
+            lv_txt_get_size(&ts, buf, lf, 0, 0, LV_COORD_MAX, 0);
+            lv_coord_t lxi = (lv_coord_t)lroundf(lx) - ts.x / 2;
+            lv_coord_t lyi = (lv_coord_t)lroundf(ly) - ts.y / 2;
+            lv_area_t la = { lxi, lyi, lxi + ts.x, lyi + ts.y };
+            lv_draw_label(ctx, &ld, &la, buf, NULL);
+        }
+    }
+}
+
 /* ── Draw callback ──────────────────────────────────────────────────────── */
 static void _pathbar_draw_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
@@ -240,25 +383,41 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     lv_opa_t master = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
     if (master <= LV_OPA_MIN) return;
 
-    /* dim full-path track */
-    _draw_band(ctx, pd, 0.0f, 1.0f, pd->dim_color, pd->dim_opa, master);
+    /* Dim full-path track. Drawn OPAQUE using dim_color pre-blended over black
+     * at dim_opa, rather than as a translucent stroke. lv_draw_line has no join
+     * support, so a curved bend is many short segments whose rounded caps
+     * overlap; at <100% opacity that overlap COMPOUNDS (each cap re-blends the
+     * same pixels) and the bends/joints render darker than the single-segment
+     * straight runs — the bar looks blotchy at corners. Pre-blending to a solid
+     * colour makes overlap a no-op (opaque over opaque = same colour), so the
+     * whole track reads as one uniform run. The straight runs already showed
+     * exactly this blended shade (dim_color over the dark cluster bg), so they
+     * are unchanged — only the corners lighten to match. dim_opa stays the
+     * authoring knob: it sets how dark the solid track is. */
+    lv_color_t dim_solid = lv_color_mix(pd->dim_color, lv_color_black(), pd->dim_opa);
+    _draw_band(ctx, pd, 0.0f, 1.0f, dim_solid, LV_OPA_COVER, master);
 
     float f = pd->cur_frac;
-    if (f <= 0.0f) return;
+    if (f > 0.0f) {
+        /* redline split */
+        float rl = 1.0f;
+        if (pd->redline < pd->val_max && pd->val_max > pd->val_min)
+            rl = (pd->redline - pd->val_min) / (pd->val_max - pd->val_min);
+        if (rl < 0.0f) rl = 0.0f;
+        if (rl > 1.0f) rl = 1.0f;
 
-    /* redline split */
-    float rl = 1.0f;
-    if (pd->redline < pd->val_max && pd->val_max > pd->val_min)
-        rl = (pd->redline - pd->val_min) / (pd->val_max - pd->val_min);
-    if (rl < 0.0f) rl = 0.0f;
-    if (rl > 1.0f) rl = 1.0f;
-
-    if (f <= rl) {
-        _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master);
-    } else {
-        _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
-        _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
+        if (f <= rl) {
+            if (pd->fade_fill) _draw_band_faded(ctx, pd, 0.0f, f, pd->lit_color, master);
+            else               _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master);
+        } else {
+            if (pd->fade_fill) _draw_band_faded(ctx, pd, 0.0f, rl, pd->lit_color, master);
+            else               _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
+            _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
+        }
     }
+
+    /* Tick + number scale on top (static — drawn regardless of fill level). */
+    _pathbar_draw_scale(ctx, pd);
 }
 
 /* ── Smoothing timer ────────────────────────────────────────────────────── */
@@ -371,6 +530,7 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "corner_radius", pd->corner_radius);
     }
     if (!pd->rounded) cJSON_AddBoolToObject(cfg, "rounded", false);
+    if (pd->fade_fill) cJSON_AddBoolToObject(cfg, "fade_fill", true);
     if (_color_to_u32(pd->dim_color) != _color_to_u32(_u32_to_color(DEF_DIM_COLOR)))
         cJSON_AddNumberToObject(cfg, "dim_color", _color_to_u32(pd->dim_color));
     if (_color_to_u32(pd->lit_color) != _color_to_u32(_u32_to_color(DEF_LIT_COLOR)))
@@ -381,6 +541,28 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "dim_opa", pd->dim_opa);
     if (pd->smoothing_ms != 0)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", pd->smoothing_ms);
+
+    /* Value scale (defaults-only). Only meaningful when show_ticks is on. */
+    if (pd->show_ticks) {
+        cJSON_AddBoolToObject(cfg, "show_ticks", true);
+        if (pd->minor_tick_step != 0.0f) cJSON_AddNumberToObject(cfg, "minor_tick_step", pd->minor_tick_step);
+        if (pd->major_tick_step != 0.0f) cJSON_AddNumberToObject(cfg, "major_tick_step", pd->major_tick_step);
+        if (pd->show_labels) cJSON_AddBoolToObject(cfg, "show_labels", true);
+        if (pd->tick_label_divisor != 1) cJSON_AddNumberToObject(cfg, "tick_label_divisor", pd->tick_label_divisor);
+        if (pd->tick_len != 10) cJSON_AddNumberToObject(cfg, "tick_len", pd->tick_len);
+        if (pd->major_tick_len != 16) cJSON_AddNumberToObject(cfg, "major_tick_len", pd->major_tick_len);
+        if (pd->tick_width != 2) cJSON_AddNumberToObject(cfg, "tick_width", pd->tick_width);
+        if (pd->major_tick_width != 3) cJSON_AddNumberToObject(cfg, "major_tick_width", pd->major_tick_width);
+        if (_color_to_u32(pd->tick_color) != DEF_TICK_COLOR)
+            cJSON_AddNumberToObject(cfg, "tick_color", _color_to_u32(pd->tick_color));
+        if (_color_to_u32(pd->major_tick_color) != DEF_MAJ_TICK_COLOR)
+            cJSON_AddNumberToObject(cfg, "major_tick_color", _color_to_u32(pd->major_tick_color));
+        if (_color_to_u32(pd->label_color) != DEF_LABEL_COLOR)
+            cJSON_AddNumberToObject(cfg, "label_color", _color_to_u32(pd->label_color));
+        if (pd->label_gap != 14) cJSON_AddNumberToObject(cfg, "label_gap", pd->label_gap);
+        if (!pd->redline_recolor_ticks) cJSON_AddBoolToObject(cfg, "redline_recolor_ticks", false);
+        if (pd->label_font[0]) cJSON_AddStringToObject(cfg, "label_font", pd->label_font);
+    }
 
     /* Only custom shapes carry an explicit path; parametric shapes regenerate. */
     if (pd->shape == 0 && pd->pts && pd->n_pts > 0) {
@@ -420,6 +602,8 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) pd->corner_radius = (uint16_t)LV_CLAMP(0, item->valueint, 1000);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "rounded");
     if (cJSON_IsBool(item)) pd->rounded = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
+    if (cJSON_IsBool(item)) pd->fade_fill = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "dim_color");
     if (cJSON_IsNumber(item)) pd->dim_color = _u32_to_color((uint32_t)item->valueint);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "lit_color");
@@ -430,6 +614,39 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) pd->dim_opa = (lv_opa_t)LV_CLAMP(0, item->valueint, 255);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
     if (cJSON_IsNumber(item)) pd->smoothing_ms = (uint16_t)item->valueint;
+
+    /* optional value scale (ticks + numbers along the path) */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+    if (cJSON_IsBool(item)) pd->show_ticks = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "show_labels");
+    if (cJSON_IsBool(item)) pd->show_labels = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_step");
+    if (cJSON_IsNumber(item)) pd->minor_tick_step = (float)item->valuedouble;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_step");
+    if (cJSON_IsNumber(item)) pd->major_tick_step = (float)item->valuedouble;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_label_divisor");
+    if (cJSON_IsNumber(item)) pd->tick_label_divisor = (uint16_t)LV_CLAMP(1, item->valueint, 100000);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_len");
+    if (cJSON_IsNumber(item)) pd->tick_len = (uint8_t)LV_CLAMP(0, item->valueint, 200);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_len");
+    if (cJSON_IsNumber(item)) pd->major_tick_len = (uint8_t)LV_CLAMP(0, item->valueint, 200);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_width");
+    if (cJSON_IsNumber(item)) pd->tick_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_width");
+    if (cJSON_IsNumber(item)) pd->major_tick_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_color");
+    if (cJSON_IsNumber(item)) pd->tick_color = _u32_to_color((uint32_t)item->valueint);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
+    if (cJSON_IsNumber(item)) pd->major_tick_color = _u32_to_color((uint32_t)item->valueint);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_color");
+    if (cJSON_IsNumber(item)) pd->label_color = _u32_to_color((uint32_t)item->valueint);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_gap");
+    if (cJSON_IsNumber(item)) pd->label_gap = (int16_t)LV_CLAMP(-200, item->valueint, 200);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_recolor_ticks");
+    if (cJSON_IsBool(item)) pd->redline_recolor_ticks = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(pd->label_font, item->valuestring, sizeof(pd->label_font));
 
     /* path: flat [x0,y0,x1,y1,...] of absolute screen-px points */
     cJSON *path = cJSON_GetObjectItemCaseSensitive(cfg, "path");
@@ -507,6 +724,21 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->redline_color = _u32_to_color(DEF_RED_COLOR);
     pd->dim_opa       = DEF_DIM_OPA;
     pd->smoothing_ms  = 0;
+    pd->show_ticks          = false;
+    pd->show_labels         = false;
+    pd->minor_tick_step     = 0.0f;
+    pd->major_tick_step     = 0.0f;
+    pd->tick_label_divisor  = 1;
+    pd->tick_len            = 10;
+    pd->major_tick_len      = 16;
+    pd->tick_width          = 2;
+    pd->major_tick_width    = 3;
+    pd->tick_color          = _u32_to_color(DEF_TICK_COLOR);
+    pd->major_tick_color    = _u32_to_color(DEF_MAJ_TICK_COLOR);
+    pd->label_color         = _u32_to_color(DEF_LABEL_COLOR);
+    pd->label_gap           = 14;
+    pd->redline_recolor_ticks = true;
+    pd->label_font[0]       = '\0';
 
     w->type      = WIDGET_PATHBAR;
     w->slot      = slot;

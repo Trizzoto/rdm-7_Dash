@@ -701,6 +701,87 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
     }
 }
 
+/* ── Positional fade overlay on the moving fill ───────────────────────────────
+ * DRAW_MAIN_END on the main arc: re-draws the lit indicator span as a series of
+ * opaque arc sub-bands tinted dim->bright by their ABSOLUTE angular position
+ * along the sweep (dim at the start, full by ARC_FADE_FULL of the sweep). It
+ * paints OVER the native single-colour indicator (same geometry, read straight
+ * from the lv_arc), so it's purely additive — when fade_fill is off the cb isn't
+ * even registered, so existing arcs are untouched. The fade colour tracks the
+ * indicator's current colour, so alert/redline recolouring still shows through
+ * as a dim->bright ramp of that colour. lv_draw_arc clips to the dirty rect, so
+ * this stays as cheap as the native draw under targeted invalidation. */
+#define ARC_FADE_FULL 0.45f
+static void _arc_fade_draw_cb(lv_event_t *e) {
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
+    arc_data_t *d = (arc_data_t *)lv_event_get_user_data(e);
+    if (!d || !d->fade_fill) return;
+    lv_obj_t *obj = lv_event_get_target(e);
+    if (!obj || !lv_obj_is_valid(obj)) return;
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+
+    int16_t v  = lv_arc_get_value(obj);
+    int16_t mn = lv_arc_get_min_value(obj);
+    int16_t mx = lv_arc_get_max_value(obj);
+    if (mx <= mn || v <= mn) return;                     /* nothing lit */
+
+    lv_opa_t master = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
+    if (master <= LV_OPA_MIN) return;
+
+    /* Geometry — replicate lv_arc's get_center() + indicator radius. */
+    lv_coord_t pl = lv_obj_get_style_pad_left(obj, LV_PART_MAIN);
+    lv_coord_t pr = lv_obj_get_style_pad_right(obj, LV_PART_MAIN);
+    lv_coord_t pt = lv_obj_get_style_pad_top(obj, LV_PART_MAIN);
+    lv_coord_t pb = lv_obj_get_style_pad_bottom(obj, LV_PART_MAIN);
+    lv_coord_t r  = LV_MIN(lv_obj_get_width(obj)  - pl - pr,
+                           lv_obj_get_height(obj) - pt - pb) / 2;
+    lv_point_t center = { obj->coords.x1 + r + pl, obj->coords.y1 + r + pt };
+    lv_coord_t ipl = lv_obj_get_style_pad_left(obj, LV_PART_INDICATOR);
+    lv_coord_t ipr = lv_obj_get_style_pad_right(obj, LV_PART_INDICATOR);
+    lv_coord_t ipt = lv_obj_get_style_pad_top(obj, LV_PART_INDICATOR);
+    lv_coord_t ipb = lv_obj_get_style_pad_bottom(obj, LV_PART_INDICATOR);
+    lv_coord_t indic_r = r - LV_MAX4(ipl, ipr, ipt, ipb);
+    if (indic_r <= 0) return;
+
+    uint16_t bg_start = lv_arc_get_bg_angle_start(obj);
+    uint16_t bg_end   = lv_arc_get_bg_angle_end(obj);
+    uint16_t a_start  = lv_arc_get_angle_start(obj);     /* indicator start angle */
+    uint16_t a_end    = lv_arc_get_angle_end(obj);       /* indicator end angle   */
+
+    float sweep    = (float)(((int)bg_end - (int)bg_start + 3600) % 360);
+    if (sweep <= 0.0f) sweep = 360.0f;
+    float ind_span = (float)(((int)a_end - (int)a_start + 3600) % 360);
+    if (ind_span <= 0.5f) return;
+
+    lv_color_t bright = lv_obj_get_style_arc_color(obj, LV_PART_INDICATOR);
+    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 189);   /* ~74% */
+
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.width   = lv_obj_get_style_arc_width(obj, LV_PART_INDICATOR);
+    dsc.opa     = master;
+    dsc.rounded = 0;
+    if (dsc.width <= 0) return;
+
+    int segs = (int)(ind_span / 8.0f) + 1;
+    if (segs < 2)  segs = 2;
+    if (segs > 48) segs = 48;
+    float dstep = ind_span / (float)segs;
+    for (int i = 0; i < segs; i++) {
+        float o0  = dstep * i;
+        float o1  = dstep * (i + 1) + (i < segs - 1 ? dstep * 0.5f : 0.0f);  /* overlap joints */
+        float mid = (o0 + o1) * 0.5f;                    /* deg from fill start */
+        float t   = (mid / sweep) / ARC_FADE_FULL;       /* absolute position along the scale */
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        dsc.color = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
+        uint16_t sa = (uint16_t)(((int)a_start + (int)o0) % 360);
+        uint16_t ea = (uint16_t)(((int)a_start + (int)(o1 + 0.5f)) % 360);
+        if (ea == sa) continue;   /* degenerate slice → lv_draw_arc would draw a full circle */
+        lv_draw_arc(ctx, &dsc, &center, (uint16_t)indic_r, sa, ea);
+    }
+}
+
 /* ── Static tick-ring snapshot ─────────────────────────────────────────────
  * The overlay meter's ticks + labels are pure static content, yet they
  * re-render (tick math + glyph blits) on every redraw whose dirty rect
@@ -1239,6 +1320,10 @@ static void _arc_create_standard(widget_t *w, lv_obj_t *parent) {
      * else 100 (decorative full-fill). */
     lv_arc_set_value(obj, d->signal_index >= 0 ? 0 : 100);
     d->arc_obj = obj;
+    /* Positional fade overlay — only hook the draw when enabled so plain arcs
+     * pay nothing. Paints dim->bright sub-bands over the native fill. */
+    if (d->fade_fill)
+        lv_obj_add_event_cb(obj, _arc_fade_draw_cb, LV_EVENT_DRAW_MAIN_END, d);
 
     /* Redline zone marker — separate arc spanning [threshold_angle..end_angle].
      * Drawn ON TOP of the main arc so it stays visible regardless of fill
@@ -1439,6 +1524,8 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "bg_arc_width", d->bg_arc_width);
     if (d->rounded_ends != ARC_DEFAULT_ROUNDED)
         cJSON_AddBoolToObject(cfg, "rounded_ends", d->rounded_ends);
+    if (d->fade_fill)
+        cJSON_AddBoolToObject(cfg, "fade_fill", true);
 
     /* Signal binding */
     if (d->signal_name[0] != '\0')
@@ -1659,6 +1746,8 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "rounded_ends");
     if (cJSON_IsBool(item)) d->rounded_ends = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
+    if (cJSON_IsBool(item)) d->fade_fill = cJSON_IsTrue(item);
 
     /* Signal binding */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
@@ -2113,6 +2202,7 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "arc_offset") == 0)     { out->i = d->arc_offset;       return true; }
 	if (strcmp(name, "bg_arc_width") == 0)   { out->i = d->bg_arc_width;     return true; }
 	if (strcmp(name, "rounded_ends") == 0)   { out->b = d->rounded_ends;     return true; }
+	if (strcmp(name, "fade_fill") == 0)      { out->b = d->fade_fill;        return true; }
 	if (strcmp(name, "arc_color") == 0)      { out->color = lv_color_to32(d->arc_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "bg_arc_color") == 0)   { out->color = lv_color_to32(d->bg_arc_color) & 0xFFFFFF; return true; }
 	/* Color alerts. Thresholds (arc_low / arc_high) are channel-owned and the
@@ -2243,6 +2333,17 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		if (a && lv_obj_is_valid(a)) {
 			lv_obj_set_style_arc_rounded(a, d->rounded_ends, LV_PART_MAIN);
 			lv_obj_set_style_arc_rounded(a, d->rounded_ends, LV_PART_INDICATOR);
+		}
+		return true;
+	}
+	if (strcmp(name, "fade_fill") == 0) {
+		d->fade_fill = in->b;
+		if (a && lv_obj_is_valid(a)) {
+			/* (re)attach the overlay draw hook for live editor toggling */
+			lv_obj_remove_event_cb(a, _arc_fade_draw_cb);
+			if (d->fade_fill)
+				lv_obj_add_event_cb(a, _arc_fade_draw_cb, LV_EVENT_DRAW_MAIN_END, d);
+			lv_obj_invalidate(a);
 		}
 		return true;
 	}

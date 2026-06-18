@@ -58,6 +58,7 @@ typedef struct {
     gradient_stops_t grad_stops;
     uint8_t    bg_arc_width;    /* default: 10 */
     bool       rounded_ends;    /* default: false */
+    bool       fade_fill;       /* default: false — positional dim->bright fade overlay on the moving fill */
     lv_obj_t  *arc_obj;         /* runtime only */
     lv_obj_t  *sector_clip;     /* runtime: clipping container sized to the
                                  * swept-sector bbox; the arc + redline arc live

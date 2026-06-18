@@ -94,26 +94,15 @@ static void _wifi_mgr_event_cb(wifi_mgr_state_t new_state, void *user_data);
 static void _async_refresh(void *data);
 
 /* =========================================================================
- * Signal strength helper
+ * Signal strength helper — map RSSI (dBm) to a 0..4 bar level.
  * ========================================================================= */
-static const char *_rssi_icon(int8_t rssi)
+static int _rssi_level(int8_t rssi)
 {
-    (void)rssi;
-    return LV_SYMBOL_WIFI;
-}
-
-static const char *_rssi_bars(int8_t rssi)
-{
-    if (rssi >= -55) return "||||";
-    if (rssi >= -70) return "|||";
-    if (rssi >= -85) return "||";
-    return "|";
-}
-
-static const char *_auth_text(uint8_t auth_mode)
-{
-    if (auth_mode == 0) return "Open";
-    return LV_SYMBOL_EYE_CLOSE;
+    if (rssi >= -55) return 4;
+    if (rssi >= -65) return 3;
+    if (rssi >= -75) return 2;
+    if (rssi >= -88) return 1;
+    return 0;
 }
 
 /* =========================================================================
@@ -413,40 +402,51 @@ static void _create_screen(void)
     lv_label_set_text(scan_title, "AVAILABLE NETWORKS");
     _style_section_title(scan_title);
 
-    /* Scan results list */
+    /* Scan results list — flex-grows to fill the panel so the footer (Scan
+     * button + spinner) always sits pinned at the bottom. */
     wifi_list = lv_list_create(right_panel);
-    lv_obj_set_size(wifi_list, LV_PCT(100), 300);
+    lv_obj_set_width(wifi_list, LV_PCT(100));
+    lv_obj_set_flex_grow(wifi_list, 1);
     lv_obj_set_style_bg_color(wifi_list, THEME_COLOR_SECTION_BG, 0);
     lv_obj_set_style_bg_opa(wifi_list, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(wifi_list, 0, 0);
     lv_obj_set_style_radius(wifi_list, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_pad_all(wifi_list, 2, 0);
-    lv_obj_set_style_pad_gap(wifi_list, 2, 0);
+    lv_obj_set_style_pad_all(wifi_list, 0, 0);
+    lv_obj_set_style_pad_gap(wifi_list, 0, 0);
     lv_obj_set_style_bg_color(wifi_list, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
     lv_obj_set_style_bg_opa(wifi_list, LV_OPA_50, LV_PART_SCROLLBAR);
 
+    /* Footer row — spinner (left) + Scan Again (right), pinned at the bottom. */
+    lv_obj_t *footer = lv_obj_create(right_panel);
+    lv_obj_set_size(footer, LV_PCT(100), 40);
+    lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(footer, 0, 0);
+    lv_obj_set_style_pad_all(footer, 0, 0);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+
     /* Connection spinner (hidden by default) */
-    connection_spinner = lv_spinner_create(right_panel, 1000, 60);
-    lv_obj_set_size(connection_spinner, 30, 30);
+    connection_spinner = lv_spinner_create(footer, 1000, 60);
+    lv_obj_set_size(connection_spinner, 28, 28);
+    lv_obj_align(connection_spinner, LV_ALIGN_LEFT_MID, 4, 0);
     lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_ACCENT_BLUE, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(connection_spinner, THEME_COLOR_SECTION_BG, LV_PART_MAIN);
     lv_obj_set_style_arc_width(connection_spinner, 4, LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(connection_spinner, 4, LV_PART_MAIN);
     lv_obj_add_flag(connection_spinner, LV_OBJ_FLAG_HIDDEN);
 
-    /* Scan button */
-    scan_btn = lv_btn_create(right_panel);
-    lv_obj_set_size(scan_btn, 140, 32);
+    /* Scan button — pinned bottom-right */
+    scan_btn = lv_btn_create(footer);
+    lv_obj_set_size(scan_btn, 134, 34);
+    lv_obj_align(scan_btn, LV_ALIGN_RIGHT_MID, -2, 0);
     lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_BTN_SAVE, 0);
     lv_obj_set_style_bg_opa(scan_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(scan_btn, THEME_RADIUS_SMALL, 0);
+    lv_obj_set_style_radius(scan_btn, THEME_RADIUS_NORMAL, 0);
     lv_obj_set_style_shadow_width(scan_btn, 0, 0);
     lv_obj_set_style_bg_color(scan_btn, THEME_COLOR_BTN_SAVE_PRESSED, LV_STATE_PRESSED);
     lv_obj_add_event_cb(scan_btn, _scan_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_flex_grow(scan_btn, 0);
 
     lv_obj_t *scan_lbl = lv_label_create(scan_btn);
-    lv_label_set_text(scan_lbl, "Scan Networks");
+    lv_label_set_text(scan_lbl, LV_SYMBOL_REFRESH "  Scan Again");
     lv_obj_set_style_text_font(scan_lbl, THEME_FONT_SMALL, 0);
     lv_obj_set_style_text_color(scan_lbl, THEME_COLOR_TEXT_ON_ACCENT, 0);
     lv_obj_center(scan_lbl);
@@ -474,6 +474,10 @@ static void _create_screen(void)
     /* Set initial visibility */
     _update_visibility();
     _refresh_status(NULL);
+
+    /* Show whatever we already know (cached scan results + saved networks)
+     * right away — otherwise the list sat blank until the next scan completed. */
+    _populate_scan_list();
 
     /* Auto-scan on open if WiFi is running and not mid-connect */
     if (wifi_manager_is_started() &&
@@ -733,6 +737,150 @@ static bool _ssid_is_saved(const wifi_credentials_t *list, uint8_t list_count,
     return false;
 }
 
+/* Draw a compact 4-bar signal-strength indicator (increasing height) pinned to
+ * the right edge of `parent`. Bars below the RSSI level use the accent colour;
+ * the remainder stay on a dim track. */
+static void _add_signal_bars(lv_obj_t *parent, int8_t rssi)
+{
+    int level = _rssi_level(rssi);
+
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, 28, 20);
+    lv_obj_align(cont, LV_ALIGN_RIGHT_MID, -12, 0);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    static const lv_coord_t bar_h[4] = {7, 11, 15, 20};
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *bar = lv_obj_create(cont);
+        lv_obj_remove_style_all(bar);
+        lv_obj_set_size(bar, 5, bar_h[i]);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, i * 7, 0);
+        lv_obj_set_style_radius(bar, 1, 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(bar,
+            (i < level) ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_SCROLLBAR, 0);
+    }
+}
+
+/* Build one network row in the scan list with a polished two-line layout:
+ *   [wifi]  SSID                                       [signal bars]
+ *           open / dBm                          [Forget]
+ * Wires up the tap-to-connect handler and (for saved networks) an inline
+ * Forget button. `out_of_range` marks a saved entry not seen in the last scan
+ * (rssi ignored, no bars, not tappable). */
+static void _add_network_row(const char *ssid_raw, int8_t rssi, bool secured,
+                             bool connected, bool saved, bool out_of_range)
+{
+    char safe[33];
+    _sanitize_ssid(ssid_raw, safe, sizeof(safe));
+
+    lv_obj_t *row = lv_btn_create(wifi_list);
+    lv_obj_set_width(row, LV_PCT(100));
+    lv_obj_set_height(row, 46);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_SECTION_BG, 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(row, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
+    lv_obj_set_style_radius(row, 0, 0);
+    lv_obj_set_style_shadow_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    /* Hairline divider between networks — medium grey on the dark-grey rows. */
+    lv_obj_set_style_border_color(row, THEME_COLOR_SCROLLBAR, 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_opa(row, LV_OPA_50, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Connected network gets a blue accent stripe down the left edge. */
+    if (connected) {
+        lv_obj_t *stripe = lv_obj_create(row);
+        lv_obj_remove_style_all(stripe);
+        lv_obj_set_size(stripe, 3, 46);
+        lv_obj_align(stripe, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_bg_color(stripe, THEME_COLOR_ACCENT_BLUE, 0);
+        lv_obj_set_style_bg_opa(stripe, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(stripe, LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    /* Tap-to-connect — out-of-range rows have nothing to connect to. */
+    if (!out_of_range) {
+        char *ssid_copy = lv_mem_alloc(33);
+        if (ssid_copy) {
+            strncpy(ssid_copy, ssid_raw, 32);
+            ssid_copy[32] = '\0';
+        }
+        lv_obj_add_event_cb(row, _network_item_cb, LV_EVENT_ALL, ssid_copy);
+    }
+
+    /* WiFi glyph */
+    lv_obj_t *icon = lv_label_create(row);
+    lv_label_set_text(icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(icon, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(icon,
+        connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
+
+    /* SSID name */
+    lv_obj_t *name = lv_label_create(row);
+    lv_label_set_text(name, safe);
+    lv_obj_set_style_text_font(name, THEME_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(name,
+        connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_PRIMARY, 0);
+    lv_obj_set_width(name, 196);
+    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 34, 7);
+    if (out_of_range) lv_obj_set_style_text_opa(name, LV_OPA_60, 0);
+
+    /* Secondary line: security + signal in dBm (or out-of-range note) */
+    char meta[48];
+    if (out_of_range) {
+        snprintf(meta, sizeof(meta), "saved  \xE2\x80\xA2  out of range");
+    } else if (connected) {
+        snprintf(meta, sizeof(meta), "connected  \xE2\x80\xA2  %d dBm", (int)rssi);
+    } else {
+        snprintf(meta, sizeof(meta), "%s%d dBm",
+                 secured ? "" : "open  \xE2\x80\xA2  ", (int)rssi);
+    }
+    lv_obj_t *sub = lv_label_create(row);
+    lv_label_set_text(sub, meta);
+    lv_obj_set_style_text_font(sub, THEME_FONT_TINY, 0);
+    lv_obj_set_style_text_color(sub,
+        connected ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 34, 25);
+
+    /* Signal bars (skip for out-of-range) */
+    if (!out_of_range) {
+        _add_signal_bars(row, rssi);
+    }
+
+    /* Inline Forget button for saved networks */
+    if (saved) {
+        char *forget_ssid = lv_mem_alloc(33);
+        if (forget_ssid) {
+            strncpy(forget_ssid, ssid_raw, 32);
+            forget_ssid[32] = '\0';
+        }
+        lv_obj_t *fb = lv_btn_create(row);
+        lv_obj_set_size(fb, 52, 22);
+        /* Sit left of the signal bars when they're present, else far right. */
+        lv_obj_align(fb, LV_ALIGN_RIGHT_MID, out_of_range ? -10 : -48, 0);
+        lv_obj_set_style_bg_color(fb, THEME_COLOR_BTN_DANGER_BG, 0);
+        lv_obj_set_style_bg_opa(fb, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(fb, THEME_COLOR_STATUS_ERROR, 0);
+        lv_obj_set_style_border_width(fb, 1, 0);
+        lv_obj_set_style_radius(fb, THEME_RADIUS_SMALL, 0);
+        lv_obj_set_style_shadow_width(fb, 0, 0);
+        lv_obj_set_style_pad_all(fb, 0, 0);
+        lv_obj_add_event_cb(fb, _forget_cb, LV_EVENT_ALL, forget_ssid);
+
+        lv_obj_t *fl = lv_label_create(fb);
+        lv_label_set_text(fl, "Forget");
+        lv_obj_set_style_text_font(fl, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(fl, THEME_COLOR_STATUS_ERROR, 0);
+        lv_obj_center(fl);
+    }
+}
+
 static void _populate_scan_list(void)
 {
     if (!wifi_list) return;
@@ -742,11 +890,38 @@ static void _populate_scan_list(void)
     wifi_mgr_ap_record_t records[MAX_SCAN_RESULTS];
     uint16_t count = wifi_manager_get_scan_results(records, MAX_SCAN_RESULTS);
 
+    /* Show strongest signal first (scan order is otherwise arbitrary). */
+    for (uint16_t a = 0; a + 1 < count; a++) {
+        for (uint16_t b = 0; b + 1 < count - a; b++) {
+            if (records[b].rssi < records[b + 1].rssi) {
+                wifi_mgr_ap_record_t tmp = records[b];
+                records[b] = records[b + 1];
+                records[b + 1] = tmp;
+            }
+        }
+    }
+
     /* Load the full multi-SSID saved list — any network in the list gets the
      * "saved" highlight + per-row Forget button. (Was previously slot-0 only.) */
     wifi_credentials_t saved_list[CONFIG_STORE_WIFI_SLOT_COUNT];
     uint8_t saved_count = 0;
     config_store_load_wifi_list(saved_list, &saved_count);
+
+    const char *connected = wifi_manager_get_connected_ssid();
+
+    /* "Connected to X" banner pinned at the very top of the list. */
+    if (connected && connected[0]) {
+        char safe_conn[33];
+        _sanitize_ssid(connected, safe_conn, sizeof(safe_conn));
+        char banner[64];
+        snprintf(banner, sizeof(banner),
+                 LV_SYMBOL_OK "  Connected to %s", safe_conn);
+        lv_obj_t *hdr = lv_list_add_text(wifi_list, banner);
+        lv_obj_set_style_text_font(hdr, THEME_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(hdr, THEME_COLOR_STATUS_CONNECTED, 0);
+        lv_obj_set_style_bg_opa(hdr, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_bottom(hdr, 2, 0);
+    }
 
     if (count == 0 && saved_count == 0) {
         lv_obj_t *empty = lv_list_add_text(wifi_list, "No networks found");
@@ -774,69 +949,23 @@ static void _populate_scan_list(void)
     }
 
     for (uint16_t i = 0; i < count; i++) {
+        /* Skip hidden SSIDs (blank) — they show as empty, untappable rows. */
+        if (records[i].ssid[0] == '\0') continue;
+
+        /* Skip weaker duplicates of an SSID already shown. Records are sorted
+         * strongest-first, so the entry we keep is the best one. */
+        bool dup = false;
+        for (uint16_t j = 0; j < i; j++) {
+            if (strcmp(records[j].ssid, records[i].ssid) == 0) { dup = true; break; }
+        }
+        if (dup) continue;
+
         bool is_saved = _ssid_is_saved(saved_list, saved_count, records[i].ssid);
-
-        /* Sanitize SSID for display (font may lack non-ASCII glyphs) */
-        char safe_ssid[33];
-        _sanitize_ssid(records[i].ssid, safe_ssid, sizeof(safe_ssid));
-
-        /* Build display string */
-        char item_text[80];
-        snprintf(item_text, sizeof(item_text), "%s   %s  %s",
-                 safe_ssid,
-                 _rssi_bars(records[i].rssi),
-                 _auth_text(records[i].auth_mode));
-
-        lv_obj_t *btn = lv_list_add_btn(wifi_list, _rssi_icon(records[i].rssi),
-                                         item_text);
-        lv_obj_set_style_bg_color(btn, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
-        lv_obj_set_style_text_font(btn, THEME_FONT_SMALL, 0);
-        lv_obj_set_style_border_width(btn, 0, 0);
-        lv_obj_set_style_pad_ver(btn, 6, 0);
-
-        if (is_saved) {
-            /* Highlight saved network in blue */
-            lv_obj_set_style_text_color(btn, THEME_COLOR_STATUS_CONNECTED, 0);
-
-            /* Add a small "Forget" button on the right side. Per-row SSID
-             * context is passed via user_data so we forget the right entry
-             * (was previously slot-0 only). */
-            char *forget_ssid = lv_mem_alloc(33);
-            if (forget_ssid) {
-                strncpy(forget_ssid, records[i].ssid, 32);
-                forget_ssid[32] = '\0';
-            }
-
-            lv_obj_t *forget_btn_inline = lv_btn_create(btn);
-            lv_obj_set_size(forget_btn_inline, 56, 22);
-            lv_obj_align(forget_btn_inline, LV_ALIGN_RIGHT_MID, 0, 0);
-            lv_obj_set_style_bg_color(forget_btn_inline, THEME_COLOR_BTN_DANGER_BG, 0);
-            lv_obj_set_style_bg_opa(forget_btn_inline, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_color(forget_btn_inline, THEME_COLOR_STATUS_ERROR, 0);
-            lv_obj_set_style_border_width(forget_btn_inline, 1, 0);
-            lv_obj_set_style_radius(forget_btn_inline, THEME_RADIUS_SMALL, 0);
-            lv_obj_set_style_shadow_width(forget_btn_inline, 0, 0);
-            lv_obj_set_style_pad_all(forget_btn_inline, 0, 0);
-            lv_obj_add_event_cb(forget_btn_inline, _forget_cb, LV_EVENT_ALL, forget_ssid);
-
-            lv_obj_t *fgt_lbl = lv_label_create(forget_btn_inline);
-            lv_label_set_text(fgt_lbl, "Forget");
-            lv_obj_set_style_text_font(fgt_lbl, THEME_FONT_TINY, 0);
-            lv_obj_set_style_text_color(fgt_lbl, THEME_COLOR_STATUS_ERROR, 0);
-            lv_obj_center(fgt_lbl);
-        } else {
-            lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_PRIMARY, 0);
-        }
-
-        /* Store SSID in user_data for click handler */
-        char *ssid_copy = lv_mem_alloc(33);
-        if (ssid_copy) {
-            strncpy(ssid_copy, records[i].ssid, 32);
-            ssid_copy[32] = '\0';
-        }
-        lv_obj_add_event_cb(btn, _network_item_cb, LV_EVENT_ALL, ssid_copy);
+        bool is_conn  = connected && connected[0] &&
+                        strcmp(records[i].ssid, connected) == 0;
+        bool secured  = records[i].auth_mode != 0;
+        _add_network_row(records[i].ssid, records[i].rssi, secured,
+                         is_conn, is_saved, /*out_of_range=*/false);
     }
 
     /* Append "Saved (out of range)" entries — known networks that didn't
@@ -862,47 +991,9 @@ static void _populate_scan_list(void)
             any_out_of_range = true;
         }
 
-        char safe_ssid[33];
-        _sanitize_ssid(saved_list[s].ssid, safe_ssid, sizeof(safe_ssid));
-
-        lv_obj_t *btn = lv_list_add_btn(wifi_list, LV_SYMBOL_WIFI, safe_ssid);
-        lv_obj_set_style_bg_color(btn, THEME_COLOR_SECTION_BG, 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(btn, THEME_COLOR_SCROLLBAR, LV_STATE_PRESSED);
-        lv_obj_set_style_text_font(btn, THEME_FONT_SMALL, 0);
-        /* Dim out-of-range so they read as "saved but unreachable" */
-        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_text_opa(btn, LV_OPA_70, 0);
-        lv_obj_set_style_border_width(btn, 0, 0);
-        lv_obj_set_style_pad_ver(btn, 6, 0);
-
-        /* Forget button — same per-row pattern, dispatches to _forget_cb */
-        char *forget_ssid = lv_mem_alloc(33);
-        if (forget_ssid) {
-            strncpy(forget_ssid, saved_list[s].ssid, 32);
-            forget_ssid[32] = '\0';
-        }
-        lv_obj_t *forget_btn = lv_btn_create(btn);
-        lv_obj_set_size(forget_btn, 56, 22);
-        lv_obj_align(forget_btn, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_bg_color(forget_btn, THEME_COLOR_BTN_DANGER_BG, 0);
-        lv_obj_set_style_bg_opa(forget_btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(forget_btn, THEME_COLOR_STATUS_ERROR, 0);
-        lv_obj_set_style_border_width(forget_btn, 1, 0);
-        lv_obj_set_style_radius(forget_btn, THEME_RADIUS_SMALL, 0);
-        lv_obj_set_style_shadow_width(forget_btn, 0, 0);
-        lv_obj_set_style_pad_all(forget_btn, 0, 0);
-        lv_obj_add_event_cb(forget_btn, _forget_cb, LV_EVENT_ALL, forget_ssid);
-
-        lv_obj_t *fgt_lbl = lv_label_create(forget_btn);
-        lv_label_set_text(fgt_lbl, "Forget");
-        lv_obj_set_style_text_font(fgt_lbl, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(fgt_lbl, THEME_COLOR_STATUS_ERROR, 0);
-        lv_obj_center(fgt_lbl);
-
-        /* Row tap is a no-op for out-of-range — there's nothing to connect to.
-         * If the user wants to connect, they need to wait for it to appear in
-         * the next scan. */
+        _add_network_row(saved_list[s].ssid, 0, /*secured=*/true,
+                         /*connected=*/false, /*saved=*/true,
+                         /*out_of_range=*/true);
     }
 }
 

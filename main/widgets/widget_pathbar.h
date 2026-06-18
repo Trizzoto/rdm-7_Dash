@@ -29,6 +29,7 @@ typedef struct {
 
     uint8_t     band_width;           /* stroke thickness px (default 22) */
     bool        rounded;              /* rounded caps/joins (default true) */
+    bool        fade_fill;            /* positional dim->bright fade along the lit band */
 
     /* Parametric shape: when shape != 0 the path is GENERATED to fit the widget
      * box (so the editor only needs a shape + radius, no point array). shape 0
@@ -41,6 +42,21 @@ typedef struct {
     lv_color_t  redline_color;        /* fill beyond redline */
     lv_opa_t    dim_opa;              /* track opacity (default ~70) */
     uint16_t    smoothing_ms;         /* 0 = snap; else ease toward target */
+
+    /* Optional value scale drawn ALONG the path (Ford-tach style: ticks +
+     * numbers that follow the band, spaced by arc-length so they line up with
+     * the fill). All off by default — a bare pathbar is unchanged. */
+    bool        show_ticks;
+    bool        show_labels;
+    float       minor_tick_step;      /* value spacing; <= 0 disables ticks   */
+    float       major_tick_step;      /* value spacing for long/major ticks   */
+    uint16_t    tick_label_divisor;   /* label = value / divisor (e.g. 1000)  */
+    uint8_t     tick_len, major_tick_len;
+    uint8_t     tick_width, major_tick_width;
+    lv_color_t  tick_color, major_tick_color, label_color;
+    int16_t     label_gap;            /* px from band edge out to the number  */
+    bool        redline_recolor_ticks;
+    char        label_font[40];
 
     /* path geometry (absolute screen px), heap-allocated in from_json */
     lv_point_t *pts;

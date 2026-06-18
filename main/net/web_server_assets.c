@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>        /* fsync, fileno */
 
 static const char *TAG = "web_server_assets";
 
@@ -33,6 +34,14 @@ static const char *TAG = "web_server_assets";
 #define LFS_IMAGE_DIR "/lfs/images"
 /* Max RDMIMG size: SCREEN_W * SCREEN_H * 3 bytes/pixel + 12-byte header, rounded up */
 #define IMAGE_MAX_SIZE (1200 * 1024)
+/* Streaming upload chunk: bounds how much of the body we hold in RAM at once.
+ * The body is written straight to flash chunk-by-chunk, so a multi-MB image
+ * never needs a whole-file PSRAM buffer (which used to OOM at ~1.2 MB free). */
+#define IMAGE_UPLOAD_CHUNK (8 * 1024)
+/* Streaming download chunk: same idea for the GET side. The image + font data
+ * handlers fread one buffer at a time and httpd_resp_send_chunk() it, so a
+ * download never needs a whole-file PSRAM buffer either. Shared by both. */
+#define ASSET_DOWNLOAD_CHUNK (8 * 1024)
 
 static void _ensure_image_dir(void) {
 	struct stat st;
@@ -79,41 +88,13 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	/* Allocate receive buffer in PSRAM */
-	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
-	if (!buf) {
-		buf = malloc(content_len);
-		if (!buf) {
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-			return ESP_FAIL;
-		}
-	}
-
-	/* Receive data in chunks */
-	size_t received = 0;
-	while (received < content_len) {
-		int ret = httpd_req_recv(req, (char *)buf + received, content_len - received);
-		if (ret <= 0) {
-			free(buf);
-			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
-			return ESP_FAIL;
-		}
-		received += ret;
-	}
-
-	/* Validate RDMI magic */
-	if (memcmp(buf, "RDMI", 4) != 0) {
-		free(buf);
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid RDMIMG format");
-		return ESP_FAIL;
-	}
-
-	/* Check free space before writing */
+	/* Free-space pre-check: the declared length is known up front, so reject a
+	 * too-big upload before opening the file. (The stream below also fails
+	 * safely — staged in .tmp, never published — if the FS fills mid-write.) */
 	size_t total_bytes = 0, used_bytes = 0;
 	if (esp_littlefs_info("littlefs", &total_bytes, &used_bytes) == ESP_OK) {
 		size_t free_bytes = (total_bytes > used_bytes) ? (total_bytes - used_bytes) : 0;
 		if (content_len > free_bytes) {
-			free(buf);
 			char err_msg[128];
 			snprintf(err_msg, sizeof(err_msg),
 					 "Not enough storage: need %u KB, only %u KB free",
@@ -123,26 +104,109 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 		}
 	}
 
-	/* Write to LittleFS */
-	char path[80];
+	/* Stream the body straight to flash in fixed-size chunks instead of
+	 * buffering the whole image in PSRAM. The old handler allocated one
+	 * content_len-sized PSRAM buffer, so a 1.15 MB full-screen .rdmimg OOM'd
+	 * whenever a background image already held the ~1.2 MB of free PSRAM. Here
+	 * the only RAM held is one IMAGE_UPLOAD_CHUNK buffer, so uploads succeed
+	 * regardless of the active layout.
+	 *
+	 * Durability mirrors channel_manager.c's atomic save: write into a .tmp,
+	 * fsync it, keep the previous image as .bak across the rename window, then
+	 * atomically rename the .tmp over the live file. rename() is atomic on
+	 * LittleFS, so a power loss leaves either the old or the new image intact —
+	 * never a half-written .rdmimg. */
+	char path[96], tmp_path[112], bak_path[112];
 	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-	FILE *f = fopen(path, "wb");
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
+
+	uint8_t *chunk = malloc(IMAGE_UPLOAD_CHUNK);
+	if (!chunk) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+
+	FILE *f = fopen(tmp_path, "wb");
 	if (!f) {
-		free(buf);
+		free(chunk);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
 		return ESP_FAIL;
 	}
-	size_t nw = fwrite(buf, 1, received, f);
-	fclose(f);
-	free(buf);
 
-	if (nw != received) {
-		remove(path);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Write incomplete");
+	/* recv -> validate RDMI magic on the first 12 bytes -> write, repeat.
+	 * On any failure we stop, set err_status, and clean up the .tmp below. */
+	size_t received = 0;
+	uint8_t header[12];
+	size_t header_have = 0;
+	bool ok = true;
+	const char *err_status = NULL;
+	int http_err = HTTPD_500_INTERNAL_SERVER_ERROR;
+
+	while (received < content_len) {
+		size_t want = content_len - received;
+		if (want > IMAGE_UPLOAD_CHUNK) want = IMAGE_UPLOAD_CHUNK;
+		int ret = httpd_req_recv(req, (char *)chunk, want);
+		if (ret <= 0) {
+			ok = false;
+			err_status = "Receive failed";
+			break;
+		}
+
+		/* Accumulate the 12-byte header across however many segments it spans
+		 * (content_len >= 12 is guaranteed above) and validate before we
+		 * commit the bulk of the file. */
+		if (header_have < sizeof(header)) {
+			size_t copy = sizeof(header) - header_have;
+			if (copy > (size_t)ret) copy = (size_t)ret;
+			memcpy(header + header_have, chunk, copy);
+			header_have += copy;
+			if (header_have == sizeof(header) && memcmp(header, "RDMI", 4) != 0) {
+				ok = false;
+				err_status = "Invalid RDMIMG format";
+				http_err = HTTPD_400_BAD_REQUEST;
+				break;
+			}
+		}
+
+		size_t nw = fwrite(chunk, 1, (size_t)ret, f);
+		if (nw != (size_t)ret) {
+			ok = false;
+			err_status = "Write incomplete";
+			break;
+		}
+		received += (size_t)ret;
+	}
+	free(chunk);
+
+	/* Flush stdio + commit to flash before the rename so the published file is
+	 * durable, then close exactly once regardless of the loop's outcome. */
+	bool flush_ok = (fflush(f) == 0 && fsync(fileno(f)) == 0);
+	if (fclose(f) != 0) flush_ok = false;
+	if (ok && !flush_ok) {
+		ok = false;
+		err_status = "Write incomplete";
+	}
+
+	if (!ok) {
+		remove(tmp_path);
+		httpd_resp_send_err(req, http_err, err_status ? err_status : "Upload failed");
 		return ESP_FAIL;
 	}
 
-	ESP_LOGI(TAG, "Uploaded image '%s' (%u bytes)", name, (unsigned)received);
+	/* Atomic publish. Keep the previous image as .bak across the (microsecond)
+	 * rename window so a crash can't lose it, then drop the .bak so we don't
+	 * permanently double the storage of a multi-MB image. */
+	rename(path, bak_path);
+	if (rename(tmp_path, path) != 0) {
+		rename(bak_path, path);  /* restore the previous image if we had one */
+		remove(tmp_path);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot write file");
+		return ESP_FAIL;
+	}
+	remove(bak_path);  /* best-effort space reclaim; no-op on a first upload */
+
+	ESP_LOGI(TAG, "Uploaded image '%s' (%u bytes, streamed)", name, (unsigned)received);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
@@ -263,7 +327,76 @@ static const httpd_uri_t image_delete_uri = {.uri = "/api/image/delete",
                                               .handler = image_delete_handler,
                                               .user_ctx = NULL};
 
-/* GET /api/image/data?name=<name> — return raw RDMIMG binary */
+/* Stream a file to the client in fixed-size chunks via HTTP chunked transfer
+ * encoding, instead of buffering the whole file in one PSRAM allocation. The
+ * old image/font download handlers did heap_caps_malloc(file_size) + a single
+ * httpd_resp_send(), so a 1.15 MB full-screen .rdmimg returned "500 Out of
+ * memory" whenever a background image already held the ~1.2 MB of free PSRAM,
+ * and a 4 MB TTF was worse. Here the only RAM held is one ASSET_DOWNLOAD_CHUNK
+ * buffer regardless of file size. The caller has already validated the name and
+ * built the path; we own opening the file, the size sanity check, and the
+ * response.
+ *
+ * Returns ESP_OK on a fully-sent file. On a pre-send failure (not found / bad
+ * size / OOM) it sends the matching httpd error and returns ESP_FAIL. If a read
+ * or send fails mid-stream the headers are already out, so it just aborts the
+ * connection (returns ESP_FAIL without the terminating zero-length chunk) — the
+ * client then sees a truncated chunked stream rather than a silent short file. */
+static esp_err_t _send_file_chunked(httpd_req_t *req, const char *path,
+                                    long max_size, const char *not_found_msg) {
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, not_found_msg);
+		return ESP_FAIL;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long file_size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	if (file_size <= 0 || file_size > max_size) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
+		return ESP_FAIL;
+	}
+
+	uint8_t *chunk = malloc(ASSET_DOWNLOAD_CHUNK);
+	if (!chunk) {
+		fclose(f);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
+
+	/* Headers go out with the first chunk — set them before the loop. */
+	httpd_resp_set_type(req, "application/octet-stream");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+	long remaining = file_size;
+	esp_err_t res = ESP_OK;
+	while (remaining > 0) {
+		size_t want = (remaining > ASSET_DOWNLOAD_CHUNK)
+		                  ? ASSET_DOWNLOAD_CHUNK : (size_t)remaining;
+		size_t nread = fread(chunk, 1, want, f);
+		if (nread == 0) {
+			res = ESP_FAIL;  /* short read before EOF — abort mid-stream */
+			break;
+		}
+		if (httpd_resp_send_chunk(req, (const char *)chunk, nread) != ESP_OK) {
+			res = ESP_FAIL;  /* client gone / send failed — abort mid-stream */
+			break;
+		}
+		remaining -= (long)nread;
+	}
+
+	free(chunk);
+	fclose(f);
+
+	if (res == ESP_OK)
+		httpd_resp_send_chunk(req, NULL, 0);  /* terminate the chunked response */
+	return res;
+}
+
+/* GET /api/image/data?name=<name> — return raw RDMIMG binary (streamed) */
 static esp_err_t image_data_handler(httpd_req_t *req) {
 	char query[64] = {0};
 	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
@@ -288,38 +421,7 @@ static esp_err_t image_data_handler(httpd_req_t *req) {
 
 	char path[80];
 	snprintf(path, sizeof(path), "%s/%s.rdmimg", LFS_IMAGE_DIR, name);
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Image not found");
-		return ESP_FAIL;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long file_size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (file_size <= 0 || file_size > IMAGE_MAX_SIZE) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
-		return ESP_FAIL;
-	}
-
-	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-	if (!buf) buf = malloc(file_size);
-	if (!buf) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
-
-	size_t nread = fread(buf, 1, file_size, f);
-	fclose(f);
-
-	httpd_resp_set_type(req, "application/octet-stream");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
-	free(buf);
-	return res;
+	return _send_file_chunked(req, path, IMAGE_MAX_SIZE, "Image not found");
 }
 
 static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
@@ -390,7 +492,13 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 		}
 	}
 
-	/* Receive into PSRAM */
+	/* Receive into PSRAM. Unlike the image upload (which streams straight to
+	 * flash) and the image/font *downloads* (which stream from flash), this one
+	 * can't be chunked away: font_manager_add_family() takes the full TTF as one
+	 * contiguous (data,size) buffer — it memcpy's it into its own PSRAM copy and
+	 * hands that to lv_tiny_ttf for the life of the family — so the whole font
+	 * must be assembled in RAM before we can register it. We prefer PSRAM and
+	 * only fall back to internal heap. */
 	uint8_t *buf = heap_caps_malloc(content_len, MALLOC_CAP_SPIRAM);
 	if (!buf) {
 		buf = malloc(content_len);
@@ -557,7 +665,7 @@ static const httpd_uri_t font_delete_uri = {.uri = "/api/font/delete",
                                              .handler = font_delete_handler,
                                              .user_ctx = NULL};
 
-/* GET /api/font/data?name=<family_name> — return raw TTF binary */
+/* GET /api/font/data?name=<family_name> — return raw TTF binary (streamed) */
 static esp_err_t font_data_handler(httpd_req_t *req) {
 	char query[64] = {0};
 	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
@@ -582,38 +690,7 @@ static esp_err_t font_data_handler(httpd_req_t *req) {
 
 	char path[80];
 	snprintf(path, sizeof(path), "%s/%s.ttf", LFS_FONT_DIR, name);
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
-		return ESP_FAIL;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long file_size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	if (file_size <= 0 || file_size > FONT_MAX_FILE_SIZE) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Invalid file size");
-		return ESP_FAIL;
-	}
-
-	uint8_t *buf = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM);
-	if (!buf) buf = malloc(file_size);
-	if (!buf) {
-		fclose(f);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-		return ESP_FAIL;
-	}
-
-	size_t nread = fread(buf, 1, file_size, f);
-	fclose(f);
-
-	httpd_resp_set_type(req, "application/octet-stream");
-	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t res = httpd_resp_send(req, (const char *)buf, nread);
-	free(buf);
-	return res;
+	return _send_file_chunked(req, path, FONT_MAX_FILE_SIZE, "Font not found");
 }
 
 static const httpd_uri_t font_data_uri = {.uri = "/api/font/data",

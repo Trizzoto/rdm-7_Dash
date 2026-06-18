@@ -18,6 +18,13 @@ const ROOT = path.resolve(__dirname, '..');
 const INDEX_HTML = path.join(ROOT, 'main', 'web', 'index.html');
 const MIRROR_HTML = path.join(ROOT, 'main', 'web', 'mirror.html');
 
+/* Browser-dev layout persistence. POST /api/layout/save writes the firmware
+ * payload here (pretty-printed) and GET /api/layout/current serves it back —
+ * so layouts authored in the studio survive a page reload / server restart
+ * without a device, and you can hand the file to anyone to Import. Delete the
+ * file to fall back to SAMPLE_LAYOUT. */
+const SAVED_LAYOUT = path.join(ROOT, 'tools', 'ford_cluster.json');
+
 /* --device <ip>: proxy mode for the WASM live mirror. Serves the LOCAL
  * main/web/mirror.html at /mirror (so the page under development is the
  * one being tested) but forwards /mirror/index.js, /mirror/index.wasm and
@@ -245,6 +252,30 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url.startsWith('/api/')) {
+    /* Layout persistence — serve the saved layout file if present so the
+     * studio opens straight to the authored layout (no device needed). */
+    if ((url === '/api/layout/current' || url === '/api/layout/raw') && req.method === 'GET') {
+      try {
+        if (fs.existsSync(SAVED_LAYOUT)) return sendJson(res, fs.readFileSync(SAVED_LAYOUT, 'utf8'));
+      } catch (e) { /* fall through to sample */ }
+      return sendJson(res, SAMPLE_LAYOUT);
+    }
+    if (url === '/api/layout/save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const pretty = JSON.stringify(JSON.parse(body), null, 2);
+          fs.writeFileSync(SAVED_LAYOUT, pretty);
+        } catch (e) { /* ignore malformed save */ }
+        sendJson(res, { ok: true });
+      });
+    }
+    /* Dev-only: dump the studio preview SVG to disk so it can be shared. */
+    if (url === '/api/preview/svg' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try { fs.writeFileSync(path.join(ROOT, 'tools', 'ford_cluster_preview.svg'), body); } catch (e) {}
+        sendJson(res, { ok: true });
+      });
+    }
     /* Channels — explicit handlers (need body + the in-memory store). */
     if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
       return sendJson(res, { channels: channelStore });
@@ -321,7 +352,7 @@ const server = http.createServer((req, res) => {
   const fp = path.join(ROOT, 'main', 'web', url);
   if (fp.startsWith(path.join(ROOT, 'main', 'web')) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
     const ext = path.extname(fp);
-    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
+    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': ct });
     return res.end(fs.readFileSync(fp));
   }

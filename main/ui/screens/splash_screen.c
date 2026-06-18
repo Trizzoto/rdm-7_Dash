@@ -35,6 +35,22 @@ static char s_active_splash_name[LAYOUT_MAX_NAME] = "Default";
 static widget_t *s_widgets[SPLASH_MAX_WIDGETS];
 static uint8_t s_widget_count = 0;
 
+/* ── Boot splash timing ───────────────────────────────────────────────────
+ * The dashboard build (layout JSON parse + widget/image/font instantiation) is
+ * the expensive part of boot — up to ~2.5 s on an image-heavy layout. It MUST
+ * run behind the opaque fade-out cover, never under the visible logo: loading
+ * the big layout images saturates PSRAM bandwidth, and this RGB panel reads its
+ * framebuffer from PSRAM every frame, so the heavy PSRAM traffic starves the
+ * LCD DMA and visibly tears/glitches any non-black content. Behind solid black
+ * the tear is invisible — which is why the logo is faded fully out first.
+ *
+ * The win over the old flow is just trimming the dead time: the original waited
+ * a fixed 900 ms (logo up, doing nothing) + 350 ms fade before even starting
+ * the build. We now show the logo briefly, fade quickly, then build + reveal —
+ * so the splash adds ~1 s instead of ~1.7 s, while staying glitch-free. */
+#define SPLASH_MIN_VISIBLE_MS  500  /* logo display before the fade-out begins */
+#define SPLASH_FADE_MS         200  /* logo → black fade-out (was 350)         */
+
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
 /** Build the full layout name for the active splash (e.g. "_splash_Default"). */
@@ -395,7 +411,37 @@ static void _reveal_dashboard_now(bool animate)
 
 void splash_screen_reveal_dashboard(void)
 {
+	/* Guarantee a fully-black panel BEFORE the build. The build below blocks the
+	 * LVGL render loop for the whole layout load (~2.3 s on a heavy layout), so
+	 * the panel freezes on whatever was last flushed. The fade-out animation's
+	 * final fully-opaque frame is NOT yet flushed when we get here (its ready_cb
+	 * runs before the refresh step of the same lv_timer_handler pass), so the
+	 * panel would otherwise sit at the previous ~95%-opaque frame and let the
+	 * logo bleed through at ~5% for the entire load. Drop our own opaque black
+	 * cover over whatever is showing (faded splash, logo with fade off, or the
+	 * splash-disabled black screen) and flush it synchronously — now the load
+	 * happens on a truly black (0%) screen. The cover lives on the outgoing
+	 * screen, which the reveal's screen swap auto-deletes. */
+	lv_obj_t *act = lv_disp_get_scr_act(lv_disp_get_default());
+	if (act && lv_obj_is_valid(act)) {
+		lv_obj_t *blk = lv_obj_create(act);
+		lv_obj_remove_style_all(blk);
+		lv_obj_set_size(blk, lv_disp_get_hor_res(lv_disp_get_default()),
+		                lv_disp_get_ver_res(lv_disp_get_default()));
+		lv_obj_set_align(blk, LV_ALIGN_CENTER);
+		lv_obj_set_style_bg_color(blk, lv_color_black(), LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(blk, LV_OPA_COVER, LV_PART_MAIN);
+		lv_obj_clear_flag(blk, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	}
+	lv_refr_now(NULL);
+
+	/* Build the dashboard here, behind that opaque black cover. Doing the
+	 * image-heavy build while a non-black screen is visible would tear the
+	 * panel — see the PSRAM/LCD note by SPLASH_MIN_VISIBLE_MS. */
+	int64_t _bt0 = esp_timer_get_time();
 	ui_Screen3_screen_init();
+	int64_t _bt1 = esp_timer_get_time();
+	ESP_LOGI("BOOTPERF", "dashboard build dur=%lld ms", (_bt1 - _bt0) / 1000);
 
 	/* Reset our splash-widget bookkeeping — the dashboard owns the registry
 	 * now, and the old splash screen is about to be auto-deleted. */
@@ -404,6 +450,8 @@ void splash_screen_reveal_dashboard(void)
 
 	bool animate = true;
 	config_store_load_boot_anim(&animate);
+	ESP_LOGI("BOOTPERF", "reveal start (animate=%d) @ %lld ms", animate,
+	         esp_timer_get_time() / 1000);
 	_reveal_dashboard_now(animate);
 }
 
@@ -485,7 +533,7 @@ static void _splash_transition_cb(void *arg)
 		lv_anim_init(&a);
 		lv_anim_set_var(&a, cover);
 		lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-		lv_anim_set_time(&a, 350);
+		lv_anim_set_time(&a, SPLASH_FADE_MS);
 		lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
 		lv_anim_set_exec_cb(&a, _splash_cover_opa_cb);
 		lv_anim_set_ready_cb(&a, _splash_fade_ready_cb);
@@ -512,6 +560,28 @@ static void splash_timer_cb(void *arg)
 	}
 }
 
+/* Arm the one-shot esp_timer that drives the fade-out + reveal transition.
+ * Kept as an esp_timer (not lv_timer) so the WiFi-loss fallback can detect a
+ * still-pending transition via `splash_timer != NULL` and jump it forward. */
+static void _arm_transition_timer(uint32_t delay_ms)
+{
+	if (splash_timer) {
+		esp_timer_stop(splash_timer);
+		esp_timer_delete(splash_timer);
+		splash_timer = NULL;
+	}
+	esp_timer_create_args_t timer_args = {
+		.callback = splash_timer_cb,
+		.name = "splash_xition"
+	};
+	if (esp_timer_create(&timer_args, &splash_timer) == ESP_OK)
+		esp_timer_start_once(splash_timer, (uint64_t)delay_ms * 1000);
+	else
+		/* Couldn't allocate the timer — fall back to an immediate transition
+		 * so boot never stalls on the splash. */
+		_splash_transition_cb(NULL);
+}
+
 void show_splash_screen(void)
 {
 	splash_screen = _create_screen();
@@ -531,6 +601,7 @@ void show_splash_screen(void)
 	}
 
 	lv_scr_load(splash_screen);
+	ESP_LOGI("BOOTPERF", "splash shown @ %lld ms", esp_timer_get_time() / 1000);
 
 	/* Paint the splash in ONE synchronous pass before returning. show_splash_screen
 	 * runs inside ui_init() while app_main holds the LVGL mutex, so without this
@@ -541,13 +612,11 @@ void show_splash_screen(void)
 	 * goes straight from black to a fully-drawn splash. */
 	lv_refr_now(NULL);
 
-	/* Auto-transition to dashboard after 900 ms */
-	esp_timer_create_args_t timer_args = {
-		.callback = splash_timer_cb,
-		.name = "splash_timer"
-	};
-	esp_timer_create(&timer_args, &splash_timer);
-	esp_timer_start_once(splash_timer, 900000);
+	/* After the logo has been visible briefly, fade it out and build + reveal
+	 * the dashboard behind the black cover. SPLASH_MIN_VISIBLE_MS replaces the
+	 * old fixed 900 ms idle so boot stays snappy; the build still happens behind
+	 * black to avoid the PSRAM/LCD tear (see SPLASH_MIN_VISIBLE_MS note). */
+	_arm_transition_timer(SPLASH_MIN_VISIBLE_MS);
 }
 
 /* ── WiFi-loss fallback ──────────────────────────────────────────────────

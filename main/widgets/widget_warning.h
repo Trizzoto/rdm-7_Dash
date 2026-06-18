@@ -35,6 +35,11 @@ typedef struct {
 	int8_t     label_y_offset;       /* extra vertical shift, default 0 */
 	uint8_t    label_text_align;     /* 0=Left, 1=Center, 2=Right (default 1) */
 	char       image_name[64];       /* RDMIMG name; empty = circle mode */
+	/* Image zoom in PERCENT (100 = native). Stored as percent (not the raw
+	 * LVGL 256-based zoom the standalone image widget uses) so it passes
+	 * straight through the web editor without a unit conversion; the create
+	 * path converts to LVGL zoom (pct*256/100). Only used in image mode. */
+	uint16_t   image_scale;          /* default: 100 */
 	uint8_t    active_opa;           /* opacity when active (default 255) */
 	uint8_t    inactive_opa;         /* opacity when inactive (default 180) */
 	/* ── Alert type ──

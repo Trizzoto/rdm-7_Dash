@@ -960,6 +960,16 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 			lv_img_set_src(warning_circles[i], wd_style->img_dsc);
 			lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
 			lv_obj_set_pos(warning_circles[i], pos_x, pos_y);
+			/* Image scale — pivot on the image centre so the zoom stays
+			 * centred on the widget position, then convert percent → LVGL
+			 * zoom (256 = 100%). Skipped at 100% (set_zoom(256) is a no-op). */
+			if (wd_style->image_scale != 100 && wd_style->image_scale > 0) {
+				lv_img_set_pivot(warning_circles[i],
+				                 wd_style->img_dsc->header.w / 2,
+				                 wd_style->img_dsc->header.h / 2);
+				lv_img_set_zoom(warning_circles[i],
+				                (uint16_t)((uint32_t)wd_style->image_scale * 256 / 100));
+			}
 			/* Apply color overlay using recolor */
 			lv_color_t init_color = wd_style->inactive_color;
 			uint8_t init_opa = wd_style->inactive_opa;
@@ -986,6 +996,13 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 					lv_img_set_src(wd_style->night_img_obj, wd_style->night_img_dsc);
 					lv_obj_set_align(wd_style->night_img_obj, LV_ALIGN_CENTER);
 					lv_obj_set_pos(wd_style->night_img_obj, pos_x, pos_y);
+					if (wd_style->image_scale != 100 && wd_style->image_scale > 0) {
+						lv_img_set_pivot(wd_style->night_img_obj,
+						                 wd_style->night_img_dsc->header.w / 2,
+						                 wd_style->night_img_dsc->header.h / 2);
+						lv_img_set_zoom(wd_style->night_img_obj,
+						                (uint16_t)((uint32_t)wd_style->image_scale * 256 / 100));
+					}
 					lv_obj_set_style_img_recolor(wd_style->night_img_obj, init_color,
 					                              LV_PART_MAIN | LV_STATE_DEFAULT);
 					lv_obj_set_style_img_recolor_opa(wd_style->night_img_obj,
@@ -1265,6 +1282,8 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "label_text_align", wd->label_text_align);
 		if (wd->image_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "image_name", wd->image_name);
+		if (wd->image_scale != 100)
+			cJSON_AddNumberToObject(cfg, "image_scale", wd->image_scale);
 		if (wd->active_opa != 255)
 			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
 		if (wd->inactive_opa != 180)
@@ -1341,6 +1360,11 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(wd->image_name, item->valuestring, sizeof(wd->image_name));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_scale");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		wd->image_scale = (uint16_t)(v < 10 ? 10 : (v > 200 ? 200 : v));
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "active_opa");
 	if (cJSON_IsNumber(item)) wd->active_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
@@ -1418,6 +1442,16 @@ static void _warning_destroy(widget_t *w) {
 	/* Label is a sibling of root (child of parent), delete explicitly */
 	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot]))
 		lv_obj_del(warning_labels[slot]);
+	/* The day image/circle (warning_circles[slot]) is created via
+	 * lv_img_create(parent) — a SIBLING of the touch-area root (w->root), so the
+	 * lv_obj_del(w->root) below does NOT reach it. Delete it explicitly here,
+	 * BEFORE rdm_image_free() releases its descriptor: otherwise it orphans on
+	 * the screen with a dangling bg/img src and the next display refresh
+	 * dereferences freed pixel data → Guru Meditation (LoadProhibited). This was
+	 * the layout-switch crash; the night sibling was already deleted below but
+	 * the day object was only NULLed, never freed. */
+	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot]))
+		lv_obj_del(warning_circles[slot]);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -1606,6 +1640,7 @@ static bool _warning_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "label") == 0)              { out->str = wd->label;              return true; }
 	if (strcmp(name, "label_font") == 0)         { out->str = wd->label_font;         return true; }
 	if (strcmp(name, "image_name") == 0)         { out->str = wd->image_name;         return true; }
+	if (strcmp(name, "image_scale") == 0)        { out->i = wd->image_scale;          return true; }
 	if (strcmp(name, "is_momentary") == 0)       { out->b = wd->is_momentary;         return true; }
 	if (strcmp(name, "invert_toggle") == 0)      { out->b = wd->invert_toggle;        return true; }
 	if (strcmp(name, "show_label") == 0)         { out->b = wd->show_label;           return true; }
@@ -1653,6 +1688,24 @@ static bool _warning_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "image_name") == 0 && in->str) {
 		safe_strncpy(wd->image_name, in->str, sizeof(wd->image_name));
 		return true;   /* circle <-> image mode flip needs layout reload */
+	}
+	if (strcmp(name, "image_scale") == 0) {
+		int pct = in->i; if (pct < 10) pct = 10; if (pct > 200) pct = 200;
+		wd->image_scale = (uint16_t)pct;
+		/* Live-apply on the image object(s) — scale doesn't flip the LVGL
+		 * object type, so no reload needed. No-op in circle mode (img_obj NULL). */
+		uint16_t zoom = (uint16_t)((uint32_t)pct * 256 / 100);
+		if (wd->img_obj && lv_obj_is_valid(wd->img_obj) && wd->img_dsc) {
+			lv_img_set_pivot(wd->img_obj, wd->img_dsc->header.w / 2,
+			                 wd->img_dsc->header.h / 2);
+			lv_img_set_zoom(wd->img_obj, zoom);
+		}
+		if (wd->night_img_obj && lv_obj_is_valid(wd->night_img_obj) && wd->night_img_dsc) {
+			lv_img_set_pivot(wd->night_img_obj, wd->night_img_dsc->header.w / 2,
+			                 wd->night_img_dsc->header.h / 2);
+			lv_img_set_zoom(wd->night_img_obj, zoom);
+		}
+		return true;
 	}
 	if (strcmp(name, "label_font") == 0 && in->str) {
 		safe_strncpy(wd->label_font, in->str, sizeof(wd->label_font));
@@ -1796,6 +1849,7 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->label_y_offset = 0;
 	wd->label_text_align = 1;           /* Center */
 	wd->image_name[0] = '\0';
+	wd->image_scale = 100;              /* native size */
 	wd->active_opa = 255;
 	wd->inactive_opa = 180;
 	wd->flash_mode = 0;                 /* Solid by default — no flashing */

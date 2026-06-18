@@ -849,6 +849,13 @@ static void _migrate_layout_root(cJSON *root, int from_ver) {
  * geometry actually changed re-slice, so moving one meter stays cheap. No-op
  * when there's no full-screen bg image, and meters with their own face are
  * left untouched. */
+/* Free a sliced face when its low-z occluder image is deleted (e.g. on layout
+ * reload, when the bg container that owns it is destroyed). Balances the
+ * rdm_image_slice() refcount taken when the occluder was created. */
+static void _occ_free_slice_cb(lv_event_t *e) {
+	rdm_image_free((lv_img_dsc_t *)lv_event_get_user_data(e));
+}
+
 static void _autoslice_from_bg(void) {
 	widget_t *snap[WIDGET_REGISTRY_MAX];
 	uint8_t n = 0;
@@ -875,10 +882,12 @@ static void _autoslice_from_bg(void) {
 		/* Auto-slicing makes a meter's face OPAQUE so it occludes the bg — but an
 		 * opaque rect also occludes any LOWER-z widget the meter sits on top of.
 		 * If this meter substantially covers a widget below it (e.g. a big centre
-		 * gauge moved above the little sub-dials inside it), skip the slice and
-		 * leave it transparent so only its needle draws over those widgets. The
-		 * covered widgets keep their own optimisation; just this meter pays the
-		 * bg re-blend under its needle. */
+		 * gauge raised above the little sub-dials inside it), don't make the meter
+		 * opaque (it would hide them). Instead drop a low-z opaque face-occluder
+		 * (a contiguous crop of the bg) under the bg's other children, so the
+		 * meter's needle still re-blends a cache-friendly crop (not the strided
+		 * full bg = the slow path) while staying transparent so the needle draws
+		 * ON TOP of the covered widgets. */
 		const widget_t *m = snap[i];
 		int mx1 = SCREEN_ORIGIN_X + m->x - m->w / 2;
 		int my1 = SCREEN_ORIGIN_Y + m->y - m->h / 2;
@@ -898,8 +907,39 @@ static void _autoslice_from_bg(void) {
 			if (oa > 0 && ov * 2 >= oa) { covers_lower = true; break; }  /* >50% covered */
 		}
 		if (covers_lower) {
-			ESP_LOGI(TAG, "autoslice: skip '%s' (would occlude a lower widget) — needle stays on top",
-			         m->id);
+			/* Low-z face-occluder: an opaque crop of the bg parented to the bg
+			 * container (so it draws above the bg image but below the bg's other
+			 * sibling widgets, and is auto-freed when the bg is destroyed on
+			 * reload). The skipped meter stays transparent → its needle draws on
+			 * top of the covered widgets AND re-blends this contiguous crop. */
+			if (bgw->root && lv_obj_is_valid(bgw->root)) {
+				int dw = disp.x2 - disp.x1 + 1, dh = disp.y2 - disp.y1 + 1;
+				if (dw > 0 && dh > 0) {
+					int sx = (int)((int64_t)(mx1 - disp.x1) * nw / dw);
+					int sy = (int)((int64_t)(my1 - disp.y1) * nh / dh);
+					int sw = (int)((int64_t)m->w * nw / dw);
+					int sh = (int)((int64_t)m->h * nh / dh);
+					lv_img_dsc_t *face = rdm_image_slice(bg, sx, sy, sw, sh, m->w, m->h);
+					if (face) {
+						/* Use the SAME cover setup as widget_meter_autoface: an
+						 * lv_obj with bg_img + bg_opa COVER + radius 0 registers for
+						 * LVGL's cover-check, so the strided bg below is SKIPPED under
+						 * the needle (an lv_img did not cover → bg still re-read = slow). */
+						lv_obj_t *occ = lv_obj_create(bgw->root);
+						lv_obj_remove_style_all(occ);
+						lv_obj_set_size(occ, m->w, m->h);
+						lv_obj_set_align(occ, LV_ALIGN_TOP_LEFT);
+						lv_obj_set_pos(occ, mx1, my1);   /* cont is screen-(0,0): local == screen px */
+						lv_obj_set_style_bg_img_src(occ, face, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_bg_opa(occ, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_radius(occ, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_clear_flag(occ, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+						lv_obj_add_event_cb(occ, _occ_free_slice_cb, LV_EVENT_DELETE, face);
+						ESP_LOGI(TAG, "autoslice: '%s' needle-on-top + low-z face occluder", m->id);
+					}
+				}
+			}
+			vTaskDelay(1);
 			continue;
 		}
 		widget_meter_autoface(snap[i], bg, &disp, nw, nh);

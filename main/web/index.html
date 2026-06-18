@@ -4024,6 +4024,25 @@
                 close</p>
         </div>
     </div>
+    <!-- Load Layout JSON — paste a layout (firmware-format JSON, e.g. produced by
+         an AI builder) straight into the editor. Mirrors the .rdm/file import
+         path: validate → firmwareToWebFormat() → renderEditor(). No device
+         required; Save afterwards to push to a connected dash. -->
+    <div id="loadJsonModal" onclick="closeLoadJsonModal()" style="display:none; position:fixed; inset:0; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
+        <div onclick="event.stopPropagation()" style="background:var(--panel-elevated); border:1px solid var(--border); box-shadow:var(--shadow-md); border-radius:var(--radius-lg); padding:24px; width:min(640px, 95vw); max-height:90vh; overflow-y:auto; color:var(--text);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <h2 style="margin:0; font-size:15px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:white;">Load Layout JSON</h2>
+                <button onclick="closeLoadJsonModal()" style="background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer;">&times;</button>
+            </div>
+            <p style="margin:0 0 12px; font-size:11px; color:var(--text-muted);">Paste a layout in firmware JSON format (the same shape an export produces, or what an AI builder generates). It loads straight into the editor for preview &mdash; no device needed. Hit <b>Save</b> afterwards to push it to a connected dash.</p>
+            <textarea id="loadJsonText" spellcheck="false" placeholder='{ "name": "my_layout", "widgets": [ ... ] }' style="width:100%; height:280px; padding:10px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); font-family:'JetBrains Mono', monospace; font-size:12px; line-height:1.4; resize:vertical; white-space:pre;"></textarea>
+            <div id="loadJsonError" style="display:none; margin-top:8px; font-size:12px; color:hsl(0,70%,62%);"></div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button class="btn btn-secondary" onclick="closeLoadJsonModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="loadJsonFromText()">Load into Editor</button>
+            </div>
+        </div>
+    </div>
     <div id="ecuModal" style="display:none; position:fixed; inset:0; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); z-index:2000; align-items:center; justify-content:center;">
         <div style="background:var(--panel-elevated); border:1px solid var(--border); box-shadow:var(--shadow-md); border-radius:var(--radius-lg); padding:24px; min-width:280px; max-width:min(420px, 90vw); max-height:90vh; overflow-y:auto;">
             <div style="font-size:13px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:hsl(0,0%,100%); margin-bottom:16px;">Select ECU / Vehicle</div>
@@ -4089,6 +4108,8 @@
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
                 <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
+                <button class="header-pill active" id="pillRender" onclick="toggleHeaderPill(this, 'render')" title="Render gauges/text in the canvas when offline (no device). The device LVGL render stays the source of truth.">Render</button>
+                <button class="header-pill" id="pillDash" onclick="toggleHeaderPill(this, 'dash')" title="Simulate the real dash: RGB565 colour banding + firmware-feasible glow (no Gaussian blur / radial halos).">DASH 565</button>
             </div>
             <!-- Hidden elements for JS compatibility. The firmware-hosted editor
                  only runs on the 7" dash, so screenSizeSelect is hidden; the JS
@@ -4261,6 +4282,11 @@
                 <div class="card-body">Load a layout bundle (.rdm) from a file into the editor.</div>
                 <div class="card-stat">Bundle import</div>
             </div>
+            <div class="setup-card" onclick="openLoadJsonModal && openLoadJsonModal()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>Load JSON</div>
+                <div class="card-body">Paste a layout in JSON format (e.g. from an AI builder) straight into the editor &mdash; no device needed.</div>
+                <div class="card-stat">Paste &amp; preview</div>
+            </div>
             <div class="setup-card" onclick="exportRdm && exportRdm()">
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Export .rdm</div>
                 <div class="card-body">Save the current layout (plus assets) as a portable .rdm bundle.</div>
@@ -4308,6 +4334,19 @@
                 <div class="display-bezel bezel-on" id="canvasContainer" style="transform: scale(1) translate(0px, 0px);">
                     <div class="canvas-container">
                         <canvas id="screenshotCanvas" width="800" height="480"></canvas>
+                        <!-- Reference-overlay: a tracing backdrop (e.g. the real Ford
+                             cluster photo) to align widgets to. Hidden until _setRef()
+                             sets a src. Sits above the canvas, below the preview/boxes. -->
+                        <img id="refOverlay" width="800" height="480"
+                             style="display:none; position:absolute; top:0; left:0; width:800px; height:480px; pointer-events:none; opacity:0.5; object-fit:fill;"
+                             draggable="false" alt="reference overlay">
+                        <!-- Offline WYSIWYG preview: SVG render of every widget so the
+                             studio shows real gauges without a device. Sits above the
+                             (blank, when offline) screenshot canvas but below the
+                             interaction layer so widget boxes stay clickable. Auto-hides
+                             when a live device frame is present. See renderPreview(). -->
+                        <svg id="previewLayer" width="800" height="480" viewBox="0 0 800 480"
+                             style="position:absolute;top:0;left:0;width:800px;height:480px;pointer-events:none;"></svg>
                         <!-- Live MJPEG stream layer. Hidden by default; shown when the
                              LIVE header pill is active. The <img src> is set to the
                              continuous MJPEG endpoint, which the browser renders as a
@@ -5300,6 +5339,10 @@
         let expandedSignalIdx = -1;
         let _cachedImageList = [];
         let _cachedFontList = [];
+        /* Pathbar trace backdrops — editor-only tracing aid keyed by widget id.
+         * { src(dataURL), name, natW, natH, opa(0..100), fit('fill'|'native') }.
+         * NOT serialized to the layout/firmware; purely an authoring overlay. */
+        let _pathbarTrace = {};
         let currentScreenMode = 'dashboard';
         /* Day / Night editor mode — 'day' or 'night'. Drives canvas appearance + inspector UI
          * for night-mode override fields. Persisted per-session, not saved to layout. */
@@ -6643,10 +6686,75 @@
             input.click();
         }
 
+        /* Paste-a-layout loader (the AI-builder on-ramp). Takes firmware-format
+         * layout JSON from the textarea and runs the exact same ingest path as
+         * the .rdm/file import — validate → firmwareToWebFormat → renderEditor —
+         * so a layout produced by Claude (or any export) previews offline with
+         * no device. */
+        function openLoadJsonModal() {
+            const ta = document.getElementById('loadJsonText');
+            const err = document.getElementById('loadJsonError');
+            if (err) { err.style.display = 'none'; err.textContent = ''; }
+            if (ta) ta.value = '';
+            document.getElementById('loadJsonModal').style.display = 'flex';
+            if (ta) setTimeout(() => ta.focus(), 30);
+        }
+        function closeLoadJsonModal() {
+            const m = document.getElementById('loadJsonModal');
+            if (m) m.style.display = 'none';
+        }
+        function loadJsonFromText() {
+            const ta = document.getElementById('loadJsonText');
+            const err = document.getElementById('loadJsonError');
+            const fail = (msg) => { if (err) { err.textContent = msg; err.style.display = 'block'; } };
+            const raw = (ta && ta.value || '').trim();
+            if (!raw) { fail('Paste a layout JSON first.'); return; }
+            let data;
+            try { data = JSON.parse(raw); }
+            catch (e) { fail('Not valid JSON: ' + (e && e.message || e)); return; }
+            if (!data || typeof data !== 'object' || !Array.isArray(data.widgets)) {
+                fail('Invalid layout: expected an object with a "widgets" array.'); return;
+            }
+            try {
+                pushHistory();
+                firmwareToWebFormat(data);
+                currentLayout = data;
+                if (!currentLayout.name || currentLayout.name === 'default')
+                    currentLayout.name = 'imported';
+                selectedIndex = -1; selectedIndices = new Set();
+                history = [JSON.stringify(currentLayout)];
+                historyIndex = 0;
+                renderEditor();
+                renderSignals();
+                updateInspector();
+                closeLoadJsonModal();
+                updateStatus('Loaded layout "' + currentLayout.name + '" (' + currentLayout.widgets.length + ' widgets)');
+            } catch (e) {
+                fail('Failed to load layout: ' + (e && e.message || e));
+            }
+        }
+
         /* ── RGB565 ↔ RGB888 color conversion ──────────────────────────────
          * Firmware stores colors as RGB565 (16-bit lv_color_t.full).
          * Web editor works with RGB888. Convert on load and save.        */
         function rgb565to888(val) {
+            /* Hex-string colours ("#RRGGBB", "#RGB", "0xRRGGBB") are treated as
+             * explicit RGB888 — this is the unambiguous form an AI builder / the
+             * Load-JSON paste should use. A bare integer <= 0xFFFF is otherwise
+             * read as RGB565 (the firmware-native form), which would mangle pure
+             * blues/greens (zero red channel). Device-stored layouts only ever
+             * use numbers, so this branch is additive. */
+            if (typeof val === 'string') {
+                let s = val.trim();
+                if (s[0] === '#' || /^0x/i.test(s)) {
+                    s = s.replace(/^#/, '').replace(/^0x/i, '');
+                    if (s.length === 3) s = s[0]+s[0]+s[1]+s[1]+s[2]+s[2];
+                    const n = parseInt(s, 16);
+                    return Number.isFinite(n) ? (n & 0xFFFFFF) : 0;
+                }
+                val = parseInt(s, 10);
+                if (!Number.isFinite(val)) return 0;
+            }
             val = Number(val) || 0;
             if (val > 0xFFFF) return val;          /* already RGB888 */
             const r5 = (val >> 11) & 0x1F;
@@ -6683,7 +6791,7 @@
                      * matching whatever rgb space the calling pass wants. */
                     if (f.type === 'gradient_stops' && Array.isArray(w.config[f.name])) {
                         w.config[f.name].forEach(s => {
-                            if (s && typeof s.color === 'number') {
+                            if (s && (typeof s.color === 'number' || typeof s.color === 'string')) {
                                 s.color = convertFn(s.color);
                             }
                         });
@@ -6713,7 +6821,8 @@
                         }
                     });
                     Object.keys(w.config.night).forEach(k => {
-                        if (nightColorKeys.has(k) && w.config.night[k] !== undefined && typeof w.config.night[k] === 'number') {
+                        if (nightColorKeys.has(k) && w.config.night[k] !== undefined
+                            && (typeof w.config.night[k] === 'number' || typeof w.config.night[k] === 'string')) {
                             w.config.night[k] = convertFn(w.config.night[k]);
                         }
                     });
@@ -7176,6 +7285,9 @@
                         fields: [
                             { name: "label", label: "Label", type: "text", def: "", cat: "data" },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
+                            /* Zoom for the alert image (100 = native), centred on the widget.
+                             * Only applies in image mode (ignored for the plain circle lamp). */
+                            { name: "image_scale", label: "Image Scale %", type: "stepper", def: 100, cat: "appearance", min: 10, max: 200 },
                             { name: "active_color", label: "Active Color", type: "color", def: 0xFF0000, cat: "appearance", nightOverridable: true },
                             { name: "active_opa", label: "Active Opacity", type: "stepper", def: 255, cat: "appearance", min: 0, max: 255 },
                             { name: "is_momentary", label: "Momentary", type: "checkbox", def: true, cat: "appearance" },
@@ -7256,10 +7368,19 @@
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", min: 1, max: 20, enabledBy: "show_ticks" },
                             { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", min: 1, max: 50, enabledBy: "show_ticks" },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks", nightOverridable: true },
+                            /* Optional 3rd tick tier between minor and major. Value spacing
+                             * in data units (e.g. 500 = a medium tick every 500 RPM). 0 = off. */
+                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", min: 0, max: 20, enabledBy: "show_ticks" },
+                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance" },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_tick_labels", nightOverridable: true },
+                            /* Divides each tick label by this factor — e.g. 1000 turns a
+                             * 0..7000 tach into 0..7 (print the unit elsewhere, "RPM x1000"). */
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             /* Master toggle for the value needle. When off, the meter
                              * renders ticks / labels / ball only — no needle line, image,
                              * or needle shadow. Independent of Show Needle Ball. */
@@ -7423,6 +7544,7 @@
                             { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", nightOverridable: true },
                             { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", min: 1, max: 50 },
                             { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance" },
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", nightOverridable: true },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance" },
@@ -7578,6 +7700,7 @@
                             { name: "corner_radius", label: "Corner Radius", type: "stepper", def: 40, cat: "appearance", min: 0, max: 400 },
                             { name: "band_width", label: "Band Width", type: "stepper", def: 22, cat: "appearance", min: 2, max: 80 },
                             { name: "rounded", label: "Rounded Caps", type: "checkbox", def: true, cat: "appearance" },
+                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance" },
                             { name: "lit_color", label: "Fill Color", type: "color", def: 0x2EE4C8, cat: "appearance" },
                             { name: "dim_color", label: "Track Color", type: "color", def: 0x2E323A, cat: "appearance" },
                             { name: "dim_opa", label: "Track Opacity", type: "slider", def: 90, cat: "appearance", min: 0, max: 255 },
@@ -7585,7 +7708,27 @@
                             { name: "min", label: "Min Value", type: "number", def: 0, cat: "data" },
                             { name: "max", label: "Max Value", type: "number", def: 11000, cat: "data" },
                             { name: "redline", label: "Redline", type: "number", def: 10000, cat: "data" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "appearance", min: 0, max: 500 }
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "appearance", min: 0, max: 500 },
+                            /* Draw a tick + number scale that FOLLOWS the path (spaced by
+                             * arc-length so the marks line up with the fill). Turns a bare
+                             * pathbar into a Ford-style swept tach. */
+                            { name: "show_ticks", label: "Show Scale", type: "checkbox", def: false, cat: "data" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 0, cat: "data", enabledBy: "show_ticks" },
+                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 0, cat: "data", enabledBy: "show_ticks" },
+                            { name: "show_labels", label: "Show Numbers", type: "checkbox", def: false, cat: "data", enabledBy: "show_ticks" },
+                            /* Divides each number by this factor — e.g. 1000 turns a
+                             * 0..8000 tach into 0..8 (print the unit elsewhere). */
+                            { name: "tick_label_divisor", label: "Number Divisor", type: "stepper", def: 1, cat: "data", min: 1, max: 100000, enabledBy: "show_labels" },
+                            { name: "tick_len", label: "Tick Length", type: "stepper", def: 10, cat: "appearance", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", min: 0, max: 40, enabledBy: "show_ticks" },
+                            { name: "tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "major_tick_len", label: "Major Tick Length", type: "stepper", def: 16, cat: "appearance", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 3, cat: "appearance", min: 0, max: 40, enabledBy: "show_ticks" },
+                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "redline_recolor_ticks", label: "Recolor Ticks Past Redline", type: "checkbox", def: true, cat: "appearance", enabledBy: "show_ticks" },
+                            { name: "label_color", label: "Number Color", type: "color", def: 0xFFFFFF, cat: "appearance", enabledBy: "show_labels" },
+                            { name: "label_font", label: "Number Font", type: "font", def: "", cat: "appearance", enabledBy: "show_labels" },
+                            { name: "label_gap", label: "Number Gap", type: "stepper", def: 14, cat: "appearance", min: -200, max: 200, enabledBy: "show_labels" }
                         ]
                     }
                 };
@@ -8204,6 +8347,753 @@
 
             updateFooterCounts();
             renderLayerTree();
+            renderPreview();
+        }
+
+        /* ════════════════════════════════════════════════════════════════
+         *  OFFLINE WYSIWYG PREVIEW RENDERER  (#previewLayer)
+         *  ----------------------------------------------------------------
+         *  Draws a faithful SVG of each widget so the studio shows real
+         *  gauges / text WITHOUT a connected device. It uses the SAME angle
+         *  + colour conventions the firmware uses (user 0 deg = 12 o'clock,
+         *  CW+, lvgl = user+270; colours are RGB888 ints in web format), and
+         *  paints representative "scene" values so a gauge reads ~mid-sweep
+         *  instead of pinned at zero.
+         *
+         *  Shown only when there is NO live device frame (offline / design
+         *  mode) so it never fights a connected dash — the moment a real
+         *  /api/screenshot paints, _haveLiveFrame flips and the SVG hides.
+         *  Toggle with the "Render" header pill. The device LVGL render is
+         *  always the source of truth; this is a design aid.
+         * ════════════════════════════════════════════════════════════════ */
+        let _previewEnabled = (localStorage.getItem('rdm7_preview_render') !== '0');
+        let _haveLiveFrame  = false;
+
+        /* SIM in the offline preview: when the SIM pill is on (and no live
+         * device frame owns the canvas), sweep every gauge across its range so
+         * the studio animates without a dash — mirrors the device's "sweep all
+         * signals min↔max" test. Driven from _updateSimButton via _pvSimSync. */
+        let _pvSimOn = false, _pvSimPhase = 0, _pvSimTimer = null;
+        function _pvHash01(s){ let h = 2166136261; s = String(s);
+            for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+            return ((h >>> 0) % 1000) / 1000; }
+        function _pvTri(t){ t = ((t % 1) + 1) % 1; return t < 0.5 ? t * 2 : 2 - t * 2; }
+        function _pvSimFrac(key){ return _pvTri(_pvSimPhase + _pvHash01(key)); }
+        function _pvSimSync(){
+            const want = (typeof _simActive !== 'undefined' && _simActive);
+            if (want === _pvSimOn) return;
+            _pvSimOn = want;
+            if (_pvSimOn){
+                if (!_pvSimTimer) _pvSimTimer = setInterval(() => {
+                    _pvSimPhase = (_pvSimPhase + 0.02) % 1;
+                    if (_previewEnabled && !_haveLiveFrame) renderPreview();
+                }, 80);
+            } else if (_pvSimTimer){ clearInterval(_pvSimTimer); _pvSimTimer = null; renderPreview(); }
+        }
+
+        function _pvColor(v, fb){
+            if (v === undefined || v === null || v === '') return fb;
+            if (typeof v === 'string') return v[0] === '#' ? v : ('#' + v);
+            const n = (Number(v) >>> 0) & 0xFFFFFF;
+            return '#' + n.toString(16).padStart(6, '0');
+        }
+        function _pvNum(v, fb){ const n = Number(v); return isFinite(n) ? n : fb; }
+        /* Darken a #rrggbb toward black by factor f (0=black, 1=unchanged). */
+        function _pvDarken(hex, f){
+            const n = parseInt(String(hex).replace('#', ''), 16) || 0;
+            const r = Math.round(((n >> 16) & 255) * f), g = Math.round(((n >> 8) & 255) * f), b = Math.round((n & 255) * f);
+            return '#' + (((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1));
+        }
+        /* DASH mode: simulate the real RGB565 framebuffer + firmware-feasible
+         * rendering (no Gaussian blur, no radial halos) so the studio shows
+         * what the panel ACTUALLY outputs, not the prettied-up 24-bit version. */
+        let _pvDeviceMode = (localStorage.getItem('rdm7_preview_565') === '1');
+        /* Discrete transfer table for an N-level channel (565 = 32/64/32). The
+         * final composite gets snapped to these levels = real panel banding. */
+        function _pv565Table(n){ const a = []; for (let i = 0; i < n; i++) a.push((i / (n - 1)).toFixed(4)); return a.join(' '); }
+
+        /* Blend #rrggbb a→b by t (0..1). */
+        function _pvLerpColor(a, b, t){
+            t = Math.max(0, Math.min(1, t));
+            const na = parseInt(String(a).replace('#', ''), 16) || 0, nb = parseInt(String(b).replace('#', ''), 16) || 0;
+            const r = Math.round(((na >> 16) & 255) + (((nb >> 16) & 255) - ((na >> 16) & 255)) * t);
+            const g = Math.round(((na >> 8) & 255) + (((nb >> 8) & 255) - ((na >> 8) & 255)) * t);
+            const bl = Math.round((na & 255) + ((nb & 255) - (na & 255)) * t);
+            return '#' + (((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1));
+        }
+        function _pvClamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+        function _pvEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+        function _pvFmt(v, dec){
+            if (dec != null) return Number(v).toFixed(dec);
+            if (Math.abs(v - Math.round(v)) < 1e-6) return String(Math.round(v));
+            return String(Math.round(v * 100) / 100);
+        }
+        function _pvFontPx(fontStr, fb){
+            if (!fontStr) return fb;
+            const m = String(fontStr).match(/[:_](\d+)\s*$/);
+            return m ? parseInt(m[1], 10) : fb;
+        }
+        function _pvFontFam(fontStr){
+            if (!fontStr) return "'Segoe UI',Roboto,Arial,sans-serif";
+            const fam = String(fontStr).split(/[:_]/)[0].replace(/'/g, '');
+            return `'${fam}','Segoe UI',Roboto,Arial,sans-serif`;
+        }
+        /* user angle (0 = 12 o'clock, CW positive) → [x,y] on screen */
+        function _pvPt(cx, cy, r, ua){ const a = ua * Math.PI / 180; return [cx + r * Math.sin(a), cy - r * Math.cos(a)]; }
+        function _pvArcD(cx, cy, r, a0, a1){
+            if (Math.abs(a1 - a0) >= 359.999) a1 = a0 + 359.999 * (a1 >= a0 ? 1 : -1);
+            const [x0, y0] = _pvPt(cx, cy, r, a0), [x1, y1] = _pvPt(cx, cy, r, a1);
+            const large = Math.abs(a1 - a0) > 180 ? 1 : 0;
+            const sweep = (a1 - a0) >= 0 ? 1 : 0;
+            return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r.toFixed(2)} ${r.toFixed(2)} 0 ${large} ${sweep} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+        }
+
+        function _pvDefaults(type){
+            const def = WIDGET_DEFS[type];
+            const o = {};
+            if (def && def.fields) def.fields.forEach(f => { o[f.name] = f.def; });
+            return o;
+        }
+        function _pvCfg(w){
+            const c = Object.assign(_pvDefaults(w.type), w.config || {});
+            if (currentEditorMode === 'night' && c.night) Object.assign(c, c.night);
+            if (w.type === 'meter') { try { _meterSyncDerived(c); } catch (e) {} }
+            if (w.type === 'arc')   { try { _arcSyncDerived(c);  } catch (e) {} }
+            return c;
+        }
+
+        /* Representative scene value for a gauge, mapped into [mn,mx]. Keyed
+         * off the bound signal / channel / label so a tach reads ~4500, a
+         * speedo ~55 etc — matching the look of a running dash. */
+        function _pvScene(w, c, mn, mx){
+            const k = ((w.signal || '') + ' ' + (w.channel || '') + ' ' + (c.label || '')).toLowerCase();
+            if (_pvSimOn) return mn + (mx - mn) * _pvSimFrac(w.signal || w.channel || c.label || w.id || '');
+            const f = t => mn + (mx - mn) * t;
+            if (/rpm|tach/.test(k))                  return _pvClamp(4500, mn, mx);
+            if (/mph|speed|kmh|km\/h|veh/.test(k))   return _pvClamp(55, mn, mx);
+            if (/gear/.test(k))                      return _pvClamp(4, mn, mx);
+            if (/coolant|water/.test(k))             return f(0.50);
+            if (/oil.?temp/.test(k))                 return f(0.45);
+            if (/oil.?pres|press|boost|map/.test(k)) return f(0.50);
+            if (/fuel/.test(k))                      return f(0.62);
+            if (/volt|batt/.test(k))                 return f(0.60);
+            return f(0.62);
+        }
+        /* Numeric readout for panel / text widgets (name-aware). */
+        function _pvReadout(w, c){
+            const k = ((w.signal || '') + ' ' + (w.channel || '') + ' ' + (c.label || '')).toLowerCase();
+            let v;
+            if (_pvSimOn){
+                const fr = _pvSimFrac(w.signal || w.channel || c.label || w.id || '');
+                if (/gear/.test(k)) return String(1 + Math.floor(fr * 5.999));   /* 1..6 */
+                let lo = 0, hi = 100;
+                if      (/speed|mph|kmh/.test(k)) { lo = 0;   hi = 140; }
+                else if (/rpm/.test(k))           { lo = 0;   hi = 7000; }
+                else if (/coolant|water/.test(k)) { lo = 60;  hi = 115; }
+                else if (/oil.?temp/.test(k))     { lo = 140; hi = 300; }
+                else if (/oil.?pres/.test(k))     { lo = 0;   hi = 90; }
+                else if (/volt|batt/.test(k))     { lo = 12;  hi = 14.6; }
+                else if (/fuel/.test(k))          { lo = 0;   hi = 100; }
+                else if (/boost|map/.test(k))     { lo = -5;  hi = 18; }
+                return _pvFmt(lo + (hi - lo) * fr, _pvNum(c.decimals, 0));
+            }
+            if (/gear/.test(k))            return '4';
+            if (/speed|mph|kmh/.test(k))   v = 55;
+            else if (/rpm/.test(k))        v = 4500;
+            else if (/coolant|water/.test(k)) v = 90;
+            else if (/oil.?temp/.test(k))  v = 104;
+            else if (/oil.?pres/.test(k))  v = 58;
+            else if (/volt|batt/.test(k))  v = 13.8;
+            else if (/fuel/.test(k))       v = 62;
+            else if (/boost|map/.test(k))  v = 12;
+            else                           v = 42;
+            return _pvFmt(v, _pvNum(c.decimals, 0));
+        }
+
+        /* Soft blue ambient halo behind a gauge pod (the Ford backlight bloom). */
+        function _pvHalo(cx, cy, r, id, col){
+            return `<radialGradient id="${id}" cx="50%" cy="50%" r="50%">`
+                + `<stop offset="0%" stop-color="${col}" stop-opacity="0.20"/>`
+                + `<stop offset="50%" stop-color="${col}" stop-opacity="0.06"/>`
+                + `<stop offset="100%" stop-color="${col}" stop-opacity="0"/>`
+                + `</radialGradient>`
+                + `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="url(#${id})"/>`;
+        }
+
+        /* ─── per-type drawers (return SVG markup) ─────────────────────── */
+        function _pvMeter(w, c){
+            const p = devToWeb(w.x, w.y), cx = p.x, cy = p.y;
+            const R = Math.min(w.w, w.h) / 2;
+            const start = _pvNum(c.start_angle_user, 225);
+            const sweep = _pvClamp(_pvNum(c.sweep_degrees, 270), 1, 360);
+            const rev = !!c.reverse;
+            const mn = _pvNum(c.min, 0), mx = _pvNum(c.max, 100), range = (mx - mn) || 1;
+            const ua = v => { const t = _pvClamp((v - mn) / range, 0, 1); return rev ? start - t * sweep : start + t * sweep; };
+            const val = _pvScene(w, c, mn, mx);
+            let s = '';
+            const bgOpa = _pvNum(c.meter_bg_opa, 255) / 255;
+            if (bgOpa > 0) s += `<circle cx="${cx}" cy="${cy}" r="${R.toFixed(1)}" fill="${_pvColor(c.meter_bg_color, '#3D3D3D')}" fill-opacity="${bgOpa.toFixed(3)}"/>`;
+            if (_pvNum(c.border_width, 0) > 0)
+                s += `<circle cx="${cx}" cy="${cy}" r="${(R - c.border_width / 2).toFixed(1)}" fill="none" stroke="${_pvColor(c.border_color, '#000')}" stroke-width="${c.border_width}" stroke-opacity="${(_pvNum(c.border_opa, 255) / 255).toFixed(3)}"/>`;
+
+            const pad = _pvNum(c.scale_padding, 0);
+            const rOuter = R - pad - 2;
+            const rlEn = !!c.redline_enabled, rlTh = _pvNum(c.redline_threshold, mx + 1);
+            const rlCol = _pvColor(c.redline_color, '#FF0000');
+            if (c.show_ticks !== false){
+                const minorStep = Math.max(1e-6, _pvNum(c.minor_tick_step, 10));
+                const N = Math.max(1, Math.round(range / minorStep));
+                const majorEvery = Math.max(1, _pvNum(c.major_tick_every, 5));
+                const midStep = _pvNum(c.mid_tick_step, 0);
+                const midEvery = midStep > 0 ? Math.max(1, Math.round(midStep / minorStep)) : 0;
+                const rlRecolor = c.redline_recolor_ticks !== false;
+                for (let i = 0; i <= N; i++){
+                    const v = mn + i * minorStep, aa = ua(v);
+                    const isMaj = (i % majorEvery) === 0;
+                    const isMid = !isMaj && midEvery > 0 && (i % midEvery) === 0;
+                    let len = isMaj ? _pvNum(c.major_tick_length, 15) : isMid ? _pvNum(c.mid_tick_length, 13) : _pvNum(c.minor_tick_length, 10);
+                    let wd  = isMaj ? _pvNum(c.major_tick_width, 4)  : isMid ? _pvNum(c.mid_tick_width, 2)  : _pvNum(c.minor_tick_width, 2);
+                    let col = isMaj ? _pvColor(c.major_tick_color, '#FFF') : isMid ? _pvColor(c.mid_tick_color, '#BDBDBD') : _pvColor(c.minor_tick_color, '#9E9E9E');
+                    if (rlEn && rlRecolor && v >= rlTh - 1e-6) col = rlCol;
+                    const [x0, y0] = _pvPt(cx, cy, rOuter, aa), [x1, y1] = _pvPt(cx, cy, rOuter - len, aa);
+                    s += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="${col}" stroke-width="${wd}"/>`;
+                }
+                if (c.show_tick_labels !== false){
+                    const div = Math.max(1, _pvNum(c.tick_label_divisor, 1));
+                    const gap = _pvNum(c.label_gap, 10);
+                    const fpx = _pvFontPx(c.tick_label_font, Math.max(10, Math.round(R * 0.12)));
+                    const fam = _pvFontFam(c.tick_label_font);
+                    const col = _pvColor(c.tick_label_color, '#FFF');
+                    const rLbl = rOuter - _pvNum(c.major_tick_length, 15) - gap - fpx * 0.55;
+                    for (let i = 0; i <= N; i += majorEvery){
+                        const v = mn + i * minorStep, aa = ua(v);
+                        const [lx, ly] = _pvPt(cx, cy, rLbl, aa);
+                        s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${col}" font-family="${fam}" font-size="${fpx}" text-anchor="middle" dominant-baseline="central">${_pvEsc(_pvFmt(v / div))}</text>`;
+                    }
+                }
+            }
+            if (rlEn && c.redline_show_arc !== false){
+                const th = _pvClamp(_pvNum(c.redline_threshold, mx), mn, mx);
+                const aw = _pvNum(c.redline_arc_width, 6);
+                const rr = R - pad - aw / 2 - _pvNum(c.redline_arc_r_mod, 0);
+                s += `<path d="${_pvArcD(cx, cy, rr, ua(th), ua(mx))}" fill="none" stroke="${rlCol}" stroke-width="${aw}"/>`;
+            }
+            if (c.show_needle !== false){
+                const aa = ua(val);
+                const nLen = R + _pvNum(c.needle_r_mod, -10);
+                const [nx, ny] = _pvPt(cx, cy, nLen, aa);
+                const [bx, by] = _pvPt(cx, cy, _pvNum(c.needle_inner_radius, 0) - _pvNum(c.needle_rear_length, 0), aa);
+                s += `<line x1="${bx.toFixed(1)}" y1="${by.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${_pvColor(c.needle_color, '#FFF')}" stroke-width="${_pvNum(c.needle_width, 4)}" stroke-linecap="round"/>`;
+            }
+            if (c.show_needle_ball !== false && _pvNum(c.needle_ball_size, 10) > 0)
+                s += `<circle cx="${cx}" cy="${cy}" r="${(_pvNum(c.needle_ball_size, 10) / 2).toFixed(1)}" fill="${_pvColor(c.needle_ball_color, '#FFF')}"/>`;
+            return s;
+        }
+
+        function _pvArcGauge(w, c){
+            const p = devToWeb(w.x, w.y), cx = p.x, cy = p.y;
+            const R = Math.min(w.w, w.h) / 2;
+            const start = _pvNum(c.start_angle_user, 225);
+            const sweep = _pvClamp(_pvNum(c.sweep_degrees, 270), 1, 360);
+            const rev = !!c.reverse;
+            const mn = _pvNum(c.signal_min, 0), mx = _pvNum(c.signal_max, 100), range = (mx - mn) || 1;
+            const ua = v => { const t = _pvClamp((v - mn) / range, 0, 1); return rev ? start - t * sweep : start + t * sweep; };
+            const val = _pvScene(w, c, mn, mx);
+            const off = _pvNum(c.arc_offset, 0);
+            const trackW = _pvNum(c.bg_arc_width, 10), fillW = _pvNum(c.arc_width, 10);
+            const ring = R - off - Math.max(trackW, fillW) / 2;
+            const cap = c.rounded_ends ? 'round' : 'butt';
+            const endFull = start + (rev ? -sweep : sweep);
+            let s = (Math.min(w.w, w.h) > 180 && !_pvDeviceMode)
+                ? _pvHalo(cx, cy, R * 1.16, 'h_' + (w.id || 'arc'), _pvColor(c.arc_color, '#33C0F0')) : '';
+            s += `<path d="${_pvArcD(cx, cy, ring, start, endFull)}" fill="none" stroke="${_pvColor(c.bg_arc_color, '#333')}" stroke-width="${trackW}" stroke-linecap="${cap}"/>`;
+            /* static redline zone on the high end of the track (arc_high → max) */
+            const _rlw = _pvNum(c.redline_arc_width, 0), _rth = _pvNum(c.arc_high, mx);
+            if (_rlw > 0 && _rth < mx) s += `<path d="${_pvArcD(cx, cy, ring, ua(_rth), ua(mx))}" fill="none" stroke="${_pvColor(c.redline_color, '#FF0000')}" stroke-width="${trackW}" stroke-linecap="${cap}"/>`;
+            let fillCol = _pvColor(c.arc_color, '#00FF00');
+            if (c.arc_alerts_enabled){
+                if (val >= _pvNum(c.arc_high, mx)) fillCol = _pvColor(c.arc_high_color, '#FF0000');
+                else if (val <= _pvNum(c.arc_low, mn)) fillCol = _pvColor(c.arc_low_color, '#0000FF');
+            }
+            if (Math.abs(val - mn) > 1e-6){
+                const aV = ua(val), fd = _pvArcD(cx, cy, ring, start, aV);
+                const fv = _pvClamp((val - mn) / range, 0, 1);
+                if (_pvDeviceMode)
+                    s += [[fillW + 16, 0.05], [fillW + 10, 0.09], [fillW + 5, 0.16]].map(L =>
+                        `<path d="${fd}" fill="none" stroke="${fillCol}" stroke-opacity="${L[1]}" stroke-width="${L[0]}" stroke-linecap="${cap}"/>`).join('');
+                else
+                    s += `<path d="${fd}" fill="none" stroke="${fillCol}" stroke-opacity="0.30" stroke-width="${fillW + 10}" stroke-linecap="${cap}" filter="url(#pvGlowBlur)"/>`
+                       + `<path d="${fd}" fill="none" stroke="${fillCol}" stroke-opacity="0.40" stroke-width="${fillW + 2}" stroke-linecap="${cap}" filter="url(#pvGlowBlurSm)"/>`;
+                /* Positional fade along the arc (dark→bright by angle, fixed to
+                 * position not value) — gated by the fade_fill setting so the
+                 * preview matches the firmware (widget_arc.c _arc_fade_draw_cb).
+                 * When off, a single solid fill like the native indicator. */
+                if (c.fade_fill){
+                    const dim = _pvDarken(fillCol, 0.26);
+                    const segs = Math.max(2, Math.ceil(Math.abs(aV - start) / 7));
+                    const dseg = (aV - start) / segs;
+                    for (let i = 0; i < segs; i++){
+                        const a0 = start + dseg * i;
+                        const a1 = start + dseg * (i + 1) + (i < segs - 1 ? dseg * 0.45 : 0);  /* overlap joints, flat outer ends */
+                        const bpos = Math.min(1, ((((i + 0.5) / segs) * Math.abs(aV - start)) / sweep) / 0.45);   /* bright by ~45% of SCALE */
+                        s += `<path d="${_pvArcD(cx, cy, ring, a0, a1)}" fill="none" stroke="${_pvLerpColor(dim, fillCol, bpos)}" stroke-width="${fillW}" stroke-linecap="butt"/>`;
+                    }
+                } else {
+                    s += `<path d="${fd}" fill="none" stroke="${fillCol}" stroke-width="${fillW}" stroke-linecap="${cap}"/>`;
+                }
+                /* bright leading-edge cap (flat when rounded_ends is off) */
+                const vTip = val - 0.012 * range;
+                if (vTip > mn) s += `<path d="${_pvArcD(cx, cy, ring, ua(vTip), aV)}" fill="none" stroke="#E6FAFF" stroke-width="${fillW}" stroke-linecap="${cap}"/>`;
+            }
+            if (c.show_ticks){
+                let tmn = _pvNum(c.tick_min, 0), tmx = _pvNum(c.tick_max, 0);
+                if (tmn === 0 && tmx === 0){ tmn = mn; tmx = mx; }
+                const trange = (tmx - tmn) || 1;
+                const minorStep = Math.max(1e-6, _pvNum(c.minor_tick_step, 10));
+                const N = Math.max(1, Math.round(trange / minorStep));
+                const majorEvery = Math.max(1, _pvNum(c.major_tick_every, 5));
+                const rOuter = ring - Math.max(trackW, fillW) / 2 - 2;
+                const tua = v => { const t = _pvClamp((v - mn) / range, 0, 1); return rev ? start - t * sweep : start + t * sweep; };
+                for (let i = 0; i <= N; i++){
+                    const v = tmn + i * minorStep, aa = tua(v), isMaj = (i % majorEvery) === 0;
+                    const len = isMaj ? _pvNum(c.major_tick_length, 15) : _pvNum(c.minor_tick_length, 10);
+                    const wd  = isMaj ? _pvNum(c.major_tick_width, 4)  : _pvNum(c.minor_tick_width, 2);
+                    const col = isMaj ? _pvColor(c.major_tick_color, '#FFF') : _pvColor(c.minor_tick_color, '#9E9E9E');
+                    const [x0, y0] = _pvPt(cx, cy, rOuter, aa), [x1, y1] = _pvPt(cx, cy, rOuter - len, aa);
+                    s += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="${col}" stroke-width="${wd}"/>`;
+                }
+                if (c.show_tick_labels !== false){
+                    const div = Math.max(1, _pvNum(c.tick_label_divisor, 1));
+                    const fpx = _pvFontPx(c.tick_label_font, Math.max(9, Math.round(R * 0.11)));
+                    const fam = _pvFontFam(c.tick_label_font), col = _pvColor(c.tick_label_color, '#FFF');
+                    const rLbl = ring - Math.max(trackW, fillW) / 2 - _pvNum(c.major_tick_length, 15) - _pvNum(c.label_gap, 10) - fpx * 0.55;
+                    for (let i = 0; i <= N; i += majorEvery){
+                        const v = tmn + i * minorStep, aa = tua(v), [lx, ly] = _pvPt(cx, cy, rLbl, aa);
+                        s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${col}" font-family="${fam}" font-size="${fpx}" text-anchor="middle" dominant-baseline="central">${_pvEsc(_pvFmt(v / div))}</text>`;
+                    }
+                }
+            }
+            return s;
+        }
+
+        function _pvPanel(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const bw = _pvNum(c.border_width, 3);
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${_pvNum(c.border_radius, 7)}" fill="${_pvColor(c.bg_color, '#000')}" fill-opacity="${(_pvNum(c.bg_opa, 255) / 255).toFixed(3)}"${bw > 0 ? ` stroke="${_pvColor(c.border_color, '#2E2F2E')}" stroke-width="${bw}"` : ''}/>`;
+            const align = _pvNum(c.text_align, 1), anchor = align === 0 ? 'start' : align === 2 ? 'end' : 'middle';
+            const tx = align === 0 ? left + 8 : align === 2 ? left + w.w - 8 : p.x;
+            if (c.label){
+                const lf = _pvFontPx(c.label_font, Math.max(11, Math.round(w.h * 0.18)));
+                s += `<text x="${tx.toFixed(1)}" y="${(p.y + _pvNum(c.label_y_offset, -28)).toFixed(1)}" fill="${_pvColor(c.label_color, '#FFF')}" font-family="${_pvFontFam(c.label_font)}" font-size="${lf}" text-anchor="${anchor}" dominant-baseline="central">${_pvEsc(c.label)}</text>`;
+            }
+            const vf = _pvFontPx(c.value_font, Math.max(16, Math.round(w.h * 0.4)));
+            let valTxt = _pvReadout(w, c);
+            if (c.show_unit && c.custom_text) valTxt += ' ' + c.custom_text;
+            s += `<text x="${tx.toFixed(1)}" y="${(p.y + _pvNum(c.value_y_offset, 9)).toFixed(1)}" fill="${_pvColor(c.value_color, '#FFF')}" font-family="${_pvFontFam(c.value_font)}" font-size="${vf}" font-weight="600" text-anchor="${anchor}" dominant-baseline="central">${_pvEsc(valTxt)}</text>`;
+            return s;
+        }
+
+        function _pvBar(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const mn = _pvNum(c.bar_min, 0), mx = _pvNum(c.bar_max, 100), range = (mx - mn) || 1;
+            const val = _pvScene(w, c, mn, mx), frac = _pvClamp((val - mn) / range, 0, 1);
+            const rad = _pvNum(c.bar_radius, 5), bw = _pvNum(c.bar_border_width, 2);
+            let fillCol = _pvColor(c.bar_in_range_color, '#00FF00');
+            if (c.bar_alerts_enabled){
+                if (val >= _pvNum(c.bar_high, mx)) fillCol = _pvColor(c.bar_high_color, '#FF0000');
+                else if (val <= _pvNum(c.bar_low, mn)) fillCol = _pvColor(c.bar_low_color, '#0000FF');
+            }
+            const dir = _pvNum(c.fill_dir, 0);
+            let fx = left, fw = w.w * frac;
+            if (dir === 1) fx = left + w.w * (1 - frac);
+            else if (dir === 2){ fw = w.w * frac; fx = left + (w.w - fw) / 2; }
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${rad}" fill="${_pvColor(c.bar_bg_color, '#2E2F2E')}"${bw > 0 ? ` stroke="${_pvColor(c.bar_border_color, '#2E2F2E')}" stroke-width="${bw}"` : ''}/>`;
+            if (fw > 0.5){
+                /* positional fade (dim at empty end → bright at the fill end) + bright tip */
+                const dim = _pvDarken(fillCol, 0.26), gid = 'bg_' + (w.id || 'bar');
+                const x1g = dir === 1 ? left + w.w : left, x2g = dir === 1 ? left : left + w.w;
+                s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${x1g}" y1="0" x2="${x2g}" y2="0"><stop offset="0%" stop-color="${dim}"/><stop offset="100%" stop-color="${fillCol}"/></linearGradient>`;
+                s += `<rect x="${fx.toFixed(1)}" y="${(top + bw).toFixed(1)}" width="${fw.toFixed(1)}" height="${(w.h - 2 * bw).toFixed(1)}" rx="${_pvNum(c.indicator_radius, 5)}" fill="url(#${gid})"/>`;
+                const tipW = Math.min(3, fw), tipX = dir === 1 ? fx : fx + fw - tipW;
+                if (dir !== 2) s += `<rect x="${tipX.toFixed(1)}" y="${(top + bw).toFixed(1)}" width="${tipW.toFixed(1)}" height="${(w.h - 2 * bw).toFixed(1)}" fill="#E6FAFF"/>`;
+            }
+            if (c.label){
+                const lf = _pvFontPx(c.label_font, Math.max(10, Math.round(w.h * 0.6)));
+                s += `<text x="${(left + 4).toFixed(1)}" y="${p.y.toFixed(1)}" fill="${_pvColor(c.label_color, '#FFF')}" font-family="${_pvFontFam(c.label_font)}" font-size="${lf}" dominant-baseline="central">${_pvEsc(c.label)}</text>`;
+            }
+            return s;
+        }
+
+        function _pvText(w, c){
+            const p = devToWeb(w.x, w.y);
+            const txt = (c.static_text != null && c.static_text !== '') ? c.static_text : _pvReadout(w, c);
+            const fpx = _pvFontPx(c.font, Math.max(12, Math.round(w.h * 0.8)));
+            const rot = _pvNum(c.rotation, 0);
+            const g = rot ? ` transform="rotate(${rot} ${p.x} ${p.y})"` : '';
+            return `<text x="${p.x}" y="${p.y}" fill="${_pvColor(c.text_color, '#FFF')}" font-family="${_pvFontFam(c.font)}" font-size="${fpx}" font-weight="600" text-anchor="middle" dominant-baseline="central"${g}>${_pvEsc(txt)}</text>`;
+        }
+
+        /* Tiny built-in pictograms so an `image` widget named "icon:NAME" draws a
+         * crisp dashboard glyph in the preview (oil / coolant / oil-temp / fuel
+         * …). On a real device the user uploads matching images; this just lets
+         * the studio show the Ford telltales without an asset upload. */
+        function _pvIcon(kind, cx, cy, sz, col){
+            const S = sz / 2, sw = Math.max(1.4, sz * 0.07);
+            const drop = (dx, dy, k) =>
+                `<path d="M ${dx} ${dy - k} C ${dx + k * 0.92} ${dy + k * 0.18} ${dx + k * 0.6} ${dy + k} ${dx} ${dy + k} C ${dx - k * 0.6} ${dy + k} ${dx - k * 0.92} ${dy + k * 0.18} ${dx} ${dy - k} Z" fill="${col}"/>`;
+            if (kind === 'coolant' || kind === 'thermo'){
+                const tw = S * 0.34, th = S * 1.05, bx = cx, bTop = cy - th, bulbR = S * 0.42, bulbY = cy + S * 0.55;
+                return `<g fill="none" stroke="${col}" stroke-width="${sw}">`
+                    + `<path d="M ${bx - tw} ${bTop} a ${tw} ${tw} 0 0 1 ${tw * 2} 0 L ${bx + tw} ${bulbY - bulbR * 0.4}" />`
+                    + `<path d="M ${bx - tw} ${bTop} L ${bx - tw} ${bulbY - bulbR * 0.4}" />`
+                    + `</g>`
+                    + `<circle cx="${bx}" cy="${bulbY}" r="${bulbR}" fill="${col}"/>`
+                    + `<rect x="${bx - tw * 0.45}" y="${cy - S * 0.2}" width="${tw * 0.9}" height="${(bulbY - (cy - S * 0.2))}" rx="${tw * 0.45}" fill="${col}"/>`
+                    + `<line x1="${bx + tw + sw}" y1="${cy - S * 0.4}" x2="${bx + tw + sz * 0.16}" y2="${cy - S * 0.4}" stroke="${col}" stroke-width="${sw}"/>`
+                    + `<line x1="${bx + tw + sw}" y1="${cy + S * 0.05}" x2="${bx + tw + sz * 0.16}" y2="${cy + S * 0.05}" stroke="${col}" stroke-width="${sw}"/>`;
+            }
+            if (kind === 'fuel'){
+                const x0 = cx - S * 0.55, y0 = cy - S * 0.85, pw = S * 1.0, ph = S * 1.7;
+                return `<rect x="${x0}" y="${y0}" width="${pw}" height="${ph}" rx="${sw}" fill="none" stroke="${col}" stroke-width="${sw}"/>`
+                    + `<rect x="${x0 + sw * 1.5}" y="${y0 + ph * 0.5}" width="${pw - sw * 3}" height="${ph * 0.5 - sw * 1.5}" fill="${col}"/>`
+                    + `<path d="M ${x0 + pw} ${y0 + ph * 0.35} l ${S * 0.4} 0 l 0 ${ph * 0.4} a ${S * 0.18} ${S * 0.18} 0 0 1 ${-S * 0.36} 0" fill="none" stroke="${col}" stroke-width="${sw}"/>`;
+            }
+            /* oil / oiltemp: the classic oil-can drip */
+            let s = `<path d="M ${cx - S * 0.85} ${cy + S * 0.35} l ${S * 1.0} 0 l ${S * 0.55} ${-S * 0.32} l 0 ${S * 0.32} l ${S * 0.5} 0 q ${S * 0.3} 0 ${S * 0.3} ${S * 0.3} l 0 ${S * 0.2} q 0 ${S * 0.3} ${-S * 0.3} ${S * 0.3} l ${-S * 1.05} 0 q ${-S * 0.3} 0 ${-S * 0.3} ${-S * 0.3} Z" fill="${col}"/>`
+                + `<line x1="${cx + S * 0.35}" y1="${cy + S * 0.05}" x2="${cx + S * 0.95}" y2="${cy - S * 0.55}" stroke="${col}" stroke-width="${sw}"/>`;
+            s += drop(cx + S * 0.95, cy - S * 0.2, S * 0.3);
+            if (kind === 'oiltemp')
+                s += `<path d="M ${cx - S * 0.7} ${cy + S * 0.75} q ${S * 0.25} ${-S * 0.3} ${S * 0.5} 0 q ${S * 0.25} ${S * 0.3} ${S * 0.5} 0 q ${S * 0.25} ${-S * 0.3} ${S * 0.5} 0" fill="none" stroke="${col}" stroke-width="${sw}"/>`;
+            return s;
+        }
+
+        function _pvImage(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const name = c.image_name || 'image';
+            if (name.indexOf('icon:') === 0){
+                const col = _pvNum(c.recolor_opa, 0) > 0 ? _pvColor(c.recolor, '#FFF') : '#FFFFFF';
+                return _pvIcon(name.slice(5), p.x, p.y, Math.min(w.w, w.h), col);
+            }
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="4" fill="#1b1b1b" fill-opacity="0.5" stroke="#555" stroke-width="1" stroke-dasharray="4 3"/>`;
+            s += `<text x="${p.x}" y="${p.y}" fill="#9aa" font-family="'Segoe UI',sans-serif" font-size="${Math.max(8, Math.min(13, w.h * 0.2))}" text-anchor="middle" dominant-baseline="central">${_pvEsc(name)}</text>`;
+            return s;
+        }
+
+        function _pvLine(w, c){
+            const p = devToWeb(w.x, w.y);
+            const col = _pvColor(c.line_color, '#FFF'), lw = _pvNum(c.line_width, 4);
+            const opa = (_pvNum(c.line_opa, 255) / 255).toFixed(3);
+            const cap = c.rounded ? 'round' : 'butt';
+            const dash = _pvNum(c.dash_gap, 0) > 0 ? ` stroke-dasharray="${lw * 2} ${c.dash_gap}"` : '';
+            let x0, y0, x1, y1;
+            const o = c.orientation || 'horizontal';
+            if (o === 'vertical'){ x0 = x1 = p.x; y0 = p.y - w.h / 2; y1 = p.y + w.h / 2; }
+            else if (o === 'diagonal_fwd'){ x0 = p.x - w.w / 2; y0 = p.y + w.h / 2; x1 = p.x + w.w / 2; y1 = p.y - w.h / 2; }
+            else if (o === 'diagonal_bwd'){ x0 = p.x - w.w / 2; y0 = p.y - w.h / 2; x1 = p.x + w.w / 2; y1 = p.y + w.h / 2; }
+            else { x0 = p.x - w.w / 2; x1 = p.x + w.w / 2; y0 = y1 = p.y; }
+            return `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="${col}" stroke-width="${lw}" stroke-opacity="${opa}" stroke-linecap="${cap}"${dash}/>`;
+        }
+
+        function _pvShape(w, c){
+            const p = devToWeb(w.x, w.y), L = p.x - w.w / 2, T = p.y - w.h / 2, R = p.x + w.w / 2, B = p.y + w.h / 2;
+            const fill = _pvColor(c.bg_color, '#1A1A1A'), opa = (_pvNum(c.bg_opa, 255) / 255).toFixed(3);
+            const bw = _pvNum(c.border_width, 0), bc = _pvColor(c.border_color, '#2E2F2E');
+            const stroke = bw > 0 ? ` stroke="${bc}" stroke-width="${bw}"` : '';
+            const t = c.shape_type || 'rectangle';
+            if (t === 'circle')
+                return `<ellipse cx="${p.x}" cy="${p.y}" rx="${w.w / 2}" ry="${w.h / 2}" fill="${fill}" fill-opacity="${opa}"${stroke}/>`;
+            let pts = null;
+            if (t === 'triangle') pts = [[p.x, T], [R, B], [L, B]];
+            else if (t === 'diamond') pts = [[p.x, T], [R, p.y], [p.x, B], [L, p.y]];
+            else if (t === 'arrow_right') pts = [[L, T + w.h * 0.25], [p.x, T + w.h * 0.25], [p.x, T], [R, p.y], [p.x, B], [p.x, B - w.h * 0.25], [L, B - w.h * 0.25]];
+            else if (t === 'arrow_left') pts = [[R, T + w.h * 0.25], [p.x, T + w.h * 0.25], [p.x, T], [L, p.y], [p.x, B], [p.x, B - w.h * 0.25], [R, B - w.h * 0.25]];
+            else if (t === 'chevron_right') pts = [[L, T], [p.x, p.y], [L, B], [L + w.w * 0.25, B], [p.x + w.w * 0.25, p.y], [L + w.w * 0.25, T]];
+            else if (t === 'chevron_left') pts = [[R, T], [p.x, p.y], [R, B], [R - w.w * 0.25, B], [p.x - w.w * 0.25, p.y], [R - w.w * 0.25, T]];
+            if (pts) return `<polygon points="${pts.map(a => a[0].toFixed(1) + ',' + a[1].toFixed(1)).join(' ')}" fill="${fill}" fill-opacity="${opa}"${stroke}/>`;
+            return `<rect x="${L.toFixed(1)}" y="${T.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${_pvNum(c.border_radius, 10)}" fill="${fill}" fill-opacity="${opa}"${stroke}/>`;
+        }
+
+        function _pvRpmBar(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const mx = _pvNum(c.rpm_max, 7000), frac = _pvClamp(4500 / mx, 0, 1);
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="3" fill="${_pvColor(c.bar_bg_color, '#F0F0F0')}"/>`;
+            s += `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${(w.w * frac).toFixed(1)}" height="${w.h}" rx="3" fill="${_pvColor(c.bar_color, '#00FF00')}"/>`;
+            return s;
+        }
+
+        function _pvBanner(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${_pvNum(c.radius, 0)}" fill="${_pvColor(c.bg_color, '#FF0000')}" fill-opacity="${(_pvNum(c.bg_opa, 128) / 255).toFixed(3)}"/>`;
+            s += `<text x="${p.x}" y="${p.y}" fill="${_pvColor(c.text_color, '#000')}" font-family="${_pvFontFam(c.font)}" font-size="${_pvFontPx(c.font, Math.round(w.h * 0.5))}" font-weight="700" text-anchor="middle" dominant-baseline="central">${_pvEsc(c.text || 'WARNING')}</text>`;
+            return s;
+        }
+
+        function _pvIndicator(w, c){
+            const p = devToWeb(w.x, w.y), s2 = Math.min(w.w, w.h) / 2;
+            const left = _pvNum(c.slot, 0) === 0;
+            const col = _pvColor(c.color_on, '#FFBF00'), opa = (_pvNum(c.opa_on, 255) / 255).toFixed(3);
+            const x = p.x, y = p.y;
+            const pts = left
+                ? [[x - s2, y], [x, y - s2], [x, y - s2 / 2], [x + s2, y - s2 / 2], [x + s2, y + s2 / 2], [x, y + s2 / 2], [x, y + s2]]
+                : [[x + s2, y], [x, y - s2], [x, y - s2 / 2], [x - s2, y - s2 / 2], [x - s2, y + s2 / 2], [x, y + s2 / 2], [x, y + s2]];
+            return `<polygon points="${pts.map(a => a[0].toFixed(1) + ',' + a[1].toFixed(1)).join(' ')}" fill="${col}" fill-opacity="${opa}"/>`;
+        }
+
+        function _pvWarning(w, c){
+            const p = devToWeb(w.x, w.y), r = Math.min(w.w, w.h) / 2;
+            const col = _pvColor(c.active_color, '#FF0000'), opa = (_pvNum(c.active_opa, 255) / 255).toFixed(3);
+            let s = `<circle cx="${p.x}" cy="${p.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${opa}"/>`;
+            if (c.show_label !== false && c.label)
+                s += `<text x="${p.x}" y="${(p.y + r + 9).toFixed(1)}" fill="${_pvColor(c.label_color, '#FFF')}" font-family="${_pvFontFam(c.label_font)}" font-size="11" text-anchor="middle">${_pvEsc(c.label)}</text>`;
+            return s;
+        }
+
+        function _pvShiftLight(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const n = _pvClamp(_pvNum(c.led_count, 8), 4, 16), gap = _pvNum(c.led_spacing, 2);
+            const lw = (w.w - gap * (n - 1)) / n, lit = Math.round(n * 0.6);
+            let s = '';
+            for (let i = 0; i < n; i++){
+                const col = i >= lit ? _pvColor(c.color_off, '#212121')
+                          : i < n * 0.4 ? _pvColor(c.color_low, '#00FF00')
+                          : i < n * 0.75 ? _pvColor(c.color_mid, '#FFFF00') : _pvColor(c.color_high, '#FF0000');
+                s += `<rect x="${(left + i * (lw + gap)).toFixed(1)}" y="${top.toFixed(1)}" width="${lw.toFixed(1)}" height="${w.h}" rx="${_pvNum(c.border_radius, 2)}" fill="${col}"/>`;
+            }
+            return s;
+        }
+
+        function _pvButton(w, c){
+            const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
+            const active = w.type === 'toggle';
+            const fill = active ? _pvColor(c.inactive_color, '#555') : _pvColor(c.bg_color, '#333');
+            let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="${_pvNum(c.border_radius, 5)}" fill="${fill}"/>`;
+            if (c.show_label !== false && c.label)
+                s += `<text x="${p.x}" y="${p.y}" fill="${_pvColor(c.label_color || c.text_color, '#FFF')}" font-family="${_pvFontFam(c.font)}" font-size="${_pvFontPx(c.font, Math.round(w.h * 0.4))}" text-anchor="middle" dominant-baseline="central">${_pvEsc(c.label)}</text>`;
+            return s;
+        }
+
+        /* Port of the firmware _pathbar_gen_shape (widget_pathbar.c): builds the
+         * polyline for a parametric shape fitted to the widget box, in web px.
+         * shape 1 = rounded L-bend, 2 = straight, 3 = 45° bevel. */
+        function _pbGenPath(w, c){
+            const p = devToWeb(w.x, w.y);
+            const bx = p.x - w.w / 2, by = p.y - w.h / 2, bw = w.w, bh = w.h;
+            const band = _pvNum(c.band_width, 22), inset = band / 2 + 2;
+            const l = bx + inset, t = by + inset, r = bx + bw - inset, b = by + bh - inset;
+            const shape = _pvNum(c.shape, 1), orient = _pvNum(c.orientation, 0);
+            const pts = [];
+            const emit = (x, y) => { if (!pts.length || x !== pts[pts.length - 1][0] || y !== pts[pts.length - 1][1]) pts.push([x, y]); };
+            if (shape === 2){
+                if (orient === 1){ const cx = (l + r) / 2; emit(cx, b); emit(cx, t); }
+                else { const cy = (t + b) / 2; emit(l, cy); emit(r, cy); }
+            } else {
+                let ax, ay, cx, cy, ex, ey;
+                switch (orient){
+                    case 1: ax = r; ay = b; cx = r; cy = t; ex = l; ey = t; break;
+                    case 2: ax = l; ay = t; cx = l; cy = b; ex = r; ey = b; break;
+                    case 3: ax = r; ay = t; cx = r; cy = b; ex = l; ey = b; break;
+                    default: ax = l; ay = b; cx = l; cy = t; ex = r; ey = t; break;
+                }
+                const leg1 = Math.abs(ay - cy) + Math.abs(ax - cx);
+                const leg2 = Math.abs(ey - cy) + Math.abs(ex - cx);
+                let rad = _pvNum(c.corner_radius, 40);
+                const maxr = Math.min(leg1, leg2) - 2;
+                if (rad > maxr) rad = maxr; if (rad < 0) rad = 0;
+                const a1x = Math.sign(ax - cx), a1y = Math.sign(ay - cy);
+                const b1x = Math.sign(ex - cx), b1y = Math.sign(ey - cy);
+                const t1x = cx + a1x * rad, t1y = cy + a1y * rad;
+                const t2x = cx + b1x * rad, t2y = cy + b1y * rad;
+                const cnx = cx + (a1x + b1x) * rad, cny = cy + (a1y + b1y) * rad;
+                emit(ax, ay); emit(t1x, t1y);
+                if (rad > 1 && shape !== 3){
+                    let a0 = Math.atan2(t1y - cny, t1x - cnx), a2 = Math.atan2(t2y - cny, t2x - cnx);
+                    let d = a2 - a0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+                    const steps = Math.min(72, Math.floor(rad * 0.5) + 8);
+                    for (let i = 1; i < steps; i++){ const ang = a0 + d * i / steps; emit(cnx + rad * Math.cos(ang), cny + rad * Math.sin(ang)); }
+                }
+                emit(t2x, t2y); emit(ex, ey);
+            }
+            return pts;
+        }
+        function _pbCum(pts){ const cum = [0]; for (let i = 1; i < pts.length; i++){ cum[i] = cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); } return cum; }
+        function _pbAt(pts, cum, s){
+            const total = cum[cum.length - 1] || 1; s = _pvClamp(s, 0, total);
+            for (let i = 1; i < pts.length; i++){
+                if (cum[i] >= s){ const seg = (cum[i] - cum[i - 1]) || 1, f = (s - cum[i - 1]) / seg;
+                    const x = pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, y = pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f;
+                    let tx = pts[i][0] - pts[i - 1][0], ty = pts[i][1] - pts[i - 1][1]; const L = Math.hypot(tx, ty) || 1;
+                    return [x, y, tx / L, ty / L]; }
+            }
+            const n = pts.length - 1; return [pts[n][0], pts[n][1], 0, 0];
+        }
+        function _pbSliceRange(pts, cum, fa, fb){
+            const total = cum[cum.length - 1] || 1, a = _pvClamp(fa, 0, 1) * total, b = _pvClamp(fb, 0, 1) * total;
+            const sp = _pbAt(pts, cum, a); if (b <= a) return [[sp[0], sp[1]], [sp[0], sp[1]]];
+            const out = [[sp[0], sp[1]]];
+            for (let i = 1; i < pts.length; i++){ if (cum[i] <= a) continue; if (cum[i] >= b) break; out.push([pts[i][0], pts[i][1]]); }
+            const ep = _pbAt(pts, cum, b); out.push([ep[0], ep[1]]);
+            return out;
+        }
+        function _pbPathStr(pl){ return 'M ' + pl.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L '); }
+
+        function _pvPathbar(w, c){
+            let pts;
+            if (_pvNum(c.shape, 1) === 0 && Array.isArray(c.path) && c.path.length >= 4){
+                pts = []; for (let i = 0; i + 1 < c.path.length; i += 2) pts.push([c.path[i], c.path[i + 1]]);
+            } else {
+                pts = _pbGenPath(w, c);
+            }
+            if (pts.length < 2) return '';
+            const cum = _pbCum(pts), total = cum[cum.length - 1] || 1;
+            const band = _pvNum(c.band_width, 22), cap = c.rounded ? 'round' : 'butt';
+            const mn = _pvNum(c.min, 0), mx = _pvNum(c.max, 11000), range = (mx - mn) || 1;
+            const val = _pvScene(w, c, mn, mx), frac = _pvClamp((val - mn) / range, 0, 1);
+            let rl = 1; const redl = _pvNum(c.redline, mx); if (redl < mx) rl = _pvClamp((redl - mn) / range, 0, 1);
+            const dimCol = _pvColor(c.dim_color, '#2E323A'), dimOpa = (_pvNum(c.dim_opa, 90) / 255).toFixed(3);
+            const litCol = _pvColor(c.lit_color, '#2EE4C8'), redCol = _pvColor(c.redline_color, '#FF5C32');
+            const stroke = (pl, col, opa) => `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}"${opa != null ? ` stroke-opacity="${opa}"` : ''} stroke-width="${band}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
+            /* Bloom. Studio: soft Gaussian blur. DASH: graduated multi-stroke
+             * (the firmware can stack strokes but can't blur), 565-banded by the
+             * global quantiser. */
+            const glow = (pl, col) => _pvDeviceMode
+                ? [[band + 16, 0.05], [band + 10, 0.09], [band + 5, 0.16]].map(L =>
+                    `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="${L[1]}" stroke-width="${L[0]}" stroke-linecap="${cap}" stroke-linejoin="round"/>`).join('')
+                : `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="0.30" stroke-width="${band + 10}" stroke-linecap="${cap}" stroke-linejoin="round" filter="url(#pvGlowBlur)"/>`
+                + `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="0.40" stroke-width="${band + 2}" stroke-linecap="${cap}" stroke-linejoin="round" filter="url(#pvGlowBlurSm)"/>`;
+            /* ambient halo over the pod — studio only (no radial gradients on the panel) */
+            let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
+            pts.forEach(p => { bx0 = Math.min(bx0, p[0]); by0 = Math.min(by0, p[1]); bx1 = Math.max(bx1, p[0]); by1 = Math.max(by1, p[1]); });
+            let s = _pvDeviceMode ? '' : _pvHalo((bx0 + bx1) / 2, (by0 + by1) / 2, Math.max(bx1 - bx0, by1 - by0) / 2 * 0.7, 'h_' + (w.id || 'pb'), litCol);
+            s += stroke(pts, dimCol, dimOpa);                                     /* dim track */
+            if (frac > 0){
+                const litEnd = Math.min(frac, rl);
+                if (litEnd > 0){
+                    const sl = _pbSliceRange(pts, cum, 0, litEnd);
+                    /* Positional fade (gated by fade_fill to match firmware
+                     * widget_pathbar.c _draw_band_faded): dark→bright along the
+                     * path, full bright by ~45% of the path, fixed to position
+                     * not value → targeted-invalidate cheap. When off, solid. */
+                    let litStroke = litCol;
+                    if (c.fade_fill){
+                        const gid = 'lg_' + (w.id || 'pb'), pe = pts[pts.length - 1];
+                        s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${pts[0][0].toFixed(1)}" y1="${pts[0][1].toFixed(1)}" x2="${pe[0].toFixed(1)}" y2="${pe[1].toFixed(1)}">`
+                           + `<stop offset="0%" stop-color="${_pvDarken(litCol, 0.26)}"/>`
+                           + `<stop offset="45%" stop-color="${litCol}"/>`
+                           + `<stop offset="100%" stop-color="${litCol}"/></linearGradient>`;
+                        litStroke = `url(#${gid})`;
+                    }
+                    s += glow(sl, litCol) + `<path d="${_pbPathStr(sl)}" fill="none" stroke="${litStroke}" stroke-width="${band}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
+                }
+                if (frac > rl){ const sl = _pbSliceRange(pts, cum, rl, frac); s += glow(sl, redCol) + stroke(sl, redCol); }
+                /* bright leading-edge cap (Ford "current value" highlight) */
+                s += stroke(_pbSliceRange(pts, cum, Math.max(0, frac - 0.012), frac), (frac > rl) ? '#FFD2B8' : '#E6FAFF');
+            }
+            /* tick + number scale that follows the path (the bit the bare
+             * pathbar was missing — what makes it a real Ford-style tach). */
+            if (c.show_ticks){
+                const minorStep = Math.max(1e-6, _pvNum(c.minor_tick_step, 1000));
+                const majorStep = Math.max(minorStep, _pvNum(c.major_tick_step, minorStep));
+                const div = Math.max(1, _pvNum(c.tick_label_divisor, 1));
+                const N = Math.max(1, Math.round(range / minorStep));
+                const majorEvery = Math.max(1, Math.round(majorStep / minorStep));
+                let cgx = 0, cgy = 0; pts.forEach(p => { cgx += p[0]; cgy += p[1]; }); cgx /= pts.length; cgy /= pts.length;
+                const tcol = _pvColor(c.tick_color, '#FFFFFF'), mcol = _pvColor(c.major_tick_color, '#FFFFFF');
+                const minLen = _pvNum(c.tick_len, band * 0.55), majLen = _pvNum(c.major_tick_len, band);
+                const minW = _pvNum(c.tick_width, 2), majW = _pvNum(c.major_tick_width, 3);
+                const rlV = _pvNum(c.redline, mx + 1);
+                const lblCol = _pvColor(c.label_color, '#FFFFFF'), lblGap = _pvNum(c.label_gap, 16);
+                const lblFpx = _pvFontPx(c.label_font, 19), lblFam = _pvFontFam(c.label_font);
+                for (let i = 0; i <= N; i++){
+                    const v = mn + i * minorStep, fr = _pvClamp((v - mn) / range, 0, 1);
+                    const a = _pbAt(pts, cum, fr * total), px = a[0], py = a[1];
+                    const nx = -a[3], ny = a[2];                                  /* unit normal */
+                    const isMaj = (i % majorEvery) === 0;
+                    let len = isMaj ? majLen : minLen, ww = isMaj ? majW : minW;
+                    let col = isMaj ? mcol : tcol;
+                    if (c.redline_recolor_ticks !== false && v >= rlV - 1e-6) col = redCol;
+                    s += `<line x1="${(px - nx * len / 2).toFixed(1)}" y1="${(py - ny * len / 2).toFixed(1)}" x2="${(px + nx * len / 2).toFixed(1)}" y2="${(py + ny * len / 2).toFixed(1)}" stroke="${col}" stroke-width="${ww}"/>`;
+                    if (isMaj && c.show_labels !== false){
+                        /* Numbers sit ABOVE near-horizontal stretches (the top bar)
+                         * but toward the centroid on curves (inside the arc) — the
+                         * Ford tach reads exactly this way. */
+                        const horiz = Math.abs(a[2]) > Math.abs(a[3]);
+                        const sgn = horiz ? (ny > 0 ? -1 : 1)
+                                          : (((cgx - px) * nx + (cgy - py) * ny) >= 0 ? 1 : -1);
+                        const lx = px + nx * sgn * (band / 2 + lblGap), ly = py + ny * sgn * (band / 2 + lblGap);
+                        s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${lblCol}" font-family="${lblFam}" font-size="${lblFpx}" text-anchor="middle" dominant-baseline="central">${_pvEsc(_pvFmt(v / div))}</text>`;
+                    }
+                }
+            }
+            return s;
+        }
+
+        function _pvWidget(w){
+            const c = _pvCfg(w);
+            switch (w.type){
+                case 'meter':       return _pvMeter(w, c);
+                case 'arc':         return _pvArcGauge(w, c);
+                case 'panel':       return _pvPanel(w, c);
+                case 'bar':         return _pvBar(w, c);
+                case 'rpm_bar':     return _pvRpmBar(w, c);
+                case 'text':        return _pvText(w, c);
+                case 'image':       return _pvImage(w, c);
+                case 'line':        return _pvLine(w, c);
+                case 'shape_panel': return _pvShape(w, c);
+                case 'banner':      return _pvBanner(w, c);
+                case 'indicator':   return _pvIndicator(w, c);
+                case 'warning':     return _pvWarning(w, c);
+                case 'shift_light': return _pvShiftLight(w, c);
+                case 'toggle': case 'button': return _pvButton(w, c);
+                case 'pathbar':     return _pvPathbar(w, c);
+                default:            return '';
+            }
+        }
+
+        function renderPreview(){
+            const svg = document.getElementById('previewLayer');
+            if (!svg) return;
+            const pill = document.getElementById('pillRender');
+            if (pill) pill.classList.toggle('active', _previewEnabled);
+            const pillD = document.getElementById('pillDash');
+            const show = _previewEnabled && !_haveLiveFrame;
+            svg.style.display = show ? 'block' : 'none';
+            if (!show){ svg.innerHTML = ''; return; }
+            if (pillD) pillD.classList.toggle('active', _pvDeviceMode);
+            const bg = (currentLayout.screen && currentLayout.screen.bg) || currentLayout.bg || '#000000';
+            const defs = `<defs>`
+                + `<radialGradient id="pvBg" cx="50%" cy="46%" r="72%">`
+                + `<stop offset="0%" stop-color="#0a1825"/>`
+                + `<stop offset="52%" stop-color="${_pvColor(bg, '#04080D')}"/>`
+                + `<stop offset="100%" stop-color="#010307"/>`
+                + `</radialGradient>`
+                + `<filter id="pvGlowBlur" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="6"/></filter>`
+                + `<filter id="pvGlowBlurSm" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="4"/></filter>`
+                /* RGB565 framebuffer simulation: snap the final composite to
+                 * 32/64/32 levels per channel — exactly the panel's banding. */
+                + `<filter id="pv565q" filterUnits="userSpaceOnUse" x="0" y="0" width="${CANVAS_W}" height="${CANVAS_H}" color-interpolation-filters="sRGB">`
+                + `<feComponentTransfer><feFuncR type="discrete" tableValues="${_pv565Table(32)}"/>`
+                + `<feFuncG type="discrete" tableValues="${_pv565Table(64)}"/>`
+                + `<feFuncB type="discrete" tableValues="${_pv565Table(32)}"/></feComponentTransfer></filter>`
+                + `</defs>`;
+            /* DASH mode: solid panel bg (no radial gradient on the real screen). */
+            const bgFill = _pvDeviceMode ? _pvColor(bg, '#04080D') : 'url(#pvBg)';
+            let body = `<rect x="0" y="0" width="${CANVAS_W}" height="${CANVAS_H}" fill="${bgFill}"/>`;
+            (currentLayout.widgets || []).forEach(w => {
+                if (w.hidden) return;
+                try { body += _pvWidget(w); } catch (e) { /* skip a single bad widget */ }
+            });
+            svg.innerHTML = defs + (_pvDeviceMode ? `<g filter="url(#pv565q)">${body}</g>` : body);
+        }
+
+        /* Reference tracing overlay (dev aid): _setRef('/ford_ref.png', 0.5) to
+         * overlay an image to align widgets to; _setRef(null) to hide. */
+        function _setRef(url, opa){
+            const img = document.getElementById('refOverlay');
+            if (!img) return;
+            if (!url){ img.style.display = 'none'; img.removeAttribute('src'); return; }
+            img.src = url;
+            img.style.opacity = (opa == null ? 0.5 : opa);
+            img.style.display = 'block';
         }
 
         /* ── pathbar custom-path waypoint editor ───────────────────────────
@@ -8256,15 +9146,59 @@
                 document.getElementById('livePreviewToggle').checked &&
                 typeof triggerPreview === 'function') triggerPreview();
         }
+        /* Build an SVG path "d" string from the flat [x,y,...] point array. */
+        function _pathbarBuildD(path) {
+            let d = '';
+            for (let i = 0; i < path.length; i += 2)
+                d += (i === 0 ? 'M' : 'L') + path[i] + ' ' + path[i + 1] + ' ';
+            return d.trim();
+        }
         function _renderPathHandles(w, idx) {
             const path = w.config.path;
             const n = path.length / 2;
+
+            /* Tracing backdrop sits behind everything so the path can be drawn
+             * over a reference image (e.g. a custom track shape). */
+            _renderPathTrace(w);
+
+            /* Live path overlay: a band-width ghost in the fill colour plus a
+             * thin dashed centerline so the bar's actual shape is visible while
+             * authoring / tracing (the dots alone don't show the path). Drawn
+             * below the handles. */
+            const NS = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(NS, 'svg');
+            svg.setAttribute('id', 'pbPathSvg');
+            svg.setAttribute('viewBox', '0 0 ' + CANVAS_W + ' ' + CANVAS_H);
+            svg.style.cssText = 'position:absolute;left:0;top:0;width:' + CANVAS_W + 'px;height:' + CANVAS_H + 'px;pointer-events:none;z-index:25;overflow:visible;';
+            const d = _pathbarBuildD(path);
+            const fillHex = '#' + (rgb565to888(w.config.lit_color != null ? w.config.lit_color : 0x2EE4C8) >>> 0).toString(16).padStart(6, '0');
+            const ghost = document.createElementNS(NS, 'path');
+            ghost.setAttribute('id', 'pbPathLine');
+            ghost.setAttribute('d', d);
+            ghost.setAttribute('fill', 'none');
+            ghost.setAttribute('stroke', fillHex);
+            ghost.setAttribute('stroke-width', w.config.band_width || 22);
+            ghost.setAttribute('stroke-linecap', 'round');
+            ghost.setAttribute('stroke-linejoin', 'round');
+            ghost.setAttribute('stroke-opacity', '0.30');
+            const center = document.createElementNS(NS, 'path');
+            center.setAttribute('id', 'pbPathCenter');
+            center.setAttribute('d', d);
+            center.setAttribute('fill', 'none');
+            center.setAttribute('stroke', 'var(--accent)');
+            center.setAttribute('stroke-width', '1.5');
+            center.setAttribute('stroke-dasharray', '5 4');
+            center.setAttribute('stroke-opacity', '0.9');
+            svg.appendChild(ghost); svg.appendChild(center);
+            interactionLayer.appendChild(svg);
+
             for (let i = 0; i < n; i++) {
                 const px = path[i * 2], py = path[i * 2 + 1];
                 const h = document.createElement('div');
                 h.className = 'path-handle';
+                h.id = 'pbh_' + i;
                 h.style.left = (px - 7) + 'px'; h.style.top = (py - 7) + 'px';
-                h.title = 'Drag to move · double-click to remove · hold Shift for free angle';
+                h.title = 'Drag to move · double-click to remove · Shift = 45° · Alt = no snap';
                 h.onmousedown = (e) => { if (e.button === 0) _startPathDrag(e, idx, i); };
                 h.ondblclick = (e) => { e.stopPropagation(); e.preventDefault(); _removePathPoint(idx, i); };
                 interactionLayer.appendChild(h);
@@ -8272,12 +9206,51 @@
                     const mx = (px + path[(i + 1) * 2]) / 2, my = (py + path[(i + 1) * 2 + 1]) / 2;
                     const a = document.createElement('div');
                     a.className = 'path-add-handle'; a.textContent = '+';
+                    a.id = 'pba_' + i;
                     a.style.left = (mx - 6) + 'px'; a.style.top = (my - 6) + 'px';
                     a.title = 'Add a point here';
                     a.onmousedown = (e) => { e.stopPropagation(); e.preventDefault(); _addPathPoint(idx, i, mx, my); };
                     interactionLayer.appendChild(a);
                 }
             }
+        }
+        /* Lightweight per-frame update during a waypoint drag: reposition the
+         * handles + redraw the path overlay without rebuilding the whole canvas
+         * (a full renderEditor() per mousemove is what made dragging feel sticky). */
+        function _pathbarLiveUpdate(w) {
+            const path = w.config.path, n = path.length / 2;
+            const d = _pathbarBuildD(path);
+            const line = document.getElementById('pbPathLine');
+            const center = document.getElementById('pbPathCenter');
+            if (line) line.setAttribute('d', d);
+            if (center) center.setAttribute('d', d);
+            for (let i = 0; i < n; i++) {
+                const h = document.getElementById('pbh_' + i);
+                if (h) { h.style.left = (path[i * 2] - 7) + 'px'; h.style.top = (path[i * 2 + 1] - 7) + 'px'; }
+                if (i < n - 1) {
+                    const a = document.getElementById('pba_' + i);
+                    if (a) {
+                        const mx = (path[i * 2] + path[(i + 1) * 2]) / 2;
+                        const my = (path[i * 2 + 1] + path[(i + 1) * 2 + 1]) / 2;
+                        a.style.left = (mx - 6) + 'px'; a.style.top = (my - 6) + 'px';
+                    }
+                }
+            }
+        }
+        /* Gentle axis magnet: snap x and/or y to a neighbour point only when
+         * within SNAP_PX, so straight segments are easy to make but the handle
+         * is never locked to discrete angles. */
+        function _pathbarSoftSnap(path, ptIdx, cx, cy) {
+            const SNAP_PX = 6, n = path.length / 2;
+            const nb = [];
+            if (ptIdx > 0) nb.push([path[(ptIdx - 1) * 2], path[(ptIdx - 1) * 2 + 1]]);
+            if (ptIdx < n - 1) nb.push([path[(ptIdx + 1) * 2], path[(ptIdx + 1) * 2 + 1]]);
+            let bx = cx, by = cy, bestX = SNAP_PX, bestY = SNAP_PX;
+            for (const p of nb) {
+                if (Math.abs(cx - p[0]) < bestX) { bx = p[0]; bestX = Math.abs(cx - p[0]); }
+                if (Math.abs(cy - p[1]) < bestY) { by = p[1]; bestY = Math.abs(cy - p[1]); }
+            }
+            return [bx, by];
         }
         function _startPathDrag(e, idx, ptIdx) {
             e.stopPropagation(); e.preventDefault();
@@ -8290,17 +9263,23 @@
                 let cy = (ev.clientY - rect.top) / zoomLevel;
                 cx = Math.max(0, Math.min(CANVAS_W, cx));
                 cy = Math.max(0, Math.min(CANVAS_H, cy));
-                if (!ev.shiftKey && ptIdx > 0) {
+                /* Default = free drag. Shift = constrain to 45° from the previous
+                 * point. Alt = disable even the gentle axis magnet for fine work. */
+                if (ev.shiftKey && ptIdx > 0) {
                     const s = _snap45(path[(ptIdx - 1) * 2], path[(ptIdx - 1) * 2 + 1], cx, cy);
+                    cx = s[0]; cy = s[1];
+                } else if (!ev.altKey) {
+                    const s = _pathbarSoftSnap(path, ptIdx, cx, cy);
                     cx = s[0]; cy = s[1];
                 }
                 path[ptIdx * 2] = Math.round(cx); path[ptIdx * 2 + 1] = Math.round(cy);
-                _fitPathbarBox(w);
-                renderEditor();
+                _pathbarLiveUpdate(w);   /* light update — no full re-render */
             };
             const up = () => {
                 document.removeEventListener('mousemove', move);
                 document.removeEventListener('mouseup', up);
+                _fitPathbarBox(w);       /* re-fit the clip box once, on release */
+                renderEditor();
                 updateInspector();
                 _pathbarPreview();
             };
@@ -8321,6 +9300,101 @@
             path.splice((afterIdx + 1) * 2, 0, Math.round(mx), Math.round(my));
             _fitPathbarBox(w);
             renderEditor(); updateInspector(); _pathbarPreview();
+        }
+
+        /* ── pathbar trace backdrop — draw the track over an image ───────────
+         * An editor-only reference image rendered behind the path handles so a
+         * custom track shape can be traced accurately. Held in _pathbarTrace
+         * (per widget id), never written to the layout/firmware. */
+        function _renderPathTrace(w) {
+            const t = _pathbarTrace[w.id];
+            if (!t || !t.src) return;
+            const img = document.createElement('img');
+            img.id = 'pbTraceImg';
+            img.src = t.src;
+            img.draggable = false;
+            let L, T, W, H;
+            if (t.fit === 'native' && t.natW && t.natH) {
+                W = t.natW; H = t.natH; L = (CANVAS_W - W) / 2; T = (CANVAS_H - H) / 2;
+            } else {
+                L = 0; T = 0; W = CANVAS_W; H = CANVAS_H;
+            }
+            img.style.cssText = 'position:absolute;left:' + L + 'px;top:' + T + 'px;width:' + W + 'px;height:' + H
+                + 'px;opacity:' + ((t.opa != null ? t.opa : 50) / 100) + ';pointer-events:none;z-index:2;object-fit:fill;';
+            interactionLayer.insertBefore(img, interactionLayer.firstChild);
+        }
+        function _pathbarTracePick(val) {
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w) return;
+            if (val === '') { delete _pathbarTrace[w.id]; renderEditor(); updateInspector(); return; }
+            if (val === '__file__') { const f = document.getElementById('pbTraceFile'); if (f) f.click(); return; }
+            showToast('Loading trace image…', 'info');
+            fetch('/api/image/data?name=' + encodeURIComponent(val))
+                .then(r => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
+                .then(buf => {
+                    const dec = _rdmimgToCanvas(buf);
+                    if (!dec) throw new Error();
+                    const prev = _pathbarTrace[w.id] || {};
+                    _pathbarTrace[w.id] = { src: dec.canvas.toDataURL(), name: val,
+                        natW: dec.width, natH: dec.height,
+                        opa: prev.opa != null ? prev.opa : 50, fit: prev.fit || 'fill' };
+                    renderEditor(); updateInspector();
+                })
+                .catch(() => showToast('Could not load image', 'error'));
+        }
+        function _pathbarTraceFile(input) {
+            const w = currentLayout.widgets[selectedIndex];
+            const f = input.files && input.files[0];
+            if (!w || !f) return;
+            const r = new FileReader();
+            r.onload = () => {
+                const im = new Image();
+                im.onload = () => {
+                    const prev = _pathbarTrace[w.id] || {};
+                    _pathbarTrace[w.id] = { src: r.result, name: '',
+                        natW: im.naturalWidth, natH: im.naturalHeight,
+                        opa: prev.opa != null ? prev.opa : 50, fit: prev.fit || 'fill' };
+                    renderEditor(); updateInspector();
+                };
+                im.src = r.result;
+            };
+            r.readAsDataURL(f);
+            input.value = '';
+        }
+        function _pathbarTraceOpa(v) {
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w || !_pathbarTrace[w.id]) return;
+            _pathbarTrace[w.id].opa = parseInt(v);
+            const img = document.getElementById('pbTraceImg');
+            if (img) img.style.opacity = parseInt(v) / 100;
+        }
+        function _pathbarTraceFit(v) {
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w || !_pathbarTrace[w.id]) return;
+            _pathbarTrace[w.id].fit = v;
+            renderEditor();
+        }
+        function _pathbarTraceAddWidget() {
+            const w = currentLayout.widgets[selectedIndex];
+            const t = w && _pathbarTrace[w.id];
+            if (!t) return;
+            if (!t.name) { showToast('Pick a device image (or upload it to the dash first)', 'info'); return; }
+            if (currentLayout.widgets.some(x => x.type === 'image' && x.config && x.config.image_name === t.name)) {
+                showToast('That image is already a widget in this layout', 'info'); return;
+            }
+            pushHistory();
+            const def = WIDGET_DEFS['image'] || { fields: [], defW: 200, defH: 200 };
+            const config = {};
+            def.fields.forEach(f => { config[f.name] = f.def; });
+            config.image_name = t.name;
+            const nw = { type: 'image', id: nextWidgetId('image'), x: 0, y: 0,
+                w: t.natW || def.defW, h: t.natH || def.defH, config: config };
+            currentLayout.widgets.unshift(nw);     /* behind everything else */
+            selectedIndex = currentLayout.widgets.indexOf(w);
+            selectedIndices = new Set([selectedIndex]);
+            renderEditor(); updateInspector();
+            if (document.getElementById('livePreviewToggle') && document.getElementById('livePreviewToggle').checked) triggerPreview();
+            showToast('Added "' + t.name + '" as a background image widget', 'success');
         }
 
         /* Layout Settings box (hidden, display:none). Night-mode trigger UI
@@ -9205,6 +10279,8 @@
             isPanning = false;
             workspaceViewport.style.cursor = 'default';
             if (isDragging || isResizing) {
+                const wasResizing = isResizing;
+                const moved = _dragMoved;
                 isDragging = false;
                 isResizing = false;
                 guideX.style.display = 'none';
@@ -9217,7 +10293,15 @@
                 if (_dragMoved) pushHistory();
                 _dragMoved = false;
                 updateInspector();
-                if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+                /* Fast path: push just the moved/resized widget's geometry
+                 * to the device instead of rebuilding the whole layout. A
+                 * resize touches only the selected widget; a drag may move
+                 * the whole multi-selection. Skip when nothing actually
+                 * moved (a plain click). */
+                if (moved) {
+                    if (wasResizing) _pushWidgetTransform(currentLayout.widgets[selectedIndex]);
+                    else _pushSelectionTransforms();
+                }
             }
         };
 
@@ -9479,8 +10563,16 @@
         }
 
         function triggerPreview() {
+            _lastPreviewActivityMs = Date.now();   /* keep the live canvas brisk for a few s */
             if (previewTimer) clearTimeout(previewTimer);
             previewTimer = setTimeout(async () => {
+                /* The device is about to tear down + rebuild EVERY widget
+                 * (which reloads large bg images). Pause the screenshot loop so
+                 * its encodes/allocs don't starve the contiguous PSRAM the
+                 * image reload needs — that race is what makes a bg image blink
+                 * out ("disappear") mid-edit. Resume shortly after the push so
+                 * the async dashboard rebuild has settled first. */
+                _layoutPushBusy = true;
                 try {
                     await fetch('/api/layout/preview', {
                         method: 'POST',
@@ -9496,7 +10588,16 @@
                      * rebuild before responding, so these /api/banner/test calls
                      * (queued after) run after the banner is recreated. */
                     await _reassertBannerPreviews();
-                } catch (e) { }
+                } catch (e) {
+                } finally {
+                    /* Hold the pause a touch past the response: the preview
+                     * handler queues the rebuild via lv_async_call and returns
+                     * before it actually runs, so resuming immediately would
+                     * encode frames off a half-built tree. Keep the canvas
+                     * brisk afterwards so the user sees the rebuilt result. */
+                    _lastPreviewActivityMs = Date.now();
+                    setTimeout(() => { _layoutPushBusy = false; }, 500);
+                }
             }, 250); // 250ms debounce
         }
 
@@ -9516,6 +10617,177 @@
                     body: JSON.stringify({ id, active: true })
                 }).catch(() => {});
             }));
+        }
+
+        /* ── Live-edit fast paths ────────────────────────────────────────────
+         * Instead of pushing the WHOLE layout to /api/layout/preview (which
+         * tears down + rebuilds every widget on the device, reloading large
+         * background images — the "fuzz on every nudge"), these update one
+         * live widget in place. They fall back to a full triggerPreview() when
+         * the targeted widget isn't on the device yet, or when the firmware
+         * reports it couldn't apply the change. */
+
+        function _previewLive() {
+            const t = document.getElementById('livePreviewToggle');
+            return t && t.checked;
+        }
+
+        /* Live edits are coalesced: rapid inputs (slider drag, spinner
+         * auto-repeat, multi-widget drag) collapse to one request per widget /
+         * field on a short trailing debounce, instead of a POST per event
+         * (which would flood the device and fight the LVGL lock). */
+        const _LIVE_FLUSH_MS = 80;
+        let   _liveFlushTimer = null;
+        const _pendingXform = new Map();   /* id -> widget                    */
+        const _pendingSet   = new Map();   /* id -> { w, fields:Map(name->def)} */
+
+        function _scheduleLiveFlush() {
+            if (_liveFlushTimer) return;
+            _liveFlushTimer = setTimeout(_flushLiveEdits, _LIVE_FLUSH_MS);
+        }
+
+        function _flushLiveEdits() {
+            _liveFlushTimer = null;
+            const xforms = [..._pendingXform.values()]; _pendingXform.clear();
+            const sets   = [..._pendingSet.values()];   _pendingSet.clear();
+            xforms.forEach(_doWidgetTransform);
+            sets.forEach(e => e.fields.forEach((def, field) => _doFieldSet(e.w, field, def)));
+        }
+
+        /* Move/resize a single widget by id (device coords). Used by drag,
+         * resize, and the inspector X/Y/W/H inputs. Coalesced via _pendingXform. */
+        function _pushWidgetTransform(w) {
+            if (!_previewLive() || !w) return;
+            if (!w.id) { triggerPreview(); return; }
+            _pendingXform.set(w.id, w);
+            _scheduleLiveFlush();
+        }
+
+        function _doWidgetTransform(w) {
+            if (!w || !w.id) return;
+            /* Deliberately do NOT bump _lastPreviewActivityMs here: the editor
+             * already shows the move via its own widget-box, and pinning the
+             * screenshot loop to "brisk" after every nudge is what made the LCD
+             * fuzz for seconds after a move. The idle heartbeat refreshes the
+             * live-data backdrop soon enough. */
+            fetch('/api/widget/transform', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: w.id,
+                    x: Math.round(w.x), y: Math.round(w.y),
+                    w: Math.round(w.w), h: Math.round(w.h)
+                })
+            }).then(r => r.json()).then(j => {
+                /* Widget not on the device's current screen (e.g. just added
+                 * but never previewed) — do a full rebuild so it appears. */
+                if (!j || j.found === false) { if (_previewLive()) triggerPreview(); }
+            }).catch(() => { if (_previewLive()) triggerPreview(); });
+        }
+
+        /* Push transforms for every currently-selected widget (multi-drag). */
+        function _pushSelectionTransforms() {
+            if (!_previewLive()) return;
+            const idxs = selectedIndices && selectedIndices.size
+                       ? [...selectedIndices] : [selectedIndex];
+            idxs.forEach(i => {
+                const w = currentLayout.widgets[i];
+                if (w) _pushWidgetTransform(w);
+            });
+        }
+
+        /* Fields whose firmware inspector_set fully captures the edit on its
+         * own. Anything NOT here (selects, gradients, can_id, and fields that
+         * re-derive OTHER config values) stays on the full-preview path so the
+         * device matches the editor exactly. Mirror of the special-case
+         * branches in updateWidgetConfigField — a stale entry only costs an
+         * extra full preview, never correctness. */
+        function _fieldFastEligible(w, field, fieldDef) {
+            if (!w || !fieldDef) return false;
+            const T = fieldDef.type;
+            /* image_picker is deliberately excluded: changing the image must
+             * reload it on the device anyway, so a full preview is no more
+             * expensive there and avoids any re-bake/occluder divergence. */
+            const SIMPLE = (T === 'color' || T === 'number' || T === 'stepper' ||
+                            T === 'stepper-auto' || T === 'slider' ||
+                            T === 'text' || T === 'textarea' || T === 'font' ||
+                            T === 'checkbox');
+            if (!SIMPLE) return false;
+            /* Checkbox that gates sub-fields re-renders the inspector. */
+            if (T === 'checkbox') {
+                const def = WIDGET_DEFS[w.type];
+                if (def && def.fields.some(f => f.enabledBy === field ||
+                                                f.enabledBy === '!' + field)) return false;
+            }
+            /* Channel-backed thresholds are mirrored to the channel, not config. */
+            const tspec = (typeof _widgetThresholdSpec === 'function') ? _widgetThresholdSpec(w) : null;
+            if (tspec) {
+                const tf = [tspec.high, tspec.low, tspec.highEn, tspec.lowEn, tspec.en].filter(Boolean);
+                if (tf.includes(field)) return false;
+            }
+            /* Fields that re-derive other config values (angles, tick counts,
+             * geometry) — let the full rebuild recompute everything. */
+            if (w.type === 'meter' && ['min','max','start_angle_user','sweep_degrees',
+                'minor_tick_step','major_tick_step'].includes(field)) return false;
+            if (w.type === 'arc' && ['start_angle_user','sweep_degrees','minor_tick_step',
+                'major_tick_step','signal_min','signal_max'].includes(field)) return false;
+            if (w.type === 'image' && (field === 'image_name' || field === 'auto_size')) return false;
+            if (w.type === 'line' && field === 'orientation') return false;
+            if (w.type === 'indicator' && field === 'input_source') return false;
+            return true;
+        }
+
+        /* Queue one config field for the live widget; coalesced + flushed by
+         * _flushLiveEdits. The value is read fresh from w.config at flush time
+         * so the latest edit in a burst always wins. */
+        function _pushWidgetFieldSet(w, field, fieldDef) {
+            if (!_previewLive()) return;
+            if (!w || !w.id) { triggerPreview(); return; }
+            let e = _pendingSet.get(w.id);
+            if (!e) { e = { w, fields: new Map() }; _pendingSet.set(w.id, e); }
+            e.fields.set(field, fieldDef);
+            _scheduleLiveFlush();
+        }
+
+        /* Apply one config field to the live widget via /api/widget/set; fall
+         * back to a full preview if it can't be cleanly applied. The value is
+         * pulled fresh from w.config (number for numeric/colour, bool for
+         * checkbox, string for text/font). */
+        function _doFieldSet(w, field, fieldDef) {
+            const fallback = () => { if (_previewLive()) triggerPreview(); };
+            if (!w || !w.id || !fieldDef || !w.config) { fallback(); return; }
+            const val = w.config[field];
+            const T = fieldDef.type;
+            let payloadVal;
+            if (T === 'checkbox') {
+                payloadVal = !!val;
+            } else if (T === 'color') {
+                const n = Number(val);
+                if (!Number.isFinite(n)) { fallback(); return; }
+                payloadVal = n & 0xFFFFFF;          /* 0xRRGGBB, matches firmware */
+            } else if (T === 'number' || T === 'stepper' ||
+                       T === 'stepper-auto' || T === 'slider') {
+                const n = Number(val);
+                /* Firmware applies numerics as int32 (same as the on-device
+                 * inspector). A fractional value would lose precision vs a
+                 * full rebuild, so defer those. */
+                if (!Number.isFinite(n) || !Number.isInteger(n)) { fallback(); return; }
+                payloadVal = n;
+            } else {                                /* text / textarea / font */
+                payloadVal = (val == null) ? '' : String(val);
+            }
+            /* No _lastPreviewActivityMs bump — see _doWidgetTransform. The edit
+             * is already visible in the editor; let the idle heartbeat refresh
+             * the backdrop instead of pinning the capture loop to brisk. */
+            fetch('/api/widget/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: w.id, field, value: payloadVal })
+            }).then(r => r.json()).then(j => {
+                /* Firmware couldn't apply it live (unknown field, widget not
+                 * present, type mismatch) — fall back to a full rebuild. */
+                if (!j || j.handled !== true) { if (_previewLive()) triggerPreview(); }
+            }).catch(() => { if (_previewLive()) triggerPreview(); });
         }
 
         /* Render a night-mode override control for a field (color or image_picker only).
@@ -10379,6 +11651,30 @@
             html += `</div></details>`;
             } /* end NO_RULES_TYPES gate */
 
+            /* Pathbar custom path: "Trace Image" authoring aid (editor-only). */
+            if (w.type === 'pathbar' && _pathbarIsCustom(w)) {
+                const t = _pathbarTrace[w.id] || {};
+                html += `<details class="inspector-accordion"${t.src ? ' open' : ''}><summary>Trace Image</summary><div class="accordion-body">`;
+                html += `<div style="font-size:11px;color:#999;margin-bottom:6px;">Show an image behind the canvas to trace the track path over. Editor-only — not saved to the dash.</div>`;
+                html += `<div class="field"><label>Image</label><select onchange="_pathbarTracePick(this.value)">`;
+                html += `<option value="">None</option><option value="__file__">Upload file…</option>`;
+                (_cachedImageList || []).forEach(img => {
+                    html += `<option value="${img.name}" ${t.name === img.name ? 'selected' : ''}>${img.name}</option>`;
+                });
+                html += `</select></div>`;
+                html += `<input type="file" id="pbTraceFile" accept="image/*" style="display:none" onchange="_pathbarTraceFile(this)">`;
+                if (t.src) {
+                    html += `<div class="field"><label>Opacity</label><input type="range" min="5" max="100" value="${t.opa != null ? t.opa : 50}" oninput="_pathbarTraceOpa(this.value)"></div>`;
+                    html += `<div class="field"><label>Size</label><select onchange="_pathbarTraceFit(this.value)">
+                        <option value="fill" ${t.fit !== 'native' ? 'selected' : ''}>Fill canvas</option>
+                        <option value="native" ${t.fit === 'native' ? 'selected' : ''}>Native size</option>
+                    </select></div>`;
+                    if (t.name) html += `<button class="btn btn-secondary" style="font-size:11px;width:100%;margin-top:4px;" onclick="_pathbarTraceAddWidget()">Add to dash as image widget</button>`;
+                    html += `<button class="btn btn-secondary" style="font-size:11px;width:100%;margin-top:4px;" onclick="_pathbarTracePick('')">Remove trace</button>`;
+                }
+                html += `</div></details>`;
+            }
+
             inspectorContent.innerHTML = html;
             _restoreInspectorState();
 
@@ -10480,6 +11776,8 @@
             if (!btn) return;
             btn.classList.toggle('sim-active', _simActive);
             btn.textContent = _simActive ? 'SIM ON' : 'SIM';
+            /* Drive the offline preview sweep to follow the SIM state. */
+            if (typeof _pvSimSync === 'function') _pvSimSync();
         }
         async function _pollSimState() {
             try {
@@ -11080,7 +12378,15 @@
                 updateInspector();
             }
             pushHistory();
-            if (preview && document.getElementById('livePreviewToggle').checked) triggerPreview();
+            if (preview && _previewLive()) {
+                /* Geometry edits (X/Y/W/H) update the live widget in place;
+                 * anything else falls back to a full rebuild. */
+                if (field === 'x' || field === 'y' || field === 'w' || field === 'h') {
+                    _pushWidgetTransform(currentLayout.widgets[selectedIndex]);
+                } else {
+                    triggerPreview();
+                }
+            }
         }
 
         /* ═══════════════════════════════════════════════════════════════
@@ -11528,7 +12834,19 @@
             }
 
             pushHistory();
-            if (document.getElementById('livePreviewToggle').checked) triggerPreview();
+            if (_previewLive()) {
+                /* Fast path: simple single-field edits (colour, text, number,
+                 * toggle, font, image) are applied to the live widget via
+                 * /api/widget/set — no full teardown/rebuild. Fields that
+                 * re-derive other values, channel-backed thresholds, selects,
+                 * and gradients fall back to a full preview so the device
+                 * stays in lock-step with the editor. */
+                if (_fieldFastEligible(w, field, fieldDef)) {
+                    _pushWidgetFieldSet(w, field, fieldDef);
+                } else {
+                    triggerPreview();
+                }
+            }
         }
 
         /* Write a night-mode override for the selected widget. Creates w.config.night
@@ -12928,6 +14246,10 @@
                 ssCanvas.style.width = w + 'px'; ssCanvas.style.height = h + 'px'; }
             const iLayer = document.getElementById('interactionLayer');
             if (iLayer) { iLayer.style.width = w + 'px'; iLayer.style.height = h + 'px'; }
+            const pvLayer = document.getElementById('previewLayer');
+            if (pvLayer) { pvLayer.setAttribute('width', w); pvLayer.setAttribute('height', h);
+                pvLayer.setAttribute('viewBox', `0 0 ${w} ${h}`);
+                pvLayer.style.width = w + 'px'; pvLayer.style.height = h + 'px'; }
 
             /* Update status bar label */
             const lbl = document.getElementById('screenResLabel');
@@ -13305,14 +14627,24 @@
                  * browser upscales to the canvas. Full-res stays reserved for the
                  * LIVE preview's own polling loop (which users opt into and isn't
                  * running simultaneously with edit invalidations). */
-                const response = await fetch('/api/screenshot?smooth=1&q=100&t=' + Date.now(),
+                /* q=80 (was 100): the canvas backdrop is upscaled anyway, so
+                 * near-lossless was just bloating each frame ~3x — bigger frames
+                 * = longer WiFi TX = more sustained radio noise on the LCD. */
+                const response = await fetch('/api/screenshot?smooth=1&q=80&t=' + Date.now(),
                                               { cache: 'no-store' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const blob = await response.blob();
                 const bmp  = await createImageBitmap(blob);
                 ctx.drawImage(bmp, 0, 0, CANVAS_W, CANVAS_H);
                 bmp.close();
-            } catch (e) { console.error('Screenshot failed', e); }
+                /* A real device frame painted — retire the offline SVG preview
+                 * so the live screenshot owns the canvas. */
+                if (!_haveLiveFrame) { _haveLiveFrame = true; renderPreview(); }
+            } catch (e) {
+                console.error('Screenshot failed', e);
+                /* No device frame (offline) — fall back to the SVG preview. */
+                if (_haveLiveFrame) { _haveLiveFrame = false; renderPreview(); }
+            }
         }
 
         /* Full-resolution screenshot download for the File menu. Pulls
@@ -13363,17 +14695,48 @@
         let _livePreviewOn = (localStorage.getItem('rdm7_live_preview') !== '0');
         let _livePreviewToken = 0;
 
+        /* ── Live-preview pacing ─────────────────────────────────────────────
+         * The editor canvas backdrop is a live device screenshot. It used to
+         * poll /api/screenshot back-to-back (~3-6 fps) the WHOLE time the editor
+         * was open, which kept the WiFi radio + PSRAM bus saturated — that's the
+         * persistent "fuzz" on the RGB LCD (bus contention / EMI) and the
+         * constant chatter. Now: a brisk cadence for a few seconds after any
+         * edit (so changes still show up promptly), then a slow heartbeat when
+         * nothing is changing. _layoutPushBusy additionally stalls the loop
+         * while a layout rebuild is in flight on the device, so screenshot
+         * encodes don't fight the rebuild for the contiguous PSRAM a large
+         * background image needs to reload (else that gauge goes black). */
+        const LIVE_ACTIVE_INTERVAL_MS = 450;   /* ~2 fps right after an edit   */
+        const LIVE_IDLE_INTERVAL_MS   = 2000;  /* ~0.5 fps when idle           */
+        const LIVE_ACTIVE_WINDOW_MS   = 4000;  /* "active" = within 4s of edit */
+        let   _lastPreviewActivityMs  = 0;
+        let   _layoutPushBusy         = false;
+
         async function _livePreviewLoop(token) {
             while (_livePreviewOn && token === _livePreviewToken) {
-                /* CONTROL drives its own <img>; the tab being hidden means
-                 * nobody's watching — idle in both cases instead of burning
-                 * device CPU on encodes. */
-                if (document.hidden || _liveControlOn) {
+                /* Idle the loop when nobody's watching (tab hidden), CONTROL is
+                 * driving its own <img>, a layout rebuild is mid-flight on the
+                 * device (don't compete for PSRAM/CPU while it reloads big
+                 * background images), or the user is actively dragging/resizing
+                 * a widget. Capturing the framebuffer mid-gesture is the single
+                 * worst offender for the LCD "fuzz" (each /api/screenshot reads
+                 * the whole FB out of PSRAM + encodes + WiFi-TX, starving the
+                 * RGB panel's DMA → tearing). The dragged widget is drawn by the
+                 * editor itself (DOM widget-box), so the user still sees it move;
+                 * only the live-data backdrop pauses for the ~1 s gesture. */
+                if (document.hidden || _liveControlOn || _layoutPushBusy ||
+                    isDragging || isResizing) {
                     await new Promise(r => setTimeout(r, 400));
                     continue;
                 }
                 await captureScreenshot();   /* swallows its own errors */
-                await new Promise(r => setTimeout(r, 0));  /* yield; pace = encode latency */
+                /* Adaptive cadence: brisk briefly after an edit, slow heartbeat
+                 * when idle — instead of the old back-to-back encode/TX storm. */
+                const sinceEdit = Date.now() - _lastPreviewActivityMs;
+                const pace = sinceEdit < LIVE_ACTIVE_WINDOW_MS
+                           ? LIVE_ACTIVE_INTERVAL_MS
+                           : LIVE_IDLE_INTERVAL_MS;
+                await new Promise(r => setTimeout(r, pace));
             }
         }
         function _startLivePreview() {
@@ -13548,11 +14911,11 @@
             while (_liveControlOn && token === _liveLoopToken && img) {
                 const t0 = performance.now();
                 try {
-                    /* Half-res 400x240, q=100, smooth=2x2 box-average. Full-res
-                     * stretched to 10–15 s encodes under real load — half-res
-                     * keeps responsiveness while q=100 gives max JPEG fidelity.
+                    /* Half-res 400x240, q=80, smooth=2x2 box-average. Half-res
+                     * keeps encodes responsive; q=80 keeps frames small so the
+                     * 1 fps control mirror stays light on WiFi/PSRAM.
                      * For screen-recording at full-res, use /api/capture/stream. */
-                    const r = await fetch('/api/screenshot?q=100&smooth=1&t=' + Date.now(), { cache: 'no-store' });
+                    const r = await fetch('/api/screenshot?q=80&smooth=1&t=' + Date.now(), { cache: 'no-store' });
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     const blob = await r.blob();
                     /* Bail if the user toggled off during the fetch */
@@ -14320,6 +15683,14 @@
                 document.getElementById('interactionLayer').classList.toggle('hide-widgets', !isActive);
             } else if (id === 'crosshair') {
                 document.getElementById('interactionLayer').classList.toggle('hide-crosshair', !isActive);
+            } else if (id === 'render') {
+                _previewEnabled = isActive;
+                localStorage.setItem('rdm7_preview_render', isActive ? '1' : '0');
+                renderPreview();
+            } else if (id === 'dash') {
+                _pvDeviceMode = isActive;
+                localStorage.setItem('rdm7_preview_565', isActive ? '1' : '0');
+                renderPreview();
             }
         }
 
@@ -20013,6 +21384,7 @@
                 ]},
                 { heading: 'File', items: [
                     { type: 'button', label: 'Import .rdm',         icon: 'upload',   onclick: 'importRdm()' },
+                    { type: 'button', label: 'Load JSON…',     icon: 'upload',   onclick: 'openLoadJsonModal()' },
                     { type: 'button', label: 'Export .rdm',         icon: 'download', onclick: 'exportRdm()' },
                     { type: 'button', label: 'Export Screenshot',   icon: 'camera',   onclick: 'downloadScreenshot()' },
                     { type: 'button', label: 'File Manager…',  icon: 'folder',   onclick: 'openStorageManager()' }
