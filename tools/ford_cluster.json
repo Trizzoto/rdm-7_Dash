@@ -7,6 +7,19 @@
   },
   "widgets": [
     {
+      "type": "image",
+      "id": "bg_glow",
+      "x": 0,
+      "y": 0,
+      "w": 800,
+      "h": 480,
+      "config": {
+        "image_name": "ford_bg",
+        "image_scale": 256,
+        "opacity": 255
+      }
+    },
+    {
       "type": "pathbar",
       "id": "tach",
       "x": -141,
