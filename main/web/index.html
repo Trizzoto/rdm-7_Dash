@@ -7704,6 +7704,7 @@
                             { name: "band_width", label: "Band Width", type: "stepper", def: 22, cat: "appearance", min: 2, max: 80 },
                             { name: "rounded", label: "Rounded Caps", type: "checkbox", def: true, cat: "appearance" },
                             { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance" },
+                            { name: "smooth", label: "Smooth Curve", type: "checkbox", def: false, cat: "appearance" },
                             { name: "lead_edge_enabled", label: "Leading Edge", type: "checkbox", def: true, cat: "appearance" },
                             { name: "lead_edge_color", label: "Leading Edge Color", type: "color", def: 0xE6FAFF, cat: "appearance", enabledBy: "lead_edge_enabled" },
                             { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
@@ -8953,94 +8954,31 @@
         }
         function _pbPathStr(pl){ return 'M ' + pl.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L '); }
 
+        /* PLACEHOLDER ONLY — we deliberately do NOT re-draw the pathbar gauge here.
+         * Its real rendering is the firmware quad-strip (widget_pathbar.c,
+         * lv_draw_polygon) and cannot be reproduced pixel-identically in SVG, so
+         * approximating it would show the editor something different from the
+         * device — which we never want. This offline layer is hidden the instant a
+         * live /api/screenshot frame paints (_haveLiveFrame), so when a device is
+         * connected you always see the real thing. Offline, we show a neutral
+         * wireframe (box + path centreline + label) so the widget's position and
+         * shape are visible for authoring, with zero risk of being mistaken for the
+         * actual gauge. (Helpers _pbGenPath/_pbPathStr reused; the band/fill/scale
+         * SVG port was removed on purpose.) */
         function _pvPathbar(w, c){
-            let pts;
+            const p = devToWeb(w.x, w.y);
+            const left = (p.x - w.w / 2).toFixed(1), top = (p.y - w.h / 2).toFixed(1);
+            let pts = [];
             if (_pvNum(c.shape, 1) === 0 && Array.isArray(c.path) && c.path.length >= 4){
-                pts = []; for (let i = 0; i + 1 < c.path.length; i += 2) pts.push([c.path[i], c.path[i + 1]]);
+                for (let i = 0; i + 1 < c.path.length; i += 2) pts.push([c.path[i], c.path[i + 1]]);
             } else {
                 pts = _pbGenPath(w, c);
             }
-            if (pts.length < 2) return '';
-            const cum = _pbCum(pts), total = cum[cum.length - 1] || 1;
-            const band = _pvNum(c.band_width, 22), cap = c.rounded ? 'round' : 'butt';
-            const mn = _pvNum(c.min, 0), mx = _pvNum(c.max, 11000), range = (mx - mn) || 1;
-            const val = _pvScene(w, c, mn, mx), frac = _pvClamp((val - mn) / range, 0, 1);
-            let rl = 1; const redl = _pvNum(c.redline, mx); if (redl < mx) rl = _pvClamp((redl - mn) / range, 0, 1);
-            const dimCol = _pvColor(c.dim_color, '#2E323A'), dimOpa = (_pvNum(c.dim_opa, 90) / 255).toFixed(3);
-            const litCol = _pvColor(c.lit_color, '#2EE4C8'), redCol = _pvColor(c.redline_color, '#FF5C32');
-            const stroke = (pl, col, opa) => `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}"${opa != null ? ` stroke-opacity="${opa}"` : ''} stroke-width="${band}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
-            /* Bloom. Studio: soft Gaussian blur. DASH: graduated multi-stroke
-             * (the firmware can stack strokes but can't blur), 565-banded by the
-             * global quantiser. */
-            const glow = (pl, col) => _pvDeviceMode
-                ? [[band + 16, 0.05], [band + 10, 0.09], [band + 5, 0.16]].map(L =>
-                    `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="${L[1]}" stroke-width="${L[0]}" stroke-linecap="${cap}" stroke-linejoin="round"/>`).join('')
-                : `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="0.30" stroke-width="${band + 10}" stroke-linecap="${cap}" stroke-linejoin="round" filter="url(#pvGlowBlur)"/>`
-                + `<path d="${_pbPathStr(pl)}" fill="none" stroke="${col}" stroke-opacity="0.40" stroke-width="${band + 2}" stroke-linecap="${cap}" stroke-linejoin="round" filter="url(#pvGlowBlurSm)"/>`;
-            /* ambient halo over the pod — studio only (no radial gradients on the panel) */
-            let bx0 = 1e9, by0 = 1e9, bx1 = -1e9, by1 = -1e9;
-            pts.forEach(p => { bx0 = Math.min(bx0, p[0]); by0 = Math.min(by0, p[1]); bx1 = Math.max(bx1, p[0]); by1 = Math.max(by1, p[1]); });
-            let s = _pvDeviceMode ? '' : _pvHalo((bx0 + bx1) / 2, (by0 + by1) / 2, Math.max(bx1 - bx0, by1 - by0) / 2 * 0.7, 'h_' + (w.id || 'pb'), litCol);
-            s += stroke(pts, dimCol, dimOpa);                                     /* dim track */
-            if (frac > 0){
-                const litEnd = Math.min(frac, rl);
-                if (litEnd > 0){
-                    const sl = _pbSliceRange(pts, cum, 0, litEnd);
-                    /* Positional fade (gated by fade_fill to match firmware
-                     * widget_pathbar.c _draw_band_faded): dark→bright along the
-                     * path, full bright by ~45% of the path, fixed to position
-                     * not value → targeted-invalidate cheap. When off, solid. */
-                    let litStroke = litCol;
-                    if (c.fade_fill){
-                        const gid = 'lg_' + (w.id || 'pb'), pe = pts[pts.length - 1];
-                        s += `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${pts[0][0].toFixed(1)}" y1="${pts[0][1].toFixed(1)}" x2="${pe[0].toFixed(1)}" y2="${pe[1].toFixed(1)}">`
-                           + `<stop offset="0%" stop-color="${_pvDarken(litCol, 0.26)}"/>`
-                           + `<stop offset="45%" stop-color="${litCol}"/>`
-                           + `<stop offset="100%" stop-color="${litCol}"/></linearGradient>`;
-                        litStroke = `url(#${gid})`;
-                    }
-                    s += glow(sl, litCol) + `<path d="${_pbPathStr(sl)}" fill="none" stroke="${litStroke}" stroke-width="${band}" stroke-linecap="${cap}" stroke-linejoin="round"/>`;
-                }
-                if (frac > rl){ const sl = _pbSliceRange(pts, cum, rl, frac); s += glow(sl, redCol) + stroke(sl, redCol); }
-                /* bright leading-edge cap (Ford "current value" highlight) */
-                s += stroke(_pbSliceRange(pts, cum, Math.max(0, frac - 0.012), frac), (frac > rl) ? '#FFD2B8' : '#E6FAFF');
+            let s = `<rect x="${left}" y="${top}" width="${w.w}" height="${w.h}" fill="none" stroke="#5A6068" stroke-width="1" stroke-dasharray="4 4" opacity="0.45"/>`;
+            if (pts.length >= 2){
+                s += `<path d="${_pbPathStr(pts)}" fill="none" stroke="#7A828C" stroke-width="1.5" stroke-dasharray="5 5" opacity="0.55"/>`;
             }
-            /* tick + number scale that follows the path (the bit the bare
-             * pathbar was missing — what makes it a real Ford-style tach). */
-            if (c.show_ticks){
-                const minorStep = Math.max(1e-6, _pvNum(c.minor_tick_step, 1000));
-                const majorStep = Math.max(minorStep, _pvNum(c.major_tick_step, minorStep));
-                const div = Math.max(1, _pvNum(c.tick_label_divisor, 1));
-                const N = Math.max(1, Math.round(range / minorStep));
-                const majorEvery = Math.max(1, Math.round(majorStep / minorStep));
-                let cgx = 0, cgy = 0; pts.forEach(p => { cgx += p[0]; cgy += p[1]; }); cgx /= pts.length; cgy /= pts.length;
-                const tcol = _pvColor(c.tick_color, '#FFFFFF'), mcol = _pvColor(c.major_tick_color, '#FFFFFF');
-                const minLen = _pvNum(c.tick_len, band * 0.55), majLen = _pvNum(c.major_tick_len, band);
-                const minW = _pvNum(c.tick_width, 2), majW = _pvNum(c.major_tick_width, 3);
-                const rlV = _pvNum(c.redline, mx + 1);
-                const lblCol = _pvColor(c.label_color, '#FFFFFF'), lblGap = _pvNum(c.label_gap, 16);
-                const lblFpx = _pvFontPx(c.label_font, 19), lblFam = _pvFontFam(c.label_font);
-                for (let i = 0; i <= N; i++){
-                    const v = mn + i * minorStep, fr = _pvClamp((v - mn) / range, 0, 1);
-                    const a = _pbAt(pts, cum, fr * total), px = a[0], py = a[1];
-                    const nx = -a[3], ny = a[2];                                  /* unit normal */
-                    const isMaj = (i % majorEvery) === 0;
-                    let len = isMaj ? majLen : minLen, ww = isMaj ? majW : minW;
-                    let col = isMaj ? mcol : tcol;
-                    if (c.redline_recolor_ticks !== false && v >= rlV - 1e-6) col = redCol;
-                    s += `<line x1="${(px - nx * len / 2).toFixed(1)}" y1="${(py - ny * len / 2).toFixed(1)}" x2="${(px + nx * len / 2).toFixed(1)}" y2="${(py + ny * len / 2).toFixed(1)}" stroke="${col}" stroke-width="${ww}"/>`;
-                    if (isMaj && c.show_labels !== false){
-                        /* Numbers sit ABOVE near-horizontal stretches (the top bar)
-                         * but toward the centroid on curves (inside the arc) — the
-                         * Ford tach reads exactly this way. */
-                        const horiz = Math.abs(a[2]) > Math.abs(a[3]);
-                        const sgn = horiz ? (ny > 0 ? -1 : 1)
-                                          : (((cgx - px) * nx + (cgy - py) * ny) >= 0 ? 1 : -1);
-                        const lx = px + nx * sgn * (band / 2 + lblGap), ly = py + ny * sgn * (band / 2 + lblGap);
-                        s += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${lblCol}" font-family="${lblFam}" font-size="${lblFpx}" text-anchor="middle" dominant-baseline="central">${_pvEsc(_pvFmt(v / div))}</text>`;
-                    }
-                }
-            }
+            s += `<text x="${p.x.toFixed(1)}" y="${p.y.toFixed(1)}" fill="#8A929C" font-family="sans-serif" font-size="12" text-anchor="middle" dominant-baseline="central" opacity="0.85">pathbar · renders on device</text>`;
             return s;
         }
 
@@ -9163,12 +9101,83 @@
                 document.getElementById('livePreviewToggle').checked &&
                 typeof triggerPreview === 'function') triggerPreview();
         }
-        /* Build an SVG path "d" string from the flat [x,y,...] point array. */
-        function _pathbarBuildD(path) {
+        /* JS port of the firmware Catmull-Rom (_pathbar_smooth_from_anchors in
+         * widget_pathbar.c) so the editor overlay shows the SAME curve the device
+         * renders from the anchors — same formula, no divergence. Returns a flat
+         * dense [x,y,...] array. */
+        function _pbCatmull(path) {
+            const a = []; for (let i = 0; i + 1 < path.length; i += 2) a.push([path[i], path[i + 1]]);
+            const na = a.length; if (na < 2) return path.slice();
+            const out = [];
+            const emit = (x, y) => { const xi = Math.round(x), yi = Math.round(y);
+                if (!out.length || xi !== out[out.length - 2] || yi !== out[out.length - 1]) out.push(xi, yi); };
+            emit(a[0][0], a[0][1]);
+            if (na === 2) { emit(a[1][0], a[1][1]); return out; }
+            for (let i = 0; i < na - 1; i++) {
+                const p0 = a[i > 0 ? i - 1 : 0], p1 = a[i], p2 = a[i + 1], p3 = a[i + 2 < na ? i + 2 : na - 1];
+                let steps = Math.floor(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 6);
+                steps = Math.max(2, Math.min(48, steps));
+                for (let s = 1; s <= steps; s++) {
+                    const t = s / steps, t2 = t * t, t3 = t2 * t;
+                    emit(0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+                         0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3));
+                }
+            }
+            return out;
+        }
+        /* Douglas-Peucker: reduce a dense polyline to its few defining points. */
+        function _pbSimplifyDP(pts, tol) {
+            if (pts.length < 3) return pts.slice();
+            const keep = new Array(pts.length).fill(false);
+            keep[0] = keep[pts.length - 1] = true;
+            const stack = [[0, pts.length - 1]];
+            while (stack.length) {
+                const [s, e] = stack.pop();
+                const ax = pts[s][0], ay = pts[s][1], dx = pts[e][0] - ax, dy = pts[e][1] - ay;
+                const len = Math.hypot(dx, dy) || 1;
+                let maxD = -1, idx = -1;
+                for (let i = s + 1; i < e; i++) {
+                    const d = Math.abs((pts[i][0] - ax) * dy - (pts[i][1] - ay) * dx) / len;
+                    if (d > maxD) { maxD = d; idx = i; }
+                }
+                if (maxD > tol && idx > 0) { keep[idx] = true; stack.push([s, idx]); stack.push([idx, e]); }
+            }
+            return pts.filter((_, i) => keep[i]);
+        }
+        /* Build an SVG path "d" string. When `smooth`, route the points through the
+         * same Catmull-Rom the firmware uses so the overlay matches the device. */
+        function _pathbarBuildD(path, smooth) {
+            const pts = (smooth && path.length >= 4) ? _pbCatmull(path) : path;
             let d = '';
-            for (let i = 0; i < path.length; i += 2)
-                d += (i === 0 ? 'M' : 'L') + path[i] + ' ' + path[i + 1] + ' ';
+            for (let i = 0; i < pts.length; i += 2)
+                d += (i === 0 ? 'M' : 'L') + pts[i] + ' ' + pts[i + 1] + ' ';
             return d.trim();
+        }
+        /* Reduce a dense hand-placed path to a few anchors and turn on smoothing,
+         * so the user drags ~a handful of dots instead of dozens. */
+        function _pathbarSmoothSimplify() {
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w || !w.config) return;
+            pushHistory();
+            const path = w.config.path || [];
+            let pts = []; for (let i = 0; i + 1 < path.length; i += 2) pts.push([path[i], path[i + 1]]);
+            if (pts.length > 3) {
+                const band = w.config.band_width || 22;
+                let tol = Math.max(4, band * 0.25), simp = pts;
+                for (let it = 0; it < 10 && (simp = _pbSimplifyDP(pts, tol)).length > 9; it++) tol *= 1.5;
+                if (simp.length >= 2) { const flat = []; simp.forEach(p => flat.push(Math.round(p[0]), Math.round(p[1]))); w.config.path = flat; }
+            }
+            w.config.smooth = true;
+            _fitPathbarBox(w);
+            renderEditor(); updateInspector(); _pathbarPreview();
+            updateStatus('Pathbar: ' + (w.config.path.length / 2) + ' anchors · smooth curve');
+        }
+        function _pathbarSetSmooth(v) {
+            const w = currentLayout.widgets[selectedIndex];
+            if (!w || !w.config) return;
+            pushHistory();
+            w.config.smooth = !!v;
+            renderEditor(); updateInspector(); _pathbarPreview();
         }
         function _renderPathHandles(w, idx) {
             const path = w.config.path;
@@ -9187,7 +9196,7 @@
             svg.setAttribute('id', 'pbPathSvg');
             svg.setAttribute('viewBox', '0 0 ' + CANVAS_W + ' ' + CANVAS_H);
             svg.style.cssText = 'position:absolute;left:0;top:0;width:' + CANVAS_W + 'px;height:' + CANVAS_H + 'px;pointer-events:none;z-index:25;overflow:visible;';
-            const d = _pathbarBuildD(path);
+            const d = _pathbarBuildD(path, w.config.smooth);
             const fillHex = '#' + (rgb565to888(w.config.lit_color != null ? w.config.lit_color : 0x2EE4C8) >>> 0).toString(16).padStart(6, '0');
             const ghost = document.createElementNS(NS, 'path');
             ghost.setAttribute('id', 'pbPathLine');
@@ -9236,7 +9245,7 @@
          * (a full renderEditor() per mousemove is what made dragging feel sticky). */
         function _pathbarLiveUpdate(w) {
             const path = w.config.path, n = path.length / 2;
-            const d = _pathbarBuildD(path);
+            const d = _pathbarBuildD(path, w.config.smooth);
             const line = document.getElementById('pbPathLine');
             const center = document.getElementById('pbPathCenter');
             if (line) line.setAttribute('d', d);
@@ -11667,6 +11676,20 @@
             }
             html += `</div></details>`;
             } /* end NO_RULES_TYPES gate */
+
+            /* Pathbar custom path: curve authoring (smooth spline from few anchors). */
+            if (w.type === 'pathbar' && _pathbarIsCustom(w)) {
+                const np = ((w.config.path || []).length / 2) | 0;
+                const sm = !!w.config.smooth;
+                html += `<details class="inspector-accordion" open><summary>Curve</summary><div class="accordion-body">`;
+                html += `<div style="font-size:11px;color:#999;margin-bottom:6px;">${np} point${np === 1 ? '' : 's'}${sm ? ' · <b style="color:var(--accent)">smooth</b> (curve fit through anchors)' : ''}. Smoothing fits a curve through a few anchor points so you don't hand-place every dot.</div>`;
+                if (!sm || np > 10)
+                    html += `<button class="btn btn-primary" style="font-size:11px;width:100%;" onclick="_pathbarSmoothSimplify()">${sm ? 'Reduce to anchors' : 'Smooth &amp; reduce to anchors'}</button>`;
+                if (sm)
+                    html += `<button class="btn btn-secondary" style="font-size:11px;width:100%;margin-top:4px;" onclick="_pathbarSetSmooth(false)">Turn off smoothing</button>`;
+                html += `<div style="font-size:10px;color:#777;margin-top:5px;">Drag a dot to shape the curve · double-click to remove · + to add a point.</div>`;
+                html += `</div></details>`;
+            }
 
             /* Pathbar custom path: "Trace Image" authoring aid (editor-only). */
             if (w.type === 'pathbar' && _pathbarIsCustom(w)) {

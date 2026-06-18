@@ -3386,6 +3386,14 @@
           "help": "Dim-to-bright gradient along the lit band (positional, redraw-cheap)."
         },
         {
+          "name": "smooth",
+          "label": "Smooth Curve",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "help": "Custom paths only: treat the path points as a few anchors and fit a smooth Catmull-Rom curve through them (no need to hand-place dozens of points)."
+        },
+        {
           "name": "lead_edge_enabled",
           "label": "Leading Edge",
           "type": "checkbox",
