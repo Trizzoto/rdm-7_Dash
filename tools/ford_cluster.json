@@ -689,7 +689,7 @@
       "w": 30,
       "h": 12,
       "config": {
-        "static_text": "°F",
+        "static_text": "\u00b0F",
         "decimals": 0,
         "rotation": 0,
         "font": "Montserrat:11",
@@ -704,7 +704,7 @@
       "w": 30,
       "h": 12,
       "config": {
-        "static_text": "°F",
+        "static_text": "\u00b0F",
         "decimals": 0,
         "rotation": 0,
         "font": "Montserrat:11",
@@ -868,7 +868,16 @@
         "center_fill": false,
         "fill_dir": 0,
         "bar_in_range_color": 13854,
-        "grad_stops": [ { "pos": 0, "color": 9366 }, { "pos": 100, "color": 13854 } ],
+        "grad_stops": [
+          {
+            "pos": 0,
+            "color": 9366
+          },
+          {
+            "pos": 100,
+            "color": 13854
+          }
+        ],
         "label_font": "",
         "value_font": "",
         "bar_bg_color": 6438,
@@ -880,7 +889,7 @@
         "value_color": 65535,
         "bar_image": "",
         "bar_image_full": "",
-        "fill_edge_width": 0,
+        "fill_edge_width": 4,
         "fill_edge_color": 65535,
         "bar_low_color": 31,
         "bar_high_color": 57861,
@@ -945,7 +954,16 @@
         "center_fill": false,
         "fill_dir": 0,
         "bar_in_range_color": 13854,
-        "grad_stops": [ { "pos": 0, "color": 9366 }, { "pos": 100, "color": 13854 } ],
+        "grad_stops": [
+          {
+            "pos": 0,
+            "color": 9366
+          },
+          {
+            "pos": 100,
+            "color": 13854
+          }
+        ],
         "label_font": "",
         "value_font": "",
         "bar_bg_color": 6438,
@@ -957,7 +975,7 @@
         "value_color": 65535,
         "bar_image": "",
         "bar_image_full": "",
-        "fill_edge_width": 0,
+        "fill_edge_width": 4,
         "fill_edge_color": 65535,
         "bar_low_color": 31,
         "bar_high_color": 63488,
@@ -994,7 +1012,7 @@
       "w": 120,
       "h": 20,
       "config": {
-        "static_text": "80° E",
+        "static_text": "80\u00b0 E",
         "decimals": 0,
         "rotation": 0,
         "font": "Montserrat:16",

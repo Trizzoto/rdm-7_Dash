@@ -59,6 +59,9 @@ typedef struct {
     uint8_t    bg_arc_width;    /* default: 10 */
     bool       rounded_ends;    /* default: false */
     bool       fade_fill;       /* default: false — positional dim->bright fade overlay on the moving fill */
+    bool       lead_edge_enabled;  /* default: true — bright "current value" cap at the fill tip */
+    lv_color_t lead_edge_color;    /* default: near-white */
+    uint8_t    lead_edge_width;    /* default: 6 — cap length px along the arc (0 = off) */
     lv_obj_t  *arc_obj;         /* runtime only */
     lv_obj_t  *sector_clip;     /* runtime: clipping container sized to the
                                  * swept-sector bbox; the arc + redline arc live

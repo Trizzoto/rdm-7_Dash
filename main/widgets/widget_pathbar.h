@@ -30,6 +30,9 @@ typedef struct {
     uint8_t     band_width;           /* stroke thickness px (default 22) */
     bool        rounded;              /* rounded caps/joins (default true) */
     bool        fade_fill;            /* positional dim->bright fade along the lit band */
+    bool        lead_edge_enabled;    /* bright "current value" marker at the fill tip */
+    lv_color_t  lead_edge_color;      /* marker colour (default near-white) */
+    uint8_t     lead_edge_width;      /* marker thickness px (0 = off) */
 
     /* Parametric shape: when shape != 0 the path is GENERATED to fit the widget
      * box (so the editor only needs a shape + radius, no point array). shape 0

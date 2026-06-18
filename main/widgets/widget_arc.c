@@ -765,9 +765,9 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
     dsc.rounded = 0;
     if (dsc.width <= 0) return;
 
-    int segs = (int)(ind_span / 12.0f) + 1;   /* ~12deg sub-bands: fewer lv_draw_arc calls, fade still smooth */
+    int segs = (int)(ind_span / 5.0f) + 1;   /* ~5deg sub-bands: smooth blend (near the RGB565 step floor) */
     if (segs < 2)  segs = 2;
-    if (segs > 32) segs = 32;
+    if (segs > 64) segs = 64;
     float dstep = ind_span / (float)segs;
     for (int i = 0; i < segs; i++) {
         float o0  = dstep * i;
@@ -782,10 +782,14 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
         if (ea == sa) continue;   /* degenerate slice → lv_draw_arc would draw a full circle */
         lv_draw_arc(ctx, &dsc, &center, (uint16_t)indic_r, sa, ea);
     }
-    /* bright leading-edge cap at the current value (studio: #E6FAFF tip) */
-    if (ind_span >= 4.0f) {
-        dsc.color = lv_color_hex(0xE6FAFF);
-        uint16_t cs = (uint16_t)(((int)a_end - 4 + 3600) % 360);
+    /* bright "current value" cap at the fill tip — configurable. Width is in px
+     * along the arc, converted to degrees via the indicator radius. */
+    if (d->lead_edge_enabled && d->lead_edge_width > 0 && ind_span >= 2.0f) {
+        dsc.color = d->lead_edge_color;
+        float capdeg = (float)d->lead_edge_width / (float)indic_r * 57.2958f;
+        if (capdeg < 1.0f) capdeg = 1.0f;
+        if (capdeg > ind_span) capdeg = ind_span;
+        uint16_t cs = (uint16_t)(((int)a_end - (int)(capdeg + 0.5f) + 3600) % 360);
         uint16_t ce = (uint16_t)(((int)a_end) % 360);
         if (cs != ce) lv_draw_arc(ctx, &dsc, &center, (uint16_t)indic_r, cs, ce);
     }
@@ -1539,6 +1543,12 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddBoolToObject(cfg, "rounded_ends", d->rounded_ends);
     if (d->fade_fill)
         cJSON_AddBoolToObject(cfg, "fade_fill", true);
+    if (!d->lead_edge_enabled)
+        cJSON_AddBoolToObject(cfg, "lead_edge_enabled", false);
+    if (d->lead_edge_width != 6)
+        cJSON_AddNumberToObject(cfg, "lead_edge_width", d->lead_edge_width);
+    if (d->lead_edge_color.full != lv_color_hex(0xE6FAFF).full)
+        cJSON_AddNumberToObject(cfg, "lead_edge_color", (int)d->lead_edge_color.full);
 
     /* Signal binding */
     if (d->signal_name[0] != '\0')
@@ -1761,6 +1771,12 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsBool(item)) d->rounded_ends = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
     if (cJSON_IsBool(item)) d->fade_fill = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_enabled");
+    if (cJSON_IsBool(item)) d->lead_edge_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_width");
+    if (cJSON_IsNumber(item)) d->lead_edge_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_color");
+    if (cJSON_IsNumber(item)) d->lead_edge_color.full = (uint16_t)item->valueint;
 
     /* Signal binding */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
@@ -2216,6 +2232,9 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "bg_arc_width") == 0)   { out->i = d->bg_arc_width;     return true; }
 	if (strcmp(name, "rounded_ends") == 0)   { out->b = d->rounded_ends;     return true; }
 	if (strcmp(name, "fade_fill") == 0)      { out->b = d->fade_fill;        return true; }
+	if (strcmp(name, "lead_edge_enabled") == 0) { out->b = d->lead_edge_enabled; return true; }
+	if (strcmp(name, "lead_edge_width") == 0)   { out->i = d->lead_edge_width;   return true; }
+	if (strcmp(name, "lead_edge_color") == 0)   { out->color = lv_color_to32(d->lead_edge_color) & 0xFFFFFF; return true; }
 	if (strcmp(name, "arc_color") == 0)      { out->color = lv_color_to32(d->arc_color)    & 0xFFFFFF; return true; }
 	if (strcmp(name, "bg_arc_color") == 0)   { out->color = lv_color_to32(d->bg_arc_color) & 0xFFFFFF; return true; }
 	/* Color alerts. Thresholds (arc_low / arc_high) are channel-owned and the
@@ -2360,6 +2379,21 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 			lv_obj_set_style_arc_opa(a, d->fade_fill ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_INDICATOR);
 			lv_obj_invalidate(a);
 		}
+		return true;
+	}
+	if (strcmp(name, "lead_edge_enabled") == 0) {
+		d->lead_edge_enabled = in->b;
+		if (a && lv_obj_is_valid(a)) lv_obj_invalidate(a);
+		return true;
+	}
+	if (strcmp(name, "lead_edge_width") == 0) {
+		d->lead_edge_width = (uint8_t)LV_CLAMP(0, in->i, 40);
+		if (a && lv_obj_is_valid(a)) lv_obj_invalidate(a);
+		return true;
+	}
+	if (strcmp(name, "lead_edge_color") == 0) {
+		d->lead_edge_color = lv_color_hex(in->color);
+		if (a && lv_obj_is_valid(a)) lv_obj_invalidate(a);
 		return true;
 	}
 	if (strcmp(name, "arc_color") == 0) {
@@ -2551,6 +2585,9 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->bg_arc_color  = lv_color_hex(ARC_DEFAULT_BG_COLOR);
     d->bg_arc_width  = ARC_DEFAULT_BG_WIDTH;
     d->rounded_ends  = ARC_DEFAULT_ROUNDED;
+    d->lead_edge_enabled = true;
+    d->lead_edge_color   = lv_color_hex(0xE6FAFF);
+    d->lead_edge_width   = 6;
     d->arc_obj       = NULL;
     d->signal_index  = -1;
     d->signal_min    = ARC_DEFAULT_SIG_MIN;

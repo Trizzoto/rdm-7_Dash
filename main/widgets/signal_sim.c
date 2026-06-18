@@ -20,7 +20,9 @@
  * a slower tick doesn't slow the sweep — it just stops doing redundant work
  * (multiple injects between two frames the user never sees). */
 #define SIM_TIMER_PERIOD_MS  16
-#define SIM_CYCLE_MS        3000
+#define SIM_CYCLE_MS        12000   /* full min->max->min sweep period; ~realistic
+                                     * gentle motion (was 3000 = fast teleport that
+                                     * spiked redraw load and looked unnatural) */
 /* Batch size is chosen adaptively in _sim_timer_cb based on signal count. */
 
 static const char *TAG = "signal_sim";

@@ -35,6 +35,8 @@ static const char *TAG = "widget_pathbar";
 #define DEF_DIM_COLOR    0xC8CBCF
 #define DEF_LIT_COLOR    0x202328
 #define DEF_RED_COLOR    0xF26E10
+#define DEF_LEAD_COLOR   0xE6FAFF
+#define DEF_LEAD_WIDTH   6
 #define DEF_DIM_OPA      70
 #define DEF_W            560
 #define DEF_H            320
@@ -211,12 +213,13 @@ static void _draw_band_faded(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, f
                              lv_color_t bright, lv_opa_t master) {
     if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
     lv_color_t dim = lv_color_mix(bright, lv_color_black(), 66);   /* 26% of bright — matches studio _pvDarken(col,0.26) */
-    /* ~13px sub-bands along the lit span: fewer lv_draw_line passes (cheaper
-     * redraw) while the fade stays visually smooth. Clamp for sanity. */
+    /* ~6px sub-bands along the lit span: smooth blend (near the RGB565 step
+     * floor). Targeted-invalidate keeps the redraw cheap (segments outside the
+     * dirty rect clip away). Clamp for sanity. */
     float span_px = (fb - fa) * pd->total_len;
-    int segs = (int)(span_px / 13.0f) + 1;
+    int segs = (int)(span_px / 6.0f) + 1;
     if (segs < 2)  segs = 2;
-    if (segs > 40) segs = 40;
+    if (segs > 90) segs = 90;
     float dstep = (fb - fa) / (float)segs;
     for (int i = 0; i < segs; i++) {
         float p0 = fa + dstep * i;
@@ -415,13 +418,22 @@ static void _pathbar_draw_cb(lv_event_t *e) {
             else               _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
             _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
         }
-        /* bright leading-edge cap at the current value (studio: #E6FAFF tip,
-         * warm past redline) — only with the fade look, matches the editor. */
-        if (pd->fade_fill) {
-            float ca = f - 0.012f;
-            if (ca < 0.0f) ca = 0.0f;
-            lv_color_t cap = (f > rl) ? lv_color_hex(0xFFD2B8) : lv_color_hex(0xE6FAFF);
-            _draw_band(ctx, pd, ca, f, cap, LV_OPA_COVER, master);
+        /* Bright "current value" marker at the fill tip. Drawn as a FLAT line
+         * straight across the band (perpendicular to the path) so it never
+         * rounds on a bend the way a band slice did — and it's configurable. */
+        if (pd->lead_edge_enabled && pd->lead_edge_width > 0) {
+            float mx, my, mnx, mny;
+            if (_pathbar_sample(pd, f * pd->total_len, &mx, &my, &mnx, &mny)) {
+                float hw = pd->band_width * 0.5f;
+                lv_point_t a = { (lv_coord_t)(mx - mnx * hw), (lv_coord_t)(my - mny * hw) };
+                lv_point_t b = { (lv_coord_t)(mx + mnx * hw), (lv_coord_t)(my + mny * hw) };
+                lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
+                ld.color = pd->lead_edge_color;
+                ld.width = pd->lead_edge_width;
+                ld.opa = master;
+                ld.round_start = ld.round_end = 0;   /* flat ends */
+                lv_draw_line(ctx, &ld, &a, &b);
+            }
         }
     }
 
@@ -540,6 +552,10 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
     }
     if (!pd->rounded) cJSON_AddBoolToObject(cfg, "rounded", false);
     if (pd->fade_fill) cJSON_AddBoolToObject(cfg, "fade_fill", true);
+    if (!pd->lead_edge_enabled) cJSON_AddBoolToObject(cfg, "lead_edge_enabled", false);
+    if (pd->lead_edge_width != DEF_LEAD_WIDTH) cJSON_AddNumberToObject(cfg, "lead_edge_width", pd->lead_edge_width);
+    if (_color_to_u32(pd->lead_edge_color) != _color_to_u32(_u32_to_color(DEF_LEAD_COLOR)))
+        cJSON_AddNumberToObject(cfg, "lead_edge_color", _color_to_u32(pd->lead_edge_color));
     if (_color_to_u32(pd->dim_color) != _color_to_u32(_u32_to_color(DEF_DIM_COLOR)))
         cJSON_AddNumberToObject(cfg, "dim_color", _color_to_u32(pd->dim_color));
     if (_color_to_u32(pd->lit_color) != _color_to_u32(_u32_to_color(DEF_LIT_COLOR)))
@@ -613,6 +629,12 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsBool(item)) pd->rounded = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
     if (cJSON_IsBool(item)) pd->fade_fill = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_enabled");
+    if (cJSON_IsBool(item)) pd->lead_edge_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_width");
+    if (cJSON_IsNumber(item)) pd->lead_edge_width = (uint8_t)LV_CLAMP(0, item->valueint, 40);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_color");
+    if (cJSON_IsNumber(item)) pd->lead_edge_color = _u32_to_color((uint32_t)item->valueint);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "dim_color");
     if (cJSON_IsNumber(item)) pd->dim_color = _u32_to_color((uint32_t)item->valueint);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "lit_color");
@@ -731,6 +753,9 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->dim_color     = _u32_to_color(DEF_DIM_COLOR);
     pd->lit_color     = _u32_to_color(DEF_LIT_COLOR);
     pd->redline_color = _u32_to_color(DEF_RED_COLOR);
+    pd->lead_edge_enabled = true;
+    pd->lead_edge_color   = _u32_to_color(DEF_LEAD_COLOR);
+    pd->lead_edge_width   = DEF_LEAD_WIDTH;
     pd->dim_opa       = DEF_DIM_OPA;
     pd->smoothing_ms  = 0;
     pd->show_ticks          = false;

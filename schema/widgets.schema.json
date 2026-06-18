@@ -781,7 +781,7 @@
           "min": 0,
           "max": 20,
           "category": "appearance",
-          "enabled_by": "bar_image_full"
+          "help": "Bright marker at the fill's leading edge (current value)."
         },
         {
           "name": "fill_edge_color",
@@ -789,7 +789,7 @@
           "type": "color",
           "default": "#FFFFFF",
           "category": "appearance",
-          "enabled_by": "bar_image_full"
+          "enabled_by": "fill_edge_width"
         },
         {
           "name": "bar_alerts_enabled",
@@ -2411,6 +2411,32 @@
           "help": "Dim-to-bright gradient along the lit arc (positional, redraw-cheap)."
         },
         {
+          "name": "lead_edge_enabled",
+          "label": "Leading Edge",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "help": "Bright marker at the current-value end of the fill."
+        },
+        {
+          "name": "lead_edge_color",
+          "label": "Leading Edge Color",
+          "type": "color",
+          "default": "#E6FAFF",
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled"
+        },
+        {
+          "name": "lead_edge_width",
+          "label": "Leading Edge Width",
+          "type": "stepper",
+          "default": 6,
+          "min": 0,
+          "max": 40,
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled"
+        },
+        {
           "name": "arc_image",
           "label": "Track Image",
           "type": "image_picker",
@@ -3358,6 +3384,32 @@
           "default": false,
           "category": "appearance",
           "help": "Dim-to-bright gradient along the lit band (positional, redraw-cheap)."
+        },
+        {
+          "name": "lead_edge_enabled",
+          "label": "Leading Edge",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "help": "Bright flat marker at the current-value tip of the fill."
+        },
+        {
+          "name": "lead_edge_color",
+          "label": "Leading Edge Color",
+          "type": "color",
+          "default": "#E6FAFF",
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled"
+        },
+        {
+          "name": "lead_edge_width",
+          "label": "Leading Edge Width",
+          "type": "stepper",
+          "default": 6,
+          "min": 0,
+          "max": 40,
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled"
         },
         {
           "name": "lit_color",
