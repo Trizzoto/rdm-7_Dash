@@ -8,6 +8,7 @@
 #include "widget_warning.h"
 #include "widget_arc.h"
 #include "widget_shift_light.h"
+#include "widget_pathbar.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -99,6 +100,13 @@ static void _rebuild_signal_state(uint16_t count)
             sig_name = ad->signal_name;
             mn = ad->signal_min;
             mx = ad->signal_max;
+            break;
+        }
+        case WIDGET_PATHBAR: {
+            pathbar_data_t *pd = (pathbar_data_t *)w->type_data;
+            sig_name = pd->signal_name;
+            mn = pd->val_min;
+            mx = pd->val_max;
             break;
         }
         case WIDGET_SHIFT_LIGHT: {
