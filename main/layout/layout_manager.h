@@ -41,8 +41,13 @@ extern "C" {
  *      a `night` sub-object with delta values for color and image fields.
  *      Layout root may also contain a `night_mode` block with `signal_name`
  *      + `active_when` for CAN-signal-driven night mode triggering.
- *      Older schemas load fine — missing night blocks just mean no overrides. */
-#define LAYOUT_SCHEMA_VERSION 14
+ *      Older schemas load fine — missing night blocks just mean no overrides.
+ *
+ * v15: pathbar `smooth` flag. A custom-path pathbar may set `smooth:true`, in
+ *      which case its `path` points are treated as a few anchors and a
+ *      Catmull-Rom curve is tessellated through them. Additive/optional —
+ *      older layouts (no flag) render the path verbatim as before. */
+#define LAYOUT_SCHEMA_VERSION 15
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"

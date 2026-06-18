@@ -61,7 +61,17 @@ typedef struct {
     bool        redline_recolor_ticks;
     char        label_font[40];
 
-    /* path geometry (absolute screen px), heap-allocated in from_json */
+    /* Smooth custom path: when set, the explicit `path` is treated as a few
+     * ANCHOR points and a Catmull-Rom spline is tessellated through them into the
+     * dense render polyline below. The anchors are kept verbatim so to_json round-
+     * trips the few authored points (the editor edits those). Only meaningful for
+     * a custom path (shape == 0). */
+    bool        smooth;
+    lv_point_t *anchors;              /* authored control points (smooth only) */
+    uint16_t    n_anchors;
+
+    /* path geometry (absolute screen px), heap-allocated in from_json. When
+     * smooth, this is the tessellated dense curve; otherwise the path verbatim. */
     lv_point_t *pts;
     float      *cum;                  /* cumulative arc length per point */
     uint16_t    n_pts;

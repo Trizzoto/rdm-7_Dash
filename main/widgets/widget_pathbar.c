@@ -76,6 +76,66 @@ static void _pathbar_build_cum(pathbar_data_t *pd) {
     pd->total_len = pd->cum[pd->n_pts - 1];
 }
 
+static void _pathbar_free_anchors(pathbar_data_t *pd) {
+    if (pd->anchors) { free(pd->anchors); pd->anchors = NULL; }
+    pd->n_anchors = 0;
+}
+
+/* Smooth custom path: tessellate a Catmull-Rom spline THROUGH pd->anchors into
+ * the dense pd->pts so a few authored points produce a clean curve (instead of
+ * the user hand-placing dozens of polyline points). Catmull-Rom interpolates
+ * every anchor; the two end segments reflect the end anchor as the phantom
+ * neighbour so the curve doesn't pull in. Sub-steps scale with chord length
+ * (~6px) and the whole thing is capped at PATHBAR_MAX_POINTS. Replaces pts/cum;
+ * pd->anchors is left intact (to_json round-trips the few points). */
+static void _pathbar_smooth_from_anchors(pathbar_data_t *pd) {
+    const int na = pd->n_anchors;
+    if (!pd->anchors || na < 2) return;
+
+    static lv_point_t buf[PATHBAR_MAX_POINTS];
+    int n = 0;
+    #define SM_EMIT(X, Y) do { \
+        lv_coord_t _x = (lv_coord_t)lroundf(X), _y = (lv_coord_t)lroundf(Y); \
+        if ((n == 0 || _x != buf[n-1].x || _y != buf[n-1].y) && n < PATHBAR_MAX_POINTS) { \
+            buf[n].x = _x; buf[n].y = _y; n++; } } while (0)
+
+    SM_EMIT(pd->anchors[0].x, pd->anchors[0].y);
+    if (na == 2) {
+        SM_EMIT(pd->anchors[1].x, pd->anchors[1].y);            /* a line */
+    } else {
+        for (int i = 0; i < na - 1; i++) {
+            lv_point_t p0 = pd->anchors[i > 0      ? i - 1 : 0];
+            lv_point_t p1 = pd->anchors[i];
+            lv_point_t p2 = pd->anchors[i + 1];
+            lv_point_t p3 = pd->anchors[i + 2 < na ? i + 2 : na - 1];
+            float chord = sqrtf((float)((p2.x-p1.x)*(p2.x-p1.x) + (p2.y-p1.y)*(p2.y-p1.y)));
+            int steps = (int)(chord / 6.0f);
+            if (steps < 2)  steps = 2;
+            if (steps > 48) steps = 48;
+            for (int s = 1; s <= steps; s++) {
+                float t = (float)s / (float)steps, t2 = t*t, t3 = t2*t;
+                float x = 0.5f * (2.0f*p1.x + (-p0.x + p2.x)*t
+                        + (2.0f*p0.x - 5.0f*p1.x + 4.0f*p2.x - p3.x)*t2
+                        + (-p0.x + 3.0f*p1.x - 3.0f*p2.x + p3.x)*t3);
+                float y = 0.5f * (2.0f*p1.y + (-p0.y + p2.y)*t
+                        + (2.0f*p0.y - 5.0f*p1.y + 4.0f*p2.y - p3.y)*t2
+                        + (-p0.y + 3.0f*p1.y - 3.0f*p2.y + p3.y)*t3);
+                SM_EMIT(x, y);
+            }
+        }
+    }
+    #undef SM_EMIT
+
+    _pathbar_free_path(pd);
+    if (n < 2) return;
+    pd->pts = heap_caps_calloc(n, sizeof(lv_point_t), MALLOC_CAP_SPIRAM);
+    pd->cum = heap_caps_calloc(n, sizeof(float), MALLOC_CAP_SPIRAM);
+    if (!pd->pts || !pd->cum) { _pathbar_free_path(pd); return; }
+    for (int i = 0; i < n; i++) pd->pts[i] = buf[i];
+    pd->n_pts = (uint16_t)n;
+    _pathbar_build_cum(pd);
+}
+
 /* Generate the path points for a parametric shape, fit to the widget box (so
  * the editor only needs a shape + radius, no point array). box is absolute
  * screen px. Replaces pd->pts/cum. */
@@ -152,88 +212,9 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
     _pathbar_build_cum(pd);
 }
 
-/* Stroke every path segment overlapping arc-length [a, b] with the given dsc.
- * LVGL clips each segment to the draw clip area, so off-region segments cost
- * only a clip-reject (cheap with targeted invalidate).
- *
- * round_ends controls only the band's two OUTER caps (start at a, end at b).
- * Internal joints between segments are ALWAYS rounded: lv_draw_line has no join
- * support, so a smooth bend is just consecutive round caps overlapping. With
- * butt caps everywhere, each bend leaves a triangular gap on its outer side ->
- * a frayed/saw-tooth edge along curves. dsc is mutated per segment. */
-static void _stroke_range(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float a, float b,
-                          lv_draw_line_dsc_t *dsc, bool round_ends) {
-    bool first = true;
-    for (uint16_t i = 1; i < pd->n_pts; i++) {
-        float c0 = pd->cum[i - 1], c1 = pd->cum[i];
-        if (c1 <= a) continue;
-        if (c0 >= b) break;
-        float seg = c1 - c0;
-        if (seg <= 0.0f) continue;
-        float sa = a > c0 ? (a - c0) / seg : 0.0f;
-        float sb = b < c1 ? (b - c0) / seg : 1.0f;
-        lv_point_t p0 = pd->pts[i - 1], p1 = pd->pts[i];
-        lv_point_t q0 = { (lv_coord_t)(p0.x + (p1.x - p0.x) * sa),
-                          (lv_coord_t)(p0.y + (p1.y - p0.y) * sa) };
-        lv_point_t q1 = { (lv_coord_t)(p0.x + (p1.x - p0.x) * sb),
-                          (lv_coord_t)(p0.y + (p1.y - p0.y) * sb) };
-        bool is_last = (b <= c1);                 /* this segment holds the band end */
-        dsc->round_start = first   ? (round_ends ? 1 : 0) : 1;
-        dsc->round_end   = is_last ? (round_ends ? 1 : 0) : 1;
-        lv_draw_line(ctx, dsc, &q0, &q1);
-        first = false;
-    }
-}
-
-/* ── Draw one band between arc-length fractions [fa, fb] ─────────────────────
- */
-static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
-                       lv_color_t color, lv_opa_t opa, lv_opa_t master) {
-    if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
-    float a = fa * pd->total_len;
-    float b = fb * pd->total_len;
-
-    lv_draw_line_dsc_t dsc;
-    lv_draw_line_dsc_init(&dsc);
-    dsc.color = color;
-    dsc.width = pd->band_width;
-    dsc.opa = master < LV_OPA_MAX ? (lv_opa_t)(((uint32_t)opa * master) >> 8) : opa;
-    if (dsc.opa > LV_OPA_MIN) _stroke_range(ctx, pd, a, b, &dsc, pd->rounded);
-}
-
-/* ── Positional fade fill ────────────────────────────────────────────────────
- * Draw [fa, fb] as a series of opaque sub-bands tinted dim->bright by their
- * ABSOLUTE position along the path (not by value), so it stays targeted-
- * invalidate cheap: each lv_draw_line is clipped to the dirty rect, and the
- * colour at a given path position never changes as the value moves. Brightness
- * ramps from `dim` at fraction 0 to full `bright` by PATHBAR_FADE_FULL of the
- * path — matching the studio preview. */
+/* Lit fill ramps from dim to full brightness by this fraction of the path
+ * (matches the studio preview). Used by the quad-strip renderer below. */
 #define PATHBAR_FADE_FULL 0.45f
-static void _draw_band_faded(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
-                             lv_color_t bright, lv_opa_t master) {
-    if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
-    lv_color_t dim = lv_color_mix(bright, lv_color_black(), 66);   /* 26% of bright — matches studio _pvDarken(col,0.26) */
-    /* ~6px sub-bands along the lit span: smooth blend (near the RGB565 step
-     * floor). Targeted-invalidate keeps the redraw cheap (segments outside the
-     * dirty rect clip away). Clamp for sanity. */
-    float span_px = (fb - fa) * pd->total_len;
-    int segs = (int)(span_px / 6.0f) + 1;
-    if (segs < 2)  segs = 2;
-    if (segs > 90) segs = 90;
-    float dstep = (fb - fa) / (float)segs;
-    for (int i = 0; i < segs; i++) {
-        float p0 = fa + dstep * i;
-        /* overlap into the next (brighter) sub-band so butt-cap joints can't
-         * leave a thin dark gap on curves — the next band paints over it. */
-        float p1 = fa + dstep * (i + 1) + (i < segs - 1 ? dstep * 0.5f : 0.0f);
-        float pc = p0 + dstep * 0.5f;                       /* centre fraction */
-        float t  = pc / PATHBAR_FADE_FULL;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        lv_color_t col = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
-        _draw_band(ctx, pd, p0, p1, col, LV_OPA_COVER, master);
-    }
-}
 
 /* ── Targeted invalidate ────────────────────────────────────────────────────
  * Only redraw the region the fill front actually moved through (the path arc
@@ -273,7 +254,12 @@ static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
     }
     if (!any) { lv_obj_invalidate(w->root); return; }
 
-    lv_coord_t m = (lv_coord_t)(pd->band_width / 2) + 3;
+    /* Margin must cover the widest thing the renderer paints off the centreline:
+     * a mitered interior corner reaches up to PB_MITER_MAX*half-width, and round
+     * end caps reach half-width. 3/4*band_width = 1.5*half-width covers the
+     * miter clamp; +4 slack. Without this, a sharp corner's miter spike painted
+     * during a full redraw isn't cleared by a targeted (recede) invalidate. */
+    lv_coord_t m = (lv_coord_t)(pd->band_width * 3 / 4) + 4;
     lv_area_t area = { x0 - m, y0 - m, x1 + m, y1 + m };
     lv_obj_invalidate_area(w->root, &area);
 }
@@ -375,6 +361,223 @@ static void _pathbar_draw_scale(lv_draw_ctx_t *ctx, pathbar_data_t *pd) {
     }
 }
 
+/* ── Band renderer (vertex-offset quad strip) ────────────────────────────────
+ * The band is stroked as a strip of convex trapezoids filled with
+ * lv_draw_polygon, NOT as overlapping round-capped lines. This is the proper
+ * stroke-to-fill: the band outline is the path offset by ±half-width with
+ * mitered joints, so flat ends and clean corners come for free — no round-cap
+ * overshoot (the old "rounded base/tip" bugs are structurally impossible) and
+ * no per-segment fuzz. Two details make it clean and cheap:
+ *   - each quad pokes PB_SEAM_OVERLAP px into the next so the later (opaque)
+ *     quad buries the previous quad's anti-aliased edge → no black seam lines,
+ *   - the lit fill is walked in PB_GRAD_STEP arc-length steps for a smooth
+ *     gradient even across one long path segment, last step clipped at the front.
+ * Far less overdraw than the line-stroke approach → measurably faster too. */
+#define PB_SEAM_OVERLAP 2.0f    /* px each quad pokes into the next to bury AA seams */
+#define PB_GRAD_STEP    9.0f    /* px per gradient sub-quad along the lit fill       */
+#define PB_MITER_MAX    1.5f    /* cap miter at 1.5*half-width (clean to ~96°, then  */
+                                /* a slight bevel) — bounds the off-centreline reach */
+                                /* so _pathbar_invalidate_range can cover it.        */
+
+/* Interpolate the band cross-edge (the two offset points) at arc-length s. */
+static void _spk_edge_at(const lv_point_t *L, const lv_point_t *R, const float *cum,
+                         int n, float s, lv_point_t *oL, lv_point_t *oR) {
+    if (s <= cum[0])     { *oL = L[0];   *oR = R[0];   return; }
+    if (s >= cum[n - 1]) { *oL = L[n-1]; *oR = R[n-1]; return; }
+    for (int i = 1; i < n; i++) {
+        if (cum[i] >= s) {
+            float seg = cum[i] - cum[i - 1];
+            float fr  = seg > 0.0f ? (s - cum[i - 1]) / seg : 0.0f;
+            oL->x = (lv_coord_t)lroundf(L[i-1].x + (L[i].x - L[i-1].x) * fr);
+            oL->y = (lv_coord_t)lroundf(L[i-1].y + (L[i].y - L[i-1].y) * fr);
+            oR->x = (lv_coord_t)lroundf(R[i-1].x + (R[i].x - R[i-1].x) * fr);
+            oR->y = (lv_coord_t)lroundf(R[i-1].y + (R[i].y - R[i-1].y) * fr);
+            return;
+        }
+    }
+    *oL = L[n-1]; *oR = R[n-1];
+}
+
+/* Filled half-disc terminal cap for rounded ends: centred at (cx,cy), radius hw,
+ * bulging in the outward tangent (tx,ty). Convex → one lv_draw_polygon. */
+static void _spk_round_cap(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
+                           float cx, float cy, float tx, float ty, float hw) {
+    float l = sqrtf(tx*tx + ty*ty);
+    if (l <= 0.001f || hw < 1.0f) return;
+    tx /= l; ty /= l;
+    float nx = -ty, ny = tx;                       /* perpendicular (band cross-axis) */
+    enum { K = 10 };
+    lv_point_t pts[K + 1];
+    for (int j = 0; j <= K; j++) {
+        float phi = (float)M_PI * (0.5f - (float)j / (float)K);   /* +90°..-90° */
+        float s = sinf(phi), c = cosf(phi);
+        pts[j].x = (lv_coord_t)lroundf(cx + hw * (s*nx + c*tx));
+        pts[j].y = (lv_coord_t)lroundf(cy + hw * (s*ny + c*ty));
+    }
+    lv_draw_polygon(ctx, rd, pts, K + 1);
+}
+
+/* lv_draw_polygon (LVGL sw) ASSUMES a simple convex polygon — its scanline
+ * edge-walk never terminates on a self-intersecting one, hanging the LVGL task
+ * (watchdog → reboot). A band trapezoid can bowtie on a tight concave curve
+ * (inner radius < half-width) or collapse to ~zero area at the clipped fill
+ * front. So fill every quad as TWO triangles (a triangle can't self-intersect),
+ * skipping any with sub-pixel area — LVGL then only ever sees a clean triangle. */
+static inline bool _pb_tri_ok(lv_point_t a, lv_point_t b, lv_point_t c) {
+    long cross = (long)(b.x - a.x) * (c.y - a.y) - (long)(b.y - a.y) * (c.x - a.x);
+    return cross > 1 || cross < -1;            /* 2*area; skip near-collinear */
+}
+static void _pb_fill_quad(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
+                          lv_point_t a, lv_point_t b, lv_point_t c, lv_point_t d) {
+    if (_pb_tri_ok(a, b, c)) { lv_point_t t[3] = { a, b, c }; lv_draw_polygon(ctx, rd, t, 3); }
+    if (_pb_tri_ok(a, c, d)) { lv_point_t t[3] = { a, c, d }; lv_draw_polygon(ctx, rd, t, 3); }
+}
+
+/* Render the band as a vertex-offset quad strip filled with lv_draw_polygon
+ * (one convex trapezoid per step), instead of overlapping round-capped lines:
+ *   - flat base/tip + clean joins BY CONSTRUCTION (offset points are mitered and
+ *     shared between adjacent quads — no round-cap overshoot, no fray),
+ *   - each quad pokes PB_SEAM_OVERLAP px into the next so the later (opaque) quad
+ *     buries the previous one's anti-aliased edge — kills the black seam lines,
+ *   - lit fill is walked in PB_GRAD_STEP arc-length steps for a smooth gradient
+ *     even across one long path segment, last step clipped at the fill front.
+ * Far less overdraw than the line-stroke path → also faster. */
+static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
+                               lv_opa_t master, lv_color_t dim_solid) {
+    const int n = pd->n_pts;
+    if (n < 2 || n > PATHBAR_MAX_POINTS) return;
+    const float hw = (float)pd->band_width * 0.5f;
+
+    /* Per-vertex mitered offset points (left/right of the centreline). Endpoints
+     * use the plain segment normal → the terminal edge is perpendicular to the
+     * path = a flat butt cut. Interior vertices use the angle bisector with the
+     * miter length that preserves perpendicular half-width, clamped so a sharp
+     * bend can't throw a long spike. */
+    static lv_point_t L[PATHBAR_MAX_POINTS], R[PATHBAR_MAX_POINTS];
+    for (int i = 0; i < n; i++) {
+        float inx = 0, iny = 0, onx = 0, ony = 0;       /* left-normals of in/out segs */
+        if (i > 0) {
+            float dx = pd->pts[i].x - pd->pts[i-1].x, dy = pd->pts[i].y - pd->pts[i-1].y;
+            float l = sqrtf(dx*dx + dy*dy); if (l <= 0.0f) l = 1.0f;
+            inx = -dy/l; iny = dx/l;
+        }
+        if (i < n-1) {
+            float dx = pd->pts[i+1].x - pd->pts[i].x, dy = pd->pts[i+1].y - pd->pts[i].y;
+            float l = sqrtf(dx*dx + dy*dy); if (l <= 0.0f) l = 1.0f;
+            onx = -dy/l; ony = dx/l;
+        }
+        float mx, my, mlen;
+        if (i == 0)            { mx = onx; my = ony; mlen = hw; }       /* flat start cut */
+        else if (i == n-1)     { mx = inx; my = iny; mlen = hw; }       /* flat end cut   */
+        else {
+            mx = inx + onx; my = iny + ony;
+            float ml = sqrtf(mx*mx + my*my);
+            /* Near-exact 180° fold (a U-turn) has no defined bisector — fall back
+             * to the incoming normal. A true fold makes the band overlap itself
+             * (a degenerate shape for a gauge bar); custom paths shouldn't author
+             * one. Real turns, even 90°+, take the bisector branch below. */
+            if (ml < 0.001f) { mx = inx; my = iny; mlen = hw; }
+            else {
+                mx /= ml; my /= ml;
+                float c = mx*onx + my*ony;                 /* cos(half-turn) */
+                if (c < 0.05f) c = 0.05f;                  /* avoid blow-up before clamp */
+                mlen = hw / c;
+                if (mlen > hw * PB_MITER_MAX) mlen = hw * PB_MITER_MAX;
+            }
+        }
+        L[i].x = (lv_coord_t)lroundf(pd->pts[i].x + mx*mlen);
+        L[i].y = (lv_coord_t)lroundf(pd->pts[i].y + my*mlen);
+        R[i].x = (lv_coord_t)lroundf(pd->pts[i].x - mx*mlen);
+        R[i].y = (lv_coord_t)lroundf(pd->pts[i].y - my*mlen);
+    }
+
+    const float total = pd->total_len;
+    lv_draw_rect_dsc_t rd;
+    lv_draw_rect_dsc_init(&rd);
+    rd.bg_opa = master;
+    /* The seam-overlap trick assumes opaque-over-opaque (the later quad fully
+     * buries the prior quad's AA edge). When the whole widget is translucent —
+     * e.g. the boot fade-reveal animates the root's opa — overlapping would
+     * alpha-blend the overlap region twice into a bright stripe, so drop it while
+     * not fully opaque (the shared mitered edges still abut cleanly). */
+    float ov = (master < LV_OPA_COVER) ? 0.0f : PB_SEAM_OVERLAP;
+
+    /* Dim full-path track: one trapezoid per segment, each poking into the next. */
+    rd.bg_color = dim_solid;
+    for (int i = 1; i < n; i++) {
+        lv_point_t el = L[i], er = R[i];
+        if (i < n - 1) _spk_edge_at(L, R, pd->cum, n, pd->cum[i] + ov, &el, &er);
+        _pb_fill_quad(ctx, &rd, L[i-1], R[i-1], er, el);
+    }
+    if (pd->rounded) {     /* round the track's two ends (base, far end) */
+        _spk_round_cap(ctx, &rd, pd->pts[0].x, pd->pts[0].y,
+                       (float)(pd->pts[0].x - pd->pts[1].x),
+                       (float)(pd->pts[0].y - pd->pts[1].y), hw);
+        _spk_round_cap(ctx, &rd, pd->pts[n-1].x, pd->pts[n-1].y,
+                       (float)(pd->pts[n-1].x - pd->pts[n-2].x),
+                       (float)(pd->pts[n-1].y - pd->pts[n-2].y), hw);
+    }
+
+    /* Lit fill walked in small steps for a smooth gradient; last step clipped. */
+    float f = pd->cur_frac;
+    if (f <= 0.0f || total <= 0.0f) return;
+    float fill = f * total;
+    lv_color_t bright = pd->lit_color;
+    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 66);
+    float rl = (pd->redline < pd->val_max && pd->val_max > pd->val_min)
+             ? (pd->redline - pd->val_min) / (pd->val_max - pd->val_min) : 1.0f;
+    float rlpx = rl * total;                          /* exact redline arc-length */
+
+    float s0 = 0.0f;
+    lv_point_t e0l = L[0], e0r = R[0];
+    while (s0 < fill - 0.01f) {
+        float s1 = s0 + PB_GRAD_STEP;
+        bool last = false;
+        if (s1 >= fill) { s1 = fill; last = true; }
+        /* Land a quad boundary exactly on the redline so the lit/redline colour
+         * break is at rl, not snapped to the nearest gradient step. */
+        if (s0 < rlpx - 0.01f && s1 > rlpx) { s1 = rlpx; last = false; }
+        lv_point_t e1l, e1r;                          /* true edge at s1 (the front if last) */
+        _spk_edge_at(L, R, pd->cum, n, s1, &e1l, &e1r);
+        lv_point_t qel = e1l, qer = e1r;              /* end edge actually drawn (overlapped) */
+        if (!last) _spk_edge_at(L, R, pd->cum, n, s1 + ov, &qel, &qer);
+
+        float pc = ((s0 + s1) * 0.5f) / total;
+        lv_color_t col;
+        if (pc > rl) col = pd->redline_color;
+        else if (pd->fade_fill) {
+            float t = pc / PATHBAR_FADE_FULL; if (t > 1.0f) t = 1.0f;
+            col = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
+        } else col = bright;
+        rd.bg_color = col;
+        _pb_fill_quad(ctx, &rd, e0l, e0r, qer, qel);
+
+        e0l = e1l; e0r = e1r;                         /* next quad starts at the true edge */
+        s0  = s1;
+    }
+
+    if (pd->rounded) {
+        /* lit base cap — gradient colour at fraction 0 */
+        rd.bg_color = pd->fade_fill ? dim : bright;
+        _spk_round_cap(ctx, &rd, pd->pts[0].x, pd->pts[0].y,
+                       (float)(pd->pts[0].x - pd->pts[1].x),
+                       (float)(pd->pts[0].y - pd->pts[1].y), hw);
+        /* lit tip cap — colour at the fill front, bulging forward */
+        float mx, my, mnx, mny;
+        if (_pathbar_sample(pd, fill, &mx, &my, &mnx, &mny)) {
+            float pcf = fill / total;
+            lv_color_t tc;
+            if (pcf > rl) tc = pd->redline_color;
+            else if (pd->fade_fill) {
+                float t = pcf / PATHBAR_FADE_FULL; if (t > 1.0f) t = 1.0f;
+                tc = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
+            } else tc = bright;
+            rd.bg_color = tc;
+            _spk_round_cap(ctx, &rd, mx, my, mny, -mnx, hw);   /* forward tangent = (ny,-nx) */
+        }
+    }
+}
+
 /* ── Draw callback ──────────────────────────────────────────────────────── */
 static void _pathbar_draw_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
@@ -387,37 +590,14 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     lv_opa_t master = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
     if (master <= LV_OPA_MIN) return;
 
-    /* Dim full-path track. Drawn OPAQUE using dim_color pre-blended over black
-     * at dim_opa, rather than as a translucent stroke. lv_draw_line has no join
-     * support, so a curved bend is many short segments whose rounded caps
-     * overlap; at <100% opacity that overlap COMPOUNDS (each cap re-blends the
-     * same pixels) and the bends/joints render darker than the single-segment
-     * straight runs — the bar looks blotchy at corners. Pre-blending to a solid
-     * colour makes overlap a no-op (opaque over opaque = same colour), so the
-     * whole track reads as one uniform run. The straight runs already showed
-     * exactly this blended shade (dim_color over the dark cluster bg), so they
-     * are unchanged — only the corners lighten to match. dim_opa stays the
-     * authoring knob: it sets how dark the solid track is. */
+    /* Dim track colour: dim_color pre-blended over black at dim_opa, drawn opaque
+     * (dim_opa is the authoring knob for how dark the track reads). The band
+     * renderer fills opaque quads, so there's no cap/overlap compounding. */
     lv_color_t dim_solid = lv_color_mix(pd->dim_color, lv_color_black(), pd->dim_opa);
-    _draw_band(ctx, pd, 0.0f, 1.0f, dim_solid, LV_OPA_COVER, master);
-
     float f = pd->cur_frac;
-    if (f > 0.0f) {
-        /* redline split */
-        float rl = 1.0f;
-        if (pd->redline < pd->val_max && pd->val_max > pd->val_min)
-            rl = (pd->redline - pd->val_min) / (pd->val_max - pd->val_min);
-        if (rl < 0.0f) rl = 0.0f;
-        if (rl > 1.0f) rl = 1.0f;
+    _pathbar_draw_band(ctx, pd, master, dim_solid);
 
-        if (f <= rl) {
-            if (pd->fade_fill) _draw_band_faded(ctx, pd, 0.0f, f, pd->lit_color, master);
-            else               _draw_band(ctx, pd, 0.0f, f, pd->lit_color, LV_OPA_COVER, master);
-        } else {
-            if (pd->fade_fill) _draw_band_faded(ctx, pd, 0.0f, rl, pd->lit_color, master);
-            else               _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
-            _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
-        }
+    if (f > 0.0f) {
         /* Bright "current value" marker at the fill tip. Drawn as a FLAT line
          * straight across the band (perpendicular to the path) so it never
          * rounds on a bend the way a band slice did — and it's configurable. */
@@ -566,6 +746,7 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "dim_opa", pd->dim_opa);
     if (pd->smoothing_ms != 0)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", pd->smoothing_ms);
+    if (pd->smooth) cJSON_AddBoolToObject(cfg, "smooth", true);
 
     /* Value scale (defaults-only). Only meaningful when show_ticks is on. */
     if (pd->show_ticks) {
@@ -589,12 +770,20 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         if (pd->label_font[0]) cJSON_AddStringToObject(cfg, "label_font", pd->label_font);
     }
 
-    /* Only custom shapes carry an explicit path; parametric shapes regenerate. */
-    if (pd->shape == 0 && pd->pts && pd->n_pts > 0) {
-        cJSON *path = cJSON_AddArrayToObject(cfg, "path");
-        for (uint16_t i = 0; i < pd->n_pts; i++) {
-            cJSON_AddItemToArray(path, cJSON_CreateNumber(pd->pts[i].x));
-            cJSON_AddItemToArray(path, cJSON_CreateNumber(pd->pts[i].y));
+    /* Only custom shapes carry an explicit path; parametric shapes regenerate.
+     * When smooth, write the FEW authored anchors (not the dense tessellation) so
+     * editing round-trips to the same handful of dots. */
+    if (pd->shape == 0) {
+        const lv_point_t *src = (pd->smooth && pd->anchors && pd->n_anchors > 0)
+                              ? pd->anchors : pd->pts;
+        uint16_t cnt = (pd->smooth && pd->anchors && pd->n_anchors > 0)
+                     ? pd->n_anchors : pd->n_pts;
+        if (src && cnt > 0) {
+            cJSON *path = cJSON_AddArrayToObject(cfg, "path");
+            for (uint16_t i = 0; i < cnt; i++) {
+                cJSON_AddItemToArray(path, cJSON_CreateNumber(src[i].x));
+                cJSON_AddItemToArray(path, cJSON_CreateNumber(src[i].y));
+            }
         }
     }
 }
@@ -629,6 +818,8 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsBool(item)) pd->rounded = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
     if (cJSON_IsBool(item)) pd->fade_fill = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "smooth");
+    if (cJSON_IsBool(item)) pd->smooth = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_enabled");
     if (cJSON_IsBool(item)) pd->lead_edge_enabled = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "lead_edge_width");
@@ -691,14 +882,22 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
             pd->cum = heap_caps_calloc(n, sizeof(float), MALLOC_CAP_SPIRAM);
             if (!pd->pts || !pd->cum) { _pathbar_free_path(pd); }
             else {
+                /* Drop consecutive duplicate points (zero-length segments): the
+                 * band offset/miter math treats a zero-length leg as a degenerate
+                 * normal and would throw an offset spike. The parametric generator
+                 * already de-dups (PB_EMIT); the explicit loader must too. */
+                int k = 0;
                 for (int i = 0; i < n; i++) {
                     cJSON *px = cJSON_GetArrayItem(path, i * 2);
                     cJSON *py = cJSON_GetArrayItem(path, i * 2 + 1);
-                    pd->pts[i].x = (lv_coord_t)(cJSON_IsNumber(px) ? px->valuedouble : 0);
-                    pd->pts[i].y = (lv_coord_t)(cJSON_IsNumber(py) ? py->valuedouble : 0);
+                    lv_coord_t X = (lv_coord_t)(cJSON_IsNumber(px) ? px->valuedouble : 0);
+                    lv_coord_t Y = (lv_coord_t)(cJSON_IsNumber(py) ? py->valuedouble : 0);
+                    if (k == 0 || X != pd->pts[k-1].x || Y != pd->pts[k-1].y) {
+                        pd->pts[k].x = X; pd->pts[k].y = Y; k++;
+                    }
                 }
-                pd->n_pts = (uint16_t)n;
-                _pathbar_build_cum(pd);
+                if (k >= 2) { pd->n_pts = (uint16_t)k; _pathbar_build_cum(pd); }
+                else        { _pathbar_free_path(pd); }
             }
         }
     }
@@ -709,6 +908,20 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
         lv_coord_t bx = SCREEN_ORIGIN_X + w->x - (lv_coord_t)(w->w / 2);
         lv_coord_t by = SCREEN_ORIGIN_Y + w->y - (lv_coord_t)(w->h / 2);
         _pathbar_gen_shape(pd, bx, by, (lv_coord_t)w->w, (lv_coord_t)w->h);
+    }
+
+    /* Smooth custom path: the points just loaded are the AUTHORED anchors — keep
+     * them verbatim (for to_json round-trip) and replace pts with the Catmull-Rom
+     * curve through them. Only for custom paths; parametric shapes are already
+     * smooth. */
+    _pathbar_free_anchors(pd);
+    if (pd->shape == 0 && pd->smooth && pd->n_pts >= 2) {
+        pd->anchors = heap_caps_calloc(pd->n_pts, sizeof(lv_point_t), MALLOC_CAP_SPIRAM);
+        if (pd->anchors) {
+            pd->n_anchors = pd->n_pts;
+            for (uint16_t i = 0; i < pd->n_pts; i++) pd->anchors[i] = pd->pts[i];
+            _pathbar_smooth_from_anchors(pd);     /* anchors -> dense pts */
+        }
     }
 
     if (pd->signal_name[0])
@@ -724,6 +937,7 @@ static void _pathbar_destroy(widget_t *w) {
             signal_unsubscribe(pd->signal_index, _pathbar_on_signal, w);
         if (pd->anim_timer) { lv_timer_del(pd->anim_timer); pd->anim_timer = NULL; }
         _pathbar_free_path(pd);
+        _pathbar_free_anchors(pd);
     }
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
