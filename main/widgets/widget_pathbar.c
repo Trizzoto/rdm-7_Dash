@@ -210,7 +210,7 @@ static void _draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float f
 static void _draw_band_faded(lv_draw_ctx_t *ctx, pathbar_data_t *pd, float fa, float fb,
                              lv_color_t bright, lv_opa_t master) {
     if (fb <= fa || pd->n_pts < 2 || pd->total_len <= 0.0f) return;
-    lv_color_t dim = lv_color_mix(bright, lv_color_black(), 189);   /* ~74% of bright */
+    lv_color_t dim = lv_color_mix(bright, lv_color_black(), 66);   /* 26% of bright — matches studio _pvDarken(col,0.26) */
     /* ~8px sub-bands along the lit span; clamp so very long/short bands stay sane */
     float span_px = (fb - fa) * pd->total_len;
     int segs = (int)(span_px / 8.0f) + 1;
@@ -413,6 +413,14 @@ static void _pathbar_draw_cb(lv_event_t *e) {
             if (pd->fade_fill) _draw_band_faded(ctx, pd, 0.0f, rl, pd->lit_color, master);
             else               _draw_band(ctx, pd, 0.0f, rl, pd->lit_color, LV_OPA_COVER, master);
             _draw_band(ctx, pd, rl, f, pd->redline_color, LV_OPA_COVER, master);
+        }
+        /* bright leading-edge cap at the current value (studio: #E6FAFF tip,
+         * warm past redline) — only with the fade look, matches the editor. */
+        if (pd->fade_fill) {
+            float ca = f - 0.012f;
+            if (ca < 0.0f) ca = 0.0f;
+            lv_color_t cap = (f > rl) ? lv_color_hex(0xFFD2B8) : lv_color_hex(0xE6FAFF);
+            _draw_band(ctx, pd, ca, f, cap, LV_OPA_COVER, master);
         }
     }
 

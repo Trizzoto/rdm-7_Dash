@@ -8770,9 +8770,15 @@
         function _pvImage(w, c){
             const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
             const name = c.image_name || 'image';
-            if (name.indexOf('icon:') === 0){
+            /* Built-in telltale pictograms: the studio can't fetch the device's
+             * uploaded .rdmimg, so render a matching pictogram for the known
+             * telltale names (the ic_* ones are the real device assets used by
+             * the Ford cluster) as well as the legacy "icon:" form. */
+            const ICON_ALIAS = { ic_oilp: 'oil', ic_ect: 'coolant', ic_oilt: 'oiltemp', ic_fuel: 'fuel' };
+            const kind = name.indexOf('icon:') === 0 ? name.slice(5) : ICON_ALIAS[name];
+            if (kind){
                 const col = _pvNum(c.recolor_opa, 0) > 0 ? _pvColor(c.recolor, '#FFF') : '#FFFFFF';
-                return _pvIcon(name.slice(5), p.x, p.y, Math.min(w.w, w.h), col);
+                return _pvIcon(kind, p.x, p.y, Math.min(w.w, w.h), col);
             }
             let s = `<rect x="${left.toFixed(1)}" y="${top.toFixed(1)}" width="${w.w}" height="${w.h}" rx="4" fill="#1b1b1b" fill-opacity="0.5" stroke="#555" stroke-width="1" stroke-dasharray="4 3"/>`;
             s += `<text x="${p.x}" y="${p.y}" fill="#9aa" font-family="'Segoe UI',sans-serif" font-size="${Math.max(8, Math.min(13, w.h * 0.2))}" text-anchor="middle" dominant-baseline="central">${_pvEsc(name)}</text>`;

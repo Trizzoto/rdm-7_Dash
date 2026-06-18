@@ -754,7 +754,9 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
     if (ind_span <= 0.5f) return;
 
     lv_color_t bright = lv_obj_get_style_arc_color(obj, LV_PART_INDICATOR);
-    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 189);   /* ~74% */
+    /* dim = 26% of bright — matches the studio preview (_pvDarken(col, 0.26))
+     * so the dim→bright ramp reads the same on the panel as in the editor. */
+    lv_color_t dim    = lv_color_mix(bright, lv_color_black(), 66);
 
     lv_draw_arc_dsc_t dsc;
     lv_draw_arc_dsc_init(&dsc);
@@ -779,6 +781,13 @@ static void _arc_fade_draw_cb(lv_event_t *e) {
         uint16_t ea = (uint16_t)(((int)a_start + (int)(o1 + 0.5f)) % 360);
         if (ea == sa) continue;   /* degenerate slice → lv_draw_arc would draw a full circle */
         lv_draw_arc(ctx, &dsc, &center, (uint16_t)indic_r, sa, ea);
+    }
+    /* bright leading-edge cap at the current value (studio: #E6FAFF tip) */
+    if (ind_span >= 4.0f) {
+        dsc.color = lv_color_hex(0xE6FAFF);
+        uint16_t cs = (uint16_t)(((int)a_end - 4 + 3600) % 360);
+        uint16_t ce = (uint16_t)(((int)a_end) % 360);
+        if (cs != ce) lv_draw_arc(ctx, &dsc, &center, (uint16_t)indic_r, cs, ce);
     }
 }
 
