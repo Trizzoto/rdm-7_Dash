@@ -554,7 +554,7 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
     if (pd->fade_fill) cJSON_AddBoolToObject(cfg, "fade_fill", true);
     if (!pd->lead_edge_enabled) cJSON_AddBoolToObject(cfg, "lead_edge_enabled", false);
     if (pd->lead_edge_width != DEF_LEAD_WIDTH) cJSON_AddNumberToObject(cfg, "lead_edge_width", pd->lead_edge_width);
-    if (_color_to_u32(pd->lead_edge_color) != _color_to_u32(_u32_to_color(DEF_LEAD_COLOR)))
+    if (pd->lead_edge_color.full != lv_color_hex(DEF_LEAD_COLOR).full)
         cJSON_AddNumberToObject(cfg, "lead_edge_color", _color_to_u32(pd->lead_edge_color));
     if (_color_to_u32(pd->dim_color) != _color_to_u32(_u32_to_color(DEF_DIM_COLOR)))
         cJSON_AddNumberToObject(cfg, "dim_color", _color_to_u32(pd->dim_color));
@@ -754,7 +754,7 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->lit_color     = _u32_to_color(DEF_LIT_COLOR);
     pd->redline_color = _u32_to_color(DEF_RED_COLOR);
     pd->lead_edge_enabled = true;
-    pd->lead_edge_color   = _u32_to_color(DEF_LEAD_COLOR);
+    pd->lead_edge_color   = lv_color_hex(DEF_LEAD_COLOR);   /* 888->565 (NOT _u32_to_color, which expects raw 565) */
     pd->lead_edge_width   = DEF_LEAD_WIDTH;
     pd->dim_opa       = DEF_DIM_OPA;
     pd->smoothing_ms  = 0;
