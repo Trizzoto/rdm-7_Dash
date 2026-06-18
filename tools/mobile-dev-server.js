@@ -276,6 +276,21 @@ const server = http.createServer((req, res) => {
         sendJson(res, { ok: true });
       });
     }
+    /* Dev-only: decode a {name, dataurl} data: URL (png/jpeg) to tools/_icons/
+     * so studio-rasterized images can be pulled to disk for device upload /
+     * side-by-side diffing. */
+    if (url === '/api/_save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          const b64 = String(d.dataurl || '').replace(/^data:[^,]+,/, '');
+          const dir = path.join(ROOT, 'tools', '_icons');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, d.name), Buffer.from(b64, 'base64'));
+          sendJson(res, { ok: true, bytes: Buffer.from(b64, 'base64').length });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
     /* Channels — explicit handlers (need body + the in-memory store). */
     if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
       return sendJson(res, { channels: channelStore });

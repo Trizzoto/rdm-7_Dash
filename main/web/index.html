@@ -8770,6 +8770,11 @@
         function _pvImage(w, c){
             const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
             const name = c.image_name || 'image';
+            /* Full-screen background image (e.g. a baked glow layer): the studio
+             * draws its own ambient glow + radial bg in renderPreview, so skip
+             * the placeholder box here and let that show through — matches what
+             * the device renders from the baked image. */
+            if (w.w >= 760 && w.h >= 440) return '';
             /* Built-in telltale pictograms: the studio can't fetch the device's
              * uploaded .rdmimg, so render a matching pictogram for the known
              * telltale names (the ic_* ones are the real device assets used by

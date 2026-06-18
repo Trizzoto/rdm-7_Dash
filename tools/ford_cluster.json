@@ -15,6 +15,7 @@
       "h": 480,
       "config": {
         "image_name": "ford_bg",
+        "auto_size": true,
         "image_scale": 256,
         "opacity": 255
       }
