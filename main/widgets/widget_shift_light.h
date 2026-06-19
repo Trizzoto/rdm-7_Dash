@@ -16,6 +16,11 @@ extern "C" {
 
 #define SHL_DEFAULT_W (SCREEN_ORIGIN_X)   /* half screen width */
 
+/* Hard upper bound on LED count. Sizes the per-instance LED-object and
+ * paint-cache arrays plus the stack scratch arrays in widget_shift_light.c.
+ * Keep in sync with the led_count "max" in schema/widgets.schema.json. */
+#define SHL_MAX_LED 45
+
 /* ── Night-mode overrides for shift_light ───────────────────────────────── */
 typedef struct {
     NIGHT_FIELD_COLOR(color_low)
@@ -27,7 +32,7 @@ typedef struct {
 typedef struct {
     char     signal_name[32];
     int16_t  signal_index;
-    uint8_t  led_count;        /* Number of LEDs (4-16, default 8) */
+    uint8_t  led_count;        /* Number of LEDs (4-SHL_MAX_LED, default 8) */
     float    range_min;        /* RPM value where first LED lights (e.g., 4000) */
     float    range_max;        /* RPM value where all LEDs lit (e.g., 7000) */
     float    flash_threshold;  /* RPM value where LEDs start flashing (e.g., 7200) */
@@ -45,8 +50,8 @@ typedef struct {
     float    threshold_high;   /* Position (0-1) where color switches from mid→high (default 0.8) */
     bool     flash_state;      /* Runtime: current flash on/off */
     uint8_t  active_count;     /* Runtime: how many LEDs are active */
-    lv_obj_t *leds[16];        /* Runtime: LVGL rectangle objects */
-    lv_color_t last_led_color[16]; /* Runtime: last color painted per LED, so
+    lv_obj_t *leds[SHL_MAX_LED];        /* Runtime: LVGL rectangle objects */
+    lv_color_t last_led_color[SHL_MAX_LED]; /* Runtime: last color painted per LED, so
                                     * unchanged per-tick writes are skipped
                                     * (LVGL v8 set_style always invalidates).
                                     * Every LED color write routes through

@@ -3243,7 +3243,7 @@
           "default": 8,
           "category": "data",
           "min": 4,
-          "max": 16,
+          "max": 45,
           "step": 1,
           "group": "Value"
         },

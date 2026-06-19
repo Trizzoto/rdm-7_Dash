@@ -3082,7 +3082,7 @@ static const widget_field_t shift_light_fields[] = {
     {
         .name = "led_count", .label = "LED Count",
         .type = WF_TYPE_NUMBER, .category = WF_CAT_DATA,
-        .min_int = 4, .max_int = 16, .step_int = 1,
+        .min_int = 4, .max_int = 45, .step_int = 1,
         .default_int = 8, .default_float = 8.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
