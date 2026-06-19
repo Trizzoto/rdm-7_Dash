@@ -9,8 +9,8 @@ Part of the **RDM project**: this firmware + RDM Desktop Studio (Tauri) + RDM We
 
 ## Build
 
-- ESP-IDF v5.3.1 at `C:\Espressif\frameworks\esp-idf-v5.3.1`. **Each shell call is fresh** — prefix every `idf.py` invocation with `. "$env:IDF_PATH\export.ps1" *> $null;` to load the toolchain. After that, run `idf.py build` / `idf.py -p COM13 flash monitor` directly.
-- Dev port: **COM13** (the user's dash). Flash + monitor are pre-approved; only `erase_flash` or OTA still asks first.
+- ESP-IDF v5.3.1 at `C:\Espressif\frameworks\esp-idf-v5.3.1`. **Each shell call is fresh** — prefix every `idf.py` invocation with `. "$env:IDF_PATH\export.ps1" *> $null;` to load the toolchain. After that, run `idf.py build` / `idf.py -p COM27 flash monitor` directly.
+- Dev port: **COM27** (the user's dash, CH343; was COM13 historically and can change on re-plug — confirm via `[System.IO.Ports.SerialPort]::GetPortNames()`). Over WiFi the dash gets a DHCP IP on the user's LAN (not fixed — discover with a subnet sweep hitting `/api/selftest`). Flash + monitor are pre-approved; only `erase_flash` or OTA still asks first.
 - Long builds belong in `run_in_background` so the chat stays responsive. Monitor streams via the Monitor tool — kill it with TaskStop when done.
 - All `.c` files must be listed in `main/CMakeLists.txt` SRCS
 - `main/web/index.html` embedded via `EMBED_TXTFILES`
