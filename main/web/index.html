@@ -11199,12 +11199,15 @@
             return idxs.every(i => currentLayout.widgets[i].type === t) ? idxs : null;
         }
         function _multiTargets() {
-            /* OTHER selected indices sharing the representative's type. */
+            /* OTHER selected indices sharing the representative's type. Locked
+             * widgets are excluded — the lock contract (honored by drag/resize/
+             * nudge) must hold for fan-out too. */
             if (!_multiEdit) return [];
             const rep = currentLayout.widgets[selectedIndex];
             if (!rep) return [];
             return [...selectedIndices].filter(i => i !== selectedIndex &&
-                currentLayout.widgets[i] && currentLayout.widgets[i].type === rep.type);
+                currentLayout.widgets[i] && currentLayout.widgets[i].type === rep.type &&
+                !currentLayout.widgets[i].locked);
         }
 
         function updateInspector() {
@@ -11306,6 +11309,13 @@
             const isTestable = TOGGLE_TEST_TYPES.has(w.type);
             if (dataFields.length || hasSignalBinding || isTestable) {
                 html += `<details class="inspector-accordion" open><summary>Data</summary><div class="accordion-body">`;
+                /* In multi-select, the channel card / bind / unbind below act on
+                 * the focused widget ONLY (the picker flow isn't fanned), so say
+                 * so — otherwise the "changes apply to all" banner is misleading
+                 * for the data binding specifically. */
+                if (_multiEdit) {
+                    html += `<div style="font-size:10px; color:hsl(40,80%,60%); margin-bottom:8px; line-height:1.4;">Data binding applies to this widget only — bind channels one at a time. (Appearance/behaviour edits below apply to all ${selectedIndices.size}.)</div>`;
+                }
                 /* Channel binding — primary widget data binding for v2.
                  * Replaces the old "Assign Data Source" signal-picking
                  * flow. The card shows the bound channel + live value;
@@ -12983,13 +12993,17 @@
             }
 
             /* Multi-select fan-out: apply ONLY this field to the other selected
-             * same-type widgets (not their whole config). Channel-backed
-             * threshold fields are skipped — those belong to the bound channel,
-             * not the widget, and fanning them across widgets bound to different
-             * channels would cross-write. Meter/arc derived fields re-sync per
-             * target so their legacy LVGL values stay consistent. */
+             * same-type widgets (not their whole config). Skipped fields:
+             *  - 'slot' is per-widget-UNIQUE (e.g. indicator left=0/right=1) —
+             *    fanning it collides two widgets onto the same slot, so neither
+             *    renders right on device.
+             *  - channel-backed thresholds belong to the bound channel, not the
+             *    widget, and fanning across widgets on different channels would
+             *    cross-write.
+             * Meter/arc derived fields re-sync per target so their legacy LVGL
+             * values stay consistent. */
             const _fanned = _multiTargets();
-            if (_fanned.length) {
+            if (_fanned.length && field !== 'slot') {
                 const _tspec2 = _widgetThresholdSpec(w);
                 const _isThreshold = _tspec2 && [_tspec2.high, _tspec2.low, _tspec2.highEn,
                                                  _tspec2.lowEn, _tspec2.en].filter(Boolean).includes(field);
@@ -13435,13 +13449,13 @@
                 updateStatus(`Only one ${def.displayName || type} allowed per layout`, true);
                 return;
             }
-            /* Enforce slot caps consistently with paste/duplicate. indicator (2)
-             * and warning (8) are HARD firmware caps — a widget past the cap gets
-             * no slot and collides on-device (never renders correctly), so adding
-             * one was a silent no-win. Refuse with the same clarity paste gives.
-             * panel/bar are effectively unlimited (256) so this never fires. */
-            if (SLOT_LIMITS[type] !== undefined && nextAvailableSlot(type) < 0) {
-                const cap = SLOT_LIMITS[type] > 0 ? SLOT_LIMITS[type] : 256;
+            /* Enforce the HARD firmware slot caps consistently with paste/
+             * duplicate. Only indicator (2) and warning (8) are real caps — a
+             * widget past them gets no slot and collides on-device (never renders
+             * correctly), so adding one was a silent no-win. panel/bar use
+             * SLOT_LIMITS 0 = unlimited (don't gate them). */
+            if (SLOT_LIMITS[type] > 0 && nextAvailableSlot(type) < 0) {
+                const cap = SLOT_LIMITS[type];
                 showToast(`Maximum ${cap} ${def.displayName || type} widget${cap === 1 ? '' : 's'} reached`, 'error');
                 return;
             }

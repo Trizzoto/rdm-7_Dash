@@ -230,48 +230,48 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	return j;
 }
 
-/* Serializes the full channel-list build (below). The build allocates a
- * sizable cJSON tree plus a serialized string; several concurrent builds
- * (Studio + mirror + a browser polling at once) race for PSRAM and
- * intermittently OOM into 500s — the stress test reproduced this. Created in
+/* Serializes only the heavy channel-list BUILD (cJSON tree + serialized string).
+ * Several concurrent builds (Studio + mirror + a browser polling at once) race
+ * for PSRAM and intermittently OOM into 500s — the stress test reproduced this.
+ * We serialize the build but NOT the network send (a slow reader must not hold
+ * the lock), and we WAIT (not try-lock) so a legitimate concurrent reader gets
+ * served a moment later instead of a spurious 503. Created in
  * web_server_channels_register(). */
 static SemaphoreHandle_t s_channels_list_mux = NULL;
 
 /* GET /api/channels — return all active channels with config + live state. */
 static esp_err_t channels_list_handler(httpd_req_t *req) {
-	/* Concurrency gate: only one heavy list build at a time. If one is already
-	 * in flight, shed load with 503 + Retry-After (client retries on the next
-	 * poll) rather than piling on a second large allocation and risking an OOM
-	 * that could also starve a concurrent screenshot/inject. */
-	if (s_channels_list_mux && xSemaphoreTake(s_channels_list_mux, 0) != pdTRUE)
+	/* Serialize the build: wait up to 2 s for our turn; only shed with 503 if
+	 * the device is genuinely saturated that long (the build itself is short). */
+	if (s_channels_list_mux &&
+	    xSemaphoreTake(s_channels_list_mux, pdMS_TO_TICKS(2000)) != pdTRUE)
 		return web_server_send_busy(req);
 
-	esp_err_t e;
+	/* Build the whole JSON string while holding the lock... */
 	char *json = NULL;
-	cJSON *arr;
 	cJSON *root = cJSON_CreateObject();
-	if (!root) { e = web_server_send_busy(req); goto done; }
-
-	cJSON_AddNumberToObject(root, "count", channel_manager_count());
-	arr = cJSON_AddArrayToObject(root, "channels");
-	for (size_t i = 0; i < channel_manager_count(); ++i) {
-		channel_t *c = channel_manager_at(i);
-		if (!c) continue;
-		cJSON *jc = channel_to_full_json(c);
-		if (jc) cJSON_AddItemToArray(arr, jc);
+	if (root) {
+		cJSON_AddNumberToObject(root, "count", channel_manager_count());
+		cJSON *arr = cJSON_AddArrayToObject(root, "channels");
+		for (size_t i = 0; i < channel_manager_count(); ++i) {
+			channel_t *c = channel_manager_at(i);
+			if (!c) continue;
+			cJSON *jc = channel_to_full_json(c);
+			if (jc) cJSON_AddItemToArray(arr, jc);
+		}
+		json = cJSON_PrintUnformatted(root);
+		cJSON_Delete(root);
 	}
 
-	json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	if (!json) { e = web_server_send_busy(req); goto done; }
+	/* ...then release BEFORE the (potentially slow) send, so a slow reader can't
+	 * block other channel reads for the whole send timeout. */
+	if (s_channels_list_mux) xSemaphoreGive(s_channels_list_mux);
 
+	if (!json) return web_server_send_busy(req);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	e = httpd_resp_sendstr(req, json);
+	esp_err_t e = httpd_resp_sendstr(req, json);
 	cJSON_free(json);
-
-done:
-	if (s_channels_list_mux) xSemaphoreGive(s_channels_list_mux);
 	return e;
 }
 

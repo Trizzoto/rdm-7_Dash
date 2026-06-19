@@ -50,7 +50,10 @@ void web_server_drain_body(httpd_req_t *req, size_t max_drain) {
 		size_t chunk = remaining - got;
 		if (chunk > sizeof(sink)) chunk = sizeof(sink);
 		int r = httpd_req_recv(req, sink, chunk);
-		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+		/* A recv timeout means the sender stalled. We bail rather than loop:
+		 * httpd runs all handlers on ONE task, so spinning here on a no-data
+		 * stall would wedge the entire web server (slowloris). Best-effort
+		 * drain — if the client won't send, let the socket close (RST). */
 		if (r <= 0) break;
 		got += (size_t)r;
 	}

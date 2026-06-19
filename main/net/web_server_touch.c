@@ -335,11 +335,11 @@ static esp_err_t api_widget_transform_post_handler(httpd_req_t *req) {
 	cJSON *h_js = cJSON_GetObjectItemCaseSensitive(root, "h");
 
 	bool found = false;
-	/* 2 s acquire: a live drag fires these rapidly and the LVGL render task
-	 * can hold the lock through a heavy frame (image load / full rebuild).
-	 * On timeout return 503 + Retry-After so the editor retries that edit
-	 * rather than silently dropping it (see _doWidgetTransform). */
-	if (!rdm_lvgl_lock(2000)) {
+	/* Fail fast on lock contention: httpd runs all handlers on one task, so a
+	 * long block here stalls EVERY endpoint. 1 s is enough to ride out a normal
+	 * frame; on timeout we 503 + Retry-After and the editor retries the edit
+	 * (see _fetchLiveEdit / _doWidgetTransform) — cheaper than blocking longer. */
+	if (!rdm_lvgl_lock(1000)) {
 		cJSON_Delete(root);
 		return web_server_send_busy(req);
 	}
@@ -407,8 +407,8 @@ static esp_err_t api_widget_set_post_handler(httpd_req_t *req) {
 	}
 
 	bool found = false, handled = false;
-	/* 2 s acquire + 503 on timeout — same rationale as transform above. */
-	if (!rdm_lvgl_lock(2000)) {
+	/* 1 s fail-fast + 503 (editor retries) — same rationale as transform above. */
+	if (!rdm_lvgl_lock(1000)) {
 		cJSON_Delete(root);
 		return web_server_send_busy(req);
 	}
