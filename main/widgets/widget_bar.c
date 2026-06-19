@@ -556,6 +556,36 @@ static void _bar_smooth_apply(widget_t *w, float v) {
 	bd->smooth_bypass = false;
 }
 
+/* Position the leading-edge marker at the fill front of a STANDARD (non-image,
+ * non-mirror) bar — a thin sibling rectangle that rides the moving edge of the
+ * fill, mirroring the pathbar's lead edge. Cheap (called only when the value
+ * actually changes); hidden when the bar is empty or stale. The size is set at
+ * create / resize, so this only moves + toggles visibility. */
+static void _bar_place_lead_edge(widget_t *w, bar_data_t *bd,
+                                 int32_t display_value, bool stale) {
+	lv_obj_t *tip = bd ? bd->fill_tip_obj : NULL;
+	if (!tip || !lv_obj_is_valid(tip)) return;
+	if (!bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+	int32_t rmin = lv_bar_get_min_value(bd->bar_obj);
+	int32_t rmax = lv_bar_get_max_value(bd->bar_obj);
+	float frac = (rmax > rmin) ? (float)(display_value - rmin) / (float)(rmax - rmin) : 0.0f;
+	if (frac < 0.0f) frac = 0.0f;
+	if (frac > 1.0f) frac = 1.0f;
+	/* Empty normal bar → nothing to mark. Center-fill always has a front. */
+	if (stale || (!bd->center_fill && frac <= 0.004f)) {
+		lv_obj_add_flag(tip, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	float pos_frac = (bd->fill_dir == 1) ? (1.0f - frac) : frac;   /* RTL: front on the left */
+	float left  = (float)w->x - (float)w->w / 2.0f;                /* center-origin coords */
+	float front = left + pos_frac * (float)w->w;
+	float e = (float)bd->fill_edge_width;
+	lv_coord_t cx = (lv_coord_t)lroundf((bd->fill_dir == 1) ? front + e / 2.0f
+	                                                        : front - e / 2.0f);
+	lv_obj_set_pos(tip, cx, w->y);
+	lv_obj_clear_flag(tip, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
@@ -638,6 +668,10 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 			lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
 			if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
 				lv_bar_set_value(bd->bar_obj2, display_value, LV_ANIM_OFF);
+			/* Move the leading-edge marker to the new fill front (single-bar
+			 * modes only; mirror modes have two fronts and skip the marker). */
+			if (bd->fill_tip_obj && !mirror)
+				_bar_place_lead_edge(w, bd, display_value, is_stale);
 			bd->_pc_display_value = display_value;
 		}
 		bool night_active = night_mode_is_active();
@@ -891,6 +925,22 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 			/* Resting value: centre (0) for center-fill, else the low end. The
 			 * initial-snap below overrides this once a bound signal is read. */
 			lv_bar_set_value(bar, bd->center_fill ? 0 : b_min, LV_ANIM_OFF);
+			/* Leading-edge marker: a thin sibling rectangle that rides the fill
+			 * front (same idea as the pathbar / image-bar tip). _bar_place_lead_edge
+			 * positions it each value change; created hidden until the first read. */
+			if (bd->fill_edge_width > 0) {
+				lv_obj_t *tip = lv_obj_create(parent);
+				lv_obj_remove_style_all(tip);
+				lv_obj_set_size(tip, bd->fill_edge_width, w->h);
+				lv_obj_set_align(tip, LV_ALIGN_CENTER);
+				lv_obj_set_pos(tip, w->x - (w->w / 2), w->y);
+				lv_obj_set_style_bg_color(tip, bd->fill_edge_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+				lv_obj_add_flag(tip, LV_OBJ_FLAG_HIDDEN);
+				lv_obj_move_foreground(tip);
+				bd->fill_tip_obj = tip;
+			}
 			if (!w->root) w->root = bar;
 		} else {
 			/* Two mirrored half-bars. Geometry is in center-origin coords:
@@ -1054,6 +1104,11 @@ static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		}
 	} else if (w->root && lv_obj_is_valid(w->root)) {
 		lv_obj_set_size(w->root, nw, nh);
+	}
+	/* Leading-edge marker tracks the new height + fill front. */
+	if (bd && bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj)) {
+		lv_obj_set_size(bd->fill_tip_obj, bd->fill_edge_width, nh);
+		_bar_place_lead_edge(w, bd, bd->_pc_display_value, false);
 	}
 	/* Keep the label + value glued to their relative positions when the bar
 	 * grows / shrinks live in the editor. Without this the value label stays
@@ -1445,11 +1500,15 @@ static void _bar_destroy(widget_t *w) {
 		lv_obj_del(bd->value_obj);
 	/* Tick marks are siblings of root too — delete explicitly + NULL them. */
 	if (bd) _bar_free_ticks(bd);
-	/* Clip container is always a sibling of root — delete explicitly (this
-	 * also frees its child fill-tip). */
+	/* Leading-edge tip: in standard-bar mode it's a sibling of root, in image
+	 * mode a child of the clip. Delete it explicitly first (safe either way),
+	 * then NULL so the clip delete below doesn't double-free. */
+	if (bd && bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj))
+		lv_obj_del(bd->fill_tip_obj);
+	if (bd) bd->fill_tip_obj = NULL;
+	/* Clip container is always a sibling of root — delete explicitly. */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
-	if (bd) bd->fill_tip_obj = NULL;
 	/* In track-image + color-fill mode, bar_obj is a sibling of root */
 	if (bd && bd->bar_obj && lv_obj_is_valid(bd->bar_obj) && (lv_obj_t *)bd->bar_obj != w->root)
 		lv_obj_del(bd->bar_obj);
