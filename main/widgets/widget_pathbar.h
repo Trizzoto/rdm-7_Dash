@@ -37,9 +37,10 @@ typedef struct {
     /* Parametric shape: when shape != 0 the path is GENERATED to fit the widget
      * box (so the editor only needs a shape + radius, no point array). shape 0
      * = custom (use the explicit `path` below, e.g. tooling-authored). */
-    uint8_t     shape;                /* 0=custom, 1=L-bend, 2=straight */
-    uint8_t     orientation;          /* L: 0=TL 1=TR 2=BL 3=BR ; straight: 0=horiz 1=vert */
+    uint8_t     shape;                /* 0=custom, 1=L-bend, 2=straight, 3=45° bend, 4=J-hook */
+    uint8_t     orientation;          /* L/J: 0=TL 1=TR 2=BL 3=BR ; straight: 0=horiz 1=vert */
     uint16_t    corner_radius;        /* L-bend fillet radius px */
+    uint16_t    hook_angle;           /* J-hook arc sweep degrees (90=quarter, default 120) */
     lv_color_t  dim_color;            /* empty track */
     lv_color_t  lit_color;            /* fill */
     lv_color_t  redline_color;        /* fill beyond redline */

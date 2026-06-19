@@ -103,24 +103,40 @@ static void _pathbar_smooth_from_anchors(pathbar_data_t *pd) {
     if (na == 2) {
         SM_EMIT(pd->anchors[1].x, pd->anchors[1].y);            /* a line */
     } else {
+        /* CENTRIPETAL Catmull-Rom (alpha=0.5, Barry-Goldman form). Uniform CR
+         * overshoots/cusps badly when anchor spacing is uneven (e.g. a long
+         * straight run next to a tight curve) because a far neighbour blows up
+         * the local tangent; centripetal parameterises by sqrt(distance) so it
+         * never overshoots or self-intersects. End segments use a reflected
+         * phantom point so the knots stay non-coincident. */
         for (int i = 0; i < na - 1; i++) {
-            lv_point_t p0 = pd->anchors[i > 0      ? i - 1 : 0];
-            lv_point_t p1 = pd->anchors[i];
-            lv_point_t p2 = pd->anchors[i + 1];
-            lv_point_t p3 = pd->anchors[i + 2 < na ? i + 2 : na - 1];
-            float chord = sqrtf((float)((p2.x-p1.x)*(p2.x-p1.x) + (p2.y-p1.y)*(p2.y-p1.y)));
+            float p1x = pd->anchors[i].x,     p1y = pd->anchors[i].y;
+            float p2x = pd->anchors[i+1].x,   p2y = pd->anchors[i+1].y;
+            float p0x, p0y, p3x, p3y;
+            if (i > 0)      { p0x = pd->anchors[i-1].x; p0y = pd->anchors[i-1].y; }
+            else            { p0x = 2.0f*p1x - p2x;     p0y = 2.0f*p1y - p2y; }
+            if (i+2 < na)   { p3x = pd->anchors[i+2].x; p3y = pd->anchors[i+2].y; }
+            else            { p3x = 2.0f*p2x - p1x;     p3y = 2.0f*p2y - p1y; }
+            float t0 = 0.0f;
+            float t1 = t0 + sqrtf(sqrtf((p1x-p0x)*(p1x-p0x) + (p1y-p0y)*(p1y-p0y)));
+            float t2 = t1 + sqrtf(sqrtf((p2x-p1x)*(p2x-p1x) + (p2y-p1y)*(p2y-p1y)));
+            float t3 = t2 + sqrtf(sqrtf((p3x-p2x)*(p3x-p2x) + (p3y-p2y)*(p3y-p2y)));
+            if (t1 <= t0) t1 = t0 + 1e-4f;
+            if (t2 <= t1) t2 = t1 + 1e-4f;
+            if (t3 <= t2) t3 = t2 + 1e-4f;
+            float chord = sqrtf((p2x-p1x)*(p2x-p1x) + (p2y-p1y)*(p2y-p1y));
             int steps = (int)(chord / 6.0f);
             if (steps < 2)  steps = 2;
             if (steps > 48) steps = 48;
             for (int s = 1; s <= steps; s++) {
-                float t = (float)s / (float)steps, t2 = t*t, t3 = t2*t;
-                float x = 0.5f * (2.0f*p1.x + (-p0.x + p2.x)*t
-                        + (2.0f*p0.x - 5.0f*p1.x + 4.0f*p2.x - p3.x)*t2
-                        + (-p0.x + 3.0f*p1.x - 3.0f*p2.x + p3.x)*t3);
-                float y = 0.5f * (2.0f*p1.y + (-p0.y + p2.y)*t
-                        + (2.0f*p0.y - 5.0f*p1.y + 4.0f*p2.y - p3.y)*t2
-                        + (-p0.y + 3.0f*p1.y - 3.0f*p2.y + p3.y)*t3);
-                SM_EMIT(x, y);
+                float t  = t1 + (t2 - t1) * (float)s / (float)steps;
+                float A1x = ((t1-t)*p0x + (t-t0)*p1x) / (t1-t0), A1y = ((t1-t)*p0y + (t-t0)*p1y) / (t1-t0);
+                float A2x = ((t2-t)*p1x + (t-t1)*p2x) / (t2-t1), A2y = ((t2-t)*p1y + (t-t1)*p2y) / (t2-t1);
+                float A3x = ((t3-t)*p2x + (t-t2)*p3x) / (t3-t2), A3y = ((t3-t)*p2y + (t-t2)*p3y) / (t3-t2);
+                float B1x = ((t2-t)*A1x + (t-t0)*A2x) / (t2-t0), B1y = ((t2-t)*A1y + (t-t0)*A2y) / (t2-t0);
+                float B2x = ((t3-t)*A2x + (t-t1)*A3x) / (t3-t1), B2y = ((t3-t)*A2y + (t-t1)*A3y) / (t3-t1);
+                float Cx  = ((t2-t)*B1x + (t-t1)*B2x) / (t2-t1), Cy  = ((t2-t)*B1y + (t-t1)*B2y) / (t2-t1);
+                SM_EMIT(Cx, Cy);
             }
         }
     }
@@ -153,7 +169,39 @@ static void _pathbar_gen_shape(pathbar_data_t *pd, lv_coord_t bx, lv_coord_t by,
     float l = bx + inset, t = by + inset;
     float r = bx + bw - inset, b = by + bh - inset;
 
-    if (pd->shape == 2) {                  /* straight */
+    if (pd->shape == 4) {                  /* J-hook (Ford digital-cluster tach) */
+        /* A TRUE CIRCULAR arc (constant radius — no skew) that ALWAYS ends with a
+         * horizontal tangent, flowing into the straight horizontal tail, so the
+         * curve meets the bar with a perfect radius and no kink. `hook_angle` is
+         * the arc sweep in degrees (meter-style: 90 = quarter circle / vertical at
+         * the start, 180 = half circle), and the radius auto-fits the box height
+         * for that sweep so it's round and fits every time. orientation picks the
+         * corner the hook curls into (0 = bottom-left / tail along the top = Ford). */
+        float S = (float)pd->hook_angle * (float)M_PI / 180.0f;   /* sweep, rad */
+        float denom = 1.0f - cosf(S);                /* height = R*(1-cos S) */
+        if (denom < 0.05f) denom = 0.05f;
+        float R = (b - t) / denom;                   /* circle radius that fills H */
+        float maxR = (r - l) - 24.0f;                /* always leave room for tail */
+        if (R > maxR) R = maxR;
+        if (R < 8.0f) R = 8.0f;
+
+        const float DEG = (float)M_PI / 180.0f;
+        float cx, cy, a0, a1, tx, ty;      /* center, start/end angle, tail end */
+        switch (pd->orientation) {
+        case 1: cx = r - R; cy = t + R; a0 = (270.0f + (float)pd->hook_angle)*DEG; a1 = 270.0f*DEG; tx = l; ty = t; break; /* hook BR, tail top-left  */
+        case 2: cx = l + R; cy = b - R; a0 = ( 90.0f + (float)pd->hook_angle)*DEG; a1 =  90.0f*DEG; tx = r; ty = b; break; /* hook TL, tail bottom-right */
+        case 3: cx = r - R; cy = b - R; a0 = ( 90.0f - (float)pd->hook_angle)*DEG; a1 =  90.0f*DEG; tx = l; ty = b; break; /* hook TR, tail bottom-left  */
+        default:cx = l + R; cy = t + R; a0 = (270.0f - (float)pd->hook_angle)*DEG; a1 = 270.0f*DEG; tx = r; ty = t; break; /* hook BL, tail top-right (Ford) */
+        }
+        int steps = (int)(R * fabsf(a1 - a0) / 6.0f) + 4;
+        if (steps < 16)  steps = 16;
+        if (steps > 120) steps = 120;
+        for (int i = 0; i <= steps; i++) {
+            float ang = a0 + (a1 - a0) * (float)i / (float)steps;
+            PB_EMIT(cx + R * cosf(ang), cy + R * sinf(ang));
+        }
+        PB_EMIT(tx, ty);                   /* straight tangent tail */
+    } else if (pd->shape == 2) {           /* straight */
         if (pd->orientation == 1) {        /* vertical: bottom -> top */
             float cx = (l + r) / 2.0f;
             PB_EMIT(cx, b); PB_EMIT(cx, t);
@@ -728,7 +776,8 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
     if (pd->shape != 0) {
         cJSON_AddNumberToObject(cfg, "shape", pd->shape);
         if (pd->orientation != 0) cJSON_AddNumberToObject(cfg, "orientation", pd->orientation);
-        cJSON_AddNumberToObject(cfg, "corner_radius", pd->corner_radius);
+        if (pd->shape == 4) cJSON_AddNumberToObject(cfg, "hook_angle", pd->hook_angle);
+        else                cJSON_AddNumberToObject(cfg, "corner_radius", pd->corner_radius);
     }
     if (!pd->rounded) cJSON_AddBoolToObject(cfg, "rounded", false);
     if (pd->fade_fill) cJSON_AddBoolToObject(cfg, "fade_fill", true);
@@ -809,11 +858,13 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "band_width");
     if (cJSON_IsNumber(item)) pd->band_width = (uint8_t)LV_CLAMP(1, item->valueint, 80);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "shape");
-    if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 3);
+    if (cJSON_IsNumber(item)) pd->shape = (uint8_t)LV_CLAMP(0, item->valueint, 4);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "orientation");
     if (cJSON_IsNumber(item)) pd->orientation = (uint8_t)LV_CLAMP(0, item->valueint, 3);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "corner_radius");
     if (cJSON_IsNumber(item)) pd->corner_radius = (uint16_t)LV_CLAMP(0, item->valueint, 1000);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "hook_angle");
+    if (cJSON_IsNumber(item)) pd->hook_angle = (uint16_t)LV_CLAMP(30, item->valueint, 200);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "rounded");
     if (cJSON_IsBool(item)) pd->rounded = cJSON_IsTrue(item);
     item = cJSON_GetObjectItemCaseSensitive(cfg, "fade_fill");
@@ -964,6 +1015,7 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->shape         = 0;            /* custom (explicit path) */
     pd->orientation   = 0;
     pd->corner_radius = 40;
+    pd->hook_angle    = 120;          /* J-hook arc sweep degrees */
     pd->dim_color     = _u32_to_color(DEF_DIM_COLOR);
     pd->lit_color     = _u32_to_color(DEF_LIT_COLOR);
     pd->redline_color = _u32_to_color(DEF_RED_COLOR);
