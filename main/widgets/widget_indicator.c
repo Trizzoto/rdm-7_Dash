@@ -950,7 +950,16 @@ static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		indicator_data_t *id = (indicator_data_t *)w->type_data;
 		uint8_t slot = id ? id->slot : 0;
 		const lv_img_dsc_t *src = (slot == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
-		lv_img_set_zoom(w->root, _calc_zoom(src->header.w, src->header.h, nw, nh));
+		/* The zoom MUST be applied to the image object (ui_Indicator_Left/Right),
+		 * NOT w->root: w->root is the transparent touch-area base object (a plain
+		 * lv_obj), so lv_img_set_zoom(w->root, ...) would write the zoom field
+		 * past the base object's allocation — an out-of-bounds heap write that
+		 * intermittently corrupts the heap and panics (found via resize fuzz).
+		 * Resize the touch target to match the new box. */
+		lv_obj_t *img = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+		if (img && lv_obj_is_valid(img))
+			lv_img_set_zoom(img, _calc_zoom(src->header.w, src->header.h, nw, nh));
+		lv_obj_set_size(w->root, nw, nh);
 	}
 }
 static void _indicator_open_settings(widget_t *w) {
