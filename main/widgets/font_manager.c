@@ -24,7 +24,7 @@
 static const char *TAG = "font_mgr";
 
 #define LFS_FONT_DIR  "/lfs/fonts"
-#define FONT_MAX_FILE_SIZE (512 * 1024)  /* 512 KB max per TTF */
+/* FONT_MAX_FILE_SIZE now lives in font_manager.h (shared with the upload cap). */
 
 /* ── Family cache (TTF data in PSRAM) ────────────────────────────────────── */
 

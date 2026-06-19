@@ -45,6 +45,12 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual);
 // which client poll/edit loops honour — unlike a 500, which surfaces an error.
 esp_err_t web_server_send_busy(httpd_req_t *req);
 
+// Drain up to max_drain bytes of an unread request body so a subsequent error
+// response is delivered cleanly (a FIN, not a TCP RST). Call before rejecting
+// an oversize upload by content_len, or the client sees a connection reset
+// instead of the 4xx. Bounded so a huge body can't tie the worker up.
+void web_server_drain_body(httpd_req_t *req, size_t max_drain);
+
 // Serialize + send a cJSON object as application/json (with CORS), then free
 // it. ALWAYS consumes root. Sends a 500 instead of crashing if the serialize
 // OOMs. Forward-declared with a cJSON struct tag so callers needn't include

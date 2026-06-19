@@ -41,7 +41,7 @@ static httpd_handle_t server = NULL;
  * preview hit exactly this (ConnectionResetError instead of the 413). Draining
  * the body first lets the error response actually arrive. Bounded so a
  * maliciously huge body can't tie the worker up indefinitely. */
-static void web_server_drain_body(httpd_req_t *req, size_t max_drain) {
+void web_server_drain_body(httpd_req_t *req, size_t max_drain) {
 	size_t remaining = req->content_len;
 	if (remaining > max_drain) remaining = max_drain;
 	char sink[512];

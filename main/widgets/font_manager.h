@@ -22,6 +22,13 @@ extern "C" {
 #define FONT_MAX_FAMILIES  8
 #define FONT_MAX_INSTANCES 32
 #define FONT_NAME_LEN      32
+/* Hard limit on a single TTF, enforced at BOTH upload (web_server_assets.c) and
+ * load (font_manager.c). The font manager memcpy's the whole file into a PSRAM
+ * family-cache slot, so this caps that allocation; uploads larger than this are
+ * rejected up front (previously the upload handler used a stale 4 MB cap, so a
+ * 0.5–4 MB font would upload OK but silently fail to load, and >~2.7 MB OOM'd
+ * the upload malloc). Single source of truth — do not redefine per-file. */
+#define FONT_MAX_FILE_SIZE (512 * 1024)
 
 /**
  * Initialise the font manager. Scans /lfs/fonts/ and pre-loads

@@ -84,6 +84,8 @@ static esp_err_t image_upload_handler(httpd_req_t *req) {
 
 	size_t content_len = req->content_len;
 	if (content_len < 12 || content_len > IMAGE_MAX_SIZE) {
+		/* Drain (bounded) so an oversize upload reads the 400, not a TCP reset. */
+		if (content_len > IMAGE_MAX_SIZE) web_server_drain_body(req, 1024 * 1024);
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
 		return ESP_FAIL;
 	}
@@ -432,7 +434,9 @@ static const httpd_uri_t image_data_uri = {.uri = "/api/image/data",
 /* ── Font endpoints ──────────────────────────────────────────────────────── */
 
 #define LFS_FONT_DIR  "/lfs/fonts"
-#define FONT_MAX_FILE_SIZE (4 * 1024 * 1024)
+/* FONT_MAX_FILE_SIZE comes from font_manager.h (shared with the loader). The
+ * upload cap MUST match the loader's limit, or a font in (limit, old-4MB]
+ * uploads OK but silently fails to load (and large ones OOM the upload malloc). */
 
 static void _ensure_font_dir(void) {
 	struct stat st;
@@ -473,7 +477,14 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 	}
 
 	size_t content_len = req->content_len;
-	if (content_len < 12 || content_len > FONT_MAX_FILE_SIZE) {
+	if (content_len > FONT_MAX_FILE_SIZE) {
+		/* Drain (bounded) so the client reads this 400 instead of a TCP reset. */
+		web_server_drain_body(req, 1024 * 1024);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+		                    "Font too large (512 KB max — subset the TTF first)");
+		return ESP_FAIL;
+	}
+	if (content_len < 12) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
 		return ESP_FAIL;
 	}
