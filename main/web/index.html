@@ -11183,6 +11183,30 @@
             if (typeof updateInspector === 'function') updateInspector();
         }
 
+        /* ── Multi-select property editing ──────────────────────────────────
+         * When 2+ widgets of the SAME type are selected, the inspector renders
+         * one representative widget and every field edit fans out to the rest
+         * (only the field you change, not the whole config). _multiEdit is set
+         * per-render by updateInspector; the field setters read _multiTargets()
+         * to apply the same change to the other selected widgets. Mixed-type
+         * selections keep the plain "N widgets selected" placeholder. */
+        let _multiEdit = false;
+        function _sameTypeMultiGroup() {
+            if (selectedIndices.size <= 1) return null;
+            const idxs = [...selectedIndices].filter(i => currentLayout.widgets[i]);
+            if (idxs.length <= 1) return null;
+            const t = currentLayout.widgets[idxs[0]].type;
+            return idxs.every(i => currentLayout.widgets[i].type === t) ? idxs : null;
+        }
+        function _multiTargets() {
+            /* OTHER selected indices sharing the representative's type. */
+            if (!_multiEdit) return [];
+            const rep = currentLayout.widgets[selectedIndex];
+            if (!rep) return [];
+            return [...selectedIndices].filter(i => i !== selectedIndex &&
+                currentLayout.widgets[i] && currentLayout.widgets[i].type === rep.type);
+        }
+
         function updateInspector() {
             updateWidgetCoords();
             _saveInspectorState();
@@ -11212,9 +11236,22 @@
                 return;
             }
             if (selectedIndices.size > 1) {
-                fuelCalStopPoll();
-                inspectorContent.innerHTML = `<div style="text-align:center; color:hsl(0, 0%, 67%); padding-top:40px;">${selectedIndices.size} widgets selected<br><span style="font-size:11px;color:hsl(0, 0%, 40%);">Drag to move together &bull; Arrow keys to nudge &bull; Delete to remove</span></div>`;
-                return;
+                const _mg = _sameTypeMultiGroup();
+                if (!_mg) {
+                    /* Mixed types — no shared field set to edit. */
+                    fuelCalStopPoll();
+                    _multiEdit = false;
+                    const _nTypes = new Set([...selectedIndices].map(i => currentLayout.widgets[i] && currentLayout.widgets[i].type)).size;
+                    inspectorContent.innerHTML = `<div style="text-align:center; color:hsl(0, 0%, 67%); padding-top:40px;">${selectedIndices.size} widgets selected<br><span style="font-size:11px;color:hsl(0, 0%, 40%);">${_nTypes} types — select one widget type to edit shared properties<br>Drag to move together &bull; Arrow keys to nudge &bull; Delete to remove</span></div>`;
+                    return;
+                }
+                /* Same-type multi-select: edit shared properties for all at once.
+                 * Render a representative (keep the focused one inside the
+                 * selection) and fan field edits out via _multiTargets(). */
+                _multiEdit = true;
+                if (!selectedIndices.has(selectedIndex)) selectedIndex = _mg[0];
+            } else {
+                _multiEdit = false;
             }
             const w = currentLayout.widgets[selectedIndex];
             const def = WIDGET_DEFS[w.type] || { fields: [] };
@@ -11224,17 +11261,24 @@
             _syncWidgetThresholdsFromChannel(w);
 
             const disabledAttr = w.locked ? 'disabled' : '';
+            /* ID and position are per-widget-unique, so they're disabled while
+             * editing a multi-selection (you'd otherwise stack them / dup ids).
+             * Size (W/H) stays editable and fans out. */
+            const uniqAttr = (w.locked || _multiEdit) ? 'disabled' : '';
             const lockMsg = w.locked ? '<div style="background:hsla(0, 100%, 63%, 0.1); border:1px solid hsl(0, 100%, 63%); color:hsl(0, 100%, 63%); padding:4px; font-size:11px; margin-bottom:12px; text-align:center; border-radius:4px;">Widget is Locked</div>' : '';
 
             let html = lockMsg;
+            if (_multiEdit) {
+                html += `<div style="background:hsla(210,90%,55%,0.12); border:1px solid hsl(210,90%,55%); color:hsl(210,90%,72%); padding:5px 8px; font-size:11px; margin-bottom:10px; text-align:center; border-radius:4px;">Editing ${selectedIndices.size} ${w.type} widgets &mdash; changes apply to all</div>`;
+            }
 
             /* ── Layout Accordion (open by default) ── */
             html += `<details class="inspector-accordion" open><summary>Layout</summary><div class="accordion-body">`;
             html += `<div class="field"><label>Type</label><input type="text" value="${w.type}" disabled></div>`;
-            html += `<div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${disabledAttr}></div>`;
+            html += `<div class="field"><label>ID</label><input type="text" value="${w.id}" onchange="updateWidgetField('id', this.value)" ${uniqAttr}></div>`;
             html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                <div class="field"><label>X</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${disabledAttr}></div>
-                <div class="field"><label>Y</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${disabledAttr}></div>
+                <div class="field"><label>X</label><input type="number" value="${w.x}" oninput="updateWidgetField('x', parseInt(this.value), true)" ${uniqAttr}></div>
+                <div class="field"><label>Y</label><input type="number" value="${w.y}" oninput="updateWidgetField('y', parseInt(this.value), true)" ${uniqAttr}></div>
             </div>`;
             html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                 <div class="field"><label>W</label><input type="number" value="${w.w}" onchange="updateWidgetField('w', parseInt(this.value), true)" oninput="updateWidgetFieldDeferred('w', parseInt(this.value))" ${disabledAttr}></div>
@@ -12466,6 +12510,15 @@
                 currentLayout.widgets[selectedIndex].w = finalVal;
                 currentLayout.widgets[selectedIndex].h = finalVal;
             }
+            /* Multi-select: fan out size (W/H) to the other selected same-type
+             * widgets. Position (X/Y) and ID are NOT fanned (per-widget unique;
+             * disabled in the multi inspector) — only size is shared. */
+            const _fanned = (field === 'w' || field === 'h') ? _multiTargets() : [];
+            _fanned.forEach(i => {
+                const ow = currentLayout.widgets[i];
+                ow[field] = finalVal;
+                if (ow.type === 'meter') { ow.w = finalVal; ow.h = finalVal; }
+            });
             renderEditor();
             if (currentLayout.widgets[selectedIndex].type === 'meter' && (field === 'w' || field === 'h')) {
                 updateInspector();
@@ -12473,8 +12526,11 @@
             pushHistory();
             if (preview && _previewLive()) {
                 /* Geometry edits (X/Y/W/H) update the live widget in place;
-                 * anything else falls back to a full rebuild. */
-                if (field === 'x' || field === 'y' || field === 'w' || field === 'h') {
+                 * anything else falls back to a full rebuild. Multi-select W/H
+                 * needs a full rebuild so every fanned widget resizes. */
+                if (_fanned.length) {
+                    triggerPreview();
+                } else if (field === 'x' || field === 'y' || field === 'w' || field === 'h') {
                     _pushWidgetTransform(currentLayout.widgets[selectedIndex]);
                 } else {
                     triggerPreview();
@@ -12926,6 +12982,34 @@
                 }
             }
 
+            /* Multi-select fan-out: apply ONLY this field to the other selected
+             * same-type widgets (not their whole config). Channel-backed
+             * threshold fields are skipped — those belong to the bound channel,
+             * not the widget, and fanning them across widgets bound to different
+             * channels would cross-write. Meter/arc derived fields re-sync per
+             * target so their legacy LVGL values stay consistent. */
+            const _fanned = _multiTargets();
+            if (_fanned.length) {
+                const _tspec2 = _widgetThresholdSpec(w);
+                const _isThreshold = _tspec2 && [_tspec2.high, _tspec2.low, _tspec2.highEn,
+                                                 _tspec2.lowEn, _tspec2.en].filter(Boolean).includes(field);
+                if (!_isThreshold) {
+                    _fanned.forEach(i => {
+                        const ow = currentLayout.widgets[i];
+                        if (!ow.config) ow.config = {};
+                        ow.config[field] = finalVal;
+                        if (ow.type === 'meter' && METER_TRIGGERS.has(field)) {
+                            if (field === 'minor_tick_step' || field === 'major_tick_step') ow.config.auto_ticks = false;
+                            _meterSyncDerived(ow.config);
+                        }
+                        if (ow.type === 'arc' && ARC_TRIGGERS.has(field)) {
+                            if (field === 'minor_tick_step' || field === 'major_tick_step') ow.config.auto_ticks = false;
+                            _arcSyncDerived(ow.config);
+                        }
+                    });
+                }
+            }
+
             pushHistory();
             if (_previewLive()) {
                 /* Fast path: simple single-field edits (colour, text, number,
@@ -12933,8 +13017,11 @@
                  * /api/widget/set — no full teardown/rebuild. Fields that
                  * re-derive other values, channel-backed thresholds, selects,
                  * and gradients fall back to a full preview so the device
-                 * stays in lock-step with the editor. */
-                if (_fieldFastEligible(w, field, fieldDef)) {
+                 * stays in lock-step with the editor. In multi-select a full
+                 * preview is required so every fanned-out widget updates. */
+                if (_fanned.length) {
+                    triggerPreview();
+                } else if (_fieldFastEligible(w, field, fieldDef)) {
                     _pushWidgetFieldSet(w, field, fieldDef);
                 } else {
                     triggerPreview();
@@ -13346,6 +13433,16 @@
             const def = WIDGET_DEFS[type];
             if (def.singleton && currentLayout.widgets.some(w => w.type === type)) {
                 updateStatus(`Only one ${def.displayName || type} allowed per layout`, true);
+                return;
+            }
+            /* Enforce slot caps consistently with paste/duplicate. indicator (2)
+             * and warning (8) are HARD firmware caps — a widget past the cap gets
+             * no slot and collides on-device (never renders correctly), so adding
+             * one was a silent no-win. Refuse with the same clarity paste gives.
+             * panel/bar are effectively unlimited (256) so this never fires. */
+            if (SLOT_LIMITS[type] !== undefined && nextAvailableSlot(type) < 0) {
+                const cap = SLOT_LIMITS[type] > 0 ? SLOT_LIMITS[type] : 256;
+                showToast(`Maximum ${cap} ${def.displayName || type} widget${cap === 1 ? '' : 's'} reached`, 'error');
                 return;
             }
             pushHistory();
