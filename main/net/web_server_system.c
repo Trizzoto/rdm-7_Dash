@@ -12,6 +12,7 @@
  *   GET  /api/dimmer/config    brightness-dimmer signal config
  *   POST /api/dimmer/config    update dimmer config + re-subscribe */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -149,11 +150,7 @@ static esp_err_t _device_info_handler(httpd_req_t *req) {
 	cJSON_AddNumberToObject(sigs, "fresh", sig_fresh);
 	cJSON_AddNumberToObject(sigs, "stale", (int)sig_total - (int)sig_fresh);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t device_info_uri = {
@@ -176,12 +173,7 @@ static esp_err_t _brightness_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[64];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -234,12 +226,7 @@ static esp_err_t _can_config_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[64];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -300,11 +287,7 @@ static esp_err_t _system_health_handler(httpd_req_t *req) {
 	}
 	cJSON_AddNumberToObject(root, "wifi_rssi", rssi);
 
-	char *json = cJSON_PrintUnformatted(root);
-	cJSON_Delete(root);
-	httpd_resp_sendstr(req, json);
-	free(json);
-	return ESP_OK;
+	return web_server_send_json(req, root);
 }
 
 static const httpd_uri_t system_health_uri = {
@@ -367,12 +350,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
 	char buf[256];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -407,7 +385,7 @@ static esp_err_t _dimmer_config_post_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	save_dimmer_config_to_nvs();
-	lv_async_call(_deferred_dimmer_subscribe, NULL);
+	rdm_async_call(_deferred_dimmer_subscribe, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");

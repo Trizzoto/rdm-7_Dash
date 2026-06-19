@@ -32,6 +32,20 @@ esp_err_t boot_assets_seed_defaults(void);
  */
 bool boot_assets_is_protected_image(const char *name);
 
+/**
+ * Return true if the given font family name is one of the built-in scalable
+ * fonts seeded into /lfs/fonts/ ("Montserrat", "Fugaz One", "Manrope Bold").
+ * These must not be deleted or copied to/from SD so they always stay intact.
+ * Case-insensitive (font family lookup is case-insensitive).
+ */
+bool boot_assets_is_protected_font(const char *name);
+
+/**
+ * Return true if the given layout name is the built-in default layout
+ * ("default"), which must not be deleted or moved to SD.
+ */
+bool boot_assets_is_protected_layout(const char *name);
+
 #ifdef __cplusplus
 }
 #endif

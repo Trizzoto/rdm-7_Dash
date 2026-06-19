@@ -9,6 +9,11 @@ idf_component_register(
         "can/obd2_pids.c"
         "can/obd2_dtc_db.c"
         "can/dtc_monitor.c"
+        "data/canonical_channels.c"
+        "data/channel_manager.c"
+        "data/channel_math.c"
+        "data/channel_source_apply.c"
+        "data/unit_convert.c"
         "storage/boot_assets.c"
         "storage/config_store.c"
         "storage/sd_manager.c"
@@ -33,6 +38,9 @@ idf_component_register(
         "net/web_server_logger.c"
         "net/web_server_layout.c"
         "net/web_server_obd2.c"
+        "net/web_server_channels.c"
+        "net/web_server_test.c"
+        "net/web_server_mirror.c"
         "net/wifi_manager.c"
         "net/uart_protocol.c"
         "net/serial_protocol.c"
@@ -44,6 +52,7 @@ idf_component_register(
         "system/remote_touch.c"
         "system/crash_log.c"
         "system/heap_monitor.c"
+        "system/rdm_lv_async.c"
         "ui/ui.c"
         "ui/dashboard.c"
         "ui/ui_styles.c"
@@ -80,24 +89,28 @@ idf_component_register(
         "widgets/widget_button.c"
         "widgets/widget_shift_light.c"
         "widgets/widget_line.c"
+        "widgets/widget_banner.c"
+        "widgets/widget_pathbar.c"
         "widgets/widget_rules.c"
+        "widgets/widget_smooth.c"
         "widgets/widget_fields.c"
         "widgets/widget_fields.gen.c"
         "widgets/font_manager.c"
         "widgets/signal_internal.c"
         "widgets/signal.c"
         "widgets/signal_sim.c"
+        "widgets/gradient_stops.c"
         "layout/layout_manager.c"
         "layout/default_layout.c"
         "layout/layout_loader.c"
         "layout/ecu_presets.c"
+        "layout/layout_switcher.c"
         "ui/screens/splash_screen.c"
         "ui/screens/ui_wifi.c"
         "ui/screens/ui_diagnostics.c"
         "ui/screens/ui_peaks.c"
         "ui/screens/ui_can_list.c"
         "ui/screens/first_run_wizard.c"
-        "ui/screens/ui_ecu_picker.c"
         "ui/fonts/ui_font_fugaz_14.c"
         "ui/fonts/ui_font_fugaz_17.c"
         "ui/fonts/ui_font_fugaz_28.c"
@@ -122,6 +135,7 @@ idf_component_register(
         "."
         "./include"
         "can"
+        "data"
         "net"
         "storage"
         "io"
@@ -157,6 +171,8 @@ idf_component_register(
         "esp_http_server"
         "joltwallet__littlefs"
     EMBED_FILES "embed/RDM.rdmimg" "web/favicon.ico" "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz"
+                "${CMAKE_CURRENT_BINARY_DIR}/mirror.html.gz"
+                "embed/fonts/montserrat.ttf" "embed/fonts/fugaz_one.ttf" "embed/fonts/manrope_bold.ttf"
 )
 
 # ─── Gzip the web editor at configure time ─────────────────────────────────
@@ -183,10 +199,12 @@ idf_component_register(
 # ────────────────────────────────────────────────────────────────────────────
 set(_RDM_INDEX_HTML_SRC "${CMAKE_CURRENT_SOURCE_DIR}/web/index.html")
 set(_RDM_INDEX_HTML_GZ  "${CMAKE_CURRENT_BINARY_DIR}/index.html.gz")
+set(_RDM_MIRROR_HTML_SRC "${CMAKE_CURRENT_SOURCE_DIR}/web/mirror.html")
+set(_RDM_MIRROR_HTML_GZ  "${CMAKE_CURRENT_BINARY_DIR}/mirror.html.gz")
 
 # Re-run CMake configure when index.html changes so the .gz gets regenerated.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             "${_RDM_INDEX_HTML_SRC}")
+             "${_RDM_INDEX_HTML_SRC}" "${_RDM_MIRROR_HTML_SRC}")
 
 # The build-tree component dir is lazily created by ESP-IDF and may not exist
 # yet when we're configuring — make sure it does before Python tries to write
@@ -214,6 +232,22 @@ execute_process(
 if(NOT _rdm_gzip_result EQUAL 0)
     message(FATAL_ERROR
             "Failed to gzip ${_RDM_INDEX_HTML_SRC} -> ${_RDM_INDEX_HTML_GZ}\n"
+            "  python: ${_RDM_PYTHON}\n"
+            "  result: ${_rdm_gzip_result}\n"
+            "  stderr: ${_rdm_gzip_stderr}")
+endif()
+
+# Same treatment for the WASM live-mirror page (web/mirror.html → /mirror).
+execute_process(
+    COMMAND "${_RDM_PYTHON}" -c
+        "import gzip,sys; open(sys.argv[2],'wb').write(gzip.compress(open(sys.argv[1],'rb').read(), 9))"
+        "${_RDM_MIRROR_HTML_SRC}" "${_RDM_MIRROR_HTML_GZ}"
+    RESULT_VARIABLE _rdm_gzip_result
+    ERROR_VARIABLE  _rdm_gzip_stderr
+)
+if(NOT _rdm_gzip_result EQUAL 0)
+    message(FATAL_ERROR
+            "Failed to gzip ${_RDM_MIRROR_HTML_SRC} -> ${_RDM_MIRROR_HTML_GZ}\n"
             "  python: ${_RDM_PYTHON}\n"
             "  result: ${_rdm_gzip_result}\n"
             "  stderr: ${_rdm_gzip_stderr}")

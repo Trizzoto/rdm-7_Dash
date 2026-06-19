@@ -1,0 +1,19 @@
+{
+ "name": "ktm",
+ "image_name": "ktm_bg",
+ "image_file": "ktm_bg.rdmimg",
+ "layout_file": "ktm_layout.json",
+ "states": {
+  "idle": {
+   "GEAR": 0,
+   "RPM": 4200,
+   "VEHICLE_SPEED": 0
+  },
+  "driving": {
+   "GEAR": 3,
+   "RPM": 7400,
+   "VEHICLE_SPEED": 124
+  }
+ },
+ "default_state": "driving"
+}

@@ -3,6 +3,8 @@
 #include "ui/screens/ui_Screen3.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "widget_smooth.h"
+#include "gradient_stops.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +19,7 @@ typedef struct {
 	NIGHT_FIELD_COLOR(bar_border_color)
 	NIGHT_FIELD_COLOR(label_color)
 	NIGHT_FIELD_COLOR(value_color)
+	NIGHT_FIELD_COLOR(tick_color)
 	NIGHT_FIELD_IMAGE(bar_image, 64)
 	NIGHT_FIELD_IMAGE(bar_image_full, 64)
 } bar_night_overrides_t;
@@ -25,15 +28,41 @@ typedef struct {
 typedef struct {
 	uint8_t  slot;              /* 0=BAR1, 1=BAR2 */
 	char     label[32];
-	int32_t  bar_min;
-	int32_t  bar_max;
-	int32_t  bar_low;
-	int32_t  bar_high;
+	/* Range + alert thresholds in display units. Float so decimals survive
+	 * (e.g. lambda 0.70..1.30); the LVGL bar range is scaled by 10^decimals
+	 * at the boundary (see _bar_resolution_scale / widget_bar_sync_range). */
+	float    bar_min;
+	float    bar_max;
+	float    bar_low;
+	float    bar_high;
 	lv_color_t bar_low_color;
 	lv_color_t bar_high_color;
 	lv_color_t bar_in_range_color;
+	/* Optional N-stop horizontal gradient on the indicator. Rendered
+	 * through LVGL's native lv_grad_dsc_t (sdkconfig bumps
+	 * LV_GRADIENT_MAX_STOPS from the default 2 to 8 so multi-stop
+	 * gradients work without bg_img hacks — LVGL paints the gradient
+	 * directly into the indicator rect so it grows correctly with the
+	 * fill). grad_lv_dsc is the LVGL-format mirror of grad_stops and
+	 * MUST outlive the lv_obj_set_style_bg_grad call (LVGL stores
+	 * the pointer, not a copy). Low/high alert states still paint
+	 * solid bar_low_color / bar_high_color over the top so warning
+	 * visuals stay unambiguous. */
+	gradient_stops_t grad_stops;
+	lv_grad_dsc_t    grad_lv_dsc;
 	bool     show_bar_value;
+	bool     show_bar_label;        /* default: true — hide the text label above the bar */
 	bool     invert_bar_value;
+	bool     center_fill;           /* default: false — lv_bar SYMMETRICAL: fill from
+	                                 * zero outward (set Min<0<Max for a centered split) */
+	/* Fill direction (standard colour-bar path only):
+	 *   0 = Left → Right (default)   1 = Right → Left (base_dir RTL)
+	 *   2 = Center → Out ("inside to outside")
+	 *   3 = Edges → In   ("outside to inside")
+	 * Modes 2/3 render as two mirrored half-bars (bar_obj + bar_obj2). When a
+	 * mirror mode is active center_fill is ignored (the mirror owns geometry).
+	 * Image-mode bars only honour mode 0/1. */
+	uint8_t  fill_dir;
 	uint8_t  decimals;
 	char     label_font[32];
 	char     value_font[32];
@@ -46,34 +75,78 @@ typedef struct {
 	uint8_t    indicator_radius;     /* default: 5 */
 	lv_color_t label_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
+	/* ── Tick marks (optional) ──
+	 * Small rectangles overlaid as siblings of the bar, evenly spaced across
+	 * the bar width. tick_side: 0=Top, 1=Bottom, 2=Both. Default off so
+	 * existing layouts are unaffected. Drawn manually (lv_scale doesn't exist
+	 * in LVGL v8) following the update_rpm_lines() pattern. */
+	bool       show_ticks;           /* default: false */
+	uint8_t    tick_count;           /* default: 5  — ticks evenly across width */
+	uint8_t    tick_length;          /* default: 6  — tick length in px */
+	uint8_t    tick_width;           /* default: 2  — tick thickness in px */
+	lv_color_t tick_color;           /* default: THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	uint8_t    tick_side;            /* 0=Top,1=Bottom,2=Both, default: 2 */
 	/* ── Image-based bar (optional) ── */
 	/* Anchor-based non-linear scale. Maps a single DATA value to a specific
 	 * position along the bar fill, splitting the range into two linear
 	 * segments. Use case: "I want 90°C coolant at 50% of the bar so the
 	 * danger zone (90-110) takes the second half." Default leaves the bar
 	 * linear (anchor at midpoint, position 50%). */
-	int32_t  anchor_value;           /* default: bar_min + (bar_max-bar_min)/2 */
+	float    anchor_value;           /* default: bar_min + (bar_max-bar_min)/2 */
 	uint8_t  anchor_position;        /* 0..100, default: 50 */
 	bool     anchor_enabled;         /* false (default) = linear pass-through */
 	char     bar_image[64];          /* track/background image name (default: "") */
 	char     bar_image_full[64];     /* fill image name (default: "") */
+	lv_color_t fill_edge_color;      /* image-fill leading-edge highlight color */
+	uint8_t    fill_edge_width;      /* 0 = off (default); px width of the edge line */
 	lv_img_dsc_t *bar_img_dsc;      /* runtime: loaded track image descriptor */
 	lv_img_dsc_t *bar_img_full_dsc;  /* runtime: loaded fill image descriptor */
 	lv_obj_t *img_bg_obj;            /* runtime: background image LVGL object */
 	lv_obj_t *img_full_obj;          /* runtime: full image LVGL object */
 	lv_obj_t *img_clip_obj;          /* runtime: clipping container for fill */
+	lv_obj_t *fill_tip_obj;          /* runtime: leading-edge highlight (rides fill front) */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * See widget_meter.h for the pattern. Backwards-compat: empty
+	 * channel_id falls through to legacy bar_min/bar_max/bar_low/
+	 * bar_high path. */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
 	/* LVGL object pointers (runtime only, per-instance) */
 	lv_obj_t *bar_obj;
+	lv_obj_t *bar_obj2;             /* right-half mirror bar (fill_dir 2/3 only) */
 	lv_obj_t *label_obj;
 	lv_obj_t *value_obj;
+	/* Tick-mark objects — siblings of the bar (children of the same parent),
+	 * rebuilt only on create / resize / edit (never per signal tick). Both
+	 * sides ("Both") draw up to 2*tick_count objects, so cap at 60 (30 per
+	 * side); tick_obj_count is the number currently live in tick_objs[]. */
+	lv_obj_t *tick_objs[60];
+	uint8_t   tick_obj_count;
 	/* Runtime tracking for night-mode image swap — name currently loaded
 	 * into bar_img_dsc / bar_img_full_dsc, so we only reload on a change. */
 	char     current_bar_image[64];
 	char     current_bar_image_full[64];
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	bar_night_overrides_t night;
+	/* Paint memo — skip redundant per-tick writes. _bar_on_signal is the only
+	 * per-tick writer of the bar value / indicator color / gradient / value
+	 * label, so a value-compare here suppresses the whole-bar invalidate that
+	 * lv_bar_set_value fires every frame (LV_ANIM_OFF) plus the redundant
+	 * style writes. Reset by _bar_invalidate_paint_cache on resize / channel
+	 * rebind / night / overrides (anything that changes bounds or palette out
+	 * of band). Mirrors widget_rpm_bar.c s_paint_cache. */
+	bool       _pc_valid;
+	int32_t    _pc_display_value;
+	lv_coord_t _pc_clip_w;
+	lv_color_t _pc_bg;
+	bool       _pc_grad_active;
+	uint16_t   _pc_grad_first;
+	char       _pc_value_str[16];
+	/* Optional needle/fill smoothing (eases the value at refresh rate). */
+	widget_smooth_t smooth;
+	bool            smooth_bypass;   /* true while the easing timer re-feeds on_signal */
 } bar_data_t;
 
 /** Create BAR1 and BAR2 horizontal bar widgets and their labels on parent. */

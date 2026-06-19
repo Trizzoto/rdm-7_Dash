@@ -1,6 +1,7 @@
 #include "layout_manager.h"
 #include "default_layout.h"
 #include "boot_assets.h"
+#include "data/channel_manager.h"
 
 /* Widget factory headers */
 #include "widget_bar.h"
@@ -19,6 +20,8 @@
 #include "widget_button.h"
 #include "widget_shift_light.h"
 #include "widget_line.h"
+#include "widget_banner.h"
+#include "widget_pathbar.h"
 #include "widget_rules.h"
 
 #include "signal.h"
@@ -31,6 +34,7 @@
 #include "data_logger.h"
 #include "signal_replay.h"
 #include "can_raw_logger.h"
+#include "config_store.h"
 
 #include "cJSON.h"
 #include "esp_littlefs.h"
@@ -51,6 +55,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/* Read a layout file into a malloc'd NUL-terminated buffer (caller frees);
+ * NULL on failure. Defined below; forward-declared for the boot-time
+ * default.json validity check. */
+static char *_read_layout_file(const char *path);
 
 static const char *TAG = "layout_mgr";
 
@@ -147,6 +156,10 @@ static widget_type_t _type_from_str(const char *s) {
 		return WIDGET_SHIFT_LIGHT;
 	if (strcmp(s, "line") == 0)
 		return WIDGET_LINE;
+	if (strcmp(s, "banner") == 0)
+		return WIDGET_BANNER;
+	if (strcmp(s, "pathbar") == 0)
+		return WIDGET_PATHBAR;
 	return WIDGET_TYPE_COUNT;
 }
 
@@ -211,6 +224,12 @@ static widget_t *_factory(widget_type_t type, cJSON *widget_json) {
 		break;
 	case WIDGET_LINE:
 		w = widget_line_create_instance(slot);
+		break;
+	case WIDGET_BANNER:
+		w = widget_banner_create_instance(slot);
+		break;
+	case WIDGET_PATHBAR:
+		w = widget_pathbar_create_instance(slot);
 		break;
 	default:
 		return NULL;
@@ -290,8 +309,23 @@ esp_err_t layout_manager_init(void) {
 			 LFS_LAYOUT_DIR);
 
 	struct stat st_def;
-	if (stat(default_path, &st_def) != 0) {
-		ESP_LOGI(TAG, "default.json not found — generating");
+	bool need_default = (stat(default_path, &st_def) != 0);
+	if (!need_default) {
+		/* Exists — confirm it still parses. A corrupt default.json was never
+		 * regenerated (the check was stat-exists only), so the dash would drop
+		 * to the hardcoded fallback on every boot until factory reset. */
+		char *db = _read_layout_file(default_path);
+		cJSON *dj = db ? cJSON_Parse(db) : NULL;
+		free(db);
+		if (!dj) {
+			ESP_LOGW(TAG, "default.json present but unparseable — regenerating");
+			need_default = true;
+		} else {
+			cJSON_Delete(dj);
+		}
+	}
+	if (need_default) {
+		ESP_LOGI(TAG, "default.json not found/invalid — generating");
 		esp_err_t err2 = generate_default_layout();
 		if (err2 != ESP_OK) {
 			ESP_LOGW(TAG, "generate_default_layout failed: %s",
@@ -364,10 +398,40 @@ static void _load_signals(const cJSON *root) {
 			cJSON_GetObjectItemCaseSensitive(sj, "bit_start");
 		const cJSON *len_item =
 			cJSON_GetObjectItemCaseSensitive(sj, "bit_length");
+		const cJSON *src_item =
+			cJSON_GetObjectItemCaseSensitive(sj, "source");
 
-		if (!cJSON_IsString(name_item) || !cJSON_IsNumber(can_id_item) ||
-			!cJSON_IsNumber(start_item) || !cJSON_IsNumber(len_item))
+		/* Name is the only hard requirement. Internal-source signals
+		 * (source: "internal") never come off CAN, so they don't need
+		 * can_id / bit_start / bit_length — those default to zero. CAN
+		 * signals still need real values for dispatch to find them. */
+		if (!cJSON_IsString(name_item)) continue;
+
+		const char *src = (cJSON_IsString(src_item) && src_item->valuestring)
+			? src_item->valuestring : "";
+		bool is_internal = (strcmp(src, "internal") == 0);
+
+		/* ADR 0005 Phase B: layouts no longer carry CAN decode, but they DO
+		 * still carry portable display/calibration metadata — value→label maps
+		 * (gear/mode labels) and the fuel-sender calibration. Such entries now
+		 * arrive as {name, value_map} / {name, fuel_cal} with NO can_id/bits and
+		 * NO source. Without this, the decode-requirement gate below would skip
+		 * them entirely and the value_map attach + fuel_cal parser further down
+		 * would never run — silently losing gear labels and fuel cal on every
+		 * reload. Let metadata-only entries through; they register with can_id=0
+		 * (the channel later UPSERTs the real CAN decode, preserving value_map). */
+		bool has_decode = cJSON_IsNumber(can_id_item) &&
+		                  cJSON_IsNumber(start_item) && cJSON_IsNumber(len_item);
+		bool has_value_map =
+			cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(sj, "value_map"));
+		bool is_fuel = (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0);
+
+		if (!is_internal && !has_decode && !has_value_map && !is_fuel)
 			continue;
+
+		uint32_t can_id    = cJSON_IsNumber(can_id_item) ? (uint32_t)can_id_item->valueint : 0;
+		uint8_t  bit_start = cJSON_IsNumber(start_item)  ? (uint8_t)start_item->valueint   : 0;
+		uint8_t  bit_len   = cJSON_IsNumber(len_item)    ? (uint8_t)len_item->valueint     : 0;
 
 		float scale = 1.0f, offset = 0.0f;
 		bool is_signed = false;
@@ -391,10 +455,33 @@ static void _load_signals(const cJSON *root) {
 		const char *unit_str = (cJSON_IsString(unit_item) && unit_item->valuestring)
 			? unit_item->valuestring : "";
 
-		int16_t idx = signal_register(
-			name_item->valuestring, (uint32_t)can_id_item->valueint,
-			(uint8_t)start_item->valueint, (uint8_t)len_item->valueint, scale,
-			offset, is_signed, endian, unit_str);
+		/* Map the JSON "source" string to the signal_source_t enum. The
+		 * registry-side classification is what the OBD2 picker and web
+		 * Custom Signals filter key off of — defaulting to CAN means
+		 * legacy layouts (no "source" field) continue to behave like
+		 * broadcast signals. */
+		signal_source_t src_enum = SIGNAL_SOURCE_CAN;
+		if (is_internal) {
+			src_enum = SIGNAL_SOURCE_INTERNAL;
+		} else if (strcmp(src, "obd2") == 0) {
+			src_enum = SIGNAL_SOURCE_OBD2;
+		} else if (!has_decode) {
+			/* Metadata-only entry (value_map / fuel_cal, no CAN bit-field):
+			 * classify as INTERNAL so it isn't mislabeled CAN. If a channel
+			 * owns this signal's decode, register_decoded_signals() UPSERTs the
+			 * real CAN decode (and source) afterwards — value_map survives the
+			 * UPSERT (decode params change in place; subscribers/value_map kept). */
+			src_enum = SIGNAL_SOURCE_INTERNAL;
+		}
+
+		/* Re-registration of an existing name now UPDATES that slot's decode
+		 * params in place and returns its index (latest-layout-wins) rather
+		 * than dropping the dup — so the freshly loaded layout's decode wins
+		 * even though the registry merges across loads. See
+		 * signal_register_with_source(). */
+		int16_t idx = signal_register_with_source(
+			name_item->valuestring, can_id, bit_start, bit_len, scale,
+			offset, is_signed, endian, unit_str, src_enum);
 
 		if (idx >= 0) {
 			ESP_LOGD(TAG, "Registered signal '%s' → index %d",
@@ -404,23 +491,89 @@ static void _load_signals(const cJSON *root) {
 					 name_item->valuestring);
 		}
 
-		/* Check for fuel_cal object on FUEL_SENDER_V signal */
+		/* Optional value→label map: parse and attach so widgets that
+		 * render this signal can show "N" / "P" / "Sport" / etc. instead
+		 * of raw integer codes. Schema:
+		 *   "value_map": [ { "v": 0, "label": "N" }, ... ]
+		 * Missing/empty array = numeric formatting (existing behaviour). */
+		if (idx >= 0) {
+			const cJSON *vm_arr = cJSON_GetObjectItemCaseSensitive(sj, "value_map");
+			if (cJSON_IsArray(vm_arr) && cJSON_GetArraySize(vm_arr) > 0) {
+				int n = cJSON_GetArraySize(vm_arr);
+				if (n > SIGNAL_VALUE_MAP_MAX) n = SIGNAL_VALUE_MAP_MAX;
+				signal_value_label_t entries[SIGNAL_VALUE_MAP_MAX];
+				uint8_t count = 0;
+				for (int k = 0; k < n; k++) {
+					const cJSON *vm_obj = cJSON_GetArrayItem(vm_arr, k);
+					if (!cJSON_IsObject(vm_obj)) continue;
+					const cJSON *v_item = cJSON_GetObjectItemCaseSensitive(vm_obj, "v");
+					const cJSON *l_item = cJSON_GetObjectItemCaseSensitive(vm_obj, "label");
+					if (!cJSON_IsNumber(v_item) || !cJSON_IsString(l_item)) continue;
+					entries[count].value = (float)v_item->valuedouble;
+					safe_strncpy(entries[count].label, l_item->valuestring,
+								 sizeof(entries[count].label));
+					count++;
+				}
+				if (count > 0) {
+					signal_set_value_map(idx, entries, count);
+					ESP_LOGI(TAG, "value_map: '%s' got %u entries",
+							 name_item->valuestring, (unsigned)count);
+				}
+			}
+		}
+
+		/* Check for fuel_cal object on FUEL_SENDER_V signal. Supports
+		 * two shapes:
+		 *   - Modern multipoint: { points:[{v,val}...], enabled }
+		 *   - Legacy 2-point:    { empty_v, full_v, full_value, enabled }
+		 * If both are present the points[] array wins. */
 		if (strcmp(name_item->valuestring, "FUEL_SENDER_V") == 0) {
 			const cJSON *fc = cJSON_GetObjectItemCaseSensitive(sj, "fuel_cal");
 			if (cJSON_IsObject(fc)) {
-				float empty_v = 0.5f, full_v = 3.0f, full_val = 100.0f;
 				bool en = false;
-				const cJSON *fci;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "empty_v");
-				if (cJSON_IsNumber(fci)) empty_v = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_v");
-				if (cJSON_IsNumber(fci)) full_v = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "full_value");
-				if (cJSON_IsNumber(fci)) full_val = (float)fci->valuedouble;
-				fci = cJSON_GetObjectItemCaseSensitive(fc, "enabled");
+				const cJSON *fci = cJSON_GetObjectItemCaseSensitive(fc, "enabled");
 				if (cJSON_IsBool(fci)) en = cJSON_IsTrue(fci);
-				signal_internal_set_fuel_cal(empty_v, full_v, full_val, en);
-				ESP_LOGI(TAG, "Loaded fuel_cal from FUEL_SENDER_V signal");
+
+				const cJSON *pts = cJSON_GetObjectItemCaseSensitive(fc, "points");
+				bool used_multipoint = false;
+				if (cJSON_IsArray(pts)) {
+					int n = cJSON_GetArraySize(pts);
+					if (n >= 2) {
+						if (n > FUEL_CAL_MAX_POINTS) n = FUEL_CAL_MAX_POINTS;
+						fuel_cal_point_t buf[FUEL_CAL_MAX_POINTS];
+						int got = 0;
+						const cJSON *p;
+						int idx = 0;
+						cJSON_ArrayForEach(p, pts) {
+							if (idx >= n) break;
+							idx++;
+							if (!cJSON_IsObject(p)) continue;
+							const cJSON *jv  = cJSON_GetObjectItemCaseSensitive(p, "v");
+							const cJSON *jva = cJSON_GetObjectItemCaseSensitive(p, "val");
+							if (!cJSON_IsNumber(jv) || !cJSON_IsNumber(jva)) continue;
+							buf[got].voltage = (float)jv->valuedouble;
+							buf[got].value   = (float)jva->valuedouble;
+							got++;
+						}
+						if (got >= 2) {
+							signal_internal_set_fuel_cal_points(buf, (uint8_t)got, en);
+							used_multipoint = true;
+							ESP_LOGI(TAG, "Loaded fuel_cal: %d points", got);
+						}
+					}
+				}
+
+				if (!used_multipoint) {
+					float empty_v = 0.5f, full_v = 3.0f, full_val = 100.0f;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "empty_v");
+					if (cJSON_IsNumber(fci)) empty_v = (float)fci->valuedouble;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "full_v");
+					if (cJSON_IsNumber(fci)) full_v = (float)fci->valuedouble;
+					fci = cJSON_GetObjectItemCaseSensitive(fc, "full_value");
+					if (cJSON_IsNumber(fci)) full_val = (float)fci->valuedouble;
+					signal_internal_set_fuel_cal(empty_v, full_v, full_val, en);
+					ESP_LOGI(TAG, "Loaded fuel_cal (2-point) from FUEL_SENDER_V signal");
+				}
 			}
 		}
 	}
@@ -524,30 +677,62 @@ static void _save_signals(cJSON *root) {
 	if (count == 0)
 		return;
 
-	cJSON *arr = cJSON_AddArrayToObject(root, "signals");
-	if (!arr)
-		return;
+	/* ADR 0005 Phase B: CAN decode now lives on channels (channels.json),
+	 * NOT in the layout — so a shared layout no longer imposes the source
+	 * dash's decode (can_id/bits/scale/offset/endian) on the target. This
+	 * in-memory save (serial commands / data-logger snapshots) therefore emits
+	 * ONLY the display/calibration metadata that is genuinely layout-portable:
+	 * value→label maps and the fuel-sender calibration. Pure-decode signals are
+	 * dropped entirely; the "signals" array is created lazily so a decode-only
+	 * registry emits no "signals" key at all. (The web /api/layout/save path
+	 * goes through save_raw with the editor's buildFirmwarePayload, which strips
+	 * decode the same way.) */
+	cJSON *arr = NULL;
 
 	for (uint16_t i = 0; i < count; i++) {
 		signal_t *sig = signal_get_by_index(i);
 		if (!sig)
 			continue;
+		bool has_value_map = (sig->value_map && sig->value_map_count > 0);
+		bool is_fuel = (strcmp(sig->name, "FUEL_SENDER_V") == 0);
+		if (!has_value_map && !is_fuel)
+			continue;          /* nothing portable to emit for this signal */
+		if (!arr) {
+			arr = cJSON_AddArrayToObject(root, "signals");
+			if (!arr)
+				return;
+		}
 		cJSON *sj = cJSON_CreateObject();
 		if (!sj)
 			continue;
 		cJSON_AddStringToObject(sj, "name", sig->name);
-		cJSON_AddNumberToObject(sj, "can_id", sig->can_id);
-		cJSON_AddNumberToObject(sj, "bit_start", sig->bit_start);
-		cJSON_AddNumberToObject(sj, "bit_length", sig->bit_length);
-		cJSON_AddNumberToObject(sj, "scale", sig->scale);
-		cJSON_AddNumberToObject(sj, "offset", sig->offset);
-		cJSON_AddBoolToObject(sj, "is_signed", sig->is_signed);
-		cJSON_AddNumberToObject(sj, "endian", sig->endian);
-		if (sig->unit[0] != '\0')
-			cJSON_AddStringToObject(sj, "unit", sig->unit);
 
-		/* Attach fuel calibration to FUEL_SENDER_V signal */
-		if (strcmp(sig->name, "FUEL_SENDER_V") == 0) {
+		/* Optional value→label map round-trip. Web /api/layout/save goes
+		 * through layout_manager_save_raw and preserves this field as-is
+		 * (the editor's JSON flows verbatim to disk); the path here is
+		 * the in-memory save used by serial commands and any internal
+		 * "snapshot current state" caller. */
+		if (has_value_map) {
+			cJSON *vm_arr = cJSON_AddArrayToObject(sj, "value_map");
+			if (vm_arr) {
+				for (uint8_t k = 0; k < sig->value_map_count; k++) {
+					cJSON *vm_obj = cJSON_CreateObject();
+					if (!vm_obj) continue;
+					cJSON_AddNumberToObject(vm_obj, "v",
+						(double)sig->value_map[k].value);
+					cJSON_AddStringToObject(vm_obj, "label",
+						sig->value_map[k].label);
+					cJSON_AddItemToArray(vm_arr, vm_obj);
+				}
+			}
+		}
+
+		/* Attach fuel calibration to FUEL_SENDER_V signal. Always write
+		 * the 2-point fields for backwards-compat with older firmwares
+		 * that haven't learned about points[] yet — when a multipoint
+		 * curve is set, those mirror the endpoints. The points array is
+		 * additive: present when point_count >= 2, absent otherwise. */
+		if (is_fuel) {
 			fuel_cal_config_t fc;
 			signal_internal_get_fuel_cal(&fc);
 			cJSON *fc_obj = cJSON_AddObjectToObject(sj, "fuel_cal");
@@ -556,6 +741,18 @@ static void _save_signals(cJSON *root) {
 				cJSON_AddNumberToObject(fc_obj, "full_v", fc.full_v);
 				cJSON_AddNumberToObject(fc_obj, "full_value", fc.full_value);
 				cJSON_AddBoolToObject(fc_obj, "enabled", fc.enabled);
+				if (fc.point_count >= 2) {
+					cJSON *arr = cJSON_AddArrayToObject(fc_obj, "points");
+					if (arr) {
+						for (uint8_t pi = 0; pi < fc.point_count; pi++) {
+							cJSON *p = cJSON_CreateObject();
+							if (!p) break;
+							cJSON_AddNumberToObject(p, "v",   fc.points[pi].voltage);
+							cJSON_AddNumberToObject(p, "val", fc.points[pi].value);
+							cJSON_AddItemToArray(arr, p);
+						}
+					}
+				}
 			}
 		}
 
@@ -644,6 +841,112 @@ static void _migrate_layout_root(cJSON *root, int from_ver) {
  * @param caller   Tag string for log messages (e.g. "layout_load", "apply_json")
  * @return ESP_OK on success, ESP_FAIL if "widgets" array is missing
  */
+/* Post-pass: after all widgets exist + are positioned, give each transparent
+ * meter a small, cache-friendly face sliced from the full-screen background
+ * image. The meter then occludes the big background beneath it, so the bg isn't
+ * re-read (strided, cache-hostile) under every moving needle — ~2x fps, same
+ * look. Re-runs on every layout apply; the slice cache means only meters whose
+ * geometry actually changed re-slice, so moving one meter stays cheap. No-op
+ * when there's no full-screen bg image, and meters with their own face are
+ * left untouched. */
+/* Free a sliced face when its low-z occluder image is deleted (e.g. on layout
+ * reload, when the bg container that owns it is destroyed). Balances the
+ * rdm_image_slice() refcount taken when the occluder was created. */
+static void _occ_free_slice_cb(lv_event_t *e) {
+	rdm_image_free((lv_img_dsc_t *)lv_event_get_user_data(e));
+}
+
+static void _autoslice_from_bg(void) {
+	widget_t *snap[WIDGET_REGISTRY_MAX];
+	uint8_t n = 0;
+	widget_registry_snapshot(snap, WIDGET_REGISTRY_MAX, &n);
+	widget_t *bgw = NULL;
+	for (uint8_t i = 0; i < n; i++) {
+		widget_t *w = snap[i];
+		if (w && w->type == WIDGET_IMAGE &&
+		    w->w >= (uint16_t)(SCREEN_W * 9 / 10) &&
+		    w->h >= (uint16_t)(SCREEN_H * 9 / 10)) {
+			bgw = w;
+			break;
+		}
+	}
+	if (!bgw) return;
+	lv_img_dsc_t *bg = NULL;
+	lv_area_t disp;
+	uint16_t nw = 0, nh = 0;
+	if (!widget_image_get_bg_geometry(bgw, &bg, &disp, &nw, &nh)) return;
+	ESP_LOGI(TAG, "autoslice: bg '%s' on screen [%d,%d %dx%d]", bgw->id,
+	         (int)disp.x1, (int)disp.y1, (int)(disp.x2 - disp.x1 + 1), (int)(disp.y2 - disp.y1 + 1));
+	for (uint8_t i = 0; i < n; i++) {
+		if (!snap[i] || snap[i]->type != WIDGET_METER) continue;
+		/* Auto-slicing makes a meter's face OPAQUE so it occludes the bg — but an
+		 * opaque rect also occludes any LOWER-z widget the meter sits on top of.
+		 * If this meter substantially covers a widget below it (e.g. a big centre
+		 * gauge raised above the little sub-dials inside it), don't make the meter
+		 * opaque (it would hide them). Instead drop a low-z opaque face-occluder
+		 * (a contiguous crop of the bg) under the bg's other children, so the
+		 * meter's needle still re-blends a cache-friendly crop (not the strided
+		 * full bg = the slow path) while staying transparent so the needle draws
+		 * ON TOP of the covered widgets. */
+		const widget_t *m = snap[i];
+		int mx1 = SCREEN_ORIGIN_X + m->x - m->w / 2;
+		int my1 = SCREEN_ORIGIN_Y + m->y - m->h / 2;
+		int mx2 = mx1 + m->w - 1, my2 = my1 + m->h - 1;
+		bool covers_lower = false;
+		for (uint8_t j = 0; j < i; j++) {
+			const widget_t *o = snap[j];
+			if (!o || o == bgw) continue;
+			int ox1 = SCREEN_ORIGIN_X + o->x - o->w / 2;
+			int oy1 = SCREEN_ORIGIN_Y + o->y - o->h / 2;
+			int ox2 = ox1 + o->w - 1, oy2 = oy1 + o->h - 1;
+			int ix1 = mx1 > ox1 ? mx1 : ox1, iy1 = my1 > oy1 ? my1 : oy1;
+			int ix2 = mx2 < ox2 ? mx2 : ox2, iy2 = my2 < oy2 ? my2 : oy2;
+			if (ix2 < ix1 || iy2 < iy1) continue;        /* no overlap */
+			long ov = (long)(ix2 - ix1 + 1) * (iy2 - iy1 + 1);
+			long oa = (long)o->w * o->h;
+			if (oa > 0 && ov * 2 >= oa) { covers_lower = true; break; }  /* >50% covered */
+		}
+		if (covers_lower) {
+			/* Low-z face-occluder: an opaque crop of the bg parented to the bg
+			 * container (so it draws above the bg image but below the bg's other
+			 * sibling widgets, and is auto-freed when the bg is destroyed on
+			 * reload). The skipped meter stays transparent → its needle draws on
+			 * top of the covered widgets AND re-blends this contiguous crop. */
+			if (bgw->root && lv_obj_is_valid(bgw->root)) {
+				int dw = disp.x2 - disp.x1 + 1, dh = disp.y2 - disp.y1 + 1;
+				if (dw > 0 && dh > 0) {
+					int sx = (int)((int64_t)(mx1 - disp.x1) * nw / dw);
+					int sy = (int)((int64_t)(my1 - disp.y1) * nh / dh);
+					int sw = (int)((int64_t)m->w * nw / dw);
+					int sh = (int)((int64_t)m->h * nh / dh);
+					lv_img_dsc_t *face = rdm_image_slice(bg, sx, sy, sw, sh, m->w, m->h);
+					if (face) {
+						/* Use the SAME cover setup as widget_meter_autoface: an
+						 * lv_obj with bg_img + bg_opa COVER + radius 0 registers for
+						 * LVGL's cover-check, so the strided bg below is SKIPPED under
+						 * the needle (an lv_img did not cover → bg still re-read = slow). */
+						lv_obj_t *occ = lv_obj_create(bgw->root);
+						lv_obj_remove_style_all(occ);
+						lv_obj_set_size(occ, m->w, m->h);
+						lv_obj_set_align(occ, LV_ALIGN_TOP_LEFT);
+						lv_obj_set_pos(occ, mx1, my1);   /* cont is screen-(0,0): local == screen px */
+						lv_obj_set_style_bg_img_src(occ, face, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_bg_opa(occ, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_set_style_radius(occ, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+						lv_obj_clear_flag(occ, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+						lv_obj_add_event_cb(occ, _occ_free_slice_cb, LV_EVENT_DELETE, face);
+						ESP_LOGI(TAG, "autoslice: '%s' needle-on-top + low-z face occluder", m->id);
+					}
+				}
+			}
+			vTaskDelay(1);
+			continue;
+		}
+		widget_meter_autoface(snap[i], bg, &disp, nw, nh);
+		vTaskDelay(1);  /* yield between large slices so IDLE/WDT stay happy */
+	}
+}
+
 static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 									  const char *caller) {
 	/* Stop any active loggers / replay BEFORE wiping the signal registry.
@@ -655,13 +958,67 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 	signal_replay_stop();
 	can_raw_logger_stop();
 
-	/* ── Load signals BEFORE widgets so from_json can resolve names ── */
-	signal_registry_reset();
+	/* ── Load signals BEFORE widgets so from_json can resolve names ──
+	 *
+	 * Signals MERGE across layouts — we do NOT call signal_registry_reset()
+	 * here. This is intentional: channels are device-level user preferences
+	 * (e.g. user binds `rpm` channel to MaxxECU's RPM signal), and they
+	 * need to keep resolving even when the user loads a layout authored
+	 * against a different ECU (e.g. a Haltech-authored Drift_Pig).
+	 *
+	 * Behavior:
+	 *   - First layout loaded post-boot: registers its signals fresh.
+	 *   - Subsequent layouts: signal_register_with_source finds the existing
+	 *     same-name slot and UPDATES its decode params in place (can_id, bits,
+	 *     scale/offset, endian, unit, source), returning that slot's index.
+	 *     The latest layout's decode WINS; subscribers, peak/min stats and
+	 *     value_maps on the slot are preserved. New names not yet in the
+	 *     registry get added (additive).
+	 *   - To wipe and start fresh (e.g. user switches ECU presets via the
+	 *     ECU picker UI), explicitly call signal_registry_reset() from
+	 *     that handler before reloading the layout.
+	 *
+	 * Consequence: the name 'rpm' stays resolvable across ECU/layout
+	 * switches (so channel bindings keep working by index), but the decode
+	 * always reflects the most recently loaded layout — fixing the old
+	 * first-wins bug where a stale/boot-snapshot definition could shadow the
+	 * dashboard's correct decode and make the signal decode garbage. */
 	_load_signals(root);
-	/* Restore persisted peak/min values for any signal name that made it
-	 * into the new layout. Stale records (signal no longer present) are
-	 * silently dropped on the next autosave. */
-	signal_peaks_load();
+	/* Peak/min values are session-only (reset every boot, no NVS
+	 * persistence), so there's nothing to restore here on layout load. */
+
+	/* ── Channel-owned CAN decode (ADR 0005) ──
+	 *
+	 * 1. One-time v2->v3 migration: seed each channel's decode from the
+	 *    signals[] just loaded into the registry, so existing devices move
+	 *    their decode into channels.json. Gated internally (no-op once v3).
+	 *    SKIPPED for the boot splash layout — it can carry a frozen snapshot
+	 *    of a prior registry, and channelizing from that would pin channel
+	 *    decode to stale values before the real dashboard layout even loads.
+	 *    The migration then runs against the dashboard layout instead.
+	 * 2. register_decoded_signals: push channel-owned decode into the registry
+	 *    (UPSERT) so the dispatch engine decodes the bus from channels.json
+	 *    and the channel's decode wins over any same-name embedded layout
+	 *    signal. Runs every load (cheap, idempotent).
+	 * Both run AFTER _load_signals (need the registry populated) and BEFORE
+	 * resolve_signals/widget create (so channel->signal_index is fresh). */
+	{
+		const cJSON *jname = cJSON_GetObjectItemCaseSensitive(root, "name");
+		const char *lname = (cJSON_IsString(jname) && jname->valuestring)
+			? jname->valuestring : "";
+		bool is_splash = (strncmp(lname, "_splash", 7) == 0);
+		if (!is_splash)
+			channel_manager_migrate_decode_from_registry();
+	}
+	channel_manager_register_decoded_signals();
+
+	/* Re-bind channels to signals now that the layout's signals are
+	 * registered. Channels in /lfs/channels.json carry signal_name strings;
+	 * they couldn't resolve at channel_manager_init time because the signal
+	 * registry was empty. This must happen BEFORE widgets are created so
+	 * widget channel-binding (which reads channel->signal_index) sees fresh
+	 * indices. */
+	channel_manager_resolve_signals();
 
 	const cJSON *widgets_arr =
 		cJSON_GetObjectItemCaseSensitive(root, "widgets");
@@ -741,7 +1098,37 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 				 w->id, (int)wtype, (int)w->x, (int)w->y);
 	}
 
+	/* Optimise: auto-slice meter faces from the full-screen background (if any). */
+	_autoslice_from_bg();
+
 	return ESP_OK;
+}
+
+/* Read an entire layout file into a freshly-malloc'd, NUL-terminated buffer
+ * (caller frees). Returns NULL if the file can't be opened or read. */
+static char *_read_layout_file(const char *path) {
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+	if (!buf) {
+		close(fd);
+		return NULL;
+	}
+	size_t nread = 0;
+	while (nread < LAYOUT_MAX_FILE_BYTES - 1) {
+		ssize_t n = read(fd, buf + nread, LAYOUT_MAX_FILE_BYTES - 1 - nread);
+		if (n < 0) {
+			close(fd);
+			free(buf);
+			return NULL;
+		}
+		if (n == 0) break;
+		nread += (size_t)n;
+	}
+	close(fd);
+	buf[nread] = '\0';
+	return buf;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -757,54 +1144,45 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	/* POSIX open() — see layout_manager_read_raw for rationale. */
-	int fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		/* Try recovering from backup if primary file is missing */
-		char bak_path[96];
-		snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
-		if (rename(bak_path, path) == 0) {
-			ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
-			fd = open(path, O_RDONLY);
-		}
-		if (fd < 0) {
-			ESP_LOGE(TAG, "layout_load: cannot open %s (errno=%d)", path, errno);
-			xSemaphoreGiveRecursive(s_layout_mutex);
-			return ESP_ERR_NOT_FOUND;
-		}
-	}
+	char bak_path[96];
+	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
 
-	/* Read entire file into a heap buffer */
-	char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
-	if (!buf) {
-		close(fd);
-		xSemaphoreGiveRecursive(s_layout_mutex);
-		return ESP_ERR_NO_MEM;
-	}
-
-	size_t nread = 0;
-	while (nread < LAYOUT_MAX_FILE_BYTES - 1) {
-		ssize_t n = read(fd, buf + nread, LAYOUT_MAX_FILE_BYTES - 1 - nread);
-		if (n < 0) {
-			ESP_LOGE(TAG, "layout_load: read failed (errno=%d)", errno);
-			close(fd);
-			free(buf);
-			xSemaphoreGiveRecursive(s_layout_mutex);
-			return ESP_FAIL;
-		}
-		if (n == 0) break;
-		nread += (size_t)n;
-	}
-	close(fd);
-	buf[nread] = '\0';
-
-	cJSON *root = cJSON_Parse(buf);
+	/* Read + parse the primary file. On ANY failure — missing, unreadable, or
+	 * corrupt/truncated JSON (the normal outcome of a power cut mid-save) —
+	 * fall back to the .bak the atomic save keeps. A corrupt-but-present
+	 * primary is moved aside to {path}.corrupt so it isn't retried every boot
+	 * and is available for post-mortem. Previously a parse failure here
+	 * returned immediately, ignoring a perfectly good .bak and dropping the
+	 * user to the default layout. */
+	char *buf = _read_layout_file(path);
+	cJSON *root = buf ? cJSON_Parse(buf) : NULL;
 	free(buf);
 
 	if (!root) {
-		ESP_LOGE(TAG, "layout_load: JSON parse failed for %s", path);
+		if (access(path, F_OK) == 0) {
+			char corrupt_path[112];
+			snprintf(corrupt_path, sizeof(corrupt_path), "%s.corrupt", path);
+			remove(corrupt_path);          /* keep only the latest */
+			rename(path, corrupt_path);
+			ESP_LOGE(TAG, "layout_load: %s unparseable — moved to .corrupt, "
+			              "trying .bak", path);
+		} else {
+			ESP_LOGW(TAG, "layout_load: %s missing — trying .bak", path);
+		}
+		if (rename(bak_path, path) == 0) {
+			buf = _read_layout_file(path);
+			root = buf ? cJSON_Parse(buf) : NULL;
+			free(buf);
+			if (root)
+				ESP_LOGW(TAG, "layout_load: recovered %s from .bak", path);
+		}
+	}
+
+	if (!root) {
+		ESP_LOGE(TAG, "layout_load: cannot load %s (no valid primary or .bak)",
+				 path);
 		xSemaphoreGiveRecursive(s_layout_mutex);
-		return ESP_FAIL;
+		return ESP_ERR_NOT_FOUND;
 	}
 
 	/* ── Validate schema version ── */
@@ -844,6 +1222,24 @@ esp_err_t layout_manager_load(const char *name, lv_obj_t *parent) {
 		s_layout_ecu_version[sizeof(s_layout_ecu_version) - 1] = '\0';
 	} else {
 		s_layout_ecu_version[0] = '\0';
+	}
+
+	/* Sync the NVS cache so every downstream consumer (web /api/ecu/get,
+	 * device_settings ECU label, preset_picker/ui_ecu_picker auto-select)
+	 * stays in lockstep with the active layout. Without this the layout
+	 * field and NVS could drift — e.g. user uploads a Haltech layout but
+	 * NVS still says MaxxECU until they re-run the picker.
+	 *
+	 * Only writes when the value actually changed: NVS wear-leveling
+	 * tolerates the occasional write but a no-op skip keeps things tidy
+	 * over many layout switches per session. */
+	char prev_make[32] = "";
+	char prev_ver[24] = "";
+	config_store_load_ecu(prev_make, sizeof(prev_make),
+	                      prev_ver,  sizeof(prev_ver));
+	if (strcmp(prev_make, s_layout_ecu)         != 0 ||
+	    strcmp(prev_ver,  s_layout_ecu_version) != 0) {
+		config_store_save_ecu(s_layout_ecu, s_layout_ecu_version);
 	}
 
 	/* ── Optional night-mode CAN trigger ── */
@@ -1064,18 +1460,24 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	char path[80];
 	_make_path(name, path, sizeof(path));
 
-	/* Create backup of existing file before overwriting */
 	char bak_path[96];
 	snprintf(bak_path, sizeof(bak_path), "%s.bak", path);
-	rename(path, bak_path);
+	char tmp_path[96];
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-	/* POSIX open()/write()/close() — see layout_manager_read_raw for rationale.
-	 * fsync() replaces fflush() to ensure data reaches flash before close. */
-	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	/* Atomic write: stage the new content into {path}.tmp, fsync it to flash,
+	 * then swap it into place with rename(). This way `path` always names a
+	 * COMPLETE file — the old one until the final rename, the new one after —
+	 * so a power cut mid-write (normal in a vehicle) can never leave a
+	 * truncated live layout. The previous approach renamed live→.bak and then
+	 * wrote the new content directly over the live name, so a cut during the
+	 * write corrupted the live file AND the loader never consulted the .bak on
+	 * a parse failure (only when the file was missing). Mirrors the proven
+	 * channel_manager_save_to_lfs() idiom. */
+	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) {
 		ESP_LOGE(TAG, "layout_save_raw: cannot open %s for writing (errno=%d)",
-				 path, errno);
-		rename(bak_path, path);
+				 tmp_path, errno);
 		free(json_str);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
@@ -1090,8 +1492,7 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 					 (unsigned)total_written, (unsigned)len, errno);
 			close(fd);
 			free(json_str);
-			remove(path);
-			rename(bak_path, path);
+			remove(tmp_path);
 			xSemaphoreGiveRecursive(s_layout_mutex);
 			return ESP_FAIL;
 		}
@@ -1099,14 +1500,25 @@ esp_err_t layout_manager_save_raw(const char *name, const cJSON *root) {
 	}
 	free(json_str);
 
-	/* close() commits LittleFS writes to flash — no separate fsync needed
-	 * with POSIX write() (which bypasses the stdio userspace buffer that
-	 * the previous fflush() was draining). */
-	if (close(fd) != 0) {
-		ESP_LOGE(TAG, "layout_save_raw: close failed for %s (errno=%d)",
-				 path, errno);
-		remove(path);
-		rename(bak_path, path);
+	/* fsync the tmp file so its bytes are on flash before we make it live. */
+	if (fsync(fd) != 0 || close(fd) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: fsync/close failed for %s (errno=%d)",
+				 tmp_path, errno);
+		remove(tmp_path);
+		xSemaphoreGiveRecursive(s_layout_mutex);
+		return ESP_FAIL;
+	}
+
+	/* Keep one backup of the previous good file (no-op on first save), then
+	 * atomically move the staged file into place. The only window where `path`
+	 * is absent is between these two renames — two metadata ops, no data
+	 * write — and the loader recovers from .bak if a cut lands there. */
+	rename(path, bak_path);
+	if (rename(tmp_path, path) != 0) {
+		ESP_LOGE(TAG, "layout_save_raw: rename %s -> %s failed (errno=%d)",
+				 tmp_path, path, errno);
+		rename(bak_path, path);   /* put the old file back */
+		remove(tmp_path);
 		xSemaphoreGiveRecursive(s_layout_mutex);
 		return ESP_FAIL;
 	}

@@ -14,8 +14,11 @@
 extern "C" {
 #endif
 
-/** Maximum number of widgets the registry will track at once. */
-#define WIDGET_REGISTRY_MAX 32
+/** Maximum number of widgets the registry will track at once. Sized to the
+ * ~32 KB layout budget — a dense cluster (e.g. the Ford-style layout) runs
+ * ~38 widgets, so 32 silently dropped the tail. 64 leaves headroom; the
+ * registry + every snapshot buffer scale off this macro. */
+#define WIDGET_REGISTRY_MAX 64
 
 /** Reset the registry, dropping all tracked pointers. */
 void widget_registry_reset(void);

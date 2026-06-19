@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>   /* fsync() */
 
 static const char *TAG = "can_raw_logger";
 
@@ -26,6 +27,13 @@ static char         s_log_dir[24]  = "";
 static uint32_t     s_frame_count = 0;
 static uint64_t     s_start_us    = 0;
 static uint32_t     s_last_flush_ms = 0;
+
+/* Hot-removal detection (see data_logger). Frames arrive at bus rate
+ * (hundreds/s) so the threshold is higher than the signal logger's 3 ticks —
+ * 10 consecutive failed frames is still well under 100 ms of a dead card. */
+#define RAW_MAX_WRITE_FAILURES  10
+static uint8_t      s_write_failures = 0;
+static const char  *s_stop_reason    = "";   /* "" | "write_failure" | "lfs_cap" */
 
 static uint32_t _ms_since_start(void) {
 	if (s_start_us == 0) return 0;
@@ -73,10 +81,12 @@ esp_err_t can_raw_logger_start(void) {
 	fputs("Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n", s_file);
 	fflush(s_file);
 
-	s_frame_count   = 0;
-	s_start_us      = (uint64_t)esp_timer_get_time();
-	s_last_flush_ms = 0;
-	s_active        = true;
+	s_frame_count    = 0;
+	s_start_us       = (uint64_t)esp_timer_get_time();
+	s_last_flush_ms  = 0;
+	s_write_failures = 0;
+	s_stop_reason    = "";
+	s_active         = true;
 	ESP_LOGI(TAG, "Raw CAN capture started: %s [%s]%s",
 	         s_filename, s_on_lfs ? "LFS" : "SD",
 	         s_on_lfs ? " — capped" : "");
@@ -97,6 +107,7 @@ esp_err_t can_raw_logger_stop(void) {
 }
 
 bool        can_raw_logger_is_active(void)    { return s_active; }
+const char *can_raw_logger_last_stop_reason(void) { return s_stop_reason; }
 const char *can_raw_logger_current_file(void) { return s_filename; }
 uint32_t    can_raw_logger_frame_count(void)  { return s_frame_count; }
 uint32_t    can_raw_logger_elapsed_ms(void)   { return s_active ? _ms_since_start() : 0; }
@@ -127,11 +138,38 @@ void can_raw_logger_record_frame(uint32_t id, bool ext,
 	/* Time-based flush threshold — at low frame rates the count-based
 	 * threshold could otherwise leave data unwritten for many seconds. */
 	bool flushed = false;
+	bool frame_failed = false;
 	if ((s_frame_count % FLUSH_EVERY_FRAMES) == 0 ||
 	    (elapsed - s_last_flush_ms) >= FLUSH_EVERY_MS) {
-		fflush(s_file);
+		/* fsync commits the FAT directory entry; without it a power cut loses
+		 * the entire capture, not just the unflushed tail (see data_logger). */
+		if (fflush(s_file) != 0) frame_failed = true;
+		if (fsync(fileno(s_file)) != 0) frame_failed = true;
 		s_last_flush_ms = elapsed;
 		flushed = true;
+	}
+
+	/* Pulled-card detection: stdio's latched error flag, cleared per frame so
+	 * consecutive failures count individually. Auto-stop instead of burning
+	 * an SPI timeout on every frame forever (this runs on the LVGL task). */
+	if (ferror(s_file)) {
+		clearerr(s_file);
+		frame_failed = true;
+	}
+	if (frame_failed) {
+		if (++s_write_failures >= RAW_MAX_WRITE_FAILURES) {
+			bool was_sd = !s_on_lfs;
+			ESP_LOGE(TAG, "%u consecutive write failures — auto-stopping "
+			         "(SD card removed or filesystem dead?)",
+			         (unsigned)s_write_failures);
+			s_stop_reason = "write_failure";
+			can_raw_logger_stop();
+			/* Only after our fd is closed may sd_manager flip the mount. */
+			if (was_sd) sd_manager_notify_io_failure();
+			return;
+		}
+	} else {
+		s_write_failures = 0;
 	}
 
 	/* LFS cap protection — share the same limit as data_logger so the
@@ -142,6 +180,7 @@ void can_raw_logger_record_frame(uint32_t id, bool ext,
 		if (pos > 0 && cap > 0 && (uint32_t)pos >= cap) {
 			ESP_LOGW(TAG, "LFS cap reached (%lu bytes) — auto-stopping",
 			         (unsigned long)cap);
+			s_stop_reason = "lfs_cap";
 			can_raw_logger_stop();
 		}
 	}

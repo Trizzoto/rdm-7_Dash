@@ -16,6 +16,26 @@ static const char *TAG = "sd_manager";
 
 static bool s_sd_mounted = false;
 
+/* Consecutive esp_vfs_fat_info failures seen by sd_manager_get_info — the
+ * storage UI polls that endpoint, which makes it a free periodic health
+ * probe. Two strikes in a row = card is gone, flip to unmounted. */
+static uint8_t s_probe_failures = 0;
+
+/* Mark the card dead WITHOUT unmounting the FATFS VFS. The loggers (and a
+ * replay session) may still hold open FILE*s on /sdcard; unregistering the
+ * VFS under them would turn their later fclose() into a crash. Leaving the
+ * VFS registered just makes those fds return IO errors, which every caller
+ * already handles. The cost: a re-inserted card needs a reboot to come back
+ * (acceptable — hot-REMOVAL safety is the goal, hot-reinsert is not a
+ * supported flow). Everything else gates on sd_manager_is_mounted(), so
+ * flipping the flag stops new SD access (and the SPI-timeout burn) at once. */
+static void _mark_card_dead(const char *why) {
+	if (!s_sd_mounted) return;
+	s_sd_mounted = false;
+	ESP_LOGE(TAG, "SD card unresponsive (%s) — marked unmounted; "
+	         "loggers fall back to internal flash, reinsert needs a reboot", why);
+}
+
 static void _ensure_dir(const char *path) {
 	struct stat st;
 	if (stat(path, &st) != 0)
@@ -79,12 +99,32 @@ esp_err_t sd_manager_init(void) {
 
 bool sd_manager_is_mounted(void) { return s_sd_mounted; }
 
+void sd_manager_notify_io_failure(void) {
+	if (!s_sd_mounted) return;
+	/* A logger just saw repeated write failures. Probe the volume once: if
+	 * even f_getfree can't talk to the card, it was pulled (or died). If the
+	 * probe succeeds the card is fine and the failure was file-level (FS
+	 * full, bad sector) — leave the mount alone so other SD features keep
+	 * working. */
+	uint64_t total_bytes, free_bytes;
+	if (esp_vfs_fat_info(SD_BASE_PATH, &total_bytes, &free_bytes) != ESP_OK) {
+		_mark_card_dead("write failures + probe failed");
+	} else {
+		ESP_LOGW(TAG, "logger write failures but card still responds — "
+		         "filesystem full or file-level error, mount kept");
+	}
+}
+
 esp_err_t sd_manager_get_info(size_t *total, size_t *used, size_t *free_out) {
 	if (!s_sd_mounted) return ESP_ERR_INVALID_STATE;
 
 	uint64_t total_bytes, free_bytes;
 	esp_err_t ret = esp_vfs_fat_info(SD_BASE_PATH, &total_bytes, &free_bytes);
-	if (ret != ESP_OK) return ret;
+	if (ret != ESP_OK) {
+		if (++s_probe_failures >= 2) _mark_card_dead("info probe failed twice");
+		return ret;
+	}
+	s_probe_failures = 0;
 
 	uint64_t used_bytes = (total_bytes > free_bytes) ? (total_bytes - free_bytes) : 0;
 

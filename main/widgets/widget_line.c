@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "lvgl.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,6 +28,7 @@ static const char *TAG = "widget_line";
 #define DEF_ROUNDED     false
 #define DEF_ORIENT      LINE_ORIENT_HORIZONTAL
 #define DEF_DASH_GAP    0
+#define DEF_CURVATURE   0
 #define DEF_W           200
 #define DEF_H           4
 
@@ -76,10 +78,18 @@ static void _line_draw_cb(lv_event_t *e) {
     int32_t pw  = x2c - x1c;
     int32_t ph  = y2c - y1c;
 
+    /* Custom draw bypasses lv_obj_init_draw_line_dsc, so the recursive parent
+     * opacity (boot fade-in etc.) must be applied by hand or the line pops in
+     * at full opacity while everything else fades. */
+    lv_opa_t master_opa = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
+    if (master_opa <= LV_OPA_MIN) return;
+
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
     dsc.color      = ld->line_color;
-    dsc.opa        = ld->line_opa;
+    dsc.opa        = master_opa < LV_OPA_MAX
+                     ? (lv_opa_t)(((uint32_t)ld->line_opa * master_opa) >> 8)
+                     : ld->line_opa;
     dsc.width      = ld->line_width;
     dsc.dash_gap   = ld->dash_gap;
     dsc.dash_width = ld->dash_gap > 0 ? ld->dash_gap * 2 : 0;
@@ -106,7 +116,47 @@ static void _line_draw_cb(lv_event_t *e) {
         break;
     }
 
-    lv_draw_line(draw_ctx, &dsc, &p1, &p2);
+    /* Straight line — the original (and overwhelmingly common) case. */
+    if (ld->curvature == 0) {
+        lv_draw_line(draw_ctx, &dsc, &p1, &p2);
+        return;
+    }
+
+    /* Curved line — approximate a quadratic bezier with a small polyline.
+     * Control point sits perpendicular to the chord midpoint at distance
+     * `curvature` (in pixels). LVGL v8 has no bezier draw call, so we
+     * sample B(t) = (1-t)^2·p1 + 2t(1-t)·C + t^2·p2 at N segments and
+     * stitch lv_draw_line calls. N=20 looks smooth for typical widget
+     * sizes (~200 px chord, ~10 px per segment) without overspending
+     * the draw budget. */
+    const int N_SEGMENTS = 20;
+    int32_t dx = p2.x - p1.x;
+    int32_t dy = p2.y - p1.y;
+    int32_t len_sq = dx * dx + dy * dy;
+    if (len_sq < 1) {
+        lv_draw_line(draw_ctx, &dsc, &p1, &p2);
+        return;
+    }
+    /* Integer sqrt is fine — we're computing pixel offsets. */
+    float len = sqrtf((float)len_sq);
+    /* Perpendicular unit vector (left-hand normal). Multiplying by
+     * curvature gives the pixel offset of the control point from the
+     * chord midpoint. */
+    float perp_x = -(float)dy / len;
+    float perp_y =  (float)dx / len;
+    float cx = (float)(p1.x + p2.x) * 0.5f + perp_x * (float)ld->curvature;
+    float cy = (float)(p1.y + p2.y) * 0.5f + perp_y * (float)ld->curvature;
+
+    lv_point_t prev = p1;
+    for (int i = 1; i <= N_SEGMENTS; i++) {
+        float t   = (float)i / (float)N_SEGMENTS;
+        float omt = 1.0f - t;
+        float bx  = omt * omt * (float)p1.x + 2.0f * omt * t * cx + t * t * (float)p2.x;
+        float by  = omt * omt * (float)p1.y + 2.0f * omt * t * cy + t * t * (float)p2.y;
+        lv_point_t next = { (lv_coord_t)(bx + 0.5f), (lv_coord_t)(by + 0.5f) };
+        lv_draw_line(draw_ctx, &dsc, &prev, &next);
+        prev = next;
+    }
 }
 
 /* Forward declarations */
@@ -177,6 +227,8 @@ static void _line_to_json(widget_t *w, cJSON *out) {
         cJSON_AddStringToObject(cfg, "orientation", _orient_to_str(ld->orientation));
     if (ld->dash_gap != DEF_DASH_GAP)
         cJSON_AddNumberToObject(cfg, "dash_gap", ld->dash_gap);
+    if (ld->curvature != DEF_CURVATURE)
+        cJSON_AddNumberToObject(cfg, "curvature", ld->curvature);
 
     {
         cJSON *n = cJSON_CreateObject();
@@ -216,6 +268,9 @@ static void _line_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "dash_gap");
     if (cJSON_IsNumber(item)) ld->dash_gap = (uint8_t)LV_CLAMP(0, item->valueint, 40);
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "curvature");
+    if (cJSON_IsNumber(item)) ld->curvature = (int16_t)LV_CLAMP(-200, item->valueint, 200);
+
     cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
     if (cJSON_IsObject(night)) {
         NIGHT_PARSE_COLOR(night, ld->night, line_color);
@@ -250,6 +305,18 @@ static void _line_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_
             changed = true;
         } else if (strcmp(o->field_name, "line_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
             ld->line_opa = (lv_opa_t)o->value.num;
+            changed = true;
+        } else if (strcmp(o->field_name, "line_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
+            int v = (int)o->value.num;
+            if (v < 1)  v = 1;
+            if (v > 30) v = 30;
+            ld->line_width = (uint8_t)v;
+            changed = true;
+        } else if (strcmp(o->field_name, "curvature") == 0 && o->value_type == RULE_VAL_NUMBER) {
+            int v = (int)o->value.num;
+            if (v < -200) v = -200;
+            if (v > 200)  v = 200;
+            ld->curvature = (int16_t)v;
             changed = true;
         }
     }
@@ -288,6 +355,7 @@ static bool _line_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "rounded") == 0)     { out->b = ld->rounded;      return true; }
 	if (strcmp(name, "orientation") == 0) { out->i = ld->orientation;  return true; }
 	if (strcmp(name, "dash_gap") == 0)    { out->i = ld->dash_gap;     return true; }
+	if (strcmp(name, "curvature") == 0)   { out->i = ld->curvature;    return true; }
 	return false;
 }
 
@@ -312,6 +380,9 @@ static bool _line_inspector_set(widget_t *w, const char *name,
 	} else if (strcmp(name, "dash_gap") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 40) v = 40;
 		ld->dash_gap = (uint8_t)v;
+	} else if (strcmp(name, "curvature") == 0) {
+		int v = in->i; if (v < -200) v = -200; if (v > 200) v = 200;
+		ld->curvature = (int16_t)v;
 	} else {
 		return false;
 	}
@@ -339,6 +410,7 @@ widget_t *widget_line_create_instance(uint8_t slot) {
     ld->rounded      = DEF_ROUNDED;
     ld->orientation  = DEF_ORIENT;
     ld->dash_gap     = DEF_DASH_GAP;
+    ld->curvature    = DEF_CURVATURE;
 
     w->type      = WIDGET_LINE;
     w->slot      = slot;

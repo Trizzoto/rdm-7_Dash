@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>   /* fsync() */
 
 static const char *TAG = "data_logger";
 
@@ -40,6 +41,14 @@ static uint32_t      s_last_flush_ms  = 0;
 static int16_t       s_signal_indices[LOG_MAX_SIGNALS];
 static uint16_t      s_signal_count   = 0;
 static uint16_t      s_rate_hz        = LOG_DEFAULT_RATE_HZ;
+
+/* Hot-removal / dead-FS detection: consecutive timer ticks whose writes or
+ * flushes failed. Three strikes auto-stops the log — otherwise a pulled SD
+ * card means every sample burns an SPI timeout on the LVGL task forever
+ * while the UI keeps reporting a healthy recording. */
+#define LOG_MAX_WRITE_FAILURES  3
+static uint8_t       s_write_failures = 0;
+static const char   *s_stop_reason    = "";   /* "" | "write_failure" | "lfs_cap" */
 
 static uint32_t _get_ms(void) {
 	return (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -97,11 +106,43 @@ static void _log_timer_cb(lv_timer_t *timer) {
 	 * the time-based threshold guarantees data isn't lost on a brief power
 	 * cut even at slow rates. */
 	bool flushed = false;
+	bool tick_failed = false;
 	if (s_sample_count % LOG_FLUSH_EVERY_SAMPLES == 0 ||
 	    (now - s_last_flush_ms) >= LOG_FLUSH_EVERY_MS) {
-		fflush(s_log_file);
+		/* fflush only drains the stdio buffer into the VFS; on FAT the
+		 * directory entry (file size) isn't committed until f_sync, so a
+		 * power cut would otherwise leave a 0-byte/truncated CSV — losing the
+		 * whole session, not the ~2 s the threshold implies. fsync maps to
+		 * f_sync and commits the metadata. */
+		if (fflush(s_log_file) != 0) tick_failed = true;
+		if (fsync(fileno(s_log_file)) != 0) tick_failed = true;
 		s_last_flush_ms = now;
 		flushed = true;
+	}
+
+	/* stdio latches its error flag once an underlying VFS write fails, and
+	 * the rows above are larger than the stdio buffer so a dead card shows
+	 * up within a tick or two of removal. clearerr so consecutive ticks are
+	 * counted individually rather than the latch counting forever. */
+	if (ferror(s_log_file)) {
+		clearerr(s_log_file);
+		tick_failed = true;
+	}
+	if (tick_failed) {
+		if (++s_write_failures >= LOG_MAX_WRITE_FAILURES) {
+			bool was_sd = !s_on_lfs;
+			ESP_LOGE(TAG, "%u consecutive write failures — auto-stopping "
+			         "(SD card removed or filesystem dead?)",
+			         (unsigned)s_write_failures);
+			s_stop_reason = "write_failure";
+			data_logger_stop();
+			/* After our file is closed it's safe for sd_manager to probe and
+			 * flip the mount state — never before, while we hold the fd. */
+			if (was_sd) sd_manager_notify_io_failure();
+			return;
+		}
+	} else {
+		s_write_failures = 0;
 	}
 
 	/* LFS cap: after each flush, check file size and auto-stop if exceeded.
@@ -113,6 +154,7 @@ static void _log_timer_cb(lv_timer_t *timer) {
 		if (pos > 0 && (size_t)pos >= LOG_LFS_MAX_BYTES) {
 			ESP_LOGW(TAG, "LFS log reached %u-byte cap — auto-stopping",
 			         (unsigned)LOG_LFS_MAX_BYTES);
+			s_stop_reason = "lfs_cap";
 			data_logger_stop();
 		}
 	}
@@ -181,10 +223,12 @@ esp_err_t data_logger_start(void) {
 
 	_write_header();
 
-	s_sample_count  = 0;
-	s_start_time_ms = _get_ms();
-	s_last_flush_ms = s_start_time_ms;
-	s_active        = true;
+	s_sample_count   = 0;
+	s_start_time_ms  = _get_ms();
+	s_last_flush_ms  = s_start_time_ms;
+	s_write_failures = 0;
+	s_stop_reason    = "";
+	s_active         = true;
 
 	/* Create the LVGL timer with the active rate. */
 	_restart_timer();
@@ -238,6 +282,7 @@ esp_err_t data_logger_stop(void) {
 }
 
 bool data_logger_is_active(void) { return s_active; }
+const char *data_logger_last_stop_reason(void) { return s_stop_reason; }
 const char *data_logger_current_file(void) { return s_filename; }
 uint32_t data_logger_get_sample_count(void) { return s_sample_count; }
 uint32_t data_logger_get_elapsed_ms(void) {

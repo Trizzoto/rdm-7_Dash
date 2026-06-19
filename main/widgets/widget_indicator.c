@@ -1,5 +1,6 @@
 #include "widget_indicator.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -715,6 +716,23 @@ void indicator_apply_analog_state(bool left_on, bool right_on) {
 	update_indicator_ui_immediate(1);
 }
 
+/* Force a single indicator's visual on/off for the editor "Test Active"
+ * preview, REGARDLESS of input_source. indicator_apply_analog_state() only
+ * touches Wire-mode (input_source==0) indicators, so a CAN-mode indicator —
+ * or one with no signal bound yet — could never be exercised from the editor.
+ * This drives the lamp directly by slot so the user can always preview the
+ * active look. (For a Wire-mode indicator with wire-input polling enabled the
+ * 20 Hz GPIO poll will reclaim the lamp on release, which is the correct
+ * live behaviour.) */
+void widget_indicator_apply_test_state(uint8_t slot, bool active) {
+	if (slot >= 2) return;
+	indicator_data_t *id = _lookup_indicator_data(slot);
+	if (!id) return;
+	id->current_state = active;
+	previous_indicator_states[slot] = active;
+	update_indicator_ui_immediate(slot);
+}
+
 // Asynchronous callback for updating an indicator
 void update_indicator_ui(void *param) {
 	uint8_t indicator_idx = *(uint8_t *)param;
@@ -879,6 +897,28 @@ static void _indicator_on_signal(float value, bool is_stale, void *user_data) {
 	update_indicator_ui_immediate(slot);
 }
 
+/* Channel-changed listener — re-snapshot signal binding and invalidate. */
+static void _indicator_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+	if (!id) return;
+	safe_strncpy(id->signal_name, c->signal_name, sizeof(id->signal_name));
+	/* Re-point our signal subscription when the channel's source index moved
+	 * (e.g. the user just configured this channel's CAN decode in the editor).
+	 * Without this an indicator bound to an as-yet-unconfigured channel stays
+	 * dark even after the channel is wired up. Mirrors _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != id->signal_index) {
+		if (id->signal_index >= 0)
+			signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+		id->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _indicator_on_signal, w);
+	}
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+}
+
 static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	uint8_t slot = id ? id->slot : 0;
@@ -890,6 +930,10 @@ static void _indicator_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (id && id->signal_index >= 0)
 		signal_subscribe(id->signal_index, _indicator_on_signal, w);
+
+	if (id && id->channel)
+		channel_manager_subscribe((channel_t *)id->channel,
+		                           _indicator_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
@@ -906,7 +950,16 @@ static void _indicator_resize(widget_t *w, uint16_t nw, uint16_t nh) {
 		indicator_data_t *id = (indicator_data_t *)w->type_data;
 		uint8_t slot = id ? id->slot : 0;
 		const lv_img_dsc_t *src = (slot == 0) ? &ui_img_indicator_left_png : &ui_img_indicator_right_png;
-		lv_img_set_zoom(w->root, _calc_zoom(src->header.w, src->header.h, nw, nh));
+		/* The zoom MUST be applied to the image object (ui_Indicator_Left/Right),
+		 * NOT w->root: w->root is the transparent touch-area base object (a plain
+		 * lv_obj), so lv_img_set_zoom(w->root, ...) would write the zoom field
+		 * past the base object's allocation — an out-of-bounds heap write that
+		 * intermittently corrupts the heap and panics (found via resize fuzz).
+		 * Resize the touch target to match the new box. */
+		lv_obj_t *img = (slot == 0) ? ui_Indicator_Left : ui_Indicator_Right;
+		if (img && lv_obj_is_valid(img))
+			lv_img_set_zoom(img, _calc_zoom(src->header.w, src->header.h, nw, nh));
+		lv_obj_set_size(w->root, nw, nh);
 	}
 }
 static void _indicator_open_settings(widget_t *w) {
@@ -925,10 +978,14 @@ static void _indicator_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "is_momentary", id->is_momentary);
 		if (id->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", id->signal_name);
-		cJSON_AddNumberToObject(cfg, "color_on", (int)id->color_on.full);
-		cJSON_AddNumberToObject(cfg, "opa_on", id->opa_on);
-		cJSON_AddNumberToObject(cfg, "color_off", (int)id->color_off.full);
-		cJSON_AddNumberToObject(cfg, "opa_off", id->opa_off);
+		if (id->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", id->channel_id);
+		/* base_* not the live fields — a conditional-rule override may be
+		 * active right now and must never be persisted as configuration. */
+		cJSON_AddNumberToObject(cfg, "color_on", (int)id->base_color_on.full);
+		cJSON_AddNumberToObject(cfg, "opa_on", id->base_opa_on);
+		cJSON_AddNumberToObject(cfg, "color_off", (int)id->base_color_off.full);
+		cJSON_AddNumberToObject(cfg, "opa_off", id->base_opa_off);
 		/* Night-mode overrides — emit only fields that have an override set */
 		cJSON *n = cJSON_CreateObject();
 		NIGHT_SERIALIZE_COLOR(n, id->night, color_on);
@@ -968,6 +1025,11 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsNumber(item)) id->color_off.full = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "opa_off");
 	if (cJSON_IsNumber(item)) id->opa_off = (uint8_t)item->valueint;
+	/* Loaded config is the new base for rule overrides to layer onto. */
+	id->base_color_on  = id->color_on;
+	id->base_opa_on    = id->opa_on;
+	id->base_color_off = id->color_off;
+	id->base_opa_off   = id->opa_off;
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -979,13 +1041,62 @@ static void _indicator_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (id->signal_name[0] != '\0')
 		id->signal_index = signal_find_by_name(id->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(id->channel_id, ch_item->valuestring, sizeof(id->channel_id));
+	channel_t *bound_c = id->channel_id[0] ? channel_manager_get(id->channel_id) : NULL;
+	if (bound_c) {
+		/* Attach to the channel even when it has no signal yet, so the
+		 * channel-changed listener fires (and _indicator_on_channel_changed
+		 * subscribes) the moment the user configures this channel's source.
+		 * Previously this was gated on signal_index >= 0, leaving an indicator
+		 * bound to an unconfigured channel dark until a full layout reload. */
+		id->channel = bound_c;
+		if (bound_c->signal_index >= 0) {
+			safe_strncpy(id->signal_name, bound_c->signal_name, sizeof(id->signal_name));
+			id->signal_index = bound_c->signal_index;
+		}
+	} else if (id->signal_name[0] != '\0') {
+		/* Indicator is boolean — no min/max/threshold to migrate, just
+		 * signal binding. */
+		legacy_widget_data_t legacy = {
+			.signal_name = id->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) id->channel = c;
+	}
 }
 static void _indicator_destroy(widget_t *w) {
 	indicator_data_t *id = (indicator_data_t *)w->type_data;
 	if (id && id->signal_index >= 0)
 		signal_unsubscribe(id->signal_index, _indicator_on_signal, w);
+	if (id && id->channel) {
+		channel_manager_unsubscribe((channel_t *)id->channel,
+		                             _indicator_on_channel_changed, w);
+		id->channel = NULL;
+	}
 	night_mode_unsubscribe(_indicator_night_cb, w);
 	widget_rules_free(w);
+	/* The indicator image is a separate global lv_img created on `parent` (a
+	 * sibling of the touch-area root), so lv_obj_del(w->root) below doesn't reach
+	 * it. Delete it + clear the global, else it orphans on the screen and leaks
+	 * across every layout switch (turn-signal arrows bleeding onto layouts that
+	 * have no indicators). Its descriptor is a static built-in PNG, so there's
+	 * nothing to rdm_image_free — unlike the warning image this leaked rather
+	 * than dangled. */
+	if (id && id->slot < 2) {
+		lv_obj_t **gp = (id->slot == 0) ? &ui_Indicator_Left : &ui_Indicator_Right;
+		if (*gp && lv_obj_is_valid(*gp)) lv_obj_del(*gp);
+		*gp = NULL;
+	}
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -1043,10 +1154,12 @@ static bool _indicator_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "input_source") == 0) { out->i = id->input_source;         return true; }
 	if (strcmp(name, "animation") == 0)    { out->b = id->animation_enabled;    return true; }
 	if (strcmp(name, "is_momentary") == 0) { out->b = id->is_momentary;         return true; }
-	if (strcmp(name, "opa_on") == 0)       { out->i = id->opa_on;               return true; }
-	if (strcmp(name, "opa_off") == 0)      { out->i = id->opa_off;              return true; }
-	if (strcmp(name, "color_on") == 0)     { out->color = lv_color_to32(id->color_on)  & 0xFFFFFF; return true; }
-	if (strcmp(name, "color_off") == 0)    { out->color = lv_color_to32(id->color_off) & 0xFFFFFF; return true; }
+	/* base_* — the inspector shows configured values, not whatever a
+	 * conditional rule happens to be overriding right now. */
+	if (strcmp(name, "opa_on") == 0)       { out->i = id->base_opa_on;          return true; }
+	if (strcmp(name, "opa_off") == 0)      { out->i = id->base_opa_off;         return true; }
+	if (strcmp(name, "color_on") == 0)     { out->color = lv_color_to32(id->base_color_on)  & 0xFFFFFF; return true; }
+	if (strcmp(name, "color_off") == 0)    { out->color = lv_color_to32(id->base_color_off) & 0xFFFFFF; return true; }
 	return false;
 }
 
@@ -1085,28 +1198,63 @@ static bool _indicator_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "color_on") == 0) {
-		id->color_on = lv_color_hex(in->color);
+		id->color_on = id->base_color_on = lv_color_hex(in->color);
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "color_off") == 0) {
-		id->color_off = lv_color_hex(in->color);
+		id->color_off = id->base_color_off = lv_color_hex(in->color);
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "opa_on") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
-		id->opa_on = (uint8_t)v;
+		id->opa_on = id->base_opa_on = (uint8_t)v;
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	if (strcmp(name, "opa_off") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
-		id->opa_off = (uint8_t)v;
+		id->opa_off = id->base_opa_off = (uint8_t)v;
 		update_indicator_ui_immediate(id->slot);
 		return true;
 	}
 	return false;
+}
+
+/* ── apply_overrides: conditional-rule styling ─────────────────────────────
+ *
+ * Indicator was the one widget with rules support missing — rules on an
+ * indicator would subscribe and evaluate but silently apply nothing. The
+ * renderers (state flips, blink timer, night mode) all read color/opa from
+ * indicator_data_t, so overrides mutate those live fields — reset from the
+ * base_* copies first so deactivated rules restore the configured look —
+ * then repaint through the same path a state change uses. */
+static void _indicator_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t count) {
+	if (!w || w->type != WIDGET_INDICATOR || !w->type_data) return;
+	indicator_data_t *id = (indicator_data_t *)w->type_data;
+
+	id->color_on  = id->base_color_on;
+	id->opa_on    = id->base_opa_on;
+	id->color_off = id->base_color_off;
+	id->opa_off   = id->base_opa_off;
+
+	for (uint8_t i = 0; i < count; i++) {
+		const rule_override_t *o = &ov[i];
+		if (strcmp(o->field_name, "color_on") == 0 && o->value_type == RULE_VAL_COLOR) {
+			id->color_on.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "color_off") == 0 && o->value_type == RULE_VAL_COLOR) {
+			id->color_off.full = (uint16_t)o->value.color;
+		} else if (strcmp(o->field_name, "opa_on") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->opa_on = (uint8_t)v;
+		} else if (strcmp(o->field_name, "opa_off") == 0 && o->value_type == RULE_VAL_NUMBER) {
+			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
+			id->opa_off = (uint8_t)v;
+		}
+	}
+
+	update_indicator_ui_immediate(id->slot);
 }
 
 widget_t *widget_indicator_create_instance(uint8_t slot) {
@@ -1129,6 +1277,10 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	id->opa_on = 255;                         /* fully visible */
 	id->color_off = lv_color_hex(0x333333);   /* dark grey */
 	id->opa_off = 70;                         /* dimmed when off (visible) */
+	id->base_color_on  = id->color_on;
+	id->base_opa_on    = id->opa_on;
+	id->base_color_off = id->color_off;
+	id->base_opa_off   = id->opa_off;
 
 	w->type = WIDGET_INDICATOR;
 	w->slot = s;
@@ -1146,6 +1298,7 @@ widget_t *widget_indicator_create_instance(uint8_t slot) {
 	w->from_json = _indicator_from_json;
 	w->destroy = _indicator_destroy;
 	w->apply_night_mode = _indicator_apply_night_mode;
+	w->apply_overrides = _indicator_apply_overrides;
 	w->inspector_get = _indicator_inspector_get;
 	w->inspector_set = _indicator_inspector_set;
 

@@ -1,10 +1,12 @@
 #include "config_store.h"
+#include "system/device_id.h"   /* get_device_ap_password — per-unit AP default */
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <math.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -339,14 +341,26 @@ esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg)
     return err;
 }
 
+/* The hotspot password every unit shipped with before per-device passwords
+ * (2026-06-12). A stored value equal to this is the old fleet-wide default
+ * that the WiFi screen happened to persist, not something an owner chose —
+ * upgrade it to the per-device password on load. */
+#define LEGACY_FLEET_AP_PASSWORD "rdm7dash"
+
 esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg)
 {
     if (!cfg) return ESP_ERR_INVALID_ARG;
 
-    /* Defaults — AP disabled until user explicitly enables it */
+    /* Defaults — AP disabled until user explicitly enables it. Password
+     * defaults to the per-device derivation (unique per unit, shown on the
+     * dash WiFi screen + first-run wizard) so consumer units never share a
+     * guessable fleet-wide hotspot password. Falls back to the legacy
+     * constant only if the MAC read itself fails (never seen in practice). */
     cfg->enabled = false;
-    strncpy(cfg->password, "rdm7dash", sizeof(cfg->password) - 1);
-    cfg->password[sizeof(cfg->password) - 1] = '\0';
+    if (get_device_ap_password(cfg->password, sizeof(cfg->password)) != ESP_OK) {
+        strncpy(cfg->password, LEGACY_FLEET_AP_PASSWORD, sizeof(cfg->password) - 1);
+        cfg->password[sizeof(cfg->password) - 1] = '\0';
+    }
 
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NS_WIFI_AP, NVS_READONLY, &handle);
@@ -355,8 +369,13 @@ esp_err_t config_store_load_ap_config(rdm_ap_config_t *cfg)
     uint8_t u8;
     if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) cfg->enabled = (u8 != 0);
 
-    size_t len = sizeof(cfg->password);
-    nvs_get_str(handle, "password", cfg->password, &len);
+    char stored[sizeof(cfg->password)];
+    size_t len = sizeof(stored);
+    if (nvs_get_str(handle, "password", stored, &len) == ESP_OK &&
+        strcmp(stored, LEGACY_FLEET_AP_PASSWORD) != 0) {
+        /* Owner-chosen password wins over the derived default. */
+        memcpy(cfg->password, stored, sizeof(stored));
+    }
 
     nvs_close(handle);
     return ESP_OK;
@@ -423,6 +442,80 @@ esp_err_t config_store_load_splash_fade(bool *enabled)
     if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
     uint8_t u8;
     if (nvs_get_u8(handle, "fade", &u8) == ESP_OK) *enabled = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_save_splash_enabled(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "enabled", enabled ? 1 : 0);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_splash_enabled(bool *enabled)
+{
+    if (!enabled) return ESP_ERR_INVALID_ARG;
+    *enabled = true; /* default: splash enabled */
+    nvs_handle_t handle;
+    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8;
+    if (nvs_get_u8(handle, "enabled", &u8) == ESP_OK) *enabled = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_save_boot_anim(bool enabled)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "bootanim", enabled ? 1 : 0);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_boot_anim(bool *enabled)
+{
+    if (!enabled) return ESP_ERR_INVALID_ARG;
+    *enabled = true; /* default: animation on */
+    nvs_handle_t handle;
+    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8;
+    if (nvs_get_u8(handle, "bootanim", &u8) == ESP_OK) *enabled = (u8 != 0);
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_store_save_boot_anim_style(uint8_t style)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_SPLASH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, "bootanimstyle", style);
+    if (err != ESP_OK) { nvs_close(handle); return err; }
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_boot_anim_style(uint8_t *style)
+{
+    if (!style) return ESP_ERR_INVALID_ARG;
+    *style = BOOT_ANIM_STYLE_FADE; /* default: individual top-to-bottom fade */
+    nvs_handle_t handle;
+    if (nvs_open(NS_SPLASH, NVS_READONLY, &handle) != ESP_OK) return ESP_OK;
+    uint8_t u8;
+    if (nvs_get_u8(handle, "bootanimstyle", &u8) == ESP_OK &&
+        u8 <= BOOT_ANIM_STYLE_CURTAIN)
+        *style = u8;
     nvs_close(handle);
     return ESP_OK;
 }
@@ -525,6 +618,44 @@ esp_err_t config_store_load_ecu(char *make, size_t m_len,
     nvs_close(handle);
     if (err_m != ESP_OK || err_v != ESP_OK) { make[0] = '\0'; version[0] = '\0'; return ESP_ERR_NOT_FOUND; }
     return ESP_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  DASHBOARD SWITCHER (ordered pinned-layout cycle for the dash arrows)
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_LAYOUT_SWITCHER "layswit"
+
+esp_err_t config_store_save_layout_switcher(const char *csv)
+{
+    if (!csv) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS_LAYOUT_SWITCHER, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    /* Empty string deletes the key — caller's "use default cycle" signal. */
+    if (csv[0] == '\0') {
+        esp_err_t del = nvs_erase_key(h, "csv");
+        if (del == ESP_ERR_NVS_NOT_FOUND) del = ESP_OK;
+        if (del == ESP_OK) err = nvs_commit(h); else err = del;
+    } else {
+        err = nvs_set_str(h, "csv", csv);
+        if (err == ESP_OK) err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_store_load_layout_switcher(char *buf, size_t cap)
+{
+    if (!buf || cap == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+    nvs_handle_t h;
+    if (nvs_open(NS_LAYOUT_SWITCHER, NVS_READONLY, &h) != ESP_OK)
+        return ESP_ERR_NOT_FOUND;
+    size_t n = cap;
+    esp_err_t err = nvs_get_str(h, "csv", buf, &n);
+    nvs_close(h);
+    if (err != ESP_OK) buf[0] = '\0';
+    return err;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -742,6 +873,38 @@ esp_err_t config_store_load_ota_skip_version(char *out, size_t out_len)
     esp_err_t err = nvs_get_str(handle, "skip_ver", out, &n);
     nvs_close(handle);
     if (err != ESP_OK) out[0] = '\0';
+    return err;
+}
+
+/* ── Vehicle odometer ──────────────────────────────────────────────────── */
+
+#define NS_VEHICLE "vehicle"
+
+esp_err_t config_store_save_odometer_km(float km)
+{
+    if (!isfinite(km) || km < 0.0f) km = 0.0f;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_VEHICLE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(handle, "odo_km", &km, sizeof(km));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_odometer_km(float *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    *out = 0.0f;
+    nvs_handle_t handle;
+    if (nvs_open(NS_VEHICLE, NVS_READONLY, &handle) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    float km = 0.0f;
+    size_t sz = sizeof(km);
+    esp_err_t err = nvs_get_blob(handle, "odo_km", &km, &sz);
+    nvs_close(handle);
+    if (err == ESP_OK && sz == sizeof(km) && isfinite(km) && km >= 0.0f) {
+        *out = km;
+    }
     return err;
 }
 

@@ -20,7 +20,10 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_ota_ops.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "hal/gpio_types.h"
 #include "io/wire_inputs.h"
@@ -35,11 +38,13 @@
 #include "sdkconfig.h"
 #include "storage/data_logger.h"
 #include "storage/sd_manager.h"
+#include "system/render_perf.h"
 #include "storage/user_signals.h"
 #include "system/crash_log.h"
 #include "system/heap_monitor.h"
 #include "system/night_mode.h"
 #include "system/remote_touch.h"
+#include "data/channel_manager.h"
 #include "ui/screens/ui_wifi.h"
 
 
@@ -184,21 +189,65 @@ example_on_vsync_event(esp_lcd_panel_handle_t panel,
   return high_task_awoken == pdTRUE;
 }
 
+/* Flush instrumentation — written in rdm_lvgl_flush_cb, drained once/sec by
+ * rdm7_lvgl_monitor_cb. Cheap (2 esp_timer reads + 2 adds per flush) so it
+ * stays always-on. It separates the per-flush full-framebuffer cache-sync
+ * tax (esp_cache_msync of the whole 768 KB FB on every esp_lcd_panel_draw_
+ * bitmap) from the per-pixel draw cost folded into LVGL's elaps. A
+ * flushes/frame count climbing toward V_RES/buf_lines (~80 with 6-line SRAM
+ * buffers) is the signature of a full-screen redraw — i.e. the 32-rect
+ * invalidation cliff or a join cascade to near-full-screen. The flush worker
+ * writes these from core 0 while the monitor cb drains them on core 1, so the
+ * 64-bit read-modify-writes are guarded by a spinlock. */
+static uint64_t s_flush_us_sum = 0;
+static uint32_t s_flush_count = 0;
+static portMUX_TYPE s_flush_stat_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* Published once per ~1 s window by the monitor cb; read by GET /api/perf.
+ * See system/render_perf.h. */
+static render_perf_t s_render_perf = {0};
+
+void render_perf_get(render_perf_t *out) {
+  if (out) *out = s_render_perf;
+}
+
+/* Boot-timeline ring: one compact snapshot per published window, from the
+ * first rendered frame. Lets GET /api/perf/history show the post-boot fps
+ * curve (including the pre-WiFi seconds no HTTP poller can observe) and
+ * catch single-frame spikes via max_render_ms. Writer = LVGL task; readers
+ * tolerate 1 s-granularity tearing, same as render_perf_get. */
+static render_perf_hist_t s_perf_hist[RENDER_PERF_HISTORY_LEN];
+static uint16_t s_perf_hist_next = 0;   /* next slot to write */
+static uint16_t s_perf_hist_count = 0;  /* valid entries (caps at LEN) */
+
+uint16_t render_perf_history_get(render_perf_hist_t *out, uint16_t max) {
+  if (!out || max == 0) return 0;
+  uint16_t count = s_perf_hist_count;
+  if (count > max) count = max;
+  uint16_t start = (uint16_t)((s_perf_hist_next + RENDER_PERF_HISTORY_LEN -
+                               count) % RENDER_PERF_HISTORY_LEN);
+  for (uint16_t i = 0; i < count; i++)
+    out[i] = s_perf_hist[(start + i) % RENDER_PERF_HISTORY_LEN];
+  return count;
+}
+
 /* Dirty-rect-topology diagnostic. LVGL calls this once per refresh where
  * anything was drawn; `px_num` is the sum of unjoined dirty-rect areas for
  * the frame (see lv_refr.c:620), i.e. the real on-screen invalidation load
- * *after* the join cascade has run. Aggregate over ~1s and log average
- * px/frame as a % of the full screen: sustained near-100% with sim on
- * confirms the join cascade is merging everything to near-full-screen,
- * while a drop to low double digits when a couple of widgets stop ticking
- * would confirm the topology cliff.
- * Safe to leave in: one ESP_LOGI per second, no work on hot path. */
+ * *after* the join cascade has run. Aggregate over ~1s and log avg + worst
+ * px/frame as a % of the full screen, plus flush count + flush time: a
+ * sustained avg near-100% (or a worst-frame at 100% with ~80 flushes)
+ * confirms the join cascade / 32-rect cliff is forcing full-screen redraws,
+ * while a drop when a couple of widgets stop ticking confirms the cliff.
+ * Safe to leave in: one ESP_LOGW per second, negligible hot-path work. */
 static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
                                  uint32_t px_num) {
   static uint32_t s_start_ms = 0;
   static uint32_t s_frame_cnt = 0;
   static uint64_t s_px_sum = 0;
   static uint64_t s_elaps_sum = 0;
+  static uint32_t s_px_max = 0;
+  static uint32_t s_elaps_max = 0;
 
   uint32_t now = lv_tick_get();
   if (s_start_ms == 0)
@@ -207,6 +256,10 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
   s_frame_cnt++;
   s_px_sum += px_num;
   s_elaps_sum += elaps_ms;
+  if (px_num > s_px_max)
+    s_px_max = px_num;
+  if (elaps_ms > s_elaps_max)
+    s_elaps_max = elaps_ms;
 
   uint32_t window = now - s_start_ms;
   if (window >= 1000 && s_frame_cnt > 0) {
@@ -217,17 +270,65 @@ static void rdm7_lvgl_monitor_cb(lv_disp_drv_t *drv, uint32_t elaps_ms,
                            ? (uint32_t)((s_px_sum * 100ULL) /
                                         ((uint64_t)screen_px * s_frame_cnt))
                            : 0;
+    uint32_t max_pct =
+        screen_px ? (uint32_t)((uint64_t)s_px_max * 100ULL / screen_px) : 0;
     uint32_t fps_x10 = (s_frame_cnt * 10000U) / window;
+
+    /* Drain flush instrumentation over the same window. The flush worker on
+     * core 0 may be mid-update — take the stat spinlock for the swap. */
+    taskENTER_CRITICAL(&s_flush_stat_mux);
+    uint32_t fcount = s_flush_count;
+    uint64_t fus = s_flush_us_sum;
+    s_flush_count = 0;
+    s_flush_us_sum = 0;
+    taskEXIT_CRITICAL(&s_flush_stat_mux);
+    uint32_t flush_per_frame_x10 = (uint32_t)((uint64_t)fcount * 10U / s_frame_cnt);
+    uint32_t flush_us_per_frame = (uint32_t)(fus / s_frame_cnt);
+
+    /* Publish the window for GET /api/perf (seq last, as a cheap freshness
+     * marker for readers on other tasks). */
+    s_render_perf.fps_x10 = fps_x10;
+    s_render_perf.frames = s_frame_cnt;
+    s_render_perf.avg_px = avg_px;
+    s_render_perf.avg_pct = avg_pct;
+    s_render_perf.max_pct = max_pct;
+    s_render_perf.avg_render_ms = avg_elaps;
+    s_render_perf.flush_per_frame_x10 = flush_per_frame_x10;
+    s_render_perf.flush_us_per_frame = flush_us_per_frame;
+    s_render_perf.seq++;
+
+    /* Append to the boot-timeline ring (see render_perf_history_get). */
+    render_perf_hist_t *h = &s_perf_hist[s_perf_hist_next];
+    h->up_ms = now;
+    h->fps_x10 = (uint16_t)LV_MIN(fps_x10, 0xFFFF);
+    h->avg_render_ms = (uint16_t)LV_MIN(avg_elaps, 0xFFFF);
+    h->max_render_ms = (uint16_t)LV_MIN(s_elaps_max, 0xFFFF);
+    h->max_pct = (uint16_t)max_pct;
+    h->avg_px = avg_px;
+    s_perf_hist_next = (uint16_t)((s_perf_hist_next + 1) % RENDER_PERF_HISTORY_LEN);
+    if (s_perf_hist_count < RENDER_PERF_HISTORY_LEN)
+      s_perf_hist_count++;
+
+    /* Steady-state render telemetry — DEBUG, not WARN. The FPS-analysis
+     * campaign that needed this is concluded; at the default INFO log level
+     * this compiles out, so it no longer floods field logs (~3600 lines/hr)
+     * or buries genuine warnings. Raise the log level to re-enable. */
     ESP_LOGD("refr_diag",
-             "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% of screen) "
-             "avg_render=%lu ms",
+             "fps=%lu.%lu frames=%lu avg_px=%lu (%lu%% scr) max=%lu%% "
+             "render=%lu ms flush=%lu.%lu/frame (%lu us/frame)",
              (unsigned long)(fps_x10 / 10), (unsigned long)(fps_x10 % 10),
              (unsigned long)s_frame_cnt, (unsigned long)avg_px,
-             (unsigned long)avg_pct, (unsigned long)avg_elaps);
+             (unsigned long)avg_pct, (unsigned long)max_pct,
+             (unsigned long)avg_elaps,
+             (unsigned long)(flush_per_frame_x10 / 10),
+             (unsigned long)(flush_per_frame_x10 % 10),
+             (unsigned long)flush_us_per_frame);
     s_start_ms = now;
     s_frame_cnt = 0;
     s_px_sum = 0;
     s_elaps_sum = 0;
+    s_px_max = 0;
+    s_elaps_max = 0;
   }
 }
 
@@ -257,24 +358,57 @@ uint16_t *display_capture_shadow_fb(void) { return (uint16_t *)s_panel_fb; }
 bool display_capture_shadow_ready(void) { return s_panel_fb_ready; }
 uint32_t display_capture_shadow_seq(void) { return s_shadow_seq; }
 
-static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
-                              lv_color_t *color_map) {
+/* ── Tear-diagnostic flush trace ──────────────────────────────────────
+ * When RDM_FLUSH_TRACE is set, every flush_cb logs the dirty rect plus
+ * timing relative to the previous flush. Compare a tap-on-button log
+ * vs a tap-on-background (chrome reveal) log to see exactly what LVGL
+ * is emitting in each case — same rect count? same area? same cadence?
+ * Disabled at build time when chasing perf. */
+#ifndef RDM_FLUSH_TRACE
+#define RDM_FLUSH_TRACE 0
+#endif
+
+/* ── Cross-core flush worker ──────────────────────────────────────────────
+ * LVGL renders into two 120-line PSRAM draw buffers, so it can rasterize the
+ * next band while the previous one is still being copied into the panel
+ * framebuffer — but only if flush_cb returns before the copy. Handing the
+ * esp_lcd_panel_draw_bitmap (dirty-rect memcpy + full-768KB-FB cache msync,
+ * 4–10 ms/frame on heavy layouts) to a core-0 task overlaps it with core-1
+ * rasterization; lv_disp_flush_ready is called from the worker once the copy
+ * lands. LVGL's draw_buf_flush spins on `flushing` before reusing a buffer,
+ * so at most one job is ever in flight and band ordering is FIFO-preserved.
+ * If queue/task creation fails we fall back to the old synchronous flush. */
+typedef struct {
+  lv_disp_drv_t *drv;
+  lv_area_t area;
+  lv_color_t *color_map;
+  bool is_last;
+} rdm_flush_job_t;
+
+static QueueHandle_t s_flush_queue = NULL;
+
+static void rdm_flush_execute(lv_disp_drv_t *drv, const lv_area_t *area,
+                              lv_color_t *color_map, bool is_last) {
   esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
-  int offsetx1 = area->x1;
-  int offsetx2 = area->x2;
-  int offsety1 = area->y1;
-  int offsety2 = area->y2;
 
-  // Direct transfer to display - PSRAM buffers are handled by the LCD driver
-
-  esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1,
-                            offsety2 + 1, color_map);
+  int64_t _flush_t0 = esp_timer_get_time();
+  esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1,
+                            area->y2 + 1, color_map);
+  /* Per-flush cost = memcpy of the dirty rect into the PSRAM FB + (under the
+   * current DOUBLE_FB / no-bounce config) an esp_cache_msync of the WHOLE
+   * 768 KB framebuffer. Accumulate so the monitor can report flush time and
+   * count per frame. When the worker is active this time runs concurrently
+   * with core-1 rendering instead of adding to it. */
+  int64_t _flush_us = esp_timer_get_time() - _flush_t0;
+  taskENTER_CRITICAL(&s_flush_stat_mux);
+  s_flush_us_sum += (uint64_t)_flush_us;
+  s_flush_count++;
+  taskEXIT_CRITICAL(&s_flush_stat_mux);
 
   /* Lazily cache the panel FB pointer on first flush. Use fb_num=1 so the
    * variadic call only needs one pointer argument — we always read the
    * same FB for capture (accepting an occasional torn frame) and don't
-   * need fb1. fb_num=2 (two-pointer) form was disabled temporarily during
-   * a debugging session; this single-pointer form is the safer API shape. */
+   * need fb1. */
   if (!s_panel_fb) {
     void *fb0 = NULL;
     if (esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &fb0) == ESP_OK) {
@@ -287,10 +421,70 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
    * is available. Single 32-bit write — atomic on ESP32-S3. */
   s_shadow_seq++;
 
-  if (lv_disp_flush_is_last(drv)) {
+  if (is_last) {
     signal_internal_count_frame();
   }
   lv_disp_flush_ready(drv);
+}
+
+static void rdm_flush_worker_task(void *arg) {
+  (void)arg;
+  rdm_flush_job_t job;
+  for (;;) {
+    if (xQueueReceive(s_flush_queue, &job, portMAX_DELAY) == pdTRUE) {
+      rdm_flush_execute(job.drv, &job.area, job.color_map, job.is_last);
+    }
+  }
+}
+
+static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
+                              lv_color_t *color_map) {
+  bool is_last = lv_disp_flush_is_last(drv);
+
+#if RDM_FLUSH_TRACE
+  int offsetx1 = area->x1;
+  int offsetx2 = area->x2;
+  int offsety1 = area->y1;
+  int offsety2 = area->y2;
+  /* Trace only short bursts: log when burst starts and ends. A "burst"
+   * is a sequence of flushes with < 5 ms between them. This filters out
+   * the steady-state per-frame flushes and keeps the log to the moments
+   * we care about (taps, reveals). */
+  static uint32_t s_last_flush_us = 0;
+  static uint32_t s_burst_count = 0;
+  static uint32_t s_burst_start_us = 0;
+  uint32_t now_us = (uint32_t)esp_timer_get_time();
+  uint32_t delta_us = now_us - s_last_flush_us;
+  int w = offsetx2 - offsetx1 + 1;
+  int h = offsety2 - offsety1 + 1;
+  if (delta_us > 5000) {
+    /* New burst — log every flush of this burst */
+    s_burst_count = 1;
+    s_burst_start_us = now_us;
+    ESP_LOGW("flush", "BURST [%lu] x=%d y=%d w=%d h=%d area=%d last=%d "
+                      "since_prev=%lu us",
+             (unsigned long)s_burst_count, offsetx1, offsety1, w, h, w * h,
+             is_last, (unsigned long)delta_us);
+  } else {
+    s_burst_count++;
+    ESP_LOGW("flush", "  ... [%lu] x=%d y=%d w=%d h=%d area=%d last=%d "
+                      "delta=%lu us total=%lu us",
+             (unsigned long)s_burst_count, offsetx1, offsety1, w, h, w * h,
+             is_last, (unsigned long)delta_us,
+             (unsigned long)(now_us - s_burst_start_us));
+  }
+  s_last_flush_us = now_us;
+#endif
+
+  if (s_flush_queue) {
+    rdm_flush_job_t job = {
+        .drv = drv, .area = *area, .color_map = color_map, .is_last = is_last};
+    /* Only one flush is ever in flight (LVGL gates on `flushing`), so the
+     * depth-2 queue never fills — this send doesn't block in practice. */
+    xQueueSend(s_flush_queue, &job, portMAX_DELAY);
+    return; /* lv_disp_flush_ready comes from the worker */
+  }
+  rdm_flush_execute(drv, area, color_map, is_last);
 }
 
 bool rdm_lvgl_lock(int timeout_ms) {
@@ -307,6 +501,29 @@ void rdm_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
 TaskHandle_t lvglTaskHandle = NULL;
 
 // Change the LVGL task function to be accessible
+/* Cancel the OTA rollback once the dashboard has demonstrably booted healthy.
+ * With CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE and no factory partition, every
+ * boot starts in ESP_OTA_IMG_PENDING_VERIFY and rolls back to the other slot on
+ * the next reset unless we confirm the image here. Called from the LVGL task
+ * only after several seconds of successful rendering, so a boot-looping image
+ * never reaches it and gets rolled back instead. Idempotent (no-op when not
+ * pending / rollback disabled); only the first call does real work. */
+static void rdm_mark_app_valid_once(void) {
+  static bool done = false;
+  if (done) return;
+  done = true;
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  esp_ota_img_states_t st;
+  if (running && esp_ota_get_state_partition(running, &st) == ESP_OK &&
+      st == ESP_OTA_IMG_PENDING_VERIFY) {
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+      ESP_LOGI(TAG, "OTA image confirmed healthy — rollback cancelled (%s)",
+               running->label);
+    else
+      ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback failed");
+  }
+}
+
 void rdm_lvgl_port_task(void *pvParameter) {
   ESP_LOGI(TAG, "Starting LVGL task");
   const uint32_t refresh_period_ms =
@@ -317,6 +534,15 @@ void rdm_lvgl_port_task(void *pvParameter) {
   const uint32_t max_failures =
       10; // Maximum consecutive failures before task notification
   uint32_t start_time;
+  // Watchdog (H13): subscribe this render task to the TWDT on its FIRST
+  // successful frame (not at task start) so boot-time lock contention can't
+  // false-trip before we've proven we can render. Reset only on the success
+  // path — if lv_timer_handler hangs OR another task holds the LVGL lock
+  // forever, the dash is frozen and the WDT (PANIC=y) reboots us. The CAN RX
+  // task is intentionally NOT subscribed: its bus-off recovery path sleeps and
+  // a quiet/disconnected bus must not panic the device.
+  bool wdt_subscribed = false;
+  const int64_t boot_us = esp_timer_get_time();
 
   while (1) {
     start_time = esp_timer_get_time() / 1000;
@@ -333,6 +559,17 @@ void rdm_lvgl_port_task(void *pvParameter) {
       // widget/UI work stays single-threaded.
       can_process_queued_frames();
       rdm_lvgl_unlock();
+
+      // Arm + pet the watchdog now that a full frame succeeded.
+      if (!wdt_subscribed) {
+        esp_task_wdt_add(NULL);
+        wdt_subscribed = true;
+      }
+      esp_task_wdt_reset();
+
+      // Confirm the OTA image after ~10 s of healthy rendering (H11).
+      if ((esp_timer_get_time() - boot_us) >= 10LL * 1000 * 1000)
+        rdm_mark_app_valid_once();
 
       // Calculate remaining time in the refresh period
       uint32_t elapsed = (esp_timer_get_time() / 1000) - start_time;
@@ -577,6 +814,16 @@ void app_main(void) {
    * before dashboard_init). Idempotent — safe to call again. */
   night_mode_init();
 
+  /* Channel manager: loads /lfs/channels.json (or seeds the OBD2 default
+   * set if missing) so the channel registry is ready before any widget
+   * or web-server endpoint asks for it. Signal binding for channels
+   * happens lazily — channel_manager_resolve_signals() gets called from
+   * layout_manager_load() after the layout's signals[] array has been
+   * registered. */
+  if (channel_manager_init() != ESP_OK) {
+    ESP_LOGW(TAG, "channel_manager_init reported non-OK — dash will continue with empty channel table");
+  }
+
   // EARLY CAN DRIVER INITIALIZATION - Initialize CAN driver early but task
   // comes later
   ESP_LOGI(TAG, "Early CAN driver initialization for fast startup...");
@@ -819,67 +1066,71 @@ void app_main(void) {
   ESP_LOGI(TAG, "Initialize LVGL library");
   lv_init();
 
-  /* Try internal SRAM first — faster writes than PSRAM since the LCD
-   * DMA is constantly reading the PSRAM framebuffer. Internal SRAM
-   * avoids the SPI bus contention bottleneck.
+  /* Draw buffers — PSRAM primary, large.
    *
-   * SIZING: kept INTENTIONALLY SMALL after diagnostics (heap_monitor)
-   * caught us running with int_free < 200 BYTES post-boot. The previous
-   * sizing (20 lines = 64 KB total) ate the entire margin available for
-   * WiFi's esp_phy esp_timer_create + esf_buf_setup_static and produced
-   * recurring ESP_ERR_NO_MEM crashes inside phy_track_pll_init the
-   * moment any auth attempt cycled the radio.
+   * Measured on a heavy live layout (450px meter + 3 arcs + text, driven off
+   * CAN): a LARGE PSRAM buffer beats the previous tiny internal-SRAM buffer for
+   * this draw-heavy workload. LVGL redraws every object intersecting each
+   * draw-buffer-sized band, and lv_meter's tick/label draw is NOT clip-culled,
+   * so a 6-line buffer made the tall meter's draw run ~75x per refresh. A
+   * 120-line PSRAM buffer (V_RES/4 → ~20x fewer bands) cut render ~78→58 ms and
+   * lifted typical fps ~13→~19, even though PSRAM is slower per-flush than
+   * internal SRAM — the band-count win dominates the bus-contention cost.
    *
-   * With 6 lines × 2 buffers = ~19 KB internal we leave ~45 KB more
-   * internal headroom for the WiFi/PHY stack. LVGL flushes more often
-   * (480 / 6 = 80 partial flushes per full screen redraw) but on this
-   * dash that's still well above visual refresh — most renders only
-   * touch a sub-region anyway. If a particular widget feels janky we
-   * can re-tune this cap downward; bigger is only worth it once we
-   * have real internal-heap profiling that shows we can afford it. */
+   * It also FREES the ~19 KB of internal SRAM the old buffers used, RESTORING
+   * the WiFi/PHY heap headroom that the tiny internal buffer existed to protect
+   * (20-line internal once caused phy_track_pll_init OOM crashes). So PSRAM
+   * primary is both faster AND safer for the radio. Tiny internal SRAM remains
+   * as a last-resort fallback if PSRAM alloc ever fails (shouldn't on 8 MB). */
   void *buf1 = NULL, *buf2 = NULL;
   size_t buf_size = 0;
 
-  /* Internal SRAM: try 8, 6, then 4 lines. All small enough to leave
-   * the WiFi/PHY headroom; smallest still gives a usable flush size. */
-  static const int try_lines[] = {8, 6, 4};
-  for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
-    int lines = try_lines[i];
-    buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
-    buf_size = (buf_size + 31) & ~31;
-    buf1 = heap_caps_aligned_alloc(32, buf_size,
-                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (buf1) {
-      buf2 = heap_caps_aligned_alloc(32, buf_size,
-                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-      if (buf2) {
-        ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
-        break;
-      }
-      heap_caps_free(buf1);
-      buf1 = NULL;
-    }
-  }
-
-  /* Fallback: PSRAM buffers (slower due to bus contention with LCD DMA) */
-  if (!buf1 || !buf2) {
-    ESP_LOGW(TAG, "Internal SRAM insufficient, falling back to PSRAM buffers");
-    buf_size =
-        (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
-    buf_size = (buf_size + 31) & ~31;
+  /* Primary: PSRAM, V_RES/4 = 120 lines per buffer, shrinking on failure.
+   * Measured sweet spot: going larger (full-screen, 1 band) gave no further
+   * draw reduction — at 120 lines the per-band re-execution penalty is already
+   * gone and the remaining draw cost is overdraw-bound (overlapping layers),
+   * not band-bound. */
+  buf_size = (EXAMPLE_LCD_H_RES * (EXAMPLE_LCD_V_RES / 4) * sizeof(lv_color_t));
+  buf_size = (buf_size + 31) & ~31;
+  {
     const size_t min_buf_size = (EXAMPLE_LCD_H_RES * 30 * sizeof(lv_color_t));
-
     while (buf_size >= min_buf_size) {
       buf1 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
       if (buf1) {
         buf2 = heap_caps_aligned_alloc(32, buf_size, MALLOC_CAP_SPIRAM);
-        if (buf2)
+        if (buf2) {
+          ESP_LOGI(TAG, "Using PSRAM draw buffers (%u lines)",
+                   (unsigned)(buf_size / sizeof(lv_color_t) / EXAMPLE_LCD_H_RES));
           break;
+        }
         heap_caps_free(buf1);
         buf1 = NULL;
       }
       buf_size = (buf_size * 3) / 4;
       buf_size = (buf_size + 31) & ~31;
+    }
+  }
+
+  /* Last-resort fallback: tiny internal SRAM (8/6/4 lines). */
+  if (!buf1 || !buf2) {
+    ESP_LOGW(TAG, "PSRAM draw buffers unavailable, falling back to internal SRAM");
+    static const int try_lines[] = {8, 6, 4};
+    for (size_t i = 0; i < sizeof(try_lines) / sizeof(try_lines[0]); i++) {
+      int lines = try_lines[i];
+      buf_size = (EXAMPLE_LCD_H_RES * lines * sizeof(lv_color_t));
+      buf_size = (buf_size + 31) & ~31;
+      buf1 = heap_caps_aligned_alloc(32, buf_size,
+                                     MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      if (buf1) {
+        buf2 = heap_caps_aligned_alloc(32, buf_size,
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (buf2) {
+          ESP_LOGI(TAG, "Using internal SRAM draw buffers (%d lines)", lines);
+          break;
+        }
+        heap_caps_free(buf1);
+        buf1 = NULL;
+      }
     }
   }
 
@@ -891,6 +1142,23 @@ void app_main(void) {
   ESP_LOGI(TAG, "LVGL buffers allocated successfully, size: %u bytes each",
            buf_size);
   lv_disp_draw_buf_init(&disp_buf, buf1, buf2, buf_size / sizeof(lv_color_t));
+
+  /* Cross-core flush worker — see comment above rdm_flush_execute. Created
+   * before the display driver registers so the very first flush already
+   * routes through it. Prio 10 on core 0: above CAN RX (7) so flush latency
+   * stays bounded, below lwIP (18) / WiFi (23). Created pre-WiFi so the
+   * 4 KB internal-RAM stack allocation has headroom. */
+  s_flush_queue = xQueueCreate(2, sizeof(rdm_flush_job_t));
+  if (s_flush_queue) {
+    if (xTaskCreatePinnedToCore(rdm_flush_worker_task, "lcd_flush", 4096, NULL,
+                                10, NULL, 0) != pdPASS) {
+      vQueueDelete(s_flush_queue);
+      s_flush_queue = NULL;
+      ESP_LOGW(TAG, "Flush worker create failed — falling back to synchronous flush");
+    } else {
+      ESP_LOGI(TAG, "Cross-core flush worker active (async flush on core 0)");
+    }
+  }
 
   ESP_LOGI(TAG, "Register display driver to LVGL");
   /* Capture reads directly from the panel's own framebuffer — see the
@@ -1044,11 +1312,12 @@ void app_main(void) {
    * (UART TX idles HIGH, overriding the pull-down and permanently reading
    * as active on the indicator circuit).
    *
-   * DEBUG: set RDM7_DEBUG_KEEP_CONSOLE to 1 to skip UART1 takeover so boot
-   * logs remain visible on the USB-UART bridge past this point. Desktop app
-   * cannot connect while this is enabled. Flip back to 0 for production. */
+   * Production default: take over UART1 for the desktop serial protocol.
+   * For a debugging session, build with -DRDM7_DEBUG_KEEP_CONSOLE=1 to skip the
+   * takeover so boot logs stay visible on the USB-UART bridge (the desktop app
+   * can't connect while that override is set). */
 #ifndef RDM7_DEBUG_KEEP_CONSOLE
-#define RDM7_DEBUG_KEEP_CONSOLE 1
+#define RDM7_DEBUG_KEEP_CONSOLE 1   /* TEMP debug: keep UART0 console live to capture crash backtrace — REVERT to 0 */
 #endif
 #if RDM7_DEBUG_KEEP_CONSOLE
   ESP_LOGW(TAG, "RDM7_DEBUG_KEEP_CONSOLE=1 — skipping uart_protocol_init "

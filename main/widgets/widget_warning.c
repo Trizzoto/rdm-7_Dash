@@ -1,6 +1,7 @@
 #include "widget_warning.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "widget_panel.h"
 #include "system/night_mode.h"
@@ -36,6 +37,43 @@ static const char *TAG = "widget_warning";
 static warning_data_t *_lookup_warning_data(uint8_t slot) {
 	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_WARNING, slot);
 	return w ? (warning_data_t *)w->type_data : NULL;
+}
+
+/* ── Flash effect ──────────────────────────────────────────────────────────
+ * Per-warning periodic timer that flips flash_phase and re-renders the
+ * widget. Only created while flash_mode=1 AND current_state=true so a
+ * solid (or inactive) lamp costs zero CPU. The user_data carries the
+ * slot index so a single static callback can service every instance. */
+
+static void _warn_flash_timer_cb(lv_timer_t *t) {
+	uint8_t slot = (uint8_t)(uintptr_t)t->user_data;
+	warning_data_t *wd = _lookup_warning_data(slot);
+	if (!wd) return;
+	wd->flash_phase = !wd->flash_phase;
+	update_warning_ui_immediate(slot);
+}
+
+/* (Re)create the flash timer if `desired_ms` differs from the active
+ * period. Pass 0 to tear it down. Cheap to call every render — most
+ * frames hit the early-return on no period change. */
+static void _warn_ensure_flash_timer(warning_data_t *wd, uint16_t desired_ms) {
+	if (!wd) return;
+	if (desired_ms == 0) {
+		if (wd->flash_timer) {
+			lv_timer_del(wd->flash_timer);
+			wd->flash_timer = NULL;
+		}
+		wd->flash_phase = false;
+		return;
+	}
+	if (wd->flash_timer) {
+		/* Adjust period in place — cheaper than delete+create. */
+		lv_timer_set_period(wd->flash_timer, desired_ms);
+		return;
+	}
+	wd->flash_timer = lv_timer_create(_warn_flash_timer_cb, desired_ms,
+	                                   (void *)(uintptr_t)wd->slot);
+	wd->flash_phase = true;   /* start in the "active" half of the cycle */
 }
 
 /* forward declarations */
@@ -398,10 +436,28 @@ void update_warning_ui_immediate(uint8_t warning_idx) {
 	bool state = wd ? wd->current_state : false;
 	lv_color_t active = wd ? wd->active_color : THEME_COLOR_RED;
 	lv_color_t inactive = wd ? wd->inactive_color : THEME_COLOR_INACTIVE;
-	lv_color_t new_color = state ? active : inactive;
 	uint8_t active_opa = wd ? wd->active_opa : 255;
 	uint8_t inactive_opa = wd ? wd->inactive_opa : 180;
-	uint8_t new_opa = state ? active_opa : inactive_opa;
+
+	/* Flash effect — when active AND flash mode is on, alternate between
+	 * the active and inactive look at flash_speed_ms cadence. The timer
+	 * itself lives on the warning instance and is (re)created here so it
+	 * automatically starts when the signal activates and stops when it
+	 * deactivates or flash_mode is turned off. */
+	uint16_t flash_ms = (wd && wd->flash_mode == 1 && state)
+		? (wd->flash_speed_ms ? wd->flash_speed_ms : 200) : 0;
+	_warn_ensure_flash_timer(wd, flash_ms);
+
+	bool render_active = state;
+	if (flash_ms != 0) {
+		/* During an "off" half of the cycle, paint the inactive look while
+		 * keeping the label hidden (the label flash should follow the
+		 * lamp). */
+		render_active = wd->flash_phase;
+	}
+
+	lv_color_t new_color = render_active ? active : inactive;
+	uint8_t new_opa = render_active ? active_opa : inactive_opa;
 
 	bool is_image = wd && wd->img_obj != NULL;
 
@@ -904,6 +960,16 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 			lv_img_set_src(warning_circles[i], wd_style->img_dsc);
 			lv_obj_set_align(warning_circles[i], LV_ALIGN_CENTER);
 			lv_obj_set_pos(warning_circles[i], pos_x, pos_y);
+			/* Image scale — pivot on the image centre so the zoom stays
+			 * centred on the widget position, then convert percent → LVGL
+			 * zoom (256 = 100%). Skipped at 100% (set_zoom(256) is a no-op). */
+			if (wd_style->image_scale != 100 && wd_style->image_scale > 0) {
+				lv_img_set_pivot(warning_circles[i],
+				                 wd_style->img_dsc->header.w / 2,
+				                 wd_style->img_dsc->header.h / 2);
+				lv_img_set_zoom(warning_circles[i],
+				                (uint16_t)((uint32_t)wd_style->image_scale * 256 / 100));
+			}
 			/* Apply color overlay using recolor */
 			lv_color_t init_color = wd_style->inactive_color;
 			uint8_t init_opa = wd_style->inactive_opa;
@@ -930,6 +996,13 @@ void widget_warning_create_one(lv_obj_t *parent, uint8_t i) {
 					lv_img_set_src(wd_style->night_img_obj, wd_style->night_img_dsc);
 					lv_obj_set_align(wd_style->night_img_obj, LV_ALIGN_CENTER);
 					lv_obj_set_pos(wd_style->night_img_obj, pos_x, pos_y);
+					if (wd_style->image_scale != 100 && wd_style->image_scale > 0) {
+						lv_img_set_pivot(wd_style->night_img_obj,
+						                 wd_style->night_img_dsc->header.w / 2,
+						                 wd_style->night_img_dsc->header.h / 2);
+						lv_img_set_zoom(wd_style->night_img_obj,
+						                (uint16_t)((uint32_t)wd_style->image_scale * 256 / 100));
+					}
 					lv_obj_set_style_img_recolor(wd_style->night_img_obj, init_color,
 					                              LV_PART_MAIN | LV_STATE_DEFAULT);
 					lv_obj_set_style_img_recolor_opa(wd_style->night_img_obj,
@@ -1109,6 +1182,30 @@ static void _warning_on_signal(float value, bool is_stale, void *user_data) {
 static void _warning_apply_night_mode(widget_t *w, bool active);
 static void _warning_night_cb(bool active, void *user_data);
 
+/* Channel-changed listener for warning widget. */
+static void _warning_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	warning_data_t *wd = (warning_data_t *)w->type_data;
+	if (!wd) return;
+	safe_strncpy(wd->signal_name, c->signal_name, sizeof(wd->signal_name));
+	/* Re-point our signal subscription when the channel's source index moved
+	 * (e.g. the user just configured this channel's CAN decode in the editor).
+	 * Previously we only stored the new index and never (un)subscribed, so an
+	 * alert bound to an as-yet-unconfigured channel stayed dark even after the
+	 * channel was wired up, and a rebind left us listening to the old signal.
+	 * Mirrors _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != wd->signal_index) {
+		if (wd->signal_index >= 0)
+			signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
+		wd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _warning_on_signal, w);
+	}
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
+}
+
 static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
@@ -1120,6 +1217,10 @@ static void _warning_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (wd && wd->signal_index >= 0)
 		signal_subscribe(wd->signal_index, _warning_on_signal, w);
+
+	if (wd && wd->channel)
+		channel_manager_subscribe((channel_t *)wd->channel,
+		                           _warning_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set. */
 	if (wd && (wd->night.has_active_color || wd->night.has_inactive_color ||
@@ -1158,6 +1259,8 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddBoolToObject(cfg, "invert_toggle", wd->invert_toggle);
 		if (wd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", wd->signal_name);
+		if (wd->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", wd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
 		if (wd->inactive_color.full != THEME_COLOR_INACTIVE.full)
 			cJSON_AddNumberToObject(cfg, "inactive_color", (int)wd->inactive_color.full);
@@ -1179,10 +1282,18 @@ static void _warning_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "label_text_align", wd->label_text_align);
 		if (wd->image_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "image_name", wd->image_name);
+		if (wd->image_scale != 100)
+			cJSON_AddNumberToObject(cfg, "image_scale", wd->image_scale);
 		if (wd->active_opa != 255)
 			cJSON_AddNumberToObject(cfg, "active_opa", wd->active_opa);
 		if (wd->inactive_opa != 180)
 			cJSON_AddNumberToObject(cfg, "inactive_opa", wd->inactive_opa);
+		/* Flash effect — defaults-only. flash_mode 0 = Solid (no emit),
+		 * flash_speed_ms 200 = the default rate (no emit). */
+		if (wd->flash_mode != 0)
+			cJSON_AddNumberToObject(cfg, "flash_mode", wd->flash_mode);
+		if (wd->flash_speed_ms != 0 && wd->flash_speed_ms != 200)
+			cJSON_AddNumberToObject(cfg, "flash_speed", wd->flash_speed_ms);
 		/* Night-mode overrides — emit only fields that have an override set */
 		{
 			cJSON *n = cJSON_CreateObject();
@@ -1249,10 +1360,27 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_name");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(wd->image_name, item->valuestring, sizeof(wd->image_name));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "image_scale");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		wd->image_scale = (uint16_t)(v < 10 ? 10 : (v > 200 ? 200 : v));
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "active_opa");
 	if (cJSON_IsNumber(item)) wd->active_opa = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "inactive_opa");
 	if (cJSON_IsNumber(item)) wd->inactive_opa = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_mode");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		wd->flash_mode = (v == 1) ? 1 : 0;
+	}
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "flash_speed");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 50)   v = 50;
+		if (v > 1000) v = 1000;
+		wd->flash_speed_ms = (uint16_t)v;
+	}
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -1267,10 +1395,46 @@ static void _warning_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (wd->signal_name[0] != '\0')
 		wd->signal_index = signal_find_by_name(wd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Empty-signal channel falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(wd->channel_id, ch_item->valuestring, sizeof(wd->channel_id));
+	channel_t *bound_c = wd->channel_id[0] ? channel_manager_get(wd->channel_id) : NULL;
+	if (bound_c) {
+		/* Attach to the channel even when it has no signal yet, so the
+		 * channel-changed listener fires (and _warning_on_channel_changed
+		 * subscribes) the moment the user configures this channel's source.
+		 * Previously this branch was gated on signal_index >= 0, leaving an
+		 * alert bound to an unconfigured channel permanently dark until a full
+		 * layout reload. */
+		wd->channel = bound_c;
+		if (bound_c->signal_index >= 0) {
+			safe_strncpy(wd->signal_name, bound_c->signal_name, sizeof(wd->signal_name));
+			wd->signal_index = bound_c->signal_index;
+		}
+	} else if (wd->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = wd->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) wd->channel = c;
+	}
 }
 static void _warning_destroy(widget_t *w) {
 	warning_data_t *wd = (warning_data_t *)w->type_data;
 	uint8_t slot = wd ? wd->slot : 0;
+	if (wd && wd->channel) {
+		channel_manager_unsubscribe((channel_t *)wd->channel,
+		                             _warning_on_channel_changed, w);
+		wd->channel = NULL;
+	}
 	if (wd && wd->signal_index >= 0)
 		signal_unsubscribe(wd->signal_index, _warning_on_signal, w);
 	night_mode_unsubscribe(_warning_night_cb, w);
@@ -1278,6 +1442,16 @@ static void _warning_destroy(widget_t *w) {
 	/* Label is a sibling of root (child of parent), delete explicitly */
 	if (slot < 8 && warning_labels[slot] && lv_obj_is_valid(warning_labels[slot]))
 		lv_obj_del(warning_labels[slot]);
+	/* The day image/circle (warning_circles[slot]) is created via
+	 * lv_img_create(parent) — a SIBLING of the touch-area root (w->root), so the
+	 * lv_obj_del(w->root) below does NOT reach it. Delete it explicitly here,
+	 * BEFORE rdm_image_free() releases its descriptor: otherwise it orphans on
+	 * the screen with a dangling bg/img src and the next display refresh
+	 * dereferences freed pixel data → Guru Meditation (LoadProhibited). This was
+	 * the layout-switch crash; the night sibling was already deleted below but
+	 * the day object was only NULLed, never freed. */
+	if (slot < 8 && warning_circles[slot] && lv_obj_is_valid(warning_circles[slot]))
+		lv_obj_del(warning_circles[slot]);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -1293,6 +1467,9 @@ static void _warning_destroy(widget_t *w) {
 		*globals[slot] = NULL;
 	}
 	if (wd) {
+		/* Tear down the flash timer so we don't leak it past destroy.
+		 * _warn_ensure_flash_timer with 0 also resets flash_phase. */
+		_warn_ensure_flash_timer(wd, 0);
 		rdm_image_free(wd->img_dsc);
 		wd->img_dsc = NULL;
 		wd->img_obj = NULL;
@@ -1463,10 +1640,13 @@ static bool _warning_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "label") == 0)              { out->str = wd->label;              return true; }
 	if (strcmp(name, "label_font") == 0)         { out->str = wd->label_font;         return true; }
 	if (strcmp(name, "image_name") == 0)         { out->str = wd->image_name;         return true; }
+	if (strcmp(name, "image_scale") == 0)        { out->i = wd->image_scale;          return true; }
 	if (strcmp(name, "is_momentary") == 0)       { out->b = wd->is_momentary;         return true; }
 	if (strcmp(name, "invert_toggle") == 0)      { out->b = wd->invert_toggle;        return true; }
 	if (strcmp(name, "show_label") == 0)         { out->b = wd->show_label;           return true; }
 	if (strcmp(name, "active_opa") == 0)         { out->i = wd->active_opa;           return true; }
+	if (strcmp(name, "flash_mode") == 0)         { out->i = wd->flash_mode;           return true; }
+	if (strcmp(name, "flash_speed") == 0)        { out->i = wd->flash_speed_ms;       return true; }
 	if (strcmp(name, "inactive_opa") == 0)       { out->i = wd->inactive_opa;         return true; }
 	if (strcmp(name, "border_width") == 0)       { out->i = wd->border_width;         return true; }
 	if (strcmp(name, "radius") == 0)             { out->i = wd->radius;               return true; }
@@ -1509,6 +1689,24 @@ static bool _warning_inspector_set(widget_t *w, const char *name,
 		safe_strncpy(wd->image_name, in->str, sizeof(wd->image_name));
 		return true;   /* circle <-> image mode flip needs layout reload */
 	}
+	if (strcmp(name, "image_scale") == 0) {
+		int pct = in->i; if (pct < 10) pct = 10; if (pct > 200) pct = 200;
+		wd->image_scale = (uint16_t)pct;
+		/* Live-apply on the image object(s) — scale doesn't flip the LVGL
+		 * object type, so no reload needed. No-op in circle mode (img_obj NULL). */
+		uint16_t zoom = (uint16_t)((uint32_t)pct * 256 / 100);
+		if (wd->img_obj && lv_obj_is_valid(wd->img_obj) && wd->img_dsc) {
+			lv_img_set_pivot(wd->img_obj, wd->img_dsc->header.w / 2,
+			                 wd->img_dsc->header.h / 2);
+			lv_img_set_zoom(wd->img_obj, zoom);
+		}
+		if (wd->night_img_obj && lv_obj_is_valid(wd->night_img_obj) && wd->night_img_dsc) {
+			lv_img_set_pivot(wd->night_img_obj, wd->night_img_dsc->header.w / 2,
+			                 wd->night_img_dsc->header.h / 2);
+			lv_img_set_zoom(wd->night_img_obj, zoom);
+		}
+		return true;
+	}
 	if (strcmp(name, "label_font") == 0 && in->str) {
 		safe_strncpy(wd->label_font, in->str, sizeof(wd->label_font));
 		const lv_font_t *f = widget_resolve_font(wd->label_font);
@@ -1541,6 +1739,23 @@ static bool _warning_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "active_opa") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		wd->active_opa = (uint8_t)v;
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "flash_mode") == 0) {
+		wd->flash_mode = (in->i == 1) ? 1 : 0;
+		/* update_warning_ui_immediate (re-)evaluates the flash timer:
+		 * starting it on Solid→Flashing while active, stopping it on
+		 * Flashing→Solid. No need for a separate timer-management call
+		 * here. */
+		update_warning_ui_immediate(slot);
+		return true;
+	}
+	if (strcmp(name, "flash_speed") == 0) {
+		int v = in->i; if (v < 50) v = 50; if (v > 1000) v = 1000;
+		wd->flash_speed_ms = (uint16_t)v;
+		/* lv_timer_set_period inside _warn_ensure_flash_timer makes the
+		 * new rate live immediately on the next render. */
 		update_warning_ui_immediate(slot);
 		return true;
 	}
@@ -1634,8 +1849,13 @@ widget_t *widget_warning_create_instance(uint8_t slot) {
 	wd->label_y_offset = 0;
 	wd->label_text_align = 1;           /* Center */
 	wd->image_name[0] = '\0';
+	wd->image_scale = 100;              /* native size */
 	wd->active_opa = 255;
 	wd->inactive_opa = 180;
+	wd->flash_mode = 0;                 /* Solid by default — no flashing */
+	wd->flash_speed_ms = 200;           /* matches RPM-bar limiter flash rate */
+	wd->flash_timer = NULL;
+	wd->flash_phase = false;
 	wd->img_dsc = NULL;
 	wd->img_obj = NULL;
 

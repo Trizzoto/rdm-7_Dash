@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "system/rdm_lv_async.h"
 #include "ota_handler.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -19,6 +20,14 @@ static const char *TAG = "wifi_mgr";
 #define WIFI_RECONNECT_MAX_ATTEMPTS  5
 #define WIFI_RECONNECT_BASE_DELAY_MS 2000   /* doubles each attempt */
 #define WIFI_RECONNECT_MAX_DELAY_MS  30000
+
+/* After the fast exponential tier is exhausted, keep trying in the
+ * background at this interval instead of giving up forever — otherwise
+ * driving out of range for ~1 min meant the dash never rejoined home WiFi
+ * until reboot. Deliberately long: each retry is a scan + connect cycle and
+ * repeated PHY cycling leaks esp_timer slots (see WIFI_AUTH_FAIL_MAX note),
+ * so the duty cycle stays tiny. */
+#define WIFI_SLOW_RETRY_MS           (5 * 60 * 1000)
 
 /* Auth-class failures (wrong password, WPA mismatch, etc.) won't fix
  * themselves by retrying. Each retry cycles the PHY power state which
@@ -97,7 +106,7 @@ static void _set_state(wifi_mgr_state_t new_state)
             ctx->cb        = s_event_cb;
             ctx->state     = new_state;
             ctx->user_data = s_event_ud;
-            lv_async_call(_deferred_event_cb, ctx);
+            rdm_async_call(_deferred_event_cb, ctx);
         }
     }
 }
@@ -154,22 +163,32 @@ static void _deferred_reconnect(void *arg)
 static void _reconnect_timer_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    lv_async_call(_deferred_reconnect, NULL);
+    rdm_async_call(_deferred_reconnect, NULL);
 }
 
 static void _schedule_reconnect(void)
 {
+    int delay;
     if (s_reconnect_attempts >= WIFI_RECONNECT_MAX_ATTEMPTS) {
-        ESP_LOGW(TAG, "Max reconnect attempts reached (%d) — giving up",
-                 WIFI_RECONNECT_MAX_ATTEMPTS);
-        s_should_reconnect = false;
-        _set_state(WIFI_MGR_STATE_FAILED);
-        return;
-    }
-
-    int delay = WIFI_RECONNECT_BASE_DELAY_MS << s_reconnect_attempts;
-    if (delay > WIFI_RECONNECT_MAX_DELAY_MS) {
-        delay = WIFI_RECONNECT_MAX_DELAY_MS;
+        /* Fast tier exhausted — drop to the slow background tier rather
+         * than giving up. State shows FAILED so the UI is truthful about
+         * being offline, but the timer keeps running so the dash rejoins
+         * on its own when the network is reachable again. Auth-class
+         * failures never reach here (they hard-stop to AP-only in the
+         * disconnect handler — retrying a wrong password can't help). */
+        s_reconnect_attempts = WIFI_RECONNECT_MAX_ATTEMPTS;  /* freeze counter */
+        if (s_state != WIFI_MGR_STATE_FAILED) {
+            ESP_LOGW(TAG, "Max fast reconnect attempts (%d) — retrying in the "
+                     "background every %d s",
+                     WIFI_RECONNECT_MAX_ATTEMPTS, WIFI_SLOW_RETRY_MS / 1000);
+            _set_state(WIFI_MGR_STATE_FAILED);
+        }
+        delay = WIFI_SLOW_RETRY_MS;
+    } else {
+        delay = WIFI_RECONNECT_BASE_DELAY_MS << s_reconnect_attempts;
+        if (delay > WIFI_RECONNECT_MAX_DELAY_MS) {
+            delay = WIFI_RECONNECT_MAX_DELAY_MS;
+        }
     }
 
     ESP_LOGI(TAG, "Scheduling reconnect in %d ms (attempt %d/%d)",
@@ -244,7 +263,13 @@ static void _process_scan_results(void)
             s_auto_connect_pending = false;
             memset(s_auto_pass, 0, sizeof(s_auto_pass));
             ESP_LOGW(TAG, "Auto-connect: no networks found");
-            _set_state(WIFI_MGR_STATE_FAILED);
+            if (s_should_reconnect) {
+                /* Reconnect flow — a scan-miss is the normal out-of-range
+                 * case; keep the retry cycle alive instead of dying here. */
+                _schedule_reconnect();
+            } else {
+                _set_state(WIFI_MGR_STATE_FAILED);
+            }
         } else {
             _set_state(WIFI_MGR_STATE_IDLE);
         }
@@ -293,6 +318,13 @@ static void _process_scan_results(void)
         if (found) {
             ESP_LOGI(TAG, "Auto-connect: '%s' found in scan, connecting", s_auto_ssid);
             wifi_manager_connect(s_auto_ssid, s_auto_pass);
+        } else if (s_should_reconnect) {
+            /* Out of range (other networks visible, ours isn't) — this used
+             * to set FAILED and silently end the reconnect loop on the very
+             * first scan-miss; the dash then never rejoined until reboot.
+             * Keep cycling: fast tier first, then the slow background tier. */
+            ESP_LOGW(TAG, "Auto-connect: '%s' not in scan — retry scheduled", s_auto_ssid);
+            _schedule_reconnect();
         } else {
             ESP_LOGW(TAG, "Auto-connect: '%s' not found in scan results", s_auto_ssid);
             _set_state(WIFI_MGR_STATE_FAILED);
@@ -729,7 +761,14 @@ void wifi_manager_scan(void)
     esp_wifi_get_mode(&cur_mode);
     if (cur_mode == WIFI_MODE_AP) {
         ESP_LOGI(TAG, "Upgrading AP-only → APSTA for scan");
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        /* Web/UI-reachable path — a transient driver failure must not
+         * abort() the whole dash while driving; log and skip the scan. */
+        esp_err_t mode_err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (mode_err != ESP_OK) {
+            ESP_LOGE(TAG, "APSTA upgrade for scan failed: %s",
+                     esp_err_to_name(mode_err));
+            return;
+        }
     }
 
     ESP_LOGI(TAG, "Starting scan (non-blocking)");
@@ -789,11 +828,19 @@ void wifi_manager_connect(const char *ssid, const char *password)
      * silently no-op. */
     wifi_mode_t cur_mode = WIFI_MODE_NULL;
     esp_wifi_get_mode(&cur_mode);
-    if (cur_mode == WIFI_MODE_AP) {
-        ESP_LOGI(TAG, "Upgrading AP-only → APSTA for STA connect");
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
-    } else if (cur_mode == WIFI_MODE_NULL) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    if (cur_mode == WIFI_MODE_AP || cur_mode == WIFI_MODE_NULL) {
+        wifi_mode_t want = (cur_mode == WIFI_MODE_AP) ? WIFI_MODE_APSTA
+                                                      : WIFI_MODE_STA;
+        if (cur_mode == WIFI_MODE_AP)
+            ESP_LOGI(TAG, "Upgrading AP-only → APSTA for STA connect");
+        /* Web/UI-reachable — soft-fail instead of abort()ing the dash. */
+        esp_err_t mode_err = esp_wifi_set_mode(want);
+        if (mode_err != ESP_OK) {
+            ESP_LOGE(TAG, "Mode change for connect failed: %s",
+                     esp_err_to_name(mode_err));
+            _set_state(WIFI_MGR_STATE_FAILED);
+            return;
+        }
     }
 
     /* Store pending credentials for use in event handler */
@@ -920,7 +967,13 @@ void wifi_manager_enable_ap(bool enable)
     if (enable) {
         /* AP-only when no saved STA — see _has_saved_sta_creds comment */
         wifi_mode_t new_mode = _has_saved_sta_creds() ? WIFI_MODE_APSTA : WIFI_MODE_AP;
-        ESP_ERROR_CHECK(esp_wifi_set_mode(new_mode));
+        /* Web/UI/event-reachable — soft-fail, never abort() while driving. */
+        esp_err_t err = esp_wifi_set_mode(new_mode);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "AP enable: set_mode failed: %s", esp_err_to_name(err));
+            s_ap_enabled = false;
+            return;
+        }
 
         /* Configure AP */
         rdm_ap_config_t ap_cfg;
@@ -941,10 +994,19 @@ void wifi_manager_enable_ap(bool enable)
             ap_wifi_cfg.ap.authmode = WIFI_AUTH_OPEN;
         }
 
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_wifi_cfg));
+        err = esp_wifi_set_config(WIFI_IF_AP, &ap_wifi_cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "AP enable: set_config failed: %s", esp_err_to_name(err));
+            return;
+        }
         ESP_LOGI(TAG, "AP enabled: SSID='%s'", s_ap_ssid);
     } else {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "AP disable: set_mode failed: %s", esp_err_to_name(err));
+            s_ap_enabled = true;   /* mode didn't change — keep flag truthful */
+            return;
+        }
         ESP_LOGI(TAG, "AP disabled");
     }
 }

@@ -3,11 +3,13 @@
  * Layout:   GET/POST /api/layout/version|current|raw|save|preview|list|set|delete|rename
  * Presets:  GET /api/presets   GET /api/ecu/list|current  POST /api/ecu/set
  *           GET/POST /api/presets/custom/list|save|delete
- * Splash:   GET/POST /api/splash/list|set|delete|fade
+ * Splash:   GET/POST /api/splash/list|set|delete|fade|enabled
  *
  * Also owns the debounced LVGL screen-reload helpers used by save/preview. */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
+#include "data/channel_source_apply.h"
 #include "layout/layout_manager.h"
 #include "layout/ecu_presets.h"
 #include "lvgl.h"
@@ -21,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define. */
 #ifndef LAYOUT_MAX_FILE_BYTES
@@ -357,13 +360,98 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 	 * overwrite-or-rename decision before sending the save. Firmware just
 	 * persists whatever name the client requests. */
 
+	/* ── Auto-apply ECU preset on first save of a new layout ─────────
+	 *
+	 * Rule: if the incoming layout names an ECU (ecu + ecu_version
+	 * strings) but its signals[] is absent or empty, treat that as a
+	 * declarative "use this preset" and fill signals[] from the preset
+	 * rows before persisting. Single source of truth: the firmware-side
+	 * preset table.
+	 *
+	 * Why here, not in /api/ecu/set: this covers every code path that
+	 * can create a layout (new layout flow, Save As of an empty doc,
+	 * DBC import that forgot to materialise signals, hand-rolled curl
+	 * calls). Putting it in one create endpoint would leak the
+	 * responsibility into N callers.
+	 *
+	 * Guard: only fires when signals is truly empty/absent, so once a
+	 * layout has been bound (or the user has manually authored signals)
+	 * subsequent saves are pure writes. A user who deliberately strips
+	 * all signals while keeping ECU metadata will trigger a re-apply on
+	 * next save, which we treat as desirable ("re-bind to the named
+	 * preset"). OBD2 preset is handled inside apply_to_layout by
+	 * writing polled_pids[] instead of signals[]. */
+	bool preset_applied = false;
+	if (!is_splash) {
+		const cJSON *ecu_item = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+		const cJSON *ver_item = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+		const cJSON *sig_arr  = cJSON_GetObjectItemCaseSensitive(root, "signals");
+		bool signals_empty = !sig_arr ||
+			(cJSON_IsArray(sig_arr) && cJSON_GetArraySize(sig_arr) == 0);
+		if (signals_empty &&
+		    cJSON_IsString(ecu_item) && ecu_item->valuestring[0] &&
+		    cJSON_IsString(ver_item) && ver_item->valuestring[0]) {
+			const ecu_preset_t *p = ecu_preset_find(ecu_item->valuestring,
+			                                        ver_item->valuestring);
+			if (p) preset_applied = true;  /* will run after the raw save */
+		}
+	}
+
+	/* ── Studio "full config" import (channel thresholds + decode) ─────
+	 *
+	 * Off-device layouts (RDM Studio export / marketplace .rdm import —
+	 * both POST the raw layout here) carry channel config on signals[]:
+	 * low_warn/high_warn + CAN decode. Our own editor never emits those
+	 * keys (buildFirmwarePayload strips them), so the carry_config
+	 * pre-scan keeps normal saves off this path entirely. Adopt the
+	 * config into channels.json BEFORE the raw save: the import also
+	 * strips the threshold keys from `root`, so the persisted layout
+	 * can't re-assert imported thresholds over later on-device channel
+	 * edits on every reload. */
+	if (!is_splash) {
+		cJSON *sig_arr = cJSON_GetObjectItemCaseSensitive(root, "signals");
+		if (channel_layout_signals_carry_config(sig_arr)) {
+			if (rdm_lvgl_lock(1000)) {
+				size_t n = channel_import_from_layout_signals(sig_arr);
+				rdm_lvgl_unlock();
+				if (n)
+					ESP_LOGI(TAG, "layout/save: imported channel config "
+					              "for %u signal(s) from '%s'",
+					         (unsigned)n, layout_name);
+			} else {
+				ESP_LOGW(TAG, "layout/save: LVGL busy, channel config "
+				              "import skipped for '%s'", layout_name);
+			}
+		}
+	}
+
 	// Persist raw JSON to LittleFS
 	esp_err_t err = layout_manager_save_raw(layout_name, root);
+	/* Capture ecu identity before freeing root for the deferred apply call. */
+	char preset_make[32] = {0}, preset_ver[32] = {0};
+	if (preset_applied) {
+		const cJSON *ei = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+		const cJSON *vi = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+		if (cJSON_IsString(ei)) snprintf(preset_make, sizeof(preset_make), "%s", ei->valuestring);
+		if (cJSON_IsString(vi)) snprintf(preset_ver,  sizeof(preset_ver),  "%s", vi->valuestring);
+	}
 	cJSON_Delete(root);
 	if (err != ESP_OK) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to save layout to LittleFS");
 		return ESP_FAIL;
+	}
+
+	/* Reuse the existing apply path (handles OBD2 + decimals stamping). It
+	 * reads the just-written file, rewrites signals[], and saves back. The
+	 * double write only happens on this auto-apply path, not on every save. */
+	if (preset_applied && preset_make[0] && preset_ver[0]) {
+		const ecu_preset_t *p = ecu_preset_find(preset_make, preset_ver);
+		if (p && ecu_preset_apply_to_layout(layout_name, p) != ESP_OK) {
+			ESP_LOGW(TAG, "auto-apply of preset %s/%s to '%s' failed; "
+			              "layout saved without signal bindings",
+			         preset_make, preset_ver, layout_name);
+		}
 	}
 
 	if (apply_after_save) {
@@ -372,7 +460,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			const char *bare = layout_name + 8; /* skip "_splash_" */
 			layout_manager_set_active_splash(bare);
 			splash_screen_set_active_name(bare);
-			lv_async_call(_deferred_splash_reload, NULL);
+			rdm_async_call(_deferred_splash_reload, NULL);
 		} else {
 			// Update active layout name in NVS
 			if (layout_manager_set_active(layout_name) != ESP_OK) {
@@ -382,7 +470,7 @@ static esp_err_t layout_save_handler(httpd_req_t *req) {
 			}
 
 			// Defer heavy screen rebuild to the LVGL task
-			lv_async_call(_deferred_screen_reload, NULL);
+			rdm_async_call(_deferred_screen_reload, NULL);
 		}
 	}
 
@@ -458,7 +546,7 @@ static esp_err_t layout_preview_handler(httpd_req_t *req) {
 	 * Instead, the async callback (_deferred_preview_apply) frees its own
 	 * argument after use, so each buffer is freed exactly once. */
 	s_pending_preview_json = json_copy;
-	lv_async_call(_deferred_preview_apply, json_copy);
+	rdm_async_call(_deferred_preview_apply, json_copy);
 	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
 }
 
@@ -468,6 +556,11 @@ static const httpd_uri_t layout_preview_uri = {.uri = "/api/layout/preview",
 												   layout_preview_handler,
 											   .user_ctx = NULL};
 
+/* GET /api/layout/list
+ *   default:        {"active":"foo", "layouts":["name1","name2",...]}
+ *                   (legacy shape — used by layout-picker dropdowns)
+ *   ?details=1:     {"active":"foo", "layouts":[{"name":"name1","size":N},...]}
+ *                   (file-manager shape — sized for Storage Manager) */
 static esp_err_t layout_list_handler(httpd_req_t *req) {
 	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
 	int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
@@ -475,6 +568,16 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to list layouts");
 		return ESP_FAIL;
+	}
+
+	bool details = false;
+	char query[32];
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+		char v[8];
+		if (httpd_query_key_value(query, "details", v, sizeof(v)) == ESP_OK &&
+		    (v[0] == '1' || v[0] == 't' || v[0] == 'T')) {
+			details = true;
+		}
 	}
 
 	char active_name[LAYOUT_MAX_NAME];
@@ -488,7 +591,22 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 	for (int i = 0; i < count; i++) {
 		/* Hide system layouts (prefixed with _) from the layout list */
 		if (names[i][0] == '_') continue;
-		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+		if (details) {
+			cJSON *obj = cJSON_CreateObject();
+			cJSON_AddStringToObject(obj, "name", names[i]);
+			/* Stat the file on LittleFS. Small layouts are <2 KB, default
+			 * is a few KB; stat is cheap so doing it for the file-manager
+			 * view (typically a handful of layouts) is fine. */
+			/* "/lfs/layouts/" + LAYOUT_MAX_NAME (32) + ".json" + NUL — round up. */
+			char path[64];
+			snprintf(path, sizeof(path), "%s/%s.json", LFS_LAYOUT_DIR, names[i]);
+			struct stat st;
+			cJSON_AddNumberToObject(obj, "size",
+			    (stat(path, &st) == 0) ? (double)st.st_size : 0.0);
+			cJSON_AddItemToArray(arr, obj);
+		} else {
+			cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+		}
 	}
 
 	char *json_str = cJSON_PrintUnformatted(root);
@@ -613,13 +731,7 @@ static esp_err_t ecu_picker_mode_get_handler(httpd_req_t *req) {
 /* POST /api/ecu/picker_mode  body: {"auto": true|false} */
 static esp_err_t ecu_picker_mode_post_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
-	buf[n] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
 	const cJSON *ja = cJSON_GetObjectItemCaseSensitive(root, "auto");
@@ -659,13 +771,7 @@ static esp_err_t ecu_current_handler(httpd_req_t *req) {
 /* POST /api/ecu/set  body: {"make":"...","version":"..."} - empty strings clear */
 static esp_err_t ecu_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int n = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (n <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv"); return ESP_FAIL; }
-	buf[n] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
@@ -695,7 +801,7 @@ static esp_err_t ecu_set_handler(httpd_req_t *req) {
 			return ESP_FAIL;
 		}
 		config_store_save_ecu(make, ver);
-		lv_async_call(_deferred_screen_reload, NULL);
+		rdm_async_call(_deferred_screen_reload, NULL);
 	} else {
 		config_store_save_ecu("", "");
 	}
@@ -1073,20 +1179,57 @@ static const httpd_uri_t layout_list_uri = {.uri = "/api/layout/list",
 											.handler = layout_list_handler,
 											.user_ctx = NULL};
 
+/* GET /api/layout/switcher → {"csv":"name1,name2,name3"}
+ * Empty csv means "use the filesystem default cycle". */
+static esp_err_t layout_switcher_get_handler(httpd_req_t *req) {
+	char csv[LAYOUT_SWITCHER_CSV_MAX];
+	(void)config_store_load_layout_switcher(csv, sizeof(csv));
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "csv", csv);
+	char *s = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	esp_err_t r = httpd_resp_send(req, s ? s : "{}", HTTPD_RESP_USE_STRLEN);
+	free(s);
+	return r;
+}
+
+/* POST /api/layout/switcher  body: {"csv":"name1,name2,name3"}
+ * An empty csv erases the NVS key and reverts to filesystem-order cycling. */
+static esp_err_t layout_switcher_post_handler(httpd_req_t *req) {
+	char buf[LAYOUT_SWITCHER_CSV_MAX + 32];
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "JSON"); return ESP_FAIL; }
+	const cJSON *jc = cJSON_GetObjectItemCaseSensitive(root, "csv");
+	const char *csv = cJSON_IsString(jc) ? jc->valuestring : "";
+	if (strlen(csv) >= LAYOUT_SWITCHER_CSV_MAX) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "csv too long");
+		return ESP_FAIL;
+	}
+	esp_err_t err = config_store_save_layout_switcher(csv);
+	cJSON_Delete(root);
+	if (err != ESP_OK) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS save");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t layout_switcher_get_uri = {
+	.uri = "/api/layout/switcher", .method = HTTP_GET,
+	.handler = layout_switcher_get_handler, .user_ctx = NULL};
+static const httpd_uri_t layout_switcher_post_uri = {
+	.uri = "/api/layout/switcher", .method = HTTP_POST,
+	.handler = layout_switcher_post_handler, .user_ctx = NULL};
+
 static esp_err_t layout_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Request body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Failed to receive body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1119,7 +1262,7 @@ static esp_err_t layout_set_handler(httpd_req_t *req) {
 		return ESP_FAIL;
 	}
 
-	lv_async_call(_deferred_screen_reload, NULL);
+	rdm_async_call(_deferred_screen_reload, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -1134,18 +1277,7 @@ static const httpd_uri_t layout_set_uri = {.uri = "/api/layout/set",
 // HTTP handler for deleting a layout JSON file
 static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Request body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-							"Failed to receive body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1190,7 +1322,7 @@ static esp_err_t layout_delete_handler(httpd_req_t *req) {
 	layout_manager_get_active(active, sizeof(active));
 	if (strcmp(active, layout_name) == 0) {
 		layout_manager_set_active("default");
-		lv_async_call(_deferred_screen_reload, NULL);
+		rdm_async_call(_deferred_screen_reload, NULL);
 	}
 
 	ESP_LOGI(TAG, "Deleted layout '%s'", layout_name);
@@ -1208,16 +1340,7 @@ static const httpd_uri_t layout_delete_uri = {.uri = "/api/layout/delete",
  * Body: { "old_name": "Foo", "new_name": "Bar" } */
 static esp_err_t layout_rename_handler(httpd_req_t *req) {
 	char buf[192];
-	if (req->content_len >= sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1370,9 +1493,22 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 	bool fade_enabled = true;
 	config_store_load_splash_fade(&fade_enabled);
 
+	bool splash_enabled = true;
+	config_store_load_splash_enabled(&splash_enabled);
+
+	bool boot_anim = true;
+	config_store_load_boot_anim(&boot_anim);
+	uint8_t boot_anim_style = BOOT_ANIM_STYLE_FADE;
+	config_store_load_boot_anim_style(&boot_anim_style);
+
 	cJSON *root = cJSON_CreateObject();
 	cJSON_AddStringToObject(root, "active", active);
 	cJSON_AddBoolToObject(root, "fade_enabled", fade_enabled);
+	cJSON_AddBoolToObject(root, "enabled", splash_enabled);
+	cJSON_AddBoolToObject(root, "boot_anim", boot_anim);
+	cJSON_AddStringToObject(root, "boot_anim_style",
+	                        boot_anim_style == BOOT_ANIM_STYLE_CURTAIN
+	                            ? "curtain" : "fade");
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
@@ -1400,16 +1536,7 @@ static const httpd_uri_t splash_list_uri = {
 /* POST /api/splash/set â€” set active splash by name */
 static esp_err_t splash_set_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1438,7 +1565,7 @@ static esp_err_t splash_set_handler(httpd_req_t *req) {
 
 	/* If in splash edit mode, reload to the newly selected splash */
 	if (splash_screen_is_edit_mode())
-		lv_async_call(_deferred_splash_reload, NULL);
+		rdm_async_call(_deferred_splash_reload, NULL);
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -1453,16 +1580,7 @@ static const httpd_uri_t splash_set_uri = {
 /* POST /api/splash/delete â€” delete a splash layout file */
 static esp_err_t splash_delete_handler(httpd_req_t *req) {
 	char buf[128];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1502,7 +1620,7 @@ static esp_err_t splash_delete_handler(httpd_req_t *req) {
 		layout_manager_set_active_splash("Default");
 		splash_screen_set_active_name("Default");
 		if (splash_screen_is_edit_mode())
-			lv_async_call(_deferred_splash_reload, NULL);
+			rdm_async_call(_deferred_splash_reload, NULL);
 	}
 
 	httpd_resp_set_type(req, "application/json");
@@ -1518,16 +1636,7 @@ static const httpd_uri_t splash_delete_uri = {
 /* POST /api/splash/fade â€” set splash fade enabled/disabled */
 static esp_err_t splash_fade_handler(httpd_req_t *req) {
 	char buf[64];
-	if (req->content_len >= (int)sizeof(buf)) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
-		return ESP_FAIL;
-	}
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-		return ESP_FAIL;
-	}
-	buf[received] = '\0';
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
 
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
@@ -1558,6 +1667,101 @@ static const httpd_uri_t splash_fade_uri = {
 	.handler = splash_fade_handler, .user_ctx = NULL
 };
 
+/* POST /api/splash/enabled — enable/disable the boot splash screen */
+static esp_err_t splash_enabled_handler(httpd_req_t *req) {
+	char buf[64];
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (!cJSON_IsBool(enabled)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' bool");
+		return ESP_FAIL;
+	}
+
+	bool val = cJSON_IsTrue(enabled);
+	cJSON_Delete(root);
+
+	config_store_save_splash_enabled(val);
+	ESP_LOGI(TAG, "Splash enabled set to %s", val ? "enabled" : "disabled");
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_enabled_uri = {
+	.uri = "/api/splash/enabled", .method = HTTP_POST,
+	.handler = splash_enabled_handler, .user_ctx = NULL
+};
+
+/* Trampoline so the live preview runs on the LVGL task (the web handler runs
+ * on the HTTP task). */
+static void _boot_anim_preview_async(void *arg) {
+	(void)arg;
+	splash_screen_preview_boot_anim();
+}
+
+/* POST /api/splash/bootanim — configure the dashboard boot loading
+ * animation. Body: {"enabled": <bool>, "style": "fade"|"curtain" (optional),
+ * "preview": <bool, optional>}. When preview is true (and enabling) the
+ * selected reveal is demonstrated on the live dash. */
+static esp_err_t splash_bootanim_handler(httpd_req_t *req) {
+	char buf[96];
+	if (web_server_recv_body(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+	cJSON *root = cJSON_Parse(buf);
+	if (!root) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+		return ESP_FAIL;
+	}
+
+	cJSON *enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
+	if (!cJSON_IsBool(enabled)) {
+		cJSON_Delete(root);
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'enabled' bool");
+		return ESP_FAIL;
+	}
+
+	bool val = cJSON_IsTrue(enabled);
+	cJSON *style = cJSON_GetObjectItemCaseSensitive(root, "style");
+	bool has_style = cJSON_IsString(style) && style->valuestring;
+	if (has_style) {
+		config_store_save_boot_anim_style(
+		    strcmp(style->valuestring, "curtain") == 0
+		        ? BOOT_ANIM_STYLE_CURTAIN
+		        : BOOT_ANIM_STYLE_FADE);
+	}
+	cJSON *preview = cJSON_GetObjectItemCaseSensitive(root, "preview");
+	bool do_preview = cJSON_IsTrue(preview);
+
+	config_store_save_boot_anim(val);
+	ESP_LOGI(TAG, "Dashboard boot animation %s, style=%s%s",
+	         val ? "enabled" : "disabled",
+	         has_style ? style->valuestring : "(unchanged)",
+	         (do_preview && val) ? " (preview)" : "");
+	cJSON_Delete(root);
+
+	/* Only worth previewing the reveal when it's being turned on. */
+	if (do_preview && val)
+		rdm_async_call(_boot_anim_preview_async, NULL);
+
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	return httpd_resp_send(req, "{\"status\":\"ok\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static const httpd_uri_t splash_bootanim_uri = {
+	.uri = "/api/splash/bootanim", .method = HTTP_POST,
+	.handler = splash_bootanim_handler, .user_ctx = NULL
+};
+
 
 void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &layout_version_uri);
@@ -1566,6 +1770,8 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &layout_save_uri);
     REGISTER_URI(server, &layout_preview_uri);
     REGISTER_URI(server, &layout_list_uri);
+    REGISTER_URI(server, &layout_switcher_get_uri);
+    REGISTER_URI(server, &layout_switcher_post_uri);
     REGISTER_URI(server, &presets_list_uri);
     REGISTER_URI(server, &ecu_list_uri);
     REGISTER_URI(server, &ecu_current_uri);
@@ -1582,4 +1788,6 @@ void web_server_layout_register(httpd_handle_t server) {
     REGISTER_URI(server, &splash_set_uri);
     REGISTER_URI(server, &splash_delete_uri);
     REGISTER_URI(server, &splash_fade_uri);
+    REGISTER_URI(server, &splash_enabled_uri);
+    REGISTER_URI(server, &splash_bootanim_uri);
 }

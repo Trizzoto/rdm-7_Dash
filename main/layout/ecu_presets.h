@@ -54,7 +54,16 @@ typedef enum {
 /* Per-signal decode row. can_id==0 marks the slot as unsupported by the
  * ECU's default broadcast (e.g. Honda ECUs don't broadcast oil temp). The
  * apply function writes unsupported slots as unbound so the user can add
- * a custom signal later without collision. */
+ * a custom signal later without collision.
+ *
+ * value_map_csv: optional value→label table for enum-coded signals
+ *   (gear position, drive mode, cruise state, …). Format is
+ *   "v1=label1,v2=label2,…" — e.g. "0=N,1=1,2=2,3=3,4=4,5=5,6=6,7=P".
+ *   Labels are trimmed and capped at SIGNAL_VALUE_LABEL_MAX-1 chars.
+ *   NULL or empty = no map; widgets fall through to numeric formatting.
+ *   Applied at ecu_preset_apply_to_layout() time into the signal's
+ *   "value_map" JSON array, so every widget bound to the slot picks
+ *   up the labels automatically. */
 typedef struct {
     uint32_t can_id;       /* 0 = unsupported */
     uint8_t  bit_start;
@@ -65,6 +74,7 @@ typedef struct {
     uint8_t  endian;       /* 0 = Motorola (BE), 1 = Intel (LE) */
     const char *unit;      /* metric unit string, or "" */
     uint8_t  decimals;     /* display decimal places for panel/bar/text widgets */
+    const char *value_map_csv;  /* optional "v=label,v=label,…" enum map */
 } ecu_signal_row_t;
 
 typedef struct {
@@ -80,6 +90,115 @@ extern const int ECU_PRESETS_COUNT;
 
 /* Return the normalized signal name (e.g. "RPM") for a slot. */
 const char *ecu_signal_slot_name(ecu_signal_slot_t slot);
+
+/**
+ * Map a normalized ECU signal name (one of ECU_SIGNAL_NAMES) to its
+ * canonical channel id (e.g. "RPM" → "rpm", "MAP" → "manifold_pressure").
+ * Returns NULL when the name doesn't match any normalized ECU slot OR
+ * the slot has no canonical mapping yet. Used by the v14 channel
+ * registry's legacy-widget migrator to bind widgets whose signal_name
+ * is one of the dash's standard ECU vocabulary.
+ *
+ * Cheap O(N) scan, N=20. Called once per widget at layout-load time. */
+const char *ecu_signal_name_to_canonical(const char *signal_name);
+
+/**
+ * Reverse of ECU_SIGNAL_CANONICAL[]: canonical channel id ("rpm",
+ * "coolant_temp", ...) → ECU signal slot. Returns ECU_SIG__COUNT if
+ * the channel has no normalized slot (e.g. EGT cylinder N, custom
+ * channels). Cheap O(N), N=20. */
+ecu_signal_slot_t ecu_slot_from_canonical_id(const char *canonical_id);
+
+/**
+ * Write a single preset's slot row into a layout's signals[] array.
+ * Targets the canonical signal name (ECU_SIGNAL_NAMES[slot]) — if an
+ * entry with that name exists in signals[], its decode params are
+ * overwritten; otherwise a new entry is appended.
+ *
+ * Used by the source picker: when the user picks "Haltech RPM" for
+ * the rpm channel, this rewrites layout.signals[].rpm with Haltech's
+ * CAN id / bit start / scale / offset / etc. The channel keeps its
+ * binding to signal name "rpm" — only the decode changes.
+ *
+ * Does NOT touch the layout's `ecu` / `ecu_version` fields — those
+ * track the *bulk* preset chosen via the layout-level picker. A
+ * per-channel source override leaves them alone.
+ *
+ * Triggers layout reload (dashboard_init) on success so the new
+ * decode params take effect immediately. */
+esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,
+                                          const ecu_preset_t *preset,
+                                          ecu_signal_slot_t slot);
+
+/**
+ * Generic helper: write a single signal definition into the named
+ * layout's signals[] array. Creates the entry if it doesn't exist;
+ * otherwise wipes the existing decode params before re-adding so
+ * stale fields (decimals, value_map, etc.) don't leak through. Persists
+ * to disk.
+ *
+ * Used by ecu_preset_apply_slot_to_layout (ECU bulk slot apply) AND by
+ * the web channels source picker's preconfig binding path. Single
+ * apply path means both callers get the same JSON shape, the same
+ * cJSON allocation lifetime handling, and the same disk persistence
+ * semantics.
+ *
+ * @param layout_name  Layout to rewrite (typically "default").
+ * @param signal_name  Registry name to bind under (e.g. "RPM").
+ * @param can_id       CAN ID (0 for OBD2/internal signals).
+ * @param bit_start    Start bit (0-63).
+ * @param bit_length   Length in bits (1-64).
+ * @param scale        Linear scale factor.
+ * @param offset       Linear offset.
+ * @param is_signed    Signed two's-complement decode.
+ * @param endian       0 = Motorola/big, 1 = Intel/little.
+ * @param unit         Display unit, or NULL to omit.
+ * @param decimals     Display decimals, or -1 to omit.
+ * @return ESP_OK on success.
+ */
+esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
+                                            const char *signal_name,
+                                            uint32_t can_id,
+                                            uint8_t bit_start,
+                                            uint8_t bit_length,
+                                            float scale, float offset,
+                                            bool is_signed, uint8_t endian,
+                                            const char *unit,
+                                            int decimals);
+
+/* ── Batched layout signal writer ─────────────────────────────────────
+ *
+ * Calling ecu_preset_write_signal_to_layout() in a loop does a full
+ * read-parse-modify-serialize-write of the layout file PER signal — for a
+ * 68-signal preset that's 68 full-file LittleFS writes, which on-device
+ * stalls the LVGL task for seconds and overflows the CAN RX queue.
+ *
+ * This writer opens the layout ONCE, accumulates any number of signal
+ * upserts in memory, and writes ONCE on commit. Lifetime:
+ *   w = ecu_layout_writer_open("Time_Attack");   // read + parse once
+ *   for (...) ecu_layout_writer_upsert(w, ...);   // in-memory, no disk
+ *   ecu_layout_writer_commit(w);                  // one save, frees w
+ * On any error path use ecu_layout_writer_abort(w) to free without saving.
+ * open() returns NULL on read/parse/alloc failure — callers should treat a
+ * NULL writer as "skip layout persistence" (channel-owned decode in
+ * channels.json remains the authoritative copy under ADR 0005). */
+typedef struct ecu_layout_writer ecu_layout_writer_t;
+
+ecu_layout_writer_t *ecu_layout_writer_open(const char *layout_name);
+
+void ecu_layout_writer_upsert(ecu_layout_writer_t *w,
+                              const char *signal_name,
+                              uint32_t can_id,
+                              uint8_t bit_start, uint8_t bit_length,
+                              float scale, float offset,
+                              bool is_signed, uint8_t endian,
+                              const char *unit, int decimals);
+
+/* Save the accumulated layout once and free the writer. */
+esp_err_t ecu_layout_writer_commit(ecu_layout_writer_t *w);
+
+/* Free the writer WITHOUT saving (error/cancel path). */
+void ecu_layout_writer_abort(ecu_layout_writer_t *w);
 
 /* Find a preset by make+version strings. Returns NULL if not found. */
 const ecu_preset_t *ecu_preset_find(const char *make, const char *version);

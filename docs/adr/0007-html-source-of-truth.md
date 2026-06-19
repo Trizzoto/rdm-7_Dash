@@ -1,4 +1,7 @@
-# ADR 0005 — Three HTML copies: why they exist and the plan to collapse them
+# ADR 0007 — Three HTML copies: why they exist and the plan to collapse them
+
+> Renumbered from 0005 → 0007 (2026-06-11): the channel ADRs (0005 channel-owned
+> decode, 0006 channel architecture v2) had already claimed 0005/0006.
 
 **Status**: Accepted (documents the current state) — migration plan deferred
 **Context**: The same web editor HTML lives in two places (formerly three), the copies drift, and "why don't we just have one file?" surfaces every few sessions. This ADR exists so that question retires permanently and the future migration has a defined shape.

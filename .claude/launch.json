@@ -8,10 +8,40 @@
       "port": 8180
     },
     {
+      "name": "mirror-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/mobile-dev-server.js", "--device", "192.168.4.61"],
+      "port": 8180
+    },
+    {
       "name": "sandbox",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "../rdm7-sandbox", "run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "desktop-static",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-desktop/src", "-l", "3003", "--cors"],
+      "port": 3003
+    },
+    {
+      "name": "studio",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-studio-web/public", "-l", "3002", "--cors"],
+      "port": 3002
+    },
+    {
+      "name": "homepage-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-homepage-demo", "-l", "5174", "--cors"],
+      "port": 5174
+    },
+    {
+      "name": "altezza",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "../rdm7-wasm-editor", "-l", "8899", "--cors", "--no-clipboard"],
+      "port": 8899
     }
   ]
 }

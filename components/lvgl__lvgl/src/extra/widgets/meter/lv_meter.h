@@ -73,6 +73,13 @@ typedef struct {
             uint16_t width;
             int16_t r_mod;
             lv_color_t color;
+            /* RDM7 PERF: needle starts this many px out from the pivot.
+             * 0 = stock behaviour (line from the scale centre). With a
+             * decorative cap covering the centre, a non-zero r_in shrinks
+             * both the drawn line and — critically — the invalidated rect
+             * on value changes, so widgets stacked at the centre stop
+             * being repainted on every needle tick. */
+            lv_coord_t r_in;
         } needle_line;
         struct {
             uint16_t width;

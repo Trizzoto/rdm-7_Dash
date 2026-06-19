@@ -156,12 +156,54 @@ static void _clear_rows(void)
     s_empty_lbl = NULL;
 }
 
+/* Add the four column-header labels (ID/Hz/DLC/Bytes) into a header bar.
+ * Shared by the full-screen and embedded layouts. */
+static void _add_column_headers(lv_obj_t *col_hdr)
+{
+    struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w;
+             lv_text_align_t align; } cols[] = {
+        { "ID",    0,  18, LV_TEXT_ALIGN_LEFT  },
+        { "Hz",    18, 14, LV_TEXT_ALIGN_RIGHT },
+        { "DLC",   32, 10, LV_TEXT_ALIGN_RIGHT },
+        { "Bytes", 42, 56, LV_TEXT_ALIGN_LEFT  },
+    };
+    for (size_t i = 0; i < sizeof(cols) / sizeof(cols[0]); i++) {
+        lv_obj_t *l = lv_label_create(col_hdr);
+        lv_label_set_text(l, cols[i].txt);
+        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
+        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
+        lv_obj_set_style_text_letter_space(l, 1, 0);
+        lv_obj_set_width(l, lv_pct(cols[i].pct_w));
+        lv_obj_set_style_text_align(l, cols[i].align, 0);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(cols[i].pct_offset), 0);
+    }
+}
+
+/* Apply the scroll-list styling shared by both layouts. Caller sets size. */
+static void _style_list_container(lv_obj_t *c)
+{
+    lv_obj_set_style_bg_color(c, THEME_COLOR_BG, 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(c, 0, 0);
+    lv_obj_set_style_radius(c, 0, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(c, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(c, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_bg_color(c, THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(c, LV_OPA_50, LV_PART_SCROLLBAR);
+    lv_obj_set_style_radius(c, 2, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(c, 4, LV_PART_SCROLLBAR);
+}
+
 /* ── Refresh ─────────────────────────────────────────────────────────────── */
 
 static void _refresh(lv_timer_t *t)
 {
     (void)t;
-    if (!s_screen || !s_list_container) return;
+    /* Guard on the list container only — the embedded variant has no
+     * dedicated s_screen, but always sets s_list_container. */
+    if (!s_list_container) return;
 
     /* Only recompute Hz on a slower cadence — the bytes still refresh at
      * the timer rate, but the Hz reading stabilises. */
@@ -309,41 +351,13 @@ static void _create(void)
     lv_obj_set_style_pad_hor(col_hdr, 8, 0);
     lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-    struct { const char *txt; lv_coord_t pct_offset; lv_coord_t pct_w;
-             lv_text_align_t align; } cols[] = {
-        { "ID",    0,  18, LV_TEXT_ALIGN_LEFT  },
-        { "Hz",    18, 14, LV_TEXT_ALIGN_RIGHT },
-        { "DLC",   32, 10, LV_TEXT_ALIGN_RIGHT },
-        { "Bytes", 42, 56, LV_TEXT_ALIGN_LEFT  },
-    };
-    for (size_t i = 0; i < sizeof(cols) / sizeof(cols[0]); i++) {
-        lv_obj_t *l = lv_label_create(col_hdr);
-        lv_label_set_text(l, cols[i].txt);
-        lv_obj_set_style_text_font(l, THEME_FONT_TINY, 0);
-        lv_obj_set_style_text_color(l, THEME_COLOR_TEXT_MUTED, 0);
-        lv_obj_set_style_text_letter_space(l, 1, 0);
-        lv_obj_set_width(l, lv_pct(cols[i].pct_w));
-        lv_obj_set_style_text_align(l, cols[i].align, 0);
-        lv_obj_align(l, LV_ALIGN_LEFT_MID, lv_pct(cols[i].pct_offset), 0);
-    }
+    _add_column_headers(col_hdr);
 
     /* Scrollable list */
     s_list_container = lv_obj_create(s_screen);
     lv_obj_set_size(s_list_container, SCREEN_W, SCREEN_H - 44 - 28);
     lv_obj_align(s_list_container, LV_ALIGN_TOP_MID, 0, 44 + 28);
-    lv_obj_set_style_bg_color(s_list_container, THEME_COLOR_BG, 0);
-    lv_obj_set_style_bg_opa(s_list_container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_list_container, 0, 0);
-    lv_obj_set_style_radius(s_list_container, 0, 0);
-    lv_obj_set_style_pad_all(s_list_container, 0, 0);
-    lv_obj_set_flex_flow(s_list_container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(s_list_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_list_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_style_bg_color(s_list_container,
-                                THEME_COLOR_SCROLLBAR, LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(s_list_container, LV_OPA_50, LV_PART_SCROLLBAR);
-    lv_obj_set_style_radius(s_list_container, 2, LV_PART_SCROLLBAR);
-    lv_obj_set_style_width(s_list_container, 4, LV_PART_SCROLLBAR);
+    _style_list_container(s_list_container);
 
     /* Initial paint */
     _refresh(NULL);
@@ -391,4 +405,59 @@ void can_list_ui_hide(void)
 bool can_list_ui_is_active(void)
 {
     return s_screen != NULL;
+}
+
+/* ── Embedded variant ────────────────────────────────────────────────────── */
+
+void can_list_ui_embed(lv_obj_t *parent)
+{
+    if (!parent) return;
+
+    /* Reset the shared row cache. s_screen stays NULL — this isn't a screen,
+     * so can_list_ui_is_active() correctly reports inactive while embedded. */
+    s_row_count       = 0;
+    s_hz_tick_counter = 0;
+    s_empty_lbl       = NULL;
+
+    /* Lay the table out top-to-bottom inside the caller's container. */
+    lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(parent, 0, 0);
+
+    /* Column headers */
+    lv_obj_t *col_hdr = lv_obj_create(parent);
+    lv_obj_set_size(col_hdr, lv_pct(100), 26);
+    lv_obj_set_style_bg_color(col_hdr, THEME_COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_opa(col_hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(col_hdr, 0, 0);
+    lv_obj_set_style_radius(col_hdr, 0, 0);
+    lv_obj_set_style_pad_all(col_hdr, 4, 0);
+    lv_obj_set_style_pad_hor(col_hdr, 8, 0);
+    lv_obj_clear_flag(col_hdr, LV_OBJ_FLAG_SCROLLABLE);
+    _add_column_headers(col_hdr);
+
+    /* Scrollable list — flex-grow to fill the remaining height of parent
+     * (which must have a definite height set by the caller). */
+    s_list_container = lv_obj_create(parent);
+    lv_obj_set_width(s_list_container, lv_pct(100));
+    lv_obj_set_flex_grow(s_list_container, 1);
+    _style_list_container(s_list_container);
+
+    /* Initial paint + live refresh timer (same cadence as the full screen). */
+    _refresh(NULL);
+    if (s_refresh_timer) lv_timer_del(s_refresh_timer);
+    s_refresh_timer = lv_timer_create(_refresh, REFRESH_PERIOD_MS, NULL);
+}
+
+void can_list_ui_embed_stop(void)
+{
+    if (s_refresh_timer) {
+        lv_timer_del(s_refresh_timer);
+        s_refresh_timer = NULL;
+    }
+    /* The col header, list container, and rows are children of the caller's
+     * popup and are deleted with it — just drop our cached references so a
+     * stale pointer isn't reused on the next open. */
+    s_list_container = NULL;
+    s_empty_lbl      = NULL;
+    s_row_count      = 0;
 }

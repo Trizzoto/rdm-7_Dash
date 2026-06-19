@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "layout_manager.h"
 #include "obd2.h"
+#include "widgets/signal.h"  /* SIGNAL_VALUE_LABEL_MAX */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,9 +53,230 @@ static const char *const ECU_SIGNAL_NAMES[ECU_SIG__COUNT] = {
     "LATERAL_G",
 };
 
+/* Parallel table: which canonical channel each ECU signal slot feeds.
+ * This is the bridge between the dash's legacy signal-name vocabulary
+ * (RPM, MAP, THROTTLE, …) and the v14 canonical channel registry
+ * (rpm, manifold_pressure, throttle_position, …). NULL = no canonical
+ * mapping (signal isn't represented in the canonical list yet).
+ *
+ * Used by channel_manager_record_legacy_widget() to auto-bind widgets
+ * whose signal_name doesn't case-match a canonical id directly.
+ *
+ * Order matches ECU_SIGNAL_NAMES exactly. */
+static const char *const ECU_SIGNAL_CANONICAL[ECU_SIG__COUNT] = {
+    "rpm",                        /* RPM */
+    "manifold_pressure",          /* MAP — absolute pressure */
+    "throttle_position",          /* THROTTLE */
+    "coolant_temp",               /* COOLANT_TEMP */
+    "intake_air_temp",            /* INTAKE_AIR_TEMP */
+    "lambda_bank1",               /* LAMBDA — primary O2 sensor */
+    "oil_temp",                   /* OIL_TEMP */
+    "oil_pressure",               /* OIL_PRESSURE */
+    "fuel_pressure",              /* FUEL_PRESSURE */
+    "ignition_timing",            /* IGNITION */
+    "vehicle_speed",              /* VEHICLE_SPEED */
+    "gear",                       /* GEAR */
+    "battery_voltage",            /* BATTERY_VOLTAGE */
+    "short_term_fuel_trim",       /* FUEL_TRIM — short-term by convention */
+    "exhaust_gas_temp_avg",       /* EGT — single-probe avg */
+    "boost_pressure",             /* BOOST */
+    "fuel_level",                 /* FUEL_LEVEL */
+    "handbrake",                  /* PARK_BRAKE */
+    "yaw_rate",                   /* YAW_RATE */
+    "lateral_g",                  /* LATERAL_G */
+};
+
+/* Explicit alias table: derived preset signal names that are NOT an exact
+ * ECU slot name but unambiguously denote a canonical channel. This
+ * REPLACES the old fuzzy "_<SLOT>" suffix matcher, which produced
+ * data-corrupting false positives — e.g. "REV-LIMIT RPM" → "REV_LIMIT_RPM"
+ * suffix-matched "_RPM" and got renamed to "RPM", clobbering the real
+ * engine-RPM signal's decode (last-write-wins). The suffix heuristic
+ * could not distinguish "ENGINE_RPM" (a qualified engine RPM, correct)
+ * from "REV_LIMIT_RPM" / "LAUNCH_END_RPM" (setpoints, wrong) from string
+ * shape alone — so every alias is now spelled out.
+ *
+ * Keys are the UPPER_SNAKE form produced by the web editor's / wizard's
+ * label→signal-name converter (uppercase, runs of non-alnum → single "_",
+ * trailing "_" trimmed). Matched against the underscore-normalized name.
+ *
+ * EXHAUSTIVE across the current preconfig catalog (verified per-ECU). When
+ * adding a new ECU/DBC, add its non-exact signal names here rather than
+ * relying on any heuristic. Anything NOT listed (and not an exact slot
+ * name) is intentionally left unmapped — better an unbound channel the
+ * user can assign than a confidently-wrong auto-binding. */
+typedef struct { const char *derived; const char *canonical; } ecu_alias_t;
+static const ecu_alias_t ECU_SIGNAL_ALIASES[] = {
+    /* RPM — only these qualified forms; rev-limit/launch-end RPM are
+     * deliberately excluded (they are setpoints, not live engine RPM). */
+    { "ENGINE_RPM",        "rpm" },                 /* Ford BA/BF, Ford FG, Toyota GT86 */
+    { "ENGINE_SPEED",      "rpm" },                 /* Link ECU — its only RPM label */
+
+    /* Ignition advance/timing — slot is bare "IGNITION", these are the
+     * common descriptive forms. */
+    { "IGNITION_ANGLE",    "ignition_timing" },     /* ECU Master, MegaSquirt, MaxxECU */
+    { "IGNITION_TIMING",   "ignition_timing" },     /* Link ECU */
+
+    /* Manifold pressure — slot is "MAP". */
+    { "MANIFOLD_PRESSURE", "manifold_pressure" },   /* Haltech */
+    { "MAP_KPA",           "manifold_pressure" },   /* ECU Master, MegaSquirt "MAP (kPa)" */
+
+    /* Throttle — slot is bare "THROTTLE". */
+    { "THROTTLE_POSITION", "throttle_position" },   /* Haltech */
+
+    /* Battery — slot is "BATTERY_VOLTAGE"; "VOLT" is the common short form. */
+    { "BATTERY_VOLT",      "battery_voltage" },      /* Haltech, ECU Master, MegaSquirt */
+
+    /* Gear — slot is bare "GEAR". */
+    { "GEAR_POSITION",     "gear" },                 /* Link ECU */
+    { "GEAR_BITMASK",      "gear" },                 /* Ford FG */
+
+    /* Pressures carried with a unit suffix block the bare-slot exact match. */
+    { "OIL_PRESSURE_KPA",  "oil_pressure" },         /* ECU Master */
+    { "FUEL_PRESSURE_KPA", "fuel_pressure" },        /* ECU Master */
+
+    /* MaxxECU's "Total Fuel Trim" is the fuel-trim quantity its preset
+     * binds to the FUEL_TRIM slot. Explicit so we don't have to whitelist
+     * the ambiguous "TOTAL" prefix globally. */
+    { "TOTAL_FUEL_TRIM",   "short_term_fuel_trim" }, /* MaxxECU 1.2 / 1.3 */
+
+    /* Barometric — no ECU slot exists; binds the canonical channel
+     * directly (no rename, since there's no legacy slot name). */
+    { "BARO_PRESSURE",     "barometric_pressure" },  /* Ford, MaxxECU, Link */
+
+    /* ── Wizard 100%-coverage aliases ──────────────────────────────────────
+     * Preset signals whose derived name doesn't exact-match a canonical id
+     * (case-insensitive) and isn't one of the 20 ECU slots. Each is an
+     * explicit, hand-verified map onto an existing canonical channel so the
+     * setup wizard can bind 100% of a preset's signals to canonical channels
+     * (curated units/ranges/grouping) instead of auto-creating custom ones.
+     * EXACT match only — no fuzzy matching (see header comment). Signals NOT
+     * listed here AND not exact-id matches fall through to a custom channel. */
+
+    /* Temperatures / air */
+    { "AMBIENT_AIR_TEMP",  "ambient_temp" },          /* Haltech */
+    { "AIR_TEMP",          "intake_air_temp" },        /* Haltech 3E0 air temp */
+    { "IAT",               "intake_air_temp" },        /* Link */
+    { "DIFF_OIL_TEMP",     "differential_temp" },      /* Haltech */
+    { "GEARBOX_OIL_TEMP",  "transmission_temp" },      /* Haltech */
+
+    /* Throttle / pedal */
+    { "TPS",               "throttle_position" },      /* Link */
+    { "APS_MAIN",          "accel_pedal_position" },   /* Link */
+    { "ACCEL_PEDAL",       "accel_pedal_position" },   /* Ford FG */
+
+    /* Pressure / boost / air flow */
+    { "MGP",               "boost_pressure" },         /* Link manifold gauge pressure */
+    { "BRAKE_PRESSURE",    "brake_pressure_front" },   /* Haltech */
+    { "MAF",               "mass_air_flow" },          /* Link */
+
+    /* Electrical */
+    { "ECU_VOLTS",         "ecu_voltage" },            /* Link */
+
+    /* Fuel system */
+    { "DAMPED_FUEL_LVL",   "fuel_level" },             /* Ford BA/BF */
+    { "INSTANT_ECONOMY",   "fuel_consumption_instant" }, /* Ford BA/BF */
+    { "KM_RANGE",          "fuel_remaining_distance" },  /* Ford BA/BF */
+    { "ETHANOL",           "ethanol_pct" },            /* Link "ETHANOL %" */
+    { "FUEL_COMP",         "ethanol_pct" },            /* Haltech fuel composition */
+    { "INJ_PULSE_WIDTH",   "injector_pulse_width" },   /* Link */
+    { "INJECTOR_DC",       "injector_duty" },          /* Link */
+    { "FUEL_TRIM_ST_B1",   "short_term_fuel_trim" },   /* Haltech */
+    { "FUEL_TRIM_LT_B1",   "long_term_fuel_trim" },    /* Haltech */
+    { "FUEL_TRIM_B1",      "short_term_fuel_trim" },   /* MegaSquirt */
+
+    /* Lambda — λ-scaled sensors map to the λ Lambda-Bank channels. */
+    { "LAMBDA_1",          "lambda_bank1" },           /* Link (λ-scaled) */
+    { "LAMBDA_2",          "lambda_bank2" },           /* Link (λ-scaled) */
+    { "LAMBDA_AFR1",       "lambda_bank1" },           /* MegaSquirt "LAMBDA (AFR1)" — λ-scaled */
+
+    /* Wideband — Haltech broadcasts AFR-scaled "Wideband N" sensors. These
+     * are a DIFFERENT quantity (AFR, not λ) so they get dedicated AFR
+     * Wideband channels, NOT the λ Lambda-Bank channels — putting an AFR
+     * value (~14.7) into a λ channel (range 0.6–1.3) was wrong units +
+     * range. Primary + secondary only; sensors 3/4 fall to custom. */
+    { "WIDEBAND_1",        "wideband_1" },             /* Haltech (AFR-scaled) */
+    { "WIDEBAND_2",        "wideband_2" },             /* Haltech (AFR-scaled) */
+
+    /* Ignition */
+    { "IGN_ANGLE_LEAD",    "ignition_timing" },        /* Haltech */
+
+    /* EGT — Haltech "EGT SENSOR N" / ECU Master "EGT N" → egt_cyl_1..8
+     * (probes 9-12 have no canonical and fall to custom). */
+    { "EGT_SENSOR_1",      "egt_cyl_1" },              /* Haltech */
+    { "EGT_SENSOR_2",      "egt_cyl_2" },
+    { "EGT_SENSOR_3",      "egt_cyl_3" },
+    { "EGT_SENSOR_4",      "egt_cyl_4" },
+    { "EGT_SENSOR_5",      "egt_cyl_5" },
+    { "EGT_SENSOR_6",      "egt_cyl_6" },
+    { "EGT_SENSOR_7",      "egt_cyl_7" },
+    { "EGT_SENSOR_8",      "egt_cyl_8" },
+    { "EGT_1",             "egt_cyl_1" },              /* ECU Master, MegaSquirt */
+    { "EGT_2",             "egt_cyl_2" },
+
+    /* Wheel speeds — both naming conventions in the catalog. */
+    { "WHEEL_SPD_FL",      "wheel_speed_fl" },         /* Ford FG */
+    { "WHEEL_SPD_FR",      "wheel_speed_fr" },
+    { "WHEEL_SPD_RL",      "wheel_speed_rl" },
+    { "WHEEL_SPD_RR",      "wheel_speed_rr" },
+    { "LF_WHEEL_SPEED",    "wheel_speed_fl" },         /* Link */
+    { "RF_WHEEL_SPEED",    "wheel_speed_fr" },
+    { "LR_WHEEL_SPEED",    "wheel_speed_rl" },
+    { "RR_WHEEL_SPEED",    "wheel_speed_rr" },
+};
+static const size_t ECU_SIGNAL_ALIASES_COUNT =
+    sizeof(ECU_SIGNAL_ALIASES) / sizeof(ECU_SIGNAL_ALIASES[0]);
+
+const char *ecu_signal_name_to_canonical(const char *signal_name) {
+    if (!signal_name || signal_name[0] == '\0') return NULL;
+
+    /* 1. Direct case-sensitive match — fast path for standard preset names. */
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_NAMES[i], signal_name) == 0)
+            return ECU_SIGNAL_CANONICAL[i];
+    }
+
+    /* 2. Normalized match — strip leading and trailing underscores. Catches
+     *    user-typed labels normalized to signal names by the web editor's
+     *    label-to-signal converter, which leaves trailing underscores when
+     *    the label has trailing whitespace/punctuation (e.g. "Fuel Level "
+     *    → "FUEL_LEVEL_" and "Fuel Level - " → "FUEL_LEVEL__"). */
+    char norm[64];
+    size_t ni = 0, si = 0;
+    while (signal_name[si] == '_') si++;
+    while (signal_name[si] && ni + 1 < sizeof(norm)) norm[ni++] = signal_name[si++];
+    while (ni > 0 && norm[ni - 1] == '_') ni--;
+    norm[ni] = '\0';
+    if (ni == 0) return NULL;
+
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_NAMES[i], norm) == 0)
+            return ECU_SIGNAL_CANONICAL[i];
+    }
+
+    /* 3. Explicit alias lookup (replaces the old suffix heuristic).
+     *    EXACT match only — no fuzzy prefixes/suffixes, so collisions and
+     *    false positives are impossible. */
+    for (size_t i = 0; i < ECU_SIGNAL_ALIASES_COUNT; ++i) {
+        if (strcmp(ECU_SIGNAL_ALIASES[i].derived, norm) == 0)
+            return ECU_SIGNAL_ALIASES[i].canonical;
+    }
+
+    return NULL;
+}
+
 const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
     if (slot >= ECU_SIG__COUNT) return "";
     return ECU_SIGNAL_NAMES[slot];
+}
+
+ecu_signal_slot_t ecu_slot_from_canonical_id(const char *canonical_id) {
+    if (!canonical_id || !canonical_id[0]) return ECU_SIG__COUNT;
+    for (size_t i = 0; i < ECU_SIG__COUNT; ++i) {
+        const char *c = ECU_SIGNAL_CANONICAL[i];
+        if (c && strcmp(c, canonical_id) == 0) return (ecu_signal_slot_t)i;
+    }
+    return ECU_SIG__COUNT;
 }
 
 /* ── Preset tables ─────────────────────────────────────────────────────
@@ -69,7 +291,7 @@ const char *ecu_signal_slot_name(ecu_signal_slot_t slot) {
  */
 
 /* [0]=can_id, then bit_start, bit_length, scale, offset, is_signed, endian, unit, decimals */
-#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "", 0 }
+#define SIG_UNSUPPORTED { 0, 0, 0, 0.0f, 0.0f, false, 0, "", 0, NULL }
 
 const ecu_preset_t ECU_PRESETS[] = {
     /* ══════════════════════════════════════════════════════════════════
@@ -176,14 +398,17 @@ const ecu_preset_t ECU_PRESETS[] = {
      * MaxxECU 1.2 - base 0x520, Intel LE
      * Subset of 1.3 (no oil temp/pressure/fuel pressure broadcast).
      *
-     * Sign conventions cross-checked against the official MaxxECU v1.3
-     * DBC file (the v1.2 DBC isn't published separately; 1.3 is a strict
-     * superset for the fields 1.2 supports). The DBC uses `@1+` (Intel
-     * unsigned) for every field at 0x520/0x521/0x530/0x531 except oil
-     * temperature on 0x536 (1.3 only). The four fields below were
-     * incorrectly flagged is_signed=true in an earlier revision — that
-     * read garbage for any raw value with bit 15 set (e.g. fuel trim
-     * raw ≥ 32768). Confirmed against MaxxECU MTune behaviour.
+     * Bit/scale/offset/id verified against the official
+     * MaxxECU_Default_CAN_protocol_v1.2.dbc — every mapped field matches.
+     * The v1.2 DBC marks ALL fields `@1+` (Intel unsigned).
+     *
+     * SIGN — same deliberate deviation as the 1.3 preset (see below):
+     * COOLANT_TEMP, INTAKE_AIR_TEMP and IGNITION are forced is_signed=true
+     * so sub-zero temps / ignition retard (which the ECU sends as
+     * two's-complement) decode correctly instead of reading ~6500. Signed
+     * is identical to unsigned for their positive range (raw never sets
+     * bit 15 below 3276.7), so this is safe. FUEL_TRIM stays unsigned
+     * (positive multiplier, 100% = no correction). Confirmed in-vehicle.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -193,13 +418,13 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,  /* not in 1.2 */
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
@@ -242,62 +467,113 @@ const ecu_preset_t ECU_PRESETS[] = {
     },
 
     /* ══════════════════════════════════════════════════════════════════
-     * Ford FG — factory CAN broadcast. Inherits the BA/BF frame layout
-     * (FG keeps the same engine-side broadcasts: 0x12D / 0x207 / 0x427 /
-     * 0x44D / 0x437 / 0x353). The previous FG preset used CAN IDs that
-     * don't appear anywhere on the actual FG bus (0x109 / 0x204 / 0x156 /
-     * 0x171) — those were placeholder values from an early experiment
-     * and have been retired.
+     * Ford FG — factory hscan (500 kbps engine bus) only.
      *
-     * Sources cross-referenced 2026-05-18:
-     *   - BA/BF preset (verified in real BA/BF vehicles)
-     *   - jakka351/FG-Falcon "BigFalconSheet.xlsx" DBC tab
-     *   - jakka351/FG-Falcon resources/fg_controller_area.dbc
+     * Cross-referenced 2026-05-24 against BigFalconSheet.xlsx
+     * (FgControllerArea tab) and live canraw captures from an XR6T.
+     * The workbook's DBC tab is partly mis-parsed (overlapping
+     * length=1 rows); FgControllerArea is byte-accurate and is the
+     * authoritative source used below.
      *
-     * GEAR is new: FG broadcasts TransmissionMode on 0x210 byte 8 (bit 56,
-     * 8-bit). Value is an integer mode code (P=1/R=2/N=3/D=4 typical) —
-     * widget can map via a value table.
+     * Verification status of each row, against the canraw + decoded log:
      *
-     * Chassis extras enabled here based on the DBC tab in BigFalconSheet.xlsx
-     * (a more complete reverse-engineering than fg_controller_area.dbc).
-     * Bit positions sourced from the DBC `BO_/SG_` lines; scales are best
-     * guesses since the original DBC encodes them as raw=1.0 (the actual
-     * physical scaling isn't documented). The user can adjust scale/offset
-     * via the Signals modal after a live capture confirms the encoding:
+     *   VERIFIED (live values match expected physical range)
+     *     RPM, THROTTLE (idle..~63%), COOLANT_TEMP, OIL_TEMP,
+     *     BATTERY_VOLTAGE (alt charging visible at 13.6V)
      *
-     *   - BOOST       0x425 PCM_MSG_15  bit 31, 16-bit BE, kPa
-     *   - FUEL_LEVEL  0x425 PCM_MSG_15  bit 47, 8-bit BE  (raw -> 0.392% per cnt
-     *                                                     assumes 0..255 = 0..100%)
-     *   - LATERAL_G   0x4B0 PCM_WHEEL_SPEED bit 56, 8-bit BE (raw scaled 0.01 g)
-     *   - PARK_BRAKE  0x360 ReverseParkingSenseSystem bit 16, 8-bit LE (status flag)
-     *   - YAW_RATE    0x000 ABS broadcast bit 16, 8-bit LE (placeholder — ID 0x000
-     *                       and scaling are the least-confirmed bits in the sheet)
+     *   POSITION VERIFIED, MAGNITUDE NEEDS A DRIVING CAPTURE
+     *     VEHICLE_SPEED — bytes 4-5 of 0x207 read 0xFFFF sentinel
+     *       (= 511.99 km/h) whenever stationary. Scale 0.0078125
+     *       km/h/cnt (= raw 12800 -> 100 km/h) per spreadsheet.
+     *     GEAR — 0x230 byte 0 reads 0 in Park. Byte 2 (ActualGear-
+     *       Position) reads 0x68 = 104 in P; both bytes use an
+     *       encoded value table, not a literal gear number. Need a
+     *       full P->R->N->D->1..5 cycle to build the mapping.
+     *
+     *   UNVERIFIED — keeps current values pending more data
+     *     BOOST — 0x425 bytes 3-4 are stuck at 0xFFFF across every
+     *       captured frame, even on a turbo (engine made 510 Nm per
+     *       0x097 ActualEngineTorque in our log). Either the PCM
+     *       only updates this when actually positive-boost, or the
+     *       real boost signal lives elsewhere (0x425 byte 7 is the
+     *       only fast-varying engine byte and is a candidate — but
+     *       it could equally be InstantFuelConsumption). Needs a
+     *       WOT pull capture to disambiguate.
+     *     FUEL_LEVEL — current 0x425 bit 47 / scale 0.392 reads 75%
+     *       at 3/4 tank, but mathematically the result is driven by
+     *       byte 6 (fuel-consumption signal that happens to sit
+     *       around 0x80 at idle), not byte 5 (which is constant 0x03
+     *       = quarter-tank index). Real encoding is likely byte 5
+     *       with scale 25.0 %/cnt (4 quarters). Left as-is for now;
+     *       re-verify across a tank burn.
+     *     PARK_BRAKE — 0x437 byte 2 (HandbrakeStatus) is the right
+     *       per-spec position, but 0x437 didn't appear in our two
+     *       captures. Low broadcast rate or condition-gated. Verify
+     *       with a longer capture toggling the handbrake.
+     *
+     *   DROPPED (no factory broadcast on hscan, or prior row pointed
+     *   at the wrong thing)
+     *     MAP            -> SIG_UNSUPPORTED (FG factory doesn't
+     *                       broadcast manifold pressure; 0x44D byte 7
+     *                       is barometric, not MAP)
+     *     INTAKE_AIR_TEMP-> SIG_UNSUPPORTED (was reading HVAC cabin
+     *                       temp on mscan bus we can't even hear)
+     *     FUEL_TRIM      -> SIG_UNSUPPORTED (no STFT/LTFT broadcast)
+     *     LATERAL_G      -> SIG_UNSUPPORTED (0x4B0 byte 7 is wheel
+     *                       speed, not lat-G)
+     *     YAW_RATE       -> SIG_UNSUPPORTED (prior 0x000 was a
+     *                       placeholder, ID doesn't exist)
+     *
+     * Bit-position fixes vs the previous revision:
+     *   RPM   bit 39 -> 32  (off by 7 bits, was decoding ~15 000 rpm
+     *                        at idle by reading bytes 4-5 through a
+     *                        1-bit shift instead of as a clean 16-bit
+     *                        BE field)
+     *   GEAR  0x210 bit 56 -> 0x230 bit 0  (0x210 has no gear field;
+     *                        real gear data lives on 0x230)
+     *   PARK_BRAKE 0x360 bit 16 -> 0x437 bit 16  (0x360 is mscan;
+     *                        0x437 byte 2 is the right hscan source)
+     *
+     * Frames in this preset and the bus they live on (for reference
+     * when adding a second-channel transceiver later):
+     *   hscan: 0x12D, 0x207, 0x230, 0x425, 0x427, 0x437, 0x44D
+     *   mscan: 0x353 (HVAC), 0x360 (park sense), 0x4B0 (wheel speeds)
+     *
+     * Bonus signals visible on hscan but not yet wired to a standard
+     * ECU_SIG_* slot — users can expose via the Signals modal:
+     *   0x097 bytes 0-1 IndicatedEngineTorque (Nm, 16-bit BE signed)
+     *   0x097 bytes 2-3 FrictionLoss (Nm)
+     *   0x097 bytes 4-5 ActualEngineTorque (Nm)
+     *   0x097 bytes 6-7 DriverDemandedTorque (Nm)
+     *   0x120 bytes 0-1 EngineTorqueMinusReduction (Nm)
+     *   0x12D byte 1    AcceleratorPedalPosition (%, x0.5)
+     *   0x4C0 bytes 0-2 Odometer (24-bit LE, raw ~ km x 100)
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "Ford",
         .version = "FG",
         .display = "Ford Falcon FG",
         .rows = {
-            [ECU_SIG_RPM]             = { 0x12D, 39, 16, 0.25f,       0.0f,   false, 0, "rpm",   0 },
-            [ECU_SIG_MAP]             = { 0x44D, 56,  8, 0.5f,        0.0f,   false, 0, "kPa",   0 },
+            [ECU_SIG_RPM]             = { 0x12D, 32, 16, 0.25f,       0.0f,   false, 0, "rpm",   0 },
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,
             [ECU_SIG_THROTTLE]        = { 0x207, 48,  8, 0.5f,        0.0f,   false, 0, "%",     1 },
             [ECU_SIG_COOLANT_TEMP]    = { 0x427,  0,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x353, 32,  8, 0.333333f,  -30.0f,  false, 0, "degC",  0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,
             [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,
             [ECU_SIG_OIL_TEMP]        = { 0x44D, 48,  8, 1.0f,       -40.0f,  false, 0, "degC",  0 },
             [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
             [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
             [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,
             [ECU_SIG_VEHICLE_SPEED]   = { 0x207, 32, 16, 0.0078125f,  0.0f,   false, 0, "km/h",  0 },
-            [ECU_SIG_GEAR]            = { 0x210, 56,  8, 1.0f,        0.0f,   false, 0, "",      0 },
+            [ECU_SIG_GEAR]            = { 0x230,  0,  8, 1.0f,        0.0f,   false, 0, "",      0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x427, 24,  8, 0.1f,        0.0f,   false, 0, "V",     1 },
-            [ECU_SIG_FUEL_TRIM]       = { 0x437,  8,  8, 0.51f,       0.0f,   false, 0, "L/hr",  1 },
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
             [ECU_SIG_BOOST]           = { 0x425, 31, 16, 1.0f,        0.0f,   false, 0, "kPa",   0 },
             [ECU_SIG_FUEL_LEVEL]      = { 0x425, 47,  8, 0.392157f,   0.0f,   false, 0, "%",     0 },
-            [ECU_SIG_PARK_BRAKE]      = { 0x360, 16,  8, 1.0f,        0.0f,   false, 1, "",      0 },
-            [ECU_SIG_YAW_RATE]        = { 0x000, 16,  8, 1.0f,        0.0f,   true,  1, "deg/s", 1 },
-            [ECU_SIG_LATERAL_G]       = { 0x4B0, 56,  8, 0.01f,       0.0f,   true,  0, "g",     2 },
+            [ECU_SIG_PARK_BRAKE]      = { 0x437, 16,  8, 1.0f,        0.0f,   false, 0, "",      0 },
+            [ECU_SIG_YAW_RATE]        = SIG_UNSUPPORTED,
+            [ECU_SIG_LATERAL_G]       = SIG_UNSUPPORTED,
         },
     },
 
@@ -305,17 +581,30 @@ const ecu_preset_t ECU_PRESETS[] = {
      * MaxxECU 1.3 - base 0x520, Intel LE
      * Source: MaxxECU_Default_CAN_protocol_v1.3.dbc (official download).
      *
-     * DBC byte-order spec: every field is `@1+` (Intel unsigned) EXCEPT
-     * Engine_Oil_Temperature at 0x536 byte 48, which is `@1-` (signed).
-     * An earlier revision had four fields flagged is_signed=true that the
-     * DBC clearly marks unsigned (COOLANT_TEMP, INTAKE_AIR_TEMP, IGNITION,
-     * FUEL_TRIM) — corrected to match the DBC.
+     * Bit/scale/offset/id all verified against the official
+     * MaxxECU_Default_CAN_protocol_v1.3.dbc — every mapped field matches.
      *
-     * FUEL_TRIM is "fraction:%" with offset 0 and range [0..6553.5]:
-     * MaxxECU encodes fuel trim as a multiplier where 100% = no
-     * correction (matching MTune's display). Keep offset 0 here so the
-     * dash mirrors MTune; users wanting OBD2 STFT/LTFT ±delta style can
-     * add an offset=-100 override in their layout's Signals modal.
+     * SIGN — deliberate deviation from the DBC for three fields:
+     * The DBC (AEM-template-derived, note its auto-generated [0|6553.5]
+     * ranges) marks every field `@1+` (Intel unsigned) EXCEPT
+     * Engine_Oil_Temperature (0x536 b48, `@1-`). But CoolantTemp,
+     * IntakeAirTemp and Ignition_Timing all read negative in-vehicle —
+     * temps below 0°C on a cold start, ignition retarding past TDC — which
+     * the ECU can only put on the wire as two's-complement. The DBC's
+     * `@1+` then misreads those as ~6500. Their raw never legitimately
+     * sets bit 15 in range (120°C = 1200, 50° adv = 500), so reading them
+     * SIGNED is identical for all positive values and correct for the
+     * negatives. We therefore force is_signed=true on COOLANT_TEMP,
+     * INTAKE_AIR_TEMP and IGNITION (matching the DBC's own treatment of
+     * Engine_Oil_Temperature — the same kind of sensor). Confirmed
+     * in-vehicle on a MaxxECU. GearPosn stays unsigned: it's a 0..N index,
+     * never two's-complement negative, so signed would gain nothing.
+     *
+     * FUEL_TRIM stays UNSIGNED (matches DBC): MaxxECU's FuelTrimTotal is a
+     * multiplier where 100% = no correction (range [0..6553.5], always
+     * positive), matching MTune's display. A ±delta (OBD2 STFT/LTFT) style
+     * comes from an offset=-100 override in the Signals modal, not the
+     * sign bit.
      * ══════════════════════════════════════════════════════════════════ */
     {
         .make = "MaxxECU",
@@ -325,14 +614,14 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_RPM]             = { 0x520,  0, 16, 1.0f,       0.0f,     false, 1, "rpm",    0 },
             [ECU_SIG_MAP]             = { 0x520, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    1 },
             [ECU_SIG_THROTTLE]        = { 0x520, 16, 16, 0.1f,       0.0f,     false, 1, "%",      1 },
-            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
-            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     false, 1, "degC",   0 },
+            [ECU_SIG_COOLANT_TEMP]    = { 0x530, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
+            [ECU_SIG_INTAKE_AIR_TEMP] = { 0x530, 32, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_LAMBDA]          = { 0x520, 48, 16, 0.001f,     0.0f,     false, 1, "lambda", 2 },
             /* Engine_Oil_Temperature: the one signed field in this block. */
             [ECU_SIG_OIL_TEMP]        = { 0x536, 48, 16, 0.1f,       0.0f,     true,  1, "degC",   0 },
             [ECU_SIG_OIL_PRESSURE]    = { 0x536, 32, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
             [ECU_SIG_FUEL_PRESSURE]   = { 0x537,  0, 16, 0.1f,       0.0f,     false, 1, "kPa",    0 },
-            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     false, 1, "deg",    1 },
+            [ECU_SIG_IGNITION]        = { 0x521, 32, 16, 0.1f,       0.0f,     true,  1, "deg",    1 },
             [ECU_SIG_VEHICLE_SPEED]   = { 0x522, 48, 16, 0.1f,       0.0f,     false, 1, "km/h",   0 },
             [ECU_SIG_GEAR]            = { 0x536,  0, 16, 1.0f,       0.0f,     false, 1, "",       0 },
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x530,  0, 16, 0.01f,      0.0f,     false, 1, "V",      1 },
@@ -367,6 +656,41 @@ const ecu_preset_t ECU_PRESETS[] = {
             [ECU_SIG_BATTERY_VOLTAGE] = { 0x3EB, 32, 16, 0.01f, 0.0f,    false, 1, "V",      1 },
             [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,  /* not in Generic Dash */
             [ECU_SIG_EGT]             = SIG_UNSUPPORTED,  /* optional extension */
+        },
+    },
+
+    /* ══════════════════════════════════════════════════════════════════
+     * Toyota 86 / Subaru BRZ (2012-2020) — HS-CAN @ 500 kbps.
+     * Source: community-documented (FT86Club / openbsd / wireshark caps).
+     * These come from the vehicle bus, not a standalone ECU. RPM and a
+     * handful of other channels broadcast continuously; many slots have
+     * no native broadcast (use OBD2 PIDs for those — coolant, fuel level,
+     * battery voltage, lambda, ignition timing all come via Mode 01).
+     *
+     * If your specific year/region differs, switch this to a custom
+     * preset by editing the CAN ids in Signal Manager. Values verified
+     * on a 2014 86 GT (Australian market) — let us know corrections.
+     * ══════════════════════════════════════════════════════════════════ */
+    {
+        .make = "Toyota / Subaru",
+        .version = "86 / BRZ",
+        .display = "Toyota 86 / Subaru BRZ (2012-2020)",
+        .rows = {
+            [ECU_SIG_RPM]             = { 0x140, 16, 16, 1.0f,  0.0f,    false, 0, "rpm",    0 },
+            [ECU_SIG_MAP]             = SIG_UNSUPPORTED,  /* OBD2 PID 0x0B */
+            [ECU_SIG_THROTTLE]        = { 0x143,  0,  8, 0.39215f, 0.0f, false, 0, "%",      1 },
+            [ECU_SIG_COOLANT_TEMP]    = SIG_UNSUPPORTED,  /* OBD2 PID 0x05 */
+            [ECU_SIG_INTAKE_AIR_TEMP] = SIG_UNSUPPORTED,  /* OBD2 PID 0x0F */
+            [ECU_SIG_LAMBDA]          = SIG_UNSUPPORTED,  /* OBD2 PID 0x44 */
+            [ECU_SIG_OIL_TEMP]        = SIG_UNSUPPORTED,
+            [ECU_SIG_OIL_PRESSURE]    = SIG_UNSUPPORTED,
+            [ECU_SIG_FUEL_PRESSURE]   = SIG_UNSUPPORTED,
+            [ECU_SIG_IGNITION]        = SIG_UNSUPPORTED,  /* OBD2 PID 0x0E */
+            [ECU_SIG_VEHICLE_SPEED]   = { 0x141,  0, 16, 0.01f, 0.0f,    false, 0, "km/h",   0 },
+            [ECU_SIG_GEAR]            = { 0x161,  0,  8, 1.0f,  0.0f,    false, 0, "",       0 }, /* manual only */
+            [ECU_SIG_BATTERY_VOLTAGE] = SIG_UNSUPPORTED,  /* OBD2 PID 0x42 */
+            [ECU_SIG_FUEL_TRIM]       = SIG_UNSUPPORTED,
+            [ECU_SIG_EGT]             = SIG_UNSUPPORTED,
         },
     },
 
@@ -458,6 +782,58 @@ const ecu_preset_t *ecu_preset_find(const char *make, const char *version) {
     return NULL;
 }
 
+/* Parse a CSV-style value→label table ("0=N,1=1,2=2,…") into a cJSON
+ * array of {v: int, label: str} objects. Returns NULL when csv is NULL
+ * or empty so the caller can skip emitting an empty array. Caller owns
+ * the returned cJSON; pass it via cJSON_AddItemToObject. */
+static cJSON *_value_map_csv_to_json(const char *csv) {
+    if (!csv || !csv[0]) return NULL;
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) return NULL;
+
+    const char *p = csv;
+    while (*p) {
+        /* skip leading whitespace/commas between entries */
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+
+        /* parse numeric value (optionally negative, optional decimal)
+         * up to '='. strtof handles ints, floats, and edge cases like
+         * "+0.85" / "-1" / "1." uniformly. */
+        const char *num_start = p;
+        char *end = NULL;
+        float v = strtof(num_start, &end);
+        if (end == num_start || !end || *end != '=') {
+            /* malformed entry — bail entirely rather than mis-parse */
+            cJSON_Delete(arr);
+            return NULL;
+        }
+        p = end + 1;  /* skip '=' */
+
+        /* label runs to next ',' or end-of-string */
+        const char *label_start = p;
+        while (*p && *p != ',') p++;
+        size_t len = (size_t)(p - label_start);
+        if (len == 0) continue;  /* empty label, skip */
+        if (len >= SIGNAL_VALUE_LABEL_MAX) len = SIGNAL_VALUE_LABEL_MAX - 1;
+        char lbl[SIGNAL_VALUE_LABEL_MAX];
+        memcpy(lbl, label_start, len);
+        lbl[len] = '\0';
+
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) continue;
+        cJSON_AddNumberToObject(entry, "v", (double)v);
+        cJSON_AddStringToObject(entry, "label", lbl);
+        cJSON_AddItemToArray(arr, entry);
+    }
+
+    if (cJSON_GetArraySize(arr) == 0) {
+        cJSON_Delete(arr);
+        return NULL;
+    }
+    return arr;
+}
+
 /* Build one signal JSON object from a preset row. can_id==0 rows produce
  * an unbound signal (can_id=0, retains name). */
 static cJSON *_build_signal_json(const char *name, const ecu_signal_row_t *row) {
@@ -472,6 +848,8 @@ static cJSON *_build_signal_json(const char *name, const ecu_signal_row_t *row) 
     cJSON_AddBoolToObject(s, "is_signed", row->is_signed);
     cJSON_AddStringToObject(s, "unit", row->unit ? row->unit : "");
     cJSON_AddNumberToObject(s, "endian", row->endian);
+    cJSON *vm = _value_map_csv_to_json(row->value_map_csv);
+    if (vm) cJSON_AddItemToObject(s, "value_map", vm);
     return s;
 }
 
@@ -658,6 +1036,194 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "Applied preset '%s %s' to layout '%s'",
                  preset->make, preset->version, layout_name);
+    }
+    return err;
+}
+
+/* ── Per-slot preset application ──────────────────────────────────────
+ *
+ * The bulk ecu_preset_apply_to_layout rewrites every supported slot's
+ * signal row to match the chosen preset. The per-slot variant below is
+ * what the source picker uses when the user picks "Haltech RPM" for
+ * just the rpm channel — it rewrites ONE entry in signals[] without
+ * disturbing the others. The layout's overall `ecu`/`ecu_version`
+ * fields are intentionally left alone (they describe the bulk preset).
+ */
+/* Shared helper: write a single signal row into the named layout's
+ * signals[] array. Both the per-slot ECU bulk apply path AND the web
+ * channels source-picker preconfig path funnel through here so the
+ * cJSON allocation + disk-save story stays in ONE place.
+ *
+ * unit == NULL omits the unit field. decimals < 0 omits the decimals
+ * field. This matters because the preconfig flow doesn't carry a unit
+ * but the ECU preset flow does. */
+/* Upsert one signal row into an already-parsed signals[] cJSON array.
+ * Shared by the single-signal writer and the batched ecu_layout_writer so
+ * the find-or-create + stale-wipe + field-set logic lives in ONE place. */
+static void _upsert_signal_entry(cJSON *signals, const char *signal_name,
+                                 uint32_t can_id, uint8_t bit_start,
+                                 uint8_t bit_length, float scale, float offset,
+                                 bool is_signed, uint8_t endian,
+                                 const char *unit, int decimals) {
+    if (!signals || !signal_name || !signal_name[0]) return;
+
+    cJSON *entry = NULL;
+    cJSON *sig;
+    cJSON_ArrayForEach(sig, signals) {
+        cJSON *jname = cJSON_GetObjectItemCaseSensitive(sig, "name");
+        if (cJSON_IsString(jname) && strcmp(jname->valuestring, signal_name) == 0) {
+            entry = sig; break;
+        }
+    }
+    if (!entry) {
+        entry = cJSON_CreateObject();
+        cJSON_AddStringToObject(entry, "name", signal_name);
+        cJSON_AddItemToArray(signals, entry);
+    } else {
+        /* Wipe stale decode params before re-adding. value_map is
+         * also wiped since it's keyed to specific raw values; a new
+         * decode means previous mappings may not match. */
+        cJSON_DeleteItemFromObject(entry, "can_id");
+        cJSON_DeleteItemFromObject(entry, "bit_start");
+        cJSON_DeleteItemFromObject(entry, "bit_length");
+        cJSON_DeleteItemFromObject(entry, "scale");
+        cJSON_DeleteItemFromObject(entry, "offset");
+        cJSON_DeleteItemFromObject(entry, "is_signed");
+        cJSON_DeleteItemFromObject(entry, "endian");
+        cJSON_DeleteItemFromObject(entry, "unit");
+        cJSON_DeleteItemFromObject(entry, "decimals");
+        cJSON_DeleteItemFromObject(entry, "value_map");
+    }
+
+    cJSON_AddNumberToObject(entry, "can_id",     (double)can_id);
+    cJSON_AddNumberToObject(entry, "bit_start",  bit_start);
+    cJSON_AddNumberToObject(entry, "bit_length", bit_length);
+    cJSON_AddNumberToObject(entry, "scale",      scale);
+    cJSON_AddNumberToObject(entry, "offset",     offset);
+    cJSON_AddBoolToObject  (entry, "is_signed",  is_signed);
+    cJSON_AddNumberToObject(entry, "endian",     endian);
+    if (unit)              cJSON_AddStringToObject(entry, "unit",     unit);
+    if (decimals >= 0)     cJSON_AddNumberToObject(entry, "decimals", decimals);
+}
+
+esp_err_t ecu_preset_write_signal_to_layout(const char *layout_name,
+                                            const char *signal_name,
+                                            uint32_t can_id,
+                                            uint8_t bit_start,
+                                            uint8_t bit_length,
+                                            float scale, float offset,
+                                            bool is_signed, uint8_t endian,
+                                            const char *unit,
+                                            int decimals) {
+    if (!layout_name || !signal_name || !signal_name[0])
+        return ESP_ERR_INVALID_ARG;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return ESP_ERR_NO_MEM;
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) { free(buf); return err; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+
+    /* Find or create the signals[] array, then upsert the entry. */
+    cJSON *signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+    if (!cJSON_IsArray(signals)) {
+        signals = cJSON_AddArrayToObject(root, "signals");
+    }
+    _upsert_signal_entry(signals, signal_name, can_id, bit_start, bit_length,
+                         scale, offset, is_signed, endian, unit, decimals);
+
+    err = layout_manager_save_raw(layout_name, root);
+    cJSON_Delete(root);
+    return err;
+}
+
+/* ── Batched layout signal writer (see header) ────────────────────────── */
+struct ecu_layout_writer {
+    char   layout_name[64];
+    cJSON *root;
+    cJSON *signals;   /* borrowed pointer into root */
+};
+
+ecu_layout_writer_t *ecu_layout_writer_open(const char *layout_name) {
+    if (!layout_name || !layout_name[0]) return NULL;
+
+    char *buf = malloc(LAYOUT_MAX_FILE_BYTES);
+    if (!buf) return NULL;
+    size_t len = 0;
+    esp_err_t err = layout_manager_read_raw(layout_name, buf,
+                                            LAYOUT_MAX_FILE_BYTES, &len);
+    if (err != ESP_OK) { free(buf); return NULL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return NULL;
+
+    ecu_layout_writer_t *w = calloc(1, sizeof(*w));
+    if (!w) { cJSON_Delete(root); return NULL; }
+
+    strncpy(w->layout_name, layout_name, sizeof(w->layout_name) - 1);
+    w->root = root;
+    w->signals = cJSON_GetObjectItemCaseSensitive(root, "signals");
+    if (!cJSON_IsArray(w->signals))
+        w->signals = cJSON_AddArrayToObject(root, "signals");
+    return w;
+}
+
+void ecu_layout_writer_upsert(ecu_layout_writer_t *w,
+                              const char *signal_name,
+                              uint32_t can_id,
+                              uint8_t bit_start, uint8_t bit_length,
+                              float scale, float offset,
+                              bool is_signed, uint8_t endian,
+                              const char *unit, int decimals) {
+    if (!w) return;
+    _upsert_signal_entry(w->signals, signal_name, can_id, bit_start,
+                         bit_length, scale, offset, is_signed, endian,
+                         unit, decimals);
+}
+
+esp_err_t ecu_layout_writer_commit(ecu_layout_writer_t *w) {
+    if (!w) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = layout_manager_save_raw(w->layout_name, w->root);
+    cJSON_Delete(w->root);
+    free(w);
+    return err;
+}
+
+void ecu_layout_writer_abort(ecu_layout_writer_t *w) {
+    if (!w) return;
+    cJSON_Delete(w->root);
+    free(w);
+}
+
+esp_err_t ecu_preset_apply_slot_to_layout(const char *layout_name,
+                                          const ecu_preset_t *preset,
+                                          ecu_signal_slot_t slot) {
+    if (!layout_name || !preset || slot >= ECU_SIG__COUNT)
+        return ESP_ERR_INVALID_ARG;
+
+    const ecu_signal_row_t *row = &preset->rows[slot];
+    if (row->can_id == 0) return ESP_ERR_INVALID_ARG;
+
+    const char *signal_name = ECU_SIGNAL_NAMES[slot];
+    if (!signal_name || !signal_name[0]) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t err = ecu_preset_write_signal_to_layout(
+        layout_name, signal_name,
+        row->can_id, row->bit_start, row->bit_length,
+        row->scale, row->offset,
+        row->is_signed, row->endian,
+        row->unit ? row->unit : "",
+        row->decimals);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Slot %s ← %s %s (CAN 0x%lx) in layout '%s'",
+                 signal_name, preset->make, preset->version,
+                 (unsigned long)row->can_id, layout_name);
     }
     return err;
 }

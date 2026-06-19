@@ -7,6 +7,8 @@
  *   GET /api/capture/stream    continuous multipart-MJPEG (OBS / ffmpeg / <img>) */
 #include "web_server_internal.h"
 #include "display_capture.h"
+#include "system/screen_config.h"
+#include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +17,32 @@
 #include <string.h>
 
 static const char *TAG = "web_server_capture";
+
+/* Send a cJSON object (with CORS) and free it + the printed string. */
+static esp_err_t _send_json_capture(httpd_req_t *req, cJSON *root) {
+	char *json = cJSON_PrintUnformatted(root);
+	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_sendstr(req, json);
+	free(json);
+	return ESP_OK;
+}
+
+/* esp_http_server's httpd_err_code_t has no 503, so send one by hand. */
+static esp_err_t _send_503(httpd_req_t *req, const char *msg) {
+	httpd_resp_set_status(req, "503 Service Unavailable");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	char body[96];
+	snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", msg);
+	httpd_resp_sendstr(req, body);
+	return ESP_FAIL;
+}
 
 /* ── Query-param helper ──────────────────────────────────────────────────── */
 
@@ -251,11 +279,69 @@ static esp_err_t mjpeg_stream_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 
+/* ── GET /api/screenshot/hash?x=&y=&w=&h= ────────────────────────────────────
+ *
+ * Deterministic FNV-1a hash over a rectangular region of the persistent RGB565
+ * shadow framebuffer (the one the LVGL flush tap keeps in sync). Unlike the
+ * JPEG screenshot this is lossless and stable, so an agent can golden-compare a
+ * region or cheaply detect "did anything change" via the seq counter. Coords
+ * are in framebuffer space (0,0 = top-left, SCREEN_W×SCREEN_H); defaults to the
+ * whole screen. `torn` is true if the flush tap wrote to the FB mid-hash (the
+ * client should retry). */
+static esp_err_t _screenshot_hash_handler(httpd_req_t *req) {
+	if (!display_capture_shadow_ready())
+		return _send_503(req, "shadow framebuffer not ready");
+
+	int x = _query_int(req, "x", 0);
+	int y = _query_int(req, "y", 0);
+	int w = _query_int(req, "w", SCREEN_W);
+	int h = _query_int(req, "h", SCREEN_H);
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+	if (x >= SCREEN_W) x = SCREEN_W - 1;
+	if (y >= SCREEN_H) y = SCREEN_H - 1;
+	if (w <= 0 || x + w > SCREEN_W) w = SCREEN_W - x;
+	if (h <= 0 || y + h > SCREEN_H) h = SCREEN_H - y;
+
+	const uint16_t *fb = display_capture_shadow_fb();
+	if (!fb)
+		return _send_503(req, "no shadow framebuffer");
+
+	uint32_t seq_before = display_capture_shadow_seq();
+	uint32_t hash = 2166136261u;  /* FNV-1a/32 */
+	for (int row = y; row < y + h; row++) {
+		const uint16_t *p = fb + (size_t)row * SCREEN_W + x;
+		for (int col = 0; col < w; col++) {
+			uint16_t px = p[col];
+			hash ^= (px & 0xFF);        hash *= 16777619u;
+			hash ^= ((px >> 8) & 0xFF); hash *= 16777619u;
+		}
+	}
+	uint32_t seq_after = display_capture_shadow_seq();
+
+	char hexhash[11];
+	snprintf(hexhash, sizeof(hexhash), "0x%08lX", (unsigned long)hash);
+
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddStringToObject(root, "hash", hexhash);
+	cJSON_AddNumberToObject(root, "seq", seq_after);
+	cJSON_AddNumberToObject(root, "x", x);
+	cJSON_AddNumberToObject(root, "y", y);
+	cJSON_AddNumberToObject(root, "w", w);
+	cJSON_AddNumberToObject(root, "h", h);
+	cJSON_AddBoolToObject(root, "torn", seq_before != seq_after);
+	return _send_json_capture(req, root);
+}
+
 /* ── URI descriptors ─────────────────────────────────────────────────────── */
 
 static const httpd_uri_t screenshot_uri = {
     .uri = "/screenshot", .method = HTTP_GET,
     .handler = screenshot_handler, .user_ctx = NULL};
+
+static const httpd_uri_t api_screenshot_hash_uri = {
+    .uri = "/api/screenshot/hash", .method = HTTP_GET,
+    .handler = _screenshot_hash_handler, .user_ctx = NULL};
 
 static const httpd_uri_t api_screenshot_uri = {
     .uri = "/api/screenshot", .method = HTTP_GET,
@@ -268,5 +354,6 @@ static const httpd_uri_t api_capture_stream_uri = {
 void web_server_capture_register(httpd_handle_t server) {
 	REGISTER_URI(server, &screenshot_uri);
 	REGISTER_URI(server, &api_screenshot_uri);
+	REGISTER_URI(server, &api_screenshot_hash_uri);
 	REGISTER_URI(server, &api_capture_stream_uri);
 }

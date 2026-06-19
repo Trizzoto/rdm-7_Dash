@@ -9,7 +9,11 @@
 #include "core/lv_event.h"
 #include "ui_helpers.h"
 #include "screens/splash_screen.h"
+#include "ui_Screen3.h"
+#include "storage/config_store.h"
 #include "ui_styles.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 
 ///////////////////// VARIABLES ////////////////////
 
@@ -131,5 +135,32 @@ void ui_init(void)
     lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
                                              true, LV_FONT_DEFAULT);
     lv_disp_set_theme(dispp, theme);
-    show_splash_screen();
+
+    /* Splash-enabled gate: when disabled, skip the 900 ms boot splash entirely
+     * and build the dashboard directly for a faster boot. dashboard_init()
+     * (called from ui_Screen3_screen_init) handles all font/signal/widget
+     * registry setup itself, so skipping the splash is safe. This mirrors the
+     * no-fade branch of splash_screen.c's _splash_transition_cb. */
+    bool splash_enabled = true;
+    config_store_load_splash_enabled(&splash_enabled);
+    ESP_LOGI("BOOTPERF", "ui_init: splash_enabled=%d @ %lld ms",
+             splash_enabled, esp_timer_get_time() / 1000);
+    if (splash_enabled) {
+        show_splash_screen();
+    } else {
+        /* Splash disabled: no logo to fade out, but we still want a graceful
+         * reveal rather than an abrupt pop — and WITHOUT the old LCD-backlight
+         * brightness ramp (it read as the screen dimming up, not a layout
+         * animation). Show a plain black screen, build the dashboard unseen,
+         * then sweep it in over the black. The sweep moves opaque pixels, so
+         * it stays cheap on the RGB panel (an alpha fade over the live layout
+         * would be too laggy). Mirrors the splash-enabled reveal. */
+        lv_obj_t *black = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(black, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(black, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(black, LV_OBJ_FLAG_SCROLLABLE);
+        lv_scr_load(black);
+
+        splash_screen_reveal_dashboard(); /* builds Screen3 + sweeps it in, auto-dels black */
+    }
 }

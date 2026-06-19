@@ -20,6 +20,7 @@
  * UAF after we've returned.
  */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "can/obd2.h"
 #include "can/obd2_dtc_db.h"
@@ -38,10 +39,28 @@
 #include <time.h>
 #include <unistd.h>
 
+/* ── Blocking-request lifetime ────────────────────────────────────────────
+ * Every handler in this file parks the httpd task on a binary semaphore
+ * while an async chain runs on the LVGL task, sharing a heap ctx. On
+ * semaphore timeout the chain is still in flight, so handlers used to
+ * deliberately LEAK ctx + semaphore (freeing would be a use-after-free when
+ * the late OBD2 callback finally wrote into it). That is a leak on EVERY
+ * ECU-silent timeout — the common case on a car without OBD2 wired, polled
+ * by the editor's OBD2 modal. Refcount instead: the handler and the chain
+ * each hold one reference; whoever releases last frees. Never touch the ctx
+ * after releasing your reference. */
+static void _obd2_ctx_release(volatile int *refs, SemaphoreHandle_t done, void *ctx) {
+    if (__atomic_fetch_sub(refs, 1, __ATOMIC_ACQ_REL) == 1) {
+        vSemaphoreDelete(done);
+        free(ctx);
+    }
+}
+
 /* ── DTC read ─────────────────────────────────────────────────────────── */
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;   /* 2 = httpd handler + async chain */
     bool              ok;
     uint8_t           mode;
     uint8_t           count;
@@ -58,6 +77,7 @@ static void _dtc_done(bool ok, const obd2_dtc_t *codes, uint8_t count,
         memcpy(ctx->codes, codes, ctx->count * sizeof(obd2_dtc_t));
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* chain's reference */
 }
 
 static void _dtc_kick(void *arg) {
@@ -98,9 +118,10 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "sem alloc");
         return ESP_FAIL;
     }
+    ctx->refs = 2;
     ctx->mode = mode;
 
-    lv_async_call(_dtc_kick, ctx);
+    rdm_async_call(_dtc_kick, ctx);
     /* obd2 DTC timeout is 2 s — give 3 s HTTP wait as upper bound. */
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(3000));
 
@@ -133,11 +154,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
         }
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
-    /* If got != pdTRUE we leak ctx — see header comment. */
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -156,6 +173,7 @@ static esp_err_t _dtcs_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
 } clear_ctx_t;
 
@@ -163,6 +181,7 @@ static void _clear_done(bool ok, void *user) {
     clear_ctx_t *ctx = (clear_ctx_t *)user;
     ctx->ok = ok;
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _clear_kick(void *arg) {
@@ -183,7 +202,8 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_clear_kick, ctx);
+    ctx->refs = 2;
+    rdm_async_call(_clear_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -198,10 +218,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
         cJSON_AddBoolToObject(resp, "ok", true);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -220,6 +237,7 @@ static esp_err_t _clear_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
     char              vin[20];
 } vin_ctx_t;
@@ -232,6 +250,7 @@ static void _vin_done(bool ok, const char *vin, void *user) {
         ctx->vin[sizeof(ctx->vin) - 1] = '\0';
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _vin_kick(void *arg) {
@@ -244,6 +263,7 @@ static void _vin_kick(void *arg) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;
     bool              ok;
     char              name[24];
 } ecuname_ctx_t;
@@ -256,6 +276,7 @@ static void _ecuname_done(bool ok, const char *name, void *user) {
         ctx->name[sizeof(ctx->name) - 1] = '\0';
     }
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 }
 
 static void _ecuname_kick(void *arg) {
@@ -276,7 +297,8 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_ecuname_kick, ctx);
+    ctx->refs = 2;
+    rdm_async_call(_ecuname_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -291,10 +313,7 @@ static esp_err_t _ecuname_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(resp, "ecu_name", ctx->name);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -322,7 +341,8 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    lv_async_call(_vin_kick, ctx);
+    ctx->refs = 2;
+    rdm_async_call(_vin_kick, ctx);
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(2500));
 
     cJSON *resp = cJSON_CreateObject();
@@ -337,10 +357,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(resp, "vin", ctx->vin);
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -376,6 +393,7 @@ static esp_err_t _vin_handler(httpd_req_t *req) {
 
 typedef struct {
     SemaphoreHandle_t done;
+    volatile int      refs;           /* 2 = httpd handler + async chain */
     int               stage;          /* 0..4: which step is in flight */
     bool              all_ok;         /* false if ANY step failed (file still written) */
     /* Buffered results */
@@ -404,15 +422,15 @@ static void _snap_stage_dtc_done(bool ok, const obd2_dtc_t *codes, uint8_t count
     if (mode == 0x03) {
         ctx->stored_ok = ok; ctx->stored_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->stored, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_pending, ctx);
+        rdm_async_call(_snap_kick_pending, ctx);
     } else if (mode == 0x07) {
         ctx->pending_ok = ok; ctx->pending_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->pending, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_permanent, ctx);
+        rdm_async_call(_snap_kick_permanent, ctx);
     } else if (mode == 0x0A) {
         ctx->permanent_ok = ok; ctx->permanent_count = ok ? take : 0;
         if (ok && codes) memcpy(ctx->permanent, codes, take * sizeof(obd2_dtc_t));
-        lv_async_call(_snap_kick_vin, ctx);
+        rdm_async_call(_snap_kick_vin, ctx);
     }
 }
 
@@ -423,7 +441,7 @@ static void _snap_vin_done(bool ok, const char *vin, void *user) {
         strncpy(ctx->vin, vin, sizeof(ctx->vin) - 1);
     }
     /* Chain to ECU name — last OBD2 fetch in the snapshot chain. */
-    lv_async_call(_snap_kick_ecuname, ctx);
+    rdm_async_call(_snap_kick_ecuname, ctx);
 }
 
 static void _snap_ecuname_done(bool ok, const char *name, void *user) {
@@ -506,6 +524,7 @@ static void _snap_write_and_done(snap_ctx_t *ctx) {
         ctx->out_path[0] = '\0';
         ctx->out_bytes = 0;
         xSemaphoreGive(ctx->done);
+        _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
         return;
     }
 
@@ -554,6 +573,7 @@ static void _snap_write_and_done(snap_ctx_t *ctx) {
     }
     free(json);
     xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* chain's reference */
 }
 
 static esp_err_t _snapshot_handler(httpd_req_t *req) {
@@ -569,14 +589,15 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
+    ctx->refs = 2;
     /* Start the chain. _snap_kick_stored -> Mode 03 -> (cb) -> Mode 07 ->
      * (cb) -> Mode 0A -> (cb) -> Mode 09 -> (cb) -> write file -> sem. */
-    lv_async_call(_snap_kick_stored, ctx);
+    rdm_async_call(_snap_kick_stored, ctx);
 
     /* Generous 12 s budget: 5 OBD2 round-trips (Mode 03/07/0A + VIN +
      * ECU name) × 2 s each = 10 s, plus a couple of seconds for the SD
-     * write. If we time out, the in-flight obd2 request will still
-     * complete and harmlessly write into the leaked context. */
+     * write. On timeout the in-flight chain still completes, writes into
+     * the still-alive ctx, and drops the LAST reference — no leak. */
     BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(12000));
 
     cJSON *resp = cJSON_CreateObject();
@@ -601,10 +622,7 @@ static esp_err_t _snapshot_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(summary, "ecu_name", ctx->ecuname_ok ? ctx->ecu_name : "");
     }
 
-    if (got == pdTRUE) {
-        vSemaphoreDelete(ctx->done);
-        free(ctx);
-    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);   /* handler's reference */
 
     char *json = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
@@ -696,6 +714,46 @@ static const httpd_uri_t protocols_uri = {
     .uri = "/api/obd2/protocols", .method = HTTP_GET,
     .handler = _protocols_handler, .user_ctx = NULL};
 
+/* GET /api/obd2/pids — current polled-PID set.
+ *
+ * Returns the live "what is OBD2 actively polling right now?" list so the
+ * web Setup-mode OBD2 stat ("3 PIDs polled" / "Not configured") doesn't
+ * silently 404 and read as Not Configured even when polling is on.
+ *
+ * Response:
+ *   { "pids": [
+ *       {"service": 1,  "pid": 12},   // M01 PID 0x0C (RPM)
+ *       {"service": 33, "pid": 128},  // M21 PID 0x80 (Toyota engine block)
+ *       ...
+ *   ] }
+ */
+static esp_err_t _pids_handler(httpd_req_t *req) {
+    uint32_t enabled[OBD2_MAX_ENABLED];
+    uint8_t  n = obd2_get_enabled(enabled, OBD2_MAX_ENABLED);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_AddArrayToObject(root, "pids");
+    for (uint8_t i = 0; i < n; i++) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "service", obd2_decode_service(enabled[i]));
+        cJSON_AddNumberToObject(item, "pid",     obd2_decode_pid(enabled[i]));
+        cJSON_AddItemToArray(arr, item);
+    }
+
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return r;
+}
+
+static const httpd_uri_t pids_uri = {
+    .uri = "/api/obd2/pids", .method = HTTP_GET,
+    .handler = _pids_handler, .user_ctx = NULL};
+
 void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
     REGISTER_URI(server, &clear_uri);
@@ -703,4 +761,5 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &ecuname_uri);
     REGISTER_URI(server, &snapshot_uri);
     REGISTER_URI(server, &protocols_uri);
+    REGISTER_URI(server, &pids_uri);
 }

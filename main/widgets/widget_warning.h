@@ -35,14 +35,35 @@ typedef struct {
 	int8_t     label_y_offset;       /* extra vertical shift, default 0 */
 	uint8_t    label_text_align;     /* 0=Left, 1=Center, 2=Right (default 1) */
 	char       image_name[64];       /* RDMIMG name; empty = circle mode */
+	/* Image zoom in PERCENT (100 = native). Stored as percent (not the raw
+	 * LVGL 256-based zoom the standalone image widget uses) so it passes
+	 * straight through the web editor without a unit conversion; the create
+	 * path converts to LVGL zoom (pct*256/100). Only used in image mode. */
+	uint16_t   image_scale;          /* default: 100 */
 	uint8_t    active_opa;           /* opacity when active (default 255) */
 	uint8_t    inactive_opa;         /* opacity when inactive (default 180) */
+	/* ── Alert type ──
+	 *   0 = Solid    (default — keeps the active colour while signal is on)
+	 *   1 = Flashing (toggles between active and inactive at flash_speed_ms)
+	 * Flash effect only runs while current_state is true; a solid lamp uses
+	 * zero CPU. */
+	uint8_t    flash_mode;           /* 0=Solid, 1=Flashing (default 0) */
+	uint16_t   flash_speed_ms;       /* default 200, range 50..1000 in 50 ms steps */
 	bool       current_state;     /* runtime only -- NOT serialized */
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* ── v14 channel binding ─────────────────────────────────── */
+	char       channel_id[32];
+	void      *channel;     /* channel_t* — opaque */
 	/* Runtime LVGL pointers (not serialized) */
 	lv_img_dsc_t *img_dsc;          /* loaded RDMIMG descriptor, or NULL */
 	lv_obj_t     *img_obj;          /* LVGL image object, or NULL */
+	/* Flash effect runtime state — per-warning so each lamp can flash at
+	 * its own configured speed without coupling to the others. flash_timer
+	 * exists only while flash_mode=1 AND current_state=true; the on/off
+	 * phase is toggled by _warn_flash_timer_cb. Not serialized. */
+	lv_timer_t   *flash_timer;
+	bool          flash_phase;      /* false = inactive frame, true = active frame */
 	/* Dual-object night image swap: when night.image_name is set and differs
 	 * from the day image, a sibling lv_img is created with the night image
 	 * source. _warning_apply_night_mode toggles visibility between the two.

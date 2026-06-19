@@ -9,6 +9,7 @@
 #include "widget_rules.h"
 #include "widget_types.h"
 #include "system/night_mode.h"
+#include "data/channel_manager.h"
 #include "ui/theme.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -35,16 +36,56 @@ static void _text_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	if (!w->root || !lv_obj_is_valid(w->root)) return;
 	text_data_t *td = (text_data_t *)w->type_data;
-	if (is_stale) {
-		lv_label_set_text(w->root, "---");
-		return;
-	}
 	char buf[32];
-	if (!td || td->decimals == 0)
-		snprintf(buf, sizeof(buf), "%d", (int)value);
-	else
-		snprintf(buf, sizeof(buf), "%.*f", td->decimals, (double)value);
+	if (is_stale) {
+		strcpy(buf, "--");
+	} else {
+		/* Render in the channel's display unit when set; else defer to
+		 * signal_format_value so a value→label map (GEAR 0 -> "N") still
+		 * renders. (channel NULL safely behaves like signal_format_value.) */
+		channel_format_display_value(td ? (const channel_t *)td->channel : NULL,
+		                             td ? td->signal_index : -1, value,
+		                             td ? td->decimals : 0, buf, sizeof(buf));
+	}
+	/* Skip the redundant set: lv_label_set_text invalidates the whole glyph
+	 * area even when the string is identical, so an unchanged GEAR/SPEED text
+	 * re-invalidated a 170 px region at CAN rate (paint-memo pattern, same as
+	 * panel's last_display). */
+	if (td) {
+		if (strncmp(td->last_value_text, buf, sizeof(td->last_value_text)) == 0)
+			return;
+		strncpy(td->last_value_text, buf, sizeof(td->last_value_text) - 1);
+		td->last_value_text[sizeof(td->last_value_text) - 1] = '\0';
+	}
 	lv_label_set_text(w->root, buf);
+}
+
+/* Channel-changed listener for text widget. */
+static void _text_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	text_data_t *td = (text_data_t *)w->type_data;
+	if (!td) return;
+	safe_strncpy(td->signal_name, c->signal_name, sizeof(td->signal_name));
+	/* Re-point our own signal subscription when the channel's source index
+	 * moved. Without this the text widget stays subscribed to the OLD signal
+	 * index (rendering stale/frozen), and _text_destroy would later
+	 * unsubscribe the NEW index — leaving a dangling subscriber on the old
+	 * signal pointing at freed memory (UAF on its next update). Mirrors
+	 * _bar_on_channel_changed. */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != td->signal_index) {
+		if (td->signal_index >= 0)
+			signal_unsubscribe(td->signal_index, _text_on_signal, w);
+		td->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _text_on_signal, w);
+	}
+	/* Re-format the displayed value now in case the display unit / decimals
+	 * changed — the signal only re-notifies on a value CHANGE, so a frozen
+	 * signal would otherwise keep the old unit until the value next moves. */
+	_text_on_signal(c->current_value, c->is_stale, w);
+	if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
 static void _text_create(widget_t *w, lv_obj_t *parent) {
@@ -65,11 +106,16 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *resolved = td ? widget_resolve_font(td->font) : NULL;
 	lv_obj_set_style_text_font(label, resolved ? resolved : THEME_FONT_BODY,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
-	/* Show static text if no signal bound, otherwise "---" until signal arrives */
-	if (td && td->signal_index < 0 && td->static_text[0] != '\0')
+	/* Show static text if no signal bound, otherwise "--" until signal arrives.
+	 * Sync the paint memo with whatever we set so _text_on_signal's
+	 * unchanged-string skip stays coherent with the label content. */
+	if (td && td->signal_index < 0 && td->static_text[0] != '\0') {
 		lv_label_set_text(label, td->static_text);
-	else
-		lv_label_set_text(label, "---");
+		safe_strncpy(td->last_value_text, td->static_text, sizeof(td->last_value_text));
+	} else {
+		lv_label_set_text(label, "--");
+		if (td) safe_strncpy(td->last_value_text, "--", sizeof(td->last_value_text));
+	}
 
 	/* Apply rotation if set */
 	if (td && td->rotation != 0) {
@@ -86,6 +132,10 @@ static void _text_create(widget_t *w, lv_obj_t *parent) {
 	/* Subscribe to signal if bound */
 	if (td && td->signal_index >= 0)
 		signal_subscribe(td->signal_index, _text_on_signal, w);
+
+	if (td && td->channel)
+		channel_manager_subscribe((channel_t *)td->channel,
+		                           _text_on_channel_changed, w);
 
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
@@ -121,6 +171,8 @@ static void _text_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "static_text", td->static_text);
 		if (td->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", td->signal_name);
+		if (td->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", td->channel_id);
 		if (td->font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "font", td->font);
 		if (td->text_color.full != TEXT_DEFAULT_COLOR.full)
@@ -178,6 +230,30 @@ static void _text_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (td->signal_name[0] != '\0')
 		td->signal_index = signal_find_by_name(td->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ─────
+	 * Channel with empty signal_name (e.g. cleared by resolve_signals
+	 * after a cross-layout switch) falls through to the legacy path so
+	 * record_legacy_widget repopulates it from the widget's own signal. */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(td->channel_id, ch_item->valuestring, sizeof(td->channel_id));
+	channel_t *bound_c = td->channel_id[0] ? channel_manager_get(td->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		td->channel = bound_c;
+		safe_strncpy(td->signal_name, bound_c->signal_name, sizeof(td->signal_name));
+		td->signal_index = bound_c->signal_index;
+	} else if (td->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = td->signal_name,
+			.min = INT32_MIN, .max = INT32_MIN,
+			.high_warn = INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = CHANNEL_USE_DEFAULT_COLOR,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) td->channel = c;
+	}
 }
 
 static void _text_destroy(widget_t *w) {
@@ -185,6 +261,11 @@ static void _text_destroy(widget_t *w) {
 	text_data_t *td = (text_data_t *)w->type_data;
 	if (td && td->signal_index >= 0)
 		signal_unsubscribe(td->signal_index, _text_on_signal, w);
+	if (td && td->channel) {
+		channel_manager_unsubscribe((channel_t *)td->channel,
+		                             _text_on_channel_changed, w);
+		td->channel = NULL;
+	}
 	night_mode_unsubscribe(_text_night_cb, w);
 	widget_rules_free(w);
 	if (w->root && lv_obj_is_valid(w->root))
@@ -269,14 +350,21 @@ static bool _text_inspector_set(widget_t *w, const char *name,
 		if (new_idx >= 0)
 			signal_subscribe(new_idx, _text_on_signal, w);
 		/* If newly unbound, fall back to static_text immediately. */
-		if (new_idx < 0 && lbl && lv_obj_is_valid(lbl))
-			lv_label_set_text(lbl, td->static_text[0] ? td->static_text : "---");
+		if (new_idx < 0 && lbl && lv_obj_is_valid(lbl)) {
+			lv_label_set_text(lbl, td->static_text[0] ? td->static_text : "--");
+			safe_strncpy(td->last_value_text,
+			             td->static_text[0] ? td->static_text : "--",
+			             sizeof(td->last_value_text));
+		}
 		return true;
 	}
 	if (strcmp(name, "static_text") == 0 && in->str) {
 		safe_strncpy(td->static_text, in->str, sizeof(td->static_text));
-		if (lbl && lv_obj_is_valid(lbl) && td->signal_index < 0)
+		if (lbl && lv_obj_is_valid(lbl) && td->signal_index < 0) {
 			lv_label_set_text(lbl, td->static_text);
+			safe_strncpy(td->last_value_text, td->static_text,
+			             sizeof(td->last_value_text));
+		}
 		return true;
 	}
 	if (strcmp(name, "font") == 0 && in->str) {

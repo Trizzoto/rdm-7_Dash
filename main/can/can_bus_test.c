@@ -5,9 +5,10 @@
  * in listen-only mode.  Picks the bitrate with the most received frames.
  *
  * Runs on core 0, priority 5, stack 4096.  Communicates to LVGL via
- * lv_async_call() so UI updates are thread-safe.
+ * rdm_async_call() so UI updates are thread-safe.
  */
 #include "can_bus_test.h"
+#include "system/rdm_lv_async.h"
 #include "can_manager.h"
 
 #include <string.h>
@@ -40,6 +41,19 @@ static int64_t           s_task_start_us = 0;
 #define LISTEN_DURATION_MS  2000
 #define LISTEN_POLL_MS      10
 
+/* Per-bitrate step-by-step error trace for field diagnosis — every driver
+ * call in the install cycle, exposed via /api/can/scan/status. The serial
+ * console is owned by the desktop protocol in production builds, so this
+ * is the only way to see WHICH call fails on a customer device. */
+typedef struct {
+    esp_err_t pre_stop;          /* defensive twai_stop() before attempt 1 */
+    esp_err_t pre_uninstall;     /* defensive twai_driver_uninstall() */
+    esp_err_t install[3];        /* twai_driver_install per attempt */
+    esp_err_t start[3];          /* twai_start per attempt (0x7FFF = not reached) */
+} scan_step_dbg_t;
+#define SCAN_DBG_NOT_REACHED ((esp_err_t)0x7FFF)
+static scan_step_dbg_t s_dbg[4];
+
 /* TX/RX GPIOs (must match g_config in can_manager.c) */
 #define CAN_TX_GPIO  20
 #define CAN_RX_GPIO  19
@@ -52,7 +66,7 @@ static void _notify_ui(void *arg) {
 }
 
 static void _push_ui_update(void) {
-    lv_async_call(_notify_ui, NULL);
+    rdm_async_call(_notify_ui, NULL);
 }
 
 /** Add a CAN ID to the unique-IDs list for a result entry. */
@@ -75,7 +89,8 @@ static void _track_unique_id(can_scan_bitrate_result_t *r, uint32_t id) {
  * unfamiliar error codes can still be looked up if the symbol isn't in
  * the resolver table on a particular ESP-IDF build.
  */
-static esp_err_t _install_listen_only(const twai_timing_config_t *t_config) {
+static esp_err_t _install_listen_only(const twai_timing_config_t *t_config,
+                                      scan_step_dbg_t *dbg) {
     twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO,
                                                           CAN_RX_GPIO,
                                                           TWAI_MODE_LISTEN_ONLY);
@@ -89,15 +104,17 @@ static esp_err_t _install_listen_only(const twai_timing_config_t *t_config) {
      * cycle left the driver partially installed, this gets us back to a
      * known clean state. Both calls are harmless if nothing is there
      * (driver returns ESP_ERR_INVALID_STATE which we ignore). */
-    twai_stop();
-    twai_driver_uninstall();
+    dbg->pre_stop      = twai_stop();
+    dbg->pre_uninstall = twai_driver_uninstall();
     vTaskDelay(pdMS_TO_TICKS(100));
 
     esp_err_t err = ESP_FAIL;
     for (int attempt = 0; attempt < 3; attempt++) {
         err = twai_driver_install(&g, t_config, &f);
+        dbg->install[attempt] = err;
         if (err == ESP_OK) {
             err = twai_start();
+            dbg->start[attempt] = err;
             if (err == ESP_OK) {
                 /* Allow the TWAI controller to synchronize with the bus.
                  * With no bus connected, sync never completes but the
@@ -167,6 +184,8 @@ static void _listen_for_traffic(can_scan_bitrate_result_t *result) {
 static void _scan_task(void *arg) {
     (void)arg;
 
+    ESP_LOGI(TAG, "scan task on core %d", xPortGetCoreID());
+
     /* Phase 1: stop normal CAN operation */
     s_report.state = CAN_SCAN_STOPPING;
     _push_ui_update();
@@ -184,7 +203,9 @@ static void _scan_task(void *arg) {
         _push_ui_update();
 
         twai_timing_config_t t = can_get_timing_for_bitrate(i);
-        esp_err_t err = _install_listen_only(&t);
+        memset(&s_dbg[i], 0x7F, sizeof(s_dbg[i]));   /* mark all not-reached */
+        esp_err_t err = _install_listen_only(&t, &s_dbg[i]);
+        s_report.results[i].install_err = err;
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to install TWAI for bitrate %d: %s",
                      i, esp_err_to_name(err));
@@ -288,13 +309,24 @@ bool can_bus_test_start(void) {
     s_task_start_us = esp_timer_get_time();
 
     /* Stack in PSRAM — internal RAM is tight after WiFi init (often < 6 KB
-     * free) so the default xTaskCreatePinnedToCore would fail to allocate a
-     * 4 KB internal-RAM stack. xTaskCreateWithCaps + MALLOC_CAP_SPIRAM puts
-     * the stack in the 8 MB external RAM pool; task code still runs from
-     * IRAM/flash as normal. Pinning to core 0 isn't required for the scan
-     * — it's a self-contained probe and TWAI ISRs route independently. */
-    BaseType_t ret = xTaskCreateWithCaps(
+     * free) so a plain xTaskCreatePinnedToCore would fail to allocate a
+     * 4 KB internal-RAM stack. MALLOC_CAP_SPIRAM puts the stack in external
+     * RAM; task code still runs from IRAM/flash as normal.
+     *
+     * Pinning to CORE 1 is REQUIRED, not a preference. esp_intr_alloc /
+     * esp_intr_free are PER-CORE, and every runtime TWAI reinstall
+     * (reconfigure_can_filter / promiscuous / bitrate change) happens on
+     * the LVGL task = core 1 — so the live driver's interrupt lives on
+     * core 1 from the first post-boot filter rebuild onward. A scan task
+     * on core 0 (or unpinned and scheduled there) can neither free that
+     * interrupt nor allocate a fresh one on its own exhausted core:
+     * every install — all 4 bitrates AND the can_resume at the end —
+     * fails ESP_ERR_NOT_FOUND. The wizard then shows "CAN driver busy"
+     * on every row and CAN stays DEAD until reboot. Diagnosed live via
+     * /api/can/scan/status step traces on a flooded MaxxECU bus. */
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         _scan_task, "can_scan", 4096, NULL, 5, &s_task_handle,
+        1 /*core — MUST match the LVGL/reinstall core, see above*/,
         MALLOC_CAP_SPIRAM);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "xTaskCreateWithCaps failed (internal heap=%lu, ret=%d) - aborting start",
@@ -328,4 +360,18 @@ const can_scan_report_t *can_bus_test_get_report(void) {
 
 void can_bus_test_set_ui_callback(can_scan_ui_cb_t cb) {
     s_ui_cb = cb;
+}
+
+/* Step-trace accessor for /api/can/scan/status — see scan_step_dbg_t. */
+void can_bus_test_get_step_dbg(uint8_t bitrate_idx,
+                               esp_err_t *pre_stop, esp_err_t *pre_uninstall,
+                               esp_err_t install[3], esp_err_t start[3]) {
+    if (bitrate_idx > 3) return;
+    const scan_step_dbg_t *d = &s_dbg[bitrate_idx];
+    if (pre_stop)      *pre_stop      = d->pre_stop;
+    if (pre_uninstall) *pre_uninstall = d->pre_uninstall;
+    for (int i = 0; i < 3; i++) {
+        if (install) install[i] = d->install[i];
+        if (start)   start[i]   = d->start[i];
+    }
 }

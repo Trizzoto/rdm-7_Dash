@@ -1,7 +1,9 @@
 #pragma once
 #include "lvgl.h"
+#include "gradient_stops.h"
 #include "widget_types.h"
 #include "widget_night_helpers.h"
+#include "widget_smooth.h"
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
@@ -11,6 +13,9 @@ extern "C" {
 typedef struct {
 	NIGHT_FIELD_COLOR(bar_color)
 	NIGHT_FIELD_COLOR(limiter_color)
+	NIGHT_FIELD_COLOR(tick_color)
+	NIGHT_FIELD_COLOR(bar_bg_color)
+	NIGHT_FIELD_COLOR(rpm_value_color)
 } rpm_bar_night_overrides_t;
 
 /* ── Per-instance state for RPM bar widget ─────────────────────────────── */
@@ -18,6 +23,19 @@ typedef struct {
 	int32_t  gauge_max;
 	int32_t  redline;
 	lv_color_t bar_color;
+	/* Optional N-stop horizontal gradient on the fill. Uses LVGL's
+	 * native lv_grad_dsc_t (sdkconfig bumps LV_GRADIENT_MAX_STOPS to 8
+	 * so the full Photoshop-authored stops array passes through). LVGL
+	 * paints into the indicator rect directly so the gradient grows
+	 * with the fill — no centering artifact. grad_lv_dsc is the LVGL-
+	 * format mirror of grad_stops and must outlive every
+	 * lv_obj_set_style_bg_grad call (LVGL stores the pointer, not a
+	 * copy). Suppressed during redline and limiter so the "you're about
+	 * to break something" alert stays solid. Legacy 2-stop layouts
+	 * (grad_enabled + grad_end_color) are migrated to a 2-stop array
+	 * at load time. */
+	gradient_stops_t grad_stops;
+	lv_grad_dsc_t    grad_lv_dsc;
 	/* Limiter effect: applied when RPM >= limiter_value.
 	 *   0 = None       — no visual change at the limiter threshold
 	 *   1 = Bar Flash  — bar background toggles between bar_color and limiter_color
@@ -27,10 +45,46 @@ typedef struct {
 	int32_t  limiter_value;
 	lv_color_t limiter_color;
 	uint16_t flash_speed_ms;   /* default 200, range 50..1000 — flash period for effect=1 */
+	/* Fill direction:
+	 *   0 = Left → Right   (default; classic single-bar look)
+	 *   1 = Right → Left   (single bar, base_dir RTL)
+	 *   2 = Center → Out   ("inside to outside" — two mirrored half-bars grow
+	 *                       outward from the centre)
+	 *   3 = Edges → In     ("outside to inside" — two mirrored half-bars grow
+	 *                       inward from both outer edges; the KTM-cluster look)
+	 * Modes 2/3 render the fill as TWO lv_bar halves (rpm_bar_gauge +
+	 * rpm_bar_gauge2). Any non-default mode hides the legacy Panel9 colour
+	 * swatch + the redline-zone overlay (both designed for the L→R bar only)
+	 * and uses a plain [0,gauge_max] range instead of the extended-width hack. */
+	uint8_t  fill_dir;
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── Appearance customization (v-compatible, all defaults match the
+	 * previously-hardcoded look so to_json stays empty for untouched
+	 * widgets) ───────────────────────────────────────────────────────── */
+	/* Tick marks (the 500/1000-RPM rectangles + thousands labels). */
+	bool       show_ticks;     /* default true — current behaviour is always-on */
+	uint8_t    tick_side;      /* 0=Top, 1=Bottom, 2=Both (default 2) */
+	uint8_t    tick_length;    /* nominal main-tick length px (default 12) */
+	uint8_t    tick_width;     /* nominal main-tick width px (default 3) */
+	lv_color_t tick_color;     /* default THEME_COLOR_BG (0x000000) */
+	/* Bar track background (the unfilled portion, PART_MAIN). */
+	lv_color_t bar_bg_color;   /* default THEME_COLOR_RPM_BAR_BG (0xF0F0F0) */
+	/* Numeric RPM readout overlaid on the bar. */
+	bool       show_rpm_value;      /* default false — no number historically */
+	char       rpm_value_font[32];  /* "Family:size" or legacy; empty → THEME font */
+	lv_color_t rpm_value_color;     /* default THEME_COLOR_TEXT_PRIMARY (0xE8E8E8) */
+	lv_obj_t  *rpm_value_obj;        /* runtime label (child of container) */
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * RPM bar maps gauge_max → channel.max, redline → channel.high_warn,
+	 * limiter_value → unused (RPM-specific concept, stays widget-owned). */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	rpm_bar_night_overrides_t night;
+	/* Optional value smoothing (eases the fill at refresh rate). */
+	widget_smooth_t smooth;
+	bool            smooth_bypass;
 } rpm_bar_data_t;
 
 /** Create the RPM widget container with bar gauge, redline, tick marks, Panel9.
@@ -70,6 +124,13 @@ void rpm_limiter_effect_dropdown_event_cb(lv_event_t *e);
 void rpm_limiter_roller_event_cb(lv_event_t *e);
 void rpm_limiter_color_dropdown_event_cb(lv_event_t *e);
 void rpm_flash_speed_dropdown_event_cb(lv_event_t *e);
+/* Appearance callbacks (on-device STYLE editing parity). */
+void rpm_show_ticks_switch_event_cb(lv_event_t *e);
+void rpm_tick_side_dropdown_event_cb(lv_event_t *e);
+void rpm_tick_color_dropdown_event_cb(lv_event_t *e);
+void rpm_bar_bg_color_dropdown_event_cb(lv_event_t *e);
+void rpm_show_value_switch_event_cb(lv_event_t *e);
+void rpm_value_color_dropdown_event_cb(lv_event_t *e);
 /** Color-wheel popup creators. */
 void create_rpm_color_wheel_popup(void);
 void create_limiter_color_wheel_popup(void);

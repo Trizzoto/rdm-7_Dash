@@ -33,6 +33,48 @@ wrangler secret put CAN_UPLOAD_HMAC_SECRET
 # when prompted.
 ```
 
+## Rotating the HMAC secret  ⚠️ DO THIS BEFORE BETA UNITS SHIP
+
+The dev-phase secret is committed to this repo's git history, so treat it as
+public — rotation is what makes the old value useless, not deleting it from
+the file. The firmware and the worker must hold the **same** value; rotation
+is a two-sided change with a fleet-coordination step in between.
+
+1. **Generate** a new 64-hex-char secret (32 random bytes):
+   ```powershell
+   -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Max 256) })
+   ```
+   (or `openssl rand -hex 32`.)
+2. **Firmware first:** replace `RDM7_CAN_UPLOAD_HMAC_SECRET` in
+   `main/include/can_upload_secret.h`, build, and get the new firmware onto
+   **every** device that should keep uploading (flash the bench units, OTA the
+   fleet). Devices still on the old firmware keep working during this phase
+   because the worker still holds the old secret.
+3. **Then the worker:** once the fleet is updated,
+   ```bash
+   cd tools/cloudflare-ota-proxy
+   wrangler secret put CAN_UPLOAD_HMAC_SECRET    # paste the NEW value
+   wrangler deploy
+   ```
+   From this moment old-firmware devices get `401` on upload (fail-safe:
+   the dash shows the upload error; nothing else breaks).
+4. **Verify:** on an updated device, data-logger modal → "Share Raw CAN" →
+   expect success; and confirm the old secret is dead:
+   ```bash
+   curl -s -X POST https://<worker>/can-upload \
+     -H "X-Make: t" -H "X-Model: t" -H "X-Device-Id: t" \
+     -H "X-Timestamp: $(date +%s)" -H "X-Signature: deadbeef" \
+     --data-binary "x"   # → must be 401
+   ```
+
+If a zero-401 window matters later (bigger fleet, slow OTA uptake), extend
+`worker.js` to accept a `CAN_UPLOAD_HMAC_SECRET_OLD` secret as a fallback
+during the transition and delete it once the fleet has converged. Not worth
+the complexity at beta scale (~10 cars).
+
+Longer term (per `can_upload_secret.h`): derive per-device keys from
+`device_id` so one extracted key doesn't expose the shared endpoint.
+
 ### 4. Deploy the Worker
 ```bash
 wrangler deploy

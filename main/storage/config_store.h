@@ -50,7 +50,8 @@ esp_err_t config_store_remove_wifi(const char *ssid);
 /* ── WiFi AP (hotspot) settings ────────────────────────────────────────── */
 typedef struct {
 	bool enabled;           /* AP enabled (default: false) */
-	char password[65];      /* AP password (default: "rdm7dash") */
+	char password[65];      /* AP password (default: per-device, derived from
+	                         * the MAC — see get_device_ap_password) */
 } rdm_ap_config_t;
 
 esp_err_t config_store_save_ap_config(const rdm_ap_config_t *cfg);
@@ -68,6 +69,25 @@ esp_err_t config_store_load_wifi_boot(wifi_boot_config_t *cfg);
 /* ── Splash fade setting ──────────────────────────────────────────────── */
 esp_err_t config_store_save_splash_fade(bool enabled);
 esp_err_t config_store_load_splash_fade(bool *enabled);
+
+/* ── Splash enabled setting ───────────────────────────────────────────────
+   When false, boot skips the splash screen entirely and loads the dashboard
+   directly for a faster boot. Default: true (splash shown). */
+esp_err_t config_store_save_splash_enabled(bool enabled);
+esp_err_t config_store_load_splash_enabled(bool *enabled);
+
+/* ── Dashboard boot loading animation ─────────────────────────────────────
+   Whether the dashboard animates in after the splash fades out (true) or
+   appears instantly (false). Default: true (animation on). */
+esp_err_t config_store_save_boot_anim(bool enabled);
+esp_err_t config_store_load_boot_anim(bool *enabled);
+
+/* Boot animation style (when enabled). 0 = individual widget fade-in,
+   top-to-bottom (default); 1 = curtain sweep. */
+#define BOOT_ANIM_STYLE_FADE    0
+#define BOOT_ANIM_STYLE_CURTAIN 1
+esp_err_t config_store_save_boot_anim_style(uint8_t style);
+esp_err_t config_store_load_boot_anim_style(uint8_t *style);
 
 /* ── First-run flag (#17) ───────────────────────────────────────────────
    Set to true once the first-run wizard has been dismissed or completed.
@@ -129,6 +149,17 @@ esp_err_t config_store_save_ecu(const char *make, const char *version);
 esp_err_t config_store_load_ecu(char *make, size_t m_len,
                                 char *version, size_t v_len);
 
+/* ── Dashboard switcher — ordered "pinned" layout cycle ─────────────────
+ * Comma-separated layout name list (e.g. "sport,track,economy") set by
+ * Device Settings. The on-dash arrow buttons walk this list. When NVS
+ * has no entry, the dash falls back to "all non-system layouts in
+ * filesystem order" so the arrows still do something useful out of the
+ * box. Cap mirrors what fits in a typical CSV: 8 names * 32 chars +
+ * 7 commas + NUL = 264; we round up to 320 for slack. */
+#define LAYOUT_SWITCHER_CSV_MAX 320
+esp_err_t config_store_save_layout_switcher(const char *csv);
+esp_err_t config_store_load_layout_switcher(char *buf, size_t cap);
+
 /* ── Calculated gear — compute current gear from RPM / SPEED ─────────────
  * With a known wheel circumference, final drive, and per-gear ratios, the
  * firmware can back-compute the currently engaged gear and inject it as
@@ -153,6 +184,25 @@ typedef struct {
 
 esp_err_t config_store_save_gear_cal(const gear_cal_config_t *cfg);
 esp_err_t config_store_load_gear_cal(gear_cal_config_t *cfg);
+
+/* ── Vehicle odometer (kilometres) ───────────────────────────────────────
+ * The odometer is maintained by signal_internal.c — it integrates the
+ * configured vehicle-speed signal each tick and accumulates kilometres.
+ * Persistence is on a hybrid trigger: every 1 km of unsaved accumulation
+ * OR every 5 minutes of operation, whichever comes first. Worst-case loss
+ * on unexpected power-off is ~1 km at highway speed, ~0.4 km at 5 km/h.
+ *
+ * Manual entry (e.g. when first installing the dash, to match the
+ * vehicle's existing odometer reading) is supported via
+ * signal_internal_set_odometer_km(), which calls save immediately.
+ *
+ * Stored as a single float blob in NVS namespace "vehicle" key "odo_km". */
+esp_err_t config_store_save_odometer_km(float km);
+
+/* Loads the saved odometer reading into @p out. Returns ESP_ERR_NOT_FOUND
+ * if no value has ever been saved (first boot) — caller should treat that
+ * as "start at 0". On error @p out is set to 0.0f. */
+esp_err_t config_store_load_odometer_km(float *out);
 
 /* ── OTA: dismissed-version sentinel ─────────────────────────────────────
  * When the user hits "Skip this version" in the auto-OTA popup we store

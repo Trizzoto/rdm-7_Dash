@@ -9,8 +9,8 @@ Part of the **RDM project**: this firmware + RDM Desktop Studio (Tauri) + RDM We
 
 ## Build
 
-- ESP-IDF v5.3.1 at `C:\Espressif\frameworks\esp-idf-v5.3.1`. **Each shell call is fresh** — prefix every `idf.py` invocation with `. "$env:IDF_PATH\export.ps1" *> $null;` to load the toolchain. After that, run `idf.py build` / `idf.py -p COM13 flash monitor` directly.
-- Dev port: **COM13** (the user's dash). Flash + monitor are pre-approved; only `erase_flash` or OTA still asks first.
+- ESP-IDF v5.3.1 at `C:\Espressif\frameworks\esp-idf-v5.3.1`. **Each shell call is fresh** — prefix every `idf.py` invocation with `. "$env:IDF_PATH\export.ps1" *> $null;` to load the toolchain. After that, run `idf.py build` / `idf.py -p COM27 flash monitor` directly.
+- Dev port: **COM27** (the user's dash, CH343; was COM13 historically and can change on re-plug — confirm via `[System.IO.Ports.SerialPort]::GetPortNames()`). Over WiFi the dash gets a DHCP IP on the user's LAN (not fixed — discover with a subnet sweep hitting `/api/selftest`). Flash + monitor are pre-approved; only `erase_flash` or OTA still asks first.
 - Long builds belong in `run_in_background` so the chat stays responsive. Monitor streams via the Monitor tool — kill it with TaskStop when done.
 - All `.c` files must be listed in `main/CMakeLists.txt` SRCS
 - `main/web/index.html` embedded via `EMBED_TXTFILES`
@@ -22,6 +22,7 @@ Part of the **RDM project**: this firmware + RDM Desktop Studio (Tauri) + RDM We
 ```
 main/
 ├── can/          CAN RX task + frame dispatch
+├── data/         channel registry — canonical_channels, channel_manager, channel_source_apply (the binding layer; see ADR-0005/0006)
 ├── io/           Wire inputs (GPIO/ADC)
 ├── layout/       layout_manager, layout_loader, default_layout, ecu_presets
 ├── net/          wifi_manager, web_server + modular endpoint files, dns_hijack, ota
@@ -29,7 +30,7 @@ main/
 ├── system/       display_capture, night_mode, remote_touch, screen_config, device_id
 ├── ui/           dashboard, config_modal, screens/, settings/, callbacks/, components/
 ├── web/          index.html (embedded), logo
-└── widgets/      13 widget types + signal, font_manager, widget_rules, widget_registry
+└── widgets/      15 widget types + signal, font_manager, widget_rules, widget_registry
 schema/           widgets.schema.json + codegen metadata
 tools/            codegen_widget_defs.py, check_*.py, png_to_rdmimg.py, mobile-dev-server.js
 tests/api/        pytest API contract suite
@@ -51,7 +52,7 @@ tests/native/     Unity C unit tests (CAN decode, layout migration, widget rules
 
 ## Widget System
 
-13 types in `widget_type_t` (`widget_types.h`). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
+15 types in `widget_type_t` (`widget_types.h` — `WIDGET_TYPE_COUNT` is the authority; don't restate the number elsewhere). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
 
 | Type | Web cap | Firmware cap | Notes |
 |---|---|---|---|
@@ -78,8 +79,23 @@ CAN RX (core 0) → s_can_queue → can_process_queued_frames() (LVGL task)
   → signal_dispatch_frame() → can_extract_bits() → scale/offset → notify subscribers
 ```
 
-Registry in `widgets/signal.c/h`. Signals defined in layout JSON, registered at load. Stale after 2 s.
+Registry in `widgets/signal.c/h`. Signals registered at load (from the channel
+registry, see below — legacy layouts still carry inline `signals[]`). Stale after 2 s.
 Internal signals (GPIO/ADC): `signal_internal.c`. Simulator: `signal_sim.c`.
+
+## Channel System (`main/data/`) — the binding layer
+
+The most actively-developed subsystem and the canonical CAN-decode owner. A
+**channel** is a named, device-local binding (e.g. `rpm`, `coolant_temp`) that
+owns its CAN decode (can_id/bit/scale/offset/endian), thresholds, units, and
+provenance (`signal_source_t`: CAN / OBD2 / RDM-7 internal). Widgets bind to a
+channel by name; the channel feeds the signal registry. This is what makes
+layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006).
+
+- `canonical_channels.c/h` — the built-in canonical registry (id, label, units, default thresholds).
+- `channel_manager.c/h` — live channel store, persisted to `/lfs/channels.json` (atomic tmp+fsync+rename+`.bak` idiom — the durability reference for the rest of the FW). All API requires the LVGL lock.
+- `channel_source_apply.c/h` — shared "bind this channel to a preset/OBD2/custom source" path used by the web picker and the wizard.
+- On layout load, inline `signals[]` decode is migrated into channels (decode adopted, thresholds stripped). `channels.json` is device-local and NOT in the portable/marketplace layout.
 
 ## Layout Manager (`main/layout/`)
 
@@ -87,7 +103,7 @@ Internal signals (GPIO/ADC): `signal_internal.c`. Simulator: `signal_sim.c`.
 - `layout_loader.c/h` — JSON parse + widget instantiation
 - `default_layout.c/h` — built-in fallback layout
 - `ecu_presets.c/h` — OEM CAN signal presets (8 ECUs)
-- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v13**)
+- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v14** — that macro is the authority; don't restate the number)
 - Hot-reload path: `POST /api/layout/save` → LittleFS → `lv_async_call()` → `dashboard_init()`
 
 ## Storage
@@ -100,8 +116,14 @@ Internal signals (GPIO/ADC): `signal_internal.c`. Simulator: `signal_sim.c`.
 | Settings | NVS | `config_store_*()` |
 | SD card | FAT `/sdcard/` | layouts/images/fonts subdirs |
 | Data logs | SD `/sdcard/logs/*.csv` | `data_logger_*()` |
+| Channels (CAN decode + bindings) | LittleFS `/lfs/channels.json` | `channel_manager_*()` (`main/data/`) |
 
-All CAN signal config lives in layout JSON — not NVS.
+CAN **decode** (can_id/bit/scale/offset/endian + thresholds) now lives in the
+channel registry (`channels.json`), not the layout JSON — that's what makes
+layouts portable across devices (see ADR-0005/0006 and the "Channel System"
+section below). Layout JSON still carries widget→channel bindings; legacy
+layouts with inline `signals[]` decode are migrated into channels on load.
+None of it lives in NVS (settings only).
 
 ## Color Conversion
 
@@ -132,8 +154,8 @@ JSON: `"Family:size"` (e.g. `"Fugaz:28"`) or legacy `"fugaz_28"`. Call `font_man
 3. Add factory `widget_X_create_instance(uint8_t slot)`
 4. Register in: `widget_type_t` enum, `widget_constraints[]`, `widget_type_name()`, `_type_from_str()`, `_factory()` in `layout_manager.c`
 5. Add `.c` to `main/CMakeLists.txt` SRCS
-6. Add to `WIDGET_DEFS` in **both** `index.html` copies (firmware `main/web/`, desktop `../rdm7-desktop/src/`)
-7. Bump `LAYOUT_SCHEMA_VERSION` if schema changes (current: **v13**)
+6. Add the type + its `fields[]` to **`schema/widgets.schema.json`** (the single source of truth), then run the codegen — `python tools/codegen_widget_defs.py` (regenerates the `WIDGET_DEFS` block in `main/web/index.html`) and `python tools/codegen_widget_inspector.py` (regenerates `main/widgets/widget_fields.gen.c`). **Never hand-edit `WIDGET_DEFS` or `widget_fields.gen.c`** — those blocks are codegen output guarded by `schema-check.yml`; a manual edit fails CI. Sync the desktop copy (`../rdm7-desktop/src/index.html`) manually afterward (separate repo, has its own delta).
+7. Bump `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` if the schema changes
 
 ## Coding Conventions
 
@@ -167,7 +189,7 @@ debugging via the "Share Raw CAN" button (data logger modal in the web editor).
 - **Field not saved:** check `to_json` defaults-only logic and that `from_json` reads it
 - **Config modal field missing:** add a section in `config_modal.c` even if web editor already handles it
 - **`pdMS_TO_TICKS(1) = 0`** at `CONFIG_FREERTOS_HZ=500` — use `vTaskDelay(1)` literal for real yields
-- **`max_uri_handlers`** is 160 (~106 currently used) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
+- **`max_uri_handlers`** is 160 (~124 currently used — see the `uri_registration` tally in `GET /api/selftest`) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
 - **`w->root` may be a container, not the widget's LVGL primitive** — e.g. `widget_arc` standard mode wraps `lv_arc` in a transparent container so siblings (redline arc, value label) can coexist. Don't assume `w->root` is the type-specific object; use `type_data->arc_obj` etc.
 - **Layout > 32 KB silently truncates** — `to_json` must be defaults-only or the budget blows. Pre-save check in `_checkLayoutSize` catches it client-side, but firmware-side a non-default emit can sneak through.
 

@@ -24,13 +24,37 @@ typedef struct {
 /* ── Per-instance state for meter widget ───────────────────────────────── */
 typedef struct {
 	uint8_t value_idx;
-	int32_t min;
-	int32_t max;
+	/* Display range in float units. The LVGL meter scale is integer, so
+	 * min/max/value are multiplied by value_scale (=10^value_decimals) only
+	 * at the lv_meter_* boundary; tick labels divide back. value_scale
+	 * defaults to 1 (integer behaviour) — decimals come from the bound
+	 * channel via _meter_apply_channel. */
+	float   min;
+	float   max;
+	int32_t value_scale;            /* 10^value_decimals; 1 = no decimals */
+	uint8_t value_decimals;         /* 0..3 — drives tick-label precision */
 	int16_t start_angle;
 	int16_t end_angle;
 	lv_obj_t *meter;
 	lv_meter_scale_t *scale;
+	lv_meter_scale_t *mid_scale;     /* runtime: 2nd scale for medium ticks (NULL = off) */
 	lv_meter_indicator_t *needle;
+	/* Paint memo: value-gate the signal callback so a steady (or, in sim
+	 * mode, sub-pixel-stepping) value doesn't repaint the needle every
+	 * render window. _last_needle_v is the last integer value pushed to
+	 * lv_meter; _last_needle_valid=false forces the next paint (first
+	 * post-create paint, after a rebuild, or after a forced repaint). */
+	int32_t  _last_needle_v;     /* paint memo: last value pushed to lv_meter */
+	bool     _last_needle_valid; /* false => force next paint */
+	/* Needle smoothing: ease the displayed value toward the live value at the
+	 * refresh rate instead of stepping at the (slower) data rate — uses spare
+	 * CPU to make the needle glide. 0 = off (instant, original behaviour). */
+	uint16_t     smoothing_ms;   /* exp-ease time constant in ms; 0 = instant */
+	float        anim_target;    /* latest signal value (display units) */
+	float        anim_current;   /* eased displayed value */
+	bool         anim_active;    /* currently easing */
+	bool         anim_inited;    /* first value snaps (no glide from 0) */
+	lv_timer_t  *anim_timer;     /* ~refresh-rate easing timer (NULL if off) */
 	/* ── Appearance overrides ── */
 	/* Ticks */
 	uint8_t    minor_tick_count;     /* default: 21 */
@@ -41,6 +65,15 @@ typedef struct {
 	uint8_t    major_tick_length;    /* default: 15 */
 	lv_color_t minor_tick_color;     /* default: LV_PALETTE_GREY */
 	lv_color_t major_tick_color;     /* default: white (0xFFFFFF) */
+	/* Medium (3rd) tick tier. Drawn as a SECOND lv_meter scale over the same
+	 * range/angle as the primary scale, with a length between minor and major.
+	 * mid_tick_step is the value interval in DISPLAY units (e.g. "every 500
+	 * RPM"); the tick count is derived from (max-min)/step at build time.
+	 * 0 disables the tier. Mirrors the arc widget's medium ticks. */
+	uint16_t   mid_tick_step;        /* default: 0 (disabled) */
+	uint8_t    mid_tick_length;      /* default: 13 */
+	uint8_t    mid_tick_width;       /* default: 2 */
+	lv_color_t mid_tick_color;       /* default: 0xBDBDBD */
 	/* Needle */
 	uint8_t    needle_width;         /* default: 4 */
 	lv_color_t needle_color;         /* default: white (0xFFFFFF) */
@@ -48,6 +81,14 @@ typedef struct {
 	/* Rear extension behind the pivot, in pixels. Drawn in the same color and
 	 * width as the needle line; works alongside any tip style. 0 = no rear. */
 	uint8_t    needle_rear_length;   /* default: 0 */
+	/* Needle start radius, px from the pivot. 0 = needle drawn from the
+	 * centre (stock). Set it to the radius of a decorative centre cap so the
+	 * needle starts at the cap's edge: the hidden inner segment is neither
+	 * drawn nor invalidated, which stops every needle tick from repainting
+	 * whatever is stacked at the meter centre (cap, gear text, inner arcs).
+	 * Measured on the Time_Attack tach: the needle's full redraw stack cost
+	 * 27 ms/frame under live CAN with the needle reaching the pivot. */
+	uint16_t   needle_inner_radius;  /* default: 0 */
 	/* Tip style for line needles (ignored when needle_image_name is set):
 	 *   0 = Flat    (plain line end, LVGL default)
 	 *   1 = Rounded (soft round caps)
@@ -68,6 +109,32 @@ typedef struct {
 	uint8_t    needle_tip_base_w;    /* default: 0 (auto) */
 	uint8_t    needle_tip_point_w;   /* default: 0 (auto) */
 	uint8_t    needle_tip_taper;     /* default: 0 (auto), range 1-100 */
+	/* Needle drop shadow. Renders a colored, offset copy of the needle
+	 * silhouette BEHIND the main needle. Works for all line-needle tip
+	 * styles (Flat / Rounded / Lance / Dagger / Spade / Diamond) and
+	 * picks up the rear-extension when set. Image needles do NOT receive
+	 * a shadow (LVGL v8 can't easily tint a rotated img). The shadow is
+	 * a real lv_meter indicator added before the main needle so it
+	 * rotates and updates in lockstep. */
+	bool       shadow_enabled;       /* default: false */
+	/* When true, shadow offset magnitude scales with sin(angle_from_vertical)
+	 * — invisible when needle is vertical (12 or 6 o'clock), full at 3 / 9.
+	 * Mimics an overhead light source casting the needle's silhouette
+	 * sideways as it tilts off-axis. When false, the offset is constant
+	 * (classic drop shadow). Default true. */
+	bool       shadow_dynamic;       /* default: true */
+	int8_t     shadow_offset_x;      /* default: 3 (positive = right) */
+	int8_t     shadow_offset_y;      /* default: 4 (positive = down) */
+	uint8_t    shadow_opa;           /* default: 120 (0..255) */
+	uint8_t    shadow_width_extra;   /* default: 2 (added to needle_width) */
+	lv_color_t shadow_color;         /* default: 0x000000 */
+	/* Visibility toggles. Both default true; independent of each other so a
+	 * meter can show the ball with no needle, the needle with no ball, or
+	 * neither. show_needle off skips the needle line/image (and its shadow)
+	 * entirely; show_needle_ball off hides the center pivot ball regardless
+	 * of needle_ball_size. */
+	bool       show_needle;          /* default: true */
+	bool       show_needle_ball;     /* default: true */
 	/* Needle center ball (LV_PART_INDICATOR) */
 	uint8_t    needle_ball_size;     /* default: 10 (diameter in px, 0 = hidden) */
 	lv_color_t needle_ball_color;    /* default: white (0xFFFFFF) */
@@ -101,9 +168,55 @@ typedef struct {
 	uint16_t   tick_label_divisor;  /* default: 1 */
 	bool       show_ticks;          /* default: true — hide minor+major tick marks entirely */
 	bool       show_tick_labels;    /* default: true — hide numeric labels at major ticks */
+	/* Static-tick optimisation. When true, the meter snapshots its
+	 * tick / label / background / redline-arc layer ONCE at create
+	 * time, drops those parts off the live lv_meter (widths → 0,
+	 * label opa → transparent, bg opa → 0, redline arc removed), and
+	 * shows the snapshot as a sibling lv_img beneath the meter. The
+	 * lv_meter then redraws only the needle on each signal tick
+	 * instead of recomputing every tick that overlaps the needle
+	 * bbox, which is the perf cliff people hit on tick-heavy
+	 * dashboards.
+	 *
+	 * Trade-offs:
+	 *   • ~125 KB PSRAM per meter for the snapshot (200×200×2 bytes
+	 *     RGB565). Bounded — the firmware enforces a 4-meter cap.
+	 *   • Edits to tick / label / redline fields rebuild the
+	 *     snapshot inline (single-digit ms via lv_snapshot_take).
+	 *     Needle / signal_name edits don't touch the snapshot.
+	 *   • Night-mode meters get their own snapshot when built.
+	 *   • Resize tears the snapshot down and rebuilds on the next
+	 *     value tick.
+	 *
+	 * Default true because the perf win matters; flip off per-meter
+	 * if a snapshot edge-case shows up (e.g. fonts not yet loaded
+	 * when snapshot was taken). */
+	bool       static_ticks;        /* default: true */
+	/* Runtime snapshot state. The snapshot image data is heap-
+	 * allocated by lv_snapshot_take and must be released with
+	 * lv_snapshot_free. The snapshot is applied as the meter's own
+	 * bg_img_src style — no sibling lv_img, no z-order problems. */
+	lv_img_dsc_t *tick_snapshot_dsc;
+	lv_img_dsc_t *night_tick_snapshot_dsc;
+	/* Overlay bake: decorative sibling widgets (shapes) absorbed INTO this
+	 * meter's cached face (see widget_meter_bake_overlay). Their objects are
+	 * composited into tick_snapshot_dsc / night_tick_snapshot_dsc once and
+	 * then hidden, so they cost nothing per frame. Pointers retained so the
+	 * lazily-built night face can re-composite them. */
+#define METER_MAX_BAKE 4
+	lv_obj_t   *baked_overlays[METER_MAX_BAKE];
+	uint8_t     baked_count;
+	/* Stored pointers to the redline-arc indicators on the day and
+	 * night meters. Needed by the static-tick flatten path so we can
+	 * collapse them to zero-length AFTER taking the snapshot (lv_meter
+	 * v8 has no remove_indicator API, so leaving them alive would
+	 * double-render against the redline already baked into the
+	 * snapshot). NULL when no redline arc was added. */
+	lv_meter_indicator_t *redline_arc;
+	lv_meter_indicator_t *night_redline_arc;
 	/* Redline zone — visual emphasis for "danger" range [threshold, max]. */
 	bool       redline_enabled;     /* default: false — master toggle */
-	int32_t    redline_threshold;   /* default: 80 — value at which the zone starts */
+	float      redline_threshold;   /* default: 80 — value at which the zone starts */
 	lv_color_t redline_color;       /* default: red (0xFF0000) */
 	bool       redline_show_arc;    /* default: true — draw a colored arc segment */
 	uint8_t    redline_arc_width;   /* default: 6 — arc thickness in px */
@@ -114,7 +227,7 @@ typedef struct {
 	 * sweep, giving two linear segments instead of one. Tick label positions
 	 * remain linear (LVGL v8 scale is single-segment). */
 	bool       anchor_enabled;       /* default: false */
-	int32_t    anchor_value;         /* default: 50 */
+	float      anchor_value;         /* default: 50 */
 	uint8_t    anchor_position;      /* default: 50 — percent of sweep */
 	/* Reverse — flip the value axis. With reverse=true, max sits at the
 	 * START of the sweep and min at the END. Combines cleanly with anchor
@@ -122,6 +235,25 @@ typedef struct {
 	bool       reverse;              /* default: false */
 	char     signal_name[32];
 	int16_t  signal_index;
+	/* ── v14 channel binding ───────────────────────────────────────
+	 * When `channel_id` is set, this meter pulls its data semantics
+	 * (signal_name, min, max, redline_threshold, redline_color) from
+	 * the named channel instead of carrying them per-widget. Visual
+	 * style (needle, shadow, fonts, etc.) stays widget-owned.
+	 *
+	 * Backwards compat: v13 layouts have channel_id == "" and use the
+	 * legacy per-widget fields above. On v13 load, the widget self-
+	 * reports its values to channel_manager_record_legacy_widget() so
+	 * the channel registry auto-populates from existing layout data —
+	 * users keep their custom redlines on first v14 boot.
+	 *
+	 * The `channel` pointer is cached at create-time so the render
+	 * hot path never does string lookups. It's NULL when binding is
+	 * legacy mode. */
+	char     channel_id[32];
+	void    *channel;             /* channel_t* — opaque to avoid
+	                                  pulling channel_manager.h into
+	                                  this header */
 	/* Night-mode appearance overrides */
 	meter_night_overrides_t night;
 	/* Night-mode dual-meter pattern: when any "baked-in" night property is
@@ -131,10 +263,15 @@ typedef struct {
 	 * updates both needles in lock-step. */
 	lv_obj_t            *night_meter;        /* sibling night meter (or NULL) */
 	lv_meter_scale_t    *night_scale;
+	lv_meter_scale_t    *night_mid_scale;    /* runtime: night medium-tick scale (or NULL) */
 	lv_meter_indicator_t *night_needle;
 	lv_meter_scale_t    *night_needle_scale; /* for offset-rotated needle */
 	lv_img_dsc_t        *night_needle_img_dsc;
 	lv_img_dsc_t        *night_bg_img_dsc;
+	/* Shadow indicators — created when shadow_enabled and the needle is a
+	 * line (not image). Drawn under the main needle by linked-list order. */
+	lv_meter_indicator_t *shadow_needle;
+	lv_meter_indicator_t *night_shadow_needle;
 } meter_data_t;
 
 /**
@@ -147,6 +284,23 @@ widget_t *widget_meter_create_instance(uint8_t value_idx);
 
 /** Return value index for meter widget. */
 uint8_t widget_meter_get_value_idx(const widget_t *w);
+
+/**
+ * Auto-slice a transparent meter's face out of the shared full-screen
+ * background @p bg (with on-screen rect @p bg_disp, native size bg_nw×bg_nh)
+ * and apply it as an opaque, cache-friendly face that also occludes the
+ * background beneath. No-op for meters with an explicit/opaque face.
+ */
+void widget_meter_autoface(widget_t *w, lv_img_dsc_t *bg, const lv_area_t *bg_disp,
+                           uint16_t bg_nw, uint16_t bg_nh);
+
+/** Composite a decorative overlay object INTO this meter's cached face image
+ *  (day + night, if built), so it renders once instead of every frame. The
+ *  caller hides the live overlay afterwards. Requires the meter to have a
+ *  static-ticks face (returns false otherwise — nothing to bake into).
+ *  The overlay must sit within the meter's bounds; it renders below the
+ *  needle. Safe to call with a currently-hidden overlay. */
+bool widget_meter_bake_overlay(widget_t *meter_w, lv_obj_t *overlay);
 
 #ifdef __cplusplus
 }

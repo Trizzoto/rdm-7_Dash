@@ -24,6 +24,7 @@
 #include "widgets/widget_rpm_bar.h"
 #include "widgets/widget_indicator.h"
 #include "widgets/widget_warning.h"
+#include "data/channel_manager.h"
 #include "../settings/preset_picker.h"
 #include "can/obd2.h"
 #include "layout/ecu_presets.h"
@@ -502,14 +503,17 @@ static void preset_applied_cb(const preconfig_item_t *item, void *user_data)
  * Data tab builder (Label + Signal info + collapsible CAN settings)
  * ========================================================================= */
 
+/* Label-only "General" tab. Phase 1 of the channels migration: the data
+ * source, CAN bit-decode, decimals, range and thresholds all live on the
+ * CHANNEL now (edit them in the channels editor / long-press). The only
+ * thing left that's genuinely per-widget is the display Label override —
+ * e.g. abbreviating "Oil Temp" to "OIL" on a tight panel. Only widgets
+ * with a label buffer (panel / bar) ever get this tab; the creation site
+ * gates on widget_get_label_buf(w). */
 static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     widget_t *w = ctx->widget;
-    signal_t *sig = (ctx->signal_index >= 0)
-                        ? signal_get_by_index((uint16_t)ctx->signal_index)
-                        : NULL;
 
-    /* ── Label section (only for widgets that have a label) ──────── */
     char *lbl_buf = widget_get_label_buf(w);
     if (lbl_buf) {
         settings_section_t *sec_disp =
@@ -521,113 +525,18 @@ static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
         lv_obj_add_event_cb(ctx->label_ta, label_changed_cb,
                             LV_EVENT_VALUE_CHANGED, ctx);
 
-        /* Decimals dropdown (panel + bar only) */
+        /* Per-widget Decimals override. The default comes from the bound
+         * channel; setting it here overrides just this widget's display. */
         if (w->type == WIDGET_PANEL || w->type == WIDGET_BAR) {
-            uint8_t cur_dec = 0;
-            if (w->type == WIDGET_PANEL && w->type_data)
-                cur_dec = ((panel_data_t *)w->type_data)->decimals;
-            else if (w->type == WIDGET_BAR && w->type_data)
-                cur_dec = ((bar_data_t *)w->type_data)->decimals;
-
-            lv_obj_t *dec_dd = settings_add_dropdown(
-                sec_disp, "Decimals:", "0\n1\n2\n3\n4", 0);
-            if (cur_dec > 4) cur_dec = 4;
-            lv_dropdown_set_selected(dec_dd, cur_dec);
+            uint8_t cur_dec = (w->type == WIDGET_PANEL)
+                ? ((panel_data_t *)w->type_data)->decimals
+                : ((bar_data_t *)w->type_data)->decimals;
+            if (cur_dec > 3) cur_dec = 3;
+            lv_obj_t *dec_dd = settings_add_dropdown(sec_disp, "Decimals:",
+                                                     "0\n1\n2\n3", cur_dec);
             lv_obj_add_event_cb(dec_dd, decimals_changed_cb,
                                 LV_EVENT_VALUE_CHANGED, ctx);
         }
-    }
-
-    /* ── Data Source section (only for widgets that receive CAN data) ── */
-    if (widget_needs_data_source(w)) {
-        settings_section_t *sec_sig =
-            settings_add_section(tab, "DATA SOURCE", THEME_COLOR_ACCENT_BLUE);
-
-        char sig_info[64] = "No signal assigned";
-        char *sig_name = widget_get_signal_name_buf(w);
-        if (sig_name && sig_name[0])
-            snprintf(sig_info, sizeof(sig_info), "%s", sig_name);
-        ctx->signal_info_lbl = settings_add_info_row(sec_sig, "Signal:", sig_info);
-
-        /* ── Collapsible CAN settings toggle button ─────────────────── */
-        lv_obj_t *can_toggle = settings_add_button(
-            sec_sig, LV_SYMBOL_DOWN "  CAN Bus Settings",
-            THEME_COLOR_SURFACE, 0);
-
-        /* Container for CAN fields, hidden by default */
-        lv_obj_t *can_box = lv_obj_create(tab);
-        lv_obj_set_size(can_box, lv_pct(100), LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(can_box, THEME_COLOR_SURFACE, 0);
-        lv_obj_set_style_bg_opa(can_box, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(can_box, THEME_COLOR_BORDER, 0);
-        lv_obj_set_style_border_width(can_box, 1, 0);
-        lv_obj_set_style_radius(can_box, THEME_RADIUS_NORMAL, 0);
-        lv_obj_set_style_pad_all(can_box, 8, 0);
-        lv_obj_set_style_pad_row(can_box, 4, 0);
-        lv_obj_clear_flag(can_box, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_flex_flow(can_box, LV_FLEX_FLOW_COLUMN);
-        lv_obj_add_flag(can_box, LV_OBJ_FLAG_HIDDEN);
-
-        lv_obj_add_event_cb(can_toggle, can_toggle_btn_cb,
-                            LV_EVENT_CLICKED, can_box);
-
-        /* CAN ID */
-        char can_id_str[16] = "0";
-        if (sig) snprintf(can_id_str, sizeof(can_id_str), "%X", sig->can_id);
-        ctx->can_id_ta = settings_add_text_input(can_box, "CAN ID (0x):",
-                                                  "hex", can_id_str);
-        lv_obj_add_event_cb(ctx->can_id_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_add_event_cb(ctx->can_id_ta, can_id_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Endian */
-        ctx->endian_dd = settings_add_dropdown(can_box, "Endian:",
-                                                "Big Endian\nLittle Endian", 0);
-        lv_dropdown_set_selected(ctx->endian_dd,
-                                 (sig && sig->endian == 1) ? 1 : 0);
-        lv_obj_add_event_cb(ctx->endian_dd, endian_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Bit Start */
-        ctx->bit_start_dd = settings_add_dropdown(can_box, "Bit Start:",
-                                                   BIT_START_OPTS, 0);
-        lv_dropdown_set_selected(ctx->bit_start_dd, sig ? sig->bit_start : 0);
-        lv_obj_add_event_cb(ctx->bit_start_dd, bit_start_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Bit Length */
-        ctx->bit_len_dd = settings_add_dropdown(can_box, "Bit Length:",
-                                                 BIT_LEN_OPTS, 0);
-        lv_dropdown_set_selected(ctx->bit_len_dd,
-                                 sig ? (sig->bit_length - 1) : 7);
-        lv_obj_add_event_cb(ctx->bit_len_dd, bit_length_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Scale */
-        char scale_str[16] = "1";
-        if (sig) snprintf(scale_str, sizeof(scale_str), "%.6g", sig->scale);
-        ctx->scale_ta = settings_add_text_input(can_box, "Scale:",
-                                                 "factor", scale_str);
-        lv_obj_add_event_cb(ctx->scale_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_add_event_cb(ctx->scale_ta, scale_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Offset */
-        char offset_str[16] = "0";
-        if (sig) snprintf(offset_str, sizeof(offset_str), "%.6g", sig->offset);
-        ctx->offset_ta = settings_add_text_input(can_box, "Offset:",
-                                                  "value offset", offset_str);
-        lv_obj_add_event_cb(ctx->offset_ta, keyboard_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_add_event_cb(ctx->offset_ta, offset_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
-
-        /* Data Type (signed/unsigned) */
-        ctx->signed_dd = settings_add_dropdown(can_box, "Data Type:",
-                                                "Unsigned\nSigned", 0);
-        lv_dropdown_set_selected(ctx->signed_dd,
-                                 (sig && sig->is_signed) ? 1 : 0);
-        lv_obj_add_event_cb(ctx->signed_dd, signed_changed_cb,
-                            LV_EVENT_VALUE_CHANGED, ctx);
     }
 }
 
@@ -635,14 +544,23 @@ static void build_data_tab(lv_obj_t *tab, modal_ctx_t *ctx)
  * Alerts tab callbacks -- Panel
  * ========================================================================= */
 
+/* Warn LEVELS are written to the bound CHANNEL (device-local, persist across
+ * boot via channels.json, never shipped in a layout). Empty input clears the
+ * warn (alert off). The widget picks up the change live via its channel
+ * listener (_panel_on_channel_changed). */
 static void panel_warn_high_thresh_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
+    channel_t *ch = (channel_t *)pd->channel;
+    if (!ch) return;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
-    pd->warning_high_threshold = (txt && txt[0]) ? (float)atof(txt) : 0.0f;
+    if (txt && txt[0])
+        channel_manager_set_threshold(ch, CHZONE_HIGH_WARN, (float)atof(txt));
+    else
+        channel_manager_clear_threshold(ch, CHZONE_HIGH_WARN);
 }
 
 static void panel_warn_low_thresh_cb(lv_event_t *e)
@@ -651,8 +569,13 @@ static void panel_warn_low_thresh_cb(lv_event_t *e)
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
+    channel_t *ch = (channel_t *)pd->channel;
+    if (!ch) return;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
-    pd->warning_low_threshold = (txt && txt[0]) ? (float)atof(txt) : 0.0f;
+    if (txt && txt[0])
+        channel_manager_set_threshold(ch, CHZONE_LOW_WARN, (float)atof(txt));
+    else
+        channel_manager_clear_threshold(ch, CHZONE_LOW_WARN);
 }
 
 /* The panel alert UI uses IND_COLOR_OPTS (10 presets + Custom...) — see the
@@ -687,24 +610,6 @@ static void panel_warn_low_color_cb(lv_event_t *e)
     }
 }
 
-static void panel_warn_high_enable_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
-    if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
-    pd->warning_high_enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-}
-
-static void panel_warn_low_enable_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
-    if (!ctx || ctx->widget->type != WIDGET_PANEL) return;
-    panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
-    pd->warning_low_enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-}
-
 /* Generic "write bool via pointer" callback for the six Apply-to checkboxes
  * (high label / value / panel + low label / value / panel). user_data is a
  * direct pointer to the bool in panel_data_t — keeps the wiring trivial and
@@ -715,44 +620,6 @@ static void panel_apply_bool_cb(lv_event_t *e)
     bool *target = (bool *)lv_event_get_user_data(e);
     if (!target) return;
     *target = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-}
-
-/* Master alert toggle — turning it ON defaults BOTH high and low enable to
- * true (so users who just want "alerts" don't have to hunt through two more
- * switches); turning it OFF disables both. The per-side switches are still
- * visible below so users can disable just one side after enabling. We stash
- * pointers to the sub-switches in a file-local struct so we can keep their
- * visual state in sync when master toggles. Only one config modal opens at
- * a time — no concurrency concern. */
-static struct {
-    panel_data_t *pd;
-    lv_obj_t     *warn_box;
-    lv_obj_t     *he_sw;
-    lv_obj_t     *le_sw;
-} s_pnl_alerts;
-
-static void panel_warnings_master_toggle_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-
-    if (s_pnl_alerts.warn_box) {
-        if (on) lv_obj_clear_flag(s_pnl_alerts.warn_box, LV_OBJ_FLAG_HIDDEN);
-        else    lv_obj_add_flag  (s_pnl_alerts.warn_box, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (!s_pnl_alerts.pd) return;
-
-    if (on) {
-        s_pnl_alerts.pd->warning_high_enabled = true;
-        s_pnl_alerts.pd->warning_low_enabled  = true;
-        if (s_pnl_alerts.he_sw) lv_obj_add_state(s_pnl_alerts.he_sw, LV_STATE_CHECKED);
-        if (s_pnl_alerts.le_sw) lv_obj_add_state(s_pnl_alerts.le_sw, LV_STATE_CHECKED);
-    } else {
-        s_pnl_alerts.pd->warning_high_enabled = false;
-        s_pnl_alerts.pd->warning_low_enabled  = false;
-        if (s_pnl_alerts.he_sw) lv_obj_clear_state(s_pnl_alerts.he_sw, LV_STATE_CHECKED);
-        if (s_pnl_alerts.le_sw) lv_obj_clear_state(s_pnl_alerts.le_sw, LV_STATE_CHECKED);
-    }
 }
 
 /* =========================================================================
@@ -781,14 +648,21 @@ static void bar_max_cb(lv_event_t *e)
     widget_bar_sync_range(bd);
 }
 
+/* Bar warn LEVELS write to the bound channel (device-local, persist; empty
+ * clears). The bar adopts them live via _bar_on_channel_changed. */
 static void bar_low_thresh_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_BAR) return;
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+    channel_t *ch = (channel_t *)bd->channel;
+    if (!ch) return;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
-    bd->bar_low = (txt && txt[0]) ? (int32_t)atoi(txt) : 0;
+    if (txt && txt[0])
+        channel_manager_set_threshold(ch, CHZONE_LOW_WARN, (float)atof(txt));
+    else
+        channel_manager_clear_threshold(ch, CHZONE_LOW_WARN);
 }
 
 static void bar_high_thresh_cb(lv_event_t *e)
@@ -797,8 +671,13 @@ static void bar_high_thresh_cb(lv_event_t *e)
     modal_ctx_t *ctx = (modal_ctx_t *)lv_event_get_user_data(e);
     if (!ctx || ctx->widget->type != WIDGET_BAR) return;
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
+    channel_t *ch = (channel_t *)bd->channel;
+    if (!ch) return;
     const char *txt = lv_textarea_get_text(lv_event_get_target(e));
-    bd->bar_high = (txt && txt[0]) ? (int32_t)atoi(txt) : 0;
+    if (txt && txt[0])
+        channel_manager_set_threshold(ch, CHZONE_HIGH_WARN, (float)atof(txt));
+    else
+        channel_manager_clear_threshold(ch, CHZONE_HIGH_WARN);
 }
 
 static const char *BAR_COLOR_OPTS =
@@ -843,105 +722,66 @@ static void bar_high_color_cb(lv_event_t *e)
 }
 
 /* =========================================================================
- * Warnings toggle callback (show/hide sub-container)
- * ========================================================================= */
-
-static void warnings_toggle_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    lv_obj_t *container = (lv_obj_t *)lv_event_get_user_data(e);
-    if (!container) return;
-    if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED))
-        lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
-    else
-        lv_obj_add_flag(container, LV_OBJ_FLAG_HIDDEN);
-}
-
-/* =========================================================================
  * Alerts tab builder -- Panel
  * ========================================================================= */
 
 static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     panel_data_t *pd = (panel_data_t *)ctx->widget->type_data;
-
-    bool has_warnings = pd->warning_high_enabled || pd->warning_low_enabled;
+    channel_t *ch = (channel_t *)pd->channel;
 
     settings_section_t *sec =
-        settings_add_section(tab, "ALERT SETTINGS", THEME_COLOR_ACCENT_AMBER);
+        settings_add_section(tab, "ALERTS", THEME_COLOR_ACCENT_AMBER);
 
-    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Alerts:", has_warnings);
+    if (!ch) {
+        settings_add_info_row(sec, "Alerts:", "bind a channel first");
+        return;
+    }
 
-    /* Sub-container hidden when alerts are off */
-    lv_obj_t *warn_box = lv_obj_create(tab);
-    lv_obj_set_size(warn_box, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(warn_box, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(warn_box, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(warn_box, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(warn_box, 1, 0);
-    lv_obj_set_style_radius(warn_box, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_pad_all(warn_box, 6, 0);
-    lv_obj_set_style_pad_row(warn_box, 4, 0);
-    lv_obj_clear_flag(warn_box, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(warn_box, LV_FLEX_FLOW_COLUMN);
-    if (!has_warnings)
-        lv_obj_add_flag(warn_box, LV_OBJ_FLAG_HIDDEN);
+    /* Warn LEVELS live on the channel (device-local; persist across boot; never
+     * shipped in a layout). COLOURS + apply-to are per-widget and travel with
+     * the layout. Leave a level blank to turn that alert off. */
+    char vbuf[24];
 
-    char buf[20];
+    /* ── High warning ─────────────────────────────────────────────────── */
+    if (ch->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+        snprintf(vbuf, sizeof(vbuf), "%.*f", ch->decimals, ch->high_warn);
+    else
+        vbuf[0] = '\0';
+    lv_obj_t *hl = settings_add_text_input(sec, "High Warn:", "off", vbuf);
+    lv_obj_add_event_cb(hl, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(hl, panel_warn_high_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* ── High warning section ─────────────────────────────────────────── */
-    lv_obj_t *he_sw = settings_add_switch(warn_box, "High Enabled:", pd->warning_high_enabled);
-    lv_obj_add_event_cb(he_sw, panel_warn_high_enable_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    snprintf(buf, sizeof(buf), "%.2f", pd->warning_high_threshold);
-    lv_obj_t *ht = settings_add_text_input(warn_box, "High Threshold:", "value", buf);
-    lv_obj_add_event_cb(ht, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(ht, panel_warn_high_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    lv_obj_t *hc = settings_add_dropdown(warn_box, "High Colour:", IND_COLOR_OPTS, 0);
+    lv_obj_t *hc = settings_add_dropdown(sec, "High Colour:", IND_COLOR_OPTS, 0);
     lv_dropdown_set_selected(hc, _theme_color_idx(pd->warning_high_color));
     lv_obj_add_event_cb(hc, panel_warn_high_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    /* High "Apply To" toggles — each writes directly to the corresponding
-     * bool in pd via panel_apply_bool_cb. The runtime apply logic in
-     * widget_panel.c's _panel_on_signal already honors these flags; we're
-     * just surfacing them in the UI. */
-    lv_obj_t *hal = settings_add_switch(warn_box, "  Apply to Label:", pd->warning_high_apply_label);
+    lv_obj_t *hal = settings_add_switch(sec, "  Apply to Label:", pd->warning_high_apply_label);
     lv_obj_add_event_cb(hal, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_label);
-    lv_obj_t *hav = settings_add_switch(warn_box, "  Apply to Value:", pd->warning_high_apply_value);
+    lv_obj_t *hav = settings_add_switch(sec, "  Apply to Value:", pd->warning_high_apply_value);
     lv_obj_add_event_cb(hav, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_value);
-    lv_obj_t *hap = settings_add_switch(warn_box, "  Apply to Panel:", pd->warning_high_apply_panel);
+    lv_obj_t *hap = settings_add_switch(sec, "  Apply to Panel:", pd->warning_high_apply_panel);
     lv_obj_add_event_cb(hap, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_high_apply_panel);
 
-    /* ── Low warning section ──────────────────────────────────────────── */
-    lv_obj_t *le_sw = settings_add_switch(warn_box, "Low Enabled:", pd->warning_low_enabled);
-    lv_obj_add_event_cb(le_sw, panel_warn_low_enable_cb, LV_EVENT_VALUE_CHANGED, ctx);
+    /* ── Low warning ──────────────────────────────────────────────────── */
+    if (ch->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
+        snprintf(vbuf, sizeof(vbuf), "%.*f", ch->decimals, ch->low_warn);
+    else
+        vbuf[0] = '\0';
+    lv_obj_t *ll = settings_add_text_input(sec, "Low Warn:", "off", vbuf);
+    lv_obj_add_event_cb(ll, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ll, panel_warn_low_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    snprintf(buf, sizeof(buf), "%.2f", pd->warning_low_threshold);
-    lv_obj_t *lt = settings_add_text_input(warn_box, "Low Threshold:", "value", buf);
-    lv_obj_add_event_cb(lt, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(lt, panel_warn_low_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    lv_obj_t *lc = settings_add_dropdown(warn_box, "Low Colour:", IND_COLOR_OPTS, 0);
+    lv_obj_t *lc = settings_add_dropdown(sec, "Low Colour:", IND_COLOR_OPTS, 0);
     lv_dropdown_set_selected(lc, _theme_color_idx(pd->warning_low_color));
     lv_obj_add_event_cb(lc, panel_warn_low_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    lv_obj_t *lal = settings_add_switch(warn_box, "  Apply to Label:", pd->warning_low_apply_label);
+    lv_obj_t *lal = settings_add_switch(sec, "  Apply to Label:", pd->warning_low_apply_label);
     lv_obj_add_event_cb(lal, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_label);
-    lv_obj_t *lav = settings_add_switch(warn_box, "  Apply to Value:", pd->warning_low_apply_value);
+    lv_obj_t *lav = settings_add_switch(sec, "  Apply to Value:", pd->warning_low_apply_value);
     lv_obj_add_event_cb(lav, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_value);
-    lv_obj_t *lap = settings_add_switch(warn_box, "  Apply to Panel:", pd->warning_low_apply_panel);
+    lv_obj_t *lap = settings_add_switch(sec, "  Apply to Panel:", pd->warning_low_apply_panel);
     lv_obj_add_event_cb(lap, panel_apply_bool_cb, LV_EVENT_VALUE_CHANGED, &pd->warning_low_apply_panel);
-
-    /* Wire master toggle LAST so it can reference both sub-switches via the
-     * s_pnl_alerts scratch struct. Master uses panel-specific callback (not
-     * the generic warnings_toggle_cb) because it also defaults both sides
-     * ON when alerts are enabled, per user request. */
-    s_pnl_alerts.pd       = pd;
-    s_pnl_alerts.warn_box = warn_box;
-    s_pnl_alerts.he_sw    = he_sw;
-    s_pnl_alerts.le_sw    = le_sw;
-    lv_obj_add_event_cb(en_sw, panel_warnings_master_toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 /* =========================================================================
@@ -951,61 +791,41 @@ static void build_alerts_tab_panel(lv_obj_t *tab, modal_ctx_t *ctx)
 static void build_alerts_tab_bar(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     bar_data_t *bd = (bar_data_t *)ctx->widget->type_data;
-    char buf[16];
-
-    /* ── Bar Range ─────────────────────────────────────────────────── */
-    settings_section_t *sec_range =
-        settings_add_section(tab, "BAR RANGE", THEME_COLOR_ACCENT_BLUE);
-
-    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_min);
-    lv_obj_t *bmin = settings_add_text_input(sec_range, "Min Value:", "0", buf);
-    lv_obj_add_event_cb(bmin, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(bmin, bar_min_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_max);
-    lv_obj_t *bmax = settings_add_text_input(sec_range, "Max Value:", "100", buf);
-    lv_obj_add_event_cb(bmax, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(bmax, bar_max_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    /* ── Alert Thresholds ──────────────────────────────────────────── */
-    bool has_warnings = (bd->bar_low != 0 || bd->bar_high != 0);
+    channel_t *ch = (channel_t *)bd->channel;
 
     settings_section_t *sec =
-        settings_add_section(tab, "BAR THRESHOLDS", THEME_COLOR_ACCENT_AMBER);
+        settings_add_section(tab, "ALERTS", THEME_COLOR_ACCENT_AMBER);
 
-    lv_obj_t *en_sw = settings_add_switch(sec, "Enable Alerts:", has_warnings);
+    if (!ch) {
+        settings_add_info_row(sec, "Alerts:", "bind a channel first");
+        return;
+    }
 
-    lv_obj_t *warn_box = lv_obj_create(tab);
-    lv_obj_set_size(warn_box, lv_pct(100), LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(warn_box, THEME_COLOR_SECTION_BG, 0);
-    lv_obj_set_style_bg_opa(warn_box, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(warn_box, THEME_COLOR_BORDER, 0);
-    lv_obj_set_style_border_width(warn_box, 1, 0);
-    lv_obj_set_style_radius(warn_box, THEME_RADIUS_SMALL, 0);
-    lv_obj_set_style_pad_all(warn_box, 6, 0);
-    lv_obj_set_style_pad_row(warn_box, 4, 0);
-    lv_obj_clear_flag(warn_box, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(warn_box, LV_FLEX_FLOW_COLUMN);
-    if (!has_warnings)
-        lv_obj_add_flag(warn_box, LV_OBJ_FLAG_HIDDEN);
+    /* Warn LEVELS live on the channel (device-local; persist; blank = off).
+     * Colours are per-widget and travel with the layout. */
+    char vbuf[24];
 
-    lv_obj_add_event_cb(en_sw, warnings_toggle_cb, LV_EVENT_VALUE_CHANGED, warn_box);
+    if (ch->low_warn != CHANNEL_THRESHOLD_UNSET_LOW)
+        snprintf(vbuf, sizeof(vbuf), "%.*f", ch->decimals, ch->low_warn);
+    else
+        vbuf[0] = '\0';
+    lv_obj_t *ll = settings_add_text_input(sec, "Low Warn:", "off", vbuf);
+    lv_obj_add_event_cb(ll, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ll, bar_low_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_low);
-    lv_obj_t *blow = settings_add_text_input(warn_box, "Low Threshold:", "value", buf);
-    lv_obj_add_event_cb(blow, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(blow, bar_low_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    snprintf(buf, sizeof(buf), "%d", (int)bd->bar_high);
-    lv_obj_t *bhigh = settings_add_text_input(warn_box, "High Threshold:", "value", buf);
-    lv_obj_add_event_cb(bhigh, keyboard_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_add_event_cb(bhigh, bar_high_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
-
-    lv_obj_t *blc = settings_add_dropdown(warn_box, "Low Colour:", BAR_COLOR_OPTS, 0);
+    lv_obj_t *blc = settings_add_dropdown(sec, "Low Colour:", BAR_COLOR_OPTS, 0);
     lv_dropdown_set_selected(blc, bar_color_idx(bd->bar_low_color));
     lv_obj_add_event_cb(blc, bar_low_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
 
-    lv_obj_t *bhc = settings_add_dropdown(warn_box, "High Colour:", BAR_COLOR_OPTS, 0);
+    if (ch->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+        snprintf(vbuf, sizeof(vbuf), "%.*f", ch->decimals, ch->high_warn);
+    else
+        vbuf[0] = '\0';
+    lv_obj_t *hl = settings_add_text_input(sec, "High Warn:", "off", vbuf);
+    lv_obj_add_event_cb(hl, keyboard_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(hl, bar_high_thresh_cb, LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *bhc = settings_add_dropdown(sec, "High Colour:", BAR_COLOR_OPTS, 0);
     lv_dropdown_set_selected(bhc, bar_color_idx(bd->bar_high_color));
     lv_obj_add_event_cb(bhc, bar_high_color_cb, LV_EVENT_VALUE_CHANGED, ctx);
 }
@@ -1072,31 +892,72 @@ static uint16_t _flash_speed_to_idx(uint16_t ms) {
     return (uint16_t)((ms - 50) / 50);
 }
 
+/** Map a theme colour to the COLOR_OPTS dropdown index (10-entry list:
+ *  Green0 Cyan1 Yellow2 Orange3 Red4 Blue5 Purple6 Magenta7 Pink8 Custom9).
+ *  Unknown colours fall back to Custom (9). Distinct from _theme_color_idx,
+ *  which targets an 11-entry list that includes Grey. */
+static uint16_t _color_opts_idx(lv_color_t c) {
+    if (c.full == THEME_COLOR_GREEN.full)   return 0;
+    if (c.full == THEME_COLOR_CYAN.full)    return 1;
+    if (c.full == THEME_COLOR_YELLOW.full)  return 2;
+    if (c.full == THEME_COLOR_ORANGE.full)  return 3;
+    if (c.full == THEME_COLOR_RED.full)     return 4;
+    if (c.full == THEME_COLOR_BLUE.full)    return 5;
+    if (c.full == THEME_COLOR_PURPLE.full)  return 6;
+    if (c.full == THEME_COLOR_MAGENTA.full) return 7;
+    if (c.full == THEME_COLOR_PINK.full)    return 8;
+    return 9; /* Custom — colour not in the preset list */
+}
+
+/* Tick-side dropdown labels — index maps 1:1 to rd->tick_side. */
+static const char *TICK_SIDE_OPTS = "Top\nBottom\nBoth";
+
 static void build_rpm_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
 {
     rpm_bar_data_t *rd = (rpm_bar_data_t *)ctx->widget->type_data;
     if (!rd) return;
 
-    /* ── Gauge section ─────────────────────────────────────────────── */
+    /* ── Appearance ────────────────────────────────────────────────── */
     settings_section_t *gauge_sec =
-        settings_add_section(tab, "GAUGE", THEME_COLOR_ACCENT_BLUE);
+        settings_add_section(tab, "APPEARANCE", THEME_COLOR_ACCENT_BLUE);
 
-    lv_obj_t *max_dd = settings_add_dropdown(gauge_sec, "Max RPM:",
-                                              RPM_STEP_OPTS, 0);
-    lv_dropdown_set_selected(max_dd, _rpm_to_idx(rd->gauge_max));
-    lv_obj_add_event_cb(max_dd, rpm_gauge_roller_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t *rl_dd = settings_add_dropdown(gauge_sec, "Redline:",
-                                             RPM_STEP_OPTS, 0);
-    lv_dropdown_set_selected(rl_dd, _rpm_to_idx(rd->redline));
-    lv_obj_add_event_cb(rl_dd, rpm_redline_roller_event_cb,
-                         LV_EVENT_VALUE_CHANGED, NULL);
+    /* Max RPM (gauge range) + redline come from the channel now — the rpm_bar
+     * syncs them via _rpm_bar_on_channel_changed / from_json. Edit them in the
+     * channels editor. This tab keeps the RPM-specific visuals + limiter. */
+    settings_add_info_row(gauge_sec, "Range/redline:", "set on the channel");
 
     lv_obj_t *col_dd = settings_add_dropdown(gauge_sec, "Bar Colour:",
                                               COLOR_OPTS, 0);
     lv_dropdown_set_selected(col_dd, _theme_color_idx(rd->bar_color));
     lv_obj_add_event_cb(col_dd, rpm_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* Bar track background colour (unfilled portion). */
+    lv_obj_t *bg_dd = settings_add_dropdown(gauge_sec, "Background:",
+                                            COLOR_OPTS, 0);
+    lv_dropdown_set_selected(bg_dd, _color_opts_idx(rd->bar_bg_color));
+    lv_obj_add_event_cb(bg_dd, rpm_bar_bg_color_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ── Ticks section ─────────────────────────────────────────────── */
+    settings_section_t *tick_sec =
+        settings_add_section(tab, "TICKS", THEME_COLOR_ACCENT_TEAL);
+
+    lv_obj_t *tick_sw = settings_add_switch(tick_sec, "Show Ticks:",
+                                            rd->show_ticks);
+    lv_obj_add_event_cb(tick_sw, rpm_show_ticks_switch_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *tside_dd = settings_add_dropdown(tick_sec, "Side:",
+                                               TICK_SIDE_OPTS, 0);
+    lv_dropdown_set_selected(tside_dd, rd->tick_side > 2 ? 2 : rd->tick_side);
+    lv_obj_add_event_cb(tside_dd, rpm_tick_side_dropdown_event_cb,
+                         LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *tcol_dd = settings_add_dropdown(tick_sec, "Tick Colour:",
+                                              COLOR_OPTS, 0);
+    lv_dropdown_set_selected(tcol_dd, _color_opts_idx(rd->tick_color));
+    lv_obj_add_event_cb(tcol_dd, rpm_tick_color_dropdown_event_cb,
                          LV_EVENT_VALUE_CHANGED, NULL);
 
     /* ── Limiter section ───────────────────────────────────────────── */
@@ -1785,6 +1646,25 @@ static void build_warning_settings_tab(lv_obj_t *tab, modal_ctx_t *ctx)
  * Public: config_modal_open_for_widget
  * ========================================================================= */
 
+bool config_modal_has_content(widget_t *w)
+{
+    if (!w) return false;
+    /* A per-widget label override (panel/bar/warning) is content on its own. */
+    if (widget_get_label_buf(w)) return true;
+    /* Otherwise only widgets with a dedicated visual tab qualify. Keep this
+     * in sync with the tab-creation block in config_modal_open_for_widget. */
+    switch (w->type) {
+        case WIDGET_PANEL:
+        case WIDGET_BAR:
+        case WIDGET_RPM_BAR:
+        case WIDGET_INDICATOR:
+        case WIDGET_WARNING:
+            return true;
+        default:               /* meter, text, arc → channels-only */
+            return false;
+    }
+}
+
 void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
 {
     if (!screen || !w) return;
@@ -1902,24 +1782,18 @@ void config_modal_open_for_widget(lv_obj_t *screen, widget_t *w)
     lv_obj_set_style_border_width(tab_btns, 2,
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
 
-    /* Create tabs — indicators and warnings get simplified single-tab layouts,
-     * other widgets get the full DATA + PRESETS tabs. */
-    if (w->type != WIDGET_INDICATOR && w->type != WIDGET_WARNING) {
-        lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  DATA  ");
+    /* General (Label) tab — only for widgets that carry a per-widget label
+     * override (panel / bar). The DATA (source + CAN decode) and PRESETS
+     * tabs are retired: signal binding, presets, range, decimals and
+     * thresholds are all edited on the channel now (long-press → channels
+     * editor). Widgets with no label and no visual tab (meter / text / arc)
+     * therefore get an empty modal — the channels editor hides their
+     * "Widget settings" button entirely (see first_run_wizard.c). */
+    if (widget_get_label_buf(w)
+        && w->type != WIDGET_INDICATOR && w->type != WIDGET_WARNING) {
+        lv_obj_t *tab_data = lv_tabview_add_tab(tv, "  LABEL  ");
         style_tab(tab_data);
         build_data_tab(tab_data, ctx);
-    }
-
-    /* Presets tab (only for widgets that receive CAN data, skip indicators) */
-    if (widget_needs_data_source(w) && widget_get_signal_name_buf(w)
-        && w->type != WIDGET_INDICATOR
-        && w->type != WIDGET_WARNING) {
-        lv_obj_t *tab_presets = lv_tabview_add_tab(tv, "  PRESETS  ");
-        lv_obj_set_style_bg_color(tab_presets, THEME_COLOR_SURFACE, 0);
-        lv_obj_set_style_bg_opa(tab_presets, LV_OPA_COVER, 0);
-        build_preset_picker_embedded(tab_presets, MODAL_W,
-                                      tab_total_h - TABBAR_H,
-                                      preset_applied_cb, ctx);
     }
 
     if (has_alerts) {

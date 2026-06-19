@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,10 @@ typedef struct {
     uint32_t unique_ids[32];
     uint8_t  unique_id_count;
     bool     traffic_detected;
+    esp_err_t install_err;     /* ESP_OK, or the LAST error from the
+                                  install/start cycle — surfaced via
+                                  /api/can/scan/status so a failed slot can
+                                  be diagnosed without serial access. */
 } can_scan_bitrate_result_t;
 
 typedef struct {
@@ -64,6 +69,12 @@ const can_scan_report_t *can_bus_test_get_report(void);
  */
 typedef void (*can_scan_ui_cb_t)(void);
 void can_bus_test_set_ui_callback(can_scan_ui_cb_t cb);
+
+/** Per-bitrate step trace (defensive stop/uninstall + each install/start
+ *  attempt) for /api/can/scan/status. 0x7F7F7F7F = step not reached. */
+void can_bus_test_get_step_dbg(uint8_t bitrate_idx,
+                               esp_err_t *pre_stop, esp_err_t *pre_uninstall,
+                               esp_err_t install[3], esp_err_t start[3]);
 
 #ifdef __cplusplus
 }

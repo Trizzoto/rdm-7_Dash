@@ -51,6 +51,8 @@ typedef enum {
     WIDGET_BUTTON      = 11,
     WIDGET_SHIFT_LIGHT = 12,
     WIDGET_LINE        = 13,
+    WIDGET_BANNER      = 14,
+    WIDGET_PATHBAR     = 15,
     WIDGET_TYPE_COUNT
 } widget_type_t;
 
@@ -169,6 +171,14 @@ struct widget_t {
     int16_t                 x, y;       /**< Layout position (pixels).         */
     uint16_t                w, h;       /**< Layout size (pixels).             */
     char                    id[16];     /**< Instance identifier string.       */
+    char                    group[12];  /**< Optional editor group id (e.g.
+                                          *  "g_a1b2c3d4"); empty if ungrouped.
+                                          *  Pure metadata — firmware never
+                                          *  reads it, only preserves it on
+                                          *  the layout round-trip so the
+                                          *  web editor's "Group Layers"
+                                          *  feature survives /api/layout/raw
+                                          *  → save again. */
     uint8_t                 slot;       /**< Slot index (e.g. panel 0-7).      */
     void                   *type_data;  /**< Per-instance type-specific data.  */
 
@@ -235,6 +245,12 @@ int16_t *widget_get_signal_index_ptr(widget_t *w);
 /** Return a pointer to the label buffer inside type_data, or NULL
  *  if this widget type has no label field. */
 char *widget_get_label_buf(widget_t *w);
+
+/** Return a pointer to the channel_id[32] buffer inside type_data, or NULL
+ *  if this widget type has no channel binding (image/shape/line/button/
+ *  toggle/shift_light). Used to (re)bind a widget to a channel at runtime —
+ *  set the buffer, persist the layout, then reload so from_json re-resolves. */
+char *widget_get_channel_id_buf(widget_t *w);
 
 /** Return true if the widget type supports alert/threshold configuration
  *  (currently WIDGET_PANEL and WIDGET_BAR only). */

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -20,9 +21,24 @@ extern "C" {
 
 /* ── Limits ────────────────────────────────────────────────────────────── */
 
-#define MAX_SIGNALS            128
+/* Bumped 128 → 200. The signal array is PSRAM-backed so the extra ~14 KB
+ * is free, and the headroom matters: signals MERGE across ECU/layout
+ * switches (see layout_manager.c), so a user who tries several ECU
+ * presets accumulates their unique signal names. At 128 the registry
+ * could fill, which silently broke OBD2 gap-fill (no slot left to
+ * register FUEL_LEVEL etc.). The wizard now also registers only
+ * canonical-mapped ECU signals to keep accumulation small, but the
+ * cap raise gives margin for layouts authored with many raw signals. */
+#define MAX_SIGNALS            200
 #define MAX_SIGNAL_SUBSCRIBERS   16
 #define SIGNAL_TIMEOUT_MS     2000
+
+/* How long a manual test lock survives without a fresh inject. The editor
+ * re-injects while the user drags the Test Value slider, so an active test
+ * never expires mid-use; a FORGOTTEN one (browser closed, × never clicked)
+ * releases on its own instead of pinning the signal dead — on a moving car
+ * a gauge frozen at a fake value is a safety problem, not just a UX one. */
+#define SIGNAL_TEST_LOCK_TTL_MS (5 * 60 * 1000)
 
 /* ── Callback typedef ──────────────────────────────────────────────────── */
 
@@ -43,7 +59,52 @@ typedef struct {
     void              *user_data;
 } signal_subscriber_t;
 
+/* ── Value-label map ───────────────────────────────────────────────────── */
+
+/* Maps a discrete decoded value to a display label. Lives on the signal so
+ * every widget rendering that signal picks up the labels for free (gear
+ * positions, drive modes, cruise state, boolean flags, lambda bands,
+ * threshold codes, …). Authored in the layout JSON as:
+ *
+ *   "value_map": [ { "v": 0,     "label": "N"      },
+ *                  { "v": 1,     "label": "1"      },
+ *                  { "v": 0.85,  "label": "Rich"   },
+ *                  { "v": 1.0,   "label": "Stoich" }, … ]
+ *
+ * Lookup matches on |value - entry.v| < SIGNAL_VALUE_MAP_EPSILON, which
+ * tolerates the float drift introduced by CAN decode (raw * scale +
+ * offset) while still cleanly distinguishing entries spaced >= 0.001
+ * apart. Signals whose physical values aren't enum-coded (RPM, temps,
+ * etc.) simply leave the map empty and fall through to numeric format. */
+#define SIGNAL_VALUE_LABEL_MAX   12      /* chars, incl. NUL */
+#define SIGNAL_VALUE_MAP_MAX     32      /* max entries per signal */
+#define SIGNAL_VALUE_MAP_EPSILON 0.001f  /* match tolerance */
+
+typedef struct {
+    float    value;
+    char     label[SIGNAL_VALUE_LABEL_MAX];
+} signal_value_label_t;
+
 /* ── Signal descriptor ─────────────────────────────────────────────────── */
+
+/* Provenance of a signal — what kind of source produces its value.
+ *
+ *   CAN      — ECU broadcasts the value on the bus. Most layout-loaded
+ *              signals fall here. can_id/bit_start/length are meaningful.
+ *   OBD2     — We poll the value via Mode 01 / Mode 21 / Mode 22. Polled
+ *              by obd2.c, NOT received as a broadcast frame. can_id is 0.
+ *   INTERNAL — Synthesized on-device (CALCULATED_GEAR, FUEL_SENDER_V,
+ *              DTC_COUNT, dimmer wire input, etc). No CAN traffic at all.
+ *
+ * Drives the on-device OBD2 picker's "in preset" logic without name
+ * heuristics, lets the web Channels source picker classify Bound signals,
+ * and lets the Custom Signals editor filter out ECU-preset rows by
+ * provenance instead of name matching. */
+typedef enum {
+    SIGNAL_SOURCE_CAN      = 0,
+    SIGNAL_SOURCE_OBD2     = 1,
+    SIGNAL_SOURCE_INTERNAL = 2,
+} signal_source_t;
 
 typedef struct {
     char     name[32];
@@ -54,8 +115,13 @@ typedef struct {
     float    offset;
     bool     is_signed;
     uint8_t  endian;          /* 0 = Motorola (big), 1 = Intel (little) */
+    uint8_t  source;          /* signal_source_t — provenance, NOT decoder */
 
     char     unit[8];           /* Display unit (e.g., "kPa", "°C") */
+
+    /* Optional value→label map. NULL/empty = numeric display. */
+    signal_value_label_t *value_map;
+    uint8_t               value_map_count;
 
     /* Runtime state */
     float    current_value;
@@ -69,8 +135,11 @@ typedef struct {
                                    signal_dispatch_frame() drops matching CAN
                                    frames so the injected value sticks while
                                    the car is live on the bus. Cleared via
-                                   signal_set_test_lock(name, false) or by
-                                   layout reload (registry reset). */
+                                   signal_set_test_lock(name, false), on
+                                   re-registration (layout/channel reload),
+                                   or by TTL expiry once the editor stops
+                                   re-injecting (SIGNAL_TEST_LOCK_TTL_MS). */
+    uint64_t test_lock_ms;      /* last inject time — drives the lock TTL */
     uint64_t last_update_ms;
 
     signal_subscriber_t subscribers[MAX_SIGNAL_SUBSCRIBERS];
@@ -88,7 +157,15 @@ void signal_registry_reset(void);
 /* ── Registration ──────────────────────────────────────────────────────── */
 
 /**
- * Register a new signal.  Duplicate names are rejected.
+ * Register a signal. If a signal with the same name already exists (signals
+ * MERGE across layout loads — the registry is not reset on the happy path),
+ * its decode params are UPDATED in place and the existing index is returned
+ * (latest-layout-wins); subscribers and peak/min stats on that slot are
+ * preserved.
+ *
+ * Defaults source to SIGNAL_SOURCE_CAN. Callers that produce values
+ * via OBD2 polling or on-device synthesis should call the _with_source
+ * variant below instead.
  *
  * @return Signal index (>= 0) on success, -1 on failure.
  */
@@ -99,11 +176,61 @@ int16_t signal_register(const char *name, uint32_t can_id,
                         const char *unit);
 
 /**
+ * Register a signal with explicit provenance. Same as signal_register()
+ * but tags the registry entry's source field. Re-registering an existing
+ * name updates that slot's decode params in place (latest-layout-wins,
+ * subscribers/stats preserved) and returns the existing index.
+ *
+ * @return Signal index (>= 0) on success, -1 on failure.
+ */
+int16_t signal_register_with_source(const char *name, uint32_t can_id,
+                                    uint8_t start, uint8_t len,
+                                    float scale, float offset,
+                                    bool is_signed, uint8_t endian,
+                                    const char *unit,
+                                    signal_source_t source);
+
+/**
  * Look up a signal by name.
  *
  * @return Signal index (>= 0) if found, -1 otherwise.
  */
 int16_t signal_find_by_name(const char *name);
+
+/**
+ * Attach a value→label map to a signal. Replaces any prior map. Pass
+ * @p count == 0 (or @p entries == NULL) to clear. Entries beyond
+ * SIGNAL_VALUE_MAP_MAX are dropped. The signal owns its copy after this
+ * call — caller is free to discard @p entries. Called once at layout
+ * load by the signals[] parser; safe to call again on re-load.
+ *
+ * @return true on success, false if signal_index is out of range.
+ */
+bool signal_set_value_map(int16_t signal_index,
+                          const signal_value_label_t *entries,
+                          uint8_t count);
+
+/**
+ * Look up a label for the given decoded value on this signal. Returns
+ * NULL if no map is attached or no entry matches (caller should fall
+ * back to numeric formatting). Lookup is exact integer-equality on
+ * roundf(value); useful for gear positions, mode codes, boolean flags.
+ */
+const char *signal_value_lookup_label(int16_t signal_index, float value);
+
+/**
+ * Format @p value into @p buf using either the signal's value-label map
+ * (if a matching entry exists) or numeric formatting `%.*f` with the
+ * supplied @p decimals. Pass @p signal_index < 0 to skip the map check.
+ *
+ *   no map / no match    -> "123.4"  (decimals respected)
+ *   map matches v=0      -> "N"
+ *
+ * Widget signal-callbacks should use this instead of inline snprintf so
+ * value-label maps work uniformly across panel / bar / text.
+ */
+void signal_format_value(int16_t signal_index, float value,
+                         uint8_t decimals, char *buf, size_t cap);
 
 /** Return a pointer to the signal at the given index, or NULL. */
 signal_t *signal_get_by_index(uint16_t index);
@@ -143,6 +270,13 @@ bool signal_unsubscribe(int16_t signal_index, signal_update_cb_t cb,
  * subscribers whose value changed.
  */
 void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
+
+/**
+ * Drop CAN-dispatched signal updates for the next @p ms milliseconds (0 to
+ * resume immediately). Self-expiring deadline — safe even if the caller
+ * never resumes. Used by the boot reveal to keep animation frames cheap.
+ */
+void signal_dispatch_pause_ms(uint32_t ms);
 
 /**
  * Mark signals as stale if no CAN frame has been received within
@@ -201,27 +335,15 @@ float signal_get_peak(int16_t signal_index);
 /** Get the min value recorded for a signal. Returns FLT_MAX if none. */
 float signal_get_min(int16_t signal_index);
 
-/** Session peak/min — same as above but only since the last boot (never
- * loaded from NVS). Used by panel widgets so a "Peak Hold" reading shows
- * what's happened during this drive, not the all-time history that the
- * Peaks screen displays. */
+/** Session peak/min — used by panel widgets so a "Peak Hold" reading shows
+ * what's happened during this drive. NOTE: peaks are session-only — all
+ * peak/min state (including signal_get_peak/min below) resets every boot and
+ * is NOT persisted to NVS. The "all-time" vs "session" distinction is now
+ * purely about reset granularity within a single boot. */
 float signal_get_session_peak(int16_t signal_index);
 float signal_get_session_min(int16_t signal_index);
 void  signal_reset_session_peak(int16_t signal_index);
 void  signal_reset_all_session_peaks(void);
-
-/* ── Persistence ──────────────────────────────────────────────────────────
- * Peak/min values persist across reboot in NVS until the user hits "Reset All".
- * Call signal_peaks_load() ONCE after all signals have been registered for the
- * active layout — stale records (signals not in this layout) are silently
- * dropped. Call signal_peaks_save_now() to flush immediately (e.g. from the
- * Reset-All button, to erase persisted peaks). signal_peaks_start_autosave()
- * launches a background timer that flushes every ~30s when the peaks have
- * changed since the last save.
- */
-void signal_peaks_load(void);
-void signal_peaks_save_now(void);
-void signal_peaks_start_autosave(void);
 
 #ifdef __cplusplus
 }

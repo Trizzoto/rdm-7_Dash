@@ -14,6 +14,7 @@
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/design_tokens.h"
 #include "ui/menu/inspector.h"    /* inspector_open */
+#include "widgets/widget_shape_panel.h" /* shape_panel_data_t — baked flag */
 /* menu_screen.h is no longer included from here — the legacy editor fallback
  * now lives inside inspector.c's placeholder tabs. */
 #include "ui/callbacks/ui_callbacks.h"   /* show_numeric_input_dialog */
@@ -517,6 +518,18 @@ static void _set_decoration_clickable(bool clickable) {
             w->type != WIDGET_LINE) continue;
         if (clickable) lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
         else           lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+        /* A shape baked into a meter face is hidden in normal mode (it lives
+         * in the cached image). Reveal it while editing so it can be selected
+         * + moved; re-hide on exit. Moving it on-device leaves the baked copy
+         * stale until the next save/reload re-bakes — the web editor round-
+         * trips through a reload so it stays clean there. */
+        if (w->type == WIDGET_SHAPE_PANEL && w->type_data) {
+            shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
+            if (sd->baked) {
+                if (clickable) lv_obj_clear_flag(w->root, LV_OBJ_FLAG_HIDDEN);
+                else           lv_obj_add_flag(w->root, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
     }
 }
 
@@ -1872,16 +1885,14 @@ lv_obj_t *edit_mode_create_pill(lv_obj_t *parent) {
     s_pill = lv_btn_create(parent);
     /* Use the wider edit-pill size so "Exit Edit Mode" doesn't truncate. */
     lv_obj_set_size(s_pill, DT_PILL_EDIT_W, DT_PILL_H);
-    /* Position the right edge so the Menu pill (DT_PILL_W wide, 12 px from
-     * the screen's right edge) sits flush to our right with DT_PILL_GAP between. */
-    lv_obj_align(s_pill, LV_ALIGN_TOP_RIGHT,
-                 -(DT_PILL_EDIT_W + DT_PILL_GAP + 12), 12);
+    /* Sit DIRECTLY BELOW the Menu button (top-right, 36 tall, 12 px down).
+     * Previously this lived to the LEFT of the Menu button, on top of the
+     * layout arrows — they collided, and the overlapping reveal flickered.
+     * Right-aligned to -12 so its right edge lines up under the Menu pill. */
+    lv_obj_align(s_pill, LV_ALIGN_TOP_RIGHT, -12, 12 + 36 + 8);
     lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(s_pill, DT_RADIUS_MD, 0);
-    lv_obj_set_style_shadow_width(s_pill, 8, 0);
-    lv_obj_set_style_shadow_color(s_pill, lv_color_black(), 0);
-    lv_obj_set_style_shadow_opa(s_pill, LV_OPA_30, 0);
-    lv_obj_set_style_shadow_ofs_y(s_pill, 2, 0);
+    lv_obj_set_style_shadow_width(s_pill, 0, 0);
 
     s_pill_lbl = lv_label_create(s_pill);
     lv_obj_set_style_text_font(s_pill_lbl, THEME_FONT_SMALL, 0);
@@ -1900,7 +1911,14 @@ void edit_mode_show_pill(void) {
      * users (rightly) read as broken. */
     if (s_armed) return;
     if (!s_pill || !lv_obj_is_valid(s_pill)) return;
+    if (!lv_obj_has_flag(s_pill, LV_OBJ_FLAG_HIDDEN)) return;  /* already up */
+    /* Fade in (rather than a hard pop) so the reveal reads as a smooth
+     * transition instead of a tear — the dash uses an un-vsync-synced flush
+     * so a sharp pop over the live gauges shows a stripe; a fade spreads the
+     * repaint across frames and hides it. */
+    lv_obj_set_style_opa(s_pill, LV_OPA_TRANSP, 0);
     lv_obj_clear_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_fade_in(s_pill, 150, 0);
 }
 
 void edit_mode_hide_pill(void) {

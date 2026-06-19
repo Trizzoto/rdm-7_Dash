@@ -13,13 +13,17 @@
 #include "widgets/widget_panel.h"
 #include "widgets/widget_rpm_bar.h"
 #include "widgets/widget_warning.h"
+#include "widgets/widget_meter.h"        /* widget_meter_bake_overlay */
+#include "widgets/widget_shape_panel.h"  /* shape_panel_data_t — bake flag */
 
 #include "ui/menu/edit_mode.h"
 #include "ui/menu/menu_screen.h"
+#include "ui/screens/first_run_wizard.h"
 #include "ui/screens/ui_Screen3.h"
 #include "ui/settings/device_settings.h"
 #include "can/can_manager.h"
 #include "can/dtc_monitor.h"
+#include "data/channel_math.h"
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -32,9 +36,10 @@ static const char *TAG = "dashboard";
 
 /* ── Internal widget registry snapshot ───────────────────────────────────── */
 
-/* Maximum widgets the dashboard tracks (5 types × worst-case instances):
- *   panel×8, rpm_bar×1, bar×2, indicator×2, warning×8, text×N, meter×N */
-#define DASHBOARD_MAX_WIDGETS 32
+/* Maximum widgets the dashboard tracks. Must be >= WIDGET_REGISTRY_MAX so the
+ * snapshot here sees every registered widget — a dense cluster (Ford-style
+ * layout) runs ~38, and 32 silently dropped the tail. */
+#define DASHBOARD_MAX_WIDGETS 64
 
 static widget_t *s_widgets[DASHBOARD_MAX_WIDGETS];
 static uint8_t s_widget_count = 0;
@@ -77,7 +82,16 @@ static void _widget_long_press_cb(lv_event_t *e) {
 	if (edit_mode_is_armed()) return;
 	widget_t *w = (widget_t *)lv_event_get_user_data(e);
 	if (!w || !w->root || !lv_obj_is_valid(w->root)) return;
-	load_menu_screen_for_widget(w);
+	/* Channels-first: a channel-capable widget opens the channels editor
+	 * targeting this widget (pick a channel → Apply to widget). Widgets
+	 * with no channel binding (shift_light, decorations) fall back to the
+	 * legacy per-widget config modal, which is also still reachable from
+	 * the editor's "Widget settings" button during the phase-out. */
+	if (widget_get_channel_id_buf(w)) {
+		first_run_wizard_open_channels_for_widget(w);
+	} else {
+		load_menu_screen_for_widget(w);
+	}
 }
 
 /** Register touch events on all widgets so the MENU button always appears
@@ -101,6 +115,19 @@ static void _register_widget_long_press(void) {
 			lv_obj_clear_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
 		} else {
 			lv_obj_add_flag(w->root, LV_OBJ_FLAG_CLICKABLE);
+			/* Bubble tap events up to ui_Screen3's SHORT_CLICKED handler so a
+			 * tap ANYWHERE on the dashboard reveals the chrome — not just on
+			 * empty background. LVGL does NOT bubble by default; without this
+			 * flag a clickable widget absorbs the tap and the screen handler
+			 * never fires, which is why the menu "sometimes didn't show".
+			 *
+			 * EXCEPT button/toggle widgets: those are interactive momentary
+			 * controls (press = TX 1, release = TX 0). A press on them is a
+			 * deliberate control action and must NOT also pop the chrome — they
+			 * are a no-go zone for the tap-to-reveal gesture. */
+			if (w->type != WIDGET_BUTTON && w->type != WIDGET_TOGGLE) {
+				lv_obj_add_flag(w->root, LV_OBJ_FLAG_EVENT_BUBBLE);
+			}
 		}
 
 		/* All event callbacks are attached unconditionally — they're no-ops
@@ -108,11 +135,13 @@ static void _register_widget_long_press(void) {
 		 * events to non-CLICKABLE objects) or when not armed. This lets the
 		 * armed-state toggle flip CLICKABLE alone, without re-wiring events. */
 
-		/* Short-tap → reveal toolbar pills (Menu / Edit Mode) */
-		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
-							LV_EVENT_PRESSED, NULL);
-		lv_obj_add_event_cb(w->root, screen3_touch_event_cb,
-							LV_EVENT_RELEASED, NULL);
+		/* Short-tap → reveal chrome (Menu / arrows / Edit pill) is handled at
+		 * the SCREEN level (SHORT_CLICKED on ui_Screen3). It fires on widget
+		 * taps via the LV_OBJ_FLAG_EVENT_BUBBLE set above — one screen handler,
+		 * not a per-widget callback (per-widget multiplied dispatch work by
+		 * widget-count on every tap). The bubble flag is what makes it actually
+		 * propagate; earlier this was assumed-but-unset, so only background
+		 * taps worked. */
 
 		/* Edit Mode select + drag handlers. Bail when not armed. */
 		lv_obj_add_event_cb(w->root, edit_mode_widget_pressed_cb,
@@ -171,6 +200,63 @@ static void _setup_night_trigger(void) {
 	         s_night_trig_name, (double)s_night_trig_threshold);
 }
 
+/* Overlay-bake pass. For each shape flagged "bake_into_gauge", composite it
+ * INTO the cached face of the static-ticks meter it sits over, then hide the
+ * live shape — so the decoration costs nothing per frame (it becomes part of
+ * the meter's one-shot face blit, rendered below the needle). Runs after the
+ * full layout is built; needs final coords, so it flushes layout first. */
+static void _overlay_bake_pass(lv_obj_t *parent, widget_t **ws, uint8_t n) {
+	if (!ws || n == 0) return;
+	if (parent) lv_obj_update_layout(parent);
+
+	for (uint8_t i = 0; i < n; i++) {
+		widget_t *s = ws[i];
+		if (!s || s->type != WIDGET_SHAPE_PANEL || !s->root ||
+		    !lv_obj_is_valid(s->root))
+			continue;
+		shape_panel_data_t *sd = (shape_panel_data_t *)s->type_data;
+		if (!sd) continue;
+		sd->baked = false;
+		if (!sd->bake_into_gauge) continue;
+
+		/* Target = the static-ticks meter below this shape in z-order
+		 * (created earlier → lower index) whose bounds contain the shape's
+		 * centre. Walk back from i to pick the closest one underneath. */
+		lv_area_t sa;
+		lv_obj_get_coords(s->root, &sa);
+		lv_coord_t scx = (lv_coord_t)((sa.x1 + sa.x2) / 2);
+		lv_coord_t scy = (lv_coord_t)((sa.y1 + sa.y2) / 2);
+		widget_t *target = NULL;
+		for (int j = (int)i - 1; j >= 0; j--) {
+			widget_t *m = ws[j];
+			if (!m || m->type != WIDGET_METER || !m->root ||
+			    !lv_obj_is_valid(m->root))
+				continue;
+			lv_area_t ma;
+			lv_obj_get_coords(m->root, &ma);
+			if (scx >= ma.x1 && scx <= ma.x2 && scy >= ma.y1 && scy <= ma.y2) {
+				target = m;
+				break;
+			}
+		}
+		if (!target) {
+			ESP_LOGW("dashboard", "bake: shape '%s' has no meter under it",
+			         s->id);
+			continue;
+		}
+		if (widget_meter_bake_overlay(target, s->root)) {
+			lv_obj_add_flag(s->root, LV_OBJ_FLAG_HIDDEN);
+			sd->baked = true;
+			ESP_LOGI("dashboard", "baked shape '%s' into meter '%s'",
+			         s->id, target->id);
+		} else {
+			ESP_LOGW("dashboard",
+			         "bake: meter '%s' has no cached face (static_ticks off)",
+			         target->id);
+		}
+	}
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  *  dashboard_init
  * ════════════════════════════════════════════════════════════════════════════
@@ -187,12 +273,21 @@ void dashboard_init(lv_obj_t *parent) {
 	font_manager_reset_instances();
 	font_manager_init();
 	signal_registry_init();
-	signal_peaks_start_autosave();
+	/* Internal signals (FPS, ODOMETER, …) must exist BEFORE the layout
+	 * instantiates widgets — from_json resolves signal names at create time,
+	 * and on FIRST boot nothing else has registered them yet
+	 * (signal_internal_start runs after the load), so widgets bound to them
+	 * stayed dead until a save+reload re-ran from_json against a registry
+	 * that already carried them. Idempotent — start() re-registers later. */
+	signal_internal_register_signals();
 	/* DTC monitor exposes DTC_COUNT as a synthetic signal so warning
-	 * widgets can bind it directly. Re-asserted on every dashboard_init
-	 * because signal_registry_reset() (called inside layout_manager_load)
-	 * wipes the signal table; the dtc_monitor_start path re-registers
-	 * DTC_COUNT and re-primes it with the cached count. */
+	 * widgets can bind it directly. Re-asserted on every dashboard_init:
+	 * the signal registry MERGES across layout loads (the happy path does
+	 * NOT call signal_registry_reset()), so DTC_COUNT usually survives a
+	 * reload and re-registration just updates its decode params. It only
+	 * needs (re-)registering when genuinely absent — first boot, or after
+	 * an explicit registry reset on ECU switch. dtc_monitor_start handles
+	 * both cases (register-if-missing) and re-primes the cached count. */
 	dtc_monitor_start();
 	widget_registry_reset();
 	widget_warning_reset();
@@ -242,12 +337,21 @@ loaded:
 
 	widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS, &s_widget_count);
 
+	/* Absorb bake-flagged decorative shapes into the meter faces they cover. */
+	_overlay_bake_pass(parent, s_widgets, s_widget_count);
+
 	/* Register long-press config on signal-bound widgets */
 	_register_widget_long_press();
 
 	/* Stop any existing internal signal timer before (re-)starting */
 	signal_internal_stop();
 	signal_internal_start();
+
+	/* Math/derived channel evaluator (boost = MAP − BARO, …). Idempotent —
+	 * the timer survives layout reloads and reads live channel state each
+	 * tick. Output signals were (re-)registered during the layout load via
+	 * channel_manager_register_decoded_signals. */
+	channel_math_start();
 
 	/* Subscribe brightness dimmer to its configured signal */
 	dimmer_subscribe();
@@ -299,6 +403,7 @@ static void _apply_layout_json_internal(lv_obj_t *parent, cJSON *root) {
 	} else {
 		widget_registry_snapshot(s_widgets, DASHBOARD_MAX_WIDGETS,
 								 &s_widget_count);
+		_overlay_bake_pass(parent, s_widgets, s_widget_count);
 		_register_widget_long_press();
 		/* Re-bind layout-level night-mode CAN trigger for the new layout. */
 		_setup_night_trigger();

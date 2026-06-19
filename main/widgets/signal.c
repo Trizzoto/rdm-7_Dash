@@ -19,7 +19,6 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "nvs.h"
 #include "lvgl.h"
 
 #include <float.h>
@@ -29,10 +28,6 @@ static const char *TAG = "signal";
 
 static signal_t *s_signals     = NULL;
 static uint16_t  s_signal_count = 0;
-
-/* Peak persistence state — see bottom of file for the implementation. */
-static bool        s_peaks_dirty       = false;
-static lv_timer_t *s_peaks_save_timer  = NULL;
 
 /* ── Registry lifecycle ─────────────────────────────────────────────────── */
 
@@ -55,6 +50,15 @@ void signal_registry_init(void)
 void signal_registry_reset(void)
 {
     if (!s_signals) return;
+    /* Free any per-signal value-label maps from the previous layout before
+     * zeroing the array — these are PSRAM allocations owned by the signal. */
+    for (uint16_t i = 0; i < s_signal_count; i++) {
+        if (s_signals[i].value_map) {
+            heap_caps_free(s_signals[i].value_map);
+            s_signals[i].value_map = NULL;
+            s_signals[i].value_map_count = 0;
+        }
+    }
     memset(s_signals, 0, MAX_SIGNALS * sizeof(signal_t));
     s_signal_count = 0;
 }
@@ -66,6 +70,18 @@ int16_t signal_register(const char *name, uint32_t can_id,
                         float scale, float offset,
                         bool is_signed, uint8_t endian,
                         const char *unit)
+{
+    return signal_register_with_source(name, can_id, start, len,
+                                       scale, offset, is_signed, endian,
+                                       unit, SIGNAL_SOURCE_CAN);
+}
+
+int16_t signal_register_with_source(const char *name, uint32_t can_id,
+                                    uint8_t start, uint8_t len,
+                                    float scale, float offset,
+                                    bool is_signed, uint8_t endian,
+                                    const char *unit,
+                                    signal_source_t source)
 {
     if (!s_signals) {
         ESP_LOGE(TAG, "signal_registry_init() not called");
@@ -79,9 +95,58 @@ int16_t signal_register(const char *name, uint32_t can_id,
         ESP_LOGE(TAG, "Signal registry full (max %u)", MAX_SIGNALS);
         return -1;
     }
-    if (signal_find_by_name(name) >= 0) {
-        ESP_LOGW(TAG, "Duplicate signal name '%s' rejected", name);
-        return -1;
+    int16_t existing = signal_find_by_name(name);
+    if (existing >= 0) {
+        /* Expected on cross-layout switches: signals MERGE across layout
+         * loads (the registry is NOT reset on the happy path — see
+         * layout_manager.c _instantiate_widgets), so a name registered by
+         * an earlier layout is still present when a later layout re-declares
+         * it.
+         *
+         * Previously the first registration won and the duplicate was
+         * dropped (return -1). That silently shadowed the correct decode:
+         * if a splash/boot layout serialized a frozen snapshot of the whole
+         * registry and was loaded before the dashboard, the dashboard's
+         * authoritative decode params were discarded and the signal decoded
+         * garbage / never matched a frame (survived reboot). Fix: UPSERT —
+         * overwrite the existing slot's decode params with the freshly
+         * loaded layout's values (latest-layout-wins) while leaving the
+         * slot's subscribers, peak/min/session stats, value_map and
+         * test_locked intact so existing channel bindings (resolved by
+         * index) stay attached. */
+        signal_t *cur = &s_signals[existing];
+        cur->can_id     = can_id;
+        cur->bit_start  = start;
+        cur->bit_length = len;
+        cur->scale      = scale;
+        cur->offset     = offset;
+        cur->is_signed  = is_signed;
+        cur->endian     = endian;
+        cur->source     = (uint8_t)source;
+        if (unit && unit[0] != '\0')
+            safe_strncpy(cur->unit, unit, sizeof(cur->unit));
+        else
+            cur->unit[0] = '\0';
+        /* Reset decode freshness so the next frame re-evaluates and fires
+         * notify_subscribers — mirrors channel_source_apply.c's in-place
+         * patch. Without this a still-fresh slot whose current_value happens
+         * to match the new decode could swallow the first update. */
+        cur->is_stale       = true;
+        cur->last_update_ms = 0;
+        /* Release any test lock. Preserving it here while resetting the
+         * slot to stale created a ZOMBIE: dispatch kept skipping the signal
+         * (locked) and the staleness sweep kept skipping it too, so one
+         * forgotten editor Test Value + any layout/channel reload (the
+         * editor autosaves constantly) left the signal permanently dead
+         * showing "--" with no visible reason. Test locks are ephemeral
+         * editor state — a reload releases them. */
+        if (cur->test_locked) {
+            ESP_LOGI(TAG, "signal '%s': releasing test lock on re-register", name);
+            cur->test_locked  = false;
+            cur->test_lock_ms = 0;
+        }
+        ESP_LOGD(TAG, "signal '%s' already registered — updating decode params", name);
+        return existing;
     }
 
     signal_t *sig = &s_signals[s_signal_count];
@@ -95,6 +160,7 @@ int16_t signal_register(const char *name, uint32_t can_id,
     sig->offset     = offset;
     sig->is_signed  = is_signed;
     sig->endian     = endian;
+    sig->source     = (uint8_t)source;
     sig->is_stale   = true; /* stale until the first frame arrives */
 
     /* Unit string */
@@ -126,6 +192,79 @@ int16_t signal_find_by_name(const char *name)
             return (int16_t)i;
     }
     return -1;
+}
+
+/* ── Value-label map ───────────────────────────────────────────────────── */
+
+bool signal_set_value_map(int16_t signal_index,
+                          const signal_value_label_t *entries,
+                          uint8_t count)
+{
+    if (!s_signals || signal_index < 0 || signal_index >= (int16_t)s_signal_count)
+        return false;
+    signal_t *sig = &s_signals[signal_index];
+
+    /* Free any prior map. signal_registry_reset() zeroes the array so we
+     * don't free across resets — value_map ptrs live only while the layout
+     * is active. Layout reload calls reset before _load_signals so this is
+     * the only path that allocates them. */
+    if (sig->value_map) {
+        heap_caps_free(sig->value_map);
+        sig->value_map = NULL;
+        sig->value_map_count = 0;
+    }
+    if (!entries || count == 0) return true;
+
+    if (count > SIGNAL_VALUE_MAP_MAX) count = SIGNAL_VALUE_MAP_MAX;
+    sig->value_map = heap_caps_calloc(count, sizeof(signal_value_label_t),
+                                       MALLOC_CAP_SPIRAM);
+    if (!sig->value_map) {
+        ESP_LOGE(TAG, "value_map alloc failed for '%s' (%u entries)",
+                 sig->name, count);
+        return false;
+    }
+    memcpy(sig->value_map, entries, (size_t)count * sizeof(signal_value_label_t));
+    sig->value_map_count = count;
+    return true;
+}
+
+const char *signal_value_lookup_label(int16_t signal_index, float value)
+{
+    if (!s_signals || signal_index < 0 || signal_index >= (int16_t)s_signal_count)
+        return NULL;
+    signal_t *sig = &s_signals[signal_index];
+    if (!sig->value_map || sig->value_map_count == 0) return NULL;
+
+    /* Match on |decoded - entry| < epsilon so both integer-coded signals
+     * (gear 0..7) and decimal-coded signals (lambda 0.85 / 1.0 / 1.15)
+     * resolve cleanly. Epsilon also absorbs the tiny float drift that
+     * raw*scale+offset introduces — e.g. decoder returns 6.9999998f when
+     * the bit field is literally 7. */
+    for (uint8_t i = 0; i < sig->value_map_count; i++) {
+        float d = value - sig->value_map[i].value;
+        if (d < 0.0f) d = -d;
+        if (d < SIGNAL_VALUE_MAP_EPSILON) return sig->value_map[i].label;
+    }
+    return NULL;
+}
+
+void signal_format_value(int16_t signal_index, float value,
+                         uint8_t decimals, char *buf, size_t cap)
+{
+    if (!buf || cap == 0) return;
+    if (signal_index >= 0) {
+        const char *lbl = signal_value_lookup_label(signal_index, value);
+        if (lbl) {
+            /* Single-line copy; truncates safely if label is longer than buf. */
+            size_t n = strlen(lbl);
+            if (n >= cap) n = cap - 1;
+            memcpy(buf, lbl, n);
+            buf[n] = '\0';
+            return;
+        }
+    }
+    if (decimals == 0) snprintf(buf, cap, "%d", (int)value);
+    else               snprintf(buf, cap, "%.*f", decimals, (double)value);
 }
 
 signal_t *signal_get_by_index(uint16_t index)
@@ -203,11 +342,24 @@ static void notify_subscribers(signal_t *sig)
 
 /* ── Dispatch ───────────────────────────────────────────────────────────── */
 
+/* Self-expiring dispatch pause. Used by the boot curtain reveal so live CAN
+ * updates don't force expensive widget redraws mid-animation. Deadline-based
+ * rather than a bool so a missed "resume" (animation killed, screen torn
+ * down mid-sweep) can never wedge dispatch permanently. */
+static uint64_t s_dispatch_pause_until_ms = 0;
+
+void signal_dispatch_pause_ms(uint32_t ms)
+{
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    s_dispatch_pause_until_ms = (ms > 0) ? now + ms : 0;
+}
+
 void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 {
     if (!s_signals || !data) return;
 
     uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    if (now_ms < s_dispatch_pause_until_ms) return;
 
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];
@@ -237,8 +389,8 @@ void signal_dispatch_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc)
 
         /* Update peak/min tracking */
         if (sig->tracking_active) {
-            if (decoded > sig->peak_value) { sig->peak_value = decoded; s_peaks_dirty = true; }
-            if (decoded < sig->min_value)  { sig->min_value  = decoded; s_peaks_dirty = true; }
+            if (decoded > sig->peak_value) sig->peak_value = decoded;
+            if (decoded < sig->min_value)  sig->min_value  = decoded;
             if (decoded > sig->session_peak) sig->session_peak = decoded;
             if (decoded < sig->session_min)  sig->session_min  = decoded;
         }
@@ -279,6 +431,10 @@ void signal_inject_test_value(const char *name, float value)
     sig->current_value  = value;
     sig->is_stale       = false;
     sig->last_update_ms = now_ms;
+    /* Re-arm the test-lock TTL: while the editor keeps injecting (slider
+     * drags re-send), the lock stays alive; once injects stop, the lock
+     * expires and live CAN data resumes (see signal_check_staleness). */
+    sig->test_lock_ms   = now_ms;
 
     /* Update peak/min tracking — skip when the simulator is driving OR
      * the signal is currently test-locked by the user. The sim's
@@ -288,8 +444,8 @@ void signal_inject_test_value(const char *name, float value)
      * this branch: it plays back real logged data that the user probably
      * DOES want reflected in the peak/min stats. */
     if (sig->tracking_active && !signal_sim_is_active() && !sig->test_locked) {
-        if (value > sig->peak_value) { sig->peak_value = value; s_peaks_dirty = true; }
-        if (value < sig->min_value)  { sig->min_value  = value; s_peaks_dirty = true; }
+        if (value > sig->peak_value) sig->peak_value = value;
+        if (value < sig->min_value)  sig->min_value  = value;
         if (value > sig->session_peak) sig->session_peak = value;
         if (value < sig->session_min)  sig->session_min  = value;
     }
@@ -328,8 +484,8 @@ void signal_set_external_value(const char *name, float value)
      * (they're real data from OBD2 / internal sensors). Still gate on sim
      * being inactive so sim-only sweeps don't corrupt history. */
     if (sig->tracking_active && !signal_sim_is_active()) {
-        if (value > sig->peak_value) { sig->peak_value = value; s_peaks_dirty = true; }
-        if (value < sig->min_value)  { sig->min_value  = value; s_peaks_dirty = true; }
+        if (value > sig->peak_value) sig->peak_value = value;
+        if (value < sig->min_value)  sig->min_value  = value;
         if (value > sig->session_peak) sig->session_peak = value;
         if (value < sig->session_min)  sig->session_min  = value;
     }
@@ -353,12 +509,27 @@ void signal_check_timeouts(uint64_t current_time_ms)
     for (uint16_t i = 0; i < s_signal_count; i++) {
         signal_t *sig = &s_signals[i];
 
+        /* Test-locked signals are under manual user control — hold fresh
+         * so the injected value keeps rendering without the stale badge.
+         * BUT only while the editor is actively re-injecting: a forgotten
+         * Test Value (user never clicked ×, closed the browser, drove off)
+         * used to pin the signal dead forever. Expire the lock after the
+         * TTL so live CAN data resumes on its own. last_update_ms reset
+         * like signal_set_test_lock(false) — the next frame or the 2 s
+         * timeout decides fresh-vs-stale honestly. */
+        if (sig->test_locked) {
+            if (current_time_ms - sig->test_lock_ms > SIGNAL_TEST_LOCK_TTL_MS) {
+                ESP_LOGI(TAG, "signal '%s': test lock expired (no inject for %u s) — resuming live data",
+                         sig->name, (unsigned)(SIGNAL_TEST_LOCK_TTL_MS / 1000));
+                sig->test_locked    = false;
+                sig->test_lock_ms   = 0;
+                sig->last_update_ms = current_time_ms;
+            }
+            continue;
+        }
+
         /* Skip: already stale (already notified) or never received. */
         if (sig->is_stale || sig->last_update_ms == 0) continue;
-
-        /* Test-locked signals are under manual user control — hold fresh
-         * so the injected value keeps rendering without the stale badge. */
-        if (sig->test_locked) continue;
 
         if (current_time_ms - sig->last_update_ms > SIGNAL_TIMEOUT_MS) {
             sig->is_stale = true;
@@ -380,7 +551,13 @@ void signal_set_test_lock(const char *name, bool locked)
     signal_t *sig = &s_signals[idx];
     if (sig->test_locked == locked) return;
     sig->test_locked = locked;
+    if (locked) {
+        /* Arm the TTL even if the caller locks without injecting first —
+         * a zero timestamp would expire the lock on the next sweep tick. */
+        sig->test_lock_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    }
     if (!locked) {
+        sig->test_lock_ms = 0;
         /* Reset last_update_ms so the next real CAN frame (or 2s timeout)
          * decides fresh-vs-stale; don't hold the pre-lock timestamp. */
         sig->last_update_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
@@ -414,10 +591,8 @@ void signal_reset_peaks(void)
         s_signals[i].session_peak = -FLT_MAX;
         s_signals[i].session_min  = FLT_MAX;
     }
-    /* Flush to NVS immediately so a power-cycle right after "Reset All"
-     * doesn't re-hydrate the old peaks from stale storage. */
-    s_peaks_dirty = true;
-    signal_peaks_save_now();
+    /* Peaks are session-only (reset every boot, no NVS persistence), so
+     * there's nothing to flush — the RAM clear above is the whole job. */
 }
 
 void signal_reset_peak(int16_t signal_index)
@@ -428,11 +603,7 @@ void signal_reset_peak(int16_t signal_index)
     s_signals[signal_index].min_value    = FLT_MAX;
     s_signals[signal_index].session_peak = -FLT_MAX;
     s_signals[signal_index].session_min  = FLT_MAX;
-    s_peaks_dirty = true;
-    /* Persist immediately — same reasoning as signal_reset_peaks(): if the
-     * user resets a row and power-cycles, they'd be confused to see the old
-     * value re-hydrate from NVS. */
-    signal_peaks_save_now();
+    /* Session-only peaks — no NVS persistence to flush. */
 }
 
 float signal_get_peak(int16_t signal_index)
@@ -478,121 +649,4 @@ void signal_reset_all_session_peaks(void)
         s_signals[i].session_peak = -FLT_MAX;
         s_signals[i].session_min  = FLT_MAX;
     }
-}
-
-/* ── Persistence ────────────────────────────────────────────────────────── */
-
-#define PEAK_NS   "sig_peaks"
-#define PEAK_KEY  "v1"
-
-typedef struct {
-    char  name[32];
-    float peak;
-    float min;
-} _peak_record_t;
-
-void signal_peaks_load(void)
-{
-    if (!s_signals) return;
-
-    nvs_handle_t h;
-    if (nvs_open(PEAK_NS, NVS_READONLY, &h) != ESP_OK) return;
-
-    size_t sz = 0;
-    if (nvs_get_blob(h, PEAK_KEY, NULL, &sz) != ESP_OK || sz == 0 ||
-        (sz % sizeof(_peak_record_t)) != 0) {
-        nvs_close(h);
-        return;
-    }
-
-    _peak_record_t *buf = malloc(sz);
-    if (!buf) { nvs_close(h); return; }
-
-    if (nvs_get_blob(h, PEAK_KEY, buf, &sz) != ESP_OK) {
-        free(buf); nvs_close(h); return;
-    }
-    nvs_close(h);
-
-    uint32_t restored = 0;
-    size_t n = sz / sizeof(_peak_record_t);
-    for (size_t i = 0; i < n; i++) {
-        int16_t idx = signal_find_by_name(buf[i].name);
-        if (idx < 0) continue;  /* signal not in current layout — drop */
-        signal_t *sig = &s_signals[idx];
-        /* Don't clobber a live reading already taken since layout load — take
-         * the more extreme of persisted vs current. (Matters if this is
-         * called after some CAN frames already ran.) */
-        if (buf[i].peak > sig->peak_value) sig->peak_value = buf[i].peak;
-        if (buf[i].min  < sig->min_value)  sig->min_value  = buf[i].min;
-        restored++;
-    }
-    free(buf);
-    ESP_LOGI(TAG, "Peak/min persistence restored for %u signal(s)", (unsigned)restored);
-}
-
-void signal_peaks_save_now(void)
-{
-    if (!s_signals) return;
-
-    /* Build the blob in one pass — only signals with a recorded peak or min
-     * (i.e. not at the sentinel) are worth persisting. */
-    _peak_record_t *buf = calloc(s_signal_count, sizeof(_peak_record_t));
-    if (!buf) {
-        ESP_LOGW(TAG, "peaks save: OOM (%u bytes)",
-                 (unsigned)(s_signal_count * sizeof(_peak_record_t)));
-        return;
-    }
-
-    size_t count = 0;
-    for (uint16_t i = 0; i < s_signal_count; i++) {
-        signal_t *sig = &s_signals[i];
-        bool has_peak = (sig->peak_value != -FLT_MAX);
-        bool has_min  = (sig->min_value  !=  FLT_MAX);
-        if (!has_peak && !has_min) continue;
-
-        strncpy(buf[count].name, sig->name, sizeof(buf[count].name) - 1);
-        buf[count].name[sizeof(buf[count].name) - 1] = '\0';
-        buf[count].peak = has_peak ? sig->peak_value : -FLT_MAX;
-        buf[count].min  = has_min  ? sig->min_value  :  FLT_MAX;
-        count++;
-    }
-
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(PEAK_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) {
-        free(buf);
-        ESP_LOGW(TAG, "peaks save: nvs_open failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    if (count == 0) {
-        /* Erase the blob entirely when there's nothing meaningful — happens
-         * after Reset All before any fresh CAN traffic. */
-        nvs_erase_key(h, PEAK_KEY);
-    } else {
-        err = nvs_set_blob(h, PEAK_KEY, buf, count * sizeof(_peak_record_t));
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "peaks save: nvs_set_blob failed: %s", esp_err_to_name(err));
-        }
-    }
-    nvs_commit(h);
-    nvs_close(h);
-    free(buf);
-
-    s_peaks_dirty = false;
-}
-
-static void _peaks_autosave_cb(lv_timer_t *t)
-{
-    (void)t;
-    if (s_peaks_dirty) signal_peaks_save_now();
-}
-
-void signal_peaks_start_autosave(void)
-{
-    if (s_peaks_save_timer) return;
-    /* 30s debounce — infrequent enough for flash endurance (worst case
-     * ~2880 writes/day, well within ESP32 NVS wear-leveling budget) but
-     * frequent enough to keep power-cut loss bounded. */
-    s_peaks_save_timer = lv_timer_create(_peaks_autosave_cb, 30000, NULL);
 }

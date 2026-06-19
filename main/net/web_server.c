@@ -1,8 +1,11 @@
 #include "web_server.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "cJSON.h"
 #include <stdbool.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include "web_server_internal.h"
 
 /* Fallback for static-analyser builds that don't see layout_manager.h's define. */
@@ -24,6 +27,52 @@ extern const uint8_t favicon_ico_end[]   asm("_binary_favicon_ico_end");
 static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
+/* Largest unread body we'll politely drain before returning an error. A
+ * rejected layout is at most a few hundred KB even when abused via the editor;
+ * past this we stop reading and accept that the socket resets. */
+#define WEB_DRAIN_CAP (384 * 1024)
+
+/* Drain up to `max_drain` bytes of an unread request body.
+ *
+ * esp_http_server closes a connection with a TCP RST (not a clean FIN) when
+ * there is still unconsumed RX data on the socket. So a handler that rejects a
+ * large body *before* reading it (e.g. an oversize layout) leaves the client
+ * seeing a connection reset instead of our 4xx — the stress test's 2000-widget
+ * preview hit exactly this (ConnectionResetError instead of the 413). Draining
+ * the body first lets the error response actually arrive. Bounded so a
+ * maliciously huge body can't tie the worker up indefinitely. */
+void web_server_drain_body(httpd_req_t *req, size_t max_drain) {
+	size_t remaining = req->content_len;
+	if (remaining > max_drain) remaining = max_drain;
+	char sink[512];
+	size_t got = 0;
+	while (got < remaining) {
+		size_t chunk = remaining - got;
+		if (chunk > sizeof(sink)) chunk = sizeof(sink);
+		int r = httpd_req_recv(req, sink, chunk);
+		/* A recv timeout means the sender stalled. We bail rather than loop:
+		 * httpd runs all handlers on ONE task, so spinning here on a no-data
+		 * stall would wedge the entire web server (slowloris). Best-effort
+		 * drain — if the client won't send, let the socket close (RST). */
+		if (r <= 0) break;
+		got += (size_t)r;
+	}
+}
+
+/* 503 + Retry-After for *transient* conditions: the LVGL lock was momentarily
+ * held, a heavy build is already in flight, or a short-lived OOM under
+ * concurrent load. Unlike a 500, this tells the client the request itself is
+ * fine and to retry shortly — which the editor's live-edit and poll loops do —
+ * instead of surfacing a hard error toast. Callers `return web_server_send_busy(req);`. */
+esp_err_t web_server_send_busy(httpd_req_t *req) {
+	httpd_resp_set_status(req, "503 Service Unavailable");
+	httpd_resp_set_hdr(req, "Retry-After", "1");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_send(req, "{\"ok\":false,\"error\":\"busy\"}", HTTPD_RESP_USE_STRLEN);
+	return ESP_OK;
+}
+
 /* Send a structured 413 Payload-Too-Large JSON error.
  *
  * Layout JSON > LAYOUT_MAX_FILE_BYTES is a real failure mode in the editor,
@@ -32,6 +81,8 @@ static httpd_handle_t server = NULL;
  *     { "ok":false, "error":"layout_too_large", "max":32768, "actual":N }
  */
 esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
+	/* Drain the (rejected) body so the client reads this 413 instead of an RST. */
+	web_server_drain_body(req, WEB_DRAIN_CAP);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_status(req, "413 Payload Too Large");
@@ -42,6 +93,27 @@ esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
 			 (unsigned)LAYOUT_MAX_FILE_BYTES, (unsigned)actual);
 	httpd_resp_sendstr(req, body);
 	return ESP_FAIL;
+}
+
+/* Serialize `root`, send it as application/json, and free both. ALWAYS consumes
+ * `root` (deletes it, even on error). If serialization OOMs
+ * (cJSON_PrintUnformatted returns NULL) it sends a 500 instead of calling
+ * httpd_resp_sendstr(NULL), which crashes. Callers must not free root or send a
+ * response themselves. Does NOT set the CORS header: callers set it before
+ * calling (the established per-handler pattern), and httpd_resp_set_hdr appends
+ * rather than replaces, so setting it here too would emit a duplicate
+ * Access-Control-Allow-Origin that strict browsers reject. */
+esp_err_t web_server_send_json(httpd_req_t *req, cJSON *root) {
+	char *json = root ? cJSON_PrintUnformatted(root) : NULL;
+	cJSON_Delete(root);
+	if (!json) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+		return ESP_FAIL;
+	}
+	httpd_resp_set_type(req, "application/json");
+	esp_err_t r = httpd_resp_sendstr(req, json);
+	cJSON_free(json);
+	return r;
 }
 
 /* ── Path-safety check for user-supplied names (no traversal) ──────────── */
@@ -80,6 +152,72 @@ bool web_server_filename_is_safe(const char *name) {
 	/* Reject ".." sequences */
 	if (strstr(name, "..")) return false;
 	return true;
+}
+
+/* In-place percent-decode of a query-string value: "%XX" -> the byte it
+ * encodes, "+" -> space. httpd_query_key_value() hands back the raw,
+ * percent-encoded value, so any name with a space (e.g. "Fugaz One",
+ * "Manrope Bold") arrives as "Fugaz%20One" and never matches the file on
+ * LittleFS. Decode it before the path-safety check + fopen path build.
+ *
+ * Decoding never grows the string (every escape collapses to one byte), so
+ * decoding in place is safe. A malformed "%" escape (truncated or non-hex)
+ * is copied through verbatim rather than dropped — the subsequent
+ * web_server_name_is_safe() check still rejects anything dangerous. */
+void web_server_url_decode(char *s) {
+	if (!s) return;
+	char *dst = s;
+	for (char *src = s; *src; ) {
+		if (*src == '%' && isxdigit((unsigned char)src[1]) &&
+		    isxdigit((unsigned char)src[2])) {
+			char hex[3] = {src[1], src[2], '\0'};
+			*dst++ = (char)strtol(hex, NULL, 16);
+			src += 3;
+		} else if (*src == '+') {
+			*dst++ = ' ';
+			src++;
+		} else {
+			*dst++ = *src++;
+		}
+	}
+	*dst = '\0';
+}
+
+int web_server_recv_body_raw(httpd_req_t *req, char *buf, size_t cap) {
+	size_t want = req->content_len;
+	if (want == 0 || want >= cap) return -1;
+	size_t total = 0;
+	while (total < want) {
+		int r = httpd_req_recv(req, buf + total, want - total);
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+		if (r <= 0) return -1;
+		total += (size_t)r;
+	}
+	buf[total] = '\0';
+	return (int)total;
+}
+
+esp_err_t web_server_recv_body(httpd_req_t *req, char *buf, size_t cap) {
+	if (req->content_len == 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+		return ESP_FAIL;
+	}
+	if (req->content_len >= cap) {
+		/* Truncating JSON just produces a confusing parse error downstream —
+		 * reject oversize bodies outright with the real reason. Drain first so
+		 * the client receives this 413 cleanly instead of a TCP reset. */
+		web_server_drain_body(req, WEB_DRAIN_CAP);
+		httpd_resp_set_status(req, "413 Payload Too Large");
+		httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+		httpd_resp_set_type(req, "application/json");
+		httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"body_too_large\"}");
+		return ESP_FAIL;
+	}
+	if (web_server_recv_body_raw(req, buf, cap) < 0) {
+		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Receive failed");
+		return ESP_FAIL;
+	}
+	return ESP_OK;
 }
 
 /* HTTP handler for the main page — serves the gzipped web/index.html.
@@ -213,6 +351,9 @@ esp_err_t web_server_start(void) {
 	web_server_logger_register(server);
 	web_server_signals_register(server);
 	web_server_obd2_register(server);
+	web_server_channels_register(server);
+	web_server_test_register(server);
+	web_server_mirror_register(server);
 
 	/* Final registration tally. If any registration failed (almost always
 	 * because max_uri_handlers is too low), shout loudly so the developer

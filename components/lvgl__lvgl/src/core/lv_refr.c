@@ -76,6 +76,44 @@ static void call_flush_cb(lv_disp_drv_t * drv, const lv_area_t * area, lv_color_
 static uint32_t px_num;
 static lv_disp_t * disp_refr; /*Display being refreshed*/
 
+/* RDM7 DIAG: pre-join dirty list of the most recent >=90%-screen frame.
+ * Globals (not static) so the firmware's /api/perf/bigframe endpoint can
+ * read them; torn reads acceptable (diagnostics, seq guards freshness). */
+#define RDM7_BIGFRAME_MAX_RECTS 64
+int16_t  rdm7_bigframe_rects[RDM7_BIGFRAME_MAX_RECTS][4];
+uint16_t rdm7_bigframe_count = 0;
+uint32_t rdm7_bigframe_px = 0;
+volatile uint32_t rdm7_bigframe_seq = 0;
+static int16_t  rdm7_bigframe_cand[RDM7_BIGFRAME_MAX_RECTS][4];
+static uint16_t rdm7_bigframe_cand_count = 0;
+
+/* RDM7 DIAG: backtrace of the most recent caller that invalidated the FULL
+ * screen in one lv_inv_area() call. Decode the PCs with addr2line against
+ * the firmware ELF. */
+#if defined(ESP_PLATFORM)
+#include "esp_debug_helpers.h"
+#define RDM7_FULLINV_PCS 8
+uint32_t rdm7_fullinv_pcs[RDM7_FULLINV_PCS];
+volatile uint32_t rdm7_fullinv_seq = 0;
+/* Same capture for the inv-buffer OVERFLOW branch (the silent full-screen
+ * substitution when more than LV_INV_BUF_SIZE areas land in one frame). */
+uint32_t rdm7_invovf_pcs[RDM7_FULLINV_PCS];
+volatile uint32_t rdm7_invovf_seq = 0;
+
+static void rdm7_capture_backtrace(uint32_t *out)
+{
+    esp_backtrace_frame_t frame;
+    esp_backtrace_get_start(&frame.pc, &frame.sp, &frame.next_pc);
+    for(int fi = 0; fi < RDM7_FULLINV_PCS; fi++) {
+        out[fi] = frame.pc;
+        if(!esp_backtrace_get_next_frame(&frame)) {
+            for(int fj = fi + 1; fj < RDM7_FULLINV_PCS; fj++) out[fj] = 0;
+            break;
+        }
+    }
+}
+#endif
+
 #if LV_USE_PERF_MONITOR
     static perf_monitor_t   perf_monitor;
 #endif
@@ -242,6 +280,17 @@ void _lv_inv_area(lv_disp_t * disp, const lv_area_t * area_p)
 
     if(disp->driver->rounder_cb) disp->driver->rounder_cb(disp->driver, &com_area);
 
+#if defined(ESP_PLATFORM)
+    /* RDM7 DIAG: someone invalidated the entire screen in one call — grab a
+     * backtrace so /api/perf/bigframe can name the culprit. The frame walk
+     * is a handful of loads; only runs on full-screen invalidations. */
+    if(com_area.x1 <= scr_area.x1 && com_area.y1 <= scr_area.y1 &&
+       com_area.x2 >= scr_area.x2 && com_area.y2 >= scr_area.y2) {
+        rdm7_capture_backtrace(rdm7_fullinv_pcs);
+        rdm7_fullinv_seq++;
+    }
+#endif
+
     /*Save only if this area is not in one of the saved areas*/
     uint16_t i;
     for(i = 0; i < disp->inv_p; i++) {
@@ -253,6 +302,12 @@ void _lv_inv_area(lv_disp_t * disp, const lv_area_t * area_p)
         lv_area_copy(&disp->inv_areas[disp->inv_p], &com_area);
     }
     else {   /*If no place for the area add the screen*/
+#if defined(ESP_PLATFORM)
+        /* RDM7 DIAG: the silent full-screen fallback fired — capture who
+         * pushed the buffer over the edge (see /api/perf/bigframe). */
+        rdm7_capture_backtrace(rdm7_invovf_pcs);
+        rdm7_invovf_seq++;
+#endif
         disp->inv_p = 0;
         lv_area_copy(&disp->inv_areas[disp->inv_p], &scr_area);
     }
@@ -320,6 +375,19 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
         return;
     }
 
+    /* RDM7 DIAG: snapshot the pre-join dirty list so a near-full-screen
+     * frame can be attributed to the widgets whose rects chained. Promoted
+     * to the published buffer below when this frame's px_num lands big;
+     * read via GET /api/perf/bigframe. ~512 B copy per frame — negligible. */
+    rdm7_bigframe_cand_count = disp_refr->inv_p < RDM7_BIGFRAME_MAX_RECTS
+                               ? disp_refr->inv_p : RDM7_BIGFRAME_MAX_RECTS;
+    for(uint16_t ri = 0; ri < rdm7_bigframe_cand_count; ri++) {
+        rdm7_bigframe_cand[ri][0] = (int16_t)disp_refr->inv_areas[ri].x1;
+        rdm7_bigframe_cand[ri][1] = (int16_t)disp_refr->inv_areas[ri].y1;
+        rdm7_bigframe_cand[ri][2] = (int16_t)disp_refr->inv_areas[ri].x2;
+        rdm7_bigframe_cand[ri][3] = (int16_t)disp_refr->inv_areas[ri].y2;
+    }
+
     lv_refr_join_area();
     refr_sync_areas();
     refr_invalid_areas();
@@ -350,6 +418,24 @@ void _lv_disp_refr_timer(lv_timer_t * tmr)
         /*Call monitor cb if present*/
         if(disp_refr->driver->monitor_cb) {
             disp_refr->driver->monitor_cb(disp_refr->driver, elaps, px_num);
+        }
+
+        /* RDM7 DIAG: this frame invalidated >=90% of the screen — publish
+         * the pre-join rect list captured above for /api/perf/bigframe. */
+        {
+            uint32_t scr = (uint32_t)lv_disp_get_hor_res(disp_refr) *
+                           (uint32_t)lv_disp_get_ver_res(disp_refr);
+            if(scr && px_num >= scr - scr / 10) {
+                for(uint16_t ri = 0; ri < rdm7_bigframe_cand_count; ri++) {
+                    rdm7_bigframe_rects[ri][0] = rdm7_bigframe_cand[ri][0];
+                    rdm7_bigframe_rects[ri][1] = rdm7_bigframe_cand[ri][1];
+                    rdm7_bigframe_rects[ri][2] = rdm7_bigframe_cand[ri][2];
+                    rdm7_bigframe_rects[ri][3] = rdm7_bigframe_cand[ri][3];
+                }
+                rdm7_bigframe_count = rdm7_bigframe_cand_count;
+                rdm7_bigframe_px = px_num;
+                rdm7_bigframe_seq++;
+            }
         }
     }
 

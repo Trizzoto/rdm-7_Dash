@@ -23,11 +23,23 @@ typedef struct {
 	bool     current_state;     /* runtime only -- NOT serialized */
 	char     signal_name[32];
 	int16_t  signal_index;
-	/* Color-based state rendering (replaces opacity-based) */
+	/* ── v14 channel binding ─────────────────────────────────── */
+	char     channel_id[32];
+	void    *channel;     /* channel_t* — opaque */
+	/* Color-based state rendering (replaces opacity-based).
+	 * color_on/opa_on/... are the LIVE values the renderers read; the base_*
+	 * twins hold the user-configured values. They differ only while a
+	 * conditional rule override is active — apply_overrides resets live from
+	 * base then layers the active overrides on top. to_json / inspector_get
+	 * must read base_* so an active rule never gets persisted as config. */
 	lv_color_t color_on;        /* default: amber 0xFFBF00 */
 	uint8_t    opa_on;          /* default: 255 (fully visible) */
 	lv_color_t color_off;       /* default: 0x333333 (dark grey) */
-	uint8_t    opa_off;         /* default: 0 (invisible) */
+	uint8_t    opa_off;         /* default: 70 (dimmed but visible when off) */
+	lv_color_t base_color_on;
+	uint8_t    base_opa_on;
+	lv_color_t base_color_off;
+	uint8_t    base_opa_off;
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	indicator_night_overrides_t night;
 } indicator_data_t;
@@ -47,6 +59,10 @@ void update_config_preview(uint8_t indicator_idx);
 
 /** Apply analog (wire) state to both indicators; skips CAN-sourced channels. */
 void indicator_apply_analog_state(bool left_on, bool right_on);
+
+/** Force one indicator's lamp on/off for the editor "Test Active" preview,
+ * regardless of input_source (Wire or CAN). Slot 0 = left, 1 = right. */
+void widget_indicator_apply_test_state(uint8_t slot, bool active);
 
 /** LVGL timer callback for indicator blink animation. */
 void indicator_animation_timer_cb(lv_timer_t *timer);

@@ -40,11 +40,47 @@ extern int web_server_uri_register_failures;
 // 413 Payload Too Large JSON response (layout JSON exceeded LAYOUT_MAX_FILE_BYTES).
 esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual);
 
+// 503 + Retry-After for transient conditions (LVGL lock busy, a heavy build
+// already in flight, momentary OOM under load). Semantically "retry shortly",
+// which client poll/edit loops honour — unlike a 500, which surfaces an error.
+esp_err_t web_server_send_busy(httpd_req_t *req);
+
+// Drain up to max_drain bytes of an unread request body so a subsequent error
+// response is delivered cleanly (a FIN, not a TCP RST). Call before rejecting
+// an oversize upload by content_len, or the client sees a connection reset
+// instead of the 4xx. Bounded so a huge body can't tie the worker up.
+void web_server_drain_body(httpd_req_t *req, size_t max_drain);
+
+// Serialize + send a cJSON object as application/json (with CORS), then free
+// it. ALWAYS consumes root. Sends a 500 instead of crashing if the serialize
+// OOMs. Forward-declared with a cJSON struct tag so callers needn't include
+// cJSON.h just for the prototype.
+struct cJSON;
+esp_err_t web_server_send_json(httpd_req_t *req, struct cJSON *root);
+
 // Path-traversal guards for user-supplied file/layout names.
 // web_server_name_is_safe: no dots, no slashes, no control chars.
 // web_server_filename_is_safe: allows one dot (extension); rejects "..".
 bool web_server_name_is_safe(const char *name);
 bool web_server_filename_is_safe(const char *name);
+
+// In-place percent-decode of a query-string value: "%XX" -> byte, "+" -> space.
+// httpd_query_key_value() returns the raw encoded value; call this before the
+// safety check + path build so names with spaces (e.g. "Fugaz One") resolve.
+void web_server_url_decode(char *name);
+
+// Receive a (small, JSON) POST body into buf, looping until content_len is
+// consumed — a single httpd_req_recv() only returns the first TCP segment,
+// so split bodies used to cause intermittent 400s. Null-terminates. On any
+// failure (no body, socket error, body >= cap) sends the 4xx itself and
+// returns ESP_FAIL — callers just `return ESP_FAIL;`. Not for file uploads;
+// those stream chunks instead of buffering.
+esp_err_t web_server_recv_body(httpd_req_t *req, char *buf, size_t cap);
+
+// Same receive loop but never touches the response: returns body length, or
+// -1 on empty/oversize/socket error. For handlers with an OPTIONAL body or
+// their own error envelope.
+int web_server_recv_body_raw(httpd_req_t *req, char *buf, size_t cap);
 
 // Domain register() entry points — called from web_server_start().
 void web_server_captive_register(httpd_handle_t server);
@@ -59,6 +95,9 @@ void web_server_system_register(httpd_handle_t server);
 void web_server_logger_register(httpd_handle_t server);
 void web_server_layout_register(httpd_handle_t server);
 void web_server_obd2_register(httpd_handle_t server);
+void web_server_channels_register(httpd_handle_t server);
+void web_server_test_register(httpd_handle_t server);
+void web_server_mirror_register(httpd_handle_t server);
 
 #ifdef __cplusplus
 }

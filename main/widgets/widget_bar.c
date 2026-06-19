@@ -1,6 +1,7 @@
 #include "widget_bar.h"
 #include "widget_image.h"
 #include "widget_rules.h"
+#include "data/channel_manager.h"
 #include "screen_config.h"
 #include "can/can_decode.h"
 #include "driver/twai.h"
@@ -44,6 +45,111 @@ static inline bool _bar_has_fill_image(const bar_data_t *bd) {
 	return bd && bd->bar_image_full[0] != '\0';
 }
 
+/* Max tick objects we can hold (must match bar_data_t::tick_objs[60]). With
+ * tick_side == Both we draw two per logical tick, so the per-side count is
+ * clamped to 30. */
+#define BAR_MAX_TICK_OBJS  60
+
+/* Delete every live tick sibling and reset the bookkeeping. Tick objects are
+ * children of the bar's parent (siblings of root / label / value), so they are
+ * deleted explicitly here exactly like the label/value siblings in
+ * _bar_destroy — lv_obj_clean(screen) on a rebuild already frees them, but any
+ * in-place rebuild (resize / inspector edit) must tear down the old set first
+ * to avoid orphaned objects. */
+static void _bar_free_ticks(bar_data_t *bd) {
+	if (!bd) return;
+	for (uint8_t i = 0; i < bd->tick_obj_count; i++) {
+		if (bd->tick_objs[i] && lv_obj_is_valid(bd->tick_objs[i]))
+			lv_obj_del(bd->tick_objs[i]);
+		bd->tick_objs[i] = NULL;
+	}
+	bd->tick_obj_count = 0;
+}
+
+/* Create one tick rectangle at center-origin (x,y), pushed to the foreground so
+ * the bar fill never paints over it. Mirrors update_rpm_lines() tick styling:
+ * radius 0, solid bg, no border, no padding, non-interactive. Returns the new
+ * object (or NULL on alloc / cap failure). */
+static lv_obj_t *_bar_make_tick(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                                lv_coord_t tw, lv_coord_t th, lv_color_t col) {
+	lv_obj_t *t = lv_obj_create(parent);
+	if (!t) return NULL;
+	lv_obj_set_size(t, tw, th);
+	lv_obj_set_align(t, LV_ALIGN_CENTER);
+	lv_obj_set_pos(t, x, y);
+	lv_obj_set_style_radius(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(t, col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(t, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_border_width(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_pad_all(t, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_clear_flag(t, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_move_foreground(t);
+	return t;
+}
+
+/* (Re)build the tick marks for a bar widget. Tears down any existing ticks,
+ * then — if show_ticks — lays tick_count rectangles evenly across the bar
+ * width (w->w) in center-origin coordinates. tick_side controls vertical
+ * placement above (Top), below (Bottom), or both edges (Both) of the bar
+ * body. Called only on create / resize / inspector edit (NOT per signal tick),
+ * respecting the paint-memo pattern. */
+static void _bar_build_ticks(widget_t *w) {
+	if (!w) return;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	_bar_free_ticks(bd);
+
+	if (!bd->show_ticks || bd->tick_count == 0) return;
+
+	/* Parent of the bar = parent the siblings live on. Fall back to the bar
+	 * object's parent (image-mode bars may not have bd->bar_obj). */
+	lv_obj_t *anchor = bd->bar_obj ? bd->bar_obj
+	                 : (bd->img_bg_obj ? bd->img_bg_obj : w->root);
+	if (!anchor || !lv_obj_is_valid(anchor)) return;
+	lv_obj_t *parent = lv_obj_get_parent(anchor);
+	if (!parent || !lv_obj_is_valid(parent)) return;
+
+	lv_coord_t tw = (lv_coord_t)(bd->tick_width  ? bd->tick_width  : 1);
+	lv_coord_t th = (lv_coord_t)(bd->tick_length ? bd->tick_length : 1);
+	uint8_t count = bd->tick_count;
+
+	/* Per-side cap so "Both" (2 objects per tick) can't overflow tick_objs[60]. */
+	bool both = (bd->tick_side == 2);
+	uint8_t per_side_cap = both ? (BAR_MAX_TICK_OBJS / 2) : BAR_MAX_TICK_OBJS;
+	if (count > per_side_cap) count = per_side_cap;
+
+	/* Even spacing across the full bar width: tick i sits at
+	 * left_edge + i/(count-1) * width. A single tick is centered. */
+	lv_coord_t left = w->x - (w->w / 2);
+	lv_coord_t span = w->w;
+	/* Vertical placement: half the bar height plus half the tick height puts
+	 * the tick flush against the top / bottom edge of the bar body. */
+	lv_coord_t y_top = w->y - (w->h / 2) - (th / 2);
+	lv_coord_t y_bot = w->y + (w->h / 2) + (th / 2);
+
+	for (uint8_t i = 0; i < count; i++) {
+		lv_coord_t x;
+		if (count == 1)
+			x = w->x;
+		else
+			x = left + (lv_coord_t)(((int32_t)i * span) / (count - 1));
+
+		if (bd->tick_side == 0 || bd->tick_side == 2) {   /* Top / Both */
+			if (bd->tick_obj_count < BAR_MAX_TICK_OBJS) {
+				lv_obj_t *t = _bar_make_tick(parent, x, y_top, tw, th, bd->tick_color);
+				if (t) bd->tick_objs[bd->tick_obj_count++] = t;
+			}
+		}
+		if (bd->tick_side == 1 || bd->tick_side == 2) {   /* Bottom / Both */
+			if (bd->tick_obj_count < BAR_MAX_TICK_OBJS) {
+				lv_obj_t *t = _bar_make_tick(parent, x, y_bot, tw, th, bd->tick_color);
+				if (t) bd->tick_objs[bd->tick_obj_count++] = t;
+			}
+		}
+	}
+}
+
 /* Decimals drive the bar's *internal* resolution. A user bar_min/bar_max of
  * 0..1 with decimals=2 yields an internal LVGL range of 0..100, so a live
  * value of 0.85 fills 85% of the bar instead of snapping to the 0 or 1 end.
@@ -83,14 +189,58 @@ static float _bar_apply_anchor(const bar_data_t *bd, float v) {
 	return mn + (pct / 100.0f) * (mx - mn);
 }
 
-void widget_bar_sync_range(bar_data_t *bd) {
-	if (!bd || !bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+/* Forward decl — used by widget_bar_sync_range to re-push the current value. */
+static void _bar_on_signal(float value, bool is_stale, void *user_data);
+
+/* Push the LVGL bar range. Normal mode uses the scaled [bar_min..bar_max].
+ * Center-fill uses a SYMMETRICAL range about the data midpoint (±half) so the
+ * fill emanates from the bar's geometric centre for ANY configured range —
+ * LVGL only treats SYMMETRICAL as centred when min<0<max and fills from data
+ * zero, so a positive-only or asymmetric range would otherwise degrade to a
+ * plain left-fill. _bar_on_signal feeds (value - midpoint) to match. */
+static void _bar_set_lv_range(bar_data_t *bd) {
+	if (!bd) return;
 	int32_t scale = _bar_resolution_scale(bd);
-	int32_t lo = bd->bar_min * scale;
-	int32_t hi = bd->bar_max * scale;
-	if (hi <= lo) { lo = 0; hi = 100 * scale; }
-	lv_bar_set_range(bd->bar_obj, lo, hi);
+	int32_t lo, hi;
+	/* Mirror modes (fill_dir 2/3) own the geometry and use plain min..max on
+	 * each half — center_fill's symmetric ±half range does not apply there. */
+	bool mirror = (bd->fill_dir == 2 || bd->fill_dir == 3);
+	if (bd->center_fill && !mirror) {
+		int32_t half = lroundf((bd->bar_max - bd->bar_min) * 0.5f * (float)scale);
+		if (half < 1) half = 1;
+		lo = -half; hi = half;
+	} else {
+		lo = lroundf(bd->bar_min * (float)scale);
+		hi = lroundf(bd->bar_max * (float)scale);
+		if (hi <= lo) { lo = 0; hi = 100 * scale; }
+	}
+	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj))
+		lv_bar_set_range(bd->bar_obj, lo, hi);
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
+		lv_bar_set_range(bd->bar_obj2, lo, hi);
 }
+
+void widget_bar_sync_range(bar_data_t *bd) {
+	if (!bd) return;
+	_bar_set_lv_range(bd);
+	/* Range / decimals just changed → the cached scaled value (standard mode)
+	 * or clip width (image mode) no longer maps to the right fill. Drop the
+	 * paint memo and re-push the current value NOW: a parked/steady signal
+	 * produces no further tick to self-heal (signal.c only notifies on a value
+	 * change), so without this the fill would freeze at the old scale. */
+	bd->_pc_valid = false;
+	widget_t *w = widget_registry_find_by_type_and_slot(WIDGET_BAR, bd->slot);
+	if (w && bd->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)bd->signal_index);
+		if (sig) _bar_on_signal(sig->current_value, sig->is_stale, w);
+	}
+}
+
+/* Indicator styling/paint helpers (defined near _bar_create) — forward-declared
+ * here so _bar_on_signal (above their definitions) can paint both mirror halves. */
+static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track);
+static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
+                                 lv_color_t color, bool grad_on);
 
 /* ── Helpers: look up bar_data_t by slot or value_id via registry ──────── */
 static bar_data_t *_lookup_bar_data(uint8_t slot) {
@@ -116,16 +266,13 @@ void bar_range_input_event_cb(lv_event_t *e) {
 		if (!bd) return;
 
 		bool is_min = lv_obj_get_user_data(textarea) != NULL;
-		int32_t value = atoi(txt);
-		lv_obj_t *bar_obj = (slot == 0) ? ui_Bar_1 : ui_Bar_2;
+		float value = (float)atof(txt);
 
-		if (is_min) {
-			bd->bar_min = value;
-			lv_bar_set_range(bar_obj, value, bd->bar_max);
-		} else {
-			bd->bar_max = value;
-			lv_bar_set_range(bar_obj, bd->bar_min, value);
-		}
+		if (is_min) bd->bar_min = value;
+		else        bd->bar_max = value;
+		/* Re-apply the scaled range (10^decimals) so fractional bounds keep
+		 * their LVGL resolution instead of snapping to whole units. */
+		widget_bar_sync_range(bd);
 	}
 }
 
@@ -175,17 +322,16 @@ void update_bar_ui(void *param) {
 
 	bool show_val = bd ? bd->show_bar_value : false;
 	int decimals = bd ? bd->decimals : 0;
+	int16_t sig_idx = bd ? bd->signal_index : -1;
 	lv_obj_t *val_label = (upd->bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
 		if (upd->is_timeout) {
-			strcpy(value_str, "---");
+			strcpy(value_str, "--");
 		} else {
-			if (decimals == 0) {
-				snprintf(value_str, sizeof(value_str), "%d", (int)upd->final_value);
-			} else {
-				snprintf(value_str, sizeof(value_str), "%.*f", decimals, upd->final_value);
-			}
+			channel_format_display_value(bd ? (const channel_t *)bd->channel : NULL,
+			                             sig_idx, (float)upd->final_value,
+			                             (uint8_t)decimals, value_str, sizeof(value_str));
 		}
 		lv_label_set_text(val_label, value_str);
 	}
@@ -221,14 +367,13 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 
 	bool show_val = bd ? bd->show_bar_value : false;
 	int decimals = bd ? bd->decimals : 0;
+	int16_t sig_idx = bd ? bd->signal_index : -1;
 	lv_obj_t *val_label = (bar_index == 0) ? ui_Bar_1_Value : ui_Bar_2_Value;
 	if (val_label && lv_obj_is_valid(val_label) && show_val) {
 		char value_str[16];
-		if (decimals == 0) {
-			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
-		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", decimals, final_value);
-		}
+		channel_format_display_value(bd ? (const channel_t *)bd->channel : NULL,
+		                             sig_idx, (float)final_value,
+		                             (uint8_t)decimals, value_str, sizeof(value_str));
 		lv_label_set_text(val_label, value_str);
 	}
 
@@ -244,8 +389,8 @@ void update_bar_ui_immediate(int bar_index, int32_t bar_value,
 void widget_bar_create(lv_obj_t *parent) {
 	bar_data_t *bd1 = _lookup_bar_data(0);
 	int32_t s1 = _bar_resolution_scale(bd1);
-	int32_t b1_min = (bd1 ? bd1->bar_min : 0)   * s1;
-	int32_t b1_max = (bd1 ? bd1->bar_max : 100) * s1;
+	int32_t b1_min = lroundf((bd1 ? bd1->bar_min : 0.0f)   * (float)s1);
+	int32_t b1_max = lroundf((bd1 ? bd1->bar_max : 100.0f) * (float)s1);
 	if (b1_max <= b1_min) { b1_min = 0; b1_max = 100 * s1; }
 	ui_Bar_1 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_1, b1_min, b1_max);
@@ -285,7 +430,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_align(ui_Bar_1_Value, LV_ALIGN_CENTER);
 	lv_obj_set_x(ui_Bar_1_Value, -140);
 	lv_obj_set_y(ui_Bar_1_Value, 181);
-	lv_label_set_text(ui_Bar_1_Value, "---");
+	lv_label_set_text(ui_Bar_1_Value, "--");
 	lv_obj_set_style_text_color(ui_Bar_1_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_1_Value, THEME_FONT_BODY,
@@ -297,8 +442,8 @@ void widget_bar_create(lv_obj_t *parent) {
 
 	bar_data_t *bd2 = _lookup_bar_data(1);
 	int32_t s2 = _bar_resolution_scale(bd2);
-	int32_t b2_min = (bd2 ? bd2->bar_min : 0)   * s2;
-	int32_t b2_max = (bd2 ? bd2->bar_max : 100) * s2;
+	int32_t b2_min = lroundf((bd2 ? bd2->bar_min : 0.0f)   * (float)s2);
+	int32_t b2_max = lroundf((bd2 ? bd2->bar_max : 100.0f) * (float)s2);
 	if (b2_max <= b2_min) { b2_min = 0; b2_max = 100 * s2; }
 	ui_Bar_2 = lv_bar_create(parent);
 	lv_bar_set_range(ui_Bar_2, b2_min, b2_max);
@@ -338,7 +483,7 @@ void widget_bar_create(lv_obj_t *parent) {
 	lv_obj_set_align(ui_Bar_2_Value, LV_ALIGN_CENTER);
 	lv_obj_set_x(ui_Bar_2_Value, 340);
 	lv_obj_set_y(ui_Bar_2_Value, 181);
-	lv_label_set_text(ui_Bar_2_Value, "---");
+	lv_label_set_text(ui_Bar_2_Value, "--");
 	lv_obj_set_style_text_color(ui_Bar_2_Value, THEME_COLOR_TEXT_PRIMARY,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_text_font(ui_Bar_2_Value, THEME_FONT_BODY,
@@ -355,10 +500,107 @@ uint64_t *widget_bar_get_last_can_time(uint8_t bar_idx) {
 
 /* ── Phase 2: widget_t factory ───────────────────────────────────────────── */
 
+/* Forward decl: defined below, but needed by _bar_on_channel_changed which
+ * re-subscribes it when the channel's signal source is rebound at runtime. */
+static void _bar_on_signal(float value, bool is_stale, void *user_data);
+
+/* Channel-changed listener: re-snapshot channel fields and invalidate.
+ * The next _bar_on_signal call will pick up the new bar_min/max/low/high
+ * via the widget's live fields. */
+static void _bar_on_channel_changed(channel_t *c, void *user_data) {
+	if (!c || !user_data) return;
+	widget_t *w = (widget_t *)user_data;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+
+	safe_strncpy(bd->signal_name, c->signal_name, sizeof(bd->signal_name));
+	/* Re-point our own signal subscription when the channel's source index
+	 * actually moved. _bar_on_signal is keyed in the registry by the index it
+	 * attached to at create; without this the gauge stays bound to the OLD
+	 * signal (or nothing) and freezes on its last value after a runtime rebind.
+	 * Mirrors the inspector rebind path (_bar_inspector_set / "signal_name"). */
+	int16_t new_idx = c->signal_index;
+	if (new_idx != bd->signal_index) {
+		if (bd->signal_index >= 0)
+			signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+		bd->signal_index = new_idx;
+		if (new_idx >= 0)
+			signal_subscribe(new_idx, _bar_on_signal, w);
+	}
+	bd->bar_min = c->min;
+	bd->bar_max = c->max;
+	/* Channel owns the alert thresholds. When a side has no warn set, park it
+	 * at the range edge so that alert can never fire (reverts to inactive)
+	 * instead of leaving a stale 0 that paints the bar permanently in-alert. */
+	bd->bar_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? c->low_warn  : bd->bar_min;
+	bd->bar_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? c->high_warn : bd->bar_max;
+	/* Bar zone colours are widget-owned (Widget settings → ALERTS) — never
+	 * driven by the channel. Only range/thresholds/signal sync above. */
+
+	/* Bounds changed → re-push the LVGL range (standard mode) and re-render the
+	 * current value. The lv_bar's range is set at create from bar_min/max; the
+	 * old code only re-snapshotted the fields and dropped the paint memo, so the
+	 * standard bar kept its create-time range and the fill mis-scaled / clamped
+	 * after a runtime rebind or a channel range edit. sync_range also clears the
+	 * memo and re-pushes the value, so the fill snaps to the new bounds now. */
+	widget_bar_sync_range(bd);
+}
+
+/* Smoothing: re-feed the eased value through the normal path, bypassing the
+ * intercept below so there's no recursion. */
+static void _bar_smooth_apply(widget_t *w, float v) {
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	if (!bd) return;
+	bd->smooth_bypass = true;
+	_bar_on_signal(v, false, w);
+	bd->smooth_bypass = false;
+}
+
+/* Position the leading-edge marker at the fill front of a STANDARD (non-image,
+ * non-mirror) bar — a thin sibling rectangle that rides the moving edge of the
+ * fill, mirroring the pathbar's lead edge. Cheap (called only when the value
+ * actually changes); hidden when the bar is empty or stale. The size is set at
+ * create / resize, so this only moves + toggles visibility. */
+static void _bar_place_lead_edge(widget_t *w, bar_data_t *bd,
+                                 int32_t display_value, bool stale) {
+	lv_obj_t *tip = bd ? bd->fill_tip_obj : NULL;
+	if (!tip || !lv_obj_is_valid(tip)) return;
+	if (!bd->bar_obj || !lv_obj_is_valid(bd->bar_obj)) return;
+	int32_t rmin = lv_bar_get_min_value(bd->bar_obj);
+	int32_t rmax = lv_bar_get_max_value(bd->bar_obj);
+	float frac = (rmax > rmin) ? (float)(display_value - rmin) / (float)(rmax - rmin) : 0.0f;
+	if (frac < 0.0f) frac = 0.0f;
+	if (frac > 1.0f) frac = 1.0f;
+	/* Empty normal bar → nothing to mark. Center-fill always has a front. */
+	if (stale || (!bd->center_fill && frac <= 0.004f)) {
+		lv_obj_add_flag(tip, LV_OBJ_FLAG_HIDDEN);
+		return;
+	}
+	float pos_frac = (bd->fill_dir == 1) ? (1.0f - frac) : frac;   /* RTL: front on the left */
+	float left  = (float)w->x - (float)w->w / 2.0f;                /* center-origin coords */
+	float front = left + pos_frac * (float)w->w;
+	float e = (float)bd->fill_edge_width;
+	lv_coord_t cx = (lv_coord_t)lroundf((bd->fill_dir == 1) ? front + e / 2.0f
+	                                                        : front - e / 2.0f);
+	lv_obj_set_pos(tip, cx, w->y);
+	lv_obj_clear_flag(tip, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 	widget_t *w = (widget_t *)user_data;
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
+
+	/* Needle/fill smoothing: ease the live value at the refresh rate (uses spare
+	 * CPU for a glide). Stale resets so the next live value snaps. */
+	if (bd->smooth.smoothing_ms != 0 && !bd->smooth_bypass) {
+		if (is_stale) {
+			widget_smooth_reset(&bd->smooth);
+		} else {
+			widget_smooth_set(&bd->smooth, value, false);
+			return;
+		}
+	}
 
 	double final_value = is_stale ? 0.0 : (double)value;
 	/* Apply anchor curve once for the FILL POSITION calculation. Threshold
@@ -373,49 +615,123 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 
 	/* ── Fill-image bar mode (clip container controls fill width) ── */
 	if (bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj)) {
-		int32_t range = bd->bar_max - bd->bar_min;
+		float range = bd->bar_max - bd->bar_min;
 		int32_t pct = 0;
-		if (range > 0 && !is_stale) {
+		if (range > 0.0f && !is_stale) {
 			double clamped = (double)fill_value;
 			if (clamped < bd->bar_min) clamped = bd->bar_min;
 			if (clamped > bd->bar_max) clamped = bd->bar_max;
 			if (bd->invert_bar_value)
-				pct = (int32_t)(((bd->bar_max - clamped) * 100) / range);
+				pct = (int32_t)(((bd->bar_max - clamped) * 100.0) / range);
 			else
-				pct = (int32_t)(((clamped - bd->bar_min) * 100) / range);
+				pct = (int32_t)(((clamped - bd->bar_min) * 100.0) / range);
 		}
 		lv_coord_t clip_w = (lv_coord_t)((pct * w->w) / 100);
-		lv_obj_set_width(bd->img_clip_obj, clip_w);
+		if (!bd->_pc_valid || bd->_pc_clip_w != clip_w) {
+			lv_obj_set_width(bd->img_clip_obj, clip_w);
+			/* Leading-edge highlight rides the fill front. */
+			if (bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj))
+				lv_obj_set_x(bd->fill_tip_obj, clip_w - bd->fill_edge_width);
+			bd->_pc_clip_w = clip_w;
+		}
 	} else if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		/* ── Standard LVGL bar mode ── */
-		lv_bar_set_value(bd->bar_obj, bar_value, LV_ANIM_OFF);
+		bool mirror = (bd->fill_dir == 2 || bd->fill_dir == 3);
+		int32_t display_value;
+		if (is_stale) {
+			display_value = 0;   /* SYMMETRICAL → centre pill; NORMAL → empty */
+		} else if (bd->center_fill && !mirror) {
+			/* Center-fill: feed the offset from the range midpoint so the
+			 * SYMMETRICAL fill grows outward from the bar's centre (range set
+			 * symmetric in _bar_set_lv_range). Invert reflects about centre. */
+			float mid = (bd->bar_min + bd->bar_max) * 0.5f;
+			display_value = (int32_t)((fill_value - mid) * (float)scale);
+			if (bd->invert_bar_value) display_value = -display_value;
+		} else {
+			/* Invert is implemented by reflecting the value about the midpoint:
+			 * (min + max - value) keeps the bar filling left→right but maps a
+			 * "full" reading to an empty fill and vice versa. We do this on the
+			 * already-scaled bar_value because the LVGL bar's range is also
+			 * scaled (see _bar_resolution_scale). */
+			display_value = bar_value;
+			if (bd->invert_bar_value) {
+				int32_t scaled_min = lroundf(bd->bar_min * (float)scale);
+				int32_t scaled_max = lroundf(bd->bar_max * (float)scale);
+				display_value = scaled_min + scaled_max - bar_value;
+			}
+		}
+		/* Value-gate: lv_bar_set_value (LV_ANIM_OFF) invalidates the WHOLE
+		 * bar bbox every call — the dominant per-frame cost. Skip it when the
+		 * scaled display value is unchanged (common for slow / low-decimal
+		 * signals), which removes the whole-bar dirty rect entirely. */
+		if (!bd->_pc_valid || bd->_pc_display_value != display_value) {
+			lv_bar_set_value(bd->bar_obj, display_value, LV_ANIM_OFF);
+			if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2))
+				lv_bar_set_value(bd->bar_obj2, display_value, LV_ANIM_OFF);
+			/* Move the leading-edge marker to the new fill front (single-bar
+			 * modes only; mirror modes have two fronts and skip the marker). */
+			if (bd->fill_tip_obj && !mirror)
+				_bar_place_lead_edge(w, bd, display_value, is_stale);
+			bd->_pc_display_value = display_value;
+		}
 		bool night_active = night_mode_is_active();
 		lv_color_t low_col  = NIGHT_PICK_COLOR(night_active, bd->night, bar_low_color,      bd->bar_low_color);
 		lv_color_t high_col = NIGHT_PICK_COLOR(night_active, bd->night, bar_high_color,     bd->bar_high_color);
 		lv_color_t in_col   = NIGHT_PICK_COLOR(night_active, bd->night, bar_in_range_color, bd->bar_in_range_color);
 		lv_color_t new_color;
+		bool in_range = false;
 		if (final_value < bd->bar_low)
 			new_color = low_col;
 		else if (final_value > bd->bar_high)
 			new_color = high_col;
-		else
-			new_color = in_col;
-		lv_obj_set_style_bg_color(bd->bar_obj, new_color,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
+		else { new_color = in_col; in_range = true; }
+		/* Color + gradient memo: new_color is night-resolved, so a night
+		 * toggle that changes the resolved color re-fires here on the next
+		 * tick. grad identity = (active flag, first-stop color). */
+		bool grad_now = in_range && bd->grad_stops.count >= 2;
+		uint16_t grad_first_now =
+			(bd->grad_stops.count >= 1) ? bd->grad_stops.stops[0].color : 0;
+		if (!bd->_pc_valid || bd->_pc_bg.full != new_color.full ||
+		    bd->_pc_grad_active != grad_now || bd->_pc_grad_first != grad_first_now) {
+			/* Multi-stop horizontal gradient on the indicator, in-range only.
+			 * Uses LVGL's native lv_grad_dsc_t (cap raised to 8 stops in
+			 * sdkconfig) — rendered INTO the indicator rect so it grows with the
+			 * fill. Low/high alert states paint solid. Painted on both halves in
+			 * the mirror modes (bar_obj2) via _bar_paint_indicator. The helper
+			 * clears grad_lv_dsc.dir on the solid path because LVGL's draw_dsc
+			 * init checks grad->dir before falling back to bg_grad_dir. */
+			_bar_paint_indicator(bd->bar_obj, bd, new_color, in_range);
+			if (bd->bar_obj2)
+				_bar_paint_indicator(bd->bar_obj2, bd, new_color, in_range);
+			bd->_pc_bg = new_color;
+			bd->_pc_grad_active = grad_now;
+			bd->_pc_grad_first = grad_first_now;
+		}
 	}
 
 	/* Update this widget's own value label */
 	if (bd->value_obj && lv_obj_is_valid(bd->value_obj) && bd->show_bar_value) {
 		char value_str[16];
 		if (is_stale) {
-			strcpy(value_str, "---");
-		} else if (bd->decimals == 0) {
-			snprintf(value_str, sizeof(value_str), "%d", (int)final_value);
+			strcpy(value_str, "--");
 		} else {
-			snprintf(value_str, sizeof(value_str), "%.*f", bd->decimals, final_value);
+			/* Render in the channel display unit when set; else value-label
+			 * map / numeric via signal_format_value. The bar fill is set from
+			 * native min/max/value (ratio-preserving), so only this label
+			 * converts. */
+			channel_format_display_value((const channel_t *)bd->channel,
+			                             bd->signal_index, (float)final_value,
+			                             bd->decimals, value_str, sizeof(value_str));
 		}
-		lv_label_set_text(bd->value_obj, value_str);
+		/* Skip the realloc + label invalidate when the string is unchanged. */
+		if (!bd->_pc_valid || strcmp(bd->_pc_value_str, value_str) != 0) {
+			lv_label_set_text(bd->value_obj, value_str);
+			safe_strncpy(bd->_pc_value_str, value_str, sizeof(bd->_pc_value_str));
+		}
 	}
+
+	/* All gated writes for this tick are done — trust the memo next frame. */
+	bd->_pc_valid = true;
 
 	/* Update menu bar preview if visible */
 	uint8_t bar_index = bd->slot;
@@ -438,6 +754,47 @@ static void _bar_on_signal(float value, bool is_stale, void *user_data) {
 static void _bar_apply_night_mode(widget_t *w, bool active);
 static void _bar_night_cb(bool active, void *user_data);
 
+/* Apply the standard track + indicator styling to one lv_bar. Shared by the
+ * single-bar path and by each half in the mirror modes (fill_dir 2/3). */
+static void _bar_style_indicator(lv_obj_t *bar, bar_data_t *bd, bool has_track) {
+	lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (has_track) {
+		/* Track image is the visual background — make lv_bar body transparent */
+		lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+	} else {
+		lv_obj_set_style_bg_color(bar, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(bar, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bar, bd->bar_border_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
+	lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_color(bar, bd->bar_in_range_color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+}
+
+/* Paint one bar's indicator: solid color, or the multi-stop gradient when
+ * grad_on (and ≥2 stops). Factored out so the mirror modes paint both halves.
+ * Mutates bd->grad_lv_dsc.dir on the solid path (see the long note in
+ * _bar_on_signal about LVGL's draw_dsc grad->dir fallback). */
+static void _bar_paint_indicator(lv_obj_t *bar, bar_data_t *bd,
+                                 lv_color_t color, bool grad_on) {
+	if (!bar || !lv_obj_is_valid(bar)) return;
+	lv_obj_set_style_bg_color(bar, color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	if (grad_on && bd->grad_stops.count >= 2 &&
+	    gradient_stops_to_lv_grad_dsc(&bd->grad_stops, &bd->grad_lv_dsc,
+	                                  LV_GRAD_DIR_HOR)) {
+		lv_obj_set_style_bg_grad(bar, &bd->grad_lv_dsc,
+		                         LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	} else {
+		bd->grad_lv_dsc.dir = LV_GRAD_DIR_NONE;
+		lv_obj_set_style_bg_grad_dir(bar, LV_GRAD_DIR_NONE,
+		                             LV_PART_INDICATOR | LV_STATE_DEFAULT);
+	}
+}
+
 /* ── _bar_create: create a single bar per slot, positioned by layout ──────── */
 static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
@@ -447,8 +804,8 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	 * value of e.g. 0.85 on a 0..1 bar (decimals=2) fills 85/100 of the
 	 * bar, not snaps to 0 or 1. _bar_on_signal applies the same scale. */
 	int32_t scale = _bar_resolution_scale(bd);
-	int32_t b_min = (bd ? bd->bar_min : 0)   * scale;
-	int32_t b_max = (bd ? bd->bar_max : 100) * scale;
+	int32_t b_min = lroundf((bd ? bd->bar_min : 0.0f)   * (float)scale);
+	int32_t b_max = lroundf((bd ? bd->bar_max : 100.0f) * (float)scale);
 	if (b_max <= b_min) { b_min = 0; b_max = 100 * scale; }
 
 	bool has_track = _bar_has_track_image(bd);
@@ -517,6 +874,23 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 			if (bd->bar_img_full_dsc->header.w > 0)
 				lv_img_set_zoom(fill_img, (uint16_t)(256 * w->w / bd->bar_img_full_dsc->header.w));
 			bd->img_full_obj = fill_img;
+
+			/* Leading-edge highlight ("first class" tip): a thin coloured child
+			 * pinned to the clip's right edge. As the clip width tracks the fill,
+			 * the right-aligned child rides the fill front. A child (not a border)
+			 * avoids the border's content-inset, which would shift the fill img. */
+			if (bd->fill_edge_width > 0) {
+				lv_obj_t *tip = lv_obj_create(clip);
+				lv_obj_remove_style_all(tip);
+				lv_obj_set_size(tip, bd->fill_edge_width, w->h);
+				lv_obj_set_align(tip, LV_ALIGN_TOP_LEFT);
+				lv_obj_set_pos(tip, -bd->fill_edge_width, 0);  /* off-left until first value */
+				lv_obj_set_style_bg_color(tip, bd->fill_edge_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+				lv_obj_move_foreground(tip);
+				bd->fill_tip_obj = tip;
+			}
 		} else {
 			ESP_LOGW(TAG, "Failed to load fill image '%s', using color fill", bd->bar_image_full);
 			has_fill = false;
@@ -524,34 +898,87 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	}
 
 	if (!has_fill) {
-		/* Standard lv_bar for fill indicator */
-		lv_obj_t *bar = lv_bar_create(parent);
-		lv_bar_set_range(bar, b_min, b_max);
-		lv_bar_set_value(bar, b_min, LV_ANIM_OFF);
-		lv_obj_set_width(bar, w->w);
-		lv_obj_set_height(bar, w->h);
-		lv_obj_set_align(bar, LV_ALIGN_CENTER);
-		lv_obj_set_pos(bar, w->x, w->y);
-		lv_obj_set_style_radius(bar, bd->bar_radius, LV_PART_MAIN | LV_STATE_DEFAULT);
-		if (has_track) {
-			/* Track image is the visual background — make lv_bar body transparent */
-			lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+		/* Fill direction: 0=L→R, 1=R→L (base_dir), 2=Center→Out, 3=Edges→In.
+		 * Modes 2/3 split the bar into two mirrored half-bars whose base_dir
+		 * decides which way each half grows; center_fill yields to the mirror. */
+		uint8_t fdir = bd ? bd->fill_dir : 0;
+		bool mirror = (fdir == 2 || fdir == 3);
+		if (!mirror) {
+			/* Standard single lv_bar for fill indicator */
+			lv_obj_t *bar = lv_bar_create(parent);
+			lv_obj_set_width(bar, w->w);
+			lv_obj_set_height(bar, w->h);
+			lv_obj_set_align(bar, LV_ALIGN_CENTER);
+			lv_obj_set_pos(bar, w->x, w->y);
+			_bar_style_indicator(bar, bd, has_track);
+			if (fdir == 1)
+				lv_obj_set_style_base_dir(bar, LV_BASE_DIR_RTL,
+				                          LV_PART_MAIN | LV_STATE_DEFAULT);
+			bd->bar_obj = bar;
+			/* Center Fill: SYMMETRICAL draws the indicator from the (symmetric)
+			 * range midpoint outward. Default lv_bar mode is NORMAL, so only set
+			 * it when center_fill is enabled. Set mode BEFORE the range so
+			 * SYMMETRICAL's start_value tracks the new (negative) min. */
+			if (bd->center_fill)
+				lv_bar_set_mode(bar, LV_BAR_MODE_SYMMETRICAL);
+			_bar_set_lv_range(bd);
+			/* Resting value: centre (0) for center-fill, else the low end. The
+			 * initial-snap below overrides this once a bound signal is read. */
+			lv_bar_set_value(bar, bd->center_fill ? 0 : b_min, LV_ANIM_OFF);
+			/* Leading-edge marker: a thin sibling rectangle that rides the fill
+			 * front (same idea as the pathbar / image-bar tip). _bar_place_lead_edge
+			 * positions it each value change; created hidden until the first read. */
+			if (bd->fill_edge_width > 0) {
+				lv_obj_t *tip = lv_obj_create(parent);
+				lv_obj_remove_style_all(tip);
+				lv_obj_set_size(tip, bd->fill_edge_width, w->h);
+				lv_obj_set_align(tip, LV_ALIGN_CENTER);
+				lv_obj_set_pos(tip, w->x - (w->w / 2), w->y);
+				lv_obj_set_style_bg_color(tip, bd->fill_edge_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+				lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+				lv_obj_add_flag(tip, LV_OBJ_FLAG_HIDDEN);
+				lv_obj_move_foreground(tip);
+				bd->fill_tip_obj = tip;
+			}
+			if (!w->root) w->root = bar;
 		} else {
-			lv_obj_set_style_bg_color(bar, bd->bar_bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_bg_opa(bar, bd->bar_bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_width(bar, bd->bar_border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
-			lv_obj_set_style_border_color(bar, bd->bar_border_color,
-										  LV_PART_MAIN | LV_STATE_DEFAULT);
+			/* Two mirrored half-bars. Geometry is in center-origin coords:
+			 * the whole bar spans [x-w/2, x+w/2]; split at the centre. */
+			lv_coord_t leftW  = w->w / 2;
+			lv_coord_t rightW = w->w - leftW;
+			lv_coord_t leftX  = w->x - (w->w / 2) + (leftW / 2);
+			lv_coord_t rightX = w->x + (w->w / 2) - (rightW / 2);
+
+			lv_obj_t *barL = lv_bar_create(parent);
+			lv_obj_set_size(barL, leftW, w->h);
+			lv_obj_set_align(barL, LV_ALIGN_CENTER);
+			lv_obj_set_pos(barL, leftX, w->y);
+			_bar_style_indicator(barL, bd, has_track);
+			/* Center→Out: left grows from the centre (right edge) → RTL.
+			 * Edges→In:   left grows from the left edge → LTR. */
+			lv_obj_set_style_base_dir(barL,
+				fdir == 2 ? LV_BASE_DIR_RTL : LV_BASE_DIR_LTR,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+
+			lv_obj_t *barR = lv_bar_create(parent);
+			lv_obj_set_size(barR, rightW, w->h);
+			lv_obj_set_align(barR, LV_ALIGN_CENTER);
+			lv_obj_set_pos(barR, rightX, w->y);
+			_bar_style_indicator(barR, bd, has_track);
+			/* Center→Out: right grows from the centre (left edge) → LTR.
+			 * Edges→In:   right grows from the right edge → RTL. */
+			lv_obj_set_style_base_dir(barR,
+				fdir == 2 ? LV_BASE_DIR_LTR : LV_BASE_DIR_RTL,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
+
+			bd->bar_obj  = barL;
+			bd->bar_obj2 = barR;
+			_bar_set_lv_range(bd);   /* applies to both halves */
+			lv_bar_set_value(barL, b_min, LV_ANIM_OFF);
+			lv_bar_set_value(barR, b_min, LV_ANIM_OFF);
+			if (!w->root) w->root = barL;
 		}
-		lv_obj_set_style_pad_all(bar, 5, LV_PART_MAIN | LV_STATE_DEFAULT);
-		lv_obj_set_style_radius(bar, bd->indicator_radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_color(bar, THEME_COLOR_GREEN_BRIGHT,
-								  LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		lv_obj_set_style_bg_opa(bar, 255, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-		bd->bar_obj = bar;
-		if (!w->root) w->root = bar;
 	}
 
 	/* Create the label above the bar */
@@ -564,6 +991,10 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	const lv_font_t *bar_lbl_font = bd ? widget_resolve_font(bd->label_font) : NULL;
 	lv_obj_set_style_text_font(lbl, bar_lbl_font ? bar_lbl_font : THEME_FONT_DASH_LABEL,
 							   LV_PART_MAIN | LV_STATE_DEFAULT);
+	/* Apply Show Label preference. Default is true so existing layouts keep
+	 * their label rendered; user can hide it for a clean value-only bar. */
+	if (bd && !bd->show_bar_label)
+		lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
 
 	/* Value label sits at the bar's right end, vertically centered with the
 	 * bar fill, right-aligned so the digits hug the inside of the right edge.
@@ -581,7 +1012,7 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	lv_obj_set_pos(val,
 		w->x + (w->w / 2) - (BAR_VALUE_W / 2) - BAR_VALUE_PAD_R,
 		w->y);
-	lv_label_set_text(val, "---");
+	lv_label_set_text(val, "--");
 	lv_obj_set_style_text_color(val, bd->value_color,
 								LV_PART_MAIN | LV_STATE_DEFAULT);
 	const lv_font_t *bar_val_font = bd ? widget_resolve_font(bd->value_font) : NULL;
@@ -599,6 +1030,12 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		bd->value_obj = val;
 	}
 
+	/* Tick marks (optional) — siblings overlaid on the bar, built once here
+	 * and only rebuilt on resize / inspector edit (never per signal tick). */
+	bd->tick_obj_count = 0;
+	if (bd->show_ticks)
+		_bar_build_ticks(w);
+
 	/* Assign to slot globals so existing code (RPM limiter, callbacks) works */
 	if (slot == 0) {
 		ui_Bar_1 = bd ? bd->bar_obj : NULL;
@@ -610,9 +1047,18 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 		ui_Bar_2_Value = val;
 	}
 
+	/* Wire up needle/fill smoothing (range used for the settle epsilon). */
+	if (bd)
+		widget_smooth_config(&bd->smooth, w, _bar_smooth_apply, bd->bar_max - bd->bar_min);
+
 	/* Subscribe to signal if bound */
 	if (bd && bd->signal_index >= 0)
 		signal_subscribe(bd->signal_index, _bar_on_signal, w);
+
+	if (bd->channel)
+		channel_manager_subscribe((channel_t *)bd->channel,
+		                           _bar_on_channel_changed, w);
+	(void)0;
 
 	/* Subscribe to night-mode changes if any night override is set, and apply
 	 * current state immediately so the widget renders correctly even if it
@@ -620,27 +1066,67 @@ static void _bar_create(widget_t *w, lv_obj_t *parent) {
 	if (bd && (bd->night.has_bar_low_color      || bd->night.has_bar_high_color    ||
 	           bd->night.has_bar_in_range_color || bd->night.has_bar_bg_color      ||
 	           bd->night.has_bar_border_color   || bd->night.has_label_color       ||
-	           bd->night.has_value_color        || bd->night.has_bar_image         ||
-	           bd->night.has_bar_image_full)) {
+	           bd->night.has_value_color        || bd->night.has_tick_color        ||
+	           bd->night.has_bar_image          || bd->night.has_bar_image_full)) {
 		night_mode_subscribe(_bar_night_cb, w);
 		_bar_apply_night_mode(w, night_mode_is_active());
 	}
+
+	/* Initial paint snap: signal_subscribe does not deliver a callback, so a
+	 * bar bound to a signal that is not updating yet (engine off / no CAN, or a
+	 * stale forked signal) would sit at the create-time colour until the first
+	 * frame. Run the colour/threshold logic once from the signal's current
+	 * value so the right in-range / alert colour shows immediately. Mirrors the
+	 * widget_meter / widget_arc initial-snap. */
+	if (bd && bd->signal_index >= 0) {
+		signal_t *sig = signal_get_by_index((uint16_t)bd->signal_index);
+		if (sig) _bar_on_signal(sig->current_value, sig->is_stale, w);
+	}
 }
 static void _bar_resize(widget_t *w, uint16_t nw, uint16_t nh) {
-	if (w->root && lv_obj_is_valid(w->root))
-		lv_obj_set_size(w->root, nw, nh);
 	w->w = nw;
 	w->h = nh;
+	bar_data_t *bd = (bar_data_t *)w->type_data;
+	/* Mirror modes: re-split the new width into two centred halves. Otherwise
+	 * the single root bar (or image stack) just takes the full size. */
+	if (bd && (bd->fill_dir == 2 || bd->fill_dir == 3) && bd->bar_obj2) {
+		lv_coord_t leftW  = nw / 2;
+		lv_coord_t rightW = nw - leftW;
+		lv_coord_t leftX  = w->x - (nw / 2) + (leftW / 2);
+		lv_coord_t rightX = w->x + (nw / 2) - (rightW / 2);
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+			lv_obj_set_size(bd->bar_obj, leftW, nh);
+			lv_obj_set_pos(bd->bar_obj, leftX, w->y);
+		}
+		if (lv_obj_is_valid(bd->bar_obj2)) {
+			lv_obj_set_size(bd->bar_obj2, rightW, nh);
+			lv_obj_set_pos(bd->bar_obj2, rightX, w->y);
+		}
+	} else if (w->root && lv_obj_is_valid(w->root)) {
+		lv_obj_set_size(w->root, nw, nh);
+	}
+	/* Leading-edge marker tracks the new height + fill front. */
+	if (bd && bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj)) {
+		lv_obj_set_size(bd->fill_tip_obj, bd->fill_edge_width, nh);
+		_bar_place_lead_edge(w, bd, bd->_pc_display_value, false);
+	}
 	/* Keep the label + value glued to their relative positions when the bar
 	 * grows / shrinks live in the editor. Without this the value label stays
 	 * pinned to the original right-edge x and drifts off the bar end. */
-	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (bd && bd->label_obj && lv_obj_is_valid(bd->label_obj))
 		lv_obj_set_pos(bd->label_obj, w->x, w->y - 28);
 	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
 		lv_obj_set_pos(bd->value_obj,
 			w->x + (w->w / 2) - 33,   /* BAR_VALUE_W/2 + BAR_VALUE_PAD_R */
 			w->y);
+	/* Tick spacing/placement depends on w->w / w->h — rebuild against the new
+	 * geometry (free + recreate, so spacing recomputes cleanly). */
+	if (bd && bd->show_ticks)
+		_bar_build_ticks(w);
+	else if (bd)
+		_bar_free_ticks(bd);
+	/* Geometry changed — repaint cleanly on the next tick. */
+	if (bd) bd->_pc_valid = false;
 }
 static void _bar_open_settings(widget_t *w) { (void)w; }
 static void _bar_to_json(widget_t *w, cJSON *out) {
@@ -654,26 +1140,51 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "label", bd->label);
 		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
 		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
+		if (bd->smooth.smoothing_ms != 0)
+			cJSON_AddNumberToObject(cfg, "smoothing_ms", bd->smooth.smoothing_ms);
 		if (bd->anchor_enabled)
 			cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
 		if (bd->anchor_enabled || bd->anchor_value != (bd->bar_min + bd->bar_max) / 2)
 			cJSON_AddNumberToObject(cfg, "anchor_value", bd->anchor_value);
 		if (bd->anchor_enabled || bd->anchor_position != 50)
 			cJSON_AddNumberToObject(cfg, "anchor_position", bd->anchor_position);
-		cJSON_AddNumberToObject(cfg, "bar_low", bd->bar_low);
-		cJSON_AddNumberToObject(cfg, "bar_high", bd->bar_high);
+		/* Alert thresholds (bar_low / bar_high) live on the bound channel
+		 * (channels.json) and are intentionally NOT persisted here, so they
+		 * stick to the channel setup and don't travel when a layout is shared.
+		 * Alert COLOURS are widget-owned styling and do round-trip. */
 		cJSON_AddNumberToObject(cfg, "bar_low_color", (int)bd->bar_low_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_high_color", (int)bd->bar_high_color.full);
 		cJSON_AddNumberToObject(cfg, "bar_in_range_color", (int)bd->bar_in_range_color.full);
+		/* Multi-stop gradient. Old 2-stop fields (bar_grad_enabled /
+		 * bar_grad_end_color) are dropped on save — they're only read
+		 * back in _bar_from_json for legacy-layout migration. */
+		{
+			cJSON *gs = gradient_stops_to_json(&bd->grad_stops);
+			if (gs) cJSON_AddItemToObject(cfg, "grad_stops", gs);
+		}
 		cJSON_AddBoolToObject(cfg, "show_bar_value", bd->show_bar_value);
+		/* Defaults-only: emit show_bar_label only when the user has hidden it.
+		 * Saves a few bytes in the common path (default true). */
+		if (!bd->show_bar_label)
+			cJSON_AddBoolToObject(cfg, "show_bar_label", false);
 		cJSON_AddBoolToObject(cfg, "invert_bar_value", bd->invert_bar_value);
-		cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
+		/* Defaults-only: emit center_fill only when enabled (default false). */
+		if (bd->center_fill)
+			cJSON_AddBoolToObject(cfg, "center_fill", true);
+		if (bd->fill_dir != 0)   /* default 0 (L→R) — defaults-only emit */
+			cJSON_AddNumberToObject(cfg, "fill_dir", bd->fill_dir);
+		/* Decimals: per-widget override only — omit when it matches the bound
+		 * channel's decimals so it follows the channel by default. */
+		if (!bd->channel || bd->decimals != ((channel_t *)bd->channel)->decimals)
+			cJSON_AddNumberToObject(cfg, "decimals", bd->decimals);
 		if (bd->label_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "label_font", bd->label_font);
 		if (bd->value_font[0] != '\0')
 			cJSON_AddStringToObject(cfg, "value_font", bd->value_font);
 		if (bd->signal_name[0] != '\0')
 			cJSON_AddStringToObject(cfg, "signal_name", bd->signal_name);
+		if (bd->channel_id[0] != '\0')
+			cJSON_AddStringToObject(cfg, "channel", bd->channel_id);
 		/* Appearance overrides — only serialize non-default values */
 		if (bd->bar_bg_color.full != THEME_COLOR_PANEL.full)
 			cJSON_AddNumberToObject(cfg, "bar_bg_color", (int)bd->bar_bg_color.full);
@@ -691,11 +1202,29 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddNumberToObject(cfg, "label_color", (int)bd->label_color.full);
 		if (bd->value_color.full != THEME_COLOR_TEXT_PRIMARY.full)
 			cJSON_AddNumberToObject(cfg, "value_color", (int)bd->value_color.full);
+		/* Tick marks — defaults-only. Defaults: show_ticks=false, tick_count=5,
+		 * tick_length=6, tick_width=2, tick_color=TEXT_PRIMARY, tick_side=2. */
+		if (bd->show_ticks)
+			cJSON_AddBoolToObject(cfg, "show_ticks", true);
+		if (bd->tick_count != 5)
+			cJSON_AddNumberToObject(cfg, "tick_count", bd->tick_count);
+		if (bd->tick_length != 6)
+			cJSON_AddNumberToObject(cfg, "tick_length", bd->tick_length);
+		if (bd->tick_width != 2)
+			cJSON_AddNumberToObject(cfg, "tick_width", bd->tick_width);
+		if (bd->tick_color.full != THEME_COLOR_TEXT_PRIMARY.full)
+			cJSON_AddNumberToObject(cfg, "tick_color", (int)bd->tick_color.full);
+		if (bd->tick_side != 2)
+			cJSON_AddNumberToObject(cfg, "tick_side", bd->tick_side);
 		/* Image-based bar fields — only serialize if set */
 		if (bd->bar_image[0] != '\0')
 			cJSON_AddStringToObject(cfg, "bar_image", bd->bar_image);
 		if (bd->bar_image_full[0] != '\0')
 			cJSON_AddStringToObject(cfg, "bar_image_full", bd->bar_image_full);
+		if (bd->fill_edge_width > 0) {
+			cJSON_AddNumberToObject(cfg, "fill_edge_width", bd->fill_edge_width);
+			cJSON_AddNumberToObject(cfg, "fill_edge_color", bd->fill_edge_color.full);
+		}
 		/* Night-mode overrides — emit only fields that have an override set */
 		cJSON *n = cJSON_CreateObject();
 		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_low_color);
@@ -705,6 +1234,7 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 		NIGHT_SERIALIZE_COLOR(n, bd->night, bar_border_color);
 		NIGHT_SERIALIZE_COLOR(n, bd->night, label_color);
 		NIGHT_SERIALIZE_COLOR(n, bd->night, value_color);
+		NIGHT_SERIALIZE_COLOR(n, bd->night, tick_color);
 		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image);
 		NIGHT_SERIALIZE_IMAGE(n, bd->night, bar_image_full);
 		if (cJSON_GetArraySize(n) > 0) cJSON_AddItemToObject(cfg, "night", n);
@@ -729,13 +1259,15 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(bd->label, item->valuestring, sizeof(bd->label));
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_min");
-	if (cJSON_IsNumber(item)) bd->bar_min = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_min = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_max");
-	if (cJSON_IsNumber(item)) bd->bar_max = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->bar_max = (float)item->valuedouble;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "smoothing_ms");
+	if (cJSON_IsNumber(item)) bd->smooth.smoothing_ms = (uint16_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_enabled");
 	if (cJSON_IsBool(item)) bd->anchor_enabled = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_value");
-	if (cJSON_IsNumber(item)) bd->anchor_value = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) bd->anchor_value = (float)item->valuedouble;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "anchor_position");
 	if (cJSON_IsNumber(item)) {
 		int v = item->valueint;
@@ -743,22 +1275,50 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		if (v > 100) v = 100;
 		bd->anchor_position = (uint8_t)v;
 	}
+	/* Track explicit presence: only a threshold the layout actually carried
+	 * may migrate into the channel below. The in-memory defaults (0/100) look
+	 * like real thresholds the moment the range spans them — a center-fill
+	 * boost bar with Min -10 would otherwise adopt low_warn=0 into the channel
+	 * and turn blue the instant the value goes negative. */
+	bool bar_low_explicit = false, bar_high_explicit = false;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low");
-	if (cJSON_IsNumber(item)) bd->bar_low = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) { bd->bar_low = (float)item->valuedouble; bar_low_explicit = true; }
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high");
-	if (cJSON_IsNumber(item)) bd->bar_high = (int32_t)item->valueint;
+	if (cJSON_IsNumber(item)) { bd->bar_high = (float)item->valuedouble; bar_high_explicit = true; }
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_low_color");
 	if (cJSON_IsNumber(item)) bd->bar_low_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_high_color");
 	if (cJSON_IsNumber(item)) bd->bar_high_color.full = (uint32_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_in_range_color");
 	if (cJSON_IsNumber(item)) bd->bar_in_range_color.full = (uint32_t)item->valueint;
+	/* Prefer new N-stop array; fall back to the legacy 2-stop fields
+	 * so layouts saved before this revision keep their gradient. */
+	const cJSON *gs_arr = cJSON_GetObjectItemCaseSensitive(cfg, "grad_stops");
+	if (!gradient_stops_from_json(gs_arr, &bd->grad_stops)) {
+		const cJSON *ge  = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_enabled");
+		const cJSON *gec = cJSON_GetObjectItemCaseSensitive(cfg, "bar_grad_end_color");
+		if (cJSON_IsBool(ge) && cJSON_IsTrue(ge) && cJSON_IsNumber(gec)) {
+			gradient_stops_install_legacy_2stop(&bd->grad_stops,
+				bd->bar_in_range_color.full, (uint16_t)gec->valueint);
+		}
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_value");
 	if (cJSON_IsBool(item)) bd->show_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_bar_label");
+	if (cJSON_IsBool(item)) bd->show_bar_label = cJSON_IsTrue(item);
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "invert_bar_value");
 	if (cJSON_IsBool(item)) bd->invert_bar_value = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "center_fill");
+	if (cJSON_IsBool(item)) bd->center_fill = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_dir");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0 || v > 3) v = 0;
+		bd->fill_dir = (uint8_t)v;
+	}
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "decimals");
-	if (cJSON_IsNumber(item)) bd->decimals = (uint8_t)item->valueint;
+	bool decimals_overridden = cJSON_IsNumber(item);
+	if (decimals_overridden) bd->decimals = (uint8_t)item->valueint;
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
 	if (cJSON_IsString(item) && item->valuestring) {
 		safe_strncpy(bd->label_font, item->valuestring, sizeof(bd->label_font));
@@ -790,6 +1350,25 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "value_color");
 	if (cJSON_IsNumber(item)) bd->value_color.full = (uint32_t)item->valueint;
 
+	/* Tick marks */
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "show_ticks");
+	if (cJSON_IsBool(item)) bd->show_ticks = cJSON_IsTrue(item);
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_count");
+	if (cJSON_IsNumber(item)) bd->tick_count = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_length");
+	if (cJSON_IsNumber(item)) bd->tick_length = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_width");
+	if (cJSON_IsNumber(item)) bd->tick_width = (uint8_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_color");
+	if (cJSON_IsNumber(item)) bd->tick_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_side");
+	if (cJSON_IsNumber(item)) {
+		int v = item->valueint;
+		if (v < 0) v = 0;
+		if (v > 2) v = 2;
+		bd->tick_side = (uint8_t)v;
+	}
+
 	/* Image-based bar fields */
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_image");
 	if (cJSON_IsString(item) && item->valuestring)
@@ -797,6 +1376,10 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	item = cJSON_GetObjectItemCaseSensitive(cfg, "bar_image_full");
 	if (cJSON_IsString(item) && item->valuestring)
 		safe_strncpy(bd->bar_image_full, item->valuestring, sizeof(bd->bar_image_full));
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_edge_color");
+	if (cJSON_IsNumber(item)) bd->fill_edge_color.full = (uint32_t)item->valueint;
+	item = cJSON_GetObjectItemCaseSensitive(cfg, "fill_edge_width");
+	if (cJSON_IsNumber(item)) bd->fill_edge_width = (uint8_t)item->valueint;
 
 	/* Night-mode overrides */
 	cJSON *night = cJSON_GetObjectItemCaseSensitive(cfg, "night");
@@ -808,6 +1391,7 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 		NIGHT_PARSE_COLOR(night, bd->night, bar_border_color);
 		NIGHT_PARSE_COLOR(night, bd->night, label_color);
 		NIGHT_PARSE_COLOR(night, bd->night, value_color);
+		NIGHT_PARSE_COLOR(night, bd->night, tick_color);
 		NIGHT_PARSE_IMAGE(night, bd->night, bar_image);
 		NIGHT_PARSE_IMAGE(night, bd->night, bar_image_full);
 	}
@@ -815,12 +1399,98 @@ static void _bar_from_json(widget_t *w, cJSON *in) {
 	/* Resolve signal name → index */
 	if (bd->signal_name[0] != '\0')
 		bd->signal_index = signal_find_by_name(bd->signal_name);
+
+	/* ── v14 channel binding + backwards-compat migration ───────── */
+	cJSON *ch_item = cJSON_GetObjectItemCaseSensitive(cfg, "channel");
+	/* Stash channel id (if any) but treat an empty-signal channel as a
+	 * miss so the legacy fallback can repopulate it from the widget's
+	 * own signal field. Happens on cross-layout switches where
+	 * resolve_signals cleared the stale binding before widgets load. */
+	if (cJSON_IsString(ch_item) && ch_item->valuestring && ch_item->valuestring[0] != '\0')
+		safe_strncpy(bd->channel_id, ch_item->valuestring, sizeof(bd->channel_id));
+	channel_t *bound_c = bd->channel_id[0] ? channel_manager_get(bd->channel_id) : NULL;
+	if (bound_c && bound_c->signal_index >= 0) {
+		bd->channel = bound_c;
+		safe_strncpy(bd->signal_name, bound_c->signal_name, sizeof(bd->signal_name));
+		bd->signal_index = bound_c->signal_index;
+		/* Decimals default to the channel; a per-widget override in the layout
+		 * wins (config modal → Display → Decimals). */
+		if (!decimals_overridden) bd->decimals = bound_c->decimals;
+		bd->bar_min = bound_c->min;
+		bd->bar_max = bound_c->max;
+		/* Channel owns the alert thresholds. When a side has a warn it's
+		 * authoritative; when it doesn't but the widget carried a legacy
+		 * threshold inside the range (older layouts), migrate it UP into the
+		 * channel. Otherwise park at the range edge (alert inactive). */
+		bool _ch_dirty = false;
+		if (bound_c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
+			bd->bar_high = bound_c->high_warn;
+		} else if (bar_high_explicit &&
+		           bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
+			bound_c->high_warn = bd->bar_high;   /* real legacy threshold, strictly in range */
+			_ch_dirty = true;
+		} else {
+			bd->bar_high = bd->bar_max;          /* edge / unset / default → high alert inactive */
+		}
+		if (bound_c->low_warn != CHANNEL_THRESHOLD_UNSET_LOW) {
+			bd->bar_low = bound_c->low_warn;
+		} else if (bar_low_explicit &&
+		           bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
+			bound_c->low_warn = bd->bar_low;
+			_ch_dirty = true;
+		} else {
+			bd->bar_low = bd->bar_min;
+		}
+		if (_ch_dirty) channel_manager_mark_dirty();
+		/* Bar zone colours stay widget-owned — never overridden by the channel. */
+	} else if (bd->signal_name[0] != '\0') {
+		legacy_widget_data_t legacy = {
+			.signal_name = bd->signal_name,
+			.min = bd->bar_min,
+			.max = bd->bar_max,
+			.high_warn = bar_high_explicit ? bd->bar_high : (float)INT32_MIN,
+			.color_normal = CHANNEL_USE_DEFAULT_COLOR,
+			.color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF,
+		};
+		channel_t *c = channel_manager_record_legacy_widget(&legacy);
+		if (c) {
+			bd->channel = c;
+			if (!decimals_overridden) bd->decimals = c->decimals;
+			/* Migrate the widget's legacy alert thresholds UP into the channel
+			 * when the channel doesn't already define them (a real threshold is
+			 * one the layout explicitly carried, inside the range; an edge or
+			 * default value means "no alert"). Never clobber an existing
+			 * channel warn — that's the source of truth. */
+			if (bar_high_explicit && c->high_warn == CHANNEL_THRESHOLD_UNSET_HIGH &&
+			    bd->bar_high > bd->bar_min && bd->bar_high < bd->bar_max) {
+				c->high_warn = bd->bar_high;
+				c->color_high_warn = lv_color_to32(bd->bar_high_color) & 0xFFFFFF;
+				channel_manager_mark_dirty();
+			}
+			if (bar_low_explicit && c->low_warn == CHANNEL_THRESHOLD_UNSET_LOW &&
+			    bd->bar_low > bd->bar_min && bd->bar_low < bd->bar_max) {
+				c->low_warn = bd->bar_low;
+				c->color_low_warn = lv_color_to32(bd->bar_low_color) & 0xFFFFFF;
+				channel_manager_mark_dirty();
+			}
+			/* Adopt the channel's thresholds (single source of truth); a side
+			 * with no channel warn parks at the range edge = alert inactive. */
+			bd->bar_high = (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) ? c->high_warn : bd->bar_max;
+			bd->bar_low  = (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)  ? c->low_warn  : bd->bar_min;
+		}
+	}
 }
 static void _bar_destroy(widget_t *w) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	uint8_t slot = bd ? bd->slot : 0;
+	if (bd) widget_smooth_free(&bd->smooth);
 	if (bd && bd->signal_index >= 0)
 		signal_unsubscribe(bd->signal_index, _bar_on_signal, w);
+	if (bd && bd->channel) {
+		channel_manager_unsubscribe((channel_t *)bd->channel,
+		                             _bar_on_channel_changed, w);
+		bd->channel = NULL;
+	}
 	night_mode_unsubscribe(_bar_night_cb, w);
 	widget_rules_free(w);
 	/* Label and value are siblings of root (children of parent), delete explicitly */
@@ -828,12 +1498,23 @@ static void _bar_destroy(widget_t *w) {
 		lv_obj_del(bd->label_obj);
 	if (bd && bd->value_obj && lv_obj_is_valid(bd->value_obj))
 		lv_obj_del(bd->value_obj);
-	/* Clip container is always a sibling of root — delete explicitly */
+	/* Tick marks are siblings of root too — delete explicitly + NULL them. */
+	if (bd) _bar_free_ticks(bd);
+	/* Leading-edge tip: in standard-bar mode it's a sibling of root, in image
+	 * mode a child of the clip. Delete it explicitly first (safe either way),
+	 * then NULL so the clip delete below doesn't double-free. */
+	if (bd && bd->fill_tip_obj && lv_obj_is_valid(bd->fill_tip_obj))
+		lv_obj_del(bd->fill_tip_obj);
+	if (bd) bd->fill_tip_obj = NULL;
+	/* Clip container is always a sibling of root — delete explicitly. */
 	if (bd && bd->img_clip_obj && lv_obj_is_valid(bd->img_clip_obj))
 		lv_obj_del(bd->img_clip_obj);
 	/* In track-image + color-fill mode, bar_obj is a sibling of root */
 	if (bd && bd->bar_obj && lv_obj_is_valid(bd->bar_obj) && (lv_obj_t *)bd->bar_obj != w->root)
 		lv_obj_del(bd->bar_obj);
+	/* Mirror mode: bar_obj2 (right half) is a sibling of root — free explicitly. */
+	if (bd && bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2) && (lv_obj_t *)bd->bar_obj2 != w->root)
+		lv_obj_del(bd->bar_obj2);
 	if (w->root && lv_obj_is_valid(w->root))
 		lv_obj_del(w->root);
 	w->root = NULL;
@@ -851,6 +1532,7 @@ static void _bar_destroy(widget_t *w) {
 		bd->label_obj = NULL;
 		bd->value_obj = NULL;
 		bd->bar_obj = NULL;
+		bd->bar_obj2 = NULL;
 		rdm_image_free(bd->bar_img_dsc);
 		rdm_image_free(bd->bar_img_full_dsc);
 	}
@@ -900,6 +1582,11 @@ static void _bar_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_width(bd->bar_obj, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2)) {
+		lv_obj_set_style_bg_color(bd->bar_obj2, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj2, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_width(bd->bar_obj2, bar_bdrw, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
 	/* Fill-image mode: plain track lv_obj stored in img_bg_obj */
 	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
 		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -927,14 +1614,23 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	bar_data_t *bd = (bar_data_t *)w->type_data;
 	if (!bd) return;
 
+	/* Night palette changed — the per-value indicator color is night-resolved
+	 * inside _bar_on_signal, so drop the memo to guarantee it re-applies. */
+	bd->_pc_valid = false;
+
 	lv_color_t bar_bg  = NIGHT_PICK_COLOR(active, bd->night, bar_bg_color,     bd->bar_bg_color);
 	lv_color_t bar_bdr = NIGHT_PICK_COLOR(active, bd->night, bar_border_color, bd->bar_border_color);
 	lv_color_t lbl_col = NIGHT_PICK_COLOR(active, bd->night, label_color,      bd->label_color);
 	lv_color_t val_col = NIGHT_PICK_COLOR(active, bd->night, value_color,      bd->value_color);
+	lv_color_t tick_col = NIGHT_PICK_COLOR(active, bd->night, tick_color,      bd->tick_color);
 
 	if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
 		lv_obj_set_style_bg_color(bd->bar_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
 		lv_obj_set_style_border_color(bd->bar_obj, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->bar_obj2 && lv_obj_is_valid(bd->bar_obj2)) {
+		lv_obj_set_style_bg_color(bd->bar_obj2, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_border_color(bd->bar_obj2, bar_bdr, LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 	if (!_bar_has_track_image(bd) && bd->img_bg_obj && lv_obj_is_valid(bd->img_bg_obj)) {
 		lv_obj_set_style_bg_color(bd->img_bg_obj, bar_bg, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -945,6 +1641,13 @@ static void _bar_apply_night_mode(widget_t *w, bool active) {
 	}
 	if (bd->value_obj && lv_obj_is_valid(bd->value_obj)) {
 		lv_obj_set_style_text_color(bd->value_obj, val_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	/* Ticks are plain bg_color objects — a normal style write recolours them
+	 * (no dual-object pattern needed). */
+	for (uint8_t i = 0; i < bd->tick_obj_count; i++) {
+		if (bd->tick_objs[i] && lv_obj_is_valid(bd->tick_objs[i]))
+			lv_obj_set_style_bg_color(bd->tick_objs[i], tick_col,
+				LV_PART_MAIN | LV_STATE_DEFAULT);
 	}
 
 	/* Image swap — only if in image mode and the desired name differs from
@@ -1012,6 +1715,9 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "decimals") == 0)           { out->i = bd->decimals;             return true; }
 	if (strcmp(name, "show_bar_value") == 0)     { out->b = bd->show_bar_value;       return true; }
 	if (strcmp(name, "invert_bar_value") == 0)   { out->b = bd->invert_bar_value;     return true; }
+	if (strcmp(name, "center_fill") == 0)        { out->b = bd->center_fill;          return true; }
+	if (strcmp(name, "fill_dir") == 0)           { out->i = bd->fill_dir;             return true; }
+	if (strcmp(name, "show_bar_label") == 0)     { out->b = bd->show_bar_label;       return true; }
 	if (strcmp(name, "anchor_enabled") == 0)     { out->b = bd->anchor_enabled;       return true; }
 	if (strcmp(name, "anchor_value") == 0)       { out->i = bd->anchor_value;         return true; }
 	if (strcmp(name, "anchor_position") == 0)    { out->i = bd->anchor_position;      return true; }
@@ -1023,6 +1729,12 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "bar_border_color") == 0)   { out->color = lv_color_to32(bd->bar_border_color)   & 0xFFFFFF; return true; }
 	if (strcmp(name, "label_color") == 0)        { out->color = lv_color_to32(bd->label_color)        & 0xFFFFFF; return true; }
 	if (strcmp(name, "value_color") == 0)        { out->color = lv_color_to32(bd->value_color)        & 0xFFFFFF; return true; }
+	if (strcmp(name, "show_ticks") == 0)         { out->b = bd->show_ticks;           return true; }
+	if (strcmp(name, "tick_count") == 0)         { out->i = bd->tick_count;           return true; }
+	if (strcmp(name, "tick_length") == 0)        { out->i = bd->tick_length;          return true; }
+	if (strcmp(name, "tick_width") == 0)         { out->i = bd->tick_width;           return true; }
+	if (strcmp(name, "tick_side") == 0)          { out->i = bd->tick_side;            return true; }
+	if (strcmp(name, "tick_color") == 0)         { out->color = lv_color_to32(bd->tick_color)         & 0xFFFFFF; return true; }
 	if (strcmp(name, "bar_low") == 0)            { out->i = bd->bar_low;              return true; }
 	if (strcmp(name, "bar_high") == 0)           { out->i = bd->bar_high;             return true; }
 	if (strcmp(name, "bar_low_color") == 0)      { out->color = lv_color_to32(bd->bar_low_color)      & 0xFFFFFF; return true; }
@@ -1033,6 +1745,7 @@ static bool _bar_inspector_get(const widget_t *w, const char *name,
 		out->b = (bd->bar_low != 0 || bd->bar_high != 0);
 		return true;
 	}
+	if (strcmp(name, "smoothing_ms") == 0)       { out->i = bd->smooth.smoothing_ms;  return true; }
 	return false;
 }
 
@@ -1109,6 +1822,36 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "invert_bar_value") == 0) {
 		bd->invert_bar_value = in->b;
 		return true;   /* picked up by the next _bar_on_signal call */
+	}
+	if (strcmp(name, "center_fill") == 0) {
+		bd->center_fill = in->b;
+		/* Live: SYMMETRICAL fills outward from the range midpoint, NORMAL from
+		 * the start. Set the mode, then re-range (center-aware) + re-push the
+		 * current value via sync_range so the fill redraws from the new origin
+		 * immediately — a parked signal produces no further tick to self-heal.
+		 * Standard-bar path only (image-mode bars have no bd->bar_obj). */
+		if (bd->bar_obj && lv_obj_is_valid(bd->bar_obj)) {
+			lv_bar_set_mode(bd->bar_obj,
+				bd->center_fill ? LV_BAR_MODE_SYMMETRICAL : LV_BAR_MODE_NORMAL);
+		}
+		widget_bar_sync_range(bd);
+		return true;
+	}
+	if (strcmp(name, "fill_dir") == 0) {
+		int v = in->i;
+		if (v < 0 || v > 3) v = 0;
+		/* Structural (single vs two-bar) — stored now, applied on the next
+		 * layout reload (the web editor saves + hot-reloads after edits). */
+		bd->fill_dir = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "show_bar_label") == 0) {
+		bd->show_bar_label = in->b;
+		if (bd->label_obj && lv_obj_is_valid(bd->label_obj)) {
+			if (bd->show_bar_label) lv_obj_clear_flag(bd->label_obj, LV_OBJ_FLAG_HIDDEN);
+			else                    lv_obj_add_flag  (bd->label_obj, LV_OBJ_FLAG_HIDDEN);
+		}
+		return true;
 	}
 	if (strcmp(name, "anchor_enabled") == 0) {
 		bd->anchor_enabled = in->b;
@@ -1191,6 +1934,43 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 		return true;
 	}
+	/* Tick edits all rebuild the tick objects so spacing / geometry / colour
+	 * land live. _bar_build_ticks tears down the old set and recreates from
+	 * the current fields; a no-show_ticks state just frees them. */
+	if (strcmp(name, "show_ticks") == 0) {
+		bd->show_ticks = in->b;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		else                _bar_free_ticks(bd);
+		return true;
+	}
+	if (strcmp(name, "tick_count") == 0) {
+		bd->tick_count = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_length") == 0) {
+		bd->tick_length = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_width") == 0) {
+		bd->tick_width = (uint8_t)in->i;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_side") == 0) {
+		int v = in->i;
+		if (v < 0) v = 0;
+		if (v > 2) v = 2;
+		bd->tick_side = (uint8_t)v;
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
+	if (strcmp(name, "tick_color") == 0) {
+		bd->tick_color = lv_color_hex(in->color);
+		if (bd->show_ticks) _bar_build_ticks(w);
+		return true;
+	}
 	if (strcmp(name, "bar_low") == 0) {
 		bd->bar_low = (int32_t)in->i;
 		return true;
@@ -1217,6 +1997,12 @@ static bool _bar_inspector_set(widget_t *w, const char *name,
 		}
 		return true;
 	}
+	if (strcmp(name, "smoothing_ms") == 0) {
+		int v = in->i; if (v < 0) v = 0; if (v > 500) v = 500;
+		bd->smooth.smoothing_ms = (uint16_t)v;
+		if (v == 0) widget_smooth_reset(&bd->smooth);
+		return true;
+	}
 	return false;
 }
 
@@ -1239,6 +2025,8 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->bar_in_range_color = THEME_COLOR_GREEN_BRIGHT;
 	bd->bar_low_color = THEME_COLOR_BLUE_DARK;
 	bd->bar_high_color = THEME_COLOR_RED;
+	/* grad_stops zero-initialised by calloc — count=0 means no gradient,
+	 * render path falls back to the solid bar_in_range_color. */
 	bd->signal_index = -1;
 	bd->bar_bg_color = THEME_COLOR_PANEL;
 	bd->bar_bg_opa = 255;
@@ -1248,6 +2036,18 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->indicator_radius = 5;
 	bd->label_color = THEME_COLOR_TEXT_PRIMARY;
 	bd->value_color = THEME_COLOR_TEXT_PRIMARY;
+	bd->show_bar_label = true;        /* show the text label above the bar by default */
+	bd->fill_edge_color = lv_color_hex(0xFFFFFF);  /* image-fill leading-edge highlight */
+	bd->fill_edge_width = 0;          /* 0 = off (no leading-edge line) */
+	bd->center_fill = false;          /* NORMAL fill (left→right); SYMMETRICAL only when enabled */
+	bd->fill_dir = 0;                 /* Left → Right */
+	/* Tick-mark defaults (off by default so existing layouts are unaffected) */
+	bd->show_ticks  = false;
+	bd->tick_count  = 5;
+	bd->tick_length = 6;
+	bd->tick_width  = 2;
+	bd->tick_color  = THEME_COLOR_TEXT_PRIMARY;   /* 0xE8E8E8 */
+	bd->tick_side   = 2;                            /* Both */
 
 	w->type = WIDGET_BAR;
 	w->slot = slot & 1;

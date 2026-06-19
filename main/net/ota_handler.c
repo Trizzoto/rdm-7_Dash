@@ -1,4 +1,5 @@
 #include "ota_handler.h"
+#include "system/rdm_lv_async.h"
 #include "ota_update_dialog.h"
 #include "version.h"
 #include "storage/config_store.h"
@@ -415,13 +416,16 @@ static esp_err_t optimize_wifi_for_ota(void) {
 // Add new function to restore WiFi settings
 static esp_err_t restore_wifi_settings(void) {
     ESP_LOGI(TAG, "Restoring WiFi settings...");
-    
-    // Re-enable power save mode
-    esp_err_t ret = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+
+    /* The dash runs with power save DISABLED by design (always-powered
+     * display, web-editor latency — see wifi_manager_start). Restoring to
+     * MIN_MODEM here used to silently undo that after every OTA download,
+     * degrading the editor link until reboot. */
+    esp_err_t ret = esp_wifi_set_ps(WIFI_PS_NONE);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to restore WiFi power save: %s", esp_err_to_name(ret));
     }
-    
+
     return ESP_OK;
 }
 
@@ -870,7 +874,7 @@ static void _boot_check_task(void *arg)
         } else {
             ESP_LOGI(TAG, "Auto-OTA-check: update %s available — showing dialog",
                      latest);
-            lv_async_call(_boot_show_dialog_async, NULL);
+            rdm_async_call(_boot_show_dialog_async, NULL);
         }
     } else {
         ESP_LOGI(TAG, "Auto-OTA-check: no popup (status=%d)", (int)status);

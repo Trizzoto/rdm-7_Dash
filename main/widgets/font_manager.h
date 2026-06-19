@@ -22,6 +22,13 @@ extern "C" {
 #define FONT_MAX_FAMILIES  8
 #define FONT_MAX_INSTANCES 32
 #define FONT_NAME_LEN      32
+/* Hard limit on a single TTF, enforced at BOTH upload (web_server_assets.c) and
+ * load (font_manager.c). The font manager memcpy's the whole file into a PSRAM
+ * family-cache slot, so this caps that allocation; uploads larger than this are
+ * rejected up front (previously the upload handler used a stale 4 MB cap, so a
+ * 0.5–4 MB font would upload OK but silently fail to load, and >~2.7 MB OOM'd
+ * the upload malloc). Single source of truth — do not redefine per-file. */
+#define FONT_MAX_FILE_SIZE (512 * 1024)
 
 /**
  * Initialise the font manager. Scans /lfs/fonts/ and pre-loads
@@ -47,8 +54,15 @@ void font_manager_shutdown(void);
  * Returns a cached lv_font_t* or creates one via lv_tiny_ttf.
  *
  * @param family  Font family name (matches filename without .ttf extension)
- * @param size    Desired font height in pixels (8-128)
+ * @param size    Desired font height in pixels (8-500)
  * @return        lv_font_t* or NULL if family not found / cache full
+ *
+ * Sizes 129..500 are supported for huge value displays (e.g. an
+ * oversized gear indicator). lv_tiny_ttf rasterises glyphs on demand
+ * so the marginal PSRAM cost is per-glyph-actually-used, not per-size.
+ * Keep the practical use to a handful of glyphs at the very high end
+ * (a gear letter, an RPM number) — using a 500px font for full
+ * latin-1 text would burn through the rasteriser cache fast.
  */
 const lv_font_t *font_manager_get(const char *family, uint16_t size);
 
@@ -62,6 +76,14 @@ uint8_t font_manager_family_count(void);
  * @return  Family name string, or NULL if index out of range.
  */
 const char *font_manager_family_name(uint8_t index);
+
+/**
+ * Get the loaded TTF byte size for the family at @p index.
+ * Returns 0 if index is out of range — useful for file-manager UIs
+ * that want to display per-font storage usage. Reads from the PSRAM
+ * cache so doesn't touch LittleFS.
+ */
+size_t font_manager_family_size(uint8_t index);
 
 /**
  * Load a new font family from a TTF data buffer (e.g. after upload).

@@ -8,15 +8,21 @@
 #include "widget_warning.h"
 #include "widget_arc.h"
 #include "widget_shift_light.h"
+#include "widget_pathbar.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
+#include <math.h>
 
 #define SIM_MAX_SIGNALS     128
-/* Period shorter than the LVGL task interval (14 ms) so the timer fires
- * once per LVGL tick — giving the maximum possible inject rate. */
-#define SIM_TIMER_PERIOD_MS  5
-#define SIM_CYCLE_MS        3000
+/* Aligned to the 16 ms LVGL refresh window. The dt_ms-based phase math in
+ * _sim_timer_cb makes the animation speed independent of the timer rate, so
+ * a slower tick doesn't slow the sweep — it just stops doing redundant work
+ * (multiple injects between two frames the user never sees). */
+#define SIM_TIMER_PERIOD_MS  16
+#define SIM_CYCLE_MS        12000   /* full min->max->min sweep period; ~realistic
+                                     * gentle motion (was 3000 = fast teleport that
+                                     * spiked redraw load and looked unnatural) */
 /* Batch size is chosen adaptively in _sim_timer_cb based on signal count. */
 
 static const char *TAG = "signal_sim";
@@ -30,6 +36,13 @@ static bool         s_sim_active   = false;
 static lv_timer_t  *s_sim_timer    = NULL;
 static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
 static float        s_phase[SIM_MAX_SIGNALS];
+/* Emit threshold state: last value actually injected per signal + a validity
+ * flag. We only inject when the triangle-wave value has moved by at least
+ * ~one needle-pixel of the signal's range, so a meter bound to a slow sweep
+ * doesn't get a fresh value (and a repaint) every single timer tick. This
+ * equalises sim vs real CAN, which only emits on a decoded value change. */
+static float        s_last_emit[SIM_MAX_SIGNALS];
+static bool         s_emit_valid[SIM_MAX_SIGNALS];
 static uint16_t     s_cached_count = 0;
 static uint16_t     s_sim_cursor   = 0;   /* round-robin position */
 static uint64_t     s_last_tick_us = 0;   /* wall-clock time of previous tick */
@@ -91,6 +104,13 @@ static void _rebuild_signal_state(uint16_t count)
             mx = ad->signal_max;
             break;
         }
+        case WIDGET_PATHBAR: {
+            pathbar_data_t *pd = (pathbar_data_t *)w->type_data;
+            sig_name = pd->signal_name;
+            mn = pd->val_min;
+            mx = pd->val_max;
+            break;
+        }
         case WIDGET_SHIFT_LIGHT: {
             shift_light_data_t *sd = (shift_light_data_t *)w->type_data;
             sig_name = sd->signal_name;
@@ -120,9 +140,14 @@ static void _rebuild_signal_state(uint16_t count)
 
 static void _init_phases(uint16_t count)
 {
-    /* All signals start at phase 0 so they sweep in sync */
+    /* All signals start at phase 0 so they sweep in sync. Also clear the
+     * emit-threshold memo so the first tick of a (re)started sim — or a
+     * signal-count change rebuild — always injects, repainting every widget
+     * from a known state instead of being gated against a stale last-emit. */
     for (uint16_t i = 0; i < count && i < SIM_MAX_SIGNALS; i++) {
         s_phase[i] = 0.0f;
+        s_last_emit[i]  = 0.0f;
+        s_emit_valid[i] = false;
     }
 }
 
@@ -177,6 +202,20 @@ static void _sim_timer_cb(lv_timer_t *timer)
                     : (1.0f - s_phase[i]) * 2.0f;
 
         float value = s_bounds[i].min + t * (s_bounds[i].max - s_bounds[i].min);
+
+        /* Threshold the emission: only inject when the value moved by at least
+         * ~1 needle-pixel of the signal's range (range/200). Below that the
+         * receiving widget would round to the same integer and repaint for
+         * nothing — the exact cost that made sim laggier than CAN. Phase has
+         * already advanced above and the cursor advances after the loop, so
+         * skipping the inject doesn't perturb the round-robin or phase math. */
+        float step = (s_bounds[i].max - s_bounds[i].min) / 200.0f;
+        if (step <= 0.0f) step = 0.5f;
+        if (s_emit_valid[i] && fabsf(value - s_last_emit[i]) < step) {
+            continue;
+        }
+        s_last_emit[i]  = value;
+        s_emit_valid[i] = true;
         signal_inject_test_value(sig->name, value);
     }
 

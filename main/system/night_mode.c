@@ -10,6 +10,7 @@
  */
 
 #include "night_mode.h"
+#include "system/rdm_lv_async.h"
 
 #include "esp_log.h"
 #include "lvgl.h"
@@ -108,5 +109,5 @@ void night_mode_set_active(bool active)
 
     /* Defer notification to LVGL task so subscribers can safely touch widgets
      * regardless of who set the state (CAN task, settings UI, etc.). */
-    lv_async_call(_do_notify, active ? (void *)1 : NULL);
+    rdm_async_call(_do_notify, active ? (void *)1 : NULL);
 }

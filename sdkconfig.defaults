@@ -8,6 +8,12 @@ CONFIG_LV_USE_USER_DATA=y
 CONFIG_LV_USE_CHART=y
 CONFIG_LV_USE_PERF_MONITOR=y
 
+# Multi-stop gradients for bar / rpm_bar widgets. Default is 2 (single
+# start→end). 8 matches GRADIENT_MAX_STOPS in widgets/gradient_stops.h
+# so the firmware can pass a full Photoshop-authored stops array
+# straight into lv_obj_set_style_bg_grad without truncation.
+CONFIG_LV_GRADIENT_MAX_STOPS=8
+
 # Task watchdog — 15 s instead of the 5 s default. First-boot layout load
 # with many widgets, custom TTF font instances, and 1+ MB image widgets
 # can legitimately hold the LVGL task on CPU 1 for several seconds of
@@ -15,11 +21,35 @@ CONFIG_LV_USE_PERF_MONITOR=y
 # (layout_manager, widget_image, font_manager). 15 s still catches real
 # task hangs without false-tripping on heavy boot work.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+# Reboot (not just warn) if a subscribed task stops petting the watchdog. Only
+# the LVGL render task is subscribed (main.c) — a frozen render loop is a dead
+# dash, so panic-reboot is the right recovery. The 15 s budget above keeps a
+# heavy layout reload from tripping it.
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# OTA rollback safety. There is no factory partition, so every boot runs from
+# an OTA slot in PENDING_VERIFY; the firmware calls
+# esp_ota_mark_app_valid_cancel_rollback() after ~10 s of healthy rendering
+# (main.c). An image that boot-loops before then is rolled back to the previous
+# slot by the bootloader instead of bricking the dash.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # WiFi — reduce static RX buffers (10×1600B=16KB DMA RAM) to 6 so
 # esp_wifi_init succeeds on first boot when the first-run wizard holds
 # extra internal heap. SPIRAM_TRY_ALLOCATE_WIFI_LWIP covers higher layers.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+
+# FPS: bounce buffer was TRIED 2026-06-09 and ABANDONED — it crashed on-device
+# (abort() on core 1 mid-render with single-FB+bounce) AND the flush instrumentation
+# showed NO improvement (~7.7 ms/frame at 21% dirty, same as the DOUBLE_FB baseline:
+# the dirty-rect memcpy into PSRAM dominates, the skipped full-FB msync nets ~zero).
+# Keep DOUBLE_FB (the known-good 120-line PSRAM draw-buffer render path is unchanged).
+
+# FPS: confine the lwIP TCP/IP task (prio 18) to core 0 alongside WiFi/CAN-RX/
+# esp_timer so it can't preempt the prio-8 LVGL renderer on core 1 mid-frame.
+# Helps specifically while the web editor / CONTROL live-preview is polling.
+# CONFIG_LWIP_TCPIP_TASK_AFFINITY_NO_AFFINITY is not set
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 
 # LittleFS
 CONFIG_LITTLEFS_MAX_PARTITIONS=1

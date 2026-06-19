@@ -5,6 +5,7 @@
  * handlers, then sends a JSON response frame over UART.
  */
 #include "serial_commands.h"
+#include "system/rdm_lv_async.h"
 #include "serial_protocol.h"
 #include "uart_protocol.h"
 
@@ -25,6 +26,7 @@
 #include "storage/data_logger.h"
 #include "storage/signal_replay.h"
 #include "storage/sd_manager.h"
+#include "storage/boot_assets.h"
 #include "system/device_id.h"
 #include "ui/dashboard.h"
 #include "ui/screens/splash_screen.h"
@@ -343,7 +345,7 @@ static void _handle_layout_save(int id, cJSON *params)
     layout_manager_set_active(name);
 
     /* Trigger hot-reload via LVGL async */
-    lv_async_call(_deferred_screen_reload, NULL);
+    rdm_async_call(_deferred_screen_reload, NULL);
     _send_ok(id);
 }
 
@@ -368,7 +370,7 @@ static void _handle_layout_preview(int id, cJSON *params)
         _send_error(id, "Out of memory");
         return;
     }
-    lv_async_call(_deferred_preview_apply, copy);
+    rdm_async_call(_deferred_preview_apply, copy);
     _send_ok(id);
 }
 
@@ -393,10 +395,10 @@ static void _handle_layout_set(int id, cJSON *params)
         layout_manager_set_active_splash(splash_name);
         splash_screen_set_active_name(splash_name);
         if (splash_screen_is_edit_mode())
-            lv_async_call(_deferred_screen_reload, NULL);
+            rdm_async_call(_deferred_screen_reload, NULL);
     } else {
         layout_manager_set_active(name);
-        lv_async_call(_deferred_screen_reload, NULL);
+        rdm_async_call(_deferred_screen_reload, NULL);
     }
     _send_ok(id);
 }
@@ -494,6 +496,10 @@ static void _handle_image_delete(int id, cJSON *params)
     cJSON *name_item = cJSON_GetObjectItem(params, "name");
     if (!cJSON_IsString(name_item) || !_name_is_safe(name_item->valuestring)) {
         _send_error(id, "Invalid name");
+        return;
+    }
+    if (boot_assets_is_protected_image(name_item->valuestring)) {
+        _send_error(id, "Built-in image cannot be deleted");
         return;
     }
     char path[80];
@@ -662,7 +668,20 @@ static void _handle_font_delete(int id, cJSON *params)
         _send_error(id, "Invalid name");
         return;
     }
-    if (!font_manager_remove_family(name_item->valuestring)) {
+    if (boot_assets_is_protected_font(name_item->valuestring)) {
+        _send_error(id, "Built-in font cannot be deleted");
+        return;
+    }
+    /* Under the LVGL lock — lv_tiny_ttf_destroy() races the render task
+     * otherwise (runs on the UART task here). */
+    bool removed;
+    if (rdm_lvgl_lock(2000)) {
+        removed = font_manager_remove_family(name_item->valuestring);
+        rdm_lvgl_unlock();
+    } else {
+        removed = font_manager_remove_family(name_item->valuestring);
+    }
+    if (!removed) {
         _send_error(id, "Font not found");
         return;
     }
@@ -731,9 +750,9 @@ static void _handle_signal_simulate(int id, cJSON *params)
     cJSON *enable = cJSON_GetObjectItem(params, "enable");
     if (cJSON_IsBool(enable)) {
         if (cJSON_IsTrue(enable))
-            lv_async_call((lv_async_cb_t)signal_sim_start, NULL);
+            rdm_async_call((lv_async_cb_t)signal_sim_start, NULL);
         else
-            lv_async_call((lv_async_cb_t)signal_sim_stop, NULL);
+            rdm_async_call((lv_async_cb_t)signal_sim_stop, NULL);
     }
     cJSON *r = cJSON_CreateObject();
     cJSON_AddBoolToObject(r, "active", signal_sim_is_active());
@@ -1103,7 +1122,7 @@ static void _handle_dimmer_set(int id, cJSON *params)
     rdm_lvgl_unlock();
 
     save_dimmer_config_to_nvs();
-    lv_async_call(_deferred_serial_dimmer_subscribe, NULL);
+    rdm_async_call(_deferred_serial_dimmer_subscribe, NULL);
 
     _send_ok(id);
 }
@@ -1179,7 +1198,7 @@ static void _handle_log_start(int id, cJSON *params)
             }
         }
     }
-    lv_async_call(_deferred_serial_log_start, a);
+    rdm_async_call(_deferred_serial_log_start, a);
     _send_ok(id);
 }
 
@@ -1192,7 +1211,7 @@ static void _deferred_serial_log_stop(void *arg)
 static void _handle_log_stop(int id, cJSON *params)
 {
     (void)params;
-    lv_async_call(_deferred_serial_log_stop, NULL);
+    rdm_async_call(_deferred_serial_log_stop, NULL);
     _send_ok(id);
 }
 
@@ -1247,7 +1266,7 @@ static void _handle_log_config_set(int id, cJSON *params)
     uint16_t *arg = (uint16_t *)malloc(sizeof(uint16_t));
     if (!arg) { _send_error(id, "OOM"); return; }
     *arg = (uint16_t)v;
-    lv_async_call(_deferred_serial_log_set_rate, arg);
+    rdm_async_call(_deferred_serial_log_set_rate, arg);
     _send_ok(id);
 }
 
@@ -1294,14 +1313,14 @@ static void _handle_replay_start(int id, cJSON *params)
     }
     a->speed = cJSON_IsNumber(speed_item) ? (float)speed_item->valuedouble : 1.0f;
     a->loop  = cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item);
-    lv_async_call(_deferred_serial_replay_start, a);
+    rdm_async_call(_deferred_serial_replay_start, a);
     _send_ok(id);
 }
 
 static void _handle_replay_stop(int id, cJSON *params)
 {
     (void)params;
-    lv_async_call(_deferred_serial_replay_stop, NULL);
+    rdm_async_call(_deferred_serial_replay_stop, NULL);
     _send_ok(id);
 }
 
@@ -1558,6 +1577,14 @@ static void _handle_sd_copy(int id, cJSON *params)
         lfs_dir = LFS_FONT_DIR; sd_dir = SD_FONT_DIR; ext = ".ttf";
     } else {
         _send_error(id, "Invalid type"); return;
+    }
+
+    /* Built-in assets are locked — never copy them to or from SD. */
+    if ((strcmp(type, "font")   == 0 && boot_assets_is_protected_font(name)) ||
+        (strcmp(type, "layout") == 0 && boot_assets_is_protected_layout(name)) ||
+        (strcmp(type, "image")  == 0 && boot_assets_is_protected_image(name))) {
+        _send_error(id, "Built-in asset cannot be moved to/from SD");
+        return;
     }
 
     char src[96], dst[96];

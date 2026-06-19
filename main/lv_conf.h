@@ -29,6 +29,16 @@
 	20 // Reduced from 50ms for more responsive touch input at 70fps
 #define LV_DPI_DEF 130
 
+/* Dirty-rect slots per frame. At the stock 32, busy dash frames (meter
+ * needle front+rear old/new, two arc fills, several ticking texts/panels)
+ * overflow the buffer and lv_inv_area() falls back to invalidating the
+ * WHOLE SCREEN (lv_refr.c "if no place for the area add the screen") — a
+ * 130-170 ms frame that showed up as a periodic visible hitch on the
+ * Time_Attack layout (boot-timeline capture via /api/perf/history:
+ * max_pct=100 windows every few seconds). 128 slots cost ~1.2 KB in
+ * lv_disp_t and a longer (still trivial) join pass. */
+#define LV_INV_BUF_SIZE 128
+
 #define LV_DRAW_COMPLEX 1
 #define LV_SHADOW_CACHE_SIZE 0
 #define LV_CIRCLE_CACHE_SIZE 2

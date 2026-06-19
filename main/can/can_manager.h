@@ -82,6 +82,29 @@ void can_process_queued_frames(void);
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
 /**
+ * Inject a synthetic RX frame into the receive queue, as if it had arrived on
+ * the bus. The frame flows through the exact same decode path as a real one
+ * (can_process_queued_frames → signal_dispatch_frame → channel/widget update,
+ * OBD2 handler, id-tracker, raw logger), so this exercises bit extraction,
+ * scaling, endianness and dispatch end-to-end with no bus connected — the
+ * basis of the /api/can/inject test endpoint.
+ *
+ * Thread-safe: xQueueSendToBack may be called from any task.
+ *
+ * NOTE: queued frames are dropped (drained but not dispatched) while the
+ * signal simulator is active (see can_process_queued_frames). Callers that
+ * need the frame to take effect should ensure the sim is off.
+ *
+ * @param id    CAN ID (11-bit standard, or 29-bit when @p extd is true).
+ * @param extd  true for an extended (29-bit) frame.
+ * @param data  Pointer to up to 8 data bytes (may be NULL when dlc==0).
+ * @param dlc   Data length code (0–8; values >8 are clamped).
+ * @return ESP_OK if queued; ESP_ERR_INVALID_STATE if the RX queue doesn't
+ *         exist yet; ESP_FAIL if the queue is full.
+ */
+esp_err_t can_inject_rx_frame(uint32_t id, bool extd, const uint8_t *data, uint8_t dlc);
+
+/**
  * Read CAN bus diagnostic counters from the TWAI driver.
  * All output pointers are optional (pass NULL to skip).
  */
@@ -129,8 +152,29 @@ bool can_is_suspended(void);
  * Device Settings CAN diagnostics card when it sees twai_get_status_info
  * fail. Re-runs whichever path is appropriate:
  *   - if suspended: retries can_resume() (e.g. previous resume failed)
+ *   - else if driver reports TWAI_STATE_BUS_OFF: initiates bus-off recovery
+ *     (twai_initiate_recovery -> wait for STOPPED -> twai_start)
  *   - else if driver is uninstalled: does a fresh install + start + RX task
  * Self-rate-limited to one attempt per 5 seconds so a stuck failure mode
  * doesn't burn CPU. Returns true if recovery was attempted this call.
  */
 bool can_recover(void);
+
+/**
+ * Force the TWAI acceptance filter to ACCEPT_ALL so the CAN ID tracker
+ * sees every frame regardless of what's in the current signal registry.
+ * Pair with can_set_promiscuous_mode(false) to restore a
+ * signal-registry-derived filter.
+ *
+ * Used by the first-run wizard's ECU auto-detect probe so we can score
+ * the live bus against the entire preconfig catalog rather than just
+ * whatever signals the previous layout left in the filter mask.
+ *
+ * No-op when the requested state already matches the current one.
+ */
+void can_set_promiscuous_mode(bool enable);
+
+/**
+ * True iff promiscuous mode is currently active.
+ */
+bool can_is_promiscuous(void);

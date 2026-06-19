@@ -16,6 +16,38 @@ const path = require('path');
 const PORT = 8180;
 const ROOT = path.resolve(__dirname, '..');
 const INDEX_HTML = path.join(ROOT, 'main', 'web', 'index.html');
+const MIRROR_HTML = path.join(ROOT, 'main', 'web', 'mirror.html');
+
+/* Browser-dev layout persistence. POST /api/layout/save writes the firmware
+ * payload here (pretty-printed) and GET /api/layout/current serves it back —
+ * so layouts authored in the studio survive a page reload / server restart
+ * without a device, and you can hand the file to anyone to Import. Delete the
+ * file to fall back to SAMPLE_LAYOUT. */
+const SAVED_LAYOUT = path.join(ROOT, 'tools', 'ford_cluster.json');
+
+/* --device <ip>: proxy mode for the WASM live mirror. Serves the LOCAL
+ * main/web/mirror.html at /mirror (so the page under development is the
+ * one being tested) but forwards /mirror/index.js, /mirror/index.wasm and
+ * every /api/* request to the real dash. Lets the mirror run same-origin
+ * on localhost where browser tooling can inspect it. */
+const _devIdx = process.argv.indexOf('--device');
+const DEVICE_IP = _devIdx >= 0 ? process.argv[_devIdx + 1] : null;
+
+function proxyToDevice(req, res) {
+  const opts = {
+    host: DEVICE_IP, port: 80, path: req.url, method: req.method,
+    headers: { ...req.headers, host: DEVICE_IP },
+  };
+  const up = http.request(opts, (ur) => {
+    res.writeHead(ur.statusCode, ur.headers);
+    ur.pipe(res);
+  });
+  up.on('error', (e) => {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'device proxy failed: ' + e.message }));
+  });
+  req.pipe(up);
+}
 
 const SAMPLE_LAYOUT = {
   schema_version: 13,
@@ -64,9 +96,10 @@ const MOCK = {
     { ecu: 'Ford BA/BF', version: 'stock',      signals: [] },
     { ecu: 'Ford FG',    version: 'stock',      signals: [] }
   ]),
-  'GET  /api/presets/custom':   () => ([]),
-  'POST /api/presets/custom/save':   () => ({ ok: true }),
-  'POST /api/presets/custom/delete': () => ({ ok: true }),
+  /* /api/presets/custom GET|save|delete handled explicitly below — they need
+   * request body/query and an in-memory store so the editor's custom-preset
+   * flow ("+ New ECU", "+ Add Signal", "Create Preset") actually persists
+   * across requests during browser dev, matching the device's LittleFS. */
   'GET  /api/ecu/list':         () => ({ ecus: ['MS3-Pro', 'Haltech Elite', 'MaxxECU', 'Ford BA/BF', 'Ford FG'] }),
   'GET  /api/ecu/current':      () => ({ ecu: 'MS3-Pro', version: '1.5.x' }),
   'POST /api/ecu/set':          () => ({ ok: true }),
@@ -79,7 +112,7 @@ const MOCK = {
   'GET  /api/image/data':       () => '',
   'POST /api/image/delete':     () => ({ ok: true }),
   'POST /api/image/upload':     () => ({ ok: true }),
-  'GET  /api/font/list':        () => ({ fonts: [{ family: 'Fugaz', sizes: [16, 24, 32] }, { family: 'Orbitron', sizes: [18, 28] }] }),
+  'GET  /api/font/list':        () => (['Fugaz', 'Orbitron']),  /* firmware returns a bare array of family-name strings */
   'GET  /api/font/data':        () => '',
   'POST /api/font/upload':      () => ({ ok: true }),
   'GET  /api/sd/files':         () => ({ files: [] }),
@@ -113,6 +146,78 @@ const MOCK = {
   'POST /api/fuel/set-full':    () => ({ ok: true, voltage: 3.0 })
 };
 
+/* ── In-memory channel store (dev only) ────────────────────────────────────
+ * Enough of /api/channels to exercise the Channels modal in the browser,
+ * including the display-unit conversion UI (units_native vs units_display).
+ * Values are NATIVE — the client converts for display, same as against the
+ * device. /api/channels/update merges fields and echoes {channel} back like
+ * the firmware does. */
+const channelStore = [
+  { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, is_canonical: true,
+    signal: 'OIL_PRES', source: 'can', units_native: 'kPa', units_display: 'bar', decimals: 2,
+    min: 0, max: 1000, low_warn: 80, high_warn: 650, current_value: 203.9, is_stale: false },
+  { id: 'coolant_temp', label: 'Coolant Temp', group: 0, tier: 0, is_canonical: true,
+    signal: 'COOLANT', source: 'can', units_native: '°C', units_display: '°C', decimals: 0,
+    min: -40, max: 150, low_warn: null, high_warn: 105, current_value: 88, is_stale: false },
+  { id: 'vehicle_speed', label: 'Vehicle Speed', group: 2, tier: 0, is_canonical: true,
+    signal: 'SPEED', source: 'can', units_native: 'km/h', units_display: 'km/h', decimals: 0,
+    min: 0, max: 300, low_warn: null, high_warn: null, current_value: 67.4, is_stale: false },
+  { id: 'custom_lambda', label: 'Lambda', group: 99, tier: 1, is_canonical: false,
+    signal: 'LAMBDA', source: 'can', units_native: 'λ', units_display: '', decimals: 2,
+    min: 0.6, max: 1.4, low_warn: 0.75, high_warn: 1.1, current_value: 0.98, is_stale: false }
+];
+const CANONICAL_DEFS = [
+  { id: 'oil_pressure', label: 'Oil Pressure', group: 0, tier: 0, units_native: 'kPa',
+    units_display_default: 'bar', decimals: 2, min_default: 0, max_default: 1000,
+    low_warn: 80, high_warn: 650, notes: 'Mock canonical def.' },
+  { id: 'coolant_temp', label: 'Coolant Temp', group: 0, tier: 0, units_native: '°C',
+    units_display_default: '°C', decimals: 0, min_default: -40, max_default: 150,
+    low_warn: null, high_warn: 105, notes: '' },
+  { id: 'vehicle_speed', label: 'Vehicle Speed', group: 2, tier: 0, units_native: 'km/h',
+    units_display_default: 'km/h', decimals: 0, min_default: 0, max_default: 300,
+    low_warn: null, high_warn: null, notes: '' }
+];
+
+/* ── In-memory custom-preset store (dev only) ──────────────────────────────
+ * Mirrors the device's LittleFS custom presets. Each entry:
+ *   { ecu, version, signals: [ { label, can_id, bit_start, bit_length,
+ *                                scale, offset, endianess, is_signed, decimals } ] }
+ * GET /api/presets/custom returns the FLAT array the firmware emits — one row
+ * per signal (carrying ecu/version/label/decode), or a single { _empty:true }
+ * placeholder row so an ECU with no signals still appears in the picker. */
+const customPresetStore = [];
+
+function flattenCustomPresets() {
+  const out = [];
+  for (const p of customPresetStore) {
+    if (!p.signals || p.signals.length === 0) {
+      out.push({ ecu: p.ecu, version: p.version, label: '', _empty: true });
+      continue;
+    }
+    for (const s of p.signals) {
+      out.push({
+        ecu: p.ecu, version: p.version,
+        label: s.label || '',
+        can_id: (s.can_id != null ? String(s.can_id) : '0'),
+        endianess: (s.endianess != null ? s.endianess : 1),
+        bit_start: s.bit_start || 0,
+        bit_length: (s.bit_length != null ? s.bit_length : 16),
+        scale: (s.scale != null ? s.scale : 1),
+        offset: s.offset || 0,
+        decimals: s.decimals || 0,
+        is_signed: !!s.is_signed
+      });
+    }
+  }
+  return out;
+}
+
+function readBody(req, cb) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => cb(body));
+}
+
 function sendJson(res, body, code = 200) {
   const json = typeof body === 'string' ? body : JSON.stringify(body);
   res.writeHead(code, {
@@ -135,7 +240,116 @@ const server = http.createServer((req, res) => {
   const key = `${req.method.padEnd(4)} ${url}`;
   const handler = MOCK[key];
 
+  /* Mirror dev mode: local page, real device behind it. */
+  if (DEVICE_IP) {
+    if (url === '/mirror') {
+      try { return sendHtml(res, fs.readFileSync(MIRROR_HTML, 'utf8')); }
+      catch (e) { return sendHtml(res, `<h1>Cannot read ${MIRROR_HTML}</h1><pre>${e.message}</pre>`, 500); }
+    }
+    if (url.startsWith('/mirror/') || url.startsWith('/api/')) {
+      return proxyToDevice(req, res);
+    }
+  }
+
   if (req.url.startsWith('/api/')) {
+    /* Layout persistence — serve the saved layout file if present so the
+     * studio opens straight to the authored layout (no device needed). */
+    if ((url === '/api/layout/current' || url === '/api/layout/raw') && req.method === 'GET') {
+      try {
+        if (fs.existsSync(SAVED_LAYOUT)) return sendJson(res, fs.readFileSync(SAVED_LAYOUT, 'utf8'));
+      } catch (e) { /* fall through to sample */ }
+      return sendJson(res, SAMPLE_LAYOUT);
+    }
+    if (url === '/api/layout/save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const pretty = JSON.stringify(JSON.parse(body), null, 2);
+          fs.writeFileSync(SAVED_LAYOUT, pretty);
+        } catch (e) { /* ignore malformed save */ }
+        sendJson(res, { ok: true });
+      });
+    }
+    /* Dev-only: dump the studio preview SVG to disk so it can be shared. */
+    if (url === '/api/preview/svg' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try { fs.writeFileSync(path.join(ROOT, 'tools', 'ford_cluster_preview.svg'), body); } catch (e) {}
+        sendJson(res, { ok: true });
+      });
+    }
+    /* Dev-only: decode a {name, dataurl} data: URL (png/jpeg) to tools/_icons/
+     * so studio-rasterized images can be pulled to disk for device upload /
+     * side-by-side diffing. */
+    if (url === '/api/_save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const d = JSON.parse(body || '{}');
+          const b64 = String(d.dataurl || '').replace(/^data:[^,]+,/, '');
+          const dir = path.join(ROOT, 'tools', '_icons');
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, d.name), Buffer.from(b64, 'base64'));
+          sendJson(res, { ok: true, bytes: Buffer.from(b64, 'base64').length });
+        } catch (e) { sendJson(res, { ok: false, error: e.message }, 400); }
+      });
+    }
+    /* Channels — explicit handlers (need body + the in-memory store). */
+    if ((url === '/api/channels' || url === '/api/channels/active') && req.method === 'GET') {
+      return sendJson(res, { channels: channelStore });
+    }
+    if (url === '/api/channels/canonical' && req.method === 'GET') {
+      return sendJson(res, { channels: CANONICAL_DEFS });
+    }
+    if (url === '/api/channels/update' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const c = channelStore.find(x => x.id === data.id);
+          if (!c) return sendJson(res, { ok: false, error: 'unknown channel' }, 404);
+          const fields = data.fields || {};
+          /* Mirror the firmware's math handling so the Calculated-channel
+           * form is exercisable in browser dev. */
+          if ('math' in fields) {
+            if (fields.math == null) {
+              delete c.math; c.source = 'unbound'; c.signal = '';
+            } else {
+              c.math = fields.math; c.source = 'math';
+              c.signal = 'MATH_' + c.id.toUpperCase();
+            }
+            delete fields.math;
+          }
+          Object.assign(c, fields);
+          sendJson(res, { ok: true, channel: c });
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 400);
+        }
+      });
+    }
+    /* Custom presets — explicit handlers (need body/query + persistence). */
+    if (url === '/api/presets/custom' && req.method === 'GET') {
+      return sendJson(res, flattenCustomPresets());
+    }
+    if (url === '/api/presets/custom/save' && req.method === 'POST') {
+      return readBody(req, (body) => {
+        try {
+          const data = JSON.parse(body || '{}');
+          const ecu = data.ecu, version = data.version;
+          if (!ecu || !version) return sendJson(res, { ok: false, error: 'ecu and version required' }, 400);
+          const signals = Array.isArray(data.signals) ? data.signals : [];
+          const existing = customPresetStore.find(p => p.ecu === ecu && p.version === version);
+          if (existing) existing.signals = signals;
+          else customPresetStore.push({ ecu, version, signals });
+          sendJson(res, { ok: true });
+        } catch (e) {
+          sendJson(res, { ok: false, error: e.message }, 400);
+        }
+      });
+    }
+    if (url === '/api/presets/custom/delete' && req.method === 'POST') {
+      const q = new URLSearchParams(req.url.split('?')[1] || '');
+      const ecu = q.get('ecu'), version = q.get('version');
+      const idx = customPresetStore.findIndex(p => p.ecu === ecu && p.version === version);
+      if (idx >= 0) customPresetStore.splice(idx, 1);
+      return sendJson(res, { ok: true });
+    }
     if (handler) return sendJson(res, handler());
     console.log(`[mock] no handler for ${key} — returning {ok:true}`);
     return sendJson(res, { ok: true });
@@ -153,7 +367,7 @@ const server = http.createServer((req, res) => {
   const fp = path.join(ROOT, 'main', 'web', url);
   if (fp.startsWith(path.join(ROOT, 'main', 'web')) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
     const ext = path.extname(fp);
-    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
+    const ct = { '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.html': 'text/html', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': ct });
     return res.end(fs.readFileSync(fp));
   }

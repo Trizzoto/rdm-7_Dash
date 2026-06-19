@@ -16,7 +16,8 @@ Reading the codebase cold? Open the docs by the **question you have**, not by wh
 | How do I add a new widget type? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + the existing widget files in `main/widgets/` |
 | What's the LVGL mutex / threading rule? | [`CLAUDE.md`](../CLAUDE.md) § "Threading" |
 | What does the JSON layout look like? | [`docs/handover/03-widget-system.md`](handover/03-widget-system.md) + a saved `.json` in `data/layouts/` |
-| Why are there three HTML copies? | [`docs/adr/0005-html-source-of-truth.md`](adr/0005-html-source-of-truth.md) |
+| Why are there three HTML copies? | [`docs/adr/0007-html-source-of-truth.md`](adr/0007-html-source-of-truth.md) |
+| How do channels own CAN decode (portable layouts)? | [`docs/adr/0005-channel-owned-decode.md`](adr/0005-channel-owned-decode.md) + [`docs/adr/0006-channel-architecture-v2.md`](adr/0006-channel-architecture-v2.md) |
 | Why does Wi-Fi onboarding have so much code? | [`docs/adr/0001-wifi-onboarding-reliability.md`](adr/0001-wifi-onboarding-reliability.md) |
 | How is the web server file structured? | [`docs/adr/0002-web-server-split-roadmap.md`](adr/0002-web-server-split-roadmap.md) |
 | What are the performance budgets? | [`docs/adr/0004-performance-budgets.md`](adr/0004-performance-budgets.md) |
@@ -55,7 +56,9 @@ RDM-7_Dash/
         ├── 0002-web-server-split-roadmap.md
         ├── 0003-desktop-index-sync-plan.md
         ├── 0004-performance-budgets.md
-        └── 0005-html-source-of-truth.md
+        ├── 0005-channel-owned-decode.md
+        ├── 0006-channel-architecture-v2.md
+        └── 0007-html-source-of-truth.md
 ```
 
 ### Who each family is for

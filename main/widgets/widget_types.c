@@ -23,6 +23,7 @@
 #include "widget_arc.h"
 #include "widget_button.h"
 #include "widget_shift_light.h"
+#include "widget_pathbar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,7 +42,7 @@ const lv_font_t *widget_resolve_font(const char *name) {
 		memcpy(family, name, flen);
 		family[flen] = '\0';
 		uint16_t size = (uint16_t)atoi(colon + 1);
-		if (size >= 8 && size <= 128) {
+		if (size >= 8 && size <= 500) {
 			const lv_font_t *f = font_manager_get(family, size);
 			if (f) return f;
 		}
@@ -93,6 +94,8 @@ const widget_size_constraints_t widget_constraints[WIDGET_TYPE_COUNT] = {
     /* WIDGET_BUTTON    */ { .min_w =  40, .min_h =  20, .max_w = 300, .max_h = 100 },
     /* WIDGET_SHIFT_LIGHT */ { .min_w = 100, .min_h = 15, .max_w = SCREEN_W, .max_h =  60 },
     /* WIDGET_LINE        */ { .min_w =   2, .min_h =  2, .max_w = SCREEN_W, .max_h = SCREEN_H },
+    /* WIDGET_BANNER      */ { .min_w = 100, .min_h = 24, .max_w = SCREEN_W, .max_h = 160 },
+    /* WIDGET_PATHBAR     */ { .min_w =  20, .min_h = 20, .max_w = SCREEN_W, .max_h = SCREEN_H },
 };
 
 /* ─── Type name lookup ───────────────────────────────────────────────────── */
@@ -114,6 +117,8 @@ const char *widget_type_name(widget_type_t type)
         "button",
         "shift_light",
         "line",
+        "banner",
+        "pathbar",
     };
     if ((unsigned)type >= (unsigned)WIDGET_TYPE_COUNT) return "unknown";
     return names[type];
@@ -130,6 +135,10 @@ void widget_base_to_json(const widget_t *w, cJSON *out)
     cJSON_AddNumberToObject(out, "y",    w->y);
     cJSON_AddNumberToObject(out, "w",    w->w);
     cJSON_AddNumberToObject(out, "h",    w->h);
+    /* Defaults-only: only emit `group` when set, so ungrouped layouts
+     * pay no JSON-size penalty. */
+    if (w->group[0] != '\0')
+        cJSON_AddStringToObject(out, "group", w->group);
 }
 
 void widget_base_from_json(widget_t *w, const cJSON *in)
@@ -147,6 +156,10 @@ void widget_base_from_json(widget_t *w, const cJSON *in)
         w->h = (uint16_t)item->valuedouble;
     if ((item = cJSON_GetObjectItemCaseSensitive(in, "id")) && cJSON_IsString(item))
         safe_strncpy(w->id, item->valuestring, sizeof(w->id));
+    if ((item = cJSON_GetObjectItemCaseSensitive(in, "group")) && cJSON_IsString(item))
+        safe_strncpy(w->group, item->valuestring, sizeof(w->group));
+    else
+        w->group[0] = '\0';
 }
 
 /* ─── Widget capability queries ─────────────────────────────────────────── */
@@ -164,6 +177,7 @@ char *widget_get_signal_name_buf(widget_t *w)
         case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->signal_name;
         case WIDGET_TOGGLE:    return ((toggle_data_t *)w->type_data)->signal_name;
         case WIDGET_SHIFT_LIGHT: return ((shift_light_data_t *)w->type_data)->signal_name;
+        case WIDGET_PATHBAR:   return ((pathbar_data_t *)w->type_data)->signal_name;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:
@@ -185,6 +199,7 @@ int16_t *widget_get_signal_index_ptr(widget_t *w)
         case WIDGET_WARNING:   return &((warning_data_t *)w->type_data)->signal_index;
         case WIDGET_TOGGLE:    return &((toggle_data_t *)w->type_data)->signal_index;
         case WIDGET_SHIFT_LIGHT: return &((shift_light_data_t *)w->type_data)->signal_index;
+        case WIDGET_PATHBAR:   return &((pathbar_data_t *)w->type_data)->signal_index;
         case WIDGET_IMAGE:
         case WIDGET_SHAPE_PANEL:
         case WIDGET_ARC:
@@ -203,6 +218,22 @@ char *widget_get_label_buf(widget_t *w)
         case WIDGET_TOGGLE:  return ((toggle_data_t *)w->type_data)->label;
         case WIDGET_BUTTON:  return ((button_data_t *)w->type_data)->label;
         default:             return NULL;
+    }
+}
+
+char *widget_get_channel_id_buf(widget_t *w)
+{
+    if (!w || !w->type_data) return NULL;
+    switch (w->type) {
+        case WIDGET_PANEL:     return ((panel_data_t *)w->type_data)->channel_id;
+        case WIDGET_BAR:       return ((bar_data_t *)w->type_data)->channel_id;
+        case WIDGET_RPM_BAR:   return ((rpm_bar_data_t *)w->type_data)->channel_id;
+        case WIDGET_ARC:       return ((arc_data_t *)w->type_data)->channel_id;
+        case WIDGET_METER:     return ((meter_data_t *)w->type_data)->channel_id;
+        case WIDGET_TEXT:      return ((text_data_t *)w->type_data)->channel_id;
+        case WIDGET_INDICATOR: return ((indicator_data_t *)w->type_data)->channel_id;
+        case WIDGET_WARNING:   return ((warning_data_t *)w->type_data)->channel_id;
+        default:               return NULL;
     }
 }
 

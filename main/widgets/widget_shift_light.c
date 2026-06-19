@@ -118,16 +118,29 @@ static int _fill_order(shift_light_data_t *d, int fill_idx) {
         return d->led_count - 1 - pair;     /* right side */
 }
 
+/* Paint one LED only when its color actually changes. LVGL v8
+ * lv_obj_set_style_* always invalidates the object (no value-diff early-out),
+ * and the on-signal / flash paths touch every LED each tick — up to
+ * SHL_MAX_LED dirty rects/tick from a single widget, enough to push a dense layout over
+ * LV_INV_BUF_SIZE=32 and trigger a full-screen redraw. Routing EVERY LED
+ * color write through here keeps last_led_color[] coherent across all paths
+ * (signal, flash, overrides, night, repaint) with no separate invalidation,
+ * and skips the redundant writes. Mirrors widget_rpm_bar.c s_paint_cache. */
+static inline void _shl_set_led(shift_light_data_t *d, int i, lv_color_t c) {
+    if (i < 0 || i >= SHL_MAX_LED || !d->leds[i]) return;
+    if (d->last_led_color[i].full == c.full) return;
+    lv_obj_set_style_bg_color(d->leds[i], c, LV_PART_MAIN);
+    d->last_led_color[i] = c;
+}
+
 static void _shift_light_on_signal(float value, bool is_stale, void *user_data) {
     widget_t *w = (widget_t *)user_data;
     shift_light_data_t *d = (shift_light_data_t *)w->type_data;
     if (!w->root || !lv_obj_is_valid(w->root)) return;
 
     if (is_stale) {
-        for (int i = 0; i < d->led_count; i++) {
-            if (d->leds[i])
-                lv_obj_set_style_bg_color(d->leds[i], d->color_off, LV_PART_MAIN);
-        }
+        for (int i = 0; i < d->led_count; i++)
+            _shl_set_led(d, i, d->color_off);
         d->active_count = 0;
         return;
     }
@@ -148,8 +161,8 @@ static void _shift_light_on_signal(float value, bool is_stale, void *user_data) 
 
     if (!flashing) {
         /* Build maps: which LEDs are active, and what fill step each position has */
-        bool active[16] = {false};
-        int  step_of[16] = {0};   /* fill step for each physical position */
+        bool active[SHL_MAX_LED] = {false};
+        int  step_of[SHL_MAX_LED] = {0};   /* fill step for each physical position */
         for (int f = 0; f < d->led_count; f++) {
             int phys = _fill_order(d, f);
             step_of[phys] = f;
@@ -158,13 +171,8 @@ static void _shift_light_on_signal(float value, bool is_stale, void *user_data) 
         }
 
         for (int i = 0; i < d->led_count; i++) {
-            if (!d->leds[i]) continue;
-            if (active[i]) {
-                lv_color_t color = _led_color_for_pos(d, i, step_of[i]);
-                lv_obj_set_style_bg_color(d->leds[i], color, LV_PART_MAIN);
-            } else {
-                lv_obj_set_style_bg_color(d->leds[i], d->color_off, LV_PART_MAIN);
-            }
+            _shl_set_led(d, i, active[i] ? _led_color_for_pos(d, i, step_of[i])
+                                         : d->color_off);
         }
     }
 }
@@ -179,13 +187,15 @@ static void _flash_timer_cb(lv_timer_t *timer) {
 
     if (should_flash) {
         d->flash_state = !d->flash_state;
-        for (int i = 0; i < d->led_count; i++) {
-            if (!d->leds[i]) continue;
-            if (d->flash_state)
-                lv_obj_set_style_bg_color(d->leds[i], d->color_high, LV_PART_MAIN);
-            else
-                lv_obj_set_style_bg_color(d->leds[i], d->color_off, LV_PART_MAIN);
-        }
+        /* Resolve night-mode colors so the flash matches the rest of the strip
+         * (the other paint paths night-pick; the flash timer must too, or it
+         * would paint raw day colors over a night-applied strip). */
+        bool night = night_mode_is_active();
+        lv_color_t c_high = NIGHT_PICK_COLOR(night, d->night, color_high, d->color_high);
+        lv_color_t c_off  = NIGHT_PICK_COLOR(night, d->night, color_off,  d->color_off);
+        lv_color_t c = d->flash_state ? c_high : c_off;
+        for (int i = 0; i < d->led_count; i++)
+            _shl_set_led(d, i, c);
     }
 }
 
@@ -208,7 +218,7 @@ static void _shl_create(widget_t *w, lv_obj_t *parent) {
 
     w->root = cont;
 
-    for (int i = 0; i < d->led_count && i < 16; i++) {
+    for (int i = 0; i < d->led_count && i < SHL_MAX_LED; i++) {
         lv_obj_t *led = lv_obj_create(cont);
         lv_obj_clear_flag(led, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_opa(led, LV_OPA_COVER, LV_PART_MAIN);
@@ -217,6 +227,7 @@ static void _shl_create(widget_t *w, lv_obj_t *parent) {
         lv_obj_set_style_radius(led, d->border_radius, LV_PART_MAIN);
         lv_obj_set_style_pad_all(led, 0, LV_PART_MAIN);
         d->leds[i] = led;
+        d->last_led_color[i] = d->color_off; /* seed the paint cache */
     }
 
     _update_led_layout(w);
@@ -322,7 +333,7 @@ static void _shl_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) {
         d->led_count = (uint8_t)item->valueint;
         if (d->led_count < 4) d->led_count = 4;
-        if (d->led_count > 16) d->led_count = 16;
+        if (d->led_count > SHL_MAX_LED) d->led_count = SHL_MAX_LED;
     }
 
     item = cJSON_GetObjectItemCaseSensitive(cfg, "range_min");
@@ -429,8 +440,8 @@ static void _shl_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
     }
 
     /* Build fill step map for correct color assignment in outside-in mode */
-    bool active[16] = {false};
-    int  step_of[16] = {0};
+    bool active[SHL_MAX_LED] = {false};
+    int  step_of[SHL_MAX_LED] = {0};
     for (int f = 0; f < d->led_count; f++) {
         int phys = _fill_order(d, f);
         step_of[phys] = f;
@@ -440,17 +451,15 @@ static void _shl_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_t
 
     for (int i = 0; i < d->led_count; i++) {
         if (!d->leds[i]) continue;
+        lv_color_t color = c_off;
         if (active[i]) {
             int basis = (d->fill_mode == 1) ? step_of[i] : i;
             float pos = (d->led_count > 1) ? (float)basis / (float)(d->led_count - 1) : 0;
-            lv_color_t color;
             if (pos < d->threshold_mid) color = c_low;
             else if (pos < d->threshold_high) color = c_mid;
             else color = c_high;
-            lv_obj_set_style_bg_color(d->leds[i], color, LV_PART_MAIN);
-        } else {
-            lv_obj_set_style_bg_color(d->leds[i], c_off, LV_PART_MAIN);
         }
+        _shl_set_led(d, i, color);
     }
 }
 
@@ -469,8 +478,8 @@ static void _shl_apply_night_mode(widget_t *w, bool active_state) {
     lv_color_t c_off  = NIGHT_PICK_COLOR(active_state, d->night, color_off,  d->color_off);
 
     /* Build fill step map matching _shl_apply_overrides / _shift_light_on_signal */
-    bool led_active[16] = {false};
-    int  step_of[16]    = {0};
+    bool led_active[SHL_MAX_LED] = {false};
+    int  step_of[SHL_MAX_LED]    = {0};
     for (int f = 0; f < d->led_count; f++) {
         int phys = _fill_order(d, f);
         step_of[phys] = f;
@@ -480,17 +489,15 @@ static void _shl_apply_night_mode(widget_t *w, bool active_state) {
 
     for (int i = 0; i < d->led_count; i++) {
         if (!d->leds[i]) continue;
+        lv_color_t color = c_off;
         if (led_active[i]) {
             int basis = (d->fill_mode == 1) ? step_of[i] : i;
             float pos = (d->led_count > 1) ? (float)basis / (float)(d->led_count - 1) : 0;
-            lv_color_t color;
             if (pos < d->threshold_mid) color = c_low;
             else if (pos < d->threshold_high) color = c_mid;
             else color = c_high;
-            lv_obj_set_style_bg_color(d->leds[i], color, LV_PART_MAIN);
-        } else {
-            lv_obj_set_style_bg_color(d->leds[i], c_off, LV_PART_MAIN);
         }
+        _shl_set_led(d, i, color);
     }
 }
 
@@ -514,20 +521,18 @@ static void _shl_repaint(widget_t *w) {
 	shift_light_data_t *d = (shift_light_data_t *)w->type_data;
 	if (!d || !w->root || !lv_obj_is_valid(w->root)) return;
 
-	bool active[16] = {false};
-	int  step_of[16] = {0};
-	for (int f = 0; f < d->led_count && f < 16; f++) {
+	bool active[SHL_MAX_LED] = {false};
+	int  step_of[SHL_MAX_LED] = {0};
+	for (int f = 0; f < d->led_count && f < SHL_MAX_LED; f++) {
 		int phys = _fill_order(d, f);
-		if (phys < 0 || phys >= 16) continue;
+		if (phys < 0 || phys >= SHL_MAX_LED) continue;
 		step_of[phys] = f;
 		if (f < d->active_count) active[phys] = true;
 	}
-	for (int i = 0; i < d->led_count && i < 16; i++) {
+	for (int i = 0; i < d->led_count && i < SHL_MAX_LED; i++) {
 		if (!d->leds[i]) continue;
-		lv_color_t c = active[i]
-			? _led_color_for_pos(d, i, step_of[i])
-			: d->color_off;
-		lv_obj_set_style_bg_color(d->leds[i], c, LV_PART_MAIN);
+		_shl_set_led(d, i, active[i] ? _led_color_for_pos(d, i, step_of[i])
+		                             : d->color_off);
 	}
 }
 
@@ -575,7 +580,7 @@ static bool _shl_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "led_count") == 0) {
-		int v = in->i; if (v < 4) v = 4; if (v > 16) v = 16;
+		int v = in->i; if (v < 4) v = 4; if (v > SHL_MAX_LED) v = SHL_MAX_LED;
 		d->led_count = (uint8_t)v;
 		return true;   /* LEDs are created in _shl_create; visible change on reload */
 	}

@@ -30,7 +30,9 @@
 
 #include "../theme.h"
 #include "../../storage/config_store.h"
+#include "../../system/rdm_lv_async.h"
 #include "../../widgets/signal.h"
+#include "../../widgets/signal_internal.h"
 
 static const char *TAG = "gear_setup";
 
@@ -105,6 +107,18 @@ static void _set_label_float(lv_obj_t *lbl, float v) {
     lv_label_set_text(lbl, buf);
 }
 
+/* Wheel circumference is stored as metres in NVS (firmware-wide) but
+ * shown in millimetres in both the web and on-device UIs — humans
+ * read "1950 mm" more comfortably than "1.95 m". Round to the nearest
+ * mm; firmware-side resolution beyond that is irrelevant for gear
+ * back-calculation. */
+static void _set_label_mm(lv_obj_t *lbl, float metres) {
+    if (!lbl) return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.0f", (double)(metres * 1000.0f));
+    lv_label_set_text(lbl, buf);
+}
+
 /* Build the newline-separated signal-name dropdown list. Includes a
  * leading "(custom)" hint when the current value isn't in the registry,
  * so the user can see what the stored config refers to even after the
@@ -174,7 +188,7 @@ static void _refresh_ratio_rows(void) {
 
 /* Push all live config values onto their label widgets. */
 static void _refresh_value_labels(void) {
-    if (s.wheel_lbl) _set_label_float(s.wheel_lbl, s.cfg.wheel_circumference_m);
+    if (s.wheel_lbl) _set_label_mm(s.wheel_lbl, s.cfg.wheel_circumference_m);
     if (s.fd_lbl)    _set_label_float(s.fd_lbl,    s.cfg.final_drive);
     if (s.count_lbl) {
         char buf[16];
@@ -222,8 +236,11 @@ static void _speed_dd_cb(lv_event_t *e) {
 static void _wheel_step_cb(lv_event_t *e) {
     void *u = lv_event_get_user_data(e);
     int dir = _unpack_dir(u);
-    float step = 0.01f;
-    s.cfg.wheel_circumference_m += (dir == STEP_UP ? step : -step);
+    /* Step 10 mm per click (= 0.01 m). Range 500..3500 mm — covers
+     * everything from a kart-sized 16" tyre up to a 40"+ off-road
+     * meat-truck wheel with room to spare. */
+    float step_m = 0.010f;
+    s.cfg.wheel_circumference_m += (dir == STEP_UP ? step_m : -step_m);
     if (s.cfg.wheel_circumference_m < 0.5f) s.cfg.wheel_circumference_m = 0.5f;
     if (s.cfg.wheel_circumference_m > 3.5f) s.cfg.wheel_circumference_m = 3.5f;
     _refresh_value_labels();
@@ -375,22 +392,31 @@ static void _save_cb(lv_event_t *e) {
      * enforce this but signal_internal.c relies on it. */
     s.cfg.ratios[0] = 0.0f;
 
-    esp_err_t err = config_store_save_gear_cal(&s.cfg);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "save_gear_cal failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Gear cal saved: %u gears, FD=%.2f, wheel=%.2f m, %s",
-                 (unsigned)s.cfg.ratio_count,
-                 (double)s.cfg.final_drive,
-                 (double)s.cfg.wheel_circumference_m,
-                 s.cfg.enabled ? "enabled" : "disabled");
-    }
-    _close(err == ESP_OK);
+    /* Apply live AND persist via signal_internal_set_gear_cal() — it updates
+     * the running s_gear_cal so the change takes effect this instant, then
+     * writes NVS. (Calling config_store_save_gear_cal() directly only touched
+     * NVS, so on-device edits silently did nothing until the next reboot.) */
+    signal_internal_set_gear_cal(&s.cfg);
+    ESP_LOGI(TAG, "Gear cal saved: %u gears, FD=%.2f, wheel=%.0f mm, %s",
+             (unsigned)s.cfg.ratio_count,
+             (double)s.cfg.final_drive,
+             (double)(s.cfg.wheel_circumference_m * 1000.0f),
+             s.cfg.enabled ? "enabled" : "disabled");
+    _close(true);
 }
 
 static void _cancel_cb(lv_event_t *e) {
     (void)e;
     _close(false);
+}
+
+/* Overlay teardown when the overlay is freed by a path OTHER than our own
+ * _close() (e.g. a layout reload wiping lv_layer_top()): just drop our handle
+ * so a later _close() / ui_gear_setup_is_open() doesn't touch freed memory.
+ * The crash-safe deferred delete itself is handled by rdm_obj_del_async(). */
+static void _overlay_delete_evt_cb(lv_event_t *e) {
+    lv_obj_t *o = lv_event_get_target(e);
+    if (s.overlay == o) s.overlay = NULL;
 }
 
 static void _close(bool saved) {
@@ -400,7 +426,13 @@ static void _close(bool saved) {
         lv_timer_del(s.status_timer);
         s.status_timer = NULL;
     }
-    if (s.overlay && lv_obj_is_valid(s.overlay)) lv_obj_del_async(s.overlay);
+    /* Defer the delete (we're called from a child's event handler, so we can't
+     * delete the overlay synchronously). rdm_obj_del_async() is crash-safe: it
+     * cancels the queued delete if any other path frees the overlay first, and
+     * detaches its own delete handler before self-deleting so the in-flight
+     * async call isn't double-freed ("CORRUPT HEAP: Bad head"). */
+    if (s.overlay && lv_obj_is_valid(s.overlay))
+        rdm_obj_del_async(s.overlay);
     memset(&s, 0, sizeof(s));
     if (cb) cb(saved, ctx);
 }
@@ -580,6 +612,10 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     /* Overlay */
     lv_obj_t *scr = lv_layer_top();
     s.overlay = lv_obj_create(scr);
+    /* Clear our handle if the overlay is freed by a non-_close() path (e.g. a
+     * layout reload wiping lv_layer_top()). rdm_obj_del_async() installs its
+     * own cancel-on-delete handler for the deferred-delete safety. */
+    lv_obj_add_event_cb(s.overlay, _overlay_delete_evt_cb, LV_EVENT_DELETE, NULL);
     lv_obj_remove_style_all(s.overlay);
     lv_obj_set_size(s.overlay, lv_pct(100), lv_pct(100));
     lv_obj_center(s.overlay);
@@ -671,8 +707,10 @@ void ui_gear_setup_open(ui_gear_setup_done_cb_t cb, void *ctx) {
     _select_dd_by_name(s.speed_dd, s.cfg.speed_signal);
     lv_obj_add_event_cb(s.speed_dd, _speed_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    /* Numeric rows — wheel circumference, final drive, gear count */
-    _add_value_row(s.list, "Wheel circumference (m)",
+    /* Numeric rows — wheel circumference, final drive, gear count.
+     * Wheel circumference is shown in mm to match the web modal; the
+     * underlying storage is still metres but the label / step are mm. */
+    _add_value_row(s.list, "Wheel circumference (mm)",
                    _wheel_step_cb, 0, 0, &s.wheel_lbl, NULL);
     _add_value_row(s.list, "Final drive ratio",
                    _fd_step_cb, 0, 0, &s.fd_lbl, NULL);

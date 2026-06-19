@@ -42,6 +42,13 @@ typedef struct {
     uint8_t    shadow_opa;           /* default: 128 */
     int8_t     shadow_ofs_x;         /* default: 0 */
     int8_t     shadow_ofs_y;         /* default: 0 */
+    /* Performance: when true and this shape sits over a meter that has a
+     * cached face (static_ticks), the post-build overlay-bake pass
+     * composites this shape INTO that meter's face image and hides the live
+     * shape — so it costs nothing per frame (the "covering is free" path).
+     * Baked decoration renders below the needle. Static decoration only. */
+    bool       bake_into_gauge;      /* default: false */
+    bool       baked;                /* runtime: absorbed into a meter face */
     /* Night-mode appearance overrides */
     shape_panel_night_overrides_t night;
 } shape_panel_data_t;

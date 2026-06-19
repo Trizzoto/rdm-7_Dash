@@ -36,6 +36,15 @@ typedef struct {
 	bool       warning_low_apply_panel;
 	char       label_font[32];
 	char       value_font[32];
+	/* When set, append the bound channel's display unit to the value inline,
+	 * e.g. "40°C" / "482 kPa" — pulled from the channel, not hard-coded. */
+	bool       show_unit;            /* default: false */
+	/* Unit suffix size: 0=small, 1=medium, 2=full (default). full = inline in
+	 * the value label at the value's size; small/medium = a separate, smaller
+	 * label sitting just to the right of the value (derived from value_font). */
+	uint8_t    unit_size;            /* default: 2 (full) */
+	lv_obj_t  *unit_label;           /* runtime: separate unit label (small/medium) */
+	lv_obj_t  *value_row;            /* runtime: flex row wrapping value+unit (small/medium) */
 	/* ── Appearance overrides (defaults match legacy shared box_style) ── */
 	uint8_t    border_radius;        /* default: 7 */
 	uint8_t    border_width;         /* default: 3 */
@@ -46,6 +55,8 @@ typedef struct {
 	lv_color_t value_color;          /* default: THEME_COLOR_TEXT_PRIMARY */
 	int8_t     label_y_offset;       /* default: -28 */
 	int8_t     value_y_offset;       /* default: 9 */
+	uint8_t    text_align;           /* 0=left, 1=center (default), 2=right —
+	                                  * aligns both the header label and value */
 	int8_t     custom_text_x_offset; /* default: 41 */
 	int8_t     custom_text_y_offset; /* default: 32 */
 	/* Peak hold display: when non-zero, render a small line below the value.
@@ -57,8 +68,22 @@ typedef struct {
 	 * — these reset on every boot. The Peaks screen shows the all-time
 	 * persisted peaks instead. Reset is signal-wide via signal_reset_peak. */
 	uint8_t    show_peak;
+	/* Peak line placement + font (only meaningful when show_peak != 0).
+	 * Offsets are from box centre, matching value_y_offset / custom_text_*.
+	 * peak_font empty → THEME_FONT_TINY. The peak follows text_align like the
+	 * header/value, so these offsets fine-tune on top of left/centre/right. */
+	char       peak_font[32];        /* default: "" (tiny theme font) */
+	int8_t     peak_x_offset;        /* default: 0 */
+	int8_t     peak_y_offset;        /* default: 31 (== legacy value_y_offset 9 + 22) */
 	char       signal_name[32];
 	int16_t    signal_index;
+	/* ── v14 channel binding ─────────────────────────────────────
+	 * When `channel_id` is set, this panel pulls data semantics from
+	 * the named channel. Backwards-compat: empty `channel_id` falls
+	 * through to legacy signal_name + warning_*_threshold path.
+	 * See widget_meter.h for the full pattern documentation. */
+	char       channel_id[32];
+	void      *channel;     /* channel_t* — opaque to avoid header dep */
 	/* LVGL object pointers (runtime only) */
 	lv_obj_t  *box;
 	lv_obj_t  *header_label;
@@ -70,6 +95,10 @@ typedef struct {
 	 * Collapses a 60 Hz restyle storm to just the visible transitions. */
 	char       last_display[32];
 	uint8_t    last_warn_state;  /* bit0=label bit1=value bit2=panel bit7=stale */
+	char       last_peak[40];    /* last peak-label string painted; skips the
+	                              * redundant lv_label_set_text when the session
+	                              * peak/min hasn't moved. Reset on decimals /
+	                              * show_peak change. */
 	/* Night-mode appearance overrides (only applied when night_mode active) */
 	panel_night_overrides_t night;
 } panel_data_t;

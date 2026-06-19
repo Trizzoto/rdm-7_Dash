@@ -15,6 +15,7 @@
  *   POST /api/replay/stop        {}
  *   GET  /api/replay/status      active, file, row, total_rows, speed */
 #include "web_server_internal.h"
+#include "system/rdm_lv_async.h"
 #include "cJSON.h"
 #include "storage/data_logger.h"
 #include "storage/can_raw_logger.h"
@@ -80,9 +81,8 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 	log_start_args_t *args = NULL;
 	if (req->content_len > 0 && req->content_len < 128) {
 		char buf[128];
-		int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+		int received = web_server_recv_body_raw(req, buf, sizeof(buf));
 		if (received > 0) {
-			buf[received] = '\0';
 			cJSON *root = cJSON_Parse(buf);
 			if (root) {
 				cJSON *rate = cJSON_GetObjectItemCaseSensitive(root, "rate_hz");
@@ -102,7 +102,7 @@ static esp_err_t _log_start_handler(httpd_req_t *req) {
 		}
 	}
 
-	lv_async_call(_deferred_log_start, args);
+	rdm_async_call(_deferred_log_start, args);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -126,12 +126,10 @@ static esp_err_t _log_config_post_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 	char buf[128];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
+	if (web_server_recv_body_raw(req, buf, sizeof(buf)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
 		return ESP_OK;
 	}
-	buf[received] = '\0';
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -155,7 +153,7 @@ static esp_err_t _log_config_post_handler(httpd_req_t *req) {
 		return ESP_OK;
 	}
 	*hz_arg = (uint16_t)v;
-	lv_async_call(_deferred_log_set_rate, hz_arg);
+	rdm_async_call(_deferred_log_set_rate, hz_arg);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
 	return ESP_OK;
@@ -166,7 +164,7 @@ static esp_err_t _log_stop_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not logging");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_log_stop, NULL);
+	rdm_async_call(_deferred_log_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;
@@ -187,18 +185,19 @@ static esp_err_t _log_status_handler(httpd_req_t *req) {
 	const char *p = strrchr(file, '/');
 	if (p) basename = p + 1;
 
-	char buf[320];
+	char buf[352];
 	snprintf(buf, sizeof(buf),
 			 "{\"active\":%s,\"file\":\"%s\",\"samples\":%lu,\"elapsed_ms\":%lu,"
 			 "\"rate_hz\":%u,\"storage\":\"%s\",\"lfs_max_bytes\":%lu,"
-			 "\"sd_mounted\":%s}",
+			 "\"sd_mounted\":%s,\"stop_reason\":\"%s\"}",
 			 active ? "true" : "false",
 			 basename,
 			 (unsigned long)samples, (unsigned long)elapsed,
 			 (unsigned)rate,
 			 storage,
 			 (unsigned long)lfs_cap,
-			 sd_manager_is_mounted() ? "true" : "false");
+			 sd_manager_is_mounted() ? "true" : "false",
+			 data_logger_last_stop_reason());
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;
@@ -469,7 +468,7 @@ static esp_err_t _canraw_start_handler(httpd_req_t *req) {
 		                    "Signal logger active — stop it first");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_canraw_start, NULL);
+	rdm_async_call(_deferred_canraw_start, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -480,7 +479,7 @@ static esp_err_t _canraw_stop_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Not capturing");
 		return ESP_OK;
 	}
-	lv_async_call(_deferred_canraw_stop, NULL);
+	rdm_async_call(_deferred_canraw_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;
@@ -498,16 +497,18 @@ static esp_err_t _canraw_status_handler(httpd_req_t *req) {
 	const char *p = strrchr(file, '/');
 	if (p) basename = p + 1;
 
-	char buf[256];
+	char buf[288];
 	snprintf(buf, sizeof(buf),
 	         "{\"active\":%s,\"file\":\"%s\",\"frames\":%lu,\"elapsed_ms\":%lu,"
-	         "\"storage\":\"%s\",\"lfs_max_bytes\":%lu,\"sd_mounted\":%s}",
+	         "\"storage\":\"%s\",\"lfs_max_bytes\":%lu,\"sd_mounted\":%s,"
+	         "\"stop_reason\":\"%s\"}",
 	         active ? "true" : "false",
 	         basename,
 	         (unsigned long)frames, (unsigned long)elapsed,
 	         storage,
 	         (unsigned long)data_logger_lfs_max_bytes(),
-	         sd_manager_is_mounted() ? "true" : "false");
+	         sd_manager_is_mounted() ? "true" : "false",
+	         can_raw_logger_last_stop_reason());
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, buf);
 	return ESP_OK;
@@ -528,8 +529,7 @@ static esp_err_t _canraw_cloud_upload_handler(httpd_req_t *req)
 	}
 
 	char body[1024 + 1] = {0};
-	int recvd = httpd_req_recv(req, body, sizeof(body) - 1);
-	if (recvd <= 0) {
+	if (web_server_recv_body_raw(req, body, sizeof(body)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body read failed");
 		return ESP_OK;
 	}
@@ -637,12 +637,10 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 		return ESP_OK;
 	}
 	char buf[256];
-	int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-	if (received <= 0) {
+	if (web_server_recv_body_raw(req, buf, sizeof(buf)) <= 0) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive body");
 		return ESP_OK;
 	}
-	buf[received] = '\0';
 	cJSON *root = cJSON_Parse(buf);
 	if (!root) {
 		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
@@ -668,6 +666,17 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 	 * verbatim. */
 	const char *fn = file_item->valuestring;
 	if (fn[0] == '/') {
+		/* Absolute paths must stay inside a known storage tier and contain no
+		 * ".." traversal — otherwise a verbatim path could replay any file on
+		 * the device, bypassing the basename resolution's implicit safety. */
+		bool in_tier = (strncmp(fn, "/sdcard/", 8) == 0) ||
+		               (strncmp(fn, "/lfs/", 5) == 0);
+		if (!in_tier || strstr(fn, "..")) {
+			free(a);
+			cJSON_Delete(root);
+			httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid log path");
+			return ESP_OK;
+		}
 		strncpy(a->path, fn, sizeof(a->path) - 1);
 		a->path[sizeof(a->path) - 1] = '\0';
 	} else if (!_log_resolve_path(fn, a->path, sizeof(a->path))) {
@@ -682,7 +691,7 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 	a->loop  = cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item);
 	cJSON_Delete(root);
 
-	lv_async_call(_deferred_replay_start, a);
+	rdm_async_call(_deferred_replay_start, a);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"started\"}");
 	return ESP_OK;
@@ -690,7 +699,7 @@ static esp_err_t _replay_start_handler(httpd_req_t *req)
 
 static esp_err_t _replay_stop_handler(httpd_req_t *req)
 {
-	lv_async_call(_deferred_replay_stop, NULL);
+	rdm_async_call(_deferred_replay_stop, NULL);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_sendstr(req, "{\"status\":\"stopped\"}");
 	return ESP_OK;
