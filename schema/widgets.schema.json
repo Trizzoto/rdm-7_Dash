@@ -419,60 +419,6 @@
           "group": "Frame"
         },
         {
-          "name": "warning_high_enabled",
-          "label": "High Alert",
-          "type": "checkbox",
-          "default": false,
-          "category": "alerts",
-          "group": "Alerts"
-        },
-        {
-          "name": "warning_high_threshold",
-          "label": "Threshold",
-          "type": "stepper",
-          "default": 0,
-          "category": "alerts",
-          "group": "Alerts",
-          "min": -99999,
-          "max": 99999,
-          "enabled_by": "warning_high_enabled"
-        },
-        {
-          "name": "warning_high_color",
-          "label": "High Color",
-          "type": "color",
-          "default": "#FF0000",
-          "category": "alerts",
-          "group": "Alerts"
-        },
-        {
-          "name": "warning_high_apply_label",
-          "label": "Title",
-          "type": "checkbox",
-          "default": true,
-          "category": "alerts",
-          "group": "Alerts",
-          "inline": "warning_high_apply"
-        },
-        {
-          "name": "warning_high_apply_value",
-          "label": "Value",
-          "type": "checkbox",
-          "default": true,
-          "category": "alerts",
-          "group": "Alerts",
-          "inline": "warning_high_apply"
-        },
-        {
-          "name": "warning_high_apply_panel",
-          "label": "Border",
-          "type": "checkbox",
-          "default": false,
-          "category": "alerts",
-          "group": "Alerts",
-          "inline": "warning_high_apply"
-        },
-        {
           "name": "warning_low_enabled",
           "label": "Low Alert",
           "type": "checkbox",
@@ -525,6 +471,60 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply"
+        },
+        {
+          "name": "warning_high_enabled",
+          "label": "High Alert",
+          "type": "checkbox",
+          "default": false,
+          "category": "alerts",
+          "group": "Alerts"
+        },
+        {
+          "name": "warning_high_threshold",
+          "label": "Threshold",
+          "type": "stepper",
+          "default": 0,
+          "category": "alerts",
+          "group": "Alerts",
+          "min": -99999,
+          "max": 99999,
+          "enabled_by": "warning_high_enabled"
+        },
+        {
+          "name": "warning_high_color",
+          "label": "High Color",
+          "type": "color",
+          "default": "#FF0000",
+          "category": "alerts",
+          "group": "Alerts"
+        },
+        {
+          "name": "warning_high_apply_label",
+          "label": "Title",
+          "type": "checkbox",
+          "default": true,
+          "category": "alerts",
+          "group": "Alerts",
+          "inline": "warning_high_apply"
+        },
+        {
+          "name": "warning_high_apply_value",
+          "label": "Value",
+          "type": "checkbox",
+          "default": true,
+          "category": "alerts",
+          "group": "Alerts",
+          "inline": "warning_high_apply"
+        },
+        {
+          "name": "warning_high_apply_panel",
+          "label": "Border",
+          "type": "checkbox",
+          "default": false,
+          "category": "alerts",
+          "group": "Alerts",
+          "inline": "warning_high_apply"
         }
       ]
     },
@@ -1344,7 +1344,7 @@
           "label": "Major Tick Value Spacing",
           "type": "number",
           "default": 50,
-          "category": "data",
+          "category": "appearance",
           "group": "Ticks"
         },
         {
@@ -1352,7 +1352,7 @@
           "label": "Medium Tick Value Spacing",
           "type": "number",
           "default": 0,
-          "category": "data",
+          "category": "appearance",
           "enabled_by": "show_ticks",
           "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off.",
           "group": "Ticks"
@@ -1362,7 +1362,7 @@
           "label": "Minor Tick Value Spacing",
           "type": "number",
           "default": 10,
-          "category": "data",
+          "category": "appearance",
           "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
           "group": "Ticks"
         },
@@ -1460,6 +1460,56 @@
           "enabled_by": "show_ticks",
           "night_overridable": true,
           "group": "Ticks"
+        },
+        {
+          "name": "show_tick_labels",
+          "label": "Show Tick Labels",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_font",
+          "label": "Tick Label Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_color",
+          "label": "Tick Label Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_tick_labels",
+          "night_overridable": true,
+          "group": "Numbers"
+        },
+        {
+          "name": "label_gap",
+          "label": "Label Gap",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": -150,
+          "max": 150,
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_divisor",
+          "label": "Tick Label Divisor",
+          "type": "stepper",
+          "default": 1,
+          "category": "appearance",
+          "min": 1,
+          "max": 100000,
+          "enabled_by": "show_tick_labels",
+          "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\").",
+          "group": "Numbers"
         },
         {
           "name": "redline_enabled",
@@ -1605,56 +1655,6 @@
           "min": 0,
           "max": 100,
           "group": "Frame"
-        },
-        {
-          "name": "show_tick_labels",
-          "label": "Show Tick Labels",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance",
-          "group": "Numbers"
-        },
-        {
-          "name": "label_gap",
-          "label": "Label Gap",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": -150,
-          "max": 150,
-          "enabled_by": "show_tick_labels",
-          "group": "Numbers"
-        },
-        {
-          "name": "tick_label_font",
-          "label": "Tick Label Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance",
-          "enabled_by": "show_tick_labels",
-          "group": "Numbers"
-        },
-        {
-          "name": "tick_label_color",
-          "label": "Tick Label Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "enabled_by": "show_tick_labels",
-          "night_overridable": true,
-          "group": "Numbers"
-        },
-        {
-          "name": "tick_label_divisor",
-          "label": "Tick Label Divisor",
-          "type": "stepper",
-          "default": 1,
-          "category": "appearance",
-          "min": 1,
-          "max": 100000,
-          "enabled_by": "show_tick_labels",
-          "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\").",
-          "group": "Numbers"
         },
         {
           "name": "show_needle",
@@ -2674,17 +2674,6 @@
           "group": "Numbers"
         },
         {
-          "name": "label_gap",
-          "label": "Label Gap",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": -150,
-          "max": 150,
-          "enabled_by": "show_tick_labels",
-          "group": "Numbers"
-        },
-        {
           "name": "tick_label_font",
           "label": "Tick Label Font",
           "type": "font",
@@ -2701,6 +2690,17 @@
           "category": "appearance",
           "enabled_by": "show_tick_labels",
           "night_overridable": true,
+          "group": "Numbers"
+        },
+        {
+          "name": "label_gap",
+          "label": "Label Gap",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": -150,
+          "max": 150,
+          "enabled_by": "show_tick_labels",
           "group": "Numbers"
         },
         {
@@ -2921,15 +2921,6 @@
           "group": "Fill"
         },
         {
-          "name": "inactive_color",
-          "label": "Inactive Color",
-          "type": "color",
-          "default": "#555555",
-          "category": "appearance",
-          "night_overridable": true,
-          "group": "Fill"
-        },
-        {
           "name": "active_opa",
           "label": "Active Opacity",
           "type": "stepper",
@@ -2937,6 +2928,15 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
+          "group": "Fill"
+        },
+        {
+          "name": "inactive_color",
+          "label": "Inactive Color",
+          "type": "color",
+          "default": "#555555",
+          "category": "appearance",
+          "night_overridable": true,
           "group": "Fill"
         },
         {
@@ -3595,7 +3595,7 @@
           "label": "Major Tick Value Spacing",
           "type": "number",
           "default": 0,
-          "category": "data",
+          "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -3604,7 +3604,7 @@
           "label": "Minor Tick Value Spacing",
           "type": "number",
           "default": 0,
-          "category": "data",
+          "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -3680,6 +3680,35 @@
           "group": "Numbers"
         },
         {
+          "name": "label_font",
+          "label": "Number Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "label_color",
+          "label": "Number Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "label_gap",
+          "label": "Number Gap",
+          "type": "stepper",
+          "default": 14,
+          "category": "appearance",
+          "min": -200,
+          "max": 200,
+          "enabled_by": "show_labels",
+          "group": "Numbers"
+        },
+        {
           "name": "tick_label_divisor",
           "label": "Number Divisor",
           "type": "stepper",
@@ -3700,35 +3729,6 @@
           "min": 0,
           "max": 500,
           "group": "Behaviour"
-        },
-        {
-          "name": "label_color",
-          "label": "Number Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "enabled_by": "show_labels",
-          "group": "Numbers"
-        },
-        {
-          "name": "label_font",
-          "label": "Number Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance",
-          "enabled_by": "show_labels",
-          "group": "Numbers"
-        },
-        {
-          "name": "label_gap",
-          "label": "Number Gap",
-          "type": "stepper",
-          "default": 14,
-          "category": "appearance",
-          "min": -200,
-          "max": 200,
-          "enabled_by": "show_labels",
-          "group": "Numbers"
         }
       ]
     }

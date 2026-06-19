@@ -7193,18 +7193,18 @@
                             { name: "border_color", label: "Border Color", type: "color", def: 0x2E2F2E, cat: "appearance", group: "Frame", nightOverridable: true },
                             { name: "border_width", label: "Border Width", type: "stepper", def: 3, cat: "appearance", group: "Frame", min: 0, max: 20 },
                             { name: "border_radius", label: "Border Radius", type: "stepper", def: 7, cat: "appearance", group: "Frame", min: 0, max: 100 },
-                            { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts" },
-                            { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
-                            { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts" },
-                            { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", inline: "warning_high_apply" },
                             { name: "warning_low_enabled", label: "Low Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts" },
                             { name: "warning_low_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "warning_low_enabled" },
                             { name: "warning_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts" },
                             { name: "warning_low_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_low_apply" },
                             { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_low_apply" },
-                            { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", inline: "warning_low_apply" }
+                            { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", inline: "warning_low_apply" },
+                            { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts" },
+                            { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
+                            { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts" },
+                            { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", inline: "warning_high_apply" }
                         ]
                     },
                     "bar": {
@@ -7346,14 +7346,14 @@
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks" },
-                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "data", group: "Ticks" },
+                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks" },
                             /* Optional 3rd tick tier between minor and major. Value spacing
                              * in data units (e.g. 500 = a medium tick every 500 RPM). 0 = off. */
-                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
+                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             /* auto_ticks lives in w.config but is NOT in the inspector
                              * - see _meterSyncDerived. Min/Major Tick Spacing replace
                              * the old count-based fields. */
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "data", group: "Ticks" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks" },
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
                             { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 20, enabledBy: "show_ticks" },
                             { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
@@ -7363,6 +7363,13 @@
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
+                            { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
+                            { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels", nightOverridable: true },
+                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
+                            /* Divides each tick label by this factor — e.g. 1000 turns a
+                             * 0..7000 tach into 0..7 (print the unit elsewhere, "RPM x1000"). */
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             /* Redline zone: visual cues drawn between threshold and
                              * max. Show Arc + Recolor Ticks default ON so enabling
                              * the master toggle gives an immediate visible result. */
@@ -7381,13 +7388,6 @@
                             { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", group: "Frame", min: 0, max: 20 },
                             { name: "border_opa", label: "Border Opacity", type: "stepper", def: 255, cat: "appearance", group: "Frame", min: 0, max: 255 },
                             { name: "scale_padding", label: "Scale Padding", type: "stepper", def: 0, cat: "appearance", group: "Frame", min: 0, max: 100 },
-                            { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
-                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
-                            { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
-                            { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels", nightOverridable: true },
-                            /* Divides each tick label by this factor — e.g. 1000 turns a
-                             * 0..7000 tach into 0..7 (print the unit elsewhere, "RPM x1000"). */
-                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             /* Master toggle for the value needle. When off, the meter
                              * renders ticks / labels / ball only — no needle line, image,
                              * or needle shadow. Independent of Show Needle Ball. */
@@ -7584,9 +7584,9 @@
                             { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks" },
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
-                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels", nightOverridable: true },
+                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             { name: "ticks_on_top", label: "Ticks On Top", type: "checkbox", def: false, cat: "appearance", group: "Numbers" },
                             { name: "show_value_line", label: "Show Value Line", type: "checkbox", def: false, cat: "appearance", group: "Needle" },
@@ -7617,8 +7617,8 @@
                             { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 0, cat: "data", group: "CAN TX", min: 0, max: 50 },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", group: "Image", nightOverridable: true },
                             { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance", group: "Fill", nightOverridable: true },
                             { name: "active_opa", label: "Active Opacity", type: "stepper", def: 255, cat: "appearance", group: "Fill", min: 0, max: 255 },
+                            { name: "inactive_color", label: "Inactive Color", type: "color", def: 0x555555, cat: "appearance", group: "Fill", nightOverridable: true },
                             { name: "inactive_opa", label: "Inactive Opacity", type: "stepper", def: 100, cat: "appearance", group: "Fill", min: 0, max: 255 },
                             { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Text", enabledBy: "show_label", nightOverridable: true },
                             { name: "font", label: "Font", type: "font", def: "", cat: "appearance", group: "Text", enabledBy: "show_label" },
@@ -7729,8 +7729,8 @@
                              * arc-length so the marks line up with the fill). Turns a bare
                              * pathbar into a Ford-style swept tach. */
                             { name: "show_ticks", label: "Show Scale", type: "checkbox", def: false, cat: "data", group: "Ticks" },
-                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
+                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 3, cat: "appearance", group: "Ticks", min: 0, max: 40, enabledBy: "show_ticks" },
                             { name: "tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 40, enabledBy: "show_ticks" },
                             { name: "major_tick_len", label: "Major Tick Length", type: "stepper", def: 16, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
@@ -7738,13 +7738,13 @@
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "show_labels", label: "Show Numbers", type: "checkbox", def: false, cat: "data", group: "Numbers", enabledBy: "show_ticks" },
+                            { name: "label_font", label: "Number Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_labels" },
+                            { name: "label_color", label: "Number Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_labels" },
+                            { name: "label_gap", label: "Number Gap", type: "stepper", def: 14, cat: "appearance", group: "Numbers", min: -200, max: 200, enabledBy: "show_labels" },
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
                             { name: "tick_label_divisor", label: "Number Divisor", type: "stepper", def: 1, cat: "data", group: "Numbers", min: 1, max: 100000, enabledBy: "show_labels" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "data", group: "Behaviour", min: 0, max: 500 },
-                            { name: "label_color", label: "Number Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_labels" },
-                            { name: "label_font", label: "Number Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_labels" },
-                            { name: "label_gap", label: "Number Gap", type: "stepper", def: 14, cat: "appearance", group: "Numbers", min: -200, max: 200, enabledBy: "show_labels" }
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "data", group: "Behaviour", min: 0, max: 500 }
                         ]
                     }
                 };
