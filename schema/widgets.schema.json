@@ -119,17 +119,6 @@
           "group": "Ticks"
         },
         {
-          "name": "tick_length",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 12,
-          "category": "appearance",
-          "min": 1,
-          "max": 40,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
           "name": "tick_width",
           "label": "Tick Width",
           "type": "stepper",
@@ -137,6 +126,17 @@
           "category": "appearance",
           "min": 1,
           "max": 12,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_length",
+          "label": "Tick Length",
+          "type": "stepper",
+          "default": 12,
+          "category": "appearance",
+          "min": 1,
+          "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -792,6 +792,20 @@
           "group": "Ticks"
         },
         {
+          "name": "tick_side",
+          "label": "Tick Side",
+          "type": "select",
+          "default": 2,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "options": [
+            { "value": 0, "label": "Top" },
+            { "value": 1, "label": "Bottom" },
+            { "value": 2, "label": "Both" }
+          ],
+          "group": "Ticks"
+        },
+        {
           "name": "tick_count",
           "label": "Tick Count",
           "type": "stepper",
@@ -799,17 +813,6 @@
           "category": "appearance",
           "min": 2,
           "max": 30,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "tick_length",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 6,
-          "category": "appearance",
-          "min": 1,
-          "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -825,6 +828,17 @@
           "group": "Ticks"
         },
         {
+          "name": "tick_length",
+          "label": "Tick Length",
+          "type": "stepper",
+          "default": 6,
+          "category": "appearance",
+          "min": 1,
+          "max": 40,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
           "name": "tick_color",
           "label": "Tick Color",
           "type": "color",
@@ -832,20 +846,6 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "tick_side",
-          "label": "Tick Side",
-          "type": "select",
-          "default": 2,
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "options": [
-            { "value": 0, "label": "Top" },
-            { "value": 1, "label": "Bottom" },
-            { "value": 2, "label": "Both" }
-          ],
           "group": "Ticks"
         },
         {
@@ -1332,12 +1332,11 @@
           "group": "Value"
         },
         {
-          "name": "minor_tick_step",
-          "label": "Minor Tick Value Spacing",
-          "type": "number",
-          "default": 10,
-          "category": "data",
-          "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
+          "name": "show_ticks",
+          "label": "Show Ticks",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
           "group": "Ticks"
         },
         {
@@ -1356,6 +1355,110 @@
           "category": "data",
           "enabled_by": "show_ticks",
           "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off.",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_step",
+          "label": "Minor Tick Value Spacing",
+          "type": "number",
+          "default": 10,
+          "category": "data",
+          "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_width",
+          "label": "Major Tick Width",
+          "type": "stepper",
+          "default": 4,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_width",
+          "label": "Medium Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 20,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_width",
+          "label": "Minor Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_length",
+          "label": "Major Tick Length",
+          "type": "stepper",
+          "default": 15,
+          "category": "appearance",
+          "min": 1,
+          "max": 50,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_length",
+          "label": "Medium Tick Length",
+          "type": "stepper",
+          "default": 13,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_length",
+          "label": "Minor Tick Length",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 1,
+          "max": 50,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_color",
+          "label": "Major Tick Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "night_overridable": true,
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_color",
+          "label": "Medium Tick Color",
+          "type": "color",
+          "default": "#BDBDBD",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_color",
+          "label": "Minor Tick Color",
+          "type": "color",
+          "default": "#9E9E9E",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "night_overridable": true,
           "group": "Ticks"
         },
         {
@@ -1502,109 +1605,6 @@
           "min": 0,
           "max": 100,
           "group": "Frame"
-        },
-        {
-          "name": "show_ticks",
-          "label": "Show Ticks",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance",
-          "group": "Ticks"
-        },
-        {
-          "name": "minor_tick_width",
-          "label": "Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "minor_tick_length",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": 1,
-          "max": 50,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "minor_tick_color",
-          "label": "Tick Color",
-          "type": "color",
-          "default": "#9E9E9E",
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "night_overridable": true,
-          "group": "Ticks"
-        },
-        {
-          "name": "major_tick_width",
-          "label": "Major Tick Width",
-          "type": "stepper",
-          "default": 4,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "major_tick_length",
-          "label": "Major Tick Length",
-          "type": "stepper",
-          "default": 15,
-          "category": "appearance",
-          "min": 1,
-          "max": 50,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "major_tick_color",
-          "label": "Major Tick Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "night_overridable": true,
-          "group": "Ticks"
-        },
-        {
-          "name": "mid_tick_length",
-          "label": "Medium Tick Length",
-          "type": "stepper",
-          "default": 13,
-          "category": "appearance",
-          "min": 0,
-          "max": 100,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "mid_tick_width",
-          "label": "Medium Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 20,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "mid_tick_color",
-          "label": "Medium Tick Color",
-          "type": "color",
-          "default": "#BDBDBD",
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
         },
         {
           "name": "show_tick_labels",
@@ -2548,15 +2548,6 @@
           "group": "Ticks"
         },
         {
-          "name": "minor_tick_step",
-          "label": "Minor Tick Value Spacing",
-          "type": "number",
-          "default": 10,
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
           "name": "major_tick_step",
           "label": "Major Tick Value Spacing",
           "type": "number",
@@ -2566,45 +2557,19 @@
           "group": "Ticks"
         },
         {
-          "name": "minor_tick_length",
-          "label": "Minor Tick Length",
-          "type": "stepper",
+          "name": "mid_tick_step",
+          "label": "Medium Tick Value Spacing",
+          "type": "number",
+          "default": 0,
+          "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_step",
+          "label": "Minor Tick Value Spacing",
+          "type": "number",
           "default": 10,
           "category": "appearance",
-          "min": 0,
-          "max": 50,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "minor_tick_width",
-          "label": "Minor Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "minor_tick_color",
-          "label": "Minor Tick Color",
-          "type": "color",
-          "default": "#9E9E9E",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "major_tick_length",
-          "label": "Major Tick Length",
-          "type": "stepper",
-          "default": 15,
-          "category": "appearance",
-          "min": 0,
-          "max": 50,
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -2620,21 +2585,35 @@
           "group": "Ticks"
         },
         {
-          "name": "major_tick_color",
-          "label": "Major Tick Color",
-          "type": "color",
-          "default": "#FFFFFF",
+          "name": "mid_tick_width",
+          "label": "Medium Tick Width",
+          "type": "stepper",
+          "default": 2,
           "category": "appearance",
-          "night_overridable": true,
+          "min": 0,
+          "max": 20,
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_width",
+          "label": "Minor Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
         {
-          "name": "mid_tick_step",
-          "label": "Medium Tick Step",
-          "type": "number",
-          "default": 0,
+          "name": "major_tick_length",
+          "label": "Major Tick Length",
+          "type": "stepper",
+          "default": 15,
           "category": "appearance",
+          "min": 0,
+          "max": 50,
+          "enabled_by": "show_ticks",
           "group": "Ticks"
         },
         {
@@ -2648,13 +2627,24 @@
           "group": "Ticks"
         },
         {
-          "name": "mid_tick_width",
-          "label": "Medium Tick Width",
+          "name": "minor_tick_length",
+          "label": "Minor Tick Length",
           "type": "stepper",
-          "default": 2,
+          "default": 10,
           "category": "appearance",
           "min": 0,
-          "max": 20,
+          "max": 50,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_color",
+          "label": "Major Tick Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_ticks",
           "group": "Ticks"
         },
         {
@@ -2663,6 +2653,16 @@
           "type": "color",
           "default": "#BDBDBD",
           "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_color",
+          "label": "Minor Tick Color",
+          "type": "color",
+          "default": "#9E9E9E",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_ticks",
           "group": "Ticks"
         },
         {
@@ -3591,15 +3591,6 @@
           "group": "Ticks"
         },
         {
-          "name": "minor_tick_step",
-          "label": "Minor Tick Value Spacing",
-          "type": "number",
-          "default": 0,
-          "category": "data",
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
           "name": "major_tick_step",
           "label": "Major Tick Value Spacing",
           "type": "number",
@@ -3609,44 +3600,11 @@
           "group": "Ticks"
         },
         {
-          "name": "tick_len",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": 0,
-          "max": 100,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "tick_width",
-          "label": "Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 40,
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "tick_color",
-          "label": "Tick Color",
-          "type": "color",
-          "default": "#9E9E9E",
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "group": "Ticks"
-        },
-        {
-          "name": "major_tick_len",
-          "label": "Major Tick Length",
-          "type": "stepper",
-          "default": 16,
-          "category": "appearance",
-          "min": 0,
-          "max": 100,
+          "name": "minor_tick_step",
+          "label": "Minor Tick Value Spacing",
+          "type": "number",
+          "default": 0,
+          "category": "data",
           "enabled_by": "show_ticks",
           "group": "Ticks"
         },
@@ -3662,10 +3620,52 @@
           "group": "Ticks"
         },
         {
+          "name": "tick_width",
+          "label": "Minor Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 40,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_len",
+          "label": "Major Tick Length",
+          "type": "stepper",
+          "default": 16,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_len",
+          "label": "Minor Tick Length",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
           "name": "major_tick_color",
           "label": "Major Tick Color",
           "type": "color",
           "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_color",
+          "label": "Minor Tick Color",
+          "type": "color",
+          "default": "#9E9E9E",
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks"

@@ -7139,8 +7139,8 @@
                                   { v: 1, l: "Bottom" },
                                   { v: 2, l: "Both" }
                               ] },
-                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 12, cat: "appearance", group: "Ticks", min: 1, max: 40, enabledBy: "show_ticks" },
                             { name: "tick_width", label: "Tick Width", type: "stepper", def: 3, cat: "appearance", group: "Ticks", min: 1, max: 12, enabledBy: "show_ticks" },
+                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 12, cat: "appearance", group: "Ticks", min: 1, max: 40, enabledBy: "show_ticks" },
                             { name: "tick_color", label: "Tick Color", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "limiter_effect", label: "Limiter Effect", type: "select", def: 0, cat: "appearance", group: "Behaviour",
                               options: [
@@ -7249,16 +7249,16 @@
                             { name: "value_font", label: "Value Font", type: "font", def: "", cat: "appearance", group: "Text" },
                             { name: "value_color", label: "Value Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Text", nightOverridable: true },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance", group: "Ticks" },
-                            { name: "tick_count", label: "Tick Count", type: "stepper", def: 5, cat: "appearance", group: "Ticks", min: 2, max: 30, enabledBy: "show_ticks" },
-                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 6, cat: "appearance", group: "Ticks", min: 1, max: 40, enabledBy: "show_ticks" },
-                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 10, enabledBy: "show_ticks" },
-                            { name: "tick_color", label: "Tick Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "tick_side", label: "Tick Side", type: "select", def: 2, cat: "appearance", group: "Ticks", enabledBy: "show_ticks",
                               options: [
                                   { v: 0, l: "Top" },
                                   { v: 1, l: "Bottom" },
                                   { v: 2, l: "Both" }
                               ] },
+                            { name: "tick_count", label: "Tick Count", type: "stepper", def: 5, cat: "appearance", group: "Ticks", min: 2, max: 30, enabledBy: "show_ticks" },
+                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 10, enabledBy: "show_ticks" },
+                            { name: "tick_length", label: "Tick Length", type: "stepper", def: 6, cat: "appearance", group: "Ticks", min: 1, max: 40, enabledBy: "show_ticks" },
+                            { name: "tick_color", label: "Tick Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "Alerts" },
                             { name: "bar_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
                             { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", enabledBy: "bar_alerts_enabled", nightOverridable: true },
@@ -7345,14 +7345,24 @@
                             { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value" },
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", min: 0, max: 100, enabledBy: "anchor_enabled" },
-                            /* auto_ticks lives in w.config but is NOT in the inspector
-                             * - see _meterSyncDerived. Min/Major Tick Spacing replace
-                             * the old count-based fields. */
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "data", group: "Ticks" },
+                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks" },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "data", group: "Ticks" },
                             /* Optional 3rd tick tier between minor and major. Value spacing
                              * in data units (e.g. 500 = a medium tick every 500 RPM). 0 = off. */
                             { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
+                            /* auto_ticks lives in w.config but is NOT in the inspector
+                             * - see _meterSyncDerived. Min/Major Tick Spacing replace
+                             * the old count-based fields. */
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "data", group: "Ticks" },
+                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 20, enabledBy: "show_ticks" },
+                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", min: 1, max: 50, enabledBy: "show_ticks" },
+                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 1, max: 50, enabledBy: "show_ticks" },
+                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
+                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             /* Redline zone: visual cues drawn between threshold and
                              * max. Show Arc + Recolor Ticks default ON so enabling
                              * the master toggle gives an immediate visible result. */
@@ -7371,16 +7381,6 @@
                             { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", group: "Frame", min: 0, max: 20 },
                             { name: "border_opa", label: "Border Opacity", type: "stepper", def: 255, cat: "appearance", group: "Frame", min: 0, max: 255 },
                             { name: "scale_padding", label: "Scale Padding", type: "stepper", def: 0, cat: "appearance", group: "Frame", min: 0, max: 100 },
-                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks" },
-                            { name: "minor_tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "minor_tick_length", label: "Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 1, max: 50, enabledBy: "show_ticks" },
-                            { name: "minor_tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", min: 1, max: 50, enabledBy: "show_ticks" },
-                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
-                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 20, enabledBy: "show_ticks" },
-                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
@@ -7571,18 +7571,18 @@
                             { name: "redline_arc_width", label: "Redline Thickness", type: "stepper", def: 0, cat: "appearance", group: "Redline", min: 0, max: 50 },
                             { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance", group: "Redline" },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance", group: "Ticks" },
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
-                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "mid_tick_step", label: "Medium Tick Step", type: "number", def: 0, cat: "appearance", group: "Ticks" },
-                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", min: 0, max: 100 },
                             { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 20 },
+                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", min: 0, max: 100 },
+                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks" },
+                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
@@ -7729,14 +7729,14 @@
                              * arc-length so the marks line up with the fill). Turns a bare
                              * pathbar into a Ford-style swept tach. */
                             { name: "show_ticks", label: "Show Scale", type: "checkbox", def: false, cat: "data", group: "Ticks" },
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "tick_len", label: "Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
-                            { name: "tick_width", label: "Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 40, enabledBy: "show_ticks" },
-                            { name: "tick_color", label: "Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "major_tick_len", label: "Major Tick Length", type: "stepper", def: 16, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 0, cat: "data", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 3, cat: "appearance", group: "Ticks", min: 0, max: 40, enabledBy: "show_ticks" },
+                            { name: "tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 40, enabledBy: "show_ticks" },
+                            { name: "major_tick_len", label: "Major Tick Length", type: "stepper", def: 16, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
+                            { name: "tick_len", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 0, max: 100, enabledBy: "show_ticks" },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
+                            { name: "tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
                             { name: "show_labels", label: "Show Numbers", type: "checkbox", def: false, cat: "data", group: "Numbers", enabledBy: "show_ticks" },
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
