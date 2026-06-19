@@ -27,6 +27,49 @@ extern const uint8_t favicon_ico_end[]   asm("_binary_favicon_ico_end");
 static const char *TAG = "web_server";
 static httpd_handle_t server = NULL;
 
+/* Largest unread body we'll politely drain before returning an error. A
+ * rejected layout is at most a few hundred KB even when abused via the editor;
+ * past this we stop reading and accept that the socket resets. */
+#define WEB_DRAIN_CAP (384 * 1024)
+
+/* Drain up to `max_drain` bytes of an unread request body.
+ *
+ * esp_http_server closes a connection with a TCP RST (not a clean FIN) when
+ * there is still unconsumed RX data on the socket. So a handler that rejects a
+ * large body *before* reading it (e.g. an oversize layout) leaves the client
+ * seeing a connection reset instead of our 4xx — the stress test's 2000-widget
+ * preview hit exactly this (ConnectionResetError instead of the 413). Draining
+ * the body first lets the error response actually arrive. Bounded so a
+ * maliciously huge body can't tie the worker up indefinitely. */
+static void web_server_drain_body(httpd_req_t *req, size_t max_drain) {
+	size_t remaining = req->content_len;
+	if (remaining > max_drain) remaining = max_drain;
+	char sink[512];
+	size_t got = 0;
+	while (got < remaining) {
+		size_t chunk = remaining - got;
+		if (chunk > sizeof(sink)) chunk = sizeof(sink);
+		int r = httpd_req_recv(req, sink, chunk);
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+		if (r <= 0) break;
+		got += (size_t)r;
+	}
+}
+
+/* 503 + Retry-After for *transient* conditions: the LVGL lock was momentarily
+ * held, a heavy build is already in flight, or a short-lived OOM under
+ * concurrent load. Unlike a 500, this tells the client the request itself is
+ * fine and to retry shortly — which the editor's live-edit and poll loops do —
+ * instead of surfacing a hard error toast. Callers `return web_server_send_busy(req);`. */
+esp_err_t web_server_send_busy(httpd_req_t *req) {
+	httpd_resp_set_status(req, "503 Service Unavailable");
+	httpd_resp_set_hdr(req, "Retry-After", "1");
+	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+	httpd_resp_set_type(req, "application/json");
+	httpd_resp_send(req, "{\"ok\":false,\"error\":\"busy\"}", HTTPD_RESP_USE_STRLEN);
+	return ESP_OK;
+}
+
 /* Send a structured 413 Payload-Too-Large JSON error.
  *
  * Layout JSON > LAYOUT_MAX_FILE_BYTES is a real failure mode in the editor,
@@ -35,6 +78,8 @@ static httpd_handle_t server = NULL;
  *     { "ok":false, "error":"layout_too_large", "max":32768, "actual":N }
  */
 esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual) {
+	/* Drain the (rejected) body so the client reads this 413 instead of an RST. */
+	web_server_drain_body(req, WEB_DRAIN_CAP);
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 	httpd_resp_set_status(req, "413 Payload Too Large");
@@ -156,8 +201,13 @@ esp_err_t web_server_recv_body(httpd_req_t *req, char *buf, size_t cap) {
 	}
 	if (req->content_len >= cap) {
 		/* Truncating JSON just produces a confusing parse error downstream —
-		 * reject oversize bodies outright with the real reason. */
-		httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large");
+		 * reject oversize bodies outright with the real reason. Drain first so
+		 * the client receives this 413 cleanly instead of a TCP reset. */
+		web_server_drain_body(req, WEB_DRAIN_CAP);
+		httpd_resp_set_status(req, "413 Payload Too Large");
+		httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+		httpd_resp_set_type(req, "application/json");
+		httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"body_too_large\"}");
 		return ESP_FAIL;
 	}
 	if (web_server_recv_body_raw(req, buf, cap) < 0) {

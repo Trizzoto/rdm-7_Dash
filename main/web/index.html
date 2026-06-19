@@ -7670,7 +7670,7 @@
                             { name: "signal_name", label: "Signal", type: "text", def: "", cat: "data", group: "Value" },
                             { name: "range_min", label: "Range Min", type: "number", def: 4000, cat: "data", group: "Value" },
                             { name: "range_max", label: "Range Max", type: "number", def: 7000, cat: "data", group: "Value" },
-                            { name: "led_count", label: "LED Count", type: "number", def: 8, cat: "data", group: "Value", min: 4, max: 16, step: 1 },
+                            { name: "led_count", label: "LED Count", type: "number", def: 8, cat: "data", group: "Value", min: 4, max: 45, step: 1 },
                             { name: "flash_threshold", label: "Flash RPM", type: "number", def: 7200, cat: "data", group: "Behaviour" },
                             { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "data", group: "Behaviour", min: 50, max: 1000, step: 10 },
                             { name: "fill_mode", label: "Fill Direction", type: "select", def: 0, cat: "data", group: "Behaviour",
@@ -8877,7 +8877,7 @@
 
         function _pvShiftLight(w, c){
             const p = devToWeb(w.x, w.y), left = p.x - w.w / 2, top = p.y - w.h / 2;
-            const n = _pvClamp(_pvNum(c.led_count, 8), 4, 16), gap = _pvNum(c.led_spacing, 2);
+            const n = _pvClamp(_pvNum(c.led_count, 8), 4, 45), gap = _pvNum(c.led_spacing, 2);
             const lw = (w.w - gap * (n - 1)) / n, lit = Math.round(n * 0.6);
             let s = '';
             for (let i = 0; i < n; i++){
@@ -10716,6 +10716,27 @@
             _scheduleLiveFlush();
         }
 
+        /* POST a live edit (transform / field set) with one quick retry on a
+         * 503 "busy". The firmware returns 503 + Retry-After when the LVGL lock
+         * is momentarily held (mid render of a heavy frame). Without the retry
+         * a 503'd transform was silently dropped — the device ended a drag one
+         * step behind the editor. Resolves to { status, j }, j = parsed body
+         * or null. */
+        function _fetchLiveEdit(url, payload, retries) {
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).then(r => {
+                if (r.status === 503 && retries > 0) {
+                    return new Promise(res => setTimeout(res, 140))
+                        .then(() => _fetchLiveEdit(url, payload, retries - 1));
+                }
+                return r.json().then(j => ({ status: r.status, j }))
+                               .catch(() => ({ status: r.status, j: null }));
+            });
+        }
+
         function _doWidgetTransform(w) {
             if (!w || !w.id) return;
             /* Deliberately do NOT bump _lastPreviewActivityMs here: the editor
@@ -10723,18 +10744,15 @@
              * screenshot loop to "brisk" after every nudge is what made the LCD
              * fuzz for seconds after a move. The idle heartbeat refreshes the
              * live-data backdrop soon enough. */
-            fetch('/api/widget/transform', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    id: w.id,
-                    x: Math.round(w.x), y: Math.round(w.y),
-                    w: Math.round(w.w), h: Math.round(w.h)
-                })
-            }).then(r => r.json()).then(j => {
-                /* Widget not on the device's current screen (e.g. just added
-                 * but never previewed) — do a full rebuild so it appears. */
-                if (!j || j.found === false) { if (_previewLive()) triggerPreview(); }
+            _fetchLiveEdit('/api/widget/transform', {
+                id: w.id,
+                x: Math.round(w.x), y: Math.round(w.y),
+                w: Math.round(w.w), h: Math.round(w.h)
+            }, 1).then(({ status, j }) => {
+                /* Still busy after the retry, or widget not on the device's
+                 * current screen (just added, never previewed) — a full rebuild
+                 * reconciles either case. */
+                if (status === 503 || !j || j.found === false) { if (_previewLive()) triggerPreview(); }
             }).catch(() => { if (_previewLive()) triggerPreview(); });
         }
 
@@ -10832,15 +10850,13 @@
             /* No _lastPreviewActivityMs bump — see _doWidgetTransform. The edit
              * is already visible in the editor; let the idle heartbeat refresh
              * the backdrop instead of pinning the capture loop to brisk. */
-            fetch('/api/widget/set', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: w.id, field, value: payloadVal })
-            }).then(r => r.json()).then(j => {
-                /* Firmware couldn't apply it live (unknown field, widget not
-                 * present, type mismatch) — fall back to a full rebuild. */
-                if (!j || j.handled !== true) { if (_previewLive()) triggerPreview(); }
-            }).catch(() => { if (_previewLive()) triggerPreview(); });
+            _fetchLiveEdit('/api/widget/set', { id: w.id, field, value: payloadVal }, 1)
+              .then(({ status, j }) => {
+                /* Still busy after retry, or firmware couldn't apply it live
+                 * (unknown field, widget not present, type mismatch) — fall
+                 * back to a full rebuild. */
+                if (status === 503 || !j || j.handled !== true) { if (_previewLive()) triggerPreview(); }
+              }).catch(() => { if (_previewLive()) triggerPreview(); });
         }
 
         /* Render a night-mode override control for a field (color or image_picker only).

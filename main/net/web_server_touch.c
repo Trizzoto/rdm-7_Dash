@@ -335,13 +335,13 @@ static esp_err_t api_widget_transform_post_handler(httpd_req_t *req) {
 	cJSON *h_js = cJSON_GetObjectItemCaseSensitive(root, "h");
 
 	bool found = false;
-	if (!rdm_lvgl_lock(1000)) {
+	/* 2 s acquire: a live drag fires these rapidly and the LVGL render task
+	 * can hold the lock through a heavy frame (image load / full rebuild).
+	 * On timeout return 503 + Retry-After so the editor retries that edit
+	 * rather than silently dropping it (see _doWidgetTransform). */
+	if (!rdm_lvgl_lock(2000)) {
 		cJSON_Delete(root);
-		httpd_resp_set_status(req, "503 Service Unavailable");
-		httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-		httpd_resp_set_type(req, "application/json");
-		return httpd_resp_send(req, "{\"ok\":false,\"error\":\"LVGL busy\"}",
-							   HTTPD_RESP_USE_STRLEN);
+		return web_server_send_busy(req);
 	}
 	widget_t *wd = widget_registry_find_by_id(id_js->valuestring);
 	if (wd && wd->root && lv_obj_is_valid(wd->root)) {
@@ -407,13 +407,10 @@ static esp_err_t api_widget_set_post_handler(httpd_req_t *req) {
 	}
 
 	bool found = false, handled = false;
-	if (!rdm_lvgl_lock(1000)) {
+	/* 2 s acquire + 503 on timeout — same rationale as transform above. */
+	if (!rdm_lvgl_lock(2000)) {
 		cJSON_Delete(root);
-		httpd_resp_set_status(req, "503 Service Unavailable");
-		httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-		httpd_resp_set_type(req, "application/json");
-		return httpd_resp_send(req, "{\"ok\":false,\"error\":\"LVGL busy\"}",
-							   HTTPD_RESP_USE_STRLEN);
+		return web_server_send_busy(req);
 	}
 	widget_t *wd = widget_registry_find_by_id(id_js->valuestring);
 	if (wd && wd->inspector_set && wd->root && lv_obj_is_valid(wd->root)) {

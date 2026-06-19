@@ -35,6 +35,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "cJSON.h"
 #include <ctype.h>
 #include <string.h>
@@ -229,16 +230,30 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	return j;
 }
 
+/* Serializes the full channel-list build (below). The build allocates a
+ * sizable cJSON tree plus a serialized string; several concurrent builds
+ * (Studio + mirror + a browser polling at once) race for PSRAM and
+ * intermittently OOM into 500s — the stress test reproduced this. Created in
+ * web_server_channels_register(). */
+static SemaphoreHandle_t s_channels_list_mux = NULL;
+
 /* GET /api/channels — return all active channels with config + live state. */
 static esp_err_t channels_list_handler(httpd_req_t *req) {
-	cJSON *root = cJSON_CreateObject();
-	if (!root) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
-	cJSON_AddNumberToObject(root, "count", channel_manager_count());
-	cJSON *arr = cJSON_AddArrayToObject(root, "channels");
+	/* Concurrency gate: only one heavy list build at a time. If one is already
+	 * in flight, shed load with 503 + Retry-After (client retries on the next
+	 * poll) rather than piling on a second large allocation and risking an OOM
+	 * that could also starve a concurrent screenshot/inject. */
+	if (s_channels_list_mux && xSemaphoreTake(s_channels_list_mux, 0) != pdTRUE)
+		return web_server_send_busy(req);
 
+	esp_err_t e;
+	char *json = NULL;
+	cJSON *arr;
+	cJSON *root = cJSON_CreateObject();
+	if (!root) { e = web_server_send_busy(req); goto done; }
+
+	cJSON_AddNumberToObject(root, "count", channel_manager_count());
+	arr = cJSON_AddArrayToObject(root, "channels");
 	for (size_t i = 0; i < channel_manager_count(); ++i) {
 		channel_t *c = channel_manager_at(i);
 		if (!c) continue;
@@ -246,17 +261,17 @@ static esp_err_t channels_list_handler(httpd_req_t *req) {
 		if (jc) cJSON_AddItemToArray(arr, jc);
 	}
 
-	char *json = cJSON_PrintUnformatted(root);
+	json = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
-	if (!json) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-		return ESP_FAIL;
-	}
+	if (!json) { e = web_server_send_busy(req); goto done; }
 
 	httpd_resp_set_type(req, "application/json");
 	httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-	esp_err_t e = httpd_resp_sendstr(req, json);
+	e = httpd_resp_sendstr(req, json);
 	cJSON_free(json);
+
+done:
+	if (s_channels_list_mux) xSemaphoreGive(s_channels_list_mux);
 	return e;
 }
 
@@ -368,8 +383,7 @@ static esp_err_t channels_activate_handler(httpd_req_t *req) {
 	channel_t *c = NULL;
 	if (!rdm_lvgl_lock(500)) {
 		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
+		return web_server_send_busy(req);
 	}
 	c = channel_manager_activate(jid->valuestring);
 	rdm_lvgl_unlock();
@@ -546,8 +560,7 @@ static esp_err_t channels_update_handler(httpd_req_t *req) {
 
 	if (!rdm_lvgl_lock(500)) {
 		cJSON_Delete(root);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
+		return web_server_send_busy(req);
 	}
 
 	channel_t *c = channel_manager_get(jid->valuestring);
@@ -606,8 +619,7 @@ static esp_err_t channels_delete_handler(httpd_req_t *req) {
 
 	bool ok = false;
 	if (!rdm_lvgl_lock(500)) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
+		return web_server_send_busy(req);
 	}
 	ok = channel_manager_delete(id_copy);
 	rdm_lvgl_unlock();
@@ -784,8 +796,7 @@ static esp_err_t channels_source_options_handler(httpd_req_t *req) {
 	if (!rdm_lvgl_lock(500)) {
 		free(snap);
 		if (layout_root) cJSON_Delete(layout_root);
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
+		return web_server_send_busy(req);
 	}
 
 	channel_t *c = channel_manager_get(channel_id);
@@ -1086,8 +1097,7 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 	cJSON_Delete(root);
 
 	if (!rdm_lvgl_lock(1200)) {
-		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "LVGL busy");
-		return ESP_FAIL;
+		return web_server_send_busy(req);
 	}
 
 	/* Activate the channel up-front so we always have a target. */
@@ -1311,6 +1321,7 @@ static const httpd_uri_t channels_delete_uri = {
 };
 
 void web_server_channels_register(httpd_handle_t server) {
+	if (!s_channels_list_mux) s_channels_list_mux = xSemaphoreCreateMutex();
 	REGISTER_URI(server, &channels_list_uri);
 	REGISTER_URI(server, &channels_canonical_uri);
 	REGISTER_URI(server, &channels_activate_uri);

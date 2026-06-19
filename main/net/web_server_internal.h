@@ -40,6 +40,11 @@ extern int web_server_uri_register_failures;
 // 413 Payload Too Large JSON response (layout JSON exceeded LAYOUT_MAX_FILE_BYTES).
 esp_err_t web_server_send_layout_too_large(httpd_req_t *req, size_t actual);
 
+// 503 + Retry-After for transient conditions (LVGL lock busy, a heavy build
+// already in flight, momentary OOM under load). Semantically "retry shortly",
+// which client poll/edit loops honour — unlike a 500, which surfaces an error.
+esp_err_t web_server_send_busy(httpd_req_t *req);
+
 // Serialize + send a cJSON object as application/json (with CORS), then free
 // it. ALWAYS consumes root. Sends a 500 instead of crashing if the serialize
 // OOMs. Forward-declared with a cJSON struct tag so callers needn't include
