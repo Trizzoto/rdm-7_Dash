@@ -1857,63 +1857,56 @@ static void _build_schema_tab(widget_t *w, widget_field_category_t cat) {
         _build_signal_source_section(sig_card);
     }
 
-    lv_obj_t *colours = NULL;
-    lv_obj_t *dims    = NULL;
-    lv_obj_t *generic = NULL;
-
-    const char *generic_title =
+    /* One titled card per semantic GROUP (Value / Fill / Ticks / Needle / ...),
+     * in schema order — matches the web editor's sub-sections. (Previously cards
+     * were bucketed by field TYPE — Colours/Dimensions/Fields — which scattered a
+     * group across cards.) Cards are created lazily so a group with only
+     * later-phase fields (image/CAN) leaves no empty card. */
+    const char *fallback_title =
         (cat == WF_CAT_DATA)        ? "DATA" :
         (cat == WF_CAT_ALERTS)      ? "ALERTS" :
         (cat == WF_CAT_THRESHOLDS)  ? "THRESHOLDS" : "FIELDS";
+
+    lv_obj_t *card = NULL;
+    const char *cur_group = NULL;
+    char title[40];
 
     for (uint16_t i = 0; i < def->field_count; i++) {
         const widget_field_t *f = &def->fields[i];
         if (f->category != cat) continue;
 
+        const char *g = (f->group && f->group[0]) ? f->group : fallback_title;
+        if (!cur_group || strcmp(g, cur_group) != 0) {
+            cur_group = g; card = NULL;                  /* new group → new (lazy) card */
+            size_t n = 0;
+            for (; g[n] && n < sizeof(title) - 1; n++)
+                title[n] = (g[n] >= 'a' && g[n] <= 'z') ? (char)(g[n] - 32) : g[n];
+            title[n] = '\0';
+        }
+        #define GRP_CARD() (card ? card : (card = _make_card(s_content, title)))
+
         switch (f->type) {
-            case WF_TYPE_COLOR: {
-                if (!colours) colours = _make_card(s_content, "COLOURS");
-                _make_color_row_schema(colours, f);
-                break;
-            }
+            case WF_TYPE_COLOR:
+                _make_color_row_schema(GRP_CARD(), f); break;
             case WF_TYPE_STEPPER:
             case WF_TYPE_STEPPER_AUTO:
-            case WF_TYPE_SLIDER: {
-                if (cat == WF_CAT_APPEARANCE) {
-                    if (!dims) dims = _make_card(s_content, "DIMENSIONS");
-                    _make_stepper_row_schema(dims, f);
-                } else {
-                    if (!generic) generic = _make_card(s_content, generic_title);
-                    _make_stepper_row_schema(generic, f);
-                }
-                break;
-            }
-            case WF_TYPE_CHECKBOX: {
-                if (!generic) generic = _make_card(s_content, generic_title);
-                _make_checkbox_row_schema(generic, f);
-                break;
-            }
-            case WF_TYPE_SELECT: {
-                if (!generic) generic = _make_card(s_content, generic_title);
-                _make_select_row_schema(generic, f);
-                break;
-            }
+            case WF_TYPE_SLIDER:
+                _make_stepper_row_schema(GRP_CARD(), f); break;
+            case WF_TYPE_CHECKBOX:
+                _make_checkbox_row_schema(GRP_CARD(), f); break;
+            case WF_TYPE_SELECT:
+                _make_select_row_schema(GRP_CARD(), f); break;
             case WF_TYPE_TEXT:
             case WF_TYPE_TEXTAREA:
-            case WF_TYPE_FONT: {
-                if (!generic) generic = _make_card(s_content, generic_title);
-                _make_text_row_schema(generic, f, false);
-                break;
-            }
-            case WF_TYPE_NUMBER: {
-                if (!generic) generic = _make_card(s_content, generic_title);
-                _make_text_row_schema(generic, f, true);
-                break;
-            }
+            case WF_TYPE_FONT:
+                _make_text_row_schema(GRP_CARD(), f, false); break;
+            case WF_TYPE_NUMBER:
+                _make_text_row_schema(GRP_CARD(), f, true); break;
             default:
                 /* IMAGE_PICKER / CAN_ID rendered in a later phase. */
                 break;
         }
+        #undef GRP_CARD
     }
 }
 

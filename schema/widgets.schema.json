@@ -25,24 +25,35 @@
           "label": "RPM Max",
           "type": "number",
           "default": 7000,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "redline",
           "label": "Redline RPM",
           "type": "number",
           "default": 6000,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "limiter_value",
+          "label": "Limiter RPM",
+          "type": "number",
+          "default": 7000,
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
           "default": 80,
-          "category": "appearance",
+          "category": "data",
           "min": 0,
           "max": 300,
-          "step": 10
+          "step": 10,
+          "group": "Behaviour"
         },
         {
           "name": "bar_color",
@@ -50,7 +61,8 @@
           "type": "color",
           "default": "#00FF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "fill_dir",
@@ -59,51 +71,21 @@
           "default": 0,
           "category": "appearance",
           "options": [
-            {
-              "value": 0,
-              "label": "Left to Right"
-            },
-            {
-              "value": 1,
-              "label": "Right to Left"
-            },
-            {
-              "value": 2,
-              "label": "Center Out"
-            },
-            {
-              "value": 3,
-              "label": "Edges In"
-            }
-          ]
+            { "value": 0, "label": "Left to Right" },
+            { "value": 1, "label": "Right to Left" },
+            { "value": 2, "label": "Center Out" },
+            { "value": 3, "label": "Edges In" }
+          ],
+          "group": "Fill"
         },
         {
-          "name": "limiter_effect",
-          "label": "Limiter Effect",
-          "type": "select",
-          "default": 0,
+          "name": "bar_bg_color",
+          "label": "Background",
+          "type": "color",
+          "default": "#F0F0F0",
           "category": "appearance",
-          "options": [
-            {
-              "value": 0,
-              "label": "None"
-            },
-            {
-              "value": 1,
-              "label": "Bar Flash"
-            },
-            {
-              "value": 2,
-              "label": "Bar Solid"
-            }
-          ]
-        },
-        {
-          "name": "limiter_value",
-          "label": "Limiter RPM",
-          "type": "number",
-          "default": 7000,
-          "category": "data"
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "limiter_color",
@@ -111,24 +93,16 @@
           "type": "color",
           "default": "#FF0000",
           "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "flash_speed",
-          "label": "Flash Speed (ms)",
-          "type": "stepper",
-          "default": 200,
-          "category": "appearance",
-          "min": 50,
-          "max": 1000,
-          "step": 50
+          "night_overridable": true,
+          "group": "Redline"
         },
         {
           "name": "show_ticks",
           "label": "Show Ticks",
           "type": "checkbox",
           "default": true,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Ticks"
         },
         {
           "name": "tick_side",
@@ -138,19 +112,11 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "options": [
-            {
-              "value": 0,
-              "label": "Top"
-            },
-            {
-              "value": 1,
-              "label": "Bottom"
-            },
-            {
-              "value": 2,
-              "label": "Both"
-            }
-          ]
+            { "value": 0, "label": "Top" },
+            { "value": 1, "label": "Bottom" },
+            { "value": 2, "label": "Both" }
+          ],
+          "group": "Ticks"
         },
         {
           "name": "tick_length",
@@ -160,7 +126,8 @@
           "category": "appearance",
           "min": 1,
           "max": 40,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "tick_width",
@@ -170,7 +137,8 @@
           "category": "appearance",
           "min": 1,
           "max": 12,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "tick_color",
@@ -179,15 +147,32 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
-          "name": "bar_bg_color",
-          "label": "Background",
-          "type": "color",
-          "default": "#F0F0F0",
+          "name": "limiter_effect",
+          "label": "Limiter Effect",
+          "type": "select",
+          "default": 0,
           "category": "appearance",
-          "night_overridable": true
+          "options": [
+            { "value": 0, "label": "None" },
+            { "value": 1, "label": "Bar Flash" },
+            { "value": 2, "label": "Bar Solid" }
+          ],
+          "group": "Behaviour"
+        },
+        {
+          "name": "flash_speed",
+          "label": "Flash Speed (ms)",
+          "type": "stepper",
+          "default": 200,
+          "category": "appearance",
+          "min": 50,
+          "max": 1000,
+          "step": 50,
+          "group": "Behaviour"
         }
       ]
     },
@@ -212,74 +197,226 @@
           "label": "Header Label",
           "type": "text",
           "default": "",
-          "category": "data"
-        },
-        {
-          "name": "custom_text",
-          "label": "Unit Text",
-          "type": "text",
-          "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "decimals",
           "label": "Decimals",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "label_font",
+          "label": "Label Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "label_color",
+          "label": "Label Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Text"
+        },
+        {
+          "name": "value_font",
+          "label": "Value Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "value_color",
+          "label": "Value Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Text"
+        },
+        {
+          "name": "text_align",
+          "label": "Text Align",
+          "type": "select",
+          "default": 1,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ],
+          "group": "Text"
+        },
+        {
+          "name": "label_y_offset",
+          "label": "Label Y Offset",
+          "type": "stepper",
+          "default": -28,
+          "category": "appearance",
+          "min": -100,
+          "max": 100,
+          "group": "Text"
+        },
+        {
+          "name": "value_y_offset",
+          "label": "Value Y Offset",
+          "type": "stepper",
+          "default": 9,
+          "category": "appearance",
+          "min": -100,
+          "max": 100,
+          "group": "Text"
         },
         {
           "name": "show_peak",
           "label": "Peak Hold",
           "type": "select",
           "default": 0,
-          "category": "data",
+          "category": "appearance",
           "options": [
-            {
-              "value": 0,
-              "label": "Off"
-            },
-            {
-              "value": 1,
-              "label": "Max"
-            },
-            {
-              "value": 2,
-              "label": "Min"
-            },
-            {
-              "value": 3,
-              "label": "Min/Max"
-            }
-          ]
+            { "value": 0, "label": "Off" },
+            { "value": 1, "label": "Max" },
+            { "value": 2, "label": "Min" },
+            { "value": 3, "label": "Min/Max" }
+          ],
+          "group": "Text"
         },
         {
           "name": "peak_font",
           "label": "Peak Font",
           "type": "font",
           "default": "",
-          "category": "data",
-          "enabled_by": "show_peak"
+          "category": "appearance",
+          "enabled_by": "show_peak",
+          "group": "Text"
         },
         {
           "name": "peak_x_offset",
           "label": "Peak X Offset",
           "type": "stepper",
           "default": 0,
-          "category": "data",
+          "category": "appearance",
           "min": -100,
           "max": 100,
-          "enabled_by": "show_peak"
+          "enabled_by": "show_peak",
+          "group": "Text"
         },
         {
           "name": "peak_y_offset",
           "label": "Peak Y Offset",
           "type": "stepper",
           "default": 31,
-          "category": "data",
+          "category": "appearance",
           "min": -100,
           "max": 100,
-          "enabled_by": "show_peak"
+          "enabled_by": "show_peak",
+          "group": "Text"
+        },
+        {
+          "name": "show_unit",
+          "label": "Show Unit Suffix",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "unit_size",
+          "label": "Unit Size",
+          "type": "select",
+          "default": 2,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Small" },
+            { "value": 1, "label": "Medium" },
+            { "value": 2, "label": "Full" }
+          ],
+          "enabled_by": "show_unit",
+          "group": "Text"
+        },
+        {
+          "name": "custom_text",
+          "label": "Unit Text",
+          "type": "text",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "custom_text_x_offset",
+          "label": "Unit Text X",
+          "type": "stepper",
+          "default": 41,
+          "category": "appearance",
+          "min": -100,
+          "max": 100,
+          "group": "Text"
+        },
+        {
+          "name": "custom_text_y_offset",
+          "label": "Unit Text Y",
+          "type": "stepper",
+          "default": 32,
+          "category": "appearance",
+          "min": -100,
+          "max": 100,
+          "group": "Text"
+        },
+        {
+          "name": "bg_color",
+          "label": "Background",
+          "type": "color",
+          "default": "#000000",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Frame"
+        },
+        {
+          "name": "bg_opa",
+          "label": "BG Opacity",
+          "type": "stepper",
+          "default": 255,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Frame"
+        },
+        {
+          "name": "border_color",
+          "label": "Border Color",
+          "type": "color",
+          "default": "#2E2F2E",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Frame"
+        },
+        {
+          "name": "border_width",
+          "label": "Border Width",
+          "type": "stepper",
+          "default": 3,
+          "category": "appearance",
+          "min": 0,
+          "max": 20,
+          "group": "Frame"
+        },
+        {
+          "name": "border_radius",
+          "label": "Border Radius",
+          "type": "stepper",
+          "default": 7,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "group": "Frame"
         },
         {
           "name": "warning_high_enabled",
@@ -287,7 +424,7 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "high"
+          "group": "Alerts"
         },
         {
           "name": "warning_high_threshold",
@@ -295,7 +432,7 @@
           "type": "stepper",
           "default": 0,
           "category": "alerts",
-          "group": "high",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "warning_high_enabled"
@@ -306,7 +443,7 @@
           "type": "color",
           "default": "#FF0000",
           "category": "alerts",
-          "group": "high"
+          "group": "Alerts"
         },
         {
           "name": "warning_high_apply_label",
@@ -314,7 +451,7 @@
           "type": "checkbox",
           "default": true,
           "category": "alerts",
-          "group": "high",
+          "group": "Alerts",
           "inline": "warning_high_apply"
         },
         {
@@ -323,7 +460,7 @@
           "type": "checkbox",
           "default": true,
           "category": "alerts",
-          "group": "high",
+          "group": "Alerts",
           "inline": "warning_high_apply"
         },
         {
@@ -332,7 +469,7 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "high",
+          "group": "Alerts",
           "inline": "warning_high_apply"
         },
         {
@@ -341,7 +478,7 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "low"
+          "group": "Alerts"
         },
         {
           "name": "warning_low_threshold",
@@ -349,7 +486,7 @@
           "type": "stepper",
           "default": 0,
           "category": "alerts",
-          "group": "low",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "warning_low_enabled"
@@ -360,7 +497,7 @@
           "type": "color",
           "default": "#0000FF",
           "category": "alerts",
-          "group": "low"
+          "group": "Alerts"
         },
         {
           "name": "warning_low_apply_label",
@@ -368,7 +505,7 @@
           "type": "checkbox",
           "default": true,
           "category": "alerts",
-          "group": "low",
+          "group": "Alerts",
           "inline": "warning_low_apply"
         },
         {
@@ -377,7 +514,7 @@
           "type": "checkbox",
           "default": true,
           "category": "alerts",
-          "group": "low",
+          "group": "Alerts",
           "inline": "warning_low_apply"
         },
         {
@@ -386,167 +523,8 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "low",
+          "group": "Alerts",
           "inline": "warning_low_apply"
-        },
-        {
-          "name": "label_font",
-          "label": "Label Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "value_font",
-          "label": "Value Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "border_radius",
-          "label": "Border Radius",
-          "type": "stepper",
-          "default": 7,
-          "category": "appearance",
-          "min": 0,
-          "max": 100
-        },
-        {
-          "name": "border_width",
-          "label": "Border Width",
-          "type": "stepper",
-          "default": 3,
-          "category": "appearance",
-          "min": 0,
-          "max": 20
-        },
-        {
-          "name": "border_color",
-          "label": "Border Color",
-          "type": "color",
-          "default": "#2E2F2E",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "bg_color",
-          "label": "Background",
-          "type": "color",
-          "default": "#000000",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "bg_opa",
-          "label": "BG Opacity",
-          "type": "stepper",
-          "default": 255,
-          "category": "appearance",
-          "min": 0,
-          "max": 255
-        },
-        {
-          "name": "label_color",
-          "label": "Label Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "value_color",
-          "label": "Value Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "label_y_offset",
-          "label": "Label Y Offset",
-          "type": "stepper",
-          "default": -28,
-          "category": "appearance",
-          "min": -100,
-          "max": 100
-        },
-        {
-          "name": "value_y_offset",
-          "label": "Value Y Offset",
-          "type": "stepper",
-          "default": 9,
-          "category": "appearance",
-          "min": -100,
-          "max": 100
-        },
-        {
-          "name": "text_align",
-          "label": "Text Align",
-          "type": "select",
-          "default": 1,
-          "category": "appearance",
-          "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Center"
-            },
-            {
-              "value": 2,
-              "label": "Right"
-            }
-          ]
-        },
-        {
-          "name": "show_unit",
-          "label": "Show Unit Suffix",
-          "type": "checkbox",
-          "default": false,
-          "category": "data"
-        },
-        {
-          "name": "unit_size",
-          "label": "Unit Size",
-          "type": "select",
-          "default": 2,
-          "category": "data",
-          "options": [
-            {
-              "value": 0,
-              "label": "Small"
-            },
-            {
-              "value": 1,
-              "label": "Medium"
-            },
-            {
-              "value": 2,
-              "label": "Full"
-            }
-          ],
-          "enabled_by": "show_unit"
-        },
-        {
-          "name": "custom_text_x_offset",
-          "label": "Unit Text X",
-          "type": "stepper",
-          "default": 41,
-          "category": "appearance",
-          "min": -100,
-          "max": 100
-        },
-        {
-          "name": "custom_text_y_offset",
-          "label": "Unit Text Y",
-          "type": "stepper",
-          "default": 32,
-          "category": "appearance",
-          "min": -100,
-          "max": 100
         }
       ]
     },
@@ -571,45 +549,32 @@
           "label": "Label",
           "type": "text",
           "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "bar_min",
           "label": "Min Value",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "bar_max",
           "label": "Max Value",
           "type": "number",
           "default": 100,
-          "category": "data"
-        },
-        {
-          "name": "smoothing_ms",
-          "label": "Smoothing (ms)",
-          "type": "slider",
-          "default": 80,
-          "category": "appearance",
-          "min": 0,
-          "max": 300,
-          "step": 10
-        },
-        {
-          "name": "show_bar_value",
-          "label": "Show Value",
-          "type": "checkbox",
-          "default": false,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "decimals",
           "label": "Decimals",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "anchor_enabled",
@@ -617,7 +582,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear."
+          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
+          "group": "Value"
         },
         {
           "name": "anchor_value",
@@ -625,7 +591,8 @@
           "type": "number",
           "default": 50,
           "category": "data",
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
         },
         {
           "name": "anchor_position",
@@ -635,21 +602,43 @@
           "category": "data",
           "min": 0,
           "max": 100,
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
+        },
+        {
+          "name": "show_bar_value",
+          "label": "Show Value",
+          "type": "checkbox",
+          "default": false,
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "data",
+          "min": 0,
+          "max": 300,
+          "step": 10,
+          "group": "Behaviour"
         },
         {
           "name": "invert_bar_value",
           "label": "Invert Fill",
           "type": "checkbox",
           "default": false,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Fill"
         },
         {
           "name": "center_fill",
           "label": "Center Fill (±)",
           "type": "checkbox",
           "default": false,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Fill"
         },
         {
           "name": "fill_dir",
@@ -658,23 +647,12 @@
           "default": 0,
           "category": "appearance",
           "options": [
-            {
-              "value": 0,
-              "label": "Left to Right"
-            },
-            {
-              "value": 1,
-              "label": "Right to Left"
-            },
-            {
-              "value": 2,
-              "label": "Center Out"
-            },
-            {
-              "value": 3,
-              "label": "Edges In"
-            }
-          ]
+            { "value": 0, "label": "Left to Right" },
+            { "value": 1, "label": "Right to Left" },
+            { "value": 2, "label": "Center Out" },
+            { "value": 3, "label": "Edges In" }
+          ],
+          "group": "Fill"
         },
         {
           "name": "bar_in_range_color",
@@ -682,55 +660,37 @@
           "type": "color",
           "default": "#00FF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
-          "name": "label_font",
-          "label": "Label Font",
-          "type": "font",
+          "name": "bar_image_full",
+          "label": "Fill Image",
+          "type": "image_picker",
           "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "value_font",
-          "label": "Value Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "bar_bg_color",
-          "label": "Track Color",
-          "type": "color",
-          "default": "#2E2F2E",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
-          "name": "bar_radius",
-          "label": "Bar Radius",
+          "name": "fill_edge_width",
+          "label": "Leading Edge Width",
           "type": "stepper",
-          "default": 5,
-          "category": "appearance",
+          "default": 0,
           "min": 0,
-          "max": 50
+          "max": 20,
+          "category": "appearance",
+          "help": "Bright marker that rides the fill's leading edge (current value), like the path-bar tach. Works on colour and image fills. 0 = off.",
+          "group": "Fill"
         },
         {
-          "name": "bar_border_width",
-          "label": "Border Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 20
-        },
-        {
-          "name": "bar_border_color",
-          "label": "Border Color",
+          "name": "fill_edge_color",
+          "label": "Leading Edge Color",
           "type": "color",
-          "default": "#2E2F2E",
+          "default": "#FFFFFF",
           "category": "appearance",
-          "night_overridable": true
+          "enabled_by": "fill_edge_width",
+          "group": "Fill"
         },
         {
           "name": "indicator_radius",
@@ -739,23 +699,17 @@
           "default": 5,
           "category": "appearance",
           "min": 0,
-          "max": 50
+          "max": 50,
+          "group": "Fill"
         },
         {
-          "name": "label_color",
-          "label": "Label Color",
+          "name": "bar_bg_color",
+          "label": "Track Color",
           "type": "color",
-          "default": "#FFFFFF",
+          "default": "#2E2F2E",
           "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "value_color",
-          "label": "Value Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "bar_image",
@@ -763,33 +717,136 @@
           "type": "image_picker",
           "default": "",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
-          "name": "bar_image_full",
-          "label": "Fill Image",
-          "type": "image_picker",
-          "default": "",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "fill_edge_width",
-          "label": "Fill Edge Width",
+          "name": "bar_radius",
+          "label": "Bar Radius",
           "type": "stepper",
-          "default": 0,
+          "default": 5,
+          "category": "appearance",
+          "min": 0,
+          "max": 50,
+          "group": "Frame"
+        },
+        {
+          "name": "bar_border_width",
+          "label": "Border Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
           "min": 0,
           "max": 20,
-          "category": "appearance",
-          "help": "Bright marker at the fill's leading edge (current value)."
+          "group": "Frame"
         },
         {
-          "name": "fill_edge_color",
-          "label": "Fill Edge Color",
+          "name": "bar_border_color",
+          "label": "Border Color",
+          "type": "color",
+          "default": "#2E2F2E",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Frame"
+        },
+        {
+          "name": "label_font",
+          "label": "Label Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "label_color",
+          "label": "Label Color",
           "type": "color",
           "default": "#FFFFFF",
           "category": "appearance",
-          "enabled_by": "fill_edge_width"
+          "night_overridable": true,
+          "group": "Text"
+        },
+        {
+          "name": "value_font",
+          "label": "Value Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "value_color",
+          "label": "Value Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Text"
+        },
+        {
+          "name": "show_ticks",
+          "label": "Show Ticks",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_count",
+          "label": "Tick Count",
+          "type": "stepper",
+          "default": 5,
+          "category": "appearance",
+          "min": 2,
+          "max": 30,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_length",
+          "label": "Tick Length",
+          "type": "stepper",
+          "default": 6,
+          "category": "appearance",
+          "min": 1,
+          "max": 40,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_width",
+          "label": "Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 1,
+          "max": 10,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_color",
+          "label": "Tick Color",
+          "type": "color",
+          "default": "#E8E8E8",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_side",
+          "label": "Tick Side",
+          "type": "select",
+          "default": 2,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "options": [
+            { "value": 0, "label": "Top" },
+            { "value": 1, "label": "Bottom" },
+            { "value": 2, "label": "Both" }
+          ],
+          "group": "Ticks"
         },
         {
           "name": "bar_alerts_enabled",
@@ -797,7 +854,7 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "bar_alerts"
+          "group": "Alerts"
         },
         {
           "name": "bar_low",
@@ -805,7 +862,7 @@
           "type": "stepper",
           "default": 0,
           "category": "alerts",
-          "group": "bar_alerts",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "bar_alerts_enabled"
@@ -816,7 +873,7 @@
           "type": "color",
           "default": "#0000FF",
           "category": "alerts",
-          "group": "bar_alerts",
+          "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
           "night_overridable": true
         },
@@ -826,7 +883,7 @@
           "type": "stepper",
           "default": 100,
           "category": "alerts",
-          "group": "bar_alerts",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "bar_alerts_enabled"
@@ -837,77 +894,9 @@
           "type": "color",
           "default": "#FF0000",
           "category": "alerts",
-          "group": "bar_alerts",
+          "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
           "night_overridable": true
-        },
-        {
-          "name": "show_ticks",
-          "label": "Show Ticks",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "tick_count",
-          "label": "Tick Count",
-          "type": "stepper",
-          "default": 5,
-          "category": "appearance",
-          "min": 2,
-          "max": 30,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_length",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 6,
-          "category": "appearance",
-          "min": 1,
-          "max": 40,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_width",
-          "label": "Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 1,
-          "max": 10,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_color",
-          "label": "Tick Color",
-          "type": "color",
-          "default": "#E8E8E8",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_side",
-          "label": "Tick Side",
-          "type": "select",
-          "default": 2,
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "options": [
-            {
-              "value": 0,
-              "label": "Top"
-            },
-            {
-              "value": 1,
-              "label": "Bottom"
-            },
-            {
-              "value": 2,
-              "label": "Both"
-            }
-          ]
         }
       ]
     },
@@ -934,15 +923,10 @@
           "default": 0,
           "category": "data",
           "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Right"
-            }
-          ]
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Right" }
+          ],
+          "group": "Value"
         },
         {
           "name": "input_source",
@@ -951,29 +935,10 @@
           "default": 0,
           "category": "data",
           "options": [
-            {
-              "value": 0,
-              "label": "Wire"
-            },
-            {
-              "value": 1,
-              "label": "CAN"
-            }
-          ]
-        },
-        {
-          "name": "animation",
-          "label": "Anim Enabled",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance"
-        },
-        {
-          "name": "is_momentary",
-          "label": "Momentary",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
+            { "value": 0, "label": "Wire" },
+            { "value": 1, "label": "CAN" }
+          ],
+          "group": "Value"
         },
         {
           "name": "color_on",
@@ -981,7 +946,8 @@
           "type": "color",
           "default": "#FFBF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "opa_on",
@@ -990,7 +956,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
         },
         {
           "name": "color_off",
@@ -998,7 +965,8 @@
           "type": "color",
           "default": "#333333",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "opa_off",
@@ -1007,7 +975,24 @@
           "default": 70,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
+        },
+        {
+          "name": "animation",
+          "label": "Anim Enabled",
+          "type": "checkbox",
+          "default": true,
+          "category": "data",
+          "group": "Behaviour"
+        },
+        {
+          "name": "is_momentary",
+          "label": "Momentary",
+          "type": "checkbox",
+          "default": false,
+          "category": "data",
+          "group": "Behaviour"
         }
       ]
     },
@@ -1032,7 +1017,76 @@
           "label": "Label",
           "type": "text",
           "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "active_color",
+          "label": "Active Color",
+          "type": "color",
+          "default": "#FF0000",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "active_opa",
+          "label": "Active Opacity",
+          "type": "stepper",
+          "default": 255,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill"
+        },
+        {
+          "name": "inactive_color",
+          "label": "Inactive Color",
+          "type": "color",
+          "default": "#292C29",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "inactive_opa",
+          "label": "Inactive Opacity",
+          "type": "stepper",
+          "default": 180,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill"
+        },
+        {
+          "name": "radius",
+          "label": "Radius",
+          "type": "stepper",
+          "default": 100,
+          "category": "appearance",
+          "min": 0,
+          "max": 200,
+          "group": "Frame"
+        },
+        {
+          "name": "border_width",
+          "label": "Border Width",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 20,
+          "group": "Frame"
+        },
+        {
+          "name": "border_color_style",
+          "label": "Border Color",
+          "type": "color",
+          "default": "#000000",
+          "category": "appearance",
+          "night_overridable": true,
+          "night_key": "border_color",
+          "group": "Frame"
         },
         {
           "name": "image_name",
@@ -1040,7 +1094,8 @@
           "type": "image_picker",
           "default": "",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Image"
         },
         {
           "name": "image_scale",
@@ -1050,89 +1105,16 @@
           "category": "appearance",
           "min": 10,
           "max": 200,
-          "_doc": "Zoom for the alert image (100 = native), centred on the widget.\nOnly applies in image mode (ignored for the plain circle lamp)."
-        },
-        {
-          "name": "active_color",
-          "label": "Active Color",
-          "type": "color",
-          "default": "#FF0000",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "active_opa",
-          "label": "Active Opacity",
-          "type": "stepper",
-          "default": 255,
-          "category": "appearance",
-          "min": 0,
-          "max": 255
-        },
-        {
-          "name": "is_momentary",
-          "label": "Momentary",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance"
-        },
-        {
-          "name": "invert_toggle",
-          "label": "Invert State",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "inactive_color",
-          "label": "Inactive Color",
-          "type": "color",
-          "default": "#292C29",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "inactive_opa",
-          "label": "Inactive Opacity",
-          "type": "stepper",
-          "default": 180,
-          "category": "appearance",
-          "min": 0,
-          "max": 255
-        },
-        {
-          "name": "border_width",
-          "label": "Border Width",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": 0,
-          "max": 20
-        },
-        {
-          "name": "border_color_style",
-          "label": "Border Color",
-          "type": "color",
-          "default": "#000000",
-          "category": "appearance",
-          "night_overridable": true,
-          "night_key": "border_color"
-        },
-        {
-          "name": "radius",
-          "label": "Radius",
-          "type": "stepper",
-          "default": 100,
-          "category": "appearance",
-          "min": 0,
-          "max": 200
+          "_doc": "Zoom for the alert image (100 = native), centred on the widget.\nOnly applies in image mode (ignored for the plain circle lamp).",
+          "group": "Image"
         },
         {
           "name": "show_label",
           "label": "Show Label",
           "type": "checkbox",
           "default": true,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Text"
         },
         {
           "name": "label_color",
@@ -1141,7 +1123,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_font",
@@ -1149,7 +1132,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_y_offset",
@@ -1159,7 +1143,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_text_align",
@@ -1169,19 +1154,27 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Center"
-            },
-            {
-              "value": 2,
-              "label": "Right"
-            }
-          ]
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ],
+          "group": "Text"
+        },
+        {
+          "name": "is_momentary",
+          "label": "Momentary",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Behaviour"
+        },
+        {
+          "name": "invert_toggle",
+          "label": "Invert State",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Behaviour"
         }
       ]
     },
@@ -1206,14 +1199,33 @@
           "label": "Static Text",
           "type": "text",
           "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "decimals",
           "label": "Decimals",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "font",
+          "label": "Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "group": "Text"
+        },
+        {
+          "name": "text_color",
+          "label": "Text Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Text"
         },
         {
           "name": "rotation",
@@ -1222,22 +1234,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 359
-        },
-        {
-          "name": "font",
-          "label": "Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "text_color",
-          "label": "Text Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true
+          "max": 359,
+          "group": "Behaviour"
         }
       ]
     },
@@ -1262,24 +1260,16 @@
           "label": "Min Value",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "max",
           "label": "Max Value",
           "type": "number",
           "default": 100,
-          "category": "data"
-        },
-        {
-          "name": "smoothing_ms",
-          "label": "Smoothing (ms)",
-          "type": "slider",
-          "default": 80,
-          "category": "appearance",
-          "min": 0,
-          "max": 300,
-          "step": 10
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "start_angle_user",
@@ -1290,7 +1280,8 @@
           "min": 0,
           "max": 359,
           "step": 5,
-          "_doc": "User-coord start angle: 0° = 12 o'clock, CW positive.\n_meterSyncDerived translates this into the LVGL\nstart_angle/end_angle pair the firmware reads."
+          "_doc": "User-coord start angle: 0° = 12 o'clock, CW positive.\n_meterSyncDerived translates this into the LVGL\nstart_angle/end_angle pair the firmware reads.",
+          "group": "Value"
         },
         {
           "name": "sweep_degrees",
@@ -1300,29 +1291,16 @@
           "category": "data",
           "min": 30,
           "max": 360,
-          "step": 5
+          "step": 5,
+          "group": "Value"
         },
         {
           "name": "reverse",
           "label": "Reverse Direction",
           "type": "checkbox",
           "default": false,
-          "category": "data"
-        },
-        {
-          "name": "minor_tick_step",
-          "label": "Minor Tick Value Spacing",
-          "type": "number",
-          "default": 10,
           "category": "data",
-          "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields."
-        },
-        {
-          "name": "major_tick_step",
-          "label": "Major Tick Value Spacing",
-          "type": "number",
-          "default": 50,
-          "category": "data"
+          "group": "Value"
         },
         {
           "name": "anchor_enabled",
@@ -1330,7 +1308,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear."
+          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear.",
+          "group": "Value"
         },
         {
           "name": "anchor_value",
@@ -1338,7 +1317,8 @@
           "type": "number",
           "default": 50,
           "category": "data",
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
         },
         {
           "name": "anchor_position",
@@ -1348,7 +1328,35 @@
           "category": "data",
           "min": 0,
           "max": 100,
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
+        },
+        {
+          "name": "minor_tick_step",
+          "label": "Minor Tick Value Spacing",
+          "type": "number",
+          "default": 10,
+          "category": "data",
+          "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_step",
+          "label": "Major Tick Value Spacing",
+          "type": "number",
+          "default": 50,
+          "category": "data",
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_step",
+          "label": "Medium Tick Value Spacing",
+          "type": "number",
+          "default": 0,
+          "category": "data",
+          "enabled_by": "show_ticks",
+          "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off.",
+          "group": "Ticks"
         },
         {
           "name": "redline_enabled",
@@ -1356,7 +1364,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "_doc": "Redline zone: visual cues drawn between threshold and\nmax. Show Arc + Recolor Ticks default ON so enabling\nthe master toggle gives an immediate visible result."
+          "_doc": "Redline zone: visual cues drawn between threshold and\nmax. Show Arc + Recolor Ticks default ON so enabling\nthe master toggle gives an immediate visible result.",
+          "group": "Redline"
         },
         {
           "name": "redline_threshold",
@@ -1364,7 +1373,8 @@
           "type": "number",
           "default": 80,
           "category": "data",
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
         },
         {
           "name": "redline_color",
@@ -1372,7 +1382,8 @@
           "type": "color",
           "default": "#FF0000",
           "category": "data",
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
         },
         {
           "name": "redline_show_arc",
@@ -1380,7 +1391,8 @@
           "type": "checkbox",
           "default": true,
           "category": "data",
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
         },
         {
           "name": "redline_arc_width",
@@ -1390,7 +1402,8 @@
           "category": "data",
           "min": 1,
           "max": 30,
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
         },
         {
           "name": "redline_arc_r_mod",
@@ -1400,7 +1413,8 @@
           "category": "data",
           "min": -50,
           "max": 50,
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
         },
         {
           "name": "redline_recolor_ticks",
@@ -1408,7 +1422,19 @@
           "type": "checkbox",
           "default": true,
           "category": "data",
-          "enabled_by": "redline_enabled"
+          "enabled_by": "redline_enabled",
+          "group": "Redline"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "data",
+          "min": 0,
+          "max": 300,
+          "step": 10,
+          "group": "Behaviour"
         },
         {
           "name": "meter_bg_color",
@@ -1416,7 +1442,8 @@
           "type": "color",
           "default": "#3D3D3D",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "meter_bg_opa",
@@ -1425,7 +1452,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Frame"
         },
         {
           "name": "bg_image_name",
@@ -1433,7 +1461,8 @@
           "type": "image_picker",
           "default": "",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "border_color",
@@ -1441,7 +1470,8 @@
           "type": "color",
           "default": "#000000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "border_width",
@@ -1450,7 +1480,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 20
+          "max": 20,
+          "group": "Frame"
         },
         {
           "name": "border_opa",
@@ -1459,7 +1490,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Frame"
         },
         {
           "name": "scale_padding",
@@ -1468,14 +1500,16 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 100
+          "max": 100,
+          "group": "Frame"
         },
         {
           "name": "show_ticks",
           "label": "Show Ticks",
           "type": "checkbox",
           "default": true,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Ticks"
         },
         {
           "name": "minor_tick_width",
@@ -1485,7 +1519,8 @@
           "category": "appearance",
           "min": 1,
           "max": 20,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "minor_tick_length",
@@ -1495,7 +1530,8 @@
           "category": "appearance",
           "min": 1,
           "max": 50,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "minor_tick_color",
@@ -1504,7 +1540,8 @@
           "default": "#9E9E9E",
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Ticks"
         },
         {
           "name": "major_tick_width",
@@ -1514,7 +1551,8 @@
           "category": "appearance",
           "min": 1,
           "max": 20,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "major_tick_length",
@@ -1524,7 +1562,8 @@
           "category": "appearance",
           "min": 1,
           "max": 50,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "major_tick_color",
@@ -1533,16 +1572,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "night_overridable": true
-        },
-        {
-          "name": "mid_tick_step",
-          "label": "Medium Tick Value Spacing",
-          "type": "number",
-          "default": 0,
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off."
+          "night_overridable": true,
+          "group": "Ticks"
         },
         {
           "name": "mid_tick_length",
@@ -1552,7 +1583,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "mid_tick_width",
@@ -1562,7 +1594,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "mid_tick_color",
@@ -1570,14 +1603,16 @@
           "type": "color",
           "default": "#BDBDBD",
           "category": "appearance",
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",
           "default": true,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Numbers"
         },
         {
           "name": "label_gap",
@@ -1587,7 +1622,8 @@
           "category": "appearance",
           "min": -150,
           "max": 150,
-          "enabled_by": "show_tick_labels"
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
         },
         {
           "name": "tick_label_font",
@@ -1595,7 +1631,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "enabled_by": "show_tick_labels"
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
         },
         {
           "name": "tick_label_color",
@@ -1604,7 +1641,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "show_tick_labels",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Numbers"
         },
         {
           "name": "tick_label_divisor",
@@ -1615,7 +1653,8 @@
           "min": 1,
           "max": 100000,
           "enabled_by": "show_tick_labels",
-          "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\")."
+          "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\").",
+          "group": "Numbers"
         },
         {
           "name": "show_needle",
@@ -1623,46 +1662,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "_doc": "Master toggle for the value needle. When off, the meter\nrenders ticks / labels / ball only — no needle line, image,\nor needle shadow. Independent of Show Needle Ball."
-        },
-        {
-          "name": "needle_image_name",
-          "label": "Needle Image",
-          "type": "image_picker",
-          "default": "",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_needle"
-        },
-        {
-          "name": "needle_pivot_x",
-          "label": "Needle Pivot X",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": -400,
-          "max": 400,
-          "enabled_by": "needle_image_name"
-        },
-        {
-          "name": "needle_pivot_y",
-          "label": "Needle Pivot Y",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": -400,
-          "max": 400,
-          "enabled_by": "needle_image_name"
-        },
-        {
-          "name": "needle_angle_offset",
-          "label": "Needle Angle Offset",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": -180,
-          "max": 180,
-          "enabled_by": "needle_image_name"
+          "_doc": "Master toggle for the value needle. When off, the meter\nrenders ticks / labels / ball only — no needle line, image,\nor needle shadow. Independent of Show Needle Ball.",
+          "group": "Needle"
         },
         {
           "name": "needle_width",
@@ -1672,7 +1673,8 @@
           "category": "appearance",
           "min": 1,
           "max": 20,
-          "enabled_by": "show_needle"
+          "enabled_by": "show_needle",
+          "group": "Needle"
         },
         {
           "name": "needle_color",
@@ -1681,7 +1683,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "enabled_by": "show_needle"
+          "enabled_by": "show_needle",
+          "group": "Needle"
         },
         {
           "name": "needle_r_mod",
@@ -1691,7 +1694,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "enabled_by": "show_needle"
+          "enabled_by": "show_needle",
+          "group": "Needle"
         },
         {
           "name": "needle_rear_length",
@@ -1701,7 +1705,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "enabled_by": "show_needle"
+          "enabled_by": "show_needle",
+          "group": "Needle"
         },
         {
           "name": "needle_inner_radius",
@@ -1711,7 +1716,8 @@
           "category": "appearance",
           "min": 0,
           "max": 400,
-          "enabled_by": "show_needle"
+          "enabled_by": "show_needle",
+          "group": "Needle"
         },
         {
           "name": "needle_tip_style",
@@ -1721,31 +1727,14 @@
           "category": "appearance",
           "enabled_by": "show_needle",
           "options": [
-            {
-              "value": 0,
-              "label": "Flat"
-            },
-            {
-              "value": 1,
-              "label": "Rounded"
-            },
-            {
-              "value": 2,
-              "label": "Lance"
-            },
-            {
-              "value": 3,
-              "label": "Dagger"
-            },
-            {
-              "value": 4,
-              "label": "Spade"
-            },
-            {
-              "value": 5,
-              "label": "Diamond"
-            }
-          ]
+            { "value": 0, "label": "Flat" },
+            { "value": 1, "label": "Rounded" },
+            { "value": 2, "label": "Lance" },
+            { "value": 3, "label": "Dagger" },
+            { "value": 4, "label": "Spade" },
+            { "value": 5, "label": "Diamond" }
+          ],
+          "group": "Needle"
         },
         {
           "name": "needle_tip_base_w",
@@ -1758,7 +1747,8 @@
           "_doc": "Tip-tuning knobs. Stored value 0 = \"use the built-in\ndefault for the current style\". `autoFn` returns the\nresolved default the firmware would pick - mirrors the\nsame defaults used in widget_meter.c's DRAW_PART hook\nso the inspector can show the effective number even\nwhen the user hasn't entered an explicit override.",
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          var nw = cfg.needle_width || 4;\n                          switch (cfg.needle_tip_style) {\n                              case 2: return (nw >> 1) + 1;  // Lance\n                              case 3: return (nw >> 1) + 2;  // Dagger\n                              case 4: return (nw >> 1) + 2;  // Spade\n                              case 5: return (nw >> 1) + 3;  // Diamond\n                              default: return 0;\n                          }\n                      }"
-          }
+          },
+          "group": "Needle"
         },
         {
           "name": "needle_tip_point_w",
@@ -1770,7 +1760,8 @@
           "max": 20,
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap\n                      }"
-          }
+          },
+          "group": "Needle"
         },
         {
           "name": "needle_tip_taper",
@@ -1782,7 +1773,51 @@
           "max": 100,
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
-          }
+          },
+          "group": "Needle"
+        },
+        {
+          "name": "needle_image_name",
+          "label": "Needle Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_needle",
+          "group": "Needle"
+        },
+        {
+          "name": "needle_pivot_x",
+          "label": "Needle Pivot X",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": -400,
+          "max": 400,
+          "enabled_by": "needle_image_name",
+          "group": "Needle"
+        },
+        {
+          "name": "needle_pivot_y",
+          "label": "Needle Pivot Y",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": -400,
+          "max": 400,
+          "enabled_by": "needle_image_name",
+          "group": "Needle"
+        },
+        {
+          "name": "needle_angle_offset",
+          "label": "Needle Angle Offset",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": -180,
+          "max": 180,
+          "enabled_by": "needle_image_name",
+          "group": "Needle"
         },
         {
           "name": "show_needle_ball",
@@ -1790,7 +1825,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "_doc": "Toggle the center pivot ball. When off, the ball is hidden\nregardless of size. Independent of Show Needle."
+          "_doc": "Toggle the center pivot ball. When off, the ball is hidden\nregardless of size. Independent of Show Needle.",
+          "group": "Needle"
         },
         {
           "name": "needle_ball_size",
@@ -1800,7 +1836,8 @@
           "category": "appearance",
           "min": 0,
           "max": 40,
-          "enabled_by": "show_needle_ball"
+          "enabled_by": "show_needle_ball",
+          "group": "Needle"
         },
         {
           "name": "needle_ball_color",
@@ -1809,7 +1846,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "enabled_by": "show_needle_ball"
+          "enabled_by": "show_needle_ball",
+          "group": "Needle"
         }
       ]
     },
@@ -1835,7 +1873,8 @@
           "type": "image_picker",
           "default": "",
           "category": "data",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Image"
         },
         {
           "name": "image_scale",
@@ -1844,7 +1883,8 @@
           "default": 100,
           "category": "appearance",
           "min": 10,
-          "max": 200
+          "max": 200,
+          "group": "Image"
         },
         {
           "name": "opacity",
@@ -1853,7 +1893,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Image"
         },
         {
           "name": "recolor",
@@ -1861,7 +1902,8 @@
           "type": "color",
           "default": "#000000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Image"
         },
         {
           "name": "recolor_opa",
@@ -1870,7 +1912,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Image"
         }
       ]
     },
@@ -1897,39 +1940,16 @@
           "default": "rectangle",
           "category": "appearance",
           "options": [
-            {
-              "value": "rectangle",
-              "label": "Rectangle"
-            },
-            {
-              "value": "circle",
-              "label": "Circle"
-            },
-            {
-              "value": "triangle",
-              "label": "Triangle"
-            },
-            {
-              "value": "diamond",
-              "label": "Diamond"
-            },
-            {
-              "value": "arrow_right",
-              "label": "Arrow ▶"
-            },
-            {
-              "value": "arrow_left",
-              "label": "Arrow ◀"
-            },
-            {
-              "value": "chevron_right",
-              "label": "Chevron ❯"
-            },
-            {
-              "value": "chevron_left",
-              "label": "Chevron ❮"
-            }
-          ]
+            { "value": "rectangle", "label": "Rectangle" },
+            { "value": "circle", "label": "Circle" },
+            { "value": "triangle", "label": "Triangle" },
+            { "value": "diamond", "label": "Diamond" },
+            { "value": "arrow_right", "label": "Arrow ▶" },
+            { "value": "arrow_left", "label": "Arrow ◀" },
+            { "value": "chevron_right", "label": "Chevron ❯" },
+            { "value": "chevron_left", "label": "Chevron ❮" }
+          ],
+          "group": "Shape"
         },
         {
           "name": "bg_color",
@@ -1937,7 +1957,8 @@
           "type": "color",
           "default": "#1A1A1A",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "bg_opa",
@@ -1946,7 +1967,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
         },
         {
           "name": "border_color",
@@ -1954,7 +1976,8 @@
           "type": "color",
           "default": "#2E2F2E",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "border_width",
@@ -1963,7 +1986,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 20
+          "max": 20,
+          "group": "Frame"
         },
         {
           "name": "border_radius",
@@ -1972,7 +1996,8 @@
           "default": 10,
           "category": "appearance",
           "min": 0,
-          "max": 200
+          "max": 200,
+          "group": "Frame"
         },
         {
           "name": "shadow_width",
@@ -1981,7 +2006,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 50
+          "max": 50,
+          "group": "Shadow"
         },
         {
           "name": "shadow_color",
@@ -1989,7 +2015,8 @@
           "type": "color",
           "default": "#000000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Shadow"
         },
         {
           "name": "shadow_opa",
@@ -1998,7 +2025,8 @@
           "default": 128,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Shadow"
         },
         {
           "name": "shadow_ofs_x",
@@ -2007,7 +2035,8 @@
           "default": 0,
           "category": "appearance",
           "min": -100,
-          "max": 100
+          "max": 100,
+          "group": "Shadow"
         },
         {
           "name": "shadow_ofs_y",
@@ -2016,14 +2045,16 @@
           "default": 0,
           "category": "appearance",
           "min": -100,
-          "max": 100
+          "max": 100,
+          "group": "Shadow"
         },
         {
           "name": "bake_into_gauge",
           "label": "Bake Into Gauge (perf)",
           "type": "checkbox",
           "default": false,
-          "category": "appearance"
+          "category": "appearance",
+          "group": "Behaviour"
         }
       ]
     },
@@ -2044,12 +2075,27 @@
       },
       "fields": [
         {
+          "name": "orientation",
+          "label": "Orientation",
+          "type": "select",
+          "default": "horizontal",
+          "category": "appearance",
+          "options": [
+            { "value": "horizontal", "label": "Horizontal" },
+            { "value": "vertical", "label": "Vertical" },
+            { "value": "diagonal_fwd", "label": "Diagonal /" },
+            { "value": "diagonal_bwd", "label": "Diagonal \\" }
+          ],
+          "group": "Style"
+        },
+        {
           "name": "line_color",
           "label": "Color",
           "type": "color",
           "default": "#FFFFFF",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Style"
         },
         {
           "name": "line_width",
@@ -2058,7 +2104,8 @@
           "default": 4,
           "category": "appearance",
           "min": 1,
-          "max": 30
+          "max": 30,
+          "group": "Style"
         },
         {
           "name": "line_opa",
@@ -2067,39 +2114,16 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Style"
         },
         {
           "name": "rounded",
           "label": "Rounded Ends",
           "type": "checkbox",
           "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "orientation",
-          "label": "Orientation",
-          "type": "select",
-          "default": "horizontal",
           "category": "appearance",
-          "options": [
-            {
-              "value": "horizontal",
-              "label": "Horizontal"
-            },
-            {
-              "value": "vertical",
-              "label": "Vertical"
-            },
-            {
-              "value": "diagonal_fwd",
-              "label": "Diagonal /"
-            },
-            {
-              "value": "diagonal_bwd",
-              "label": "Diagonal \\"
-            }
-          ]
+          "group": "Style"
         },
         {
           "name": "dash_gap",
@@ -2108,7 +2132,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 40
+          "max": 40,
+          "group": "Style"
         }
       ]
     },
@@ -2129,73 +2154,67 @@
       },
       "fields": [
         {
-          "name": "text",
-          "label": "Message",
-          "type": "text",
-          "default": "WARNING",
-          "category": "data"
-        },
-        {
           "name": "op",
           "label": "Operator",
           "type": "select",
           "default": 0,
           "category": "data",
           "options": [
-            {
-              "value": 0,
-              "label": ">"
-            },
-            {
-              "value": 1,
-              "label": "<"
-            },
-            {
-              "value": 2,
-              "label": ">="
-            },
-            {
-              "value": 3,
-              "label": "<="
-            },
-            {
-              "value": 4,
-              "label": "=="
-            },
-            {
-              "value": 5,
-              "label": "!="
-            },
-            {
-              "value": 6,
-              "label": "range"
-            },
-            {
-              "value": 7,
-              "label": "always (test)"
-            }
-          ]
+            { "value": 0, "label": ">" },
+            { "value": 1, "label": "<" },
+            { "value": 2, "label": ">=" },
+            { "value": 3, "label": "<=" },
+            { "value": 4, "label": "==" },
+            { "value": 5, "label": "!=" },
+            { "value": 6, "label": "range" },
+            { "value": 7, "label": "always (test)" }
+          ],
+          "group": "Value"
         },
         {
           "name": "threshold",
           "label": "Threshold",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "range_min",
           "label": "Range Min",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "range_max",
           "label": "Range Max",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "text",
+          "label": "Message",
+          "type": "text",
+          "default": "WARNING",
+          "category": "data",
+          "group": "Text"
+        },
+        {
+          "name": "text_align",
+          "label": "Text Align",
+          "type": "select",
+          "default": 1,
+          "category": "data",
+          "options": [
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ],
+          "group": "Text"
         },
         {
           "name": "bg_color",
@@ -2203,7 +2222,8 @@
           "type": "color",
           "default": "#FF0000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "bg_opa",
@@ -2212,7 +2232,8 @@
           "default": 128,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
         },
         {
           "name": "text_color",
@@ -2220,35 +2241,16 @@
           "type": "color",
           "default": "#000000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Text"
         },
         {
           "name": "font",
           "label": "Font",
           "type": "font",
           "default": "",
-          "category": "appearance"
-        },
-        {
-          "name": "text_align",
-          "label": "Text Align",
-          "type": "select",
-          "default": 1,
           "category": "appearance",
-          "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Center"
-            },
-            {
-              "value": 2,
-              "label": "Right"
-            }
-          ]
+          "group": "Text"
         },
         {
           "name": "border_width",
@@ -2257,7 +2259,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 20
+          "max": 20,
+          "group": "Frame"
         },
         {
           "name": "border_color",
@@ -2265,7 +2268,8 @@
           "type": "color",
           "default": "#000000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Frame"
         },
         {
           "name": "radius",
@@ -2274,7 +2278,8 @@
           "default": 0,
           "category": "appearance",
           "min": 0,
-          "max": 100
+          "max": 100,
+          "group": "Frame"
         }
       ]
     },
@@ -2302,7 +2307,8 @@
           "category": "data",
           "min": 0,
           "max": 359,
-          "step": 5
+          "step": 5,
+          "group": "Value"
         },
         {
           "name": "sweep_degrees",
@@ -2312,345 +2318,40 @@
           "category": "data",
           "min": 30,
           "max": 360,
-          "step": 5
+          "step": 5,
+          "group": "Value"
         },
         {
           "name": "signal_min",
           "label": "Signal Min",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "signal_max",
           "label": "Signal Max",
           "type": "number",
           "default": 100,
-          "category": "data"
-        },
-        {
-          "name": "smoothing_ms",
-          "label": "Smoothing (ms)",
-          "type": "slider",
-          "default": 80,
-          "category": "appearance",
-          "min": 0,
-          "max": 300,
-          "step": 10
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "tick_min",
           "label": "Tick Start Value",
           "type": "number",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "tick_max",
           "label": "Tick End Value",
           "type": "number",
           "default": 0,
-          "category": "data"
-        },
-        {
-          "name": "arc_width",
-          "label": "Arc Width",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": 1,
-          "max": 50
-        },
-        {
-          "name": "arc_offset",
-          "label": "Arc Offset",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": 0,
-          "max": 120
-        },
-        {
-          "name": "arc_color",
-          "label": "Arc Color",
-          "type": "color",
-          "default": "#00FF00",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "bg_arc_color",
-          "label": "Track Color",
-          "type": "color",
-          "default": "#333333",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "bg_arc_width",
-          "label": "Track Width",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": 1,
-          "max": 50
-        },
-        {
-          "name": "rounded_ends",
-          "label": "Rounded Ends",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "fade_fill",
-          "label": "Fade Fill",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance",
-          "help": "Dim-to-bright gradient along the lit arc (positional, redraw-cheap)."
-        },
-        {
-          "name": "lead_edge_enabled",
-          "label": "Leading Edge",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance",
-          "help": "Bright marker at the current-value end of the fill."
-        },
-        {
-          "name": "lead_edge_color",
-          "label": "Leading Edge Color",
-          "type": "color",
-          "default": "#E6FAFF",
-          "category": "appearance",
-          "enabled_by": "lead_edge_enabled"
-        },
-        {
-          "name": "lead_edge_width",
-          "label": "Leading Edge Width",
-          "type": "stepper",
-          "default": 6,
-          "min": 0,
-          "max": 40,
-          "category": "appearance",
-          "enabled_by": "lead_edge_enabled"
-        },
-        {
-          "name": "arc_image",
-          "label": "Track Image",
-          "type": "image_picker",
-          "default": "",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "arc_image_full",
-          "label": "Fill Image",
-          "type": "image_picker",
-          "default": "",
-          "category": "appearance",
-          "night_overridable": true
-        },
-        {
-          "name": "show_ticks",
-          "label": "Show Ticks",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "minor_tick_step",
-          "label": "Minor Tick Value Spacing",
-          "type": "number",
-          "default": 10,
-          "category": "appearance",
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_step",
-          "label": "Major Tick Value Spacing",
-          "type": "number",
-          "default": 50,
-          "category": "appearance",
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "minor_tick_length",
-          "label": "Minor Tick Length",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": 0,
-          "max": 50,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "minor_tick_width",
-          "label": "Minor Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_length",
-          "label": "Major Tick Length",
-          "type": "stepper",
-          "default": 15,
-          "category": "appearance",
-          "min": 0,
-          "max": 50,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_width",
-          "label": "Major Tick Width",
-          "type": "stepper",
-          "default": 4,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "minor_tick_color",
-          "label": "Minor Tick Color",
-          "type": "color",
-          "default": "#9E9E9E",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_color",
-          "label": "Major Tick Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "mid_tick_step",
-          "label": "Medium Tick Step",
-          "type": "number",
-          "default": 0,
-          "category": "appearance"
-        },
-        {
-          "name": "mid_tick_length",
-          "label": "Medium Tick Length",
-          "type": "stepper",
-          "default": 13,
-          "category": "appearance",
-          "min": 0,
-          "max": 100
-        },
-        {
-          "name": "mid_tick_width",
-          "label": "Medium Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 20
-        },
-        {
-          "name": "mid_tick_color",
-          "label": "Medium Tick Color",
-          "type": "color",
-          "default": "#BDBDBD",
-          "category": "appearance"
-        },
-        {
-          "name": "show_tick_labels",
-          "label": "Show Tick Labels",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance"
-        },
-        {
-          "name": "ticks_on_top",
-          "label": "Ticks On Top",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "label_gap",
-          "label": "Label Gap",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
-          "min": -150,
-          "max": 150,
-          "enabled_by": "show_tick_labels"
-        },
-        {
-          "name": "tick_label_font",
-          "label": "Tick Label Font",
-          "type": "font",
-          "default": "",
-          "category": "appearance",
-          "enabled_by": "show_tick_labels"
-        },
-        {
-          "name": "tick_label_color",
-          "label": "Tick Label Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "enabled_by": "show_tick_labels",
-          "night_overridable": true
-        },
-        {
-          "name": "tick_label_divisor",
-          "label": "Tick Label Divisor",
-          "type": "stepper",
-          "default": 1,
-          "category": "appearance",
-          "min": 1,
-          "max": 100000,
-          "enabled_by": "show_tick_labels"
-        },
-        {
-          "name": "show_value_line",
-          "label": "Show Value Line",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance"
-        },
-        {
-          "name": "value_line_width",
-          "label": "Value Line Width",
-          "type": "stepper",
-          "default": 4,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_value_line"
-        },
-        {
-          "name": "value_line_color",
-          "label": "Value Line Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_value_line"
-        },
-        {
-          "name": "value_line_r_mod",
-          "label": "Value Line Length Trim",
-          "type": "stepper",
-          "default": -10,
-          "category": "appearance",
-          "min": -50,
-          "max": 50,
-          "enabled_by": "show_value_line"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "anchor_enabled",
@@ -2658,7 +2359,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear."
+          "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
+          "group": "Value"
         },
         {
           "name": "anchor_value",
@@ -2666,7 +2368,8 @@
           "type": "number",
           "default": 50,
           "category": "data",
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
         },
         {
           "name": "anchor_position",
@@ -2676,14 +2379,388 @@
           "category": "data",
           "min": 0,
           "max": 100,
-          "enabled_by": "anchor_enabled"
+          "enabled_by": "anchor_enabled",
+          "group": "Value"
         },
         {
           "name": "reverse",
           "label": "Reverse Direction",
           "type": "checkbox",
           "default": false,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 80,
+          "category": "data",
+          "min": 0,
+          "max": 300,
+          "step": 10,
+          "group": "Behaviour"
+        },
+        {
+          "name": "arc_width",
+          "label": "Arc Width",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 1,
+          "max": 50,
+          "group": "Fill"
+        },
+        {
+          "name": "arc_offset",
+          "label": "Arc Offset",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 120,
+          "group": "Fill"
+        },
+        {
+          "name": "arc_color",
+          "label": "Arc Color",
+          "type": "color",
+          "default": "#00FF00",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "bg_arc_color",
+          "label": "Track Color",
+          "type": "color",
+          "default": "#333333",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "bg_arc_width",
+          "label": "Track Width",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 1,
+          "max": 50,
+          "group": "Fill"
+        },
+        {
+          "name": "rounded_ends",
+          "label": "Rounded Ends",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Fill"
+        },
+        {
+          "name": "fade_fill",
+          "label": "Fade Fill",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "help": "Dim-to-bright gradient along the lit arc (positional, redraw-cheap).",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_enabled",
+          "label": "Leading Edge",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "help": "Bright marker at the current-value end of the fill.",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_color",
+          "label": "Leading Edge Color",
+          "type": "color",
+          "default": "#E6FAFF",
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_width",
+          "label": "Leading Edge Width",
+          "type": "stepper",
+          "default": 6,
+          "min": 0,
+          "max": 40,
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled",
+          "group": "Fill"
+        },
+        {
+          "name": "arc_image",
+          "label": "Track Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "arc_image_full",
+          "label": "Fill Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "redline_color",
+          "label": "Redline Color",
+          "type": "color",
+          "default": "#FF0000",
+          "category": "appearance",
+          "group": "Redline"
+        },
+        {
+          "name": "redline_arc_width",
+          "label": "Redline Thickness",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 50,
+          "group": "Redline"
+        },
+        {
+          "name": "redline_recolor_fill",
+          "label": "Redline Recolors Fill",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Redline"
+        },
+        {
+          "name": "show_ticks",
+          "label": "Show Ticks",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_step",
+          "label": "Minor Tick Value Spacing",
+          "type": "number",
+          "default": 10,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_step",
+          "label": "Major Tick Value Spacing",
+          "type": "number",
+          "default": 50,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_length",
+          "label": "Minor Tick Length",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 0,
+          "max": 50,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_width",
+          "label": "Minor Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "minor_tick_color",
+          "label": "Minor Tick Color",
+          "type": "color",
+          "default": "#9E9E9E",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_length",
+          "label": "Major Tick Length",
+          "type": "stepper",
+          "default": 15,
+          "category": "appearance",
+          "min": 0,
+          "max": 50,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_width",
+          "label": "Major Tick Width",
+          "type": "stepper",
+          "default": 4,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_color",
+          "label": "Major Tick Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_step",
+          "label": "Medium Tick Step",
+          "type": "number",
+          "default": 0,
+          "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_length",
+          "label": "Medium Tick Length",
+          "type": "stepper",
+          "default": 13,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_width",
+          "label": "Medium Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 20,
+          "group": "Ticks"
+        },
+        {
+          "name": "mid_tick_color",
+          "label": "Medium Tick Color",
+          "type": "color",
+          "default": "#BDBDBD",
+          "category": "appearance",
+          "group": "Ticks"
+        },
+        {
+          "name": "show_tick_labels",
+          "label": "Show Tick Labels",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Numbers"
+        },
+        {
+          "name": "label_gap",
+          "label": "Label Gap",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": -150,
+          "max": 150,
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_font",
+          "label": "Tick Label Font",
+          "type": "font",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_color",
+          "label": "Tick Label Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_tick_labels",
+          "night_overridable": true,
+          "group": "Numbers"
+        },
+        {
+          "name": "tick_label_divisor",
+          "label": "Tick Label Divisor",
+          "type": "stepper",
+          "default": 1,
+          "category": "appearance",
+          "min": 1,
+          "max": 100000,
+          "enabled_by": "show_tick_labels",
+          "group": "Numbers"
+        },
+        {
+          "name": "ticks_on_top",
+          "label": "Ticks On Top",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Numbers"
+        },
+        {
+          "name": "show_value_line",
+          "label": "Show Value Line",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Needle"
+        },
+        {
+          "name": "value_line_width",
+          "label": "Value Line Width",
+          "type": "stepper",
+          "default": 4,
+          "category": "appearance",
+          "min": 1,
+          "max": 20,
+          "enabled_by": "show_value_line",
+          "group": "Needle"
+        },
+        {
+          "name": "value_line_color",
+          "label": "Value Line Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "night_overridable": true,
+          "enabled_by": "show_value_line",
+          "group": "Needle"
+        },
+        {
+          "name": "value_line_r_mod",
+          "label": "Value Line Length Trim",
+          "type": "stepper",
+          "default": -10,
+          "category": "appearance",
+          "min": -50,
+          "max": 50,
+          "enabled_by": "show_value_line",
+          "group": "Needle"
         },
         {
           "name": "arc_alerts_enabled",
@@ -2691,7 +2768,7 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "arc_alerts"
+          "group": "Alerts"
         },
         {
           "name": "arc_low",
@@ -2699,7 +2776,7 @@
           "type": "stepper",
           "default": 0,
           "category": "alerts",
-          "group": "arc_alerts",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "arc_alerts_enabled"
@@ -2710,7 +2787,7 @@
           "type": "color",
           "default": "#0000FF",
           "category": "alerts",
-          "group": "arc_alerts",
+          "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
           "night_overridable": true
         },
@@ -2720,7 +2797,7 @@
           "type": "stepper",
           "default": 100,
           "category": "alerts",
-          "group": "arc_alerts",
+          "group": "Alerts",
           "min": -99999,
           "max": 99999,
           "enabled_by": "arc_alerts_enabled"
@@ -2731,32 +2808,9 @@
           "type": "color",
           "default": "#FF0000",
           "category": "alerts",
-          "group": "arc_alerts",
+          "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
           "night_overridable": true
-        },
-        {
-          "name": "redline_arc_width",
-          "label": "Redline Thickness",
-          "type": "stepper",
-          "default": 0,
-          "category": "appearance",
-          "min": 0,
-          "max": 50
-        },
-        {
-          "name": "redline_color",
-          "label": "Redline Color",
-          "type": "color",
-          "default": "#FF0000",
-          "category": "appearance"
-        },
-        {
-          "name": "redline_recolor_fill",
-          "label": "Redline Recolors Fill",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance"
         }
       ]
     },
@@ -2781,28 +2835,32 @@
           "label": "Label",
           "type": "textarea",
           "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Text"
         },
         {
           "name": "show_label",
           "label": "Show Label",
           "type": "checkbox",
           "default": true,
-          "category": "data"
+          "category": "data",
+          "group": "Text"
         },
         {
           "name": "signal_on_threshold",
           "label": "ON Threshold",
           "type": "number",
           "default": 0.5,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "tx_can_id",
           "label": "CAN ID",
           "type": "can_id",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "CAN TX"
         },
         {
           "name": "tx_bit_start",
@@ -2810,7 +2868,8 @@
           "type": "select",
           "default": 0,
           "category": "data",
-          "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))"
+          "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
+          "group": "CAN TX"
         },
         {
           "name": "tx_bit_length",
@@ -2818,7 +2877,8 @@
           "type": "select",
           "default": 1,
           "category": "data",
-          "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))"
+          "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
+          "group": "CAN TX"
         },
         {
           "name": "tx_endian",
@@ -2827,15 +2887,10 @@
           "default": 1,
           "category": "data",
           "options": [
-            {
-              "value": 0,
-              "label": "Big Endian"
-            },
-            {
-              "value": 1,
-              "label": "Little Endian"
-            }
-          ]
+            { "value": 0, "label": "Big Endian" },
+            { "value": 1, "label": "Little Endian" }
+          ],
+          "group": "CAN TX"
         },
         {
           "name": "tx_rate_hz",
@@ -2844,15 +2899,17 @@
           "default": 0,
           "category": "data",
           "min": 0,
-          "max": 50
+          "max": 50,
+          "group": "CAN TX"
         },
         {
           "name": "image_name",
           "label": "Image",
           "type": "image_picker",
           "default": "",
-          "category": "appearance",
-          "night_overridable": true
+          "category": "data",
+          "night_overridable": true,
+          "group": "Image"
         },
         {
           "name": "active_color",
@@ -2860,7 +2917,8 @@
           "type": "color",
           "default": "#00FF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "inactive_color",
@@ -2868,7 +2926,8 @@
           "type": "color",
           "default": "#555555",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "active_opa",
@@ -2877,7 +2936,8 @@
           "default": 255,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
         },
         {
           "name": "inactive_opa",
@@ -2886,7 +2946,8 @@
           "default": 100,
           "category": "appearance",
           "min": 0,
-          "max": 255
+          "max": 255,
+          "group": "Fill"
         },
         {
           "name": "label_color",
@@ -2895,7 +2956,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "show_label",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Text"
         },
         {
           "name": "font",
@@ -2903,7 +2965,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_align",
@@ -2913,19 +2976,11 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Center"
-            },
-            {
-              "value": 2,
-              "label": "Right"
-            }
-          ]
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ],
+          "group": "Text"
         },
         {
           "name": "label_x",
@@ -2935,7 +2990,8 @@
           "category": "appearance",
           "min": -400,
           "max": 400,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_y",
@@ -2945,7 +3001,8 @@
           "category": "appearance",
           "min": -240,
           "max": 240,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         }
       ]
     },
@@ -2970,28 +3027,32 @@
           "label": "Label",
           "type": "textarea",
           "default": "BTN",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "show_label",
           "label": "Show Label",
           "type": "checkbox",
           "default": true,
-          "category": "data"
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "latch",
           "label": "Latch (Toggle)",
           "type": "checkbox",
           "default": false,
-          "category": "data"
+          "category": "data",
+          "group": "Behaviour"
         },
         {
           "name": "tx_can_id",
           "label": "CAN ID",
           "type": "can_id",
           "default": 0,
-          "category": "data"
+          "category": "data",
+          "group": "CAN TX"
         },
         {
           "name": "tx_bit_start",
@@ -2999,7 +3060,8 @@
           "type": "select",
           "default": 0,
           "category": "data",
-          "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))"
+          "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
+          "group": "CAN TX"
         },
         {
           "name": "tx_bit_length",
@@ -3007,7 +3069,8 @@
           "type": "select",
           "default": 1,
           "category": "data",
-          "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))"
+          "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
+          "group": "CAN TX"
         },
         {
           "name": "tx_endian",
@@ -3016,15 +3079,10 @@
           "default": 1,
           "category": "data",
           "options": [
-            {
-              "value": 0,
-              "label": "Big Endian"
-            },
-            {
-              "value": 1,
-              "label": "Little Endian"
-            }
-          ]
+            { "value": 0, "label": "Big Endian" },
+            { "value": 1, "label": "Little Endian" }
+          ],
+          "group": "CAN TX"
         },
         {
           "name": "tx_rate_hz",
@@ -3033,7 +3091,8 @@
           "default": 0,
           "category": "data",
           "min": 0,
-          "max": 50
+          "max": 50,
+          "group": "CAN TX"
         },
         {
           "name": "tx_send_release",
@@ -3041,15 +3100,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "enabled_by": "!latch"
-        },
-        {
-          "name": "image_name",
-          "label": "Image",
-          "type": "image_picker",
-          "default": "",
-          "category": "appearance",
-          "night_overridable": true
+          "enabled_by": "!latch",
+          "group": "CAN TX"
         },
         {
           "name": "bg_color",
@@ -3057,7 +3109,8 @@
           "type": "color",
           "default": "#333333",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "text_color",
@@ -3065,7 +3118,8 @@
           "type": "color",
           "default": "#FFFFFF",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "pressed_color",
@@ -3073,7 +3127,8 @@
           "type": "color",
           "default": "#555555",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "border_radius",
@@ -3082,7 +3137,8 @@
           "default": 5,
           "category": "appearance",
           "min": 0,
-          "max": 100
+          "max": 100,
+          "group": "Frame"
         },
         {
           "name": "font",
@@ -3090,7 +3146,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_align",
@@ -3100,19 +3157,11 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "options": [
-            {
-              "value": 0,
-              "label": "Left"
-            },
-            {
-              "value": 1,
-              "label": "Center"
-            },
-            {
-              "value": 2,
-              "label": "Right"
-            }
-          ]
+            { "value": 0, "label": "Left" },
+            { "value": 1, "label": "Center" },
+            { "value": 2, "label": "Right" }
+          ],
+          "group": "Text"
         },
         {
           "name": "label_x",
@@ -3122,7 +3171,8 @@
           "category": "appearance",
           "min": -400,
           "max": 400,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
         },
         {
           "name": "label_y",
@@ -3132,7 +3182,17 @@
           "category": "appearance",
           "min": -240,
           "max": 240,
-          "enabled_by": "show_label"
+          "enabled_by": "show_label",
+          "group": "Text"
+        },
+        {
+          "name": "image_name",
+          "label": "Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "night_overridable": true,
+          "group": "Image"
         }
       ]
     },
@@ -3157,7 +3217,24 @@
           "label": "Signal",
           "type": "text",
           "default": "",
-          "category": "data"
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "range_min",
+          "label": "Range Min",
+          "type": "number",
+          "default": 4000,
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "range_max",
+          "label": "Range Max",
+          "type": "number",
+          "default": 7000,
+          "category": "data",
+          "group": "Value"
         },
         {
           "name": "led_count",
@@ -3167,28 +3244,16 @@
           "category": "data",
           "min": 4,
           "max": 16,
-          "step": 1
-        },
-        {
-          "name": "range_min",
-          "label": "Range Min",
-          "type": "number",
-          "default": 4000,
-          "category": "data"
-        },
-        {
-          "name": "range_max",
-          "label": "Range Max",
-          "type": "number",
-          "default": 7000,
-          "category": "data"
+          "step": 1,
+          "group": "Value"
         },
         {
           "name": "flash_threshold",
           "label": "Flash RPM",
           "type": "number",
           "default": 7200,
-          "category": "data"
+          "category": "data",
+          "group": "Behaviour"
         },
         {
           "name": "flash_speed",
@@ -3198,7 +3263,20 @@
           "category": "data",
           "min": 50,
           "max": 1000,
-          "step": 10
+          "step": 10,
+          "group": "Behaviour"
+        },
+        {
+          "name": "fill_mode",
+          "label": "Fill Direction",
+          "type": "select",
+          "default": 0,
+          "category": "data",
+          "options": [
+            { "value": 0, "label": "Left to Right" },
+            { "value": 1, "label": "Outside In" }
+          ],
+          "group": "Behaviour"
         },
         {
           "name": "color_low",
@@ -3206,7 +3284,8 @@
           "type": "color",
           "default": "#00FF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "color_mid",
@@ -3214,7 +3293,8 @@
           "type": "color",
           "default": "#FFFF00",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "color_high",
@@ -3222,7 +3302,8 @@
           "type": "color",
           "default": "#FF0000",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
         },
         {
           "name": "color_off",
@@ -3230,7 +3311,30 @@
           "type": "color",
           "default": "#212121",
           "category": "appearance",
-          "night_overridable": true
+          "night_overridable": true,
+          "group": "Fill"
+        },
+        {
+          "name": "threshold_mid",
+          "label": "Mid Threshold",
+          "type": "number",
+          "default": 0.5,
+          "category": "appearance",
+          "min": 0,
+          "max": 1,
+          "step": 0.05,
+          "group": "Fill"
+        },
+        {
+          "name": "threshold_high",
+          "label": "High Threshold",
+          "type": "number",
+          "default": 0.8,
+          "category": "appearance",
+          "min": 0,
+          "max": 1,
+          "step": 0.05,
+          "group": "Fill"
         },
         {
           "name": "led_spacing",
@@ -3240,17 +3344,8 @@
           "category": "appearance",
           "min": 0,
           "max": 200,
-          "step": 1
-        },
-        {
-          "name": "border_radius",
-          "label": "Corner Radius",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 255,
-          "step": 1
+          "step": 1,
+          "group": "Layout"
         },
         {
           "name": "led_width",
@@ -3260,7 +3355,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "step": 1
+          "step": 1,
+          "group": "Layout"
         },
         {
           "name": "led_height",
@@ -3270,44 +3366,19 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "step": 1
+          "step": 1,
+          "group": "Layout"
         },
         {
-          "name": "fill_mode",
-          "label": "Fill Direction",
-          "type": "select",
-          "default": 0,
-          "category": "data",
-          "options": [
-            {
-              "value": 0,
-              "label": "Left to Right"
-            },
-            {
-              "value": 1,
-              "label": "Outside In"
-            }
-          ]
-        },
-        {
-          "name": "threshold_mid",
-          "label": "Mid Threshold",
-          "type": "number",
-          "default": 0.5,
-          "category": "thresholds",
+          "name": "border_radius",
+          "label": "Corner Radius",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
           "min": 0,
-          "max": 1,
-          "step": 0.05
-        },
-        {
-          "name": "threshold_high",
-          "label": "High Threshold",
-          "type": "number",
-          "default": 0.8,
-          "category": "thresholds",
-          "min": 0,
-          "max": 1,
-          "step": 0.05
+          "max": 255,
+          "step": 1,
+          "group": "Layout"
         }
       ]
     },
@@ -3327,6 +3398,129 @@
       },
       "fields": [
         {
+          "name": "min",
+          "label": "Min Value",
+          "type": "number",
+          "default": 0,
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "max",
+          "label": "Max Value",
+          "type": "number",
+          "default": 11000,
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "redline",
+          "label": "Redline",
+          "type": "number",
+          "default": 10000,
+          "category": "data",
+          "group": "Value"
+        },
+        {
+          "name": "lit_color",
+          "label": "Fill Color",
+          "type": "color",
+          "default": "#2EE4C8",
+          "category": "appearance",
+          "group": "Fill"
+        },
+        {
+          "name": "dim_color",
+          "label": "Track Color",
+          "type": "color",
+          "default": "#2E323A",
+          "category": "appearance",
+          "group": "Fill"
+        },
+        {
+          "name": "dim_opa",
+          "label": "Track Opacity",
+          "type": "slider",
+          "default": 90,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill"
+        },
+        {
+          "name": "band_width",
+          "label": "Band Width",
+          "type": "stepper",
+          "default": 22,
+          "category": "appearance",
+          "min": 2,
+          "max": 80,
+          "group": "Fill"
+        },
+        {
+          "name": "rounded",
+          "label": "Rounded Caps",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "group": "Fill"
+        },
+        {
+          "name": "fade_fill",
+          "label": "Fade Fill",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "help": "Dim-to-bright gradient along the lit band (positional, redraw-cheap).",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_enabled",
+          "label": "Leading Edge",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "help": "Bright flat marker at the current-value tip of the fill.",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_color",
+          "label": "Leading Edge Color",
+          "type": "color",
+          "default": "#E6FAFF",
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled",
+          "group": "Fill"
+        },
+        {
+          "name": "lead_edge_width",
+          "label": "Leading Edge Width",
+          "type": "stepper",
+          "default": 6,
+          "min": 0,
+          "max": 40,
+          "category": "appearance",
+          "enabled_by": "lead_edge_enabled",
+          "group": "Fill"
+        },
+        {
+          "name": "redline_color",
+          "label": "Redline Color",
+          "type": "color",
+          "default": "#FF5C32",
+          "category": "appearance",
+          "group": "Redline"
+        },
+        {
+          "name": "redline_recolor_ticks",
+          "label": "Recolor Ticks Past Redline",
+          "type": "checkbox",
+          "default": true,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Redline"
+        },
+        {
           "name": "shape",
           "label": "Shape",
           "type": "select",
@@ -3336,8 +3530,11 @@
             { "value": 0, "label": "Custom" },
             { "value": 1, "label": "L-Bend" },
             { "value": 2, "label": "Straight" },
-            { "value": 3, "label": "45° Bend" }
-          ]
+            { "value": 3, "label": "45° Bend" },
+            { "value": 4, "label": "J-Hook" }
+          ],
+          "help": "Preset shapes (L-Bend / Straight / 45° / J-Hook) are generated to fit the widget box — no path to draw. J-Hook is the Ford digital-tach curve: a swept arc into a horizontal run, perfect every time. Choose Custom to hand-draw your own path.",
+          "group": "Shape"
         },
         {
           "name": "orientation",
@@ -3350,7 +3547,8 @@
             { "value": 1, "label": "Top-Right / Vertical" },
             { "value": 2, "label": "Bottom-Left" },
             { "value": 3, "label": "Bottom-Right" }
-          ]
+          ],
+          "group": "Shape"
         },
         {
           "name": "corner_radius",
@@ -3359,31 +3557,20 @@
           "default": 40,
           "category": "appearance",
           "min": 0,
-          "max": 400
+          "max": 400,
+          "group": "Shape"
         },
         {
-          "name": "band_width",
-          "label": "Band Width",
+          "name": "hook_angle",
+          "label": "Hook Sweep",
           "type": "stepper",
-          "default": 22,
+          "default": 120,
           "category": "appearance",
-          "min": 2,
-          "max": 80
-        },
-        {
-          "name": "rounded",
-          "label": "Rounded Caps",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance"
-        },
-        {
-          "name": "fade_fill",
-          "label": "Fade Fill",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance",
-          "help": "Dim-to-bright gradient along the lit band (positional, redraw-cheap)."
+          "min": 30,
+          "max": 200,
+          "step": 5,
+          "help": "J-Hook only: the arc sweep in degrees (meter-style). 90 = quarter circle (vertical at the start), 180 = half circle. The radius auto-fits the box height and the curve always meets the straight bar tangentially — a perfect circular radius, never skewed.",
+          "group": "Shape"
         },
         {
           "name": "smooth",
@@ -3391,93 +3578,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "help": "Custom paths only: treat the path points as a few anchors and fit a smooth Catmull-Rom curve through them (no need to hand-place dozens of points)."
-        },
-        {
-          "name": "lead_edge_enabled",
-          "label": "Leading Edge",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance",
-          "help": "Bright flat marker at the current-value tip of the fill."
-        },
-        {
-          "name": "lead_edge_color",
-          "label": "Leading Edge Color",
-          "type": "color",
-          "default": "#E6FAFF",
-          "category": "appearance",
-          "enabled_by": "lead_edge_enabled"
-        },
-        {
-          "name": "lead_edge_width",
-          "label": "Leading Edge Width",
-          "type": "stepper",
-          "default": 6,
-          "min": 0,
-          "max": 40,
-          "category": "appearance",
-          "enabled_by": "lead_edge_enabled"
-        },
-        {
-          "name": "lit_color",
-          "label": "Fill Color",
-          "type": "color",
-          "default": "#2EE4C8",
-          "category": "appearance"
-        },
-        {
-          "name": "dim_color",
-          "label": "Track Color",
-          "type": "color",
-          "default": "#2E323A",
-          "category": "appearance"
-        },
-        {
-          "name": "dim_opa",
-          "label": "Track Opacity",
-          "type": "slider",
-          "default": 90,
-          "category": "appearance",
-          "min": 0,
-          "max": 255
-        },
-        {
-          "name": "redline_color",
-          "label": "Redline Color",
-          "type": "color",
-          "default": "#FF5C32",
-          "category": "appearance"
-        },
-        {
-          "name": "min",
-          "label": "Min Value",
-          "type": "number",
-          "default": 0,
-          "category": "data"
-        },
-        {
-          "name": "max",
-          "label": "Max Value",
-          "type": "number",
-          "default": 11000,
-          "category": "data"
-        },
-        {
-          "name": "redline",
-          "label": "Redline",
-          "type": "number",
-          "default": 10000,
-          "category": "data"
-        },
-        {
-          "name": "smoothing_ms",
-          "label": "Smoothing (ms)",
-          "type": "slider",
-          "default": 90,
-          "category": "appearance",
-          "min": 0,
-          "max": 500
+          "help": "Custom paths only: treat the path points as a few anchors and fit a smooth Catmull-Rom curve through them (no need to hand-place dozens of points).",
+          "group": "Shape"
         },
         {
           "name": "show_ticks",
@@ -3485,7 +3587,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "_doc": "Draw a tick + number scale that FOLLOWS the path (spaced by\narc-length so the marks line up with the fill). Turns a bare\npathbar into a Ford-style swept tach."
+          "_doc": "Draw a tick + number scale that FOLLOWS the path (spaced by\narc-length so the marks line up with the fill). Turns a bare\npathbar into a Ford-style swept tach.",
+          "group": "Ticks"
         },
         {
           "name": "minor_tick_step",
@@ -3493,7 +3596,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "major_tick_step",
@@ -3501,7 +3605,70 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_len",
+          "label": "Tick Length",
+          "type": "stepper",
+          "default": 10,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_width",
+          "label": "Tick Width",
+          "type": "stepper",
+          "default": 2,
+          "category": "appearance",
+          "min": 0,
+          "max": 40,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "tick_color",
+          "label": "Tick Color",
+          "type": "color",
+          "default": "#9E9E9E",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_len",
+          "label": "Major Tick Length",
+          "type": "stepper",
+          "default": 16,
+          "category": "appearance",
+          "min": 0,
+          "max": 100,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_width",
+          "label": "Major Tick Width",
+          "type": "stepper",
+          "default": 3,
+          "category": "appearance",
+          "min": 0,
+          "max": 40,
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
+        },
+        {
+          "name": "major_tick_color",
+          "label": "Major Tick Color",
+          "type": "color",
+          "default": "#FFFFFF",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks"
         },
         {
           "name": "show_labels",
@@ -3509,7 +3676,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "enabled_by": "show_ticks"
+          "enabled_by": "show_ticks",
+          "group": "Numbers"
         },
         {
           "name": "tick_label_divisor",
@@ -3520,71 +3688,18 @@
           "min": 1,
           "max": 100000,
           "enabled_by": "show_labels",
-          "_doc": "Divides each number by this factor — e.g. 1000 turns a\n0..8000 tach into 0..8 (print the unit elsewhere)."
+          "_doc": "Divides each number by this factor — e.g. 1000 turns a\n0..8000 tach into 0..8 (print the unit elsewhere).",
+          "group": "Numbers"
         },
         {
-          "name": "tick_len",
-          "label": "Tick Length",
-          "type": "stepper",
-          "default": 10,
-          "category": "appearance",
+          "name": "smoothing_ms",
+          "label": "Smoothing (ms)",
+          "type": "slider",
+          "default": 90,
+          "category": "data",
           "min": 0,
-          "max": 100,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_width",
-          "label": "Tick Width",
-          "type": "stepper",
-          "default": 2,
-          "category": "appearance",
-          "min": 0,
-          "max": 40,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "tick_color",
-          "label": "Tick Color",
-          "type": "color",
-          "default": "#9E9E9E",
-          "category": "appearance",
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_len",
-          "label": "Major Tick Length",
-          "type": "stepper",
-          "default": 16,
-          "category": "appearance",
-          "min": 0,
-          "max": 100,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_width",
-          "label": "Major Tick Width",
-          "type": "stepper",
-          "default": 3,
-          "category": "appearance",
-          "min": 0,
-          "max": 40,
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "major_tick_color",
-          "label": "Major Tick Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "enabled_by": "show_ticks"
-        },
-        {
-          "name": "redline_recolor_ticks",
-          "label": "Recolor Ticks Past Redline",
-          "type": "checkbox",
-          "default": true,
-          "category": "appearance",
-          "enabled_by": "show_ticks"
+          "max": 500,
+          "group": "Behaviour"
         },
         {
           "name": "label_color",
@@ -3592,7 +3707,8 @@
           "type": "color",
           "default": "#FFFFFF",
           "category": "appearance",
-          "enabled_by": "show_labels"
+          "enabled_by": "show_labels",
+          "group": "Numbers"
         },
         {
           "name": "label_font",
@@ -3600,7 +3716,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "enabled_by": "show_labels"
+          "enabled_by": "show_labels",
+          "group": "Numbers"
         },
         {
           "name": "label_gap",
@@ -3610,7 +3727,8 @@
           "category": "appearance",
           "min": -200,
           "max": 200,
-          "enabled_by": "show_labels"
+          "enabled_by": "show_labels",
+          "group": "Numbers"
         }
       ]
     }
