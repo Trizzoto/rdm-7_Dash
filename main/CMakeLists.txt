@@ -25,6 +25,7 @@ idf_component_register(
         "io/wire_inputs.c"
         "net/ota_handler.c"
         "net/ota_update_dialog.c"
+        "net/dns_hijack.c"
         "net/web_server.c"
         "net/web_server_captive.c"
         "net/web_server_gear.c"

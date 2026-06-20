@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 #include "system/rdm_lv_async.h"
 #include "ota_handler.h"
+#include "dns_hijack.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -358,6 +359,24 @@ static void _process_scan_results(void)
 
 /* ── ESP event handler ────────────────────────────────────────────────── */
 
+/* Make the SoftAP DHCP hand out 192.168.4.1 as the DNS server, so a joining
+ * client actually queries our captive DNS responder (dns_hijack). Without this
+ * the client gets no DNS and its connectivity probe never resolves → no captive
+ * sheet. Must toggle dhcps off→on around the option set. */
+static void _ap_enable_captive_dns(void)
+{
+    if (!s_ap_netif) return;
+    esp_netif_dns_info_t dns = { 0 };
+    dns.ip.type            = ESP_IPADDR_TYPE_V4;
+    dns.ip.u_addr.ip4.addr = esp_ip4addr_aton("192.168.4.1");
+    esp_netif_dhcps_stop(s_ap_netif);
+    esp_netif_set_dns_info(s_ap_netif, ESP_NETIF_DNS_MAIN, &dns);
+    uint8_t offer_dns = 0x02;   /* DHCPS_OFFER_DNS — advertise the DNS option */
+    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET,
+                           ESP_NETIF_DOMAIN_NAME_SERVER, &offer_dns, sizeof(offer_dns));
+    esp_netif_dhcps_start(s_ap_netif);
+}
+
 static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data)
 {
@@ -506,8 +525,16 @@ static void _wifi_event_handler(void *arg, esp_event_base_t event_base,
             break;
 
         case WIFI_EVENT_AP_START:
-            /* SoftAP is up. Clients reach the editor at 192.168.4.1 (or via
-               the QR code from Device Settings); mDNS was removed in 2026-04. */
+            /* SoftAP is up. Clients reach the editor at 192.168.4.1 (or via the
+               QR code from Device Settings). Bring up the captive-portal DNS so a
+               phone that joins resolves any hostname to us and the OS captive
+               sheet opens straight into the editor. */
+            _ap_enable_captive_dns();
+            dns_hijack_start();
+            break;
+
+        case WIFI_EVENT_AP_STOP:
+            dns_hijack_stop();
             break;
 
         case WIFI_EVENT_AP_STACONNECTED: {
