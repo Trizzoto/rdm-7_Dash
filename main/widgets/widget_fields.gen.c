@@ -175,7 +175,7 @@ static const widget_field_t rpm_bar_fields[] = {
         .default_int = 200, .default_float = 200.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Behaviour", .inline_key = NULL,
+        .enabled_by = "limiter_effect=1", .group = "Behaviour", .inline_key = NULL,
         .night_overridable = false,
     },
 };
@@ -457,7 +457,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0x0000FF,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = NULL,
+        .enabled_by = "warning_low_enabled", .group = "Alerts", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -467,7 +467,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_low_apply",
+        .enabled_by = "warning_low_enabled", .group = "Alerts", .inline_key = "warning_low_apply",
         .night_overridable = false,
     },
     {
@@ -477,7 +477,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_low_apply",
+        .enabled_by = "warning_low_enabled", .group = "Alerts", .inline_key = "warning_low_apply",
         .night_overridable = false,
     },
     {
@@ -487,7 +487,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_low_apply",
+        .enabled_by = "warning_low_enabled", .group = "Alerts", .inline_key = "warning_low_apply",
         .night_overridable = false,
     },
     {
@@ -517,7 +517,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0xFF0000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = NULL,
+        .enabled_by = "warning_high_enabled", .group = "Alerts", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -527,7 +527,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_high_apply",
+        .enabled_by = "warning_high_enabled", .group = "Alerts", .inline_key = "warning_high_apply",
         .night_overridable = false,
     },
     {
@@ -537,7 +537,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 1, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_high_apply",
+        .enabled_by = "warning_high_enabled", .group = "Alerts", .inline_key = "warning_high_apply",
         .night_overridable = false,
     },
     {
@@ -547,7 +547,7 @@ static const widget_field_t panel_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Alerts", .inline_key = "warning_high_apply",
+        .enabled_by = "warning_high_enabled", .group = "Alerts", .inline_key = "warning_high_apply",
         .night_overridable = false,
     },
 };
@@ -1760,7 +1760,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Needle", .inline_key = NULL,
+        .enabled_by = "show_needle", .group = "Needle", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1770,7 +1770,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Needle", .inline_key = NULL,
+        .enabled_by = "show_needle", .group = "Needle", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -1780,7 +1780,7 @@ static const widget_field_t meter_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Needle", .inline_key = NULL,
+        .enabled_by = "show_needle", .group = "Needle", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -2400,7 +2400,7 @@ static const widget_field_t arc_fields[] = {
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Ticks", .inline_key = NULL,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -2430,7 +2430,7 @@ static const widget_field_t arc_fields[] = {
         .default_int = 2, .default_float = 2.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Ticks", .inline_key = NULL,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -2460,7 +2460,7 @@ static const widget_field_t arc_fields[] = {
         .default_int = 13, .default_float = 13.000000f, .default_color = 0x000000,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Ticks", .inline_key = NULL,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
         .night_overridable = false,
     },
     {
@@ -2490,7 +2490,7 @@ static const widget_field_t arc_fields[] = {
         .default_int = 0, .default_float = 0.0f, .default_color = 0xBDBDBD,
         .default_str = NULL,
         .options = NULL, .option_count = 0,
-        .enabled_by = NULL, .group = "Ticks", .inline_key = NULL,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
         .night_overridable = false,
     },
     {

@@ -7165,7 +7165,7 @@
                                   { v: 1, l: "Bar Flash" },
                                   { v: 2, l: "Bar Solid" }
                               ] },
-                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", group: "Behaviour", help: "How fast it flashes at the limiter (smaller = faster), in milliseconds.", min: 50, max: 1000, step: 50 }
+                            { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "appearance", group: "Behaviour", help: "How fast it flashes at the limiter (smaller = faster), in milliseconds.", min: 50, max: 1000, step: 50, enabledBy: "limiter_effect=1" }
                         ]
                     },
                     "panel": {
@@ -7212,16 +7212,16 @@
                             { name: "border_radius", label: "Border Radius", type: "stepper", def: 7, cat: "appearance", group: "Frame", help: "How rounded the corners are.", min: 0, max: 100 },
                             { name: "warning_low_enabled", label: "Low Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Warn when the reading drops too low." },
                             { name: "warning_low_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading falls to or below this.", min: -99999, max: 99999, enabledBy: "warning_low_enabled" },
-                            { name: "warning_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too low." },
-                            { name: "warning_low_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too low.", inline: "warning_low_apply" },
-                            { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too low.", inline: "warning_low_apply" },
-                            { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Turn the panel's edge/background the alert colour when it's too low.", inline: "warning_low_apply" },
+                            { name: "warning_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too low.", enabledBy: "warning_low_enabled" },
+                            { name: "warning_low_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
+                            { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
+                            { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Turn the panel's edge/background the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                             { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Warn when the reading climbs too high." },
                             { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading rises to or above this.", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
-                            { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too high." },
-                            { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too high.", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too high.", inline: "warning_high_apply" },
-                            { name: "warning_high_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Turn the panel's edge/background the alert colour when it's too high.", inline: "warning_high_apply" }
+                            { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too high.", enabledBy: "warning_high_enabled" },
+                            { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too high.", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too high.", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
+                            { name: "warning_high_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Turn the panel's edge/background the alert colour when it's too high.", enabledBy: "warning_high_enabled", inline: "warning_high_apply" }
                         ]
                     },
                     "bar": {
@@ -7429,7 +7429,7 @@
                              * same defaults used in widget_meter.c's DRAW_PART hook
                              * so the inspector can show the effective number even
                              * when the user hasn't entered an explicit override. */
-                            { name: "needle_tip_base_w", label: "Tip Base Width", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How wide the needle is at its base (leave at auto unless you want to set it).", min: 0, max: 30,
+                            { name: "needle_tip_base_w", label: "Tip Base Width", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How wide the needle is at its base (leave at auto unless you want to set it).", min: 0, max: 30, enabledBy: "show_needle",
                               autoFn: function(cfg) {
                                   var nw = cfg.needle_width || 4;
                                   switch (cfg.needle_tip_style) {
@@ -7440,11 +7440,11 @@
                                       default: return 0;
                                   }
                               } },
-                            { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How wide the needle is at its tip.", min: 0, max: 20,
+                            { name: "needle_tip_point_w", label: "Tip Point Width", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How wide the needle is at its tip.", min: 0, max: 20, enabledBy: "show_needle",
                               autoFn: function(cfg) {
                                   return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap
                               } },
-                            { name: "needle_tip_taper", label: "Tip Taper %", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How sharply the needle narrows toward the tip.", min: 0, max: 100,
+                            { name: "needle_tip_taper", label: "Tip Taper %", type: "stepper-auto", def: 0, cat: "appearance", group: "Needle", help: "How sharply the needle narrows toward the tip.", min: 0, max: 100, enabledBy: "show_needle",
                               autoFn: function(cfg) {
                                   switch (cfg.needle_tip_style) {
                                       case 2: return 90;   // Lance: shaft ends here
@@ -7589,16 +7589,16 @@
                             { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance", group: "Redline", help: "When the reading reaches the warning zone, turn the whole fill that colour - not just the band." },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance", group: "Ticks", help: "Show the marks around the gauge, like the lines on a speedometer." },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", help: "How far apart the biggest marks are, in reading value. On a 0-8000 rev counter, 1000 puts a big mark every 1000 RPM.", enabledBy: "show_ticks" },
-                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "How far apart the medium marks are. 0 turns them off." },
+                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "How far apart the medium marks are. 0 turns them off.", enabledBy: "show_ticks" },
                             { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks", help: "How far apart the smallest marks are. 0 turns them off.", enabledBy: "show_ticks" },
                             { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", help: "How thick the biggest marks are.", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", help: "How thick the medium marks are.", min: 0, max: 20 },
+                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", help: "How thick the medium marks are.", min: 0, max: 20, enabledBy: "show_ticks" },
                             { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", help: "How thick the smallest marks are.", min: 1, max: 20, enabledBy: "show_ticks" },
                             { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", help: "How long the biggest marks are.", min: 0, max: 50, enabledBy: "show_ticks" },
-                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", help: "How long the medium marks are.", min: 0, max: 100 },
+                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", help: "How long the medium marks are.", min: 0, max: 100, enabledBy: "show_ticks" },
                             { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", help: "How long the smallest marks are.", min: 0, max: 50, enabledBy: "show_ticks" },
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", help: "Colour of the biggest marks.", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", help: "Colour of the medium marks." },
+                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", help: "Colour of the medium marks.", enabledBy: "show_ticks" },
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", help: "Colour of the smallest marks.", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers", help: "Show numbers next to the biggest marks." },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Text style and size of those numbers.", enabledBy: "show_tick_labels" },
@@ -12145,6 +12145,11 @@
         }
         function updateRule(ri, key, val) {
             const w = _ensureRules(); if (!w || !w.config.rules[ri]) return;
+            if (key === 'threshold' || key === 'range_min' || key === 'range_max') {
+                const n = Number(val);
+                if (!Number.isFinite(n)) return;   /* ignore cleared box → no null in the saved rule */
+                val = n;
+            }
             pushHistory();
             w.config.rules[ri][key] = val;
             if (key === 'op') updateInspector();
@@ -12567,8 +12572,18 @@
         function updateWidgetField(field, val, preview = false) {
             if (selectedIndex === -1) return;
             let finalVal = val;
-            if (field !== 'id' && (typeof val === 'number' || !isNaN(Number(val)))) {
-                finalVal = Number(val);
+            if (field !== 'id') {
+                const n = Number(val);
+                /* Reject cleared/garbage numeric input — NaN serialises to null and
+                 * silently corrupts the saved layout (widget vanishes on reload). */
+                if (!Number.isFinite(n)) return;
+                finalVal = n;
+                /* Keep the widget's anchor on-screen so a mistyped coordinate can't
+                 * lose it off the canvas (center origin: x±400, y±240). */
+                if (field === 'x')      finalVal = Math.max(-400, Math.min(400, finalVal));
+                else if (field === 'y') finalVal = Math.max(-240, Math.min(240, finalVal));
+                else if (field === 'w') finalVal = Math.max(1, Math.min(800, finalVal));
+                else if (field === 'h') finalVal = Math.max(1, Math.min(480, finalVal));
             }
             currentLayout.widgets[selectedIndex][field] = finalVal;
             /* Meter widget must stay square, max 800 */
@@ -14059,6 +14074,14 @@
                 updateStatus('Bit length must be 1-64', true);
                 return;
             }
+            /* Scale/offset: reject NaN (a cleared box would zero or NaN the gauge
+             * silently); warn — but allow — a scale of 0 (constant reading). */
+            if (field === 'scale' || field === 'offset') {
+                const n = Number(val);
+                if (!Number.isFinite(n)) { updateStatus(`${field} must be a number`, true); return; }
+                val = n;
+                if (field === 'scale' && n === 0) updateStatus('Scale of 0 makes this read a constant — did you mean 1?', true);
+            }
             /* Update widget bindings if signal was renamed */
             if (field === 'name') {
                 const oldName = sigs[idx].name;
@@ -14274,6 +14297,11 @@
         function updateFuelCal(field, value) {
             const sig = (currentLayout.signals || []).find(s => s.name === 'FUEL_SENDER_V');
             if (!sig) return;
+            if (field === 'empty_v' || field === 'full_v' || field === 'full_value') {
+                const n = Number(value);
+                if (!Number.isFinite(n)) return;   /* ignore cleared box → no null in fuel_cal */
+                value = n;
+            }
             pushHistory();
             if (!sig.fuel_cal) sig.fuel_cal = { empty_v: 0.5, full_v: 3.0, full_value: 100, enabled: true };
             sig.fuel_cal[field] = value;

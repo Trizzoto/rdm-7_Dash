@@ -187,7 +187,8 @@
           "max": 1000,
           "step": 50,
           "group": "Behaviour",
-          "help": "How fast it flashes at the limiter (smaller = faster), in milliseconds."
+          "help": "How fast it flashes at the limiter (smaller = faster), in milliseconds.",
+          "enabled_by": "limiter_effect=1"
         }
       ]
     },
@@ -484,7 +485,8 @@
           "default": "#0000FF",
           "category": "alerts",
           "group": "Alerts",
-          "help": "The alert colour used when it's too low."
+          "help": "The alert colour used when it's too low.",
+          "enabled_by": "warning_low_enabled"
         },
         {
           "name": "warning_low_apply_label",
@@ -494,7 +496,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Turn the title the alert colour when it's too low."
+          "help": "Turn the title the alert colour when it's too low.",
+          "enabled_by": "warning_low_enabled"
         },
         {
           "name": "warning_low_apply_value",
@@ -504,7 +507,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Turn the number the alert colour when it's too low."
+          "help": "Turn the number the alert colour when it's too low.",
+          "enabled_by": "warning_low_enabled"
         },
         {
           "name": "warning_low_apply_panel",
@@ -514,7 +518,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Turn the panel's edge/background the alert colour when it's too low."
+          "help": "Turn the panel's edge/background the alert colour when it's too low.",
+          "enabled_by": "warning_low_enabled"
         },
         {
           "name": "warning_high_enabled",
@@ -544,7 +549,8 @@
           "default": "#FF0000",
           "category": "alerts",
           "group": "Alerts",
-          "help": "The alert colour used when it's too high."
+          "help": "The alert colour used when it's too high.",
+          "enabled_by": "warning_high_enabled"
         },
         {
           "name": "warning_high_apply_label",
@@ -554,7 +560,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Turn the title the alert colour when it's too high."
+          "help": "Turn the title the alert colour when it's too high.",
+          "enabled_by": "warning_high_enabled"
         },
         {
           "name": "warning_high_apply_value",
@@ -564,7 +571,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Turn the number the alert colour when it's too high."
+          "help": "Turn the number the alert colour when it's too high.",
+          "enabled_by": "warning_high_enabled"
         },
         {
           "name": "warning_high_apply_panel",
@@ -574,7 +582,8 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Turn the panel's edge/background the alert colour when it's too high."
+          "help": "Turn the panel's edge/background the alert colour when it's too high.",
+          "enabled_by": "warning_high_enabled"
         }
       ]
     },
@@ -1913,7 +1922,8 @@
             "autoFn": "function(cfg) {\n                          var nw = cfg.needle_width || 4;\n                          switch (cfg.needle_tip_style) {\n                              case 2: return (nw >> 1) + 1;  // Lance\n                              case 3: return (nw >> 1) + 2;  // Dagger\n                              case 4: return (nw >> 1) + 2;  // Spade\n                              case 5: return (nw >> 1) + 3;  // Diamond\n                              default: return 0;\n                          }\n                      }"
           },
           "group": "Needle",
-          "help": "How wide the needle is at its base (leave at auto unless you want to set it)."
+          "help": "How wide the needle is at its base (leave at auto unless you want to set it).",
+          "enabled_by": "show_needle"
         },
         {
           "name": "needle_tip_point_w",
@@ -1927,7 +1937,8 @@
             "autoFn": "function(cfg) {\n                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap\n                      }"
           },
           "group": "Needle",
-          "help": "How wide the needle is at its tip."
+          "help": "How wide the needle is at its tip.",
+          "enabled_by": "show_needle"
         },
         {
           "name": "needle_tip_taper",
@@ -1941,7 +1952,8 @@
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
           },
           "group": "Needle",
-          "help": "How sharply the needle narrows toward the tip."
+          "help": "How sharply the needle narrows toward the tip.",
+          "enabled_by": "show_needle"
         },
         {
           "name": "needle_image_name",
@@ -2799,7 +2811,8 @@
           "default": 0,
           "category": "appearance",
           "group": "Ticks",
-          "help": "How far apart the medium marks are. 0 turns them off."
+          "help": "How far apart the medium marks are. 0 turns them off.",
+          "enabled_by": "show_ticks"
         },
         {
           "name": "minor_tick_step",
@@ -2832,7 +2845,8 @@
           "min": 0,
           "max": 20,
           "group": "Ticks",
-          "help": "How thick the medium marks are."
+          "help": "How thick the medium marks are.",
+          "enabled_by": "show_ticks"
         },
         {
           "name": "minor_tick_width",
@@ -2867,7 +2881,8 @@
           "min": 0,
           "max": 100,
           "group": "Ticks",
-          "help": "How long the medium marks are."
+          "help": "How long the medium marks are.",
+          "enabled_by": "show_ticks"
         },
         {
           "name": "minor_tick_length",
@@ -2899,7 +2914,8 @@
           "default": "#BDBDBD",
           "category": "appearance",
           "group": "Ticks",
-          "help": "Colour of the medium marks."
+          "help": "Colour of the medium marks.",
+          "enabled_by": "show_ticks"
         },
         {
           "name": "minor_tick_color",
