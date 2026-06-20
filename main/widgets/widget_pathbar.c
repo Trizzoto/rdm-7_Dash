@@ -422,7 +422,10 @@ static void _pathbar_draw_scale(lv_draw_ctx_t *ctx, pathbar_data_t *pd) {
  *     gradient even across one long path segment, last step clipped at the front.
  * Far less overdraw than the line-stroke approach → measurably faster too. */
 #define PB_SEAM_OVERLAP 2.0f    /* px each quad pokes into the next to bury AA seams */
-#define PB_GRAD_STEP    9.0f    /* px per gradient sub-quad along the lit fill       */
+#define PB_GRAD_STEP    4.0f    /* px per gradient sub-quad along the lit fill — fine
+                                 * enough that the fade reads smooth on a curve (9px
+                                 * stepped visibly). Each sub-quad is now a single
+                                 * convex polygon so the extra count is cheap.        */
 #define PB_MITER_MAX    1.5f    /* cap miter at 1.5*half-width (clean to ~96°, then  */
                                 /* a slight bevel) — bounds the off-centreline reach */
                                 /* so _pathbar_invalidate_range can cover it.        */
