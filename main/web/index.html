@@ -3611,6 +3611,23 @@
         }
         .accordion-body > .inspector-subhead:first-child { margin-top:0; padding-top:0; border-top:none; }
 
+        /* ── Per-setting help: a subtle ⓘ after the label; hover shows #fieldTip ── */
+        .field-help {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:13px; height:13px; margin-left:5px; border-radius:50%;
+            font-size:9px; font-weight:700; font-style:normal; line-height:1;
+            color:var(--text-muted); border:1px solid var(--border);
+            cursor:help; user-select:none; vertical-align:middle; transition:all .12s;
+        }
+        .field-help:hover { color:var(--accent); border-color:var(--accent); }
+        #fieldTip {
+            position:fixed; z-index:10000; max-width:260px; pointer-events:none;
+            background:#0d1622; color:#e6edf3; border:1px solid var(--accent);
+            border-radius:6px; padding:7px 9px; font-size:11px; line-height:1.45;
+            box-shadow:0 6px 22px rgba(0,0,0,.55); opacity:0; transition:opacity .1s;
+        }
+        #fieldTip.show { opacity:1; }
+
         /* ── Value Labels editor (widget inspector) ── */
         .vlabels-card { margin-top:8px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--panel); overflow:hidden; }
         .vlabels-desc { font-size:11px; color:var(--text-muted); line-height:1.5; }
@@ -7236,7 +7253,7 @@
                               ] },
                             { name: "bar_in_range_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", nightOverridable: true },
                             { name: "bar_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "fill_edge_width", label: "Leading Edge Width", type: "stepper", def: 0, cat: "appearance", group: "Fill", min: 0, max: 20 },
+                            { name: "fill_edge_width", label: "Leading Edge Width", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "Bright marker that rides the fill's leading edge (current value), like the path-bar tach. Works on colour and image fills. 0 = off.", min: 0, max: 20 },
                             { name: "fill_edge_color", label: "Leading Edge Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Fill", enabledBy: "fill_edge_width" },
                             { name: "indicator_radius", label: "Fill Radius", type: "stepper", def: 5, cat: "appearance", group: "Fill", min: 0, max: 50 },
                             { name: "bar_bg_color", label: "Track Color", type: "color", def: 0x2E2F2E, cat: "appearance", group: "Frame", nightOverridable: true },
@@ -7538,66 +7555,66 @@
                     "arc": {
                         displayName: "Arc Shape", defW: 200, defH: 200,
                         fields: [
-                            { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", group: "Value", min: 0, max: 359, step: 5 },
-                            { name: "sweep_degrees", label: "Sweep (°)", type: "slider", def: 270, cat: "data", group: "Value", min: 30, max: 360, step: 5 },
-                            { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data", group: "Value" },
-                            { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data", group: "Value" },
-                            { name: "tick_min", label: "Tick Start Value", type: "number", def: 0, cat: "data", group: "Value" },
-                            { name: "tick_max", label: "Tick End Value", type: "number", def: 0, cat: "data", group: "Value" },
+                            { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", group: "Value", help: "Where the arc begins, in degrees (0° = 3 o'clock, increasing clockwise). The fill grows from here.", min: 0, max: 359, step: 5 },
+                            { name: "sweep_degrees", label: "Sweep (°)", type: "slider", def: 270, cat: "data", group: "Value", help: "How far the arc travels from the start angle. 270 = a classic three-quarter gauge, 360 = full circle.", min: 30, max: 360, step: 5 },
+                            { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data", group: "Value", help: "Channel value mapped to the empty (start) end of the arc." },
+                            { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data", group: "Value", help: "Channel value mapped to the full (end) end of the arc." },
+                            { name: "tick_min", label: "Tick Start Value", type: "number", def: 0, cat: "data", group: "Value", help: "First value the tick scale covers. Usually matches Signal Min; set differently to label only part of the range." },
+                            { name: "tick_max", label: "Tick End Value", type: "number", def: 0, cat: "data", group: "Value", help: "Last value the tick scale covers. Usually matches Signal Max." },
                             /* Anchor-based non-linear scale. "Pin THIS data value to
                              * THIS position on the bar" - splits the range into two
                              * linear segments. e.g. coolant 0-110, anchor=90,
                              * position=50 makes 0-90 cover the first half, 90-110
                              * cover the second half. anchor_enabled=false (default)
                              * = pure linear. */
-                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value" },
-                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", enabledBy: "anchor_enabled" },
-                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", min: 0, max: 100, enabledBy: "anchor_enabled" },
-                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", min: 0, max: 300, step: 10 },
-                            { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", min: 1, max: 50 },
-                            { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", group: "Fill", min: 0, max: 120 },
-                            { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", min: 1, max: 50 },
-                            { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance", group: "Fill" },
-                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill" },
-                            { name: "lead_edge_enabled", label: "Leading Edge", type: "checkbox", def: true, cat: "appearance", group: "Fill" },
-                            { name: "lead_edge_color", label: "Leading Edge Color", type: "color", def: 0xE6FAFF, cat: "appearance", group: "Fill", enabledBy: "lead_edge_enabled" },
-                            { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
-                            { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", nightOverridable: true },
-                            { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "appearance", group: "Redline" },
-                            { name: "redline_arc_width", label: "Redline Thickness", type: "stepper", def: 0, cat: "appearance", group: "Redline", min: 0, max: 50 },
-                            { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance", group: "Redline" },
-                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance", group: "Ticks" },
-                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks" },
-                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks", enabledBy: "show_ticks" },
-                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 0, max: 20 },
-                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", min: 1, max: 20, enabledBy: "show_ticks" },
-                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
-                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", min: 0, max: 100 },
-                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", min: 0, max: 50, enabledBy: "show_ticks" },
-                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks" },
-                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", enabledBy: "show_ticks", nightOverridable: true },
-                            { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers" },
-                            { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels" },
-                            { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", enabledBy: "show_tick_labels", nightOverridable: true },
-                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", min: -150, max: 150, enabledBy: "show_tick_labels" },
-                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", min: 1, max: 100000, enabledBy: "show_tick_labels" },
-                            { name: "ticks_on_top", label: "Ticks On Top", type: "checkbox", def: false, cat: "appearance", group: "Numbers" },
-                            { name: "show_value_line", label: "Show Value Line", type: "checkbox", def: false, cat: "appearance", group: "Needle" },
-                            { name: "value_line_width", label: "Value Line Width", type: "stepper", def: 4, cat: "appearance", group: "Needle", min: 1, max: 20, enabledBy: "show_value_line" },
-                            { name: "value_line_color", label: "Value Line Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Needle", enabledBy: "show_value_line", nightOverridable: true },
-                            { name: "value_line_r_mod", label: "Value Line Length Trim", type: "stepper", def: -10, cat: "appearance", group: "Needle", min: -50, max: 50, enabledBy: "show_value_line" },
-                            { name: "arc_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "Alerts" },
-                            { name: "arc_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
-                            { name: "arc_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true },
-                            { name: "arc_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "Alerts", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
-                            { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", enabledBy: "arc_alerts_enabled", nightOverridable: true }
+                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Grow the fill outward from a fixed anchor value instead of from the start - ideal for centre-zero gauges like boost/vacuum." },
+                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The value the fill grows out from when Anchor Curve is on.", enabledBy: "anchor_enabled" },
+                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where the anchor sits along the arc, as a percent of its length (0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
+                            { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value", help: "Flip the fill so it grows from the high end toward the low end." },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Damping time for fill/needle movement. Higher = smoother but laggier; 0 = instant, raw response.", min: 0, max: 300, step: 10 },
+                            { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "Thickness of the lit (value) arc, in pixels.", min: 1, max: 50 },
+                            { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "Shifts the whole ring in/out from the widget centre, in pixels. Use to nest concentric arcs.", min: 0, max: 120 },
+                            { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the lit (value) portion of the arc.", nightOverridable: true },
+                            { name: "bg_arc_color", label: "Track Color", type: "color", def: 0x333333, cat: "appearance", group: "Fill", help: "Colour of the unlit track behind the fill.", nightOverridable: true },
+                            { name: "bg_arc_width", label: "Track Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "Thickness of the background track. Make it wider or narrower than the fill for a recessed or raised look.", min: 1, max: 50 },
+                            { name: "rounded_ends", label: "Rounded Ends", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Round the ends of the fill and track instead of flat-cut." },
+                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Dim-to-bright gradient along the lit arc (positional, redraw-cheap)." },
+                            { name: "lead_edge_enabled", label: "Leading Edge", type: "checkbox", def: true, cat: "appearance", group: "Fill", help: "Bright marker at the current-value end of the fill." },
+                            { name: "lead_edge_color", label: "Leading Edge Color", type: "color", def: 0xE6FAFF, cat: "appearance", group: "Fill", help: "Colour of the leading-edge marker.", enabledBy: "lead_edge_enabled" },
+                            { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", help: "Width of the leading-edge marker, in pixels.", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
+                            { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use an image as the track instead of a solid colour.", nightOverridable: true },
+                            { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use an image as the lit fill instead of a solid colour - revealed progressively as the value rises.", nightOverridable: true },
+                            { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "appearance", group: "Redline", help: "Colour of the redline band. Its position comes from the bound channel's high-warning threshold." },
+                            { name: "redline_arc_width", label: "Redline Thickness", type: "stepper", def: 0, cat: "appearance", group: "Redline", help: "Thickness of the redline band arc.", min: 0, max: 50 },
+                            { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance", group: "Redline", help: "When the value enters the redline zone, recolour the whole fill (not just the band) to the redline colour." },
+                            { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: false, cat: "appearance", group: "Ticks", help: "Draw tick marks around the arc." },
+                            { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", help: "Value distance between major (largest) ticks. e.g. 1000 on a 0-8000 tach = a major tick every 1000.", enabledBy: "show_ticks" },
+                            { name: "mid_tick_step", label: "Medium Tick Value Spacing", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Value distance between medium ticks. 0 = no medium tier." },
+                            { name: "minor_tick_step", label: "Minor Tick Value Spacing", type: "number", def: 10, cat: "appearance", group: "Ticks", help: "Value distance between minor (smallest) ticks. 0 = no minor tier.", enabledBy: "show_ticks" },
+                            { name: "major_tick_width", label: "Major Tick Width", type: "stepper", def: 4, cat: "appearance", group: "Ticks", help: "Thickness of the major ticks, in pixels.", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "mid_tick_width", label: "Medium Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", help: "Thickness of the medium ticks, in pixels.", min: 0, max: 20 },
+                            { name: "minor_tick_width", label: "Minor Tick Width", type: "stepper", def: 2, cat: "appearance", group: "Ticks", help: "Thickness of the minor ticks, in pixels.", min: 1, max: 20, enabledBy: "show_ticks" },
+                            { name: "major_tick_length", label: "Major Tick Length", type: "stepper", def: 15, cat: "appearance", group: "Ticks", help: "Length of the major ticks, in pixels.", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "mid_tick_length", label: "Medium Tick Length", type: "stepper", def: 13, cat: "appearance", group: "Ticks", help: "Length of the medium ticks, in pixels.", min: 0, max: 100 },
+                            { name: "minor_tick_length", label: "Minor Tick Length", type: "stepper", def: 10, cat: "appearance", group: "Ticks", help: "Length of the minor ticks, in pixels.", min: 0, max: 50, enabledBy: "show_ticks" },
+                            { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", help: "Colour of the major ticks.", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", help: "Colour of the medium ticks." },
+                            { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", help: "Colour of the minor ticks.", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers", help: "Draw numeric labels at the major ticks." },
+                            { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Font (family:size) for the tick number labels.", enabledBy: "show_tick_labels" },
+                            { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", help: "Colour of the tick number labels.", enabledBy: "show_tick_labels", nightOverridable: true },
+                            { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", help: "Gap between the tick ring and the number labels, in pixels. Larger pushes labels toward the centre.", min: -150, max: 150, enabledBy: "show_tick_labels" },
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", help: "Divide label values before display. 1000 -> a 7000 tick reads '7' (e.g. RPM x1000).", min: 1, max: 100000, enabledBy: "show_tick_labels" },
+                            { name: "ticks_on_top", label: "Ticks On Top", type: "checkbox", def: false, cat: "appearance", group: "Numbers", help: "Draw ticks and labels above the fill instead of behind it." },
+                            { name: "show_value_line", label: "Show Value Line", type: "checkbox", def: false, cat: "appearance", group: "Needle", help: "Draw a thin radial line pointing at the current value." },
+                            { name: "value_line_width", label: "Value Line Width", type: "stepper", def: 4, cat: "appearance", group: "Needle", help: "Thickness of the value line, in pixels.", min: 1, max: 20, enabledBy: "show_value_line" },
+                            { name: "value_line_color", label: "Value Line Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Needle", help: "Colour of the value line.", enabledBy: "show_value_line", nightOverridable: true },
+                            { name: "value_line_r_mod", label: "Value Line Length Trim", type: "stepper", def: -10, cat: "appearance", group: "Needle", help: "Trim the value line's length inward from the outer edge, in pixels.", min: -50, max: 50, enabledBy: "show_value_line" },
+                            { name: "arc_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Recolour the fill when the value crosses the thresholds below - independent of the channel redline." },
+                            { name: "arc_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "At or below this value the fill uses the Low Color.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "Fill colour when the value is at or below the Low Threshold.", enabledBy: "arc_alerts_enabled", nightOverridable: true },
+                            { name: "arc_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "Alerts", help: "At or above this value the fill uses the High Color.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "Fill colour when the value is at or above the High Threshold.", enabledBy: "arc_alerts_enabled", nightOverridable: true }
                         ]
                     },
                     "toggle": {
@@ -7701,13 +7718,13 @@
                             { name: "dim_opa", label: "Track Opacity", type: "slider", def: 90, cat: "appearance", group: "Fill", min: 0, max: 255 },
                             { name: "band_width", label: "Band Width", type: "stepper", def: 22, cat: "appearance", group: "Fill", min: 2, max: 80 },
                             { name: "rounded", label: "Rounded Caps", type: "checkbox", def: true, cat: "appearance", group: "Fill" },
-                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill" },
-                            { name: "lead_edge_enabled", label: "Leading Edge", type: "checkbox", def: true, cat: "appearance", group: "Fill" },
+                            { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Dim-to-bright gradient along the lit band (positional, redraw-cheap)." },
+                            { name: "lead_edge_enabled", label: "Leading Edge", type: "checkbox", def: true, cat: "appearance", group: "Fill", help: "Bright flat marker at the current-value tip of the fill." },
                             { name: "lead_edge_color", label: "Leading Edge Color", type: "color", def: 0xE6FAFF, cat: "appearance", group: "Fill", enabledBy: "lead_edge_enabled" },
                             { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
                             { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF5C32, cat: "appearance", group: "Redline" },
                             { name: "redline_recolor_ticks", label: "Recolor Ticks Past Redline", type: "checkbox", def: true, cat: "appearance", group: "Redline", enabledBy: "show_ticks" },
-                            { name: "shape", label: "Shape", type: "select", def: 1, cat: "appearance", group: "Shape",
+                            { name: "shape", label: "Shape", type: "select", def: 1, cat: "appearance", group: "Shape", help: "Preset shapes (L-Bend / Straight / 45° / J-Hook) are generated to fit the widget box — no path to draw. J-Hook is the Ford digital-tach curve: a swept arc into a horizontal run, perfect every time. Choose Custom to hand-draw your own path.",
                               options: [
                                   { v: 0, l: "Custom" },
                                   { v: 1, l: "L-Bend" },
@@ -7723,8 +7740,8 @@
                                   { v: 3, l: "Bottom-Right" }
                               ] },
                             { name: "corner_radius", label: "Corner Radius", type: "stepper", def: 40, cat: "appearance", group: "Shape", min: 0, max: 400 },
-                            { name: "hook_angle", label: "Hook Sweep", type: "stepper", def: 120, cat: "appearance", group: "Shape", min: 30, max: 200, step: 5 },
-                            { name: "smooth", label: "Smooth Curve", type: "checkbox", def: false, cat: "appearance", group: "Shape" },
+                            { name: "hook_angle", label: "Hook Sweep", type: "stepper", def: 120, cat: "appearance", group: "Shape", help: "J-Hook only: the arc sweep in degrees (meter-style). 90 = quarter circle (vertical at the start), 180 = half circle. The radius auto-fits the box height and the curve always meets the straight bar tangentially — a perfect circular radius, never skewed.", min: 30, max: 200, step: 5 },
+                            { name: "smooth", label: "Smooth Curve", type: "checkbox", def: false, cat: "appearance", group: "Shape", help: "Custom paths only: treat the path points as a few anchors and fit a smooth Catmull-Rom curve through them (no need to hand-place dozens of points)." },
                             /* Draw a tick + number scale that FOLLOWS the path (spaced by
                              * arc-length so the marks line up with the fill). Turns a bare
                              * pathbar into a Ford-style swept tach. */
@@ -10925,8 +10942,41 @@
             return pf ? pf.def : false;
         }
 
+        /* Small ⓘ after a label; the actual help text is stashed in a data
+         * attribute and surfaced by the shared #fieldTip bubble on hover. */
+        function _fieldHelpIcon(f) {
+            if (!f || !f.help) return '';
+            return ` <i class="field-help" data-tip="${String(f.help).replace(/"/g,'&quot;').replace(/</g,'&lt;')}">i</i>`;
+        }
+        /* Shared hover bubble for every .field-help icon. Body-appended +
+         * position:fixed so it never clips inside the scrolling inspector;
+         * opens to the LEFT of the icon (inspector sits on the right edge). */
+        (function _setupFieldTips() {
+            let tip = null;
+            const ensure = () => {
+                if (!tip) { tip = document.createElement('div'); tip.id = 'fieldTip'; document.body.appendChild(tip); }
+                return tip;
+            };
+            const hide = () => { if (tip) tip.classList.remove('show'); };
+            document.addEventListener('mouseover', e => {
+                const ic = e.target.closest && e.target.closest('.field-help');
+                if (!ic) return;
+                const t = ensure();
+                t.textContent = ic.getAttribute('data-tip') || '';
+                t.style.left = '-9999px'; t.style.top = '0px'; t.classList.add('show');
+                const r = ic.getBoundingClientRect(), m = 8, tw = t.offsetWidth, th = t.offsetHeight;
+                let left = r.left - tw - 8;
+                if (left < m) left = Math.min(r.right + 8, window.innerWidth - tw - m);
+                let top = Math.max(m, Math.min(r.top + r.height / 2 - th / 2, window.innerHeight - th - m));
+                t.style.left = left + 'px'; t.style.top = top + 'px';
+            });
+            document.addEventListener('mouseout', e => {
+                if (e.target.closest && e.target.closest('.field-help')) hide();
+            });
+            document.addEventListener('scroll', hide, true);
+        })();
         function renderFieldHTML(f, val, disabledAttr) {
-            let html = `<div class="field"><label>${f.label}</label>`;
+            let html = `<div class="field"><label>${f.label}${_fieldHelpIcon(f)}</label>`;
             if (f.type === 'select') {
                 const allNumeric = f.options.every(opt => { const v = typeof opt === 'object' ? opt.v : opt; return v === '' || typeof v === 'number' || !isNaN(Number(v)); });
                 html += `<select onchange="updateWidgetConfigField('${f.name}', this.value, ${allNumeric})" ${disabledAttr}>`;

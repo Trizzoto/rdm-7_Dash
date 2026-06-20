@@ -2308,7 +2308,8 @@
           "min": 0,
           "max": 359,
           "step": 5,
-          "group": "Value"
+          "group": "Value",
+          "help": "Where the arc begins, in degrees (0° = 3 o'clock, increasing clockwise). The fill grows from here."
         },
         {
           "name": "sweep_degrees",
@@ -2319,7 +2320,8 @@
           "min": 30,
           "max": 360,
           "step": 5,
-          "group": "Value"
+          "group": "Value",
+          "help": "How far the arc travels from the start angle. 270 = a classic three-quarter gauge, 360 = full circle."
         },
         {
           "name": "signal_min",
@@ -2327,7 +2329,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value mapped to the empty (start) end of the arc."
         },
         {
           "name": "signal_max",
@@ -2335,7 +2338,8 @@
           "type": "number",
           "default": 100,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value mapped to the full (end) end of the arc."
         },
         {
           "name": "tick_min",
@@ -2343,7 +2347,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "First value the tick scale covers. Usually matches Signal Min; set differently to label only part of the range."
         },
         {
           "name": "tick_max",
@@ -2351,7 +2356,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Last value the tick scale covers. Usually matches Signal Max."
         },
         {
           "name": "anchor_enabled",
@@ -2360,7 +2366,8 @@
           "default": false,
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
-          "group": "Value"
+          "group": "Value",
+          "help": "Grow the fill outward from a fixed anchor value instead of from the start - ideal for centre-zero gauges like boost/vacuum."
         },
         {
           "name": "anchor_value",
@@ -2369,7 +2376,8 @@
           "default": 50,
           "category": "data",
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "The value the fill grows out from when Anchor Curve is on."
         },
         {
           "name": "anchor_position",
@@ -2380,7 +2388,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "Where the anchor sits along the arc, as a percent of its length (0 = start, 100 = end)."
         },
         {
           "name": "reverse",
@@ -2388,7 +2397,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Flip the fill so it grows from the high end toward the low end."
         },
         {
           "name": "smoothing_ms",
@@ -2399,7 +2409,8 @@
           "min": 0,
           "max": 300,
           "step": 10,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Damping time for fill/needle movement. Higher = smoother but laggier; 0 = instant, raw response."
         },
         {
           "name": "arc_width",
@@ -2409,7 +2420,8 @@
           "category": "appearance",
           "min": 1,
           "max": 50,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Thickness of the lit (value) arc, in pixels."
         },
         {
           "name": "arc_offset",
@@ -2419,7 +2431,8 @@
           "category": "appearance",
           "min": 0,
           "max": 120,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Shifts the whole ring in/out from the widget centre, in pixels. Use to nest concentric arcs."
         },
         {
           "name": "arc_color",
@@ -2428,7 +2441,8 @@
           "default": "#00FF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the lit (value) portion of the arc."
         },
         {
           "name": "bg_arc_color",
@@ -2437,7 +2451,8 @@
           "default": "#333333",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the unlit track behind the fill."
         },
         {
           "name": "bg_arc_width",
@@ -2447,7 +2462,8 @@
           "category": "appearance",
           "min": 1,
           "max": 50,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Thickness of the background track. Make it wider or narrower than the fill for a recessed or raised look."
         },
         {
           "name": "rounded_ends",
@@ -2455,7 +2471,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Round the ends of the fill and track instead of flat-cut."
         },
         {
           "name": "fade_fill",
@@ -2482,7 +2499,8 @@
           "default": "#E6FAFF",
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the leading-edge marker."
         },
         {
           "name": "lead_edge_width",
@@ -2493,7 +2511,8 @@
           "max": 40,
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Width of the leading-edge marker, in pixels."
         },
         {
           "name": "arc_image",
@@ -2502,7 +2521,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Use an image as the track instead of a solid colour."
         },
         {
           "name": "arc_image_full",
@@ -2511,7 +2531,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Use an image as the lit fill instead of a solid colour - revealed progressively as the value rises."
         },
         {
           "name": "redline_color",
@@ -2519,7 +2540,8 @@
           "type": "color",
           "default": "#FF0000",
           "category": "appearance",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Colour of the redline band. Its position comes from the bound channel's high-warning threshold."
         },
         {
           "name": "redline_arc_width",
@@ -2529,7 +2551,8 @@
           "category": "appearance",
           "min": 0,
           "max": 50,
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Thickness of the redline band arc."
         },
         {
           "name": "redline_recolor_fill",
@@ -2537,7 +2560,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "When the value enters the redline zone, recolour the whole fill (not just the band) to the redline colour."
         },
         {
           "name": "show_ticks",
@@ -2545,7 +2569,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Draw tick marks around the arc."
         },
         {
           "name": "major_tick_step",
@@ -2554,7 +2579,8 @@
           "default": 50,
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between major (largest) ticks. e.g. 1000 on a 0-8000 tach = a major tick every 1000."
         },
         {
           "name": "mid_tick_step",
@@ -2562,7 +2588,8 @@
           "type": "number",
           "default": 0,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between medium ticks. 0 = no medium tier."
         },
         {
           "name": "minor_tick_step",
@@ -2571,7 +2598,8 @@
           "default": 10,
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between minor (smallest) ticks. 0 = no minor tier."
         },
         {
           "name": "major_tick_width",
@@ -2582,7 +2610,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the major ticks, in pixels."
         },
         {
           "name": "mid_tick_width",
@@ -2592,7 +2621,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the medium ticks, in pixels."
         },
         {
           "name": "minor_tick_width",
@@ -2603,7 +2633,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_length",
@@ -2614,7 +2645,8 @@
           "min": 0,
           "max": 50,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the major ticks, in pixels."
         },
         {
           "name": "mid_tick_length",
@@ -2624,7 +2656,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the medium ticks, in pixels."
         },
         {
           "name": "minor_tick_length",
@@ -2635,7 +2668,8 @@
           "min": 0,
           "max": 50,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_color",
@@ -2645,7 +2679,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the major ticks."
         },
         {
           "name": "mid_tick_color",
@@ -2653,7 +2688,8 @@
           "type": "color",
           "default": "#BDBDBD",
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the medium ticks."
         },
         {
           "name": "minor_tick_color",
@@ -2663,7 +2699,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the minor ticks."
         },
         {
           "name": "show_tick_labels",
@@ -2671,7 +2708,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Draw numeric labels at the major ticks."
         },
         {
           "name": "tick_label_font",
@@ -2680,7 +2718,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_tick_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Font (family:size) for the tick number labels."
         },
         {
           "name": "tick_label_color",
@@ -2690,7 +2729,8 @@
           "category": "appearance",
           "enabled_by": "show_tick_labels",
           "night_overridable": true,
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Colour of the tick number labels."
         },
         {
           "name": "label_gap",
@@ -2701,7 +2741,8 @@
           "min": -150,
           "max": 150,
           "enabled_by": "show_tick_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Gap between the tick ring and the number labels, in pixels. Larger pushes labels toward the centre."
         },
         {
           "name": "tick_label_divisor",
@@ -2712,7 +2753,8 @@
           "min": 1,
           "max": 100000,
           "enabled_by": "show_tick_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Divide label values before display. 1000 -> a 7000 tick reads '7' (e.g. RPM x1000)."
         },
         {
           "name": "ticks_on_top",
@@ -2720,7 +2762,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Draw ticks and labels above the fill instead of behind it."
         },
         {
           "name": "show_value_line",
@@ -2728,7 +2771,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Draw a thin radial line pointing at the current value."
         },
         {
           "name": "value_line_width",
@@ -2739,7 +2783,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_value_line",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Thickness of the value line, in pixels."
         },
         {
           "name": "value_line_color",
@@ -2749,7 +2794,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_value_line",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Colour of the value line."
         },
         {
           "name": "value_line_r_mod",
@@ -2760,7 +2806,8 @@
           "min": -50,
           "max": 50,
           "enabled_by": "show_value_line",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Trim the value line's length inward from the outer edge, in pixels."
         },
         {
           "name": "arc_alerts_enabled",
@@ -2768,7 +2815,8 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Recolour the fill when the value crosses the thresholds below - independent of the channel redline."
         },
         {
           "name": "arc_low",
@@ -2779,7 +2827,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "arc_alerts_enabled"
+          "enabled_by": "arc_alerts_enabled",
+          "help": "At or below this value the fill uses the Low Color."
         },
         {
           "name": "arc_low_color",
@@ -2789,7 +2838,8 @@
           "category": "alerts",
           "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
-          "night_overridable": true
+          "night_overridable": true,
+          "help": "Fill colour when the value is at or below the Low Threshold."
         },
         {
           "name": "arc_high",
@@ -2800,7 +2850,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "arc_alerts_enabled"
+          "enabled_by": "arc_alerts_enabled",
+          "help": "At or above this value the fill uses the High Color."
         },
         {
           "name": "arc_high_color",
@@ -2810,7 +2861,8 @@
           "category": "alerts",
           "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
-          "night_overridable": true
+          "night_overridable": true,
+          "help": "Fill colour when the value is at or above the High Threshold."
         }
       ]
     },

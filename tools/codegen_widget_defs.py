@@ -155,7 +155,7 @@ def _options_to_js(options: List[Dict[str, Any]]) -> List[str]:
 # at the end in the order they appeared in the schema.
 FIELD_KEY_ORDER = [
     "name", "label", "type",
-    "def", "cat", "group",
+    "def", "cat", "group", "help",
     "min", "max", "step",
     "options",
     "enabledBy", "inline",
@@ -190,6 +190,8 @@ def _render_field(field: Dict[str, Any]) -> List[str]:
         rendered["cat"] = _js_string(field["category"])
     if "group" in field:
         rendered["group"] = _js_string(field["group"])
+    if field.get("help"):
+        rendered["help"] = _js_string(field["help"])
     if "min" in field:
         rendered["min"] = _js_value(field["min"])
     if "max" in field:
