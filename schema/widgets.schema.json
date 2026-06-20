@@ -26,7 +26,8 @@
           "type": "number",
           "default": 7000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Top of the bar's range, in RPM. The bar fills from 0 to here."
         },
         {
           "name": "redline",
@@ -34,7 +35,8 @@
           "type": "number",
           "default": 6000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "RPM where the redline zone begins - the bar recolours past this point."
         },
         {
           "name": "limiter_value",
@@ -42,7 +44,8 @@
           "type": "number",
           "default": 7000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "RPM at which the rev-limiter effect kicks in."
         },
         {
           "name": "smoothing_ms",
@@ -53,7 +56,8 @@
           "min": 0,
           "max": 300,
           "step": 10,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Damping time for bar movement. Higher = smoother but laggier; 0 = instant."
         },
         {
           "name": "bar_color",
@@ -62,7 +66,8 @@
           "default": "#00FF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the bar fill below the redline."
         },
         {
           "name": "fill_dir",
@@ -76,7 +81,8 @@
             { "value": 2, "label": "Center Out" },
             { "value": 3, "label": "Edges In" }
           ],
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Which direction the bar fills from (left, right, up or down)."
         },
         {
           "name": "bar_bg_color",
@@ -85,7 +91,8 @@
           "default": "#F0F0F0",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Colour of the empty track behind the bar."
         },
         {
           "name": "limiter_color",
@@ -94,7 +101,8 @@
           "default": "#FF0000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Colour used when the limiter RPM is reached."
         },
         {
           "name": "show_ticks",
@@ -102,7 +110,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Draw tick marks along the bar."
         },
         {
           "name": "tick_side",
@@ -116,7 +125,8 @@
             { "value": 1, "label": "Bottom" },
             { "value": 2, "label": "Both" }
           ],
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Which side of the bar the ticks sit on."
         },
         {
           "name": "tick_width",
@@ -127,7 +137,8 @@
           "min": 1,
           "max": 12,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the ticks, in pixels."
         },
         {
           "name": "tick_length",
@@ -138,7 +149,8 @@
           "min": 1,
           "max": 40,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the ticks, in pixels."
         },
         {
           "name": "tick_color",
@@ -148,7 +160,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the ticks."
         },
         {
           "name": "limiter_effect",
@@ -161,7 +174,8 @@
             { "value": 1, "label": "Bar Flash" },
             { "value": 2, "label": "Bar Solid" }
           ],
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "What happens at the limiter RPM (e.g. flash or solid colour)."
         },
         {
           "name": "flash_speed",
@@ -172,7 +186,8 @@
           "min": 50,
           "max": 1000,
           "step": 50,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Flash interval at the limiter, in milliseconds. Lower = faster."
         }
       ]
     },
@@ -198,7 +213,8 @@
           "type": "text",
           "default": "",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Header text shown above the value (e.g. 'COOLANT')."
         },
         {
           "name": "decimals",
@@ -206,7 +222,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Decimal places for the value (overrides the channel default)."
         },
         {
           "name": "label_font",
@@ -214,7 +231,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the header label."
         },
         {
           "name": "label_color",
@@ -223,7 +241,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Colour of the header label."
         },
         {
           "name": "value_font",
@@ -231,7 +250,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the main value."
         },
         {
           "name": "value_color",
@@ -240,7 +260,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Colour of the main value."
         },
         {
           "name": "text_align",
@@ -253,7 +274,8 @@
             { "value": 1, "label": "Center" },
             { "value": 2, "label": "Right" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Horizontal alignment of the text (left, centre, right)."
         },
         {
           "name": "label_y_offset",
@@ -263,7 +285,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the header label up/down, in pixels."
         },
         {
           "name": "value_y_offset",
@@ -273,7 +296,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the value up/down, in pixels."
         },
         {
           "name": "show_peak",
@@ -287,7 +311,8 @@
             { "value": 2, "label": "Min" },
             { "value": 3, "label": "Min/Max" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Show a held peak (or min) marker alongside the live value."
         },
         {
           "name": "peak_font",
@@ -296,7 +321,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_peak",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the peak marker."
         },
         {
           "name": "peak_x_offset",
@@ -307,7 +333,8 @@
           "min": -100,
           "max": 100,
           "enabled_by": "show_peak",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the peak marker horizontally, in pixels."
         },
         {
           "name": "peak_y_offset",
@@ -318,7 +345,8 @@
           "min": -100,
           "max": 100,
           "enabled_by": "show_peak",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the peak marker vertically, in pixels."
         },
         {
           "name": "show_unit",
@@ -326,7 +354,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Append the channel's unit (e.g. °C) after the value."
         },
         {
           "name": "unit_size",
@@ -340,7 +369,8 @@
             { "value": 2, "label": "Full" }
           ],
           "enabled_by": "show_unit",
-          "group": "Text"
+          "group": "Text",
+          "help": "Size of the unit suffix relative to the value."
         },
         {
           "name": "custom_text",
@@ -348,7 +378,8 @@
           "type": "text",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Override the unit suffix with your own text."
         },
         {
           "name": "custom_text_x_offset",
@@ -358,7 +389,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the unit text horizontally, in pixels."
         },
         {
           "name": "custom_text_y_offset",
@@ -368,7 +400,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the unit text vertically, in pixels."
         },
         {
           "name": "bg_color",
@@ -377,7 +410,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Panel background colour."
         },
         {
           "name": "bg_opa",
@@ -387,7 +421,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Panel background opacity (0 = transparent, 255 = solid)."
         },
         {
           "name": "border_color",
@@ -396,7 +431,8 @@
           "default": "#2E2F2E",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Panel border colour."
         },
         {
           "name": "border_width",
@@ -406,7 +442,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Panel border thickness, in pixels (0 = none)."
         },
         {
           "name": "border_radius",
@@ -416,7 +453,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding, in pixels."
         },
         {
           "name": "warning_low_enabled",
@@ -424,7 +462,8 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Turn on the low-value alert."
         },
         {
           "name": "warning_low_threshold",
@@ -435,7 +474,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "warning_low_enabled"
+          "enabled_by": "warning_low_enabled",
+          "help": "When the value drops to or below this, the low alert fires."
         },
         {
           "name": "warning_low_color",
@@ -443,7 +483,8 @@
           "type": "color",
           "default": "#0000FF",
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Alert colour applied when the low threshold is crossed."
         },
         {
           "name": "warning_low_apply_label",
@@ -452,7 +493,8 @@
           "default": true,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_low_apply"
+          "inline": "warning_low_apply",
+          "help": "Apply the low-alert colour to the header label."
         },
         {
           "name": "warning_low_apply_value",
@@ -461,7 +503,8 @@
           "default": true,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_low_apply"
+          "inline": "warning_low_apply",
+          "help": "Apply the low-alert colour to the value."
         },
         {
           "name": "warning_low_apply_panel",
@@ -470,7 +513,8 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_low_apply"
+          "inline": "warning_low_apply",
+          "help": "Apply the low-alert colour to the panel border/background."
         },
         {
           "name": "warning_high_enabled",
@@ -478,7 +522,8 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Turn on the high-value alert."
         },
         {
           "name": "warning_high_threshold",
@@ -489,7 +534,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "warning_high_enabled"
+          "enabled_by": "warning_high_enabled",
+          "help": "When the value rises to or above this, the high alert fires."
         },
         {
           "name": "warning_high_color",
@@ -497,7 +543,8 @@
           "type": "color",
           "default": "#FF0000",
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Alert colour applied when the high threshold is crossed."
         },
         {
           "name": "warning_high_apply_label",
@@ -506,7 +553,8 @@
           "default": true,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_high_apply"
+          "inline": "warning_high_apply",
+          "help": "Apply the high-alert colour to the header label."
         },
         {
           "name": "warning_high_apply_value",
@@ -515,7 +563,8 @@
           "default": true,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_high_apply"
+          "inline": "warning_high_apply",
+          "help": "Apply the high-alert colour to the value."
         },
         {
           "name": "warning_high_apply_panel",
@@ -524,7 +573,8 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "inline": "warning_high_apply"
+          "inline": "warning_high_apply",
+          "help": "Apply the high-alert colour to the panel border/background."
         }
       ]
     },
@@ -550,7 +600,8 @@
           "type": "text",
           "default": "",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Text label shown with the bar."
         },
         {
           "name": "bar_min",
@@ -558,7 +609,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the empty end of the bar."
         },
         {
           "name": "bar_max",
@@ -566,7 +618,8 @@
           "type": "number",
           "default": 100,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the full end of the bar."
         },
         {
           "name": "decimals",
@@ -574,7 +627,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Decimal places for the shown value (overrides the channel default)."
         },
         {
           "name": "anchor_enabled",
@@ -583,7 +637,8 @@
           "default": false,
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
-          "group": "Value"
+          "group": "Value",
+          "help": "Grow the fill from a fixed anchor value instead of from the end - good for centre-zero bars."
         },
         {
           "name": "anchor_value",
@@ -592,7 +647,8 @@
           "default": 50,
           "category": "data",
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "The value the fill grows out from when Anchor Curve is on."
         },
         {
           "name": "anchor_position",
@@ -603,7 +659,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "Where the anchor sits along the bar, as a percent of its length."
         },
         {
           "name": "show_bar_value",
@@ -611,7 +668,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Print the numeric value on the bar."
         },
         {
           "name": "smoothing_ms",
@@ -622,7 +680,8 @@
           "min": 0,
           "max": 300,
           "step": 10,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Damping time for bar movement. Higher = smoother but laggier; 0 = instant."
         },
         {
           "name": "invert_bar_value",
@@ -630,7 +689,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Invert the fill so a high value empties the bar."
         },
         {
           "name": "center_fill",
@@ -638,7 +698,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Fill outward from the centre of the bar in both directions."
         },
         {
           "name": "fill_dir",
@@ -652,7 +713,8 @@
             { "value": 2, "label": "Center Out" },
             { "value": 3, "label": "Edges In" }
           ],
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Which direction the bar fills from (left, right, up or down)."
         },
         {
           "name": "bar_in_range_color",
@@ -661,7 +723,8 @@
           "default": "#00FF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the bar fill in the normal range."
         },
         {
           "name": "bar_image_full",
@@ -670,7 +733,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Use an image as the fill instead of a solid colour."
         },
         {
           "name": "fill_edge_width",
@@ -690,7 +754,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "fill_edge_width",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the bright marker that rides the fill's leading edge."
         },
         {
           "name": "indicator_radius",
@@ -700,7 +765,8 @@
           "category": "appearance",
           "min": 0,
           "max": 50,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Corner rounding of the fill, in pixels."
         },
         {
           "name": "bar_bg_color",
@@ -709,7 +775,8 @@
           "default": "#2E2F2E",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Colour of the empty track behind the fill."
         },
         {
           "name": "bar_image",
@@ -718,7 +785,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Use an image as the track instead of a solid colour."
         },
         {
           "name": "bar_radius",
@@ -728,7 +796,8 @@
           "category": "appearance",
           "min": 0,
           "max": 50,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding of the whole bar, in pixels."
         },
         {
           "name": "bar_border_width",
@@ -738,7 +807,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Bar border thickness, in pixels (0 = none)."
         },
         {
           "name": "bar_border_color",
@@ -747,7 +817,8 @@
           "default": "#2E2F2E",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Bar border colour."
         },
         {
           "name": "label_font",
@@ -755,7 +826,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the label."
         },
         {
           "name": "label_color",
@@ -764,7 +836,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Label colour."
         },
         {
           "name": "value_font",
@@ -772,7 +845,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the value."
         },
         {
           "name": "value_color",
@@ -781,7 +855,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Value colour."
         },
         {
           "name": "show_ticks",
@@ -789,7 +864,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Draw tick marks along the bar."
         },
         {
           "name": "tick_side",
@@ -803,7 +879,8 @@
             { "value": 1, "label": "Bottom" },
             { "value": 2, "label": "Both" }
           ],
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Which side of the bar the ticks sit on."
         },
         {
           "name": "tick_count",
@@ -814,7 +891,8 @@
           "min": 2,
           "max": 30,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Number of tick marks along the bar."
         },
         {
           "name": "tick_width",
@@ -825,7 +903,8 @@
           "min": 1,
           "max": 10,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the ticks, in pixels."
         },
         {
           "name": "tick_length",
@@ -836,7 +915,8 @@
           "min": 1,
           "max": 40,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the ticks, in pixels."
         },
         {
           "name": "tick_color",
@@ -846,7 +926,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the ticks."
         },
         {
           "name": "bar_alerts_enabled",
@@ -854,7 +935,8 @@
           "type": "checkbox",
           "default": false,
           "category": "alerts",
-          "group": "Alerts"
+          "group": "Alerts",
+          "help": "Recolour the bar when the value crosses the thresholds below."
         },
         {
           "name": "bar_low",
@@ -865,7 +947,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "bar_alerts_enabled"
+          "enabled_by": "bar_alerts_enabled",
+          "help": "At or below this value the bar uses the Low Color."
         },
         {
           "name": "bar_low_color",
@@ -875,7 +958,8 @@
           "category": "alerts",
           "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
-          "night_overridable": true
+          "night_overridable": true,
+          "help": "Bar colour at or below the Low Threshold."
         },
         {
           "name": "bar_high",
@@ -886,7 +970,8 @@
           "group": "Alerts",
           "min": -99999,
           "max": 99999,
-          "enabled_by": "bar_alerts_enabled"
+          "enabled_by": "bar_alerts_enabled",
+          "help": "At or above this value the bar uses the High Color."
         },
         {
           "name": "bar_high_color",
@@ -896,7 +981,8 @@
           "category": "alerts",
           "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
-          "night_overridable": true
+          "night_overridable": true,
+          "help": "Bar colour at or above the High Threshold."
         }
       ]
     },
@@ -926,7 +1012,8 @@
             { "value": 0, "label": "Left" },
             { "value": 1, "label": "Right" }
           ],
-          "group": "Value"
+          "group": "Value",
+          "help": "Which side of the screen this indicator occupies (left or right)."
         },
         {
           "name": "input_source",
@@ -938,7 +1025,8 @@
             { "value": 0, "label": "Wire" },
             { "value": 1, "label": "CAN" }
           ],
-          "group": "Value"
+          "group": "Value",
+          "help": "What drives the indicator - a bound signal or an internal source."
         },
         {
           "name": "color_on",
@@ -947,7 +1035,8 @@
           "default": "#FFBF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour when active/on."
         },
         {
           "name": "opa_on",
@@ -957,7 +1046,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Opacity when active (0-255)."
         },
         {
           "name": "color_off",
@@ -966,7 +1056,8 @@
           "default": "#333333",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour when inactive/off."
         },
         {
           "name": "opa_off",
@@ -976,7 +1067,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Opacity when inactive (0-255)."
         },
         {
           "name": "animation",
@@ -984,7 +1076,8 @@
           "type": "checkbox",
           "default": true,
           "category": "data",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Fade the transition between on and off."
         },
         {
           "name": "is_momentary",
@@ -992,7 +1085,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Active only while the signal is asserted (vs latched on)."
         }
       ]
     },
@@ -1018,7 +1112,8 @@
           "type": "text",
           "default": "",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Text shown on the warning tile."
         },
         {
           "name": "active_color",
@@ -1027,7 +1122,8 @@
           "default": "#FF0000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Tile colour when the warning is active."
         },
         {
           "name": "active_opa",
@@ -1037,7 +1133,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Tile opacity when active (0-255)."
         },
         {
           "name": "inactive_color",
@@ -1046,7 +1143,8 @@
           "default": "#292C29",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Tile colour when inactive."
         },
         {
           "name": "inactive_opa",
@@ -1056,7 +1154,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Tile opacity when inactive (0-255)."
         },
         {
           "name": "radius",
@@ -1066,7 +1165,8 @@
           "category": "appearance",
           "min": 0,
           "max": 200,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding of the tile, in pixels."
         },
         {
           "name": "border_width",
@@ -1076,7 +1176,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Tile border thickness, in pixels (0 = none)."
         },
         {
           "name": "border_color_style",
@@ -1086,7 +1187,8 @@
           "category": "appearance",
           "night_overridable": true,
           "night_key": "border_color",
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Tile border colour."
         },
         {
           "name": "image_name",
@@ -1095,7 +1197,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Image"
+          "group": "Image",
+          "help": "Icon image shown on the tile."
         },
         {
           "name": "image_scale",
@@ -1106,7 +1209,8 @@
           "min": 10,
           "max": 200,
           "_doc": "Zoom for the alert image (100 = native), centred on the widget.\nOnly applies in image mode (ignored for the plain circle lamp).",
-          "group": "Image"
+          "group": "Image",
+          "help": "Scale the icon, in percent."
         },
         {
           "name": "show_label",
@@ -1114,7 +1218,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Show the text label on the tile."
         },
         {
           "name": "label_color",
@@ -1124,7 +1229,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Label colour."
         },
         {
           "name": "label_font",
@@ -1133,7 +1239,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the label."
         },
         {
           "name": "label_y_offset",
@@ -1144,7 +1251,8 @@
           "min": -100,
           "max": 100,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the label up/down, in pixels."
         },
         {
           "name": "label_text_align",
@@ -1158,7 +1266,8 @@
             { "value": 1, "label": "Center" },
             { "value": 2, "label": "Right" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Horizontal alignment of the label."
         },
         {
           "name": "is_momentary",
@@ -1166,7 +1275,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Active only while the signal is asserted (vs latched on)."
         },
         {
           "name": "invert_toggle",
@@ -1174,7 +1284,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Treat the signal as inverted - active when the signal is off."
         }
       ]
     },
@@ -1200,7 +1311,8 @@
           "type": "text",
           "default": "",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Fixed text to display. Leave blank to show the bound channel's value instead."
         },
         {
           "name": "decimals",
@@ -1208,7 +1320,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Decimal places when showing a channel value."
         },
         {
           "name": "font",
@@ -1216,7 +1329,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size)."
         },
         {
           "name": "text_color",
@@ -1225,7 +1339,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Text colour."
         },
         {
           "name": "rotation",
@@ -1235,7 +1350,8 @@
           "category": "appearance",
           "min": 0,
           "max": 359,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Rotate the text, in degrees."
         }
       ]
     },
@@ -1261,7 +1377,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the start of the scale."
         },
         {
           "name": "max",
@@ -1269,7 +1386,8 @@
           "type": "number",
           "default": 100,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the end of the scale."
         },
         {
           "name": "start_angle_user",
@@ -1281,7 +1399,8 @@
           "max": 359,
           "step": 5,
           "_doc": "User-coord start angle: 0° = 12 o'clock, CW positive.\n_meterSyncDerived translates this into the LVGL\nstart_angle/end_angle pair the firmware reads.",
-          "group": "Value"
+          "group": "Value",
+          "help": "Where the scale begins, in degrees (0° = 3 o'clock, increasing clockwise)."
         },
         {
           "name": "sweep_degrees",
@@ -1292,7 +1411,8 @@
           "min": 30,
           "max": 360,
           "step": 5,
-          "group": "Value"
+          "group": "Value",
+          "help": "How far the scale sweeps from the start angle. 270 = a three-quarter gauge, 360 = full circle."
         },
         {
           "name": "reverse",
@@ -1300,7 +1420,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Reverse the scale so the high value sits at the start."
         },
         {
           "name": "anchor_enabled",
@@ -1309,7 +1430,8 @@
           "default": false,
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear.",
-          "group": "Value"
+          "group": "Value",
+          "help": "Sweep the needle from a fixed anchor value instead of from the start - good for centre-zero gauges."
         },
         {
           "name": "anchor_value",
@@ -1318,7 +1440,8 @@
           "default": 50,
           "category": "data",
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "The value the needle sweeps out from when Anchor Curve is on."
         },
         {
           "name": "anchor_position",
@@ -1329,7 +1452,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "anchor_enabled",
-          "group": "Value"
+          "group": "Value",
+          "help": "Where the anchor sits along the scale, as a percent of its length."
         },
         {
           "name": "show_ticks",
@@ -1337,7 +1461,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Draw tick marks around the dial."
         },
         {
           "name": "major_tick_step",
@@ -1345,7 +1470,8 @@
           "type": "number",
           "default": 50,
           "category": "appearance",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between major (largest) ticks. e.g. 1000 on a 0-8000 tach."
         },
         {
           "name": "mid_tick_step",
@@ -1355,7 +1481,8 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off.",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between medium ticks. 0 = no medium tier."
         },
         {
           "name": "minor_tick_step",
@@ -1364,7 +1491,8 @@
           "default": 10,
           "category": "appearance",
           "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between minor ticks. 0 = no minor tier."
         },
         {
           "name": "major_tick_width",
@@ -1375,7 +1503,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the major ticks, in pixels."
         },
         {
           "name": "mid_tick_width",
@@ -1386,7 +1515,8 @@
           "min": 0,
           "max": 20,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the medium ticks, in pixels (0 = off)."
         },
         {
           "name": "minor_tick_width",
@@ -1397,7 +1527,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_length",
@@ -1408,7 +1539,8 @@
           "min": 1,
           "max": 50,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the major ticks, in pixels."
         },
         {
           "name": "mid_tick_length",
@@ -1419,7 +1551,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the medium ticks, in pixels (0 = off)."
         },
         {
           "name": "minor_tick_length",
@@ -1430,7 +1563,8 @@
           "min": 1,
           "max": 50,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_color",
@@ -1440,7 +1574,8 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "night_overridable": true,
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the major ticks."
         },
         {
           "name": "mid_tick_color",
@@ -1449,7 +1584,8 @@
           "default": "#BDBDBD",
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the medium ticks."
         },
         {
           "name": "minor_tick_color",
@@ -1459,7 +1595,8 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "night_overridable": true,
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the minor ticks."
         },
         {
           "name": "show_tick_labels",
@@ -1467,7 +1604,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Draw numeric labels at the major ticks."
         },
         {
           "name": "tick_label_font",
@@ -1476,7 +1614,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_tick_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Font (family:size) for the number labels."
         },
         {
           "name": "tick_label_color",
@@ -1486,7 +1625,8 @@
           "category": "appearance",
           "enabled_by": "show_tick_labels",
           "night_overridable": true,
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Colour of the number labels."
         },
         {
           "name": "label_gap",
@@ -1497,7 +1637,8 @@
           "min": -150,
           "max": 150,
           "enabled_by": "show_tick_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Gap between the tick ring and the number labels, in pixels."
         },
         {
           "name": "tick_label_divisor",
@@ -1509,7 +1650,8 @@
           "max": 100000,
           "enabled_by": "show_tick_labels",
           "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\").",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Divide label values before display. 1000 -> a 7000 tick reads '7' (e.g. RPM x1000)."
         },
         {
           "name": "redline_enabled",
@@ -1518,7 +1660,8 @@
           "default": false,
           "category": "data",
           "_doc": "Redline zone: visual cues drawn between threshold and\nmax. Show Arc + Recolor Ticks default ON so enabling\nthe master toggle gives an immediate visible result.",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Turn on the redline warning zone."
         },
         {
           "name": "redline_threshold",
@@ -1527,7 +1670,8 @@
           "default": 80,
           "category": "data",
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Value where the redline zone begins."
         },
         {
           "name": "redline_color",
@@ -1536,7 +1680,8 @@
           "default": "#FF0000",
           "category": "data",
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Colour of the redline zone."
         },
         {
           "name": "redline_show_arc",
@@ -1545,7 +1690,8 @@
           "default": true,
           "category": "data",
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Draw a coloured arc along the redline zone (in addition to any tick recolouring)."
         },
         {
           "name": "redline_arc_width",
@@ -1556,7 +1702,8 @@
           "min": 1,
           "max": 30,
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Thickness of the redline arc, in pixels."
         },
         {
           "name": "redline_arc_r_mod",
@@ -1567,7 +1714,8 @@
           "min": -50,
           "max": 50,
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Move the redline arc in/out from the scale, in pixels."
         },
         {
           "name": "redline_recolor_ticks",
@@ -1576,7 +1724,8 @@
           "default": true,
           "category": "data",
           "enabled_by": "redline_enabled",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Recolour ticks inside the redline zone to the redline colour."
         },
         {
           "name": "smoothing_ms",
@@ -1587,7 +1736,8 @@
           "min": 0,
           "max": 300,
           "step": 10,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Damping time for needle movement. Higher = smoother but laggier; 0 = instant."
         },
         {
           "name": "meter_bg_color",
@@ -1596,7 +1746,8 @@
           "default": "#3D3D3D",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Gauge face background colour."
         },
         {
           "name": "meter_bg_opa",
@@ -1606,7 +1757,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Gauge face background opacity (0 = transparent, 255 = solid)."
         },
         {
           "name": "bg_image_name",
@@ -1615,7 +1767,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Image drawn as the gauge face."
         },
         {
           "name": "border_color",
@@ -1624,7 +1777,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Border colour around the gauge."
         },
         {
           "name": "border_width",
@@ -1634,7 +1788,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Border thickness, in pixels (0 = none)."
         },
         {
           "name": "border_opa",
@@ -1644,7 +1799,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Border opacity (0-255)."
         },
         {
           "name": "scale_padding",
@@ -1654,7 +1810,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Inset the tick scale from the gauge edge, in pixels."
         },
         {
           "name": "show_needle",
@@ -1663,7 +1820,8 @@
           "default": true,
           "category": "appearance",
           "_doc": "Master toggle for the value needle. When off, the meter\nrenders ticks / labels / ball only — no needle line, image,\nor needle shadow. Independent of Show Needle Ball.",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Draw the needle."
         },
         {
           "name": "needle_width",
@@ -1674,7 +1832,8 @@
           "min": 1,
           "max": 20,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Needle thickness, in pixels."
         },
         {
           "name": "needle_color",
@@ -1684,7 +1843,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Needle colour."
         },
         {
           "name": "needle_r_mod",
@@ -1695,7 +1855,8 @@
           "min": -100,
           "max": 100,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Trim the needle length inward from the outer edge, in pixels."
         },
         {
           "name": "needle_rear_length",
@@ -1706,7 +1867,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Length of the needle's tail behind the pivot, in pixels."
         },
         {
           "name": "needle_inner_radius",
@@ -1717,7 +1879,8 @@
           "min": 0,
           "max": 400,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Distance from the pivot where the needle starts, in pixels (hollow centre)."
         },
         {
           "name": "needle_tip_style",
@@ -1734,7 +1897,8 @@
             { "value": 4, "label": "Spade" },
             { "value": 5, "label": "Diamond" }
           ],
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Shape of the needle tip."
         },
         {
           "name": "needle_tip_base_w",
@@ -1748,7 +1912,8 @@
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          var nw = cfg.needle_width || 4;\n                          switch (cfg.needle_tip_style) {\n                              case 2: return (nw >> 1) + 1;  // Lance\n                              case 3: return (nw >> 1) + 2;  // Dagger\n                              case 4: return (nw >> 1) + 2;  // Spade\n                              case 5: return (nw >> 1) + 3;  // Diamond\n                              default: return 0;\n                          }\n                      }"
           },
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Width of the needle at its base, in pixels (auto unless set)."
         },
         {
           "name": "needle_tip_point_w",
@@ -1761,7 +1926,8 @@
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap\n                      }"
           },
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Width of the needle at its tip, in pixels."
         },
         {
           "name": "needle_tip_taper",
@@ -1774,7 +1940,8 @@
           "_raw_extra": {
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
           },
-          "group": "Needle"
+          "group": "Needle",
+          "help": "How sharply the needle narrows from base to tip, in percent."
         },
         {
           "name": "needle_image_name",
@@ -1784,7 +1951,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_needle",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Use an image as the needle instead of a drawn shape."
         },
         {
           "name": "needle_pivot_x",
@@ -1795,7 +1963,8 @@
           "min": -400,
           "max": 400,
           "enabled_by": "needle_image_name",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Move the needle pivot horizontally, in pixels."
         },
         {
           "name": "needle_pivot_y",
@@ -1806,7 +1975,8 @@
           "min": -400,
           "max": 400,
           "enabled_by": "needle_image_name",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Move the needle pivot vertically, in pixels."
         },
         {
           "name": "needle_angle_offset",
@@ -1817,7 +1987,8 @@
           "min": -180,
           "max": 180,
           "enabled_by": "needle_image_name",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Rotate the needle's resting angle, in degrees."
         },
         {
           "name": "show_needle_ball",
@@ -1826,7 +1997,8 @@
           "default": true,
           "category": "appearance",
           "_doc": "Toggle the center pivot ball. When off, the ball is hidden\nregardless of size. Independent of Show Needle.",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Draw a hub circle at the needle pivot."
         },
         {
           "name": "needle_ball_size",
@@ -1837,7 +2009,8 @@
           "min": 0,
           "max": 40,
           "enabled_by": "show_needle_ball",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Diameter of the hub circle, in pixels."
         },
         {
           "name": "needle_ball_color",
@@ -1847,7 +2020,8 @@
           "category": "appearance",
           "night_overridable": true,
           "enabled_by": "show_needle_ball",
-          "group": "Needle"
+          "group": "Needle",
+          "help": "Colour of the hub circle."
         }
       ]
     },
@@ -1874,7 +2048,8 @@
           "default": "",
           "category": "data",
           "night_overridable": true,
-          "group": "Image"
+          "group": "Image",
+          "help": "The image to display."
         },
         {
           "name": "image_scale",
@@ -1884,7 +2059,8 @@
           "category": "appearance",
           "min": 10,
           "max": 200,
-          "group": "Image"
+          "group": "Image",
+          "help": "Scale the image, in percent."
         },
         {
           "name": "opacity",
@@ -1894,7 +2070,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Image"
+          "group": "Image",
+          "help": "Image opacity (0 = transparent, 255 = solid)."
         },
         {
           "name": "recolor",
@@ -1903,7 +2080,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Image"
+          "group": "Image",
+          "help": "Tint the image with this colour."
         },
         {
           "name": "recolor_opa",
@@ -1913,7 +2091,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Image"
+          "group": "Image",
+          "help": "Strength of the tint (0 = none, 255 = full). Tinting a light icon to white can make it vanish."
         }
       ]
     },
@@ -1949,7 +2128,8 @@
             { "value": "chevron_right", "label": "Chevron ❯" },
             { "value": "chevron_left", "label": "Chevron ❮" }
           ],
-          "group": "Shape"
+          "group": "Shape",
+          "help": "The shape to draw."
         },
         {
           "name": "bg_color",
@@ -1958,7 +2138,8 @@
           "default": "#1A1A1A",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Fill colour."
         },
         {
           "name": "bg_opa",
@@ -1968,7 +2149,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Fill opacity (0 = transparent, 255 = solid)."
         },
         {
           "name": "border_color",
@@ -1977,7 +2159,8 @@
           "default": "#2E2F2E",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Border colour."
         },
         {
           "name": "border_width",
@@ -1987,7 +2170,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Border thickness, in pixels (0 = none)."
         },
         {
           "name": "border_radius",
@@ -1997,7 +2181,8 @@
           "category": "appearance",
           "min": 0,
           "max": 200,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding, in pixels (rectangles)."
         },
         {
           "name": "shadow_width",
@@ -2007,7 +2192,8 @@
           "category": "appearance",
           "min": 0,
           "max": 50,
-          "group": "Shadow"
+          "group": "Shadow",
+          "help": "Drop-shadow spread, in pixels (0 = none)."
         },
         {
           "name": "shadow_color",
@@ -2016,7 +2202,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Shadow"
+          "group": "Shadow",
+          "help": "Drop-shadow colour."
         },
         {
           "name": "shadow_opa",
@@ -2026,7 +2213,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Shadow"
+          "group": "Shadow",
+          "help": "Drop-shadow opacity (0-255)."
         },
         {
           "name": "shadow_ofs_x",
@@ -2036,7 +2224,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Shadow"
+          "group": "Shadow",
+          "help": "Offset the shadow horizontally, in pixels."
         },
         {
           "name": "shadow_ofs_y",
@@ -2046,7 +2235,8 @@
           "category": "appearance",
           "min": -100,
           "max": 100,
-          "group": "Shadow"
+          "group": "Shadow",
+          "help": "Offset the shadow vertically, in pixels."
         },
         {
           "name": "bake_into_gauge",
@@ -2054,7 +2244,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Render this static shape into the gauge background for better performance (it won't change at runtime)."
         }
       ]
     },
@@ -2086,7 +2277,8 @@
             { "value": "diagonal_fwd", "label": "Diagonal /" },
             { "value": "diagonal_bwd", "label": "Diagonal \\" }
           ],
-          "group": "Style"
+          "group": "Style",
+          "help": "Direction of the line (horizontal, vertical or diagonal)."
         },
         {
           "name": "line_color",
@@ -2095,7 +2287,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Style"
+          "group": "Style",
+          "help": "Line colour."
         },
         {
           "name": "line_width",
@@ -2105,7 +2298,8 @@
           "category": "appearance",
           "min": 1,
           "max": 30,
-          "group": "Style"
+          "group": "Style",
+          "help": "Line thickness, in pixels."
         },
         {
           "name": "line_opa",
@@ -2115,7 +2309,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Style"
+          "group": "Style",
+          "help": "Line opacity (0-255)."
         },
         {
           "name": "rounded",
@@ -2123,7 +2318,8 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "group": "Style"
+          "group": "Style",
+          "help": "Round the line ends."
         },
         {
           "name": "dash_gap",
@@ -2133,7 +2329,8 @@
           "category": "appearance",
           "min": 0,
           "max": 40,
-          "group": "Style"
+          "group": "Style",
+          "help": "Gap between dashes, in pixels (0 = solid line)."
         }
       ]
     },
@@ -2169,7 +2366,8 @@
             { "value": 6, "label": "range" },
             { "value": 7, "label": "always (test)" }
           ],
-          "group": "Value"
+          "group": "Value",
+          "help": "How the value is compared to the threshold to trigger the banner (e.g. >, <, =, in range)."
         },
         {
           "name": "threshold",
@@ -2177,7 +2375,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "The value the operator compares against."
         },
         {
           "name": "range_min",
@@ -2185,7 +2384,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Lower bound when the operator is 'in range'."
         },
         {
           "name": "range_max",
@@ -2193,7 +2393,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Upper bound when the operator is 'in range'."
         },
         {
           "name": "text",
@@ -2201,7 +2402,8 @@
           "type": "text",
           "default": "WARNING",
           "category": "data",
-          "group": "Text"
+          "group": "Text",
+          "help": "Message shown when the banner triggers."
         },
         {
           "name": "text_align",
@@ -2214,7 +2416,8 @@
             { "value": 1, "label": "Center" },
             { "value": 2, "label": "Right" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Horizontal alignment of the message."
         },
         {
           "name": "bg_color",
@@ -2223,7 +2426,8 @@
           "default": "#FF0000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Banner background colour."
         },
         {
           "name": "bg_opa",
@@ -2233,7 +2437,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Banner background opacity (0-255)."
         },
         {
           "name": "text_color",
@@ -2242,7 +2447,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Message text colour."
         },
         {
           "name": "font",
@@ -2250,7 +2456,8 @@
           "type": "font",
           "default": "",
           "category": "appearance",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the message."
         },
         {
           "name": "border_width",
@@ -2260,7 +2467,8 @@
           "category": "appearance",
           "min": 0,
           "max": 20,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Banner border thickness, in pixels (0 = none)."
         },
         {
           "name": "border_color",
@@ -2269,7 +2477,8 @@
           "default": "#000000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Banner border colour."
         },
         {
           "name": "radius",
@@ -2279,7 +2488,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding, in pixels."
         }
       ]
     },
@@ -2888,7 +3098,8 @@
           "type": "textarea",
           "default": "",
           "category": "data",
-          "group": "Text"
+          "group": "Text",
+          "help": "Text shown on the toggle."
         },
         {
           "name": "show_label",
@@ -2896,7 +3107,8 @@
           "type": "checkbox",
           "default": true,
           "category": "data",
-          "group": "Text"
+          "group": "Text",
+          "help": "Show the text label."
         },
         {
           "name": "signal_on_threshold",
@@ -2904,7 +3116,8 @@
           "type": "number",
           "default": 0.5,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Bound value at or above which the toggle reads as ON."
         },
         {
           "name": "tx_can_id",
@@ -2912,7 +3125,8 @@
           "type": "can_id",
           "default": 0,
           "category": "data",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "CAN frame ID this toggle transmits on when switched."
         },
         {
           "name": "tx_bit_start",
@@ -2921,7 +3135,8 @@
           "default": 0,
           "category": "data",
           "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Start bit of the transmitted value within the frame."
         },
         {
           "name": "tx_bit_length",
@@ -2930,7 +3145,8 @@
           "default": 1,
           "category": "data",
           "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Number of bits transmitted."
         },
         {
           "name": "tx_endian",
@@ -2942,7 +3158,8 @@
             { "value": 0, "label": "Big Endian" },
             { "value": 1, "label": "Little Endian" }
           ],
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Byte order of the transmitted value."
         },
         {
           "name": "tx_rate_hz",
@@ -2952,7 +3169,8 @@
           "category": "data",
           "min": 0,
           "max": 50,
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "How often the frame is re-sent, in Hz (0 = send once on change)."
         },
         {
           "name": "image_name",
@@ -2961,7 +3179,8 @@
           "default": "",
           "category": "data",
           "night_overridable": true,
-          "group": "Image"
+          "group": "Image",
+          "help": "Icon shown on the toggle."
         },
         {
           "name": "active_color",
@@ -2970,7 +3189,8 @@
           "default": "#00FF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour when ON."
         },
         {
           "name": "active_opa",
@@ -2980,7 +3200,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Opacity when ON (0-255)."
         },
         {
           "name": "inactive_color",
@@ -2989,7 +3210,8 @@
           "default": "#555555",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour when OFF."
         },
         {
           "name": "inactive_opa",
@@ -2999,7 +3221,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Opacity when OFF (0-255)."
         },
         {
           "name": "label_color",
@@ -3009,7 +3232,8 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "night_overridable": true,
-          "group": "Text"
+          "group": "Text",
+          "help": "Label colour."
         },
         {
           "name": "font",
@@ -3018,7 +3242,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the label."
         },
         {
           "name": "label_align",
@@ -3032,7 +3257,8 @@
             { "value": 1, "label": "Center" },
             { "value": 2, "label": "Right" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Horizontal alignment of the label."
         },
         {
           "name": "label_x",
@@ -3043,7 +3269,8 @@
           "min": -400,
           "max": 400,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the label horizontally, in pixels."
         },
         {
           "name": "label_y",
@@ -3054,7 +3281,8 @@
           "min": -240,
           "max": 240,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the label vertically, in pixels."
         }
       ]
     },
@@ -3080,7 +3308,8 @@
           "type": "textarea",
           "default": "BTN",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Text shown on the button."
         },
         {
           "name": "show_label",
@@ -3088,7 +3317,8 @@
           "type": "checkbox",
           "default": true,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Show the text label."
         },
         {
           "name": "latch",
@@ -3096,7 +3326,8 @@
           "type": "checkbox",
           "default": false,
           "category": "data",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Toggle on each press (latched) instead of momentary."
         },
         {
           "name": "tx_can_id",
@@ -3104,7 +3335,8 @@
           "type": "can_id",
           "default": 0,
           "category": "data",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "CAN frame ID this button transmits on when pressed."
         },
         {
           "name": "tx_bit_start",
@@ -3113,7 +3345,8 @@
           "default": 0,
           "category": "data",
           "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Start bit of the transmitted value within the frame."
         },
         {
           "name": "tx_bit_length",
@@ -3122,7 +3355,8 @@
           "default": 1,
           "category": "data",
           "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Number of bits transmitted."
         },
         {
           "name": "tx_endian",
@@ -3134,7 +3368,8 @@
             { "value": 0, "label": "Big Endian" },
             { "value": 1, "label": "Little Endian" }
           ],
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Byte order of the transmitted value."
         },
         {
           "name": "tx_rate_hz",
@@ -3144,7 +3379,8 @@
           "category": "data",
           "min": 0,
           "max": 50,
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "How often the frame is re-sent while held, in Hz (0 = send once)."
         },
         {
           "name": "tx_send_release",
@@ -3153,7 +3389,8 @@
           "default": false,
           "category": "data",
           "enabled_by": "!latch",
-          "group": "CAN TX"
+          "group": "CAN TX",
+          "help": "Also send a frame when the button is released."
         },
         {
           "name": "bg_color",
@@ -3162,7 +3399,8 @@
           "default": "#333333",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Button background colour."
         },
         {
           "name": "text_color",
@@ -3171,7 +3409,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Button label colour."
         },
         {
           "name": "pressed_color",
@@ -3180,7 +3419,8 @@
           "default": "#555555",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Background colour while the button is held."
         },
         {
           "name": "border_radius",
@@ -3190,7 +3430,8 @@
           "category": "appearance",
           "min": 0,
           "max": 100,
-          "group": "Frame"
+          "group": "Frame",
+          "help": "Corner rounding, in pixels."
         },
         {
           "name": "font",
@@ -3199,7 +3440,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Font (family:size) for the label."
         },
         {
           "name": "label_align",
@@ -3213,7 +3455,8 @@
             { "value": 1, "label": "Center" },
             { "value": 2, "label": "Right" }
           ],
-          "group": "Text"
+          "group": "Text",
+          "help": "Horizontal alignment of the label."
         },
         {
           "name": "label_x",
@@ -3224,7 +3467,8 @@
           "min": -400,
           "max": 400,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the label horizontally, in pixels."
         },
         {
           "name": "label_y",
@@ -3235,7 +3479,8 @@
           "min": -240,
           "max": 240,
           "enabled_by": "show_label",
-          "group": "Text"
+          "group": "Text",
+          "help": "Nudge the label vertically, in pixels."
         },
         {
           "name": "image_name",
@@ -3244,7 +3489,8 @@
           "default": "",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Image"
+          "group": "Image",
+          "help": "Icon shown on the button."
         }
       ]
     },
@@ -3270,7 +3516,8 @@
           "type": "text",
           "default": "",
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "The channel that drives the LED bar (usually RPM)."
         },
         {
           "name": "range_min",
@@ -3278,7 +3525,8 @@
           "type": "number",
           "default": 4000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Value at which the first LED lights."
         },
         {
           "name": "range_max",
@@ -3286,7 +3534,8 @@
           "type": "number",
           "default": 7000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Value at which every LED is lit."
         },
         {
           "name": "led_count",
@@ -3297,7 +3546,8 @@
           "min": 4,
           "max": 45,
           "step": 1,
-          "group": "Value"
+          "group": "Value",
+          "help": "Number of LEDs in the bar."
         },
         {
           "name": "flash_threshold",
@@ -3305,7 +3555,8 @@
           "type": "number",
           "default": 7200,
           "category": "data",
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Value at/above which the whole bar flashes (the shift point)."
         },
         {
           "name": "flash_speed",
@@ -3316,7 +3567,8 @@
           "min": 50,
           "max": 1000,
           "step": 10,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Flash interval, in milliseconds. Lower = faster."
         },
         {
           "name": "fill_mode",
@@ -3328,7 +3580,8 @@
             { "value": 0, "label": "Left to Right" },
             { "value": 1, "label": "Outside In" }
           ],
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "How the LEDs light up as the value rises (e.g. left-to-right, or by zone)."
         },
         {
           "name": "color_low",
@@ -3337,7 +3590,8 @@
           "default": "#00FF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the LEDs in the low zone."
         },
         {
           "name": "color_mid",
@@ -3346,7 +3600,8 @@
           "default": "#FFFF00",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the LEDs in the mid zone."
         },
         {
           "name": "color_high",
@@ -3355,7 +3610,8 @@
           "default": "#FF0000",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the LEDs in the high zone."
         },
         {
           "name": "color_off",
@@ -3364,7 +3620,8 @@
           "default": "#212121",
           "category": "appearance",
           "night_overridable": true,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of unlit LEDs."
         },
         {
           "name": "threshold_mid",
@@ -3375,7 +3632,8 @@
           "min": 0,
           "max": 1,
           "step": 0.05,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Value where the LEDs switch to the mid colour."
         },
         {
           "name": "threshold_high",
@@ -3386,7 +3644,8 @@
           "min": 0,
           "max": 1,
           "step": 0.05,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Value where the LEDs switch to the high colour."
         },
         {
           "name": "led_spacing",
@@ -3397,7 +3656,8 @@
           "min": 0,
           "max": 200,
           "step": 1,
-          "group": "Layout"
+          "group": "Layout",
+          "help": "Gap between LEDs, in pixels."
         },
         {
           "name": "led_width",
@@ -3408,7 +3668,8 @@
           "min": 0,
           "max": 100,
           "step": 1,
-          "group": "Layout"
+          "group": "Layout",
+          "help": "Width of each LED, in pixels (0 = auto-fit)."
         },
         {
           "name": "led_height",
@@ -3419,7 +3680,8 @@
           "min": 0,
           "max": 100,
           "step": 1,
-          "group": "Layout"
+          "group": "Layout",
+          "help": "Height of each LED, in pixels (0 = auto-fit)."
         },
         {
           "name": "border_radius",
@@ -3430,7 +3692,8 @@
           "min": 0,
           "max": 255,
           "step": 1,
-          "group": "Layout"
+          "group": "Layout",
+          "help": "Corner rounding of each LED, in pixels."
         }
       ]
     },
@@ -3455,7 +3718,8 @@
           "type": "number",
           "default": 0,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the start of the path."
         },
         {
           "name": "max",
@@ -3463,7 +3727,8 @@
           "type": "number",
           "default": 11000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Channel value at the end of the path."
         },
         {
           "name": "redline",
@@ -3471,7 +3736,8 @@
           "type": "number",
           "default": 10000,
           "category": "data",
-          "group": "Value"
+          "group": "Value",
+          "help": "Value where the redline zone begins along the path."
         },
         {
           "name": "lit_color",
@@ -3479,7 +3745,8 @@
           "type": "color",
           "default": "#2EE4C8",
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the lit (value) portion of the band."
         },
         {
           "name": "dim_color",
@@ -3487,7 +3754,8 @@
           "type": "color",
           "default": "#2E323A",
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the unlit portion of the band."
         },
         {
           "name": "dim_opa",
@@ -3497,7 +3765,8 @@
           "category": "appearance",
           "min": 0,
           "max": 255,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Opacity of the unlit portion (0-255)."
         },
         {
           "name": "band_width",
@@ -3507,7 +3776,8 @@
           "category": "appearance",
           "min": 2,
           "max": 80,
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Thickness of the band, in pixels."
         },
         {
           "name": "rounded",
@@ -3515,7 +3785,8 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Round the band ends."
         },
         {
           "name": "fade_fill",
@@ -3542,7 +3813,8 @@
           "default": "#E6FAFF",
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Colour of the leading-edge marker."
         },
         {
           "name": "lead_edge_width",
@@ -3553,7 +3825,8 @@
           "max": 40,
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
-          "group": "Fill"
+          "group": "Fill",
+          "help": "Width of the leading-edge marker, in pixels."
         },
         {
           "name": "redline_color",
@@ -3561,7 +3834,8 @@
           "type": "color",
           "default": "#FF5C32",
           "category": "appearance",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Colour of the redline zone."
         },
         {
           "name": "redline_recolor_ticks",
@@ -3570,7 +3844,8 @@
           "default": true,
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Redline"
+          "group": "Redline",
+          "help": "Recolour ticks inside the redline zone to the redline colour."
         },
         {
           "name": "shape",
@@ -3600,7 +3875,8 @@
             { "value": 2, "label": "Bottom-Left" },
             { "value": 3, "label": "Bottom-Right" }
           ],
-          "group": "Shape"
+          "group": "Shape",
+          "help": "Direction the path runs and fills."
         },
         {
           "name": "corner_radius",
@@ -3610,7 +3886,8 @@
           "category": "appearance",
           "min": 0,
           "max": 400,
-          "group": "Shape"
+          "group": "Shape",
+          "help": "Corner rounding for preset bends (L-Bend etc.), in pixels."
         },
         {
           "name": "hook_angle",
@@ -3640,7 +3917,8 @@
           "default": false,
           "category": "data",
           "_doc": "Draw a tick + number scale that FOLLOWS the path (spaced by\narc-length so the marks line up with the fill). Turns a bare\npathbar into a Ford-style swept tach.",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Draw the tick scale along the path."
         },
         {
           "name": "major_tick_step",
@@ -3649,7 +3927,8 @@
           "default": 0,
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between major ticks."
         },
         {
           "name": "minor_tick_step",
@@ -3658,7 +3937,8 @@
           "default": 0,
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Value distance between minor ticks. 0 = no minor ticks."
         },
         {
           "name": "major_tick_width",
@@ -3669,7 +3949,8 @@
           "min": 0,
           "max": 40,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the major ticks, in pixels."
         },
         {
           "name": "tick_width",
@@ -3680,7 +3961,8 @@
           "min": 0,
           "max": 40,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Thickness of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_len",
@@ -3691,7 +3973,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the major ticks, in pixels."
         },
         {
           "name": "tick_len",
@@ -3702,7 +3985,8 @@
           "min": 0,
           "max": 100,
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Length of the minor ticks, in pixels."
         },
         {
           "name": "major_tick_color",
@@ -3711,7 +3995,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the major ticks."
         },
         {
           "name": "tick_color",
@@ -3720,7 +4005,8 @@
           "default": "#9E9E9E",
           "category": "appearance",
           "enabled_by": "show_ticks",
-          "group": "Ticks"
+          "group": "Ticks",
+          "help": "Colour of the minor ticks."
         },
         {
           "name": "show_labels",
@@ -3729,7 +4015,8 @@
           "default": false,
           "category": "data",
           "enabled_by": "show_ticks",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Draw numeric labels at the major ticks."
         },
         {
           "name": "label_font",
@@ -3738,7 +4025,8 @@
           "default": "",
           "category": "appearance",
           "enabled_by": "show_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Font (family:size) for the number labels."
         },
         {
           "name": "label_color",
@@ -3747,7 +4035,8 @@
           "default": "#FFFFFF",
           "category": "appearance",
           "enabled_by": "show_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Colour of the number labels."
         },
         {
           "name": "label_gap",
@@ -3758,7 +4047,8 @@
           "min": -200,
           "max": 200,
           "enabled_by": "show_labels",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Gap between the path and the number labels, in pixels."
         },
         {
           "name": "tick_label_divisor",
@@ -3770,7 +4060,8 @@
           "max": 100000,
           "enabled_by": "show_labels",
           "_doc": "Divides each number by this factor — e.g. 1000 turns a\n0..8000 tach into 0..8 (print the unit elsewhere).",
-          "group": "Numbers"
+          "group": "Numbers",
+          "help": "Divide label values before display (e.g. 1000 -> RPM x1000)."
         },
         {
           "name": "smoothing_ms",
@@ -3780,7 +4071,8 @@
           "category": "data",
           "min": 0,
           "max": 500,
-          "group": "Behaviour"
+          "group": "Behaviour",
+          "help": "Damping time for fill movement. Higher = smoother but laggier; 0 = instant."
         }
       ]
     }
