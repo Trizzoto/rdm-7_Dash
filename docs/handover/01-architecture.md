@@ -218,7 +218,7 @@ dashboard_persist_layout()
                   │
        ┌──────────▼─────────────────┐
        │   Widget registry          │  one widget_t per instance
-       │   13 widget types          │  (panel, rpm_bar, bar, …)
+       │   16 widget types          │  (panel, rpm_bar, bar, …)
        └──────────┬─────────────────┘
                   │ subscribe()
        ┌──────────▼──────────┐    ┌────────────────────┐

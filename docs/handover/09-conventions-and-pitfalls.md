@@ -105,13 +105,12 @@ Forward declarations preferred over including more headers. type_data structs ar
 
 Builds take 1–2 minutes and the user runs them externally. If you're an agent: do not run `idf.py build` unless the user explicitly asks. Verify your work by reading code and reasoning, not by spinning up `idf.py`.
 
-### Three copies of `index.html`
+### Two copies of `index.html`
 
 Any change to widget metadata or web-editor logic must be propagated to:
 
-1. [main/web/index.html](../../main/web/index.html) — embedded in firmware.
-2. [data/web/index.html](../../data/web/index.html) — used by `tools/mobile-dev-server.js`.
-3. `../rdm7-desktop/src/index.html` — separate Tauri app repo.
+1. [main/web/index.html](../../main/web/index.html) — embedded in firmware (gzipped to `index.html.gz` at configure time). Also served directly by `tools/mobile-dev-server.js`.
+2. `../rdm7-desktop/src/index.html` — separate Tauri app repo.
 
 There's no automation. The desktop copy has historically drifted; eyeball-diff before pushing.
 
@@ -230,8 +229,8 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 ### `httpd_register_uri_handler` returned ESP_ERR_HTTPD_HANDLERS_FULL
 
 **Symptom**: a newly-added endpoint returns 405 / falls into the OPTIONS wildcard.
-- **Cause**: `max_uri_handlers = 100` filled. ESP-IDF silently drops registrations past the cap.
-- **Fix**: count `httpd_register_uri_handler` calls. Currently we have 86 — we can bump the cap or drop dead handlers.
+- **Cause**: `max_uri_handlers = 160` filled. ESP-IDF silently drops registrations past the cap.
+- **Fix**: count `REGISTER_URI` calls. Currently ~138 — we can bump the cap or drop dead handlers.
 
 ### Phone won't connect to the AP / says "no internet"
 
@@ -320,8 +319,8 @@ A curated list of failure modes that have hit this project. Each entry: *symptom
 - [ ] Save → power cycle → reload preserves state.
 - [ ] No leak across layout reloads (check `/api/system/health` heap_free over 5 reloads).
 - [ ] LVGL mutex held for every `lv_*` call in your new code path.
-- [ ] If you added a widget field: `to_json` defaults-only, `from_json` reads it, `WIDGET_DEFS` updated in all 3 `index.html`, `convertWidgetColors` handles it (if color).
-- [ ] If you added an HTTP endpoint: counted handlers (≤ 100), responds with JSON, errors return non-200 with `{ok:false,error:...}`.
+- [ ] If you added a widget field: `to_json` defaults-only, `from_json` reads it, `WIDGET_DEFS` updated in both `index.html` copies, `convertWidgetColors` handles it (if color).
+- [ ] If you added an HTTP endpoint: counted handlers (≤ 160), responds with JSON, errors return non-200 with `{ok:false,error:...}`.
 - [ ] If you added a thread: pinned to a core, prio ≤ 8, stack sized appropriately, yields correctly.
 - [ ] If you added a signal: timeout behavior is reasonable, peak/min tracking semantically correct.
 - [ ] Logs are quiet at INFO level in steady state (no per-frame spam).

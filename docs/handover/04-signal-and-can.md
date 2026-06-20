@@ -33,7 +33,9 @@ typedef struct {
 } signal_t;
 ```
 
-Capacity: `MAX_SIGNALS = 128`, `MAX_SIGNAL_SUBSCRIBERS = 16` per signal, `SIGNAL_TIMEOUT_MS = 2000`.
+Capacity: `MAX_SIGNALS = 200`, `MAX_SIGNAL_SUBSCRIBERS = 16` per signal, `SIGNAL_TIMEOUT_MS = 2000`.
+
+> **CAN decode now lives in the channel registry, not the layout.** The canonical CAN-decode owner is the channel subsystem in [main/data/](../../main/data/) — `canonical_channels`, `channel_manager` (persisted to `/lfs/channels.json`), `channel_source_apply`, and `channel_math`. A *channel* is a named device-local binding that owns its decode (can_id/bit/scale/offset/endian), thresholds, units, and provenance; it feeds the signal registry described here. Layout JSON carries widget→channel bindings only; legacy layouts with inline `signals[]` decode are migrated into channels on load. See ADR-0005/0006.
 
 ## Public API
 

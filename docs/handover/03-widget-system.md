@@ -39,7 +39,7 @@ struct widget_t {
 
 Defined in [main/widgets/widget_types.h](../../main/widgets/widget_types.h). The vtable signatures are typedef'd at the top of the same file.
 
-## The 13 widget types
+## The 16 widget types
 
 | Type enum | Name | File | Slots | Special |
 |---|---|---|---|---|
@@ -56,10 +56,15 @@ Defined in [main/widgets/widget_types.h](../../main/widgets/widget_types.h). The
 | `WIDGET_TOGGLE` | Toggle | [widget_toggle.c/h](../../main/widgets/widget_toggle.c) | 2 | CAN-TX only (no signal RX) |
 | `WIDGET_BUTTON` | Button | [widget_button.c/h](../../main/widgets/widget_button.c) | 4 | CAN-TX command button |
 | `WIDGET_SHIFT_LIGHT` | Shift light | [widget_shift_light.c/h](../../main/widgets/widget_shift_light.c) | 1 | RPM-driven LED bar |
+| `WIDGET_LINE` | Line | [widget_line.c/h](../../main/widgets/widget_line.c) | — | Decorative line/divider |
+| `WIDGET_BANNER` | Banner | [widget_banner.c/h](../../main/widgets/widget_banner.c) | — | Scrolling/notification banner |
+| `WIDGET_PATHBAR` | Path bar | [widget_pathbar.c/h](../../main/widgets/widget_pathbar.c) | — | Bar that fills along a custom path/curve |
+
+The enum runs `WIDGET_PANEL = 0` … `WIDGET_PATHBAR = 15`; `WIDGET_TYPE_COUNT` (= 16) is the authority.
 
 Slot count enforced by the constraints table in [widget_types.c](../../main/widgets/widget_types.c) ~line 81. Pixel min/max sizes also live there.
 
-The grand-total registry cap is **32 widgets** (`WIDGET_REGISTRY_MAX`) — slot caps and global cap together prevent layout JSON from exhausting memory.
+The grand-total registry cap is **64 widgets** (`WIDGET_REGISTRY_MAX`) — slot caps and global cap together prevent layout JSON from exhausting memory.
 
 ## Lifecycle
 
@@ -224,7 +229,7 @@ The widget's `apply_overrides` is responsible for translating `rule_override_t` 
 
 ## JSON serialisation budget — defaults-only convention
 
-The whole layout file must fit **32 KB** (`LAYOUT_MAX_FILE_BYTES`, [main/layout/layout_manager.h](../../main/layout/layout_manager.h)). With up to 32 widgets, that's ~1 KB per widget on average — much less if signals + rules are also stored.
+The whole layout file must fit **32 KB** (`LAYOUT_MAX_FILE_BYTES`, [main/layout/layout_manager.h](../../main/layout/layout_manager.h)). With up to 64 widgets, that's ~0.5 KB per widget on average — much less if signals + rules are also stored.
 
 Each widget's `to_json` therefore writes a field **only if it differs from the factory default**:
 
@@ -282,7 +287,7 @@ You're adding the 14th widget. Steps:
     - `_gauge_apply_night_mode(w, active)` — apply night overrides (or NULL if not supported).
     - Wire the function pointers in `widget_gauge_create_instance`.
 
-4. **Register in [main/widgets/widget_types.h](../../main/widgets/widget_types.h)**: add `WIDGET_GAUGE = 13` to the enum, before `WIDGET_TYPE_COUNT`.
+4. **Register in [main/widgets/widget_types.h](../../main/widgets/widget_types.h)**: add `WIDGET_GAUGE = 16` to the enum, before `WIDGET_TYPE_COUNT`.
 
 5. **Update [widget_types.c](../../main/widgets/widget_types.c)**:
     - Add an entry to `widget_constraints[]` with min/max width and height.
@@ -294,13 +299,13 @@ You're adding the 14th widget. Steps:
 
 7. **Add `widget_gauge.c` to `SRCS` in [main/CMakeLists.txt](../../main/CMakeLists.txt).**
 
-8. **Update web editor metadata in `WIDGET_DEFS`** in all three copies of `index.html` ([main/web/index.html](../../main/web/index.html), [data/web/index.html](../../data/web/index.html), and `../rdm7-desktop/src/index.html`):
+8. **Update web editor metadata in `WIDGET_DEFS`** in both copies of `index.html` ([main/web/index.html](../../main/web/index.html) and `../rdm7-desktop/src/index.html`):
     - Add a new entry with `type: 'gauge'`, `label`, `defaultSize`, `slots`, `fields[]` array.
     - The `fields[]` describes inspector inputs and gets used by `convertWidgetColors()` and `buildFirmwarePayload()`.
 
 9. **Update `_wstGetTestBounds` in `index.html`** to handle the new type if it has a signal-driven test slider.
 
-10. **Bump `LAYOUT_SCHEMA_VERSION`** in [main/layout/layout_manager.h](../../main/layout/layout_manager.h) (currently 13). Schema-breaking changes warrant a bump; add a note in the migration section if you also need to upgrade old layouts on load.
+10. **Bump `LAYOUT_SCHEMA_VERSION`** in [main/layout/layout_manager.h](../../main/layout/layout_manager.h) (currently 15). Schema-breaking changes warrant a bump; add a note in the migration section if you also need to upgrade old layouts on load.
 
 11. **(Optional) on-device editing**: if your widget should be tappable on-device for in-place editing, add a section to [config_modal.c](../../main/ui/menu/config_modal.c). `config_modal_open_for_widget(screen, w)` receives the live `widget_t *` directly — no indirection layer needed.
 

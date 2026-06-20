@@ -1,6 +1,6 @@
 # 07 — Web Server & HTTP API
 
-The firmware embeds a full layout editor and exposes ~86 HTTP endpoints. This document is the reference for every endpoint, plus the supporting infrastructure (captive portal, DNS hijack, the three `index.html` copies).
+The firmware embeds a full layout editor and exposes ~138 HTTP endpoints. This document is the reference for every endpoint, plus the supporting infrastructure (captive portal, DNS hijack, the two `index.html` copies).
 
 ## Web server configuration
 
@@ -9,32 +9,31 @@ The firmware embeds a full layout editor and exposes ~86 HTTP endpoints. This do
 | Setting | Value | Reason |
 |---|---|---|
 | Port | 80 | Standard HTTP. |
-| `max_uri_handlers` | **100** | Was 80; bumped because we now register 86+ endpoints and ESP-IDF silently drops overflows. |
+| `max_uri_handlers` | **160** | We now register ~138 endpoints (`REGISTER_URI`); ESP-IDF silently drops overflows past the cap. |
 | `max_req_hdr_len` | 1024 (sdkconfig) | Android webviews exceed default 512 B. |
 | `recv_wait_timeout` / `send_wait_timeout` | 30 s | Image uploads are slow over local AP. |
 | Stack | 5120 B | |
 | Core affinity | 0 | Keeps LVGL on core 1 free. |
 
-### EMBED_TXTFILES mechanism
+### EMBED_FILES mechanism (gzipped index.html)
 
-`main/web/index.html` is embedded as a binary blob via the CMake `EMBED_TXTFILES` target property. The linker exposes:
+`main/web/index.html` is gzipped to `${CMAKE_CURRENT_BINARY_DIR}/index.html.gz` at CMake configure time and embedded via the `EMBED_FILES` target property. The linker exposes:
 
 ```c
-extern const char index_html_start[] asm("_binary_index_html_start");
-extern const char index_html_end[]   asm("_binary_index_html_end");
+extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t index_html_gz_end[]   asm("_binary_index_html_gz_end");
 ```
 
-The handler at `/` writes between those symbols straight to the response. **No filesystem read — the editor ships in flash.**
+The handler at `/` sets `Content-Encoding: gzip` and writes the gzipped blob between those symbols straight to the response. **No filesystem read — the editor ships in flash.**
 
-### The three copies of `index.html`
+### The two copies of `index.html`
 
 | Path | Used for | Synced by |
 |---|---|---|
 | [main/web/index.html](../../main/web/index.html) | Embedded in firmware (canonical) | Manual edits |
-| [data/web/index.html](../../data/web/index.html) | LittleFS-served alternate; primary use is `tools/mobile-dev-server.js` for local browser testing | Manual copy from `main/web/` |
 | `../rdm7-desktop/src/index.html` (Tauri app, separate repo) | Desktop Studio | Manual copy from `main/web/` |
 
-There is **no automated sync**. Any edit to `main/web/index.html` must be propagated to the other two. The desktop copy has historically drifted; check `git log` on both files when investigating diffs.
+There is **no automated sync**. Any edit to `main/web/index.html` must be propagated to the desktop copy. The desktop copy has historically drifted; check `git log` on both files when investigating diffs.
 
 `tools/mobile-dev-server.js` (Node) serves `main/web/index.html` and mocks all `/api/*` endpoints — useful for editor development without a device. Default port 8180. Wired to Claude Preview MCP via `.claude/launch.json` as `mobile-dev`.
 
@@ -130,7 +129,7 @@ Body shape:
 | GET | `/api/ecu/current` | `{"make":"...","version":"..."}`. |
 | POST | `/api/ecu/set` | Apply preset to active layout. |
 
-8 presets shipped: AEM/Holley/Haltech/Link/MaxxECU/MS3-Pro/Ford BA-BF / Ford FG. Custom adds an additional "Custom" entry.
+~11 presets shipped (`ECU_PRESETS[]` in [main/layout/ecu_presets.c](../../main/layout/ecu_presets.c)): ECU Master, MegaSquirt, Haltech, MaxxECU (×2), Ford (×2), Link ECU, Toyota/Subaru, RDM-7, OBD2. Custom adds an additional "Custom" entry.
 
 ### Presets (custom signal sets)
 
@@ -255,7 +254,7 @@ The wildcard handler sits at the end of registrations, so it's important `max_ur
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Serves `index.html` from EMBED_TXTFILES. |
+| GET | `/` | Serves the gzipped `index.html.gz` (EMBED_FILES) with `Content-Encoding: gzip`. |
 
 ## Auto-save vs hot reload
 
@@ -322,7 +321,7 @@ Most handlers return `{"ok":true}` on success and `{"ok":false,"error":"..."}` o
    httpd_register_uri_handler(server, &my_uri);
    ```
 
-3. **Count `httpd_register_uri_handler` calls** before adding. If you exceed `max_uri_handlers = 100`, the registration silently fails and the wildcard `/api/*` OPTIONS handler will catch your endpoint — you'll see 405 in DevTools and a confusing path through CORS preflight.
+3. **Count `REGISTER_URI` calls** before adding (~138 currently). If you exceed `max_uri_handlers = 160`, the registration silently fails and the wildcard `/api/*` OPTIONS handler will catch your endpoint — you'll see 405 in DevTools and a confusing path through CORS preflight.
 
 4. If the handler reads/writes from LVGL state, **lock first** or use `lv_async_call` to defer to the LVGL task.
 

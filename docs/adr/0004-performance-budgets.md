@@ -75,11 +75,11 @@ We do not currently fail-fast when this drops; the reading just streams to a sig
 
 **Symptom of violation**: `signal_subscribe` fails with `ESP_LOGW` and the widget silently never updates. The user sees a frozen value; serial log shows the warning.
 
-### 1.8 Total widgets — ≤ 32
+### 1.8 Total widgets — ≤ 64
 
-**Source**: [main/widgets/widget_registry.h:18](../../main/widgets/widget_registry.h) — `WIDGET_REGISTRY_MAX 32`. Enforced in [main/widgets/widget_registry.c:22](../../main/widgets/widget_registry.c) by `widget_registry_register` returning early.
+**Source**: [main/widgets/widget_registry.h:21](../../main/widgets/widget_registry.h) — `WIDGET_REGISTRY_MAX 64`. Enforced in [main/widgets/widget_registry.c:22](../../main/widgets/widget_registry.c) by `widget_registry_register` returning early.
 
-**Rationale**: Empirical. A typical 800×480 dashboard shows ~12–18 widgets. 32 is generous and lets us keep `widget_t *s_widgets[WIDGET_REGISTRY_MAX]` as a flat fixed array — the registry is iterated on every layout reload, every night-mode toggle, and every signal-clear-test path, so flat-array iteration is the right shape.
+**Rationale**: Empirical. A typical 800×480 dashboard shows ~12–18 widgets. 64 is generous and lets us keep `widget_t *s_widgets[WIDGET_REGISTRY_MAX]` as a flat fixed array — the registry is iterated on every layout reload, every night-mode toggle, and every signal-clear-test path, so flat-array iteration is the right shape.
 
 **Symptom of violation**: Layout load silently truncates after the 32nd widget. Should also surface in `/api/system/health` (§6).
 
@@ -135,7 +135,7 @@ The defaults-only `to_json` discipline ([widget code §to_json patterns](../../m
 
 ### 1.15 mDNS — disabled (memory budget exceeded)
 
-**Source**: [main/net/mdns_service.c](../../main/net/mdns_service.c) `RDM7_MDNS_DISABLED 1`. Component fully removed in commit `c395e36`.
+**Source**: `main/net/mdns_service.c` was deleted; the `espressif/mdns` component was fully removed in commit `c395e36`.
 
 **Rationale**: The `espressif/mdns` managed component is hardcoded to `CONFIG_MDNS_MEMORY_ALLOC_INTERNAL=y` and could not allocate from the tight internal-RAM pool after WiFi init, despite ~3.8 MB total heap free. Switching to `CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y` would have been the right fix; we chose to drop mDNS instead and rely on the QR-code-scanning Network panel (Device Settings) plus the captive portal flow from [ADR 0001](0001-wifi-onboarding-reliability.md).
 

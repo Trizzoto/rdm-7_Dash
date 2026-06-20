@@ -41,11 +41,11 @@ Use VFS calls (`fopen`, `fread`, `fwrite`) for everything. There is no streaming
 
 ### Layout schema
 
-Top-level keys (schema v13):
+Top-level keys (schema v15):
 
 ```json
 {
-  "schema_version": 13,
+  "schema_version": 15,
   "name": "My Layout",
   "screen_w": 800,
   "screen_h": 480,
@@ -337,7 +337,7 @@ The seeding is one-shot — once the file exists, user edits are preserved acros
 | Where are images loaded from? | LittleFS `/lfs/images/`. |
 | Where is gear config? | NVS namespace `gear_cal_cfg`. |
 | Where is the boot logo? | Embedded (`EMBED_FILES = main/embed/RDM.rdmimg` in CMake). |
-| Where is the web UI? | Embedded (`EMBED_TXTFILES = main/web/index.html`). |
+| Where is the web UI? | Embedded via `EMBED_FILES` — `main/web/index.html` gzipped to `index.html.gz` at configure time, served `Content-Encoding: gzip`. |
 | What survives `idf.py flash`? | NVS, LittleFS. |
 | What survives `idf.py erase-flash`? | Nothing. |
 

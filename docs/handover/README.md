@@ -21,7 +21,7 @@ These share the layout JSON schema, the widget definition table (`WIDGET_DEFS`),
 
 1. [01-architecture.md](01-architecture.md) — System design, threading model, data-flow diagrams. Read this first.
 2. [02-build-and-flash.md](02-build-and-flash.md) — How to build, flash, monitor; partition layout; non-default sdkconfig.
-3. [03-widget-system.md](03-widget-system.md) — The 13 widget types, vtable, lifecycle, how to add a 14th.
+3. [03-widget-system.md](03-widget-system.md) — The 16 widget types, vtable, lifecycle, how to add a 17th.
 4. [04-signal-and-can.md](04-signal-and-can.md) — CAN RX pipeline, signal registry, internal/synthetic signals, simulator, replay.
 5. [05-storage-and-persistence.md](05-storage-and-persistence.md) — LittleFS, NVS, SD card, image format, font cache, OTA.
 6. [06-ui-and-screens.md](06-ui-and-screens.md) — Screens, dashboard core, config modal, settings, touch input, night mode.
@@ -79,7 +79,8 @@ See [02-build-and-flash.md](02-build-and-flash.md) for first-build steps.
 RDM-7_Dash/
 ├── main/                  Firmware source (start here)
 │   ├── main.c             app_main, boot init order
-│   ├── widgets/           13 widget types + signal registry + font manager
+│   ├── widgets/           16 widget types + signal registry + font manager
+│   ├── data/              channel registry (canonical_channels, channel_manager, channel_source_apply, channel_math) — canonical CAN-decode owner
 │   ├── layout/            layout_manager (LittleFS JSON), default_layout, ECU presets
 │   ├── can/               TWAI driver, decode, bus-bitrate auto-detect
 │   ├── storage/           SD card, data logger, signal replay, config_store (NVS)
@@ -89,13 +90,12 @@ RDM-7_Dash/
 │   ├── io/                wire input GPIOs (turn signals)
 │   ├── design_mode/       Layout editor companion code (used by Studio integration)
 │   ├── embed/             Boot logo .rdmimg
-│   ├── web/index.html     Embedded web editor (~707 KB)
+│   ├── web/index.html     Web editor (gzipped to index.html.gz at configure time, then embedded)
 │   ├── lv_conf.h          LVGL build-time config
 │   ├── Kconfig.projbuild  Project Kconfig (screen size, double-FB, etc.)
-│   └── CMakeLists.txt     Source list, EMBED_TXTFILES
+│   └── CMakeLists.txt     Source list, EMBED_FILES (index.html.gz)
 ├── components/            Vendor components (LVGL fork, touch driver, SD card, etc.)
 ├── managed_components/    ESP-IDF Component Manager managed deps
-├── data/web/index.html    Mirror of main/web/index.html (used by mobile-dev-server)
 ├── tools/                 png_to_rdmimg.py, mobile-dev-server.js, OTA proxy, WASM build
 ├── docs/                  Documentation (you are here)
 ├── partitions.csv         Flash partition layout
@@ -136,9 +136,9 @@ A handful of non-obvious gotchas, each documented further inside:
 
 - **mDNS was removed** 2026-04-27 (ADR 0001). The managed component couldn't allocate from internal RAM after WiFi init. QR code + IP fallback replace it.
 - **`pdMS_TO_TICKS(1) == 0`** at `CONFIG_FREERTOS_HZ=500`. Use `vTaskDelay(1)` literal for real yields.
-- **Three copies of `index.html` must stay in sync** (firmware-embedded, `data/web/`, desktop). There is no automated sync.
+- **Two copies of `index.html` must stay in sync** (firmware `main/web/index.html`, desktop `../rdm7-desktop/src/index.html`). There is no automated sync. `tools/mobile-dev-server.js` serves `main/web/` directly.
 - **`remote_touch_init()` must be called from `dashboard_init()`**, not `app_main`. Registering a 2nd pointer indev before widgets exist makes `lv_obj_get_screen()` infinite-loop on first widget create.
-- **`max_uri_handlers = 100`** (was 80). ESP-IDF silently drops registrations past the cap. Count `httpd_register_uri_handler` calls before adding endpoints.
+- **`max_uri_handlers = 160`** (~138 `REGISTER_URI` calls). ESP-IDF silently drops registrations past the cap. Count `REGISTER_URI` calls before adding endpoints.
 
 ## Test plan after handover
 

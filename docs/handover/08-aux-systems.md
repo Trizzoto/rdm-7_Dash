@@ -102,20 +102,22 @@ Launched from Device Settings → "System Diagnostics".
 
 ### Built-in presets
 
-8 ECUs (presented in the wizard's two-step picker — Make → Version):
+~11 presets in `ECU_PRESETS[]` (presented in the wizard's two-step picker — Make → Version):
 
-| Make | Version(s) |
+| Make | Version(s) / display |
 |---|---|
-| AEM | (versions vary) |
-| Holley | |
-| Haltech | |
-| Link | |
-| MaxxECU | 1.2 |
-| MS3-Pro | (with degF→°C, m/s→km/h, AFR→λ conversions baked in) |
-| Ford | BA-BF, FG |
+| ECU Master | Black / Classic |
+| MegaSquirt | MS3-Pro |
+| Haltech | Nexus / Elite |
+| MaxxECU | firmware 1.2; firmware 1.3+ |
+| Ford | Falcon BA/BF; Falcon FG |
+| Link ECU | G4+ / G4X Generic Dash |
+| Toyota / Subaru | Toyota 86 / Subaru BRZ (2012–2020) |
+| RDM-7 | Internal (calculated gear) |
+| OBD2 | Standard (any 2008+ car) |
 | Custom | (no preset — user defines signals manually) |
 
-Each preset is an array of signal definitions (CAN ID, bit start/length, scale, offset, endian, unit). Applying a preset overwrites the active layout's `signals` array.
+There is **no AEM and no Holley preset.** Each preset is a table-driven set of signal definitions (CAN ID, bit start/length, scale, offset, endian, unit). Applying a preset binds the active layout's channels (decode now lives in the channel registry — see [04-signal-and-can.md](04-signal-and-can.md) and ADR-0005/0006).
 
 ### Custom presets
 

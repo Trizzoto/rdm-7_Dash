@@ -75,7 +75,7 @@ Embedded blobs:
 
 | Symbol | Source | Notes |
 |---|---|---|
-| `EMBED_TXTFILES` | `main/web/index.html` | The web editor; ~707 KB. Must be UTF-8 plain text. |
+| `EMBED_FILES` | `index.html.gz` (web editor) | `main/web/index.html` is gzipped to `${CMAKE_CURRENT_BINARY_DIR}/index.html.gz` at configure time and embedded; served with `Content-Encoding: gzip`. |
 | `EMBED_FILES` | `main/embed/RDM.rdmimg` | Boot logo image. |
 
 Vendor components in `components/` (not managed): `lvgl__lvgl` (LVGL v8 source vendored), `espressif__esp_io_expander-v1.0.1`, `sd_card`, `espressif__esp_lcd_touch`, `espressif__esp_lcd_touch_gt911`. The vendored LVGL fork is unmodified at `8.3.11` — confirm by reading [main/idf_component.yml](../../main/idf_component.yml).
@@ -231,7 +231,7 @@ The Cloudflare OTA proxy under `tools/cloudflare-ota-proxy/` lets you serve firm
 | `LV_FONT_MONTSERRAT_24 undefined` | Font wasn't enabled in sdkconfig — check `CONFIG_LV_FONT_MONTSERRAT_24`. |
 | `-Werror=comment` errors | A `/*` is nested inside a block comment somewhere. Find and fix. |
 | `image > partition size` | Firmware exceeds 3.5 MB. Investigate `idf.py size-components` and `idf.py size-files`. |
-| `httpd_register_uri_handler returned ESP_ERR_HTTPD_HANDLERS_FULL` | Hit `max_uri_handlers` cap. Currently 100 in `web_server.c`. Count `httpd_register_uri_handler` calls. |
+| `httpd_register_uri_handler returned ESP_ERR_HTTPD_HANDLERS_FULL` | Hit `max_uri_handlers` cap. Currently 160 in `web_server.c` (~138 `REGISTER_URI` calls). Count `REGISTER_URI` calls. |
 | Silent boot loop | TWDT firing — check serial monitor. Boot-time yields may be missing. |
 | White flash on boot | `app_main` no longer paints black before LVGL task starts. See main.c step 10. |
 

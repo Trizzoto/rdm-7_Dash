@@ -107,7 +107,7 @@ On Save:
 
 ## Device Settings sections
 
-[device_settings.c](../../main/ui/settings/device_settings.c) is one big function that builds the settings overlay imperatively. Sections (current as of schema v13):
+[device_settings.c](../../main/ui/settings/device_settings.c) is one big function that builds the settings overlay imperatively. Sections (current as of schema v15):
 
 | Section | Controls |
 |---|---|

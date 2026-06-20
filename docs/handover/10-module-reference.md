@@ -9,11 +9,11 @@ A one-line index of every C/H file under `main/`. Use this to find where things 
 | [main/main.c](../../main/main.c) | `app_main`. Boot init order, LVGL task spawn, mutex setup. |
 | [main/lv_conf.h](../../main/lv_conf.h) | LVGL build-time config (color depth, fonts, etc.). |
 | [main/Kconfig.projbuild](../../main/Kconfig.projbuild) | Project Kconfig: screen size, double-FB, bounce buffer. |
-| [main/CMakeLists.txt](../../main/CMakeLists.txt) | Source list, EMBED_TXTFILES, REQUIRES. |
+| [main/CMakeLists.txt](../../main/CMakeLists.txt) | Source list, EMBED_FILES (index.html.gz), REQUIRES. |
 | [main/idf_component.yml](../../main/idf_component.yml) | Managed dependency manifest. |
 | [main/include/](../../main/include/) | Project-wide headers (currently sparse). |
 | [main/embed/](../../main/embed/) | Boot logo `.rdmimg`. |
-| [main/web/index.html](../../main/web/index.html) | Embedded web editor (~707 KB). |
+| [main/web/index.html](../../main/web/index.html) | Web editor; gzipped to `index.html.gz` at configure time and embedded via EMBED_FILES. |
 
 ## `main/widgets/`
 
@@ -233,11 +233,9 @@ Newer assets are loaded at runtime via `rdm_image_load` from `/lfs/images/`. The
 | [tools/setup_wasm_project.sh](../../tools/setup_wasm_project.sh) | Bootstrap WASM-LVGL preview project. |
 | [tools/WASM_BUILD_PROMPT.md](../../tools/WASM_BUILD_PROMPT.md) | Notes on the WASM-compiled-LVGL preview pipeline. |
 
-## `data/`
+## `tools/mobile-dev-server.js`
 
-| Path | Purpose |
-|---|---|
-| [data/web/index.html](../../data/web/index.html) | Mirror of `main/web/index.html` for `mobile-dev-server.js`. |
+There is no `data/web/index.html` mirror anymore. `tools/mobile-dev-server.js` serves `main/web/index.html` directly for browser-based dev without a device.
 
 ## `docs/`
 
