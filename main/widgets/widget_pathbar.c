@@ -475,8 +475,32 @@ static inline bool _pb_tri_ok(lv_point_t a, lv_point_t b, lv_point_t c) {
     long cross = (long)(b.x - a.x) * (c.y - a.y) - (long)(b.y - a.y) * (c.x - a.x);
     return cross > 1 || cross < -1;            /* 2*area; skip near-collinear */
 }
+/* A simple convex quad can be filled as ONE polygon — no interior diagonal, so
+ * no anti-aliased seam line through the band. Standard test: every consecutive
+ * edge turns the same way (all cross products share a sign). A self-intersecting
+ * "bowtie" (the tight-curve case _pb_fill_quad guards against) fails this and
+ * falls back to the safe two-triangle split, so lv_draw_polygon never sees a
+ * non-convex polygon. */
+static inline bool _pb_quad_convex(lv_point_t a, lv_point_t b, lv_point_t c, lv_point_t d) {
+    lv_point_t p[4] = { a, b, c, d };
+    int sign = 0;
+    for (int i = 0; i < 4; i++) {
+        lv_point_t o = p[i], u = p[(i + 1) & 3], v = p[(i + 2) & 3];
+        long cr = (long)(u.x - o.x) * (v.y - o.y) - (long)(u.y - o.y) * (v.x - o.x);
+        if (cr == 0) continue;                  /* colinear vertex — skip */
+        int s = cr > 0 ? 1 : -1;
+        if (sign == 0) sign = s;
+        else if (s != sign) return false;        /* reflex/crossing turn → not convex */
+    }
+    return sign != 0;                            /* sign==0 → fully degenerate */
+}
 static void _pb_fill_quad(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
                           lv_point_t a, lv_point_t b, lv_point_t c, lv_point_t d) {
+    if (_pb_quad_convex(a, b, c, d)) {
+        lv_point_t q[4] = { a, b, c, d };        /* one fill = no diagonal seam */
+        lv_draw_polygon(ctx, rd, q, 4);
+        return;
+    }
     if (_pb_tri_ok(a, b, c)) { lv_point_t t[3] = { a, b, c }; lv_draw_polygon(ctx, rd, t, 3); }
     if (_pb_tri_ok(a, c, d)) { lv_point_t t[3] = { a, c, d }; lv_draw_polygon(ctx, rd, t, 3); }
 }
