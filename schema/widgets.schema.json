@@ -27,7 +27,7 @@
           "default": 7000,
           "category": "data",
           "group": "Value",
-          "help": "Top of the bar's range, in RPM. The bar fills from 0 to here."
+          "help": "The highest RPM the bar shows. It fills from 0 up to here."
         },
         {
           "name": "redline",
@@ -36,7 +36,7 @@
           "default": 6000,
           "category": "data",
           "group": "Value",
-          "help": "RPM where the redline zone begins - the bar recolours past this point."
+          "help": "The RPM where the red warning zone starts - the bar changes colour past this point."
         },
         {
           "name": "limiter_value",
@@ -45,7 +45,7 @@
           "default": 7000,
           "category": "data",
           "group": "Value",
-          "help": "RPM at which the rev-limiter effect kicks in."
+          "help": "The RPM where your rev limiter kicks in - the bar reacts here."
         },
         {
           "name": "smoothing_ms",
@@ -57,7 +57,7 @@
           "max": 300,
           "step": 10,
           "group": "Behaviour",
-          "help": "Damping time for bar movement. Higher = smoother but laggier; 0 = instant."
+          "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
         },
         {
           "name": "bar_color",
@@ -67,7 +67,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the bar fill below the redline."
+          "help": "Colour of the bar below the redline."
         },
         {
           "name": "fill_dir",
@@ -82,7 +82,7 @@
             { "value": 3, "label": "Edges In" }
           ],
           "group": "Fill",
-          "help": "Which direction the bar fills from (left, right, up or down)."
+          "help": "Which way the bar fills (left, right, up or down)."
         },
         {
           "name": "bar_bg_color",
@@ -92,7 +92,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Colour of the empty track behind the bar."
+          "help": "Colour of the empty background."
         },
         {
           "name": "limiter_color",
@@ -102,7 +102,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Redline",
-          "help": "Colour used when the limiter RPM is reached."
+          "help": "Colour shown when you hit the limiter."
         },
         {
           "name": "show_ticks",
@@ -111,7 +111,7 @@
           "default": true,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Draw tick marks along the bar."
+          "help": "Show marks along the bar."
         },
         {
           "name": "tick_side",
@@ -126,7 +126,7 @@
             { "value": 2, "label": "Both" }
           ],
           "group": "Ticks",
-          "help": "Which side of the bar the ticks sit on."
+          "help": "Which side of the bar the marks sit on."
         },
         {
           "name": "tick_width",
@@ -138,7 +138,7 @@
           "max": 12,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the ticks, in pixels."
+          "help": "How thick the marks are."
         },
         {
           "name": "tick_length",
@@ -150,7 +150,7 @@
           "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the ticks, in pixels."
+          "help": "How long the marks are."
         },
         {
           "name": "tick_color",
@@ -161,7 +161,7 @@
           "night_overridable": true,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the ticks."
+          "help": "Colour of the marks."
         },
         {
           "name": "limiter_effect",
@@ -175,7 +175,7 @@
             { "value": 2, "label": "Bar Solid" }
           ],
           "group": "Behaviour",
-          "help": "What happens at the limiter RPM (e.g. flash or solid colour)."
+          "help": "What happens at the limiter - flash, or just change colour."
         },
         {
           "name": "flash_speed",
@@ -187,7 +187,7 @@
           "max": 1000,
           "step": 50,
           "group": "Behaviour",
-          "help": "Flash interval at the limiter, in milliseconds. Lower = faster."
+          "help": "How fast it flashes at the limiter (smaller = faster), in milliseconds."
         }
       ]
     },
@@ -214,7 +214,7 @@
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Header text shown above the value (e.g. 'COOLANT')."
+          "help": "The title shown above the number (e.g. COOLANT)."
         },
         {
           "name": "decimals",
@@ -223,7 +223,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Decimal places for the value (overrides the channel default)."
+          "help": "How many digits after the decimal point to show."
         },
         {
           "name": "label_font",
@@ -232,7 +232,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size) for the header label."
+          "help": "Text style and size of the title."
         },
         {
           "name": "label_color",
@@ -242,7 +242,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Text",
-          "help": "Colour of the header label."
+          "help": "Colour of the title."
         },
         {
           "name": "value_font",
@@ -251,7 +251,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size) for the main value."
+          "help": "Text style and size of the number."
         },
         {
           "name": "value_color",
@@ -261,7 +261,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Text",
-          "help": "Colour of the main value."
+          "help": "Colour of the number."
         },
         {
           "name": "text_align",
@@ -275,7 +275,7 @@
             { "value": 2, "label": "Right" }
           ],
           "group": "Text",
-          "help": "Horizontal alignment of the text (left, centre, right)."
+          "help": "Line the text up to the left, centre or right."
         },
         {
           "name": "label_y_offset",
@@ -286,7 +286,7 @@
           "min": -100,
           "max": 100,
           "group": "Text",
-          "help": "Nudge the header label up/down, in pixels."
+          "help": "Nudge the title up or down."
         },
         {
           "name": "value_y_offset",
@@ -297,7 +297,7 @@
           "min": -100,
           "max": 100,
           "group": "Text",
-          "help": "Nudge the value up/down, in pixels."
+          "help": "Nudge the number up or down."
         },
         {
           "name": "show_peak",
@@ -312,7 +312,7 @@
             { "value": 3, "label": "Min/Max" }
           ],
           "group": "Text",
-          "help": "Show a held peak (or min) marker alongside the live value."
+          "help": "Also show the highest (or lowest) reading reached, held on screen."
         },
         {
           "name": "peak_font",
@@ -322,7 +322,7 @@
           "category": "appearance",
           "enabled_by": "show_peak",
           "group": "Text",
-          "help": "Font (family:size) for the peak marker."
+          "help": "Text style and size of the held reading."
         },
         {
           "name": "peak_x_offset",
@@ -334,7 +334,7 @@
           "max": 100,
           "enabled_by": "show_peak",
           "group": "Text",
-          "help": "Nudge the peak marker horizontally, in pixels."
+          "help": "Nudge the held reading left or right."
         },
         {
           "name": "peak_y_offset",
@@ -346,7 +346,7 @@
           "max": 100,
           "enabled_by": "show_peak",
           "group": "Text",
-          "help": "Nudge the peak marker vertically, in pixels."
+          "help": "Nudge the held reading up or down."
         },
         {
           "name": "show_unit",
@@ -355,7 +355,7 @@
           "default": false,
           "category": "appearance",
           "group": "Text",
-          "help": "Append the channel's unit (e.g. °C) after the value."
+          "help": "Add the unit after the number, like °C or PSI."
         },
         {
           "name": "unit_size",
@@ -370,7 +370,7 @@
           ],
           "enabled_by": "show_unit",
           "group": "Text",
-          "help": "Size of the unit suffix relative to the value."
+          "help": "How big the unit is next to the number."
         },
         {
           "name": "custom_text",
@@ -379,7 +379,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Override the unit suffix with your own text."
+          "help": "Replace the unit with your own text."
         },
         {
           "name": "custom_text_x_offset",
@@ -390,7 +390,7 @@
           "min": -100,
           "max": 100,
           "group": "Text",
-          "help": "Nudge the unit text horizontally, in pixels."
+          "help": "Nudge that text left or right."
         },
         {
           "name": "custom_text_y_offset",
@@ -401,7 +401,7 @@
           "min": -100,
           "max": 100,
           "group": "Text",
-          "help": "Nudge the unit text vertically, in pixels."
+          "help": "Nudge that text up or down."
         },
         {
           "name": "bg_color",
@@ -411,7 +411,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Panel background colour."
+          "help": "Background colour of the panel."
         },
         {
           "name": "bg_opa",
@@ -422,7 +422,7 @@
           "min": 0,
           "max": 255,
           "group": "Frame",
-          "help": "Panel background opacity (0 = transparent, 255 = solid)."
+          "help": "How solid the background is (0 = see-through, 255 = solid)."
         },
         {
           "name": "border_color",
@@ -432,7 +432,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Panel border colour."
+          "help": "Colour of the outline."
         },
         {
           "name": "border_width",
@@ -443,7 +443,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Panel border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "border_radius",
@@ -454,7 +454,7 @@
           "min": 0,
           "max": 100,
           "group": "Frame",
-          "help": "Corner rounding, in pixels."
+          "help": "How rounded the corners are."
         },
         {
           "name": "warning_low_enabled",
@@ -463,7 +463,7 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "help": "Turn on the low-value alert."
+          "help": "Warn when the reading drops too low."
         },
         {
           "name": "warning_low_threshold",
@@ -475,7 +475,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "warning_low_enabled",
-          "help": "When the value drops to or below this, the low alert fires."
+          "help": "Warn once the reading falls to or below this."
         },
         {
           "name": "warning_low_color",
@@ -484,7 +484,7 @@
           "default": "#0000FF",
           "category": "alerts",
           "group": "Alerts",
-          "help": "Alert colour applied when the low threshold is crossed."
+          "help": "The alert colour used when it's too low."
         },
         {
           "name": "warning_low_apply_label",
@@ -494,7 +494,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Apply the low-alert colour to the header label."
+          "help": "Turn the title the alert colour when it's too low."
         },
         {
           "name": "warning_low_apply_value",
@@ -504,7 +504,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Apply the low-alert colour to the value."
+          "help": "Turn the number the alert colour when it's too low."
         },
         {
           "name": "warning_low_apply_panel",
@@ -514,7 +514,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_low_apply",
-          "help": "Apply the low-alert colour to the panel border/background."
+          "help": "Turn the panel's edge/background the alert colour when it's too low."
         },
         {
           "name": "warning_high_enabled",
@@ -523,7 +523,7 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "help": "Turn on the high-value alert."
+          "help": "Warn when the reading climbs too high."
         },
         {
           "name": "warning_high_threshold",
@@ -535,7 +535,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "warning_high_enabled",
-          "help": "When the value rises to or above this, the high alert fires."
+          "help": "Warn once the reading rises to or above this."
         },
         {
           "name": "warning_high_color",
@@ -544,7 +544,7 @@
           "default": "#FF0000",
           "category": "alerts",
           "group": "Alerts",
-          "help": "Alert colour applied when the high threshold is crossed."
+          "help": "The alert colour used when it's too high."
         },
         {
           "name": "warning_high_apply_label",
@@ -554,7 +554,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Apply the high-alert colour to the header label."
+          "help": "Turn the title the alert colour when it's too high."
         },
         {
           "name": "warning_high_apply_value",
@@ -564,7 +564,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Apply the high-alert colour to the value."
+          "help": "Turn the number the alert colour when it's too high."
         },
         {
           "name": "warning_high_apply_panel",
@@ -574,7 +574,7 @@
           "category": "alerts",
           "group": "Alerts",
           "inline": "warning_high_apply",
-          "help": "Apply the high-alert colour to the panel border/background."
+          "help": "Turn the panel's edge/background the alert colour when it's too high."
         }
       ]
     },
@@ -601,7 +601,7 @@
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Text label shown with the bar."
+          "help": "Text shown with the bar."
         },
         {
           "name": "bar_min",
@@ -610,7 +610,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the empty end of the bar."
+          "help": "The reading at the empty end of the bar."
         },
         {
           "name": "bar_max",
@@ -619,7 +619,7 @@
           "default": 100,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the full end of the bar."
+          "help": "The reading at the full end of the bar."
         },
         {
           "name": "decimals",
@@ -628,7 +628,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Decimal places for the shown value (overrides the channel default)."
+          "help": "How many digits after the decimal point to show."
         },
         {
           "name": "anchor_enabled",
@@ -638,7 +638,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
           "group": "Value",
-          "help": "Grow the fill from a fixed anchor value instead of from the end - good for centre-zero bars."
+          "help": "Fill out from a set point instead of from the end. Good for bars that read both ways around zero."
         },
         {
           "name": "anchor_value",
@@ -648,7 +648,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The value the fill grows out from when Anchor Curve is on."
+          "help": "The reading the fill grows out from when the option above is on."
         },
         {
           "name": "anchor_position",
@@ -660,7 +660,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where the anchor sits along the bar, as a percent of its length."
+          "help": "Where that point sits along the bar, as a percentage."
         },
         {
           "name": "show_bar_value",
@@ -669,7 +669,7 @@
           "default": false,
           "category": "data",
           "group": "Value",
-          "help": "Print the numeric value on the bar."
+          "help": "Show the number on the bar."
         },
         {
           "name": "smoothing_ms",
@@ -681,7 +681,7 @@
           "max": 300,
           "step": 10,
           "group": "Behaviour",
-          "help": "Damping time for bar movement. Higher = smoother but laggier; 0 = instant."
+          "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
         },
         {
           "name": "invert_bar_value",
@@ -690,7 +690,7 @@
           "default": false,
           "category": "appearance",
           "group": "Fill",
-          "help": "Invert the fill so a high value empties the bar."
+          "help": "Flip it so a high reading empties the bar instead of filling it."
         },
         {
           "name": "center_fill",
@@ -699,7 +699,7 @@
           "default": false,
           "category": "appearance",
           "group": "Fill",
-          "help": "Fill outward from the centre of the bar in both directions."
+          "help": "Fill out from the middle of the bar in both directions."
         },
         {
           "name": "fill_dir",
@@ -714,7 +714,7 @@
             { "value": 3, "label": "Edges In" }
           ],
           "group": "Fill",
-          "help": "Which direction the bar fills from (left, right, up or down)."
+          "help": "Which way the bar fills (left, right, up or down)."
         },
         {
           "name": "bar_in_range_color",
@@ -724,7 +724,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the bar fill in the normal range."
+          "help": "Colour of the bar."
         },
         {
           "name": "bar_image_full",
@@ -734,7 +734,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Use an image as the fill instead of a solid colour."
+          "help": "Use a picture for the filled part instead of a plain colour."
         },
         {
           "name": "fill_edge_width",
@@ -744,7 +744,7 @@
           "min": 0,
           "max": 20,
           "category": "appearance",
-          "help": "Bright marker that rides the fill's leading edge (current value), like the path-bar tach. Works on colour and image fills. 0 = off.",
+          "help": "How wide the bright tip at the current reading is (0 = off).",
           "group": "Fill"
         },
         {
@@ -755,7 +755,7 @@
           "category": "appearance",
           "enabled_by": "fill_edge_width",
           "group": "Fill",
-          "help": "Colour of the bright marker that rides the fill's leading edge."
+          "help": "Colour of the bright tip that sits at the current reading."
         },
         {
           "name": "indicator_radius",
@@ -766,7 +766,7 @@
           "min": 0,
           "max": 50,
           "group": "Fill",
-          "help": "Corner rounding of the fill, in pixels."
+          "help": "How rounded the filled part's corners are."
         },
         {
           "name": "bar_bg_color",
@@ -776,7 +776,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Colour of the empty track behind the fill."
+          "help": "Colour of the empty part behind the fill."
         },
         {
           "name": "bar_image",
@@ -786,7 +786,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Use an image as the track instead of a solid colour."
+          "help": "Use a picture for the empty background instead of a plain colour."
         },
         {
           "name": "bar_radius",
@@ -797,7 +797,7 @@
           "min": 0,
           "max": 50,
           "group": "Frame",
-          "help": "Corner rounding of the whole bar, in pixels."
+          "help": "How rounded the whole bar's corners are."
         },
         {
           "name": "bar_border_width",
@@ -808,7 +808,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Bar border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "bar_border_color",
@@ -818,7 +818,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Bar border colour."
+          "help": "Colour of the outline."
         },
         {
           "name": "label_font",
@@ -827,7 +827,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size) for the label."
+          "help": "Text style and size of the label."
         },
         {
           "name": "label_color",
@@ -837,7 +837,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Text",
-          "help": "Label colour."
+          "help": "Colour of the label."
         },
         {
           "name": "value_font",
@@ -846,7 +846,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size) for the value."
+          "help": "Text style and size of the number."
         },
         {
           "name": "value_color",
@@ -856,7 +856,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Text",
-          "help": "Value colour."
+          "help": "Colour of the number."
         },
         {
           "name": "show_ticks",
@@ -865,7 +865,7 @@
           "default": false,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Draw tick marks along the bar."
+          "help": "Show marks along the bar, like the lines on a fuel gauge."
         },
         {
           "name": "tick_side",
@@ -880,7 +880,7 @@
             { "value": 2, "label": "Both" }
           ],
           "group": "Ticks",
-          "help": "Which side of the bar the ticks sit on."
+          "help": "Which side of the bar the marks sit on."
         },
         {
           "name": "tick_count",
@@ -892,7 +892,7 @@
           "max": 30,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Number of tick marks along the bar."
+          "help": "How many marks to show along the bar."
         },
         {
           "name": "tick_width",
@@ -904,7 +904,7 @@
           "max": 10,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the ticks, in pixels."
+          "help": "How thick the marks are."
         },
         {
           "name": "tick_length",
@@ -916,7 +916,7 @@
           "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the ticks, in pixels."
+          "help": "How long the marks are."
         },
         {
           "name": "tick_color",
@@ -927,7 +927,7 @@
           "night_overridable": true,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the ticks."
+          "help": "Colour of the marks."
         },
         {
           "name": "bar_alerts_enabled",
@@ -936,7 +936,7 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "help": "Recolour the bar when the value crosses the thresholds below."
+          "help": "Change the bar colour when the reading goes too low or too high (set the points below)."
         },
         {
           "name": "bar_low",
@@ -948,7 +948,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "bar_alerts_enabled",
-          "help": "At or below this value the bar uses the Low Color."
+          "help": "At or below this reading, the bar turns the Low colour."
         },
         {
           "name": "bar_low_color",
@@ -959,7 +959,7 @@
           "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
           "night_overridable": true,
-          "help": "Bar colour at or below the Low Threshold."
+          "help": "Bar colour when the reading is low."
         },
         {
           "name": "bar_high",
@@ -971,7 +971,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "bar_alerts_enabled",
-          "help": "At or above this value the bar uses the High Color."
+          "help": "At or above this reading, the bar turns the High colour."
         },
         {
           "name": "bar_high_color",
@@ -982,7 +982,7 @@
           "group": "Alerts",
           "enabled_by": "bar_alerts_enabled",
           "night_overridable": true,
-          "help": "Bar colour at or above the High Threshold."
+          "help": "Bar colour when the reading is high."
         }
       ]
     },
@@ -1013,7 +1013,7 @@
             { "value": 1, "label": "Right" }
           ],
           "group": "Value",
-          "help": "Which side of the screen this indicator occupies (left or right)."
+          "help": "Which side of the screen this light sits on."
         },
         {
           "name": "input_source",
@@ -1026,7 +1026,7 @@
             { "value": 1, "label": "CAN" }
           ],
           "group": "Value",
-          "help": "What drives the indicator - a bound signal or an internal source."
+          "help": "What turns the light on - a sensor reading or a built-in source."
         },
         {
           "name": "color_on",
@@ -1036,7 +1036,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour when active/on."
+          "help": "Colour when the light is on."
         },
         {
           "name": "opa_on",
@@ -1047,7 +1047,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Opacity when active (0-255)."
+          "help": "How bright it is when on (0-255)."
         },
         {
           "name": "color_off",
@@ -1057,7 +1057,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour when inactive/off."
+          "help": "Colour when the light is off."
         },
         {
           "name": "opa_off",
@@ -1068,7 +1068,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Opacity when inactive (0-255)."
+          "help": "How bright it is when off (0-255)."
         },
         {
           "name": "animation",
@@ -1077,7 +1077,7 @@
           "default": true,
           "category": "data",
           "group": "Behaviour",
-          "help": "Fade the transition between on and off."
+          "help": "Fade smoothly between on and off."
         },
         {
           "name": "is_momentary",
@@ -1086,7 +1086,7 @@
           "default": false,
           "category": "data",
           "group": "Behaviour",
-          "help": "Active only while the signal is asserted (vs latched on)."
+          "help": "Only stay on while the signal is active, instead of latching on."
         }
       ]
     },
@@ -1113,7 +1113,7 @@
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Text shown on the warning tile."
+          "help": "Text shown on the tile."
         },
         {
           "name": "active_color",
@@ -1123,7 +1123,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Tile colour when the warning is active."
+          "help": "Tile colour when the warning is on."
         },
         {
           "name": "active_opa",
@@ -1134,7 +1134,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Tile opacity when active (0-255)."
+          "help": "How solid the tile is when on (0-255)."
         },
         {
           "name": "inactive_color",
@@ -1144,7 +1144,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Tile colour when inactive."
+          "help": "Tile colour when off."
         },
         {
           "name": "inactive_opa",
@@ -1155,7 +1155,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Tile opacity when inactive (0-255)."
+          "help": "How solid the tile is when off (0-255)."
         },
         {
           "name": "radius",
@@ -1166,7 +1166,7 @@
           "min": 0,
           "max": 200,
           "group": "Frame",
-          "help": "Corner rounding of the tile, in pixels."
+          "help": "How rounded the tile's corners are."
         },
         {
           "name": "border_width",
@@ -1177,7 +1177,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Tile border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "border_color_style",
@@ -1188,7 +1188,7 @@
           "night_overridable": true,
           "night_key": "border_color",
           "group": "Frame",
-          "help": "Tile border colour."
+          "help": "Colour of the outline."
         },
         {
           "name": "image_name",
@@ -1198,7 +1198,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Image",
-          "help": "Icon image shown on the tile."
+          "help": "Icon shown on the tile."
         },
         {
           "name": "image_scale",
@@ -1210,7 +1210,7 @@
           "max": 200,
           "_doc": "Zoom for the alert image (100 = native), centred on the widget.\nOnly applies in image mode (ignored for the plain circle lamp).",
           "group": "Image",
-          "help": "Scale the icon, in percent."
+          "help": "Resize the icon, as a percentage."
         },
         {
           "name": "show_label",
@@ -1219,7 +1219,7 @@
           "default": true,
           "category": "appearance",
           "group": "Text",
-          "help": "Show the text label on the tile."
+          "help": "Show the text on the tile."
         },
         {
           "name": "label_color",
@@ -1230,7 +1230,7 @@
           "night_overridable": true,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Label colour."
+          "help": "Text colour."
         },
         {
           "name": "label_font",
@@ -1240,7 +1240,7 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Font (family:size) for the label."
+          "help": "Text style and size."
         },
         {
           "name": "label_y_offset",
@@ -1252,7 +1252,7 @@
           "max": 100,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Nudge the label up/down, in pixels."
+          "help": "Nudge the text up or down."
         },
         {
           "name": "label_text_align",
@@ -1267,7 +1267,7 @@
             { "value": 2, "label": "Right" }
           ],
           "group": "Text",
-          "help": "Horizontal alignment of the label."
+          "help": "Line the text up left, centre or right."
         },
         {
           "name": "is_momentary",
@@ -1276,7 +1276,7 @@
           "default": true,
           "category": "appearance",
           "group": "Behaviour",
-          "help": "Active only while the signal is asserted (vs latched on)."
+          "help": "Only stay on while the signal is active, instead of latching on."
         },
         {
           "name": "invert_toggle",
@@ -1285,7 +1285,7 @@
           "default": false,
           "category": "appearance",
           "group": "Behaviour",
-          "help": "Treat the signal as inverted - active when the signal is off."
+          "help": "Flip it - the warning shows when the signal is OFF."
         }
       ]
     },
@@ -1312,7 +1312,7 @@
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "Fixed text to display. Leave blank to show the bound channel's value instead."
+          "help": "Type fixed text to show. Leave blank to show the live reading instead."
         },
         {
           "name": "decimals",
@@ -1321,7 +1321,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Decimal places when showing a channel value."
+          "help": "How many digits after the decimal point when showing a reading."
         },
         {
           "name": "font",
@@ -1330,7 +1330,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size)."
+          "help": "Text style and size."
         },
         {
           "name": "text_color",
@@ -1351,7 +1351,7 @@
           "min": 0,
           "max": 359,
           "group": "Behaviour",
-          "help": "Rotate the text, in degrees."
+          "help": "Turn the text on an angle, in degrees."
         }
       ]
     },
@@ -1378,7 +1378,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the start of the scale."
+          "help": "The reading at the start of the dial."
         },
         {
           "name": "max",
@@ -1387,7 +1387,7 @@
           "default": 100,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the end of the scale."
+          "help": "The reading at the end of the dial."
         },
         {
           "name": "start_angle_user",
@@ -1400,7 +1400,7 @@
           "step": 5,
           "_doc": "User-coord start angle: 0° = 12 o'clock, CW positive.\n_meterSyncDerived translates this into the LVGL\nstart_angle/end_angle pair the firmware reads.",
           "group": "Value",
-          "help": "Where the scale begins, in degrees (0° = 3 o'clock, increasing clockwise)."
+          "help": "Where the dial starts, as a clock position in degrees (0 = 3 o'clock, going clockwise)."
         },
         {
           "name": "sweep_degrees",
@@ -1412,7 +1412,7 @@
           "max": 360,
           "step": 5,
           "group": "Value",
-          "help": "How far the scale sweeps from the start angle. 270 = a three-quarter gauge, 360 = full circle."
+          "help": "How far around the dial goes. 270 is a normal gauge; 360 is a full circle."
         },
         {
           "name": "reverse",
@@ -1421,7 +1421,7 @@
           "default": false,
           "category": "data",
           "group": "Value",
-          "help": "Reverse the scale so the high value sits at the start."
+          "help": "Run the dial backwards, so the high reading sits at the start."
         },
         {
           "name": "anchor_enabled",
@@ -1431,7 +1431,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear.",
           "group": "Value",
-          "help": "Sweep the needle from a fixed anchor value instead of from the start - good for centre-zero gauges."
+          "help": "Swing the needle out from a set point instead of from the start. Good for gauges that read both ways around zero."
         },
         {
           "name": "anchor_value",
@@ -1441,7 +1441,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The value the needle sweeps out from when Anchor Curve is on."
+          "help": "The reading the needle swings out from when the option above is on."
         },
         {
           "name": "anchor_position",
@@ -1453,7 +1453,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where the anchor sits along the scale, as a percent of its length."
+          "help": "Where that point sits along the dial, as a percentage."
         },
         {
           "name": "show_ticks",
@@ -1462,7 +1462,7 @@
           "default": true,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Draw tick marks around the dial."
+          "help": "Show the marks around the dial, like the lines on a speedometer."
         },
         {
           "name": "major_tick_step",
@@ -1471,7 +1471,7 @@
           "default": 50,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Value distance between major (largest) ticks. e.g. 1000 on a 0-8000 tach."
+          "help": "How far apart the biggest marks are, in reading value. On a 0-8000 rev counter, 1000 puts a big mark every 1000 RPM."
         },
         {
           "name": "mid_tick_step",
@@ -1482,7 +1482,7 @@
           "enabled_by": "show_ticks",
           "_doc": "Optional 3rd tick tier between minor and major. Value spacing\nin data units (e.g. 500 = a medium tick every 500 RPM). 0 = off.",
           "group": "Ticks",
-          "help": "Value distance between medium ticks. 0 = no medium tier."
+          "help": "How far apart the medium marks are. 0 turns them off."
         },
         {
           "name": "minor_tick_step",
@@ -1492,7 +1492,7 @@
           "category": "appearance",
           "_doc": "auto_ticks lives in w.config but is NOT in the inspector\n- see _meterSyncDerived. Min/Major Tick Spacing replace\nthe old count-based fields.",
           "group": "Ticks",
-          "help": "Value distance between minor ticks. 0 = no minor tier."
+          "help": "How far apart the smallest marks are. 0 turns them off."
         },
         {
           "name": "major_tick_width",
@@ -1504,7 +1504,7 @@
           "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the major ticks, in pixels."
+          "help": "How thick the biggest marks are."
         },
         {
           "name": "mid_tick_width",
@@ -1516,7 +1516,7 @@
           "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the medium ticks, in pixels (0 = off)."
+          "help": "How thick the medium marks are (0 = off)."
         },
         {
           "name": "minor_tick_width",
@@ -1528,7 +1528,7 @@
           "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the minor ticks, in pixels."
+          "help": "How thick the smallest marks are."
         },
         {
           "name": "major_tick_length",
@@ -1540,7 +1540,7 @@
           "max": 50,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the major ticks, in pixels."
+          "help": "How long the biggest marks are."
         },
         {
           "name": "mid_tick_length",
@@ -1552,7 +1552,7 @@
           "max": 100,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the medium ticks, in pixels (0 = off)."
+          "help": "How long the medium marks are (0 = off)."
         },
         {
           "name": "minor_tick_length",
@@ -1564,7 +1564,7 @@
           "max": 50,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the minor ticks, in pixels."
+          "help": "How long the smallest marks are."
         },
         {
           "name": "major_tick_color",
@@ -1575,7 +1575,7 @@
           "enabled_by": "show_ticks",
           "night_overridable": true,
           "group": "Ticks",
-          "help": "Colour of the major ticks."
+          "help": "Colour of the biggest marks."
         },
         {
           "name": "mid_tick_color",
@@ -1585,7 +1585,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the medium ticks."
+          "help": "Colour of the medium marks."
         },
         {
           "name": "minor_tick_color",
@@ -1596,7 +1596,7 @@
           "enabled_by": "show_ticks",
           "night_overridable": true,
           "group": "Ticks",
-          "help": "Colour of the minor ticks."
+          "help": "Colour of the smallest marks."
         },
         {
           "name": "show_tick_labels",
@@ -1605,7 +1605,7 @@
           "default": true,
           "category": "appearance",
           "group": "Numbers",
-          "help": "Draw numeric labels at the major ticks."
+          "help": "Show numbers next to the biggest marks."
         },
         {
           "name": "tick_label_font",
@@ -1615,7 +1615,7 @@
           "category": "appearance",
           "enabled_by": "show_tick_labels",
           "group": "Numbers",
-          "help": "Font (family:size) for the number labels."
+          "help": "Text style and size of those numbers."
         },
         {
           "name": "tick_label_color",
@@ -1626,7 +1626,7 @@
           "enabled_by": "show_tick_labels",
           "night_overridable": true,
           "group": "Numbers",
-          "help": "Colour of the number labels."
+          "help": "Colour of those numbers."
         },
         {
           "name": "label_gap",
@@ -1638,7 +1638,7 @@
           "max": 150,
           "enabled_by": "show_tick_labels",
           "group": "Numbers",
-          "help": "Gap between the tick ring and the number labels, in pixels."
+          "help": "How far the numbers sit from the marks."
         },
         {
           "name": "tick_label_divisor",
@@ -1651,7 +1651,7 @@
           "enabled_by": "show_tick_labels",
           "_doc": "Divides each tick label by this factor — e.g. 1000 turns a\n0..7000 tach into 0..7 (print the unit elsewhere, \"RPM x1000\").",
           "group": "Numbers",
-          "help": "Divide label values before display. 1000 -> a 7000 tick reads '7' (e.g. RPM x1000)."
+          "help": "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters."
         },
         {
           "name": "redline_enabled",
@@ -1661,7 +1661,7 @@
           "category": "data",
           "_doc": "Redline zone: visual cues drawn between threshold and\nmax. Show Arc + Recolor Ticks default ON so enabling\nthe master toggle gives an immediate visible result.",
           "group": "Redline",
-          "help": "Turn on the redline warning zone."
+          "help": "Show a warning zone, like a rev counter's red zone."
         },
         {
           "name": "redline_threshold",
@@ -1671,7 +1671,7 @@
           "category": "data",
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Value where the redline zone begins."
+          "help": "The reading where the warning zone starts."
         },
         {
           "name": "redline_color",
@@ -1681,7 +1681,7 @@
           "category": "data",
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Colour of the redline zone."
+          "help": "Colour of the warning zone."
         },
         {
           "name": "redline_show_arc",
@@ -1691,7 +1691,7 @@
           "category": "data",
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Draw a coloured arc along the redline zone (in addition to any tick recolouring)."
+          "help": "Draw a coloured band along the warning zone."
         },
         {
           "name": "redline_arc_width",
@@ -1703,7 +1703,7 @@
           "max": 30,
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Thickness of the redline arc, in pixels."
+          "help": "How thick that band is."
         },
         {
           "name": "redline_arc_r_mod",
@@ -1715,7 +1715,7 @@
           "max": 50,
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Move the redline arc in/out from the scale, in pixels."
+          "help": "Move the warning band in or out from the dial."
         },
         {
           "name": "redline_recolor_ticks",
@@ -1725,7 +1725,7 @@
           "category": "data",
           "enabled_by": "redline_enabled",
           "group": "Redline",
-          "help": "Recolour ticks inside the redline zone to the redline colour."
+          "help": "Turn the marks inside the warning zone that colour too."
         },
         {
           "name": "smoothing_ms",
@@ -1737,7 +1737,7 @@
           "max": 300,
           "step": 10,
           "group": "Behaviour",
-          "help": "Damping time for needle movement. Higher = smoother but laggier; 0 = instant."
+          "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
         },
         {
           "name": "meter_bg_color",
@@ -1747,7 +1747,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Gauge face background colour."
+          "help": "Background colour of the gauge face."
         },
         {
           "name": "meter_bg_opa",
@@ -1758,7 +1758,7 @@
           "min": 0,
           "max": 255,
           "group": "Frame",
-          "help": "Gauge face background opacity (0 = transparent, 255 = solid)."
+          "help": "How solid the gauge face is (0 = see-through, 255 = solid)."
         },
         {
           "name": "bg_image_name",
@@ -1768,7 +1768,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Image drawn as the gauge face."
+          "help": "Use a picture as the gauge face."
         },
         {
           "name": "border_color",
@@ -1778,7 +1778,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Border colour around the gauge."
+          "help": "Colour of the outline around the gauge."
         },
         {
           "name": "border_width",
@@ -1789,7 +1789,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "border_opa",
@@ -1800,7 +1800,7 @@
           "min": 0,
           "max": 255,
           "group": "Frame",
-          "help": "Border opacity (0-255)."
+          "help": "How solid the outline is (0-255)."
         },
         {
           "name": "scale_padding",
@@ -1811,7 +1811,7 @@
           "min": 0,
           "max": 100,
           "group": "Frame",
-          "help": "Inset the tick scale from the gauge edge, in pixels."
+          "help": "Move the marks inward from the edge of the gauge."
         },
         {
           "name": "show_needle",
@@ -1821,7 +1821,7 @@
           "category": "appearance",
           "_doc": "Master toggle for the value needle. When off, the meter\nrenders ticks / labels / ball only — no needle line, image,\nor needle shadow. Independent of Show Needle Ball.",
           "group": "Needle",
-          "help": "Draw the needle."
+          "help": "Show the pointer needle."
         },
         {
           "name": "needle_width",
@@ -1833,7 +1833,7 @@
           "max": 20,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Needle thickness, in pixels."
+          "help": "How thick the needle is."
         },
         {
           "name": "needle_color",
@@ -1844,7 +1844,7 @@
           "night_overridable": true,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Needle colour."
+          "help": "Colour of the needle."
         },
         {
           "name": "needle_r_mod",
@@ -1856,7 +1856,7 @@
           "max": 100,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Trim the needle length inward from the outer edge, in pixels."
+          "help": "Shorten the needle from its outer end."
         },
         {
           "name": "needle_rear_length",
@@ -1868,7 +1868,7 @@
           "max": 100,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Length of the needle's tail behind the pivot, in pixels."
+          "help": "How far the needle sticks out behind its centre, for a counterweight look."
         },
         {
           "name": "needle_inner_radius",
@@ -1880,7 +1880,7 @@
           "max": 400,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Distance from the pivot where the needle starts, in pixels (hollow centre)."
+          "help": "Start the needle away from the centre, leaving a gap in the middle."
         },
         {
           "name": "needle_tip_style",
@@ -1898,7 +1898,7 @@
             { "value": 5, "label": "Diamond" }
           ],
           "group": "Needle",
-          "help": "Shape of the needle tip."
+          "help": "The shape of the needle's tip."
         },
         {
           "name": "needle_tip_base_w",
@@ -1913,7 +1913,7 @@
             "autoFn": "function(cfg) {\n                          var nw = cfg.needle_width || 4;\n                          switch (cfg.needle_tip_style) {\n                              case 2: return (nw >> 1) + 1;  // Lance\n                              case 3: return (nw >> 1) + 2;  // Dagger\n                              case 4: return (nw >> 1) + 2;  // Spade\n                              case 5: return (nw >> 1) + 3;  // Diamond\n                              default: return 0;\n                          }\n                      }"
           },
           "group": "Needle",
-          "help": "Width of the needle at its base, in pixels (auto unless set)."
+          "help": "How wide the needle is at its base (leave at auto unless you want to set it)."
         },
         {
           "name": "needle_tip_point_w",
@@ -1927,7 +1927,7 @@
             "autoFn": "function(cfg) {\n                          return cfg.needle_tip_style === 4 ? 1 : 0;  // only Spade has a default cap\n                      }"
           },
           "group": "Needle",
-          "help": "Width of the needle at its tip, in pixels."
+          "help": "How wide the needle is at its tip."
         },
         {
           "name": "needle_tip_taper",
@@ -1941,7 +1941,7 @@
             "autoFn": "function(cfg) {\n                          switch (cfg.needle_tip_style) {\n                              case 2: return 90;   // Lance: shaft ends here\n                              case 3: return 100;  // Dagger: tapers across full length\n                              case 4: return 97;   // Spade: cap position\n                              case 5: return 50;   // Diamond: widest point\n                              default: return 0;\n                          }\n                      }"
           },
           "group": "Needle",
-          "help": "How sharply the needle narrows from base to tip, in percent."
+          "help": "How sharply the needle narrows toward the tip."
         },
         {
           "name": "needle_image_name",
@@ -1952,7 +1952,7 @@
           "night_overridable": true,
           "enabled_by": "show_needle",
           "group": "Needle",
-          "help": "Use an image as the needle instead of a drawn shape."
+          "help": "Use a picture as the needle instead of a drawn one."
         },
         {
           "name": "needle_pivot_x",
@@ -1964,7 +1964,7 @@
           "max": 400,
           "enabled_by": "needle_image_name",
           "group": "Needle",
-          "help": "Move the needle pivot horizontally, in pixels."
+          "help": "Move the needle's centre point left or right."
         },
         {
           "name": "needle_pivot_y",
@@ -1976,7 +1976,7 @@
           "max": 400,
           "enabled_by": "needle_image_name",
           "group": "Needle",
-          "help": "Move the needle pivot vertically, in pixels."
+          "help": "Move the needle's centre point up or down."
         },
         {
           "name": "needle_angle_offset",
@@ -1988,7 +1988,7 @@
           "max": 180,
           "enabled_by": "needle_image_name",
           "group": "Needle",
-          "help": "Rotate the needle's resting angle, in degrees."
+          "help": "Rotate where the needle rests, in degrees."
         },
         {
           "name": "show_needle_ball",
@@ -1998,7 +1998,7 @@
           "category": "appearance",
           "_doc": "Toggle the center pivot ball. When off, the ball is hidden\nregardless of size. Independent of Show Needle.",
           "group": "Needle",
-          "help": "Draw a hub circle at the needle pivot."
+          "help": "Show a round hub in the middle of the needle."
         },
         {
           "name": "needle_ball_size",
@@ -2010,7 +2010,7 @@
           "max": 40,
           "enabled_by": "show_needle_ball",
           "group": "Needle",
-          "help": "Diameter of the hub circle, in pixels."
+          "help": "How big the hub is."
         },
         {
           "name": "needle_ball_color",
@@ -2021,7 +2021,7 @@
           "night_overridable": true,
           "enabled_by": "show_needle_ball",
           "group": "Needle",
-          "help": "Colour of the hub circle."
+          "help": "Colour of the hub."
         }
       ]
     },
@@ -2049,7 +2049,7 @@
           "category": "data",
           "night_overridable": true,
           "group": "Image",
-          "help": "The image to display."
+          "help": "The picture to show."
         },
         {
           "name": "image_scale",
@@ -2060,7 +2060,7 @@
           "min": 10,
           "max": 200,
           "group": "Image",
-          "help": "Scale the image, in percent."
+          "help": "Resize the picture, as a percentage."
         },
         {
           "name": "opacity",
@@ -2071,7 +2071,7 @@
           "min": 0,
           "max": 255,
           "group": "Image",
-          "help": "Image opacity (0 = transparent, 255 = solid)."
+          "help": "How see-through the picture is (0 = invisible, 255 = solid)."
         },
         {
           "name": "recolor",
@@ -2081,7 +2081,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Image",
-          "help": "Tint the image with this colour."
+          "help": "Tint the whole picture this colour."
         },
         {
           "name": "recolor_opa",
@@ -2092,7 +2092,7 @@
           "min": 0,
           "max": 255,
           "group": "Image",
-          "help": "Strength of the tint (0 = none, 255 = full). Tinting a light icon to white can make it vanish."
+          "help": "How strong the tint is (0 = none, 255 = full). Tinting a light icon white can make it disappear."
         }
       ]
     },
@@ -2150,7 +2150,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Fill opacity (0 = transparent, 255 = solid)."
+          "help": "How see-through the fill is (0 = invisible, 255 = solid)."
         },
         {
           "name": "border_color",
@@ -2160,7 +2160,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Border colour."
+          "help": "Colour of the outline."
         },
         {
           "name": "border_width",
@@ -2171,7 +2171,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "border_radius",
@@ -2182,7 +2182,7 @@
           "min": 0,
           "max": 200,
           "group": "Frame",
-          "help": "Corner rounding, in pixels (rectangles)."
+          "help": "How rounded the corners are (for rectangles)."
         },
         {
           "name": "shadow_width",
@@ -2193,7 +2193,7 @@
           "min": 0,
           "max": 50,
           "group": "Shadow",
-          "help": "Drop-shadow spread, in pixels (0 = none)."
+          "help": "How far the drop shadow spreads (0 = no shadow)."
         },
         {
           "name": "shadow_color",
@@ -2203,7 +2203,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Shadow",
-          "help": "Drop-shadow colour."
+          "help": "Colour of the shadow."
         },
         {
           "name": "shadow_opa",
@@ -2214,7 +2214,7 @@
           "min": 0,
           "max": 255,
           "group": "Shadow",
-          "help": "Drop-shadow opacity (0-255)."
+          "help": "How dark the shadow is (0-255)."
         },
         {
           "name": "shadow_ofs_x",
@@ -2225,7 +2225,7 @@
           "min": -100,
           "max": 100,
           "group": "Shadow",
-          "help": "Offset the shadow horizontally, in pixels."
+          "help": "Move the shadow left or right."
         },
         {
           "name": "shadow_ofs_y",
@@ -2236,7 +2236,7 @@
           "min": -100,
           "max": 100,
           "group": "Shadow",
-          "help": "Offset the shadow vertically, in pixels."
+          "help": "Move the shadow up or down."
         },
         {
           "name": "bake_into_gauge",
@@ -2245,7 +2245,7 @@
           "default": false,
           "category": "appearance",
           "group": "Behaviour",
-          "help": "Render this static shape into the gauge background for better performance (it won't change at runtime)."
+          "help": "Lock this shape into the background so it draws faster. It won't change while driving - use for decoration only."
         }
       ]
     },
@@ -2278,7 +2278,7 @@
             { "value": "diagonal_bwd", "label": "Diagonal \\" }
           ],
           "group": "Style",
-          "help": "Direction of the line (horizontal, vertical or diagonal)."
+          "help": "Which way the line runs (across, up-down, or diagonal)."
         },
         {
           "name": "line_color",
@@ -2288,7 +2288,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Style",
-          "help": "Line colour."
+          "help": "Colour of the line."
         },
         {
           "name": "line_width",
@@ -2299,7 +2299,7 @@
           "min": 1,
           "max": 30,
           "group": "Style",
-          "help": "Line thickness, in pixels."
+          "help": "How thick the line is."
         },
         {
           "name": "line_opa",
@@ -2310,7 +2310,7 @@
           "min": 0,
           "max": 255,
           "group": "Style",
-          "help": "Line opacity (0-255)."
+          "help": "How see-through the line is (0-255)."
         },
         {
           "name": "rounded",
@@ -2319,7 +2319,7 @@
           "default": false,
           "category": "appearance",
           "group": "Style",
-          "help": "Round the line ends."
+          "help": "Round the line's ends."
         },
         {
           "name": "dash_gap",
@@ -2330,7 +2330,7 @@
           "min": 0,
           "max": 40,
           "group": "Style",
-          "help": "Gap between dashes, in pixels (0 = solid line)."
+          "help": "Gap between dashes (0 = a solid line)."
         }
       ]
     },
@@ -2367,7 +2367,7 @@
             { "value": 7, "label": "always (test)" }
           ],
           "group": "Value",
-          "help": "How the value is compared to the threshold to trigger the banner (e.g. >, <, =, in range)."
+          "help": "How the reading is checked to pop up the message (over, under, equal to, or within a range)."
         },
         {
           "name": "threshold",
@@ -2376,7 +2376,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "The value the operator compares against."
+          "help": "The value the reading is checked against."
         },
         {
           "name": "range_min",
@@ -2385,7 +2385,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Lower bound when the operator is 'in range'."
+          "help": "The bottom of the range (when using 'within a range')."
         },
         {
           "name": "range_max",
@@ -2394,7 +2394,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Upper bound when the operator is 'in range'."
+          "help": "The top of the range (when using 'within a range')."
         },
         {
           "name": "text",
@@ -2403,7 +2403,7 @@
           "default": "WARNING",
           "category": "data",
           "group": "Text",
-          "help": "Message shown when the banner triggers."
+          "help": "The message to show when it pops up."
         },
         {
           "name": "text_align",
@@ -2417,7 +2417,7 @@
             { "value": 2, "label": "Right" }
           ],
           "group": "Text",
-          "help": "Horizontal alignment of the message."
+          "help": "Line the message up left, centre or right."
         },
         {
           "name": "bg_color",
@@ -2427,7 +2427,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Banner background colour."
+          "help": "Background colour."
         },
         {
           "name": "bg_opa",
@@ -2438,7 +2438,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Banner background opacity (0-255)."
+          "help": "How solid the background is (0-255)."
         },
         {
           "name": "text_color",
@@ -2448,7 +2448,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Text",
-          "help": "Message text colour."
+          "help": "Colour of the message."
         },
         {
           "name": "font",
@@ -2457,7 +2457,7 @@
           "default": "",
           "category": "appearance",
           "group": "Text",
-          "help": "Font (family:size) for the message."
+          "help": "Text style and size."
         },
         {
           "name": "border_width",
@@ -2468,7 +2468,7 @@
           "min": 0,
           "max": 20,
           "group": "Frame",
-          "help": "Banner border thickness, in pixels (0 = none)."
+          "help": "Thickness of the outline (0 = none)."
         },
         {
           "name": "border_color",
@@ -2478,7 +2478,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Frame",
-          "help": "Banner border colour."
+          "help": "Colour of the outline."
         },
         {
           "name": "radius",
@@ -2489,7 +2489,7 @@
           "min": 0,
           "max": 100,
           "group": "Frame",
-          "help": "Corner rounding, in pixels."
+          "help": "How rounded the corners are."
         }
       ]
     },
@@ -2519,7 +2519,7 @@
           "max": 359,
           "step": 5,
           "group": "Value",
-          "help": "Where the arc begins, in degrees (0° = 3 o'clock, increasing clockwise). The fill grows from here."
+          "help": "Where the gauge starts, as a clock position in degrees (0 = 3 o'clock, going clockwise). This is the empty end."
         },
         {
           "name": "sweep_degrees",
@@ -2531,7 +2531,7 @@
           "max": 360,
           "step": 5,
           "group": "Value",
-          "help": "How far the arc travels from the start angle. 270 = a classic three-quarter gauge, 360 = full circle."
+          "help": "How far around the circle the gauge goes. 270 covers most of a circle like a normal gauge; 360 is a full circle."
         },
         {
           "name": "signal_min",
@@ -2540,7 +2540,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Channel value mapped to the empty (start) end of the arc."
+          "help": "The reading that shows the gauge empty (the start)."
         },
         {
           "name": "signal_max",
@@ -2549,7 +2549,7 @@
           "default": 100,
           "category": "data",
           "group": "Value",
-          "help": "Channel value mapped to the full (end) end of the arc."
+          "help": "The reading that shows the gauge full (the end)."
         },
         {
           "name": "tick_min",
@@ -2558,7 +2558,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "First value the tick scale covers. Usually matches Signal Min; set differently to label only part of the range."
+          "help": "The first number the marks count from. Usually the same as the empty value."
         },
         {
           "name": "tick_max",
@@ -2567,7 +2567,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Last value the tick scale covers. Usually matches Signal Max."
+          "help": "The last number the marks count up to. Usually the same as the full value."
         },
         {
           "name": "anchor_enabled",
@@ -2577,7 +2577,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
           "group": "Value",
-          "help": "Grow the fill outward from a fixed anchor value instead of from the start - ideal for centre-zero gauges like boost/vacuum."
+          "help": "Fill the gauge out from a set point instead of from the empty end. Handy for gauges that read both ways, like a turbo boost/vacuum gauge that rests at zero."
         },
         {
           "name": "anchor_value",
@@ -2587,7 +2587,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The value the fill grows out from when Anchor Curve is on."
+          "help": "The reading the fill grows out from when the option above is on."
         },
         {
           "name": "anchor_position",
@@ -2599,7 +2599,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where the anchor sits along the arc, as a percent of its length (0 = start, 100 = end)."
+          "help": "Where that start point sits along the gauge, as a percentage (0 = start, 100 = end)."
         },
         {
           "name": "reverse",
@@ -2608,7 +2608,7 @@
           "default": false,
           "category": "data",
           "group": "Value",
-          "help": "Flip the fill so it grows from the high end toward the low end."
+          "help": "Run the gauge backwards, so the full end becomes the empty end."
         },
         {
           "name": "smoothing_ms",
@@ -2620,7 +2620,7 @@
           "max": 300,
           "step": 10,
           "group": "Behaviour",
-          "help": "Damping time for fill/needle movement. Higher = smoother but laggier; 0 = instant, raw response."
+          "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value."
         },
         {
           "name": "arc_width",
@@ -2631,7 +2631,7 @@
           "min": 1,
           "max": 50,
           "group": "Fill",
-          "help": "Thickness of the lit (value) arc, in pixels."
+          "help": "How thick the coloured (filled) part of the gauge is."
         },
         {
           "name": "arc_offset",
@@ -2642,7 +2642,7 @@
           "min": 0,
           "max": 120,
           "group": "Fill",
-          "help": "Shifts the whole ring in/out from the widget centre, in pixels. Use to nest concentric arcs."
+          "help": "Moves the ring in or out from the centre. Use it to stack one gauge inside another."
         },
         {
           "name": "arc_color",
@@ -2652,7 +2652,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the lit (value) portion of the arc."
+          "help": "Colour of the filled part."
         },
         {
           "name": "bg_arc_color",
@@ -2662,7 +2662,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the unlit track behind the fill."
+          "help": "Colour of the empty part behind the fill."
         },
         {
           "name": "bg_arc_width",
@@ -2673,7 +2673,7 @@
           "min": 1,
           "max": 50,
           "group": "Fill",
-          "help": "Thickness of the background track. Make it wider or narrower than the fill for a recessed or raised look."
+          "help": "How thick the empty background ring is. Make it wider or narrower than the fill for a raised or recessed look."
         },
         {
           "name": "rounded_ends",
@@ -2682,7 +2682,7 @@
           "default": false,
           "category": "appearance",
           "group": "Fill",
-          "help": "Round the ends of the fill and track instead of flat-cut."
+          "help": "Give the gauge rounded ends instead of flat-cut ones."
         },
         {
           "name": "fade_fill",
@@ -2690,7 +2690,7 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "help": "Dim-to-bright gradient along the lit arc (positional, redraw-cheap).",
+          "help": "Fade the colour from dim to bright along the filled part, for a glowing look.",
           "group": "Fill"
         },
         {
@@ -2699,7 +2699,7 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "help": "Bright marker at the current-value end of the fill.",
+          "help": "Add a bright tip that sits at the current reading, like the glowing end of a digital bar.",
           "group": "Fill"
         },
         {
@@ -2710,7 +2710,7 @@
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
           "group": "Fill",
-          "help": "Colour of the leading-edge marker."
+          "help": "Colour of that bright tip."
         },
         {
           "name": "lead_edge_width",
@@ -2722,7 +2722,7 @@
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
           "group": "Fill",
-          "help": "Width of the leading-edge marker, in pixels."
+          "help": "How wide the bright tip is."
         },
         {
           "name": "arc_image",
@@ -2732,7 +2732,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Use an image as the track instead of a solid colour."
+          "help": "Use a picture for the empty background instead of a plain colour."
         },
         {
           "name": "arc_image_full",
@@ -2742,7 +2742,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Use an image as the lit fill instead of a solid colour - revealed progressively as the value rises."
+          "help": "Use a picture for the filled part instead of a plain colour. It's uncovered bit by bit as the reading rises."
         },
         {
           "name": "redline_color",
@@ -2751,7 +2751,7 @@
           "default": "#FF0000",
           "category": "appearance",
           "group": "Redline",
-          "help": "Colour of the redline band. Its position comes from the bound channel's high-warning threshold."
+          "help": "Colour of the warning zone (like a rev counter's red zone). Where it starts is set by this reading's high-warning level."
         },
         {
           "name": "redline_arc_width",
@@ -2762,7 +2762,7 @@
           "min": 0,
           "max": 50,
           "group": "Redline",
-          "help": "Thickness of the redline band arc."
+          "help": "How thick the warning-zone band is."
         },
         {
           "name": "redline_recolor_fill",
@@ -2771,7 +2771,7 @@
           "default": true,
           "category": "appearance",
           "group": "Redline",
-          "help": "When the value enters the redline zone, recolour the whole fill (not just the band) to the redline colour."
+          "help": "When the reading reaches the warning zone, turn the whole fill that colour - not just the band."
         },
         {
           "name": "show_ticks",
@@ -2780,7 +2780,7 @@
           "default": false,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Draw tick marks around the arc."
+          "help": "Show the marks around the gauge, like the lines on a speedometer."
         },
         {
           "name": "major_tick_step",
@@ -2790,7 +2790,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Value distance between major (largest) ticks. e.g. 1000 on a 0-8000 tach = a major tick every 1000."
+          "help": "How far apart the biggest marks are, in reading value. On a 0-8000 rev counter, 1000 puts a big mark every 1000 RPM."
         },
         {
           "name": "mid_tick_step",
@@ -2799,7 +2799,7 @@
           "default": 0,
           "category": "appearance",
           "group": "Ticks",
-          "help": "Value distance between medium ticks. 0 = no medium tier."
+          "help": "How far apart the medium marks are. 0 turns them off."
         },
         {
           "name": "minor_tick_step",
@@ -2809,7 +2809,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Value distance between minor (smallest) ticks. 0 = no minor tier."
+          "help": "How far apart the smallest marks are. 0 turns them off."
         },
         {
           "name": "major_tick_width",
@@ -2821,7 +2821,7 @@
           "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the major ticks, in pixels."
+          "help": "How thick the biggest marks are."
         },
         {
           "name": "mid_tick_width",
@@ -2832,7 +2832,7 @@
           "min": 0,
           "max": 20,
           "group": "Ticks",
-          "help": "Thickness of the medium ticks, in pixels."
+          "help": "How thick the medium marks are."
         },
         {
           "name": "minor_tick_width",
@@ -2844,7 +2844,7 @@
           "max": 20,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the minor ticks, in pixels."
+          "help": "How thick the smallest marks are."
         },
         {
           "name": "major_tick_length",
@@ -2856,7 +2856,7 @@
           "max": 50,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the major ticks, in pixels."
+          "help": "How long the biggest marks are."
         },
         {
           "name": "mid_tick_length",
@@ -2867,7 +2867,7 @@
           "min": 0,
           "max": 100,
           "group": "Ticks",
-          "help": "Length of the medium ticks, in pixels."
+          "help": "How long the medium marks are."
         },
         {
           "name": "minor_tick_length",
@@ -2879,7 +2879,7 @@
           "max": 50,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the minor ticks, in pixels."
+          "help": "How long the smallest marks are."
         },
         {
           "name": "major_tick_color",
@@ -2890,7 +2890,7 @@
           "night_overridable": true,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the major ticks."
+          "help": "Colour of the biggest marks."
         },
         {
           "name": "mid_tick_color",
@@ -2899,7 +2899,7 @@
           "default": "#BDBDBD",
           "category": "appearance",
           "group": "Ticks",
-          "help": "Colour of the medium ticks."
+          "help": "Colour of the medium marks."
         },
         {
           "name": "minor_tick_color",
@@ -2910,7 +2910,7 @@
           "night_overridable": true,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the minor ticks."
+          "help": "Colour of the smallest marks."
         },
         {
           "name": "show_tick_labels",
@@ -2919,7 +2919,7 @@
           "default": true,
           "category": "appearance",
           "group": "Numbers",
-          "help": "Draw numeric labels at the major ticks."
+          "help": "Show numbers next to the biggest marks."
         },
         {
           "name": "tick_label_font",
@@ -2929,7 +2929,7 @@
           "category": "appearance",
           "enabled_by": "show_tick_labels",
           "group": "Numbers",
-          "help": "Font (family:size) for the tick number labels."
+          "help": "Text style and size of those numbers."
         },
         {
           "name": "tick_label_color",
@@ -2940,7 +2940,7 @@
           "enabled_by": "show_tick_labels",
           "night_overridable": true,
           "group": "Numbers",
-          "help": "Colour of the tick number labels."
+          "help": "Colour of those numbers."
         },
         {
           "name": "label_gap",
@@ -2952,7 +2952,7 @@
           "max": 150,
           "enabled_by": "show_tick_labels",
           "group": "Numbers",
-          "help": "Gap between the tick ring and the number labels, in pixels. Larger pushes labels toward the centre."
+          "help": "How far the numbers sit from the marks."
         },
         {
           "name": "tick_label_divisor",
@@ -2964,7 +2964,7 @@
           "max": 100000,
           "enabled_by": "show_tick_labels",
           "group": "Numbers",
-          "help": "Divide label values before display. 1000 -> a 7000 tick reads '7' (e.g. RPM x1000)."
+          "help": "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters."
         },
         {
           "name": "ticks_on_top",
@@ -2973,7 +2973,7 @@
           "default": false,
           "category": "appearance",
           "group": "Numbers",
-          "help": "Draw ticks and labels above the fill instead of behind it."
+          "help": "Draw the marks and numbers on top of the fill instead of behind it."
         },
         {
           "name": "show_value_line",
@@ -2982,7 +2982,7 @@
           "default": false,
           "category": "appearance",
           "group": "Needle",
-          "help": "Draw a thin radial line pointing at the current value."
+          "help": "Show a thin pointer line at the current reading."
         },
         {
           "name": "value_line_width",
@@ -2994,7 +2994,7 @@
           "max": 20,
           "enabled_by": "show_value_line",
           "group": "Needle",
-          "help": "Thickness of the value line, in pixels."
+          "help": "How thick the pointer line is."
         },
         {
           "name": "value_line_color",
@@ -3005,7 +3005,7 @@
           "night_overridable": true,
           "enabled_by": "show_value_line",
           "group": "Needle",
-          "help": "Colour of the value line."
+          "help": "Colour of the pointer line."
         },
         {
           "name": "value_line_r_mod",
@@ -3017,7 +3017,7 @@
           "max": 50,
           "enabled_by": "show_value_line",
           "group": "Needle",
-          "help": "Trim the value line's length inward from the outer edge, in pixels."
+          "help": "Shorten the pointer line from the outer edge inward."
         },
         {
           "name": "arc_alerts_enabled",
@@ -3026,7 +3026,7 @@
           "default": false,
           "category": "alerts",
           "group": "Alerts",
-          "help": "Recolour the fill when the value crosses the thresholds below - independent of the channel redline."
+          "help": "Change the fill colour when the reading goes too low or too high (set the points below)."
         },
         {
           "name": "arc_low",
@@ -3038,7 +3038,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "arc_alerts_enabled",
-          "help": "At or below this value the fill uses the Low Color."
+          "help": "At or below this reading, the fill turns the Low colour."
         },
         {
           "name": "arc_low_color",
@@ -3049,7 +3049,7 @@
           "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
           "night_overridable": true,
-          "help": "Fill colour when the value is at or below the Low Threshold."
+          "help": "Fill colour when the reading is low."
         },
         {
           "name": "arc_high",
@@ -3061,7 +3061,7 @@
           "min": -99999,
           "max": 99999,
           "enabled_by": "arc_alerts_enabled",
-          "help": "At or above this value the fill uses the High Color."
+          "help": "At or above this reading, the fill turns the High colour."
         },
         {
           "name": "arc_high_color",
@@ -3072,7 +3072,7 @@
           "group": "Alerts",
           "enabled_by": "arc_alerts_enabled",
           "night_overridable": true,
-          "help": "Fill colour when the value is at or above the High Threshold."
+          "help": "Fill colour when the reading is high."
         }
       ]
     },
@@ -3099,7 +3099,7 @@
           "default": "",
           "category": "data",
           "group": "Text",
-          "help": "Text shown on the toggle."
+          "help": "Text shown on the switch."
         },
         {
           "name": "show_label",
@@ -3108,7 +3108,7 @@
           "default": true,
           "category": "data",
           "group": "Text",
-          "help": "Show the text label."
+          "help": "Show the text."
         },
         {
           "name": "signal_on_threshold",
@@ -3117,7 +3117,7 @@
           "default": 0.5,
           "category": "data",
           "group": "Value",
-          "help": "Bound value at or above which the toggle reads as ON."
+          "help": "The reading at or above which the switch shows as ON."
         },
         {
           "name": "tx_can_id",
@@ -3126,7 +3126,7 @@
           "default": 0,
           "category": "data",
           "group": "CAN TX",
-          "help": "CAN frame ID this toggle transmits on when switched."
+          "help": "Advanced: the CAN message ID this switch sends. Leave alone unless you're wiring it to the car's CAN bus."
         },
         {
           "name": "tx_bit_start",
@@ -3136,7 +3136,7 @@
           "category": "data",
           "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
           "group": "CAN TX",
-          "help": "Start bit of the transmitted value within the frame."
+          "help": "Advanced: which bit in the CAN message to set."
         },
         {
           "name": "tx_bit_length",
@@ -3146,7 +3146,7 @@
           "category": "data",
           "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
           "group": "CAN TX",
-          "help": "Number of bits transmitted."
+          "help": "Advanced: how many bits to send."
         },
         {
           "name": "tx_endian",
@@ -3159,7 +3159,7 @@
             { "value": 1, "label": "Little Endian" }
           ],
           "group": "CAN TX",
-          "help": "Byte order of the transmitted value."
+          "help": "Advanced: byte order of the sent value."
         },
         {
           "name": "tx_rate_hz",
@@ -3170,7 +3170,7 @@
           "min": 0,
           "max": 50,
           "group": "CAN TX",
-          "help": "How often the frame is re-sent, in Hz (0 = send once on change)."
+          "help": "Advanced: how often to resend the message, per second (0 = only when it changes)."
         },
         {
           "name": "image_name",
@@ -3180,7 +3180,7 @@
           "category": "data",
           "night_overridable": true,
           "group": "Image",
-          "help": "Icon shown on the toggle."
+          "help": "Icon shown on the switch."
         },
         {
           "name": "active_color",
@@ -3201,7 +3201,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Opacity when ON (0-255)."
+          "help": "How solid it is when ON (0-255)."
         },
         {
           "name": "inactive_color",
@@ -3222,7 +3222,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Opacity when OFF (0-255)."
+          "help": "How solid it is when OFF (0-255)."
         },
         {
           "name": "label_color",
@@ -3233,7 +3233,7 @@
           "enabled_by": "show_label",
           "night_overridable": true,
           "group": "Text",
-          "help": "Label colour."
+          "help": "Text colour."
         },
         {
           "name": "font",
@@ -3243,7 +3243,7 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Font (family:size) for the label."
+          "help": "Text style and size."
         },
         {
           "name": "label_align",
@@ -3258,7 +3258,7 @@
             { "value": 2, "label": "Right" }
           ],
           "group": "Text",
-          "help": "Horizontal alignment of the label."
+          "help": "Line the text up left, centre or right."
         },
         {
           "name": "label_x",
@@ -3270,7 +3270,7 @@
           "max": 400,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Nudge the label horizontally, in pixels."
+          "help": "Nudge the text left or right."
         },
         {
           "name": "label_y",
@@ -3282,7 +3282,7 @@
           "max": 240,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Nudge the label vertically, in pixels."
+          "help": "Nudge the text up or down."
         }
       ]
     },
@@ -3318,7 +3318,7 @@
           "default": true,
           "category": "data",
           "group": "Value",
-          "help": "Show the text label."
+          "help": "Show the text."
         },
         {
           "name": "latch",
@@ -3327,7 +3327,7 @@
           "default": false,
           "category": "data",
           "group": "Behaviour",
-          "help": "Toggle on each press (latched) instead of momentary."
+          "help": "Stay on after a press (toggle) instead of only while held."
         },
         {
           "name": "tx_can_id",
@@ -3336,7 +3336,7 @@
           "default": 0,
           "category": "data",
           "group": "CAN TX",
-          "help": "CAN frame ID this button transmits on when pressed."
+          "help": "Advanced: the CAN message ID this button sends. Leave alone unless wiring it to the car's CAN bus."
         },
         {
           "name": "tx_bit_start",
@@ -3346,7 +3346,7 @@
           "category": "data",
           "_raw_options": "Array.from({length:64},(_,i)=>({v:i,l:String(i)}))",
           "group": "CAN TX",
-          "help": "Start bit of the transmitted value within the frame."
+          "help": "Advanced: which bit in the CAN message to set."
         },
         {
           "name": "tx_bit_length",
@@ -3356,7 +3356,7 @@
           "category": "data",
           "_raw_options": "Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)}))",
           "group": "CAN TX",
-          "help": "Number of bits transmitted."
+          "help": "Advanced: how many bits to send."
         },
         {
           "name": "tx_endian",
@@ -3369,7 +3369,7 @@
             { "value": 1, "label": "Little Endian" }
           ],
           "group": "CAN TX",
-          "help": "Byte order of the transmitted value."
+          "help": "Advanced: byte order of the sent value."
         },
         {
           "name": "tx_rate_hz",
@@ -3380,7 +3380,7 @@
           "min": 0,
           "max": 50,
           "group": "CAN TX",
-          "help": "How often the frame is re-sent while held, in Hz (0 = send once)."
+          "help": "Advanced: how often to resend while held, per second (0 = send once)."
         },
         {
           "name": "tx_send_release",
@@ -3390,7 +3390,7 @@
           "category": "data",
           "enabled_by": "!latch",
           "group": "CAN TX",
-          "help": "Also send a frame when the button is released."
+          "help": "Advanced: also send a message when you let go."
         },
         {
           "name": "bg_color",
@@ -3400,7 +3400,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Button background colour."
+          "help": "Colour of the button."
         },
         {
           "name": "text_color",
@@ -3410,7 +3410,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Button label colour."
+          "help": "Text colour."
         },
         {
           "name": "pressed_color",
@@ -3420,7 +3420,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Background colour while the button is held."
+          "help": "Colour while you're pressing it."
         },
         {
           "name": "border_radius",
@@ -3431,7 +3431,7 @@
           "min": 0,
           "max": 100,
           "group": "Frame",
-          "help": "Corner rounding, in pixels."
+          "help": "How rounded the corners are."
         },
         {
           "name": "font",
@@ -3441,7 +3441,7 @@
           "category": "appearance",
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Font (family:size) for the label."
+          "help": "Text style and size."
         },
         {
           "name": "label_align",
@@ -3456,7 +3456,7 @@
             { "value": 2, "label": "Right" }
           ],
           "group": "Text",
-          "help": "Horizontal alignment of the label."
+          "help": "Line the text up left, centre or right."
         },
         {
           "name": "label_x",
@@ -3468,7 +3468,7 @@
           "max": 400,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Nudge the label horizontally, in pixels."
+          "help": "Nudge the text left or right."
         },
         {
           "name": "label_y",
@@ -3480,7 +3480,7 @@
           "max": 240,
           "enabled_by": "show_label",
           "group": "Text",
-          "help": "Nudge the label vertically, in pixels."
+          "help": "Nudge the text up or down."
         },
         {
           "name": "image_name",
@@ -3517,7 +3517,7 @@
           "default": "",
           "category": "data",
           "group": "Value",
-          "help": "The channel that drives the LED bar (usually RPM)."
+          "help": "What drives the lights - usually RPM."
         },
         {
           "name": "range_min",
@@ -3526,7 +3526,7 @@
           "default": 4000,
           "category": "data",
           "group": "Value",
-          "help": "Value at which the first LED lights."
+          "help": "The reading where the first light comes on."
         },
         {
           "name": "range_max",
@@ -3535,7 +3535,7 @@
           "default": 7000,
           "category": "data",
           "group": "Value",
-          "help": "Value at which every LED is lit."
+          "help": "The reading where every light is on."
         },
         {
           "name": "led_count",
@@ -3547,7 +3547,7 @@
           "max": 45,
           "step": 1,
           "group": "Value",
-          "help": "Number of LEDs in the bar."
+          "help": "How many lights in the row."
         },
         {
           "name": "flash_threshold",
@@ -3556,7 +3556,7 @@
           "default": 7200,
           "category": "data",
           "group": "Behaviour",
-          "help": "Value at/above which the whole bar flashes (the shift point)."
+          "help": "The reading where the whole row flashes - your shift point."
         },
         {
           "name": "flash_speed",
@@ -3568,7 +3568,7 @@
           "max": 1000,
           "step": 10,
           "group": "Behaviour",
-          "help": "Flash interval, in milliseconds. Lower = faster."
+          "help": "How fast it flashes (smaller = faster), in milliseconds."
         },
         {
           "name": "fill_mode",
@@ -3581,7 +3581,7 @@
             { "value": 1, "label": "Outside In" }
           ],
           "group": "Behaviour",
-          "help": "How the LEDs light up as the value rises (e.g. left-to-right, or by zone)."
+          "help": "How the lights fill up as the reading rises."
         },
         {
           "name": "color_low",
@@ -3591,7 +3591,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the LEDs in the low zone."
+          "help": "Colour of the first (low) lights."
         },
         {
           "name": "color_mid",
@@ -3601,7 +3601,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the LEDs in the mid zone."
+          "help": "Colour of the middle lights."
         },
         {
           "name": "color_high",
@@ -3611,7 +3611,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of the LEDs in the high zone."
+          "help": "Colour of the top lights."
         },
         {
           "name": "color_off",
@@ -3621,7 +3621,7 @@
           "category": "appearance",
           "night_overridable": true,
           "group": "Fill",
-          "help": "Colour of unlit LEDs."
+          "help": "Colour of lights that are off."
         },
         {
           "name": "threshold_mid",
@@ -3633,7 +3633,7 @@
           "max": 1,
           "step": 0.05,
           "group": "Fill",
-          "help": "Value where the LEDs switch to the mid colour."
+          "help": "The reading where the lights switch to the middle colour."
         },
         {
           "name": "threshold_high",
@@ -3645,7 +3645,7 @@
           "max": 1,
           "step": 0.05,
           "group": "Fill",
-          "help": "Value where the LEDs switch to the high colour."
+          "help": "The reading where the lights switch to the top colour."
         },
         {
           "name": "led_spacing",
@@ -3657,7 +3657,7 @@
           "max": 200,
           "step": 1,
           "group": "Layout",
-          "help": "Gap between LEDs, in pixels."
+          "help": "Gap between the lights."
         },
         {
           "name": "led_width",
@@ -3669,7 +3669,7 @@
           "max": 100,
           "step": 1,
           "group": "Layout",
-          "help": "Width of each LED, in pixels (0 = auto-fit)."
+          "help": "How wide each light is (0 = fit automatically)."
         },
         {
           "name": "led_height",
@@ -3681,7 +3681,7 @@
           "max": 100,
           "step": 1,
           "group": "Layout",
-          "help": "Height of each LED, in pixels (0 = auto-fit)."
+          "help": "How tall each light is (0 = fit automatically)."
         },
         {
           "name": "border_radius",
@@ -3693,7 +3693,7 @@
           "max": 255,
           "step": 1,
           "group": "Layout",
-          "help": "Corner rounding of each LED, in pixels."
+          "help": "How rounded each light's corners are."
         }
       ]
     },
@@ -3719,7 +3719,7 @@
           "default": 0,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the start of the path."
+          "help": "The reading at the start of the bar."
         },
         {
           "name": "max",
@@ -3728,7 +3728,7 @@
           "default": 11000,
           "category": "data",
           "group": "Value",
-          "help": "Channel value at the end of the path."
+          "help": "The reading at the end of the bar."
         },
         {
           "name": "redline",
@@ -3737,7 +3737,7 @@
           "default": 10000,
           "category": "data",
           "group": "Value",
-          "help": "Value where the redline zone begins along the path."
+          "help": "The reading where the warning zone starts along the bar."
         },
         {
           "name": "lit_color",
@@ -3746,7 +3746,7 @@
           "default": "#2EE4C8",
           "category": "appearance",
           "group": "Fill",
-          "help": "Colour of the lit (value) portion of the band."
+          "help": "Colour of the filled part."
         },
         {
           "name": "dim_color",
@@ -3755,7 +3755,7 @@
           "default": "#2E323A",
           "category": "appearance",
           "group": "Fill",
-          "help": "Colour of the unlit portion of the band."
+          "help": "Colour of the empty part."
         },
         {
           "name": "dim_opa",
@@ -3766,7 +3766,7 @@
           "min": 0,
           "max": 255,
           "group": "Fill",
-          "help": "Opacity of the unlit portion (0-255)."
+          "help": "How see-through the empty part is (0-255)."
         },
         {
           "name": "band_width",
@@ -3777,7 +3777,7 @@
           "min": 2,
           "max": 80,
           "group": "Fill",
-          "help": "Thickness of the band, in pixels."
+          "help": "How thick the bar is."
         },
         {
           "name": "rounded",
@@ -3786,7 +3786,7 @@
           "default": true,
           "category": "appearance",
           "group": "Fill",
-          "help": "Round the band ends."
+          "help": "Round the bar's ends."
         },
         {
           "name": "fade_fill",
@@ -3794,7 +3794,7 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "help": "Dim-to-bright gradient along the lit band (positional, redraw-cheap).",
+          "help": "Fade the colour from dim to bright along the filled part, for a glowing look.",
           "group": "Fill"
         },
         {
@@ -3803,7 +3803,7 @@
           "type": "checkbox",
           "default": true,
           "category": "appearance",
-          "help": "Bright flat marker at the current-value tip of the fill.",
+          "help": "Add a bright tip at the current reading, like a glowing bar end.",
           "group": "Fill"
         },
         {
@@ -3814,7 +3814,7 @@
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
           "group": "Fill",
-          "help": "Colour of the leading-edge marker."
+          "help": "Colour of that bright tip."
         },
         {
           "name": "lead_edge_width",
@@ -3826,7 +3826,7 @@
           "category": "appearance",
           "enabled_by": "lead_edge_enabled",
           "group": "Fill",
-          "help": "Width of the leading-edge marker, in pixels."
+          "help": "How wide the bright tip is."
         },
         {
           "name": "redline_color",
@@ -3835,7 +3835,7 @@
           "default": "#FF5C32",
           "category": "appearance",
           "group": "Redline",
-          "help": "Colour of the redline zone."
+          "help": "Colour of the warning zone."
         },
         {
           "name": "redline_recolor_ticks",
@@ -3845,7 +3845,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Redline",
-          "help": "Recolour ticks inside the redline zone to the redline colour."
+          "help": "Turn the marks inside the warning zone that colour too."
         },
         {
           "name": "shape",
@@ -3860,7 +3860,7 @@
             { "value": 3, "label": "45° Bend" },
             { "value": 4, "label": "J-Hook" }
           ],
-          "help": "Preset shapes (L-Bend / Straight / 45° / J-Hook) are generated to fit the widget box — no path to draw. J-Hook is the Ford digital-tach curve: a swept arc into a horizontal run, perfect every time. Choose Custom to hand-draw your own path.",
+          "help": "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path.",
           "group": "Shape"
         },
         {
@@ -3876,7 +3876,7 @@
             { "value": 3, "label": "Bottom-Right" }
           ],
           "group": "Shape",
-          "help": "Direction the path runs and fills."
+          "help": "Which way the bar runs and fills."
         },
         {
           "name": "corner_radius",
@@ -3887,7 +3887,7 @@
           "min": 0,
           "max": 400,
           "group": "Shape",
-          "help": "Corner rounding for preset bends (L-Bend etc.), in pixels."
+          "help": "How rounded the bends are on the ready-made shapes."
         },
         {
           "name": "hook_angle",
@@ -3898,7 +3898,7 @@
           "min": 30,
           "max": 200,
           "step": 5,
-          "help": "J-Hook only: the arc sweep in degrees (meter-style). 90 = quarter circle (vertical at the start), 180 = half circle. The radius auto-fits the box height and the curve always meets the straight bar tangentially — a perfect circular radius, never skewed.",
+          "help": "J-hook shape only: how far the curve sweeps. 90 is a quarter turn, 180 a half turn.",
           "group": "Shape"
         },
         {
@@ -3907,7 +3907,7 @@
           "type": "checkbox",
           "default": false,
           "category": "appearance",
-          "help": "Custom paths only: treat the path points as a few anchors and fit a smooth Catmull-Rom curve through them (no need to hand-place dozens of points).",
+          "help": "Custom shapes only: smooth your drawn points into a flowing curve.",
           "group": "Shape"
         },
         {
@@ -3918,7 +3918,7 @@
           "category": "data",
           "_doc": "Draw a tick + number scale that FOLLOWS the path (spaced by\narc-length so the marks line up with the fill). Turns a bare\npathbar into a Ford-style swept tach.",
           "group": "Ticks",
-          "help": "Draw the tick scale along the path."
+          "help": "Show marks along the bar."
         },
         {
           "name": "major_tick_step",
@@ -3928,7 +3928,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Value distance between major ticks."
+          "help": "How far apart the biggest marks are, in reading value."
         },
         {
           "name": "minor_tick_step",
@@ -3938,7 +3938,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Value distance between minor ticks. 0 = no minor ticks."
+          "help": "How far apart the smaller marks are. 0 turns them off."
         },
         {
           "name": "major_tick_width",
@@ -3950,7 +3950,7 @@
           "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the major ticks, in pixels."
+          "help": "How thick the biggest marks are."
         },
         {
           "name": "tick_width",
@@ -3962,7 +3962,7 @@
           "max": 40,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Thickness of the minor ticks, in pixels."
+          "help": "How thick the smaller marks are."
         },
         {
           "name": "major_tick_len",
@@ -3974,7 +3974,7 @@
           "max": 100,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the major ticks, in pixels."
+          "help": "How long the biggest marks are."
         },
         {
           "name": "tick_len",
@@ -3986,7 +3986,7 @@
           "max": 100,
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Length of the minor ticks, in pixels."
+          "help": "How long the smaller marks are."
         },
         {
           "name": "major_tick_color",
@@ -3996,7 +3996,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the major ticks."
+          "help": "Colour of the biggest marks."
         },
         {
           "name": "tick_color",
@@ -4006,7 +4006,7 @@
           "category": "appearance",
           "enabled_by": "show_ticks",
           "group": "Ticks",
-          "help": "Colour of the minor ticks."
+          "help": "Colour of the smaller marks."
         },
         {
           "name": "show_labels",
@@ -4016,7 +4016,7 @@
           "category": "data",
           "enabled_by": "show_ticks",
           "group": "Numbers",
-          "help": "Draw numeric labels at the major ticks."
+          "help": "Show numbers next to the biggest marks."
         },
         {
           "name": "label_font",
@@ -4026,7 +4026,7 @@
           "category": "appearance",
           "enabled_by": "show_labels",
           "group": "Numbers",
-          "help": "Font (family:size) for the number labels."
+          "help": "Text style and size of those numbers."
         },
         {
           "name": "label_color",
@@ -4036,7 +4036,7 @@
           "category": "appearance",
           "enabled_by": "show_labels",
           "group": "Numbers",
-          "help": "Colour of the number labels."
+          "help": "Colour of those numbers."
         },
         {
           "name": "label_gap",
@@ -4048,7 +4048,7 @@
           "max": 200,
           "enabled_by": "show_labels",
           "group": "Numbers",
-          "help": "Gap between the path and the number labels, in pixels."
+          "help": "How far the numbers sit from the bar."
         },
         {
           "name": "tick_label_divisor",
@@ -4061,7 +4061,7 @@
           "enabled_by": "show_labels",
           "_doc": "Divides each number by this factor — e.g. 1000 turns a\n0..8000 tach into 0..8 (print the unit elsewhere).",
           "group": "Numbers",
-          "help": "Divide label values before display (e.g. 1000 -> RPM x1000)."
+          "help": "Shrink the numbers by dividing them (1000 shows 7000 as '7')."
         },
         {
           "name": "smoothing_ms",
@@ -4072,7 +4072,7 @@
           "min": 0,
           "max": 500,
           "group": "Behaviour",
-          "help": "Damping time for fill movement. Higher = smoother but laggier; 0 = instant."
+          "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
         }
       ]
     }
