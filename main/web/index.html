@@ -15337,33 +15337,48 @@
             return false;
         }
 
+        /* Escape for HTML text / a double-quoted attribute. */
+        function _escAttr(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        /* Escape for a single-quoted JS string sitting inside a double-quoted
+         * HTML attribute (e.g. onclick="fn('HERE')"). JS-escape \ and ' first,
+         * then HTML-escape & and " so the value can't close the attribute.
+         * Without this a filename like Tom's.rdmimg kills every button on its row. */
+        function _escJs(s) {
+            return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                            .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
         function _fileListHTML(files, type, location) {
             if (!files || files.length === 0) return '<div style="font-size:11px; color:var(--text-muted); padding:4px 0;">No files</div>';
             let html = '';
             for (const f of files) {
                 const name = f.name;
+                const nameH = _escAttr(name);   /* HTML text / title */
+                const nameJ = _escJs(name);     /* inline onclick arg */
                 const size = _formatSize(f.size);
                 const dims = (f.width && f.height) ? ` (${f.width}x${f.height})` : '';
                 html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:11px; border-bottom:1px solid var(--border);">
-                    <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}${dims}</span>
+                    <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${nameH}">${nameH}${dims}</span>
                     <span style="color:var(--text-muted); margin:0 8px; white-space:nowrap;">${size}</span>`;
                 if (location === 'internal') {
                     const isProtected = _isProtectedAsset(type, name);
                     if (type === 'image' && !isProtected) {
-                        html += `<button onclick="_smEditImage('${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Resize / Crop">Edit</button>`;
+                        html += `<button onclick="_smEditImage('${nameJ}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Resize / Crop">Edit</button>`;
                     }
                     if (type === 'layout' && name !== 'default') {
-                        html += `<button onclick="_smRenameLayout('${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Rename">Ren</button>`;
+                        html += `<button onclick="_smRenameLayout('${nameJ}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Rename">Ren</button>`;
                     }
                     /* Built-in assets: silently omit the SD + delete buttons
                      * (no label/badge). The firmware also rejects these. */
                     if (!isProtected) {
-                        html += `<button onclick="_smCopyToSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Copy to SD">\u2192 SD</button>`;
-                        html += `<button onclick="_smDeleteInternal('${type}','${name}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete">&times;</button>`;
+                        html += `<button onclick="_smCopyToSD('${type}','${nameJ}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:2px;" title="Copy to SD">\u2192 SD</button>`;
+                        html += `<button onclick="_smDeleteInternal('${type}','${nameJ}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete">&times;</button>`;
                     }
                 } else {
-                    html += `<button onclick="_smCopyFromSD('${type}','${name}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">\u2190 Int</button>`;
-                    html += `<button onclick="_smDeleteFromSD('${type}','${name}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete from SD">&times;</button>`;
+                    html += `<button onclick="_smCopyFromSD('${type}','${nameJ}')" class="btn btn-secondary" style="font-size:9px; padding:2px 6px; margin-right:4px;" title="Copy to Internal">\u2190 Int</button>`;
+                    html += `<button onclick="_smDeleteFromSD('${type}','${nameJ}')" style="background:none; border:none; color:#f44; cursor:pointer; font-size:12px; padding:2px 4px;" title="Delete from SD">&times;</button>`;
                 }
                 html += `</div>`;
             }
@@ -17229,7 +17244,16 @@
             el.style.display = 'flex';
         }
 
-        async function _otaShowInstall() {
+        function _otaShowInstall() {
+            /* Pre-flight confirm — this reboots and reflashes the dash. */
+            _showConfirmOverlay(
+                'Install firmware update?',
+                'The dash will download the update and restart. Keep it powered and on Wi-Fi until it finishes (about a minute).',
+                'Update now',
+                _otaDoInstall);
+        }
+
+        async function _otaDoInstall() {
             document.getElementById('updateBanner').style.display = 'none';
             const modal = document.getElementById('otaInstallModal');
             modal.style.display = 'flex';
