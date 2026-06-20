@@ -554,13 +554,15 @@ static esp_err_t font_upload_handler(httpd_req_t *req) {
 	 * contract is that its public functions run on the LVGL task / under the
 	 * mutex — destroying a glyph cache while the render task is mid-draw with
 	 * that font is a data race. (Runs on the httpd task here.) */
-	if (rdm_lvgl_lock(2000)) {
-		font_manager_add_family(name, buf, received);
-		rdm_lvgl_unlock();
-	} else {
-		ESP_LOGW(TAG, "font upload: LVGL lock timeout — registering unguarded");
-		font_manager_add_family(name, buf, received);
+	if (!rdm_lvgl_lock(2000)) {
+		/* Refuse rather than mutate the glyph cache unguarded (heap corruption /
+		 * crash if the render task is mid-draw). Client retries. */
+		ESP_LOGW(TAG, "font upload: LVGL busy — refusing unguarded register");
+		free(buf);
+		return web_server_send_busy(req);
 	}
+	font_manager_add_family(name, buf, received);
+	rdm_lvgl_unlock();
 	free(buf);
 
 	ESP_LOGI(TAG, "Uploaded font '%s' (%u bytes)", name, (unsigned)received);
@@ -652,14 +654,12 @@ static esp_err_t font_delete_handler(httpd_req_t *req) {
 
 	/* Remove under the LVGL lock — lv_tiny_ttf_destroy() on a font the render
 	 * task may be drawing with is a data race (see font_upload_handler). */
-	bool removed;
-	if (rdm_lvgl_lock(2000)) {
-		removed = font_manager_remove_family(name);
-		rdm_lvgl_unlock();
-	} else {
-		ESP_LOGW(TAG, "font delete: LVGL lock timeout — removing unguarded");
-		removed = font_manager_remove_family(name);
+	if (!rdm_lvgl_lock(2000)) {
+		ESP_LOGW(TAG, "font delete: LVGL busy — refusing unguarded remove");
+		return web_server_send_busy(req);
 	}
+	bool removed = font_manager_remove_family(name);
+	rdm_lvgl_unlock();
 	if (!removed) {
 		httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Font not found");
 		return ESP_FAIL;

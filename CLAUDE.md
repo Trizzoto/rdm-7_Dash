@@ -13,7 +13,7 @@ Part of the **RDM project**: this firmware + RDM Desktop Studio (Tauri) + RDM We
 - Dev port: **COM27** (the user's dash, CH343; was COM13 historically and can change on re-plug — confirm via `[System.IO.Ports.SerialPort]::GetPortNames()`). Over WiFi the dash gets a DHCP IP on the user's LAN (not fixed — discover with a subnet sweep hitting `/api/selftest`). Flash + monitor are pre-approved; only `erase_flash` or OTA still asks first.
 - Long builds belong in `run_in_background` so the chat stays responsive. Monitor streams via the Monitor tool — kill it with TaskStop when done.
 - All `.c` files must be listed in `main/CMakeLists.txt` SRCS
-- `main/web/index.html` embedded via `EMBED_TXTFILES`
+- `main/web/index.html` embedded via `EMBED_FILES` (gzipped to `index.html.gz` at configure time; served with `Content-Encoding: gzip`)
 - `-Werror=comment` active — no `/*` inside block comments
 - Partition: dual OTA (3.5 MB each) + LittleFS (~8.8 MB) on 16 MB flash
 
@@ -25,12 +25,12 @@ main/
 ├── data/         channel registry — canonical_channels, channel_manager, channel_source_apply (the binding layer; see ADR-0005/0006)
 ├── io/           Wire inputs (GPIO/ADC)
 ├── layout/       layout_manager, layout_loader, default_layout, ecu_presets
-├── net/          wifi_manager, web_server + modular endpoint files, dns_hijack, ota
+├── net/          wifi_manager, web_server + modular endpoint files, captive portal, ota
 ├── storage/      config_store (NVS), data_logger, sd_manager, signal_replay, boot_assets
 ├── system/       display_capture, night_mode, remote_touch, screen_config, device_id
 ├── ui/           dashboard, config_modal, screens/, settings/, callbacks/, components/
 ├── web/          index.html (embedded), logo
-└── widgets/      15 widget types + signal, font_manager, widget_rules, widget_registry
+└── widgets/      16 widget types + signal, font_manager, widget_rules, widget_registry
 schema/           widgets.schema.json + codegen metadata
 tools/            codegen_widget_defs.py, check_*.py, png_to_rdmimg.py, mobile-dev-server.js
 tests/api/        pytest API contract suite
@@ -52,7 +52,7 @@ tests/native/     Unity C unit tests (CAN decode, layout migration, widget rules
 
 ## Widget System
 
-15 types in `widget_type_t` (`widget_types.h` — `WIDGET_TYPE_COUNT` is the authority; don't restate the number elsewhere). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
+16 types in `widget_type_t` (`widget_types.h` — `WIDGET_TYPE_COUNT` is the authority; don't restate the number elsewhere). Slot limits (per `SLOT_LIMITS` in `main/web/index.html` and firmware-side caps):
 
 | Type | Web cap | Firmware cap | Notes |
 |---|---|---|---|
@@ -103,7 +103,7 @@ layouts portable — decode no longer travels in the layout JSON (ADR-0005/0006)
 - `layout_loader.c/h` — JSON parse + widget instantiation
 - `default_layout.c/h` — built-in fallback layout
 - `ecu_presets.c/h` — OEM CAN signal presets (8 ECUs)
-- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v14** — that macro is the authority; don't restate the number)
+- Schema version: `LAYOUT_SCHEMA_VERSION` in `layout_manager.h` (currently **v15** — that macro is the authority; don't restate the number)
 - Hot-reload path: `POST /api/layout/save` → LittleFS → `lv_async_call()` → `dashboard_init()`
 
 ## Storage
@@ -134,7 +134,7 @@ Firmware: **RGB565**. Web editor: **RGB888**. Use `rgb565to888()` on load, `rgb8
 - `WIDGET_DEFS` in `index.html` — widget metadata + `fields[]` per type
 - `buildFirmwarePayload()` maps `w.signal` → `config.signal_name`, converts colors
 - **`main/web/index.html` is the single source of truth.** Embedded in firmware
-  via EMBED_TXTFILES, also served directly by `tools/mobile-dev-server.js` for
+  via EMBED_FILES (gzipped), also served directly by `tools/mobile-dev-server.js` for
   browser-based dev without a device.
 - The Tauri desktop copy at `../rdm7-desktop/src/index.html` (separate repo) has
   its own delta (USB transport, Tauri wrapper, auto-updater, ~1300 lines of
@@ -189,7 +189,7 @@ debugging via the "Share Raw CAN" button (data logger modal in the web editor).
 - **Field not saved:** check `to_json` defaults-only logic and that `from_json` reads it
 - **Config modal field missing:** add a section in `config_modal.c` even if web editor already handles it
 - **`pdMS_TO_TICKS(1) = 0`** at `CONFIG_FREERTOS_HZ=500` — use `vTaskDelay(1)` literal for real yields
-- **`max_uri_handlers`** is 160 (~124 currently used — see the `uri_registration` tally in `GET /api/selftest`) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
+- **`max_uri_handlers`** is 160 (~138 currently used — see the `uri_registration` tally in `GET /api/selftest`) — count `REGISTER_URI` calls before adding endpoints; the REGISTER_URI macro tallies failures and shouts at boot if you hit the cap
 - **`w->root` may be a container, not the widget's LVGL primitive** — e.g. `widget_arc` standard mode wraps `lv_arc` in a transparent container so siblings (redline arc, value label) can coexist. Don't assume `w->root` is the type-specific object; use `type_data->arc_obj` etc.
 - **Layout > 32 KB silently truncates** — `to_json` must be defaults-only or the budget blows. Pre-save check in `_checkLayoutSize` catches it client-side, but firmware-side a non-default emit can sneak through.
 

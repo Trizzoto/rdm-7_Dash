@@ -415,6 +415,7 @@ void update_warning_ui(void *param) {
 	uint8_t warning_idx = *(uint8_t *)param;
 	free(param);
 
+	if (warning_idx >= 8) return;   /* bounds: warning_circles[8] (matches _immediate) */
 	if (warning_circles[warning_idx] == NULL ||
 		lv_obj_get_screen(warning_circles[warning_idx]) == NULL) {
 		return;

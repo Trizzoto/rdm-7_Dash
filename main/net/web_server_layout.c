@@ -1411,8 +1411,13 @@ static esp_err_t layout_rename_handler(httpd_req_t *req) {
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
 		return ESP_FAIL;
 	}
-	fread(json_buf, 1, fsize, f);
+	size_t rd = fread(json_buf, 1, fsize, f);
 	fclose(f);
+	if (rd != (size_t)fsize) {   /* short read → don't parse/rewrite uninitialised tail */
+		free(json_buf);
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Read failed");
+		return ESP_FAIL;
+	}
 	json_buf[fsize] = '\0';
 
 	/* Update the "name" field inside the JSON */

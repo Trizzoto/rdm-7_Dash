@@ -315,16 +315,19 @@ void dashboard_init(lv_obj_t *parent) {
 	ESP_LOGI(TAG, "Loading layout '%s'", layout_name);
 
 	err = layout_manager_load(layout_name, parent);
-	if (err != ESP_OK) {
-		ESP_LOGW(TAG, "layout_manager_load('%s') failed (%s)",
-				 layout_name, esp_err_to_name(err));
+	/* "Loaded OK but zero widgets" is as dead as a load failure (an empty widget
+	 * array, or every widget type unknown/failed to instantiate) — it would boot
+	 * to a blank screen with no recovery. Treat it the same as a failure. */
+	if (err != ESP_OK || widget_registry_count() == 0) {
+		ESP_LOGW(TAG, "layout_manager_load('%s') %s",
+				 layout_name, err != ESP_OK ? esp_err_to_name(err) : "loaded 0 widgets");
 		/* Try loading "default" before using hardcoded fallback */
 		if (strcmp(layout_name, "default") != 0) {
 			ESP_LOGI(TAG, "Attempting to load 'default' layout as fallback");
 			signal_registry_reset();
 			widget_registry_reset();
 			err = layout_manager_load("default", parent);
-			if (err == ESP_OK) {
+			if (err == ESP_OK && widget_registry_count() > 0) {
 				layout_manager_set_active("default");
 				goto loaded;
 			}

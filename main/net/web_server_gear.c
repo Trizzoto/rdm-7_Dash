@@ -42,6 +42,7 @@ static esp_err_t api_gear_cfg_post_handler(httpd_req_t *req) {
 	int got = 0;
 	while (got < total) {
 		int r = httpd_req_recv(req, body + got, total - got);
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;   /* slow/segmented body — keep waiting */
 		if (r <= 0) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed"); return ESP_FAIL; }
 		got += r;
 	}
@@ -125,6 +126,7 @@ static esp_err_t api_odometer_post_handler(httpd_req_t *req) {
 	int got = 0;
 	while (got < total) {
 		int r = httpd_req_recv(req, body + got, total - got);
+		if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;   /* slow/segmented body — keep waiting */
 		if (r <= 0) {
 			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
 			return ESP_FAIL;

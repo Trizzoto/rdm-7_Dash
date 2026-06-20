@@ -52,8 +52,9 @@ int64_t can_extract_bits(const uint8_t *data, uint8_t bit_offset,
         }
     }
 
-    /* Sign-extend */
-    if (is_signed && (value & ((uint64_t)1 << (bit_length - 1))))
+    /* Sign-extend. Skip at bit_length==64: the value already fills all 64 bits
+     * (so the cast below is the signed value), and `1ULL << 64` is undefined. */
+    if (is_signed && bit_length < 64 && (value & ((uint64_t)1 << (bit_length - 1))))
         value |= ~((1ULL << bit_length) - 1);
 
     return (int64_t)value;
