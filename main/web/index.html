@@ -7237,9 +7237,9 @@
                              * position=50 makes 0-90 cover the first half, 90-110
                              * cover the second half. anchor_enabled=false (default)
                              * = pure linear. */
-                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Fill out from a set point instead of from the end. Good for bars that read both ways around zero." },
-                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading the fill grows out from when the option above is on.", enabledBy: "anchor_enabled" },
-                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that point sits along the bar, as a percentage.", min: 0, max: 100, enabledBy: "anchor_enabled" },
+                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Pin a chosen reading to a fixed spot on the bar instead of filling from the end. e.g. put your normal operating temperature in the middle, so anything hotter or colder is obvious at a glance." },
+                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
+                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the bar (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data", group: "Value", help: "Show the number on the bar." },
                             { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Flip it so a high reading empties the bar instead of filling it." },
@@ -7359,9 +7359,9 @@
                              * two linear segments. e.g. anchor=90, position=50 makes
                              * 0-90 cover the first half of the sweep, 90-max the
                              * second half. anchor_enabled=false (default) = linear. */
-                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Swing the needle out from a set point instead of from the start. Good for gauges that read both ways around zero." },
-                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading the needle swings out from when the option above is on.", enabledBy: "anchor_enabled" },
-                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that point sits along the dial, as a percentage.", min: 0, max: 100, enabledBy: "anchor_enabled" },
+                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Pin a chosen reading to a fixed spot on the dial instead of sweeping from the start. e.g. put your normal operating temperature at the middle, so the needle rests centre when warmed up and swings high or low if it drifts." },
+                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
+                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the dial (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "show_ticks", label: "Show Ticks", type: "checkbox", def: true, cat: "appearance", group: "Ticks", help: "Show the marks around the dial, like the lines on a speedometer." },
                             { name: "major_tick_step", label: "Major Tick Value Spacing", type: "number", def: 50, cat: "appearance", group: "Ticks", help: "How far apart the biggest marks are, in reading value. On a 0-8000 rev counter, 1000 puts a big mark every 1000 RPM." },
                             /* Optional 3rd tick tier between minor and major. Value spacing
@@ -7567,9 +7567,9 @@
                              * position=50 makes 0-90 cover the first half, 90-110
                              * cover the second half. anchor_enabled=false (default)
                              * = pure linear. */
-                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Fill the gauge out from a set point instead of from the empty end. Handy for gauges that read both ways, like a turbo boost/vacuum gauge that rests at zero." },
-                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading the fill grows out from when the option above is on.", enabledBy: "anchor_enabled" },
-                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that start point sits along the gauge, as a percentage (0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
+                            { name: "anchor_enabled", label: "Anchor Curve", type: "checkbox", def: false, cat: "data", group: "Value", help: "Pin a chosen reading to a fixed spot on the gauge instead of filling from the empty end. e.g. put your normal operating temperature in the middle, so the gauge sits centre when warmed up and clearly runs high or low if it drifts." },
+                            { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
+                            { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the gauge (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value", help: "Run the gauge backwards, so the full end becomes the empty end." },
                             { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value.", min: 0, max: 300, step: 10 },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "How thick the coloured (filled) part of the gauge is.", min: 1, max: 50 },

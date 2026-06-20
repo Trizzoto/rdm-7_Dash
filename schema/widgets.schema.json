@@ -638,7 +638,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
           "group": "Value",
-          "help": "Fill out from a set point instead of from the end. Good for bars that read both ways around zero."
+          "help": "Pin a chosen reading to a fixed spot on the bar instead of filling from the end. e.g. put your normal operating temperature in the middle, so anything hotter or colder is obvious at a glance."
         },
         {
           "name": "anchor_value",
@@ -648,7 +648,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The reading the fill grows out from when the option above is on."
+          "help": "The reading you want pinned in place - e.g. 90 for your normal coolant temp."
         },
         {
           "name": "anchor_position",
@@ -660,7 +660,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where that point sits along the bar, as a percentage."
+          "help": "Where that reading sits along the bar (50 = middle, 0 = start, 100 = end)."
         },
         {
           "name": "show_bar_value",
@@ -1431,7 +1431,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value\nto THIS position on the sweep\" - splits the range into\ntwo linear segments. e.g. anchor=90, position=50 makes\n0-90 cover the first half of the sweep, 90-max the\nsecond half. anchor_enabled=false (default) = linear.",
           "group": "Value",
-          "help": "Swing the needle out from a set point instead of from the start. Good for gauges that read both ways around zero."
+          "help": "Pin a chosen reading to a fixed spot on the dial instead of sweeping from the start. e.g. put your normal operating temperature at the middle, so the needle rests centre when warmed up and swings high or low if it drifts."
         },
         {
           "name": "anchor_value",
@@ -1441,7 +1441,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The reading the needle swings out from when the option above is on."
+          "help": "The reading you want pinned in place - e.g. 90 for your normal coolant temp."
         },
         {
           "name": "anchor_position",
@@ -1453,7 +1453,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where that point sits along the dial, as a percentage."
+          "help": "Where that reading sits along the dial (50 = middle, 0 = start, 100 = end)."
         },
         {
           "name": "show_ticks",
@@ -2577,7 +2577,7 @@
           "category": "data",
           "_doc": "Anchor-based non-linear scale. \"Pin THIS data value to\nTHIS position on the bar\" - splits the range into two\nlinear segments. e.g. coolant 0-110, anchor=90,\nposition=50 makes 0-90 cover the first half, 90-110\ncover the second half. anchor_enabled=false (default)\n= pure linear.",
           "group": "Value",
-          "help": "Fill the gauge out from a set point instead of from the empty end. Handy for gauges that read both ways, like a turbo boost/vacuum gauge that rests at zero."
+          "help": "Pin a chosen reading to a fixed spot on the gauge instead of filling from the empty end. e.g. put your normal operating temperature in the middle, so the gauge sits centre when warmed up and clearly runs high or low if it drifts."
         },
         {
           "name": "anchor_value",
@@ -2587,7 +2587,7 @@
           "category": "data",
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "The reading the fill grows out from when the option above is on."
+          "help": "The reading you want pinned in place - e.g. 90 for your normal coolant temp."
         },
         {
           "name": "anchor_position",
@@ -2599,7 +2599,7 @@
           "max": 100,
           "enabled_by": "anchor_enabled",
           "group": "Value",
-          "help": "Where that start point sits along the gauge, as a percentage (0 = start, 100 = end)."
+          "help": "Where that reading sits along the gauge (50 = middle, 0 = start, 100 = end)."
         },
         {
           "name": "reverse",
