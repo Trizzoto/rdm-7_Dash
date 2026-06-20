@@ -1205,6 +1205,18 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 		it = cJSON_GetObjectItemCaseSensitive(dec, "unit");
 		if (cJSON_IsString(it) && it->valuestring)
 			safe_strcpy(c->decode_unit, it->valuestring, sizeof(c->decode_unit));
+
+		/* Self-heal invalid geometry: a corrupt / hand-edited / imported
+		 * channels.json bypasses channel_manager_set_decode's validation. An
+		 * out-of-range field can't decode a real 8-byte frame, so drop the
+		 * decode (can_id = 0) rather than run garbage. */
+		if (c->can_id && (c->bit_length == 0 || c->bit_length > 64 ||
+		                  (uint16_t)c->bit_start + (uint16_t)c->bit_length > 64 ||
+		                  c->endian > 1)) {
+			ESP_LOGW(TAG, "channel '%s': invalid decode (bit %u+%u endian %u) — dropping",
+			         c->id, c->bit_start, c->bit_length, c->endian);
+			c->can_id = 0;
+		}
 	}
 
 	/* Sanity / self-heal: a high_warn at or below the channel min (or a
