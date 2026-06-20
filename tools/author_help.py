@@ -389,7 +389,7 @@ HELP = {
         "redline_recolor_ticks": "Turn the marks inside the warning zone that colour too.",
         "shape": "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path.",
         "orientation": "Which way the bar runs and fills.",
-        "corner_radius": "How rounded the bends are on the ready-made shapes.",
+        "corner_radius": "How big the rounded corner of the bend is (or the bevel, on the 45° shape).",
         "hook_angle": "J-hook shape only: how far the curve sweeps. 90 is a quarter turn, 180 a half turn.",
         "smooth": "Custom shapes only: smooth your drawn points into a flowing curve.",
         "show_ticks": "Show marks along the bar.",

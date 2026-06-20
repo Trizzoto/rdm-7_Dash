@@ -7739,9 +7739,9 @@
                                   { v: 2, l: "Bottom-Left" },
                                   { v: 3, l: "Bottom-Right" }
                               ] },
-                            { name: "corner_radius", label: "Corner Radius", type: "stepper", def: 40, cat: "appearance", group: "Shape", help: "How rounded the bends are on the ready-made shapes.", min: 0, max: 400 },
-                            { name: "hook_angle", label: "Hook Sweep", type: "stepper", def: 120, cat: "appearance", group: "Shape", help: "J-hook shape only: how far the curve sweeps. 90 is a quarter turn, 180 a half turn.", min: 30, max: 200, step: 5 },
-                            { name: "smooth", label: "Smooth Curve", type: "checkbox", def: false, cat: "appearance", group: "Shape", help: "Custom shapes only: smooth your drawn points into a flowing curve." },
+                            { name: "corner_radius", label: "Corner Radius", type: "stepper", def: 40, cat: "appearance", group: "Shape", help: "How big the rounded corner of the bend is (or the bevel, on the 45° shape).", min: 0, max: 400, enabledBy: "shape=1,3" },
+                            { name: "hook_angle", label: "Hook Sweep", type: "stepper", def: 120, cat: "appearance", group: "Shape", help: "J-hook shape only: how far the curve sweeps. 90 is a quarter turn, 180 a half turn.", min: 30, max: 200, step: 5, enabledBy: "shape=4" },
+                            { name: "smooth", label: "Smooth Curve", type: "checkbox", def: false, cat: "appearance", group: "Shape", help: "Custom shapes only: smooth your drawn points into a flowing curve.", enabledBy: "shape=0" },
                             /* Draw a tick + number scale that FOLLOWS the path (spaced by
                              * arc-length so the marks line up with the fill). Turns a bare
                              * pathbar into a Ford-style swept tach. */
@@ -10784,6 +10784,32 @@
             });
         }
 
+        /* Field visibility gate (enabledBy). Three forms:
+         *   "field"     -> show only while field is truthy
+         *   "!field"    -> show only while field is falsy
+         *   "field=a,b" -> show only while field's value is one of a/b
+         *                  (used to gate by a SELECT value, e.g. pathbar shape)
+         * getVal(key) returns the field's current value. Returns true = HIDE. */
+        function _enabledByHidden(spec, getVal) {
+            if (!spec) return false;
+            const eq = spec.indexOf('=');
+            if (eq >= 0) {
+                const cur = getVal(spec.slice(0, eq));
+                return !spec.slice(eq + 1).split(',').some(a => String(a) === String(cur));
+            }
+            const negate = spec[0] === '!';
+            const pv = getVal(negate ? spec.slice(1) : spec);
+            return negate ? !!pv : !pv;
+        }
+        /* The parent field name an enabledBy spec depends on (strips ! and =val),
+         * so a change to that field knows it must re-render the dependents. */
+        function _enabledByKey(spec) {
+            if (!spec) return null;
+            const s = spec[0] === '!' ? spec.slice(1) : spec;
+            const eq = s.indexOf('=');
+            return eq >= 0 ? s.slice(0, eq) : s;
+        }
+
         /* Fields whose firmware inspector_set fully captures the edit on its
          * own. Anything NOT here (selects, gradients, can_id, and fields that
          * re-derive OTHER config values) stays on the full-preview path so the
@@ -10801,11 +10827,12 @@
                             T === 'text' || T === 'textarea' || T === 'font' ||
                             T === 'checkbox');
             if (!SIMPLE) return false;
-            /* Checkbox that gates sub-fields re-renders the inspector. */
-            if (T === 'checkbox') {
+            /* A field that gates sub-fields must re-render the inspector, so it
+             * can't take the fast path (covers checkbox toggles and select-value
+             * gates like the pathbar shape). */
+            {
                 const def = WIDGET_DEFS[w.type];
-                if (def && def.fields.some(f => f.enabledBy === field ||
-                                                f.enabledBy === '!' + field)) return false;
+                if (def && def.fields.some(f => _enabledByKey(f.enabledBy) === field)) return false;
             }
             /* Channel-backed thresholds are mirrored to the channel, not config. */
             const tspec = (typeof _widgetThresholdSpec === 'function') ? _widgetThresholdSpec(w) : null;
@@ -11550,12 +11577,7 @@
                 let _dataG = null;
                 dataFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                    if (f.enabledBy) {
-                        const negate = f.enabledBy.startsWith('!');
-                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
-                        const parentVal = w.config[key] !== undefined ? w.config[key] : _fieldDefault(w.type, key);
-                        if (negate ? parentVal : !parentVal) return;
-                    }
+                    if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
                     if (_dataMulti && f.group && f.group !== _dataG) {
                         html += `<div class="inspector-subhead">${f.group}</div>`; _dataG = f.group;
                     }
@@ -11618,12 +11640,7 @@
                 let _appG = null;
                 appearFields.forEach(f => {
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                    if (f.enabledBy) {
-                        const negate = f.enabledBy.startsWith('!');
-                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
-                        const parentVal = w.config[key] !== undefined ? w.config[key] : _fieldDefault(w.type, key);
-                        if (negate ? parentVal : !parentVal) return;
-                    }
+                    if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
                     if (_appMulti && f.group && f.group !== _appG) {
                         html += `<div class="inspector-subhead">${f.group}</div>`; _appG = f.group;
                     }
@@ -11661,12 +11678,7 @@
                 alertFields.forEach(f => {
                     if (_WARN_HIDE.has(f.name)) return;
                     const val = w.config[f.name] !== undefined ? w.config[f.name] : f.def;
-                    if (f.enabledBy) {
-                        const negate = f.enabledBy.startsWith('!');
-                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
-                        const parentVal = w.config[key] !== undefined ? w.config[key] : _fieldDefault(w.type, key);
-                        if (negate ? parentVal : !parentVal) return;
-                    }
+                    if (_enabledByHidden(f.enabledBy, k => w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k))) return;
                     /* Inline toggle group: render all fields sharing the same inline key as one compact row */
                     if (f.inline) {
                         if (renderedInline.has(f.inline)) return;
@@ -11736,12 +11748,7 @@
                 /* THEN: full appearance fields */
                 html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin:8px 0 4px;">THEN change:</div>`;
                 appearFields.forEach(f => {
-                    if (f.enabledBy) {
-                        const negate = f.enabledBy.startsWith('!');
-                        const key = negate ? f.enabledBy.slice(1) : f.enabledBy;
-                        const parentVal = (overrides[key] !== undefined) ? overrides[key] : (w.config[key] !== undefined ? w.config[key] : _fieldDefault(w.type, key));
-                        if (negate ? parentVal : !parentVal) return;
-                    }
+                    if (_enabledByHidden(f.enabledBy, k => overrides[k] !== undefined ? overrides[k] : (w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k)))) return;
                     const isOverridden = overrides.hasOwnProperty(f.name);
                     const val = isOverridden ? overrides[f.name] : (w.config[f.name] !== undefined ? w.config[f.name] : f.def);
                     const borderStyle = isOverridden ? 'border-left: 3px solid #e67e22; padding-left: 5px;' : '';
@@ -12974,9 +12981,10 @@
                 _arcSyncDerived(w.config);
             }
 
-            /* If this field is a toggle that controls sub-fields, re-render inspector */
-            if (fieldDef && fieldDef.type === 'checkbox') {
-                const hasChildren = def.fields.some(f => f.enabledBy === field || f.enabledBy === '!' + field);
+            /* If this field gates sub-fields (a toggle, or a select-value gate
+             * like the pathbar shape), re-render so they show/hide immediately. */
+            if (fieldDef) {
+                const hasChildren = def.fields.some(f => _enabledByKey(f.enabledBy) === field);
                 if (hasChildren) updateInspector();
             }
 
