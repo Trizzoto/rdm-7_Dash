@@ -783,7 +783,7 @@ static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
 static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
                                     lv_coord_t cx, lv_coord_t cy,
                                     lv_coord_t mx, lv_coord_t my,
-                                    bool red, lv_color_t red_color) {
+                                    uint16_t zoom, bool red, lv_color_t red_color) {
 	if (!ctx || !img) return;
 	lv_coord_t iw = img->header.w, ih = img->header.h;
 	if (iw <= 0 || ih <= 0) return;
@@ -793,6 +793,7 @@ static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
 	lv_draw_img_dsc_t idsc;
 	lv_draw_img_dsc_init(&idsc);
 	idsc.angle   = (int16_t)a;
+	idsc.zoom    = zoom ? zoom : 256;
 	idsc.pivot.x = iw / 2;
 	idsc.pivot.y = ih / 2;
 	if (red) { idsc.recolor = red_color; idsc.recolor_opa = LV_OPA_COVER; }
@@ -945,8 +946,10 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 			lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
 			lv_coord_t mx = (dsc->p1->x + dsc->p2->x) / 2;
 			lv_coord_t my = (dsc->p1->y + dsc->p2->y) / 2;
+			uint16_t sc = md->tick_image_scale ? md->tick_image_scale : 100;
+			uint16_t zoom = (uint16_t)(((uint32_t)sc * 256) / 100);
 			_meter_stamp_tick_image(dsc->draw_ctx, tickimg, cx, cy, mx, my,
-			                        tick_red, md->redline_color);
+			                        zoom, tick_red, md->redline_color);
 		}
 		return;
 	}
@@ -1926,6 +1929,8 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "major_tick_image_name", md->major_tick_image_name);
 	if (md->mid_tick_image_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "mid_tick_image_name", md->mid_tick_image_name);
+	if (md->tick_image_scale != 100)
+		cJSON_AddNumberToObject(cfg, "tick_image_scale", md->tick_image_scale);
 	if (md->border_width != 0)
 		cJSON_AddNumberToObject(cfg, "border_width", md->border_width);
 	if (md->border_color.full != lv_color_black().full)
@@ -2139,6 +2144,8 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_name");
 	if (cJSON_IsString(ap) && ap->valuestring)
 		safe_strncpy(md->mid_tick_image_name, ap->valuestring, sizeof(md->mid_tick_image_name));
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_image_scale");
+	if (cJSON_IsNumber(ap)) md->tick_image_scale = (uint16_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
 	if (cJSON_IsNumber(ap)) md->border_width = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
@@ -2530,6 +2537,7 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "minor_tick_image_name") == 0) { out->str = md->minor_tick_image_name; return true; }
 	if (strcmp(name, "major_tick_image_name") == 0) { out->str = md->major_tick_image_name; return true; }
 	if (strcmp(name, "mid_tick_image_name") == 0)   { out->str = md->mid_tick_image_name;   return true; }
+	if (strcmp(name, "tick_image_scale") == 0)      { out->i = md->tick_image_scale;        return true; }
 	if (strcmp(name, "min") == 0)                { out->i = md->min;                 return true; }
 	if (strcmp(name, "max") == 0)                { out->i = md->max;                 return true; }
 	if (strcmp(name, "start_angle_user") == 0)   { out->i = md->start_angle;         return true; }
@@ -2655,6 +2663,7 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 		safe_strncpy(md->mid_tick_image_name, in->str, sizeof(md->mid_tick_image_name));
 		return true;
 	}
+	if (strcmp(name, "tick_image_scale") == 0) { md->tick_image_scale = (uint16_t)in->i; return true; }
 	if (strcmp(name, "min") == 0) { md->min = (int32_t)in->i; return true; }
 	if (strcmp(name, "max") == 0) { md->max = (int32_t)in->i; return true; }
 	if (strcmp(name, "start_angle_user") == 0) {
@@ -2925,6 +2934,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	 * 140/240/450 px is verified by tools/meter_visual_parity.py. The flag
 	 * remains as a per-meter opt-out for debugging. */
 	md->static_ticks = true;
+	md->tick_image_scale = 100;   /* per-tick image scale %, 100 = native */
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;

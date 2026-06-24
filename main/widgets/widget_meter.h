@@ -156,6 +156,7 @@ typedef struct {
 	char           minor_tick_image_name[32];
 	char           major_tick_image_name[32];
 	char           mid_tick_image_name[32];
+	uint16_t       tick_image_scale;     /* percent, default 100 (1.0x) */
 	lv_img_dsc_t  *minor_tick_img_dsc;   /* runtime */
 	lv_img_dsc_t  *major_tick_img_dsc;   /* runtime */
 	lv_img_dsc_t  *mid_tick_img_dsc;     /* runtime */

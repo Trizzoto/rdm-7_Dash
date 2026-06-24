@@ -1514,6 +1514,16 @@ static const widget_field_t meter_fields[] = {
         .night_overridable = false,
     },
     {
+        .name = "tick_image_scale", .label = "Tick Image Scale %",
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .min_int = 10, .max_int = 400, .step_int = 0,
+        .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
+        .default_str = NULL,
+        .options = NULL, .option_count = 0,
+        .enabled_by = "show_ticks", .group = "Ticks", .inline_key = NULL,
+        .night_overridable = false,
+    },
+    {
         .name = "show_tick_labels", .label = "Show Tick Labels",
         .type = WF_TYPE_CHECKBOX, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 0, .step_int = 0,

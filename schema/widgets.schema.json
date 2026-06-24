@@ -1638,6 +1638,18 @@
           "help": "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim)."
         },
         {
+          "name": "tick_image_scale",
+          "label": "Tick Image Scale %",
+          "type": "number",
+          "default": 100,
+          "min": 10,
+          "max": 400,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Scale the tick images up or down (100 = original size). Applies to all three tick images."
+        },
+        {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",
