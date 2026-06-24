@@ -3102,16 +3102,109 @@
           "help": "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim)."
         },
         {
-          "name": "tick_image_scale",
-          "label": "Tick Image Scale %",
-          "type": "number",
-          "default": 100,
-          "min": 10,
-          "max": 400,
-          "category": "appearance",
-          "enabled_by": "show_ticks",
-          "group": "Ticks",
-          "help": "Scale the tick images up or down (100 = original size). Applies to all three tick images."
+          "name": "major_tick_image_scale",
+          "label": "Major Tick Scale %",
+          "type": "number", "default": 100, "min": 10, "max": 400,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Scale the major tick image (100 = original size)."
+        },
+        {
+          "name": "mid_tick_image_scale",
+          "label": "Medium Tick Scale %",
+          "type": "number", "default": 100, "min": 10, "max": 400,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Scale the medium tick image (100 = original size)."
+        },
+        {
+          "name": "minor_tick_image_scale",
+          "label": "Minor Tick Scale %",
+          "type": "number", "default": 100, "min": 10, "max": 400,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Scale the minor tick image (100 = original size)."
+        },
+        {
+          "name": "major_tick_image_opa",
+          "label": "Major Tick Opacity",
+          "type": "number", "default": 255, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Fade the major tick image (255 = solid, 0 = invisible)."
+        },
+        {
+          "name": "mid_tick_image_opa",
+          "label": "Medium Tick Opacity",
+          "type": "number", "default": 255, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Fade the medium tick image (255 = solid, 0 = invisible)."
+        },
+        {
+          "name": "minor_tick_image_opa",
+          "label": "Minor Tick Opacity",
+          "type": "number", "default": 255, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Fade the minor tick image (255 = solid, 0 = invisible)."
+        },
+        {
+          "name": "major_tick_image_recolor",
+          "label": "Major Tick Tint",
+          "type": "color", "default": "#000000",
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Tint colour for the major tick image (set Tint Strength above 0 to apply)."
+        },
+        {
+          "name": "major_tick_image_recolor_opa",
+          "label": "Major Tick Tint Strength",
+          "type": "number", "default": 0, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "How strongly to tint the major tick image (0 = none, 255 = full tint colour)."
+        },
+        {
+          "name": "mid_tick_image_recolor",
+          "label": "Medium Tick Tint",
+          "type": "color", "default": "#000000",
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Tint colour for the medium tick image (set Tint Strength above 0 to apply)."
+        },
+        {
+          "name": "mid_tick_image_recolor_opa",
+          "label": "Medium Tick Tint Strength",
+          "type": "number", "default": 0, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "How strongly to tint the medium tick image (0 = none, 255 = full tint colour)."
+        },
+        {
+          "name": "minor_tick_image_recolor",
+          "label": "Minor Tick Tint",
+          "type": "color", "default": "#000000",
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Tint colour for the minor tick image (set Tint Strength above 0 to apply)."
+        },
+        {
+          "name": "minor_tick_image_recolor_opa",
+          "label": "Minor Tick Tint Strength",
+          "type": "number", "default": 0, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "How strongly to tint the minor tick image (0 = none, 255 = full tint colour)."
+        },
+        {
+          "name": "major_tick_image_offset",
+          "label": "Major Tick Position",
+          "type": "number", "default": 0, "min": -60, "max": 60,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Move the major tick image inward (negative) or outward (positive), in pixels."
+        },
+        {
+          "name": "mid_tick_image_offset",
+          "label": "Medium Tick Position",
+          "type": "number", "default": 0, "min": -60, "max": 60,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Move the medium tick image inward (negative) or outward (positive), in pixels."
+        },
+        {
+          "name": "minor_tick_image_offset",
+          "label": "Minor Tick Position",
+          "type": "number", "default": 0, "min": -60, "max": 60,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Move the minor tick image inward (negative) or outward (positive), in pixels."
         },
         {
           "name": "show_tick_labels",

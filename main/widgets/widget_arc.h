@@ -198,7 +198,14 @@ typedef struct {
     char       major_tick_image_name[32];
     char       mid_tick_image_name[32];
     char       minor_tick_image_name[32];
-    uint16_t   tick_image_scale;        /* percent, default 100 (1.0x) */
+    /* Per-tier image modifiers (scale %, opacity, recolour tint + its strength,
+     * radial offset px +=outward). Default = identity (100/255/—/0/0). The old
+     * single `tick_image_scale` seeds all three scales on load (back-compat). */
+    uint16_t   major_tick_image_scale, mid_tick_image_scale, minor_tick_image_scale;
+    uint8_t    major_tick_image_opa, mid_tick_image_opa, minor_tick_image_opa;
+    lv_color_t major_tick_image_recolor, mid_tick_image_recolor, minor_tick_image_recolor;
+    uint8_t    major_tick_image_recolor_opa, mid_tick_image_recolor_opa, minor_tick_image_recolor_opa;
+    int16_t    major_tick_image_offset, mid_tick_image_offset, minor_tick_image_offset;
     lv_img_dsc_t      *major_tick_img_dsc;   /* runtime */
     lv_img_dsc_t      *mid_tick_img_dsc;     /* runtime */
     lv_img_dsc_t      *minor_tick_img_dsc;   /* runtime */

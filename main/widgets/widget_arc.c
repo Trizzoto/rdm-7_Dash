@@ -803,36 +803,67 @@ static float _arc_value_for_tick(const arc_data_t *d, float linear_v, int32_t pc
            (d->signal_max - d->anchor_value) * (float)(pct - ap) / (float)hp;
 }
 
-/* Stamp a tick image rotated to a tick's angle (+ scaled by `zoom`, 256=1.0x).
- * `cx,cy` = overlay-meter centre (for the outward direction), `mx,my` = tick
- * centre (where the image lands). Image authored pointing UP (tip toward rim). */
-static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
-                                  lv_coord_t cx, lv_coord_t cy,
-                                  lv_coord_t mx, lv_coord_t my, uint16_t zoom) {
-	if (!ctx || !img) return;
+/* Per-tier tick-image modifiers (scale/opacity/recolour/radial offset). */
+typedef struct {
+	lv_img_dsc_t *img;
+	uint16_t      scale;        /* %  */
+	uint8_t       opa;          /* 0..255 */
+	lv_color_t    recolor;
+	uint8_t       recolor_opa;  /* 0 = no tint */
+	int16_t       offset;       /* radial px, + = outward */
+} arc_tick_style_t;
+
+/* Resolve the image + per-tier modifiers for the tick `dsc` is about to draw.
+ * Returns false (skip) when that tier has no image. */
+static bool _arc_tick_style_for(arc_data_t *d, const lv_obj_draw_part_dsc_t *dsc,
+                                arc_tick_style_t *s) {
+	if (d->tick_mid_scale && dsc->sub_part_ptr == d->tick_mid_scale) {
+		s->img = d->mid_tick_img_dsc;     s->scale = d->mid_tick_image_scale;
+		s->opa = d->mid_tick_image_opa;   s->recolor = d->mid_tick_image_recolor;
+		s->recolor_opa = d->mid_tick_image_recolor_opa; s->offset = d->mid_tick_image_offset;
+	} else if ((dsc->id % (d->tick_major_nth < 1 ? 1 : d->tick_major_nth)) == 0) {
+		s->img = d->major_tick_img_dsc;   s->scale = d->major_tick_image_scale;
+		s->opa = d->major_tick_image_opa; s->recolor = d->major_tick_image_recolor;
+		s->recolor_opa = d->major_tick_image_recolor_opa; s->offset = d->major_tick_image_offset;
+	} else {
+		s->img = d->minor_tick_img_dsc;   s->scale = d->minor_tick_image_scale;
+		s->opa = d->minor_tick_image_opa; s->recolor = d->minor_tick_image_recolor;
+		s->recolor_opa = d->minor_tick_image_recolor_opa; s->offset = d->minor_tick_image_offset;
+	}
+	return s->img != NULL;
+}
+
+/* Stamp a tick image rotated to a tick's angle, applying its per-tier scale /
+ * opacity / recolour / radial offset. `cx,cy` = overlay centre, `mx,my` = tick
+ * centre. Image authored pointing UP (tip toward the rim). */
+static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t cy,
+                                  lv_coord_t mx, lv_coord_t my, const arc_tick_style_t *s) {
+	if (!ctx || !s->img) return;
+	lv_img_dsc_t *img = s->img;
 	lv_coord_t iw = img->header.w, ih = img->header.h;
 	if (iw <= 0 || ih <= 0) return;
-	float deg = atan2f((float)(my - cy), (float)(mx - cx)) * 57.2957795f; /* outward */
-	int a = (int)lroundf(deg + 90.0f) * 10;                 /* up→outward, 0.1° units */
-	a %= 3600; if (a < 0) a += 3600;
+	float dx = (float)(mx - cx), dy = (float)(my - cy);
+	float deg = atan2f(dy, dx) * 57.2957795f;               /* outward (pre-offset) */
+	if (s->offset) {                                        /* shift along the radial */
+		float dist = sqrtf(dx*dx + dy*dy);
+		if (dist > 1.0f) {
+			mx += (lv_coord_t)(s->offset * dx / dist);
+			my += (lv_coord_t)(s->offset * dy / dist);
+		}
+	}
+	int a = (int)lroundf(deg + 90.0f) * 10; a %= 3600; if (a < 0) a += 3600;
 	lv_draw_img_dsc_t idsc;
 	lv_draw_img_dsc_init(&idsc);
-	idsc.angle   = (int16_t)a;
-	idsc.zoom    = zoom ? zoom : 256;
+	idsc.angle = (int16_t)a;
+	idsc.zoom  = s->scale ? (uint16_t)(((uint32_t)s->scale * 256) / 100) : 256;
+	idsc.opa   = s->opa;
+	if (s->recolor_opa) { idsc.recolor = s->recolor; idsc.recolor_opa = s->recolor_opa; }
 	idsc.pivot.x = iw / 2;
 	idsc.pivot.y = ih / 2;
 	lv_area_t coords = { (lv_coord_t)(mx - iw / 2), (lv_coord_t)(my - ih / 2),
 	                     (lv_coord_t)(mx - iw / 2 + iw - 1),
 	                     (lv_coord_t)(my - ih / 2 + ih - 1) };
 	lv_draw_img(ctx, &idsc, &coords, img);
-}
-
-/* Pick the per-tier tick image for the tick `dsc` is about to draw (or NULL). */
-static lv_img_dsc_t *_arc_tick_image_for(arc_data_t *d, const lv_obj_draw_part_dsc_t *dsc) {
-	if (d->tick_mid_scale && dsc->sub_part_ptr == d->tick_mid_scale)
-		return d->mid_tick_img_dsc;
-	uint8_t nth = d->tick_major_nth < 1 ? 1 : d->tick_major_nth;
-	return ((dsc->id % nth) == 0) ? d->major_tick_img_dsc : d->minor_tick_img_dsc;
 }
 
 /* DRAW_PART_BEGIN hook on the overlay lv_meter — relabels the major-tick
@@ -877,17 +908,15 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
      * line_dsc and resets only width per tick — an opa change would persist and
      * blank every later mark). Major ticks still fall through to the label
      * relabel below; baked into the static-tick snapshot = free at runtime. */
-    lv_img_dsc_t *tickimg = _arc_tick_image_for(d, dsc);
-    if (tickimg && dsc->p1 && dsc->p2 && dsc->draw_ctx) {
+    arc_tick_style_t ts;
+    if (_arc_tick_style_for(d, dsc, &ts) && dsc->p1 && dsc->p2 && dsc->draw_ctx) {
         if (dsc->line_dsc) dsc->line_dsc->width = 0;
         lv_obj_t *mt = lv_event_get_target(e);
         lv_coord_t cx = (mt->coords.x1 + mt->coords.x2) / 2;
         lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
         lv_coord_t mx = (dsc->p1->x + dsc->p2->x) / 2;
         lv_coord_t my = (dsc->p1->y + dsc->p2->y) / 2;
-        uint16_t sc = d->tick_image_scale ? d->tick_image_scale : 100;
-        uint16_t zoom = (uint16_t)(((uint32_t)sc * 256) / 100);
-        _arc_stamp_tick_image(dsc->draw_ctx, tickimg, cx, cy, mx, my, zoom);
+        _arc_stamp_tick_image(dsc->draw_ctx, cx, cy, mx, my, &ts);
     }
 
     /* Label-only hook below: skip minor ticks (no label_dsc/text — only major
@@ -1907,8 +1936,19 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddStringToObject(cfg, "mid_tick_image_name", d->mid_tick_image_name);
     if (d->minor_tick_image_name[0])
         cJSON_AddStringToObject(cfg, "minor_tick_image_name", d->minor_tick_image_name);
-    if (d->tick_image_scale != 100)
-        cJSON_AddNumberToObject(cfg, "tick_image_scale", d->tick_image_scale);
+    /* Per-tier image modifiers — emit only when non-identity (defaults-only). */
+    if (d->major_tick_image_scale != 100) cJSON_AddNumberToObject(cfg, "major_tick_image_scale", d->major_tick_image_scale);
+    if (d->mid_tick_image_scale   != 100) cJSON_AddNumberToObject(cfg, "mid_tick_image_scale",   d->mid_tick_image_scale);
+    if (d->minor_tick_image_scale != 100) cJSON_AddNumberToObject(cfg, "minor_tick_image_scale", d->minor_tick_image_scale);
+    if (d->major_tick_image_opa != 255) cJSON_AddNumberToObject(cfg, "major_tick_image_opa", d->major_tick_image_opa);
+    if (d->mid_tick_image_opa   != 255) cJSON_AddNumberToObject(cfg, "mid_tick_image_opa",   d->mid_tick_image_opa);
+    if (d->minor_tick_image_opa != 255) cJSON_AddNumberToObject(cfg, "minor_tick_image_opa", d->minor_tick_image_opa);
+    if (d->major_tick_image_recolor_opa) { cJSON_AddNumberToObject(cfg, "major_tick_image_recolor", (int)d->major_tick_image_recolor.full); cJSON_AddNumberToObject(cfg, "major_tick_image_recolor_opa", d->major_tick_image_recolor_opa); }
+    if (d->mid_tick_image_recolor_opa)   { cJSON_AddNumberToObject(cfg, "mid_tick_image_recolor",   (int)d->mid_tick_image_recolor.full);   cJSON_AddNumberToObject(cfg, "mid_tick_image_recolor_opa",   d->mid_tick_image_recolor_opa); }
+    if (d->minor_tick_image_recolor_opa) { cJSON_AddNumberToObject(cfg, "minor_tick_image_recolor", (int)d->minor_tick_image_recolor.full); cJSON_AddNumberToObject(cfg, "minor_tick_image_recolor_opa", d->minor_tick_image_recolor_opa); }
+    if (d->major_tick_image_offset) cJSON_AddNumberToObject(cfg, "major_tick_image_offset", d->major_tick_image_offset);
+    if (d->mid_tick_image_offset)   cJSON_AddNumberToObject(cfg, "mid_tick_image_offset",   d->mid_tick_image_offset);
+    if (d->minor_tick_image_offset) cJSON_AddNumberToObject(cfg, "minor_tick_image_offset", d->minor_tick_image_offset);
 
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
@@ -2183,8 +2223,41 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_name");
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->minor_tick_image_name, item->valuestring, sizeof(d->minor_tick_image_name));
+    /* Per-tier image modifiers. The legacy global tick_image_scale seeds all
+     * three scales (back-compat); per-tier keys then override. */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_image_scale");
-    if (cJSON_IsNumber(item)) d->tick_image_scale = (uint16_t)item->valueint;
+    if (cJSON_IsNumber(item)) d->major_tick_image_scale = d->mid_tick_image_scale =
+                              d->minor_tick_image_scale = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_scale");
+    if (cJSON_IsNumber(item)) d->major_tick_image_scale = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_scale");
+    if (cJSON_IsNumber(item)) d->mid_tick_image_scale = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_scale");
+    if (cJSON_IsNumber(item)) d->minor_tick_image_scale = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_opa");
+    if (cJSON_IsNumber(item)) d->major_tick_image_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_opa");
+    if (cJSON_IsNumber(item)) d->mid_tick_image_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_opa");
+    if (cJSON_IsNumber(item)) d->minor_tick_image_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_recolor");
+    if (cJSON_IsNumber(item)) d->major_tick_image_recolor.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_recolor");
+    if (cJSON_IsNumber(item)) d->mid_tick_image_recolor.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_recolor");
+    if (cJSON_IsNumber(item)) d->minor_tick_image_recolor.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_recolor_opa");
+    if (cJSON_IsNumber(item)) d->major_tick_image_recolor_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_recolor_opa");
+    if (cJSON_IsNumber(item)) d->mid_tick_image_recolor_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_recolor_opa");
+    if (cJSON_IsNumber(item)) d->minor_tick_image_recolor_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_offset");
+    if (cJSON_IsNumber(item)) d->major_tick_image_offset = (int16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_offset");
+    if (cJSON_IsNumber(item)) d->mid_tick_image_offset = (int16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_offset");
+    if (cJSON_IsNumber(item)) d->minor_tick_image_offset = (int16_t)item->valueint;
 
     /* Numeric tick labels */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
@@ -2578,7 +2651,21 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_image_name") == 0) { out->str = d->major_tick_image_name; return true; }
 	if (strcmp(name, "mid_tick_image_name") == 0)   { out->str = d->mid_tick_image_name;   return true; }
 	if (strcmp(name, "minor_tick_image_name") == 0) { out->str = d->minor_tick_image_name; return true; }
-	if (strcmp(name, "tick_image_scale") == 0)      { out->i = d->tick_image_scale;        return true; }
+	if (strcmp(name, "major_tick_image_scale") == 0) { out->i = d->major_tick_image_scale; return true; }
+	if (strcmp(name, "mid_tick_image_scale") == 0)   { out->i = d->mid_tick_image_scale;   return true; }
+	if (strcmp(name, "minor_tick_image_scale") == 0) { out->i = d->minor_tick_image_scale; return true; }
+	if (strcmp(name, "major_tick_image_opa") == 0)   { out->i = d->major_tick_image_opa;   return true; }
+	if (strcmp(name, "mid_tick_image_opa") == 0)     { out->i = d->mid_tick_image_opa;     return true; }
+	if (strcmp(name, "minor_tick_image_opa") == 0)   { out->i = d->minor_tick_image_opa;   return true; }
+	if (strcmp(name, "major_tick_image_recolor") == 0) { out->color = lv_color_to32(d->major_tick_image_recolor) & 0xFFFFFF; return true; }
+	if (strcmp(name, "mid_tick_image_recolor") == 0)   { out->color = lv_color_to32(d->mid_tick_image_recolor)   & 0xFFFFFF; return true; }
+	if (strcmp(name, "minor_tick_image_recolor") == 0) { out->color = lv_color_to32(d->minor_tick_image_recolor) & 0xFFFFFF; return true; }
+	if (strcmp(name, "major_tick_image_recolor_opa") == 0) { out->i = d->major_tick_image_recolor_opa; return true; }
+	if (strcmp(name, "mid_tick_image_recolor_opa") == 0)   { out->i = d->mid_tick_image_recolor_opa;   return true; }
+	if (strcmp(name, "minor_tick_image_recolor_opa") == 0) { out->i = d->minor_tick_image_recolor_opa; return true; }
+	if (strcmp(name, "major_tick_image_offset") == 0) { out->i = d->major_tick_image_offset; return true; }
+	if (strcmp(name, "mid_tick_image_offset") == 0)   { out->i = d->mid_tick_image_offset;   return true; }
+	if (strcmp(name, "minor_tick_image_offset") == 0) { out->i = d->minor_tick_image_offset; return true; }
 	if (strcmp(name, "smoothing_ms") == 0)    { out->i = d->smooth.smoothing_ms; return true; }
 	return false;
 }
@@ -2862,11 +2949,21 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
-	if (strcmp(name, "tick_image_scale") == 0) {
-		d->tick_image_scale = (uint16_t)in->i;
-		_arc_rebuild_overlay(w, night_mode_is_active());
-		return true;
-	}
+	if (strcmp(name, "major_tick_image_scale") == 0)       { d->major_tick_image_scale = (uint16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "mid_tick_image_scale") == 0)         { d->mid_tick_image_scale   = (uint16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "minor_tick_image_scale") == 0)       { d->minor_tick_image_scale = (uint16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "major_tick_image_opa") == 0)         { d->major_tick_image_opa = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "mid_tick_image_opa") == 0)           { d->mid_tick_image_opa   = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "minor_tick_image_opa") == 0)         { d->minor_tick_image_opa = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "major_tick_image_recolor") == 0)     { d->major_tick_image_recolor = lv_color_hex(in->color); _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "mid_tick_image_recolor") == 0)       { d->mid_tick_image_recolor   = lv_color_hex(in->color); _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "minor_tick_image_recolor") == 0)     { d->minor_tick_image_recolor = lv_color_hex(in->color); _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "major_tick_image_recolor_opa") == 0) { d->major_tick_image_recolor_opa = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "mid_tick_image_recolor_opa") == 0)   { d->mid_tick_image_recolor_opa   = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "minor_tick_image_recolor_opa") == 0) { d->minor_tick_image_recolor_opa = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "major_tick_image_offset") == 0)      { d->major_tick_image_offset = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "mid_tick_image_offset") == 0)        { d->mid_tick_image_offset   = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "minor_tick_image_offset") == 0)      { d->minor_tick_image_offset = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
 	/* Color alerts. Colours re-run the full fill precedence so the edit lands
 	 * immediately (even on an unbound arc with no signal ticks) and the paint
 	 * memo stays coherent — _arc_apply_fill_color updates _last_fill itself.
@@ -2997,7 +3094,11 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->major_tick_image_name[0] = '\0';
     d->mid_tick_image_name[0]   = '\0';
     d->minor_tick_image_name[0] = '\0';
-    d->tick_image_scale   = 100;
+    d->major_tick_image_scale = d->mid_tick_image_scale = d->minor_tick_image_scale = 100;
+    d->major_tick_image_opa = d->mid_tick_image_opa = d->minor_tick_image_opa = 255;
+    d->major_tick_image_recolor = d->mid_tick_image_recolor = d->minor_tick_image_recolor = lv_color_black();
+    d->major_tick_image_recolor_opa = d->mid_tick_image_recolor_opa = d->minor_tick_image_recolor_opa = 0;
+    d->major_tick_image_offset = d->mid_tick_image_offset = d->minor_tick_image_offset = 0;
     d->major_tick_img_dsc = NULL;
     d->mid_tick_img_dsc   = NULL;
     d->minor_tick_img_dsc = NULL;
