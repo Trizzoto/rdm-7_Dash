@@ -298,6 +298,7 @@ static float _meter_apply_anchor(const meter_data_t *md, float v) {
 }
 
 #define METER_ANIM_PERIOD_MS 16   /* easing tick ≈ display refresh */
+#define METER_SNAP_FRAC      0.15f /* jump > this fraction of range snaps (see widget_smooth.c) */
 
 /* Push a display value (display units; already clamped/anchored/reversed) to the
  * needle, value-gated to ~1 tip-pixel so steady/sub-pixel values don't repaint.
@@ -409,17 +410,27 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 			if (md->anim_timer) lv_timer_pause(md->anim_timer);
 		}
 		if (md->anim_inited) {
-			md->anim_target = fv;
-			if (!md->anim_active && md->anim_timer) {
-				md->anim_active = true;
-				lv_timer_resume(md->anim_timer);
+			float range = md->max - md->min;
+			if (range > 0.0f && fabsf(fv - md->anim_current) > range * METER_SNAP_FRAC) {
+				/* Big jump: snap, don't ease — fall through to the inline paint. */
+				md->anim_current = fv;
+				md->anim_target  = fv;
+				md->anim_active  = false;
+				if (md->anim_timer) lv_timer_pause(md->anim_timer);
+			} else {
+				md->anim_target = fv;
+				if (!md->anim_active && md->anim_timer) {
+					md->anim_active = true;
+					lv_timer_resume(md->anim_timer);
+				}
+				return;  /* timer eases + repaints */
 			}
-			return;  /* timer eases + repaints */
+		} else {
+			/* first value: seed the eased state, then fall through to snap-paint */
+			md->anim_current = fv;
+			md->anim_target  = fv;
+			md->anim_inited  = true;
 		}
-		/* first value: seed the eased state, then fall through to snap-paint */
-		md->anim_current = fv;
-		md->anim_target  = fv;
-		md->anim_inited  = true;
 	}
 
 	int32_t v = lroundf(fv * (float)md->value_scale);
@@ -765,6 +776,32 @@ static void _meter_draw_shadow_needle(lv_draw_ctx_t *ctx, meter_data_t *md,
 	}
 }
 
+/* Stamp a tick image rotated to a tick's angle. `cx,cy` = meter centre (for the
+ * outward direction), `mx,my` = tick centre (where the image is placed). The
+ * image is authored pointing UP (tip toward the rim); rotation aligns that with
+ * the outward radial. `red` recolours it for redline ticks. */
+static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
+                                    lv_coord_t cx, lv_coord_t cy,
+                                    lv_coord_t mx, lv_coord_t my,
+                                    bool red, lv_color_t red_color) {
+	if (!ctx || !img) return;
+	lv_coord_t iw = img->header.w, ih = img->header.h;
+	if (iw <= 0 || ih <= 0) return;
+	float deg = atan2f((float)(my - cy), (float)(mx - cx)) * 57.2957795f; /* outward */
+	int a = (int)lroundf(deg + 90.0f) * 10;                /* up→outward, 0.1° units */
+	a %= 3600; if (a < 0) a += 3600;
+	lv_draw_img_dsc_t idsc;
+	lv_draw_img_dsc_init(&idsc);
+	idsc.angle   = (int16_t)a;
+	idsc.pivot.x = iw / 2;
+	idsc.pivot.y = ih / 2;
+	if (red) { idsc.recolor = red_color; idsc.recolor_opa = LV_OPA_COVER; }
+	lv_area_t coords = { (lv_coord_t)(mx - iw / 2), (lv_coord_t)(my - ih / 2),
+	                     (lv_coord_t)(mx - iw / 2 + iw - 1),
+	                     (lv_coord_t)(my - ih / 2 + ih - 1) };
+	lv_draw_img(ctx, &idsc, &coords, img);
+}
+
 /* Custom needle tip renderer. Hooks LV_EVENT_DRAW_PART_BEGIN / _END on the
  * meter; LVGL fires DRAW_PART_NEEDLE_LINE for each line-needle indicator with
  * the pivot (p1), tip (p2), and line_dsc already populated.
@@ -881,10 +918,35 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 				lv_snprintf(dsc->text, 16, "%d", (int)display_v);
 			}
 		}
-		if (md->redline_enabled && md->redline_recolor_ticks &&
-		    shown_display >= md->redline_threshold) {
+		bool tick_red = md->redline_enabled && md->redline_recolor_ticks &&
+		                shown_display >= md->redline_threshold;
+		if (tick_red) {
 			if (dsc->line_dsc)  dsc->line_dsc->color  = md->redline_color;
 			if (dsc->label_dsc) dsc->label_dsc->color = md->redline_color;
+		}
+		/* Per-tick image: replace the drawn line with a rotated stamp for this
+		 * tier. sub_part_ptr identifies the scale → mid-scale ticks take the
+		 * medium image; main-scale ticks split on major_tick_every. Captured by
+		 * the static-tick snapshot, so this costs nothing per frame. */
+		lv_img_dsc_t *tickimg = NULL;
+		bool is_mid = (md->mid_scale       && dsc->sub_part_ptr == md->mid_scale) ||
+		              (md->night_mid_scale && dsc->sub_part_ptr == md->night_mid_scale);
+		if (is_mid) {
+			tickimg = md->mid_tick_img_dsc;
+		} else {
+			uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
+			tickimg = ((dsc->id % mte) == 0) ? md->major_tick_img_dsc
+			                                 : md->minor_tick_img_dsc;
+		}
+		if (tickimg && dsc->p1 && dsc->p2 && dsc->draw_ctx) {
+			if (dsc->line_dsc) dsc->line_dsc->opa = LV_OPA_TRANSP;   /* hide the line */
+			lv_obj_t *mt = lv_event_get_target(e);
+			lv_coord_t cx = (mt->coords.x1 + mt->coords.x2) / 2;
+			lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
+			lv_coord_t mx = (dsc->p1->x + dsc->p2->x) / 2;
+			lv_coord_t my = (dsc->p1->y + dsc->p2->y) / 2;
+			_meter_stamp_tick_image(dsc->draw_ctx, tickimg, cx, cy, mx, my,
+			                        tick_red, md->redline_color);
 		}
 		return;
 	}
@@ -1111,10 +1173,13 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
  *
  * angle_range is duplicated rather than hoisted onto meter_data_t
  * because we only need it here and at scale-range setup, and the
- * normalisation rule (0→360 when start!=end) is shared by both. */
+ * normalisation rule (0→360) is shared by both. A computed range of 0 means
+ * start≡end (mod 360), i.e. a full revolution — a literal 0° dial is
+ * meaningless, so a full-circle (360° sweep) gauge configured as start==end
+ * resolves to a full sweep instead of collapsing to nothing. */
 static uint32_t _meter_compute_angle_range(const meter_data_t *md) {
 	uint32_t r = (360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
-	if (r == 0 && md->start_angle != md->end_angle) r = 360;
+	if (r == 0) r = 360;
 	return r;
 }
 
@@ -1491,7 +1556,7 @@ static void _meter_build_one(meter_data_t *md, lv_obj_t *parent, bool use_night,
 
 	lv_meter_scale_t *scale = lv_meter_add_scale(m);
 	uint32_t angle_range = (360 + (md->end_angle % 360) - (md->start_angle % 360)) % 360;
-	if (angle_range == 0 && md->start_angle != md->end_angle) angle_range = 360;
+	if (angle_range == 0) angle_range = 360;   /* start==end → full revolution */
 	/* Counter-clockwise / reverse: scale's start_angle stays as configured —
 	 * the value mirror (max+min-v in _meter_on_signal) is what makes max
 	 * land at the start position and min land at the end of the sweep, so
@@ -1618,6 +1683,15 @@ static void _meter_create(widget_t *w, lv_obj_t *parent) {
 		ESP_LOGE(TAG, "_meter_create: missing meter_data");
 		return;
 	}
+
+	/* Per-tick images (shared by day + night) — load BEFORE any build so the
+	 * static-tick snapshot bakes the stamped ticks. */
+	if (md->minor_tick_image_name[0] && !md->minor_tick_img_dsc)
+		md->minor_tick_img_dsc = rdm_image_load(md->minor_tick_image_name);
+	if (md->major_tick_image_name[0] && !md->major_tick_img_dsc)
+		md->major_tick_img_dsc = rdm_image_load(md->major_tick_image_name);
+	if (md->mid_tick_image_name[0] && !md->mid_tick_img_dsc)
+		md->mid_tick_img_dsc = rdm_image_load(md->mid_tick_image_name);
 
 	bool needs_night = _meter_needs_night_meter(md);
 
@@ -1846,6 +1920,12 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "needle_angle_offset", md->needle_angle_offset);
 	if (md->bg_image_name[0] != '\0')
 		cJSON_AddStringToObject(cfg, "bg_image_name", md->bg_image_name);
+	if (md->minor_tick_image_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "minor_tick_image_name", md->minor_tick_image_name);
+	if (md->major_tick_image_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "major_tick_image_name", md->major_tick_image_name);
+	if (md->mid_tick_image_name[0] != '\0')
+		cJSON_AddStringToObject(cfg, "mid_tick_image_name", md->mid_tick_image_name);
 	if (md->border_width != 0)
 		cJSON_AddNumberToObject(cfg, "border_width", md->border_width);
 	if (md->border_color.full != lv_color_black().full)
@@ -2050,6 +2130,15 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 	if (cJSON_IsString(ap) && ap->valuestring) {
 		safe_strncpy(md->bg_image_name, ap->valuestring, sizeof(md->bg_image_name));
 	}
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_name");
+	if (cJSON_IsString(ap) && ap->valuestring)
+		safe_strncpy(md->minor_tick_image_name, ap->valuestring, sizeof(md->minor_tick_image_name));
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_name");
+	if (cJSON_IsString(ap) && ap->valuestring)
+		safe_strncpy(md->major_tick_image_name, ap->valuestring, sizeof(md->major_tick_image_name));
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_name");
+	if (cJSON_IsString(ap) && ap->valuestring)
+		safe_strncpy(md->mid_tick_image_name, ap->valuestring, sizeof(md->mid_tick_image_name));
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
 	if (cJSON_IsNumber(ap)) md->border_width = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
@@ -2208,6 +2297,12 @@ static void _meter_destroy(widget_t *w) {
 		rdm_image_free(md->bg_img_dsc);
 		rdm_image_free(md->night_needle_img_dsc);
 		rdm_image_free(md->night_bg_img_dsc);
+		rdm_image_free(md->minor_tick_img_dsc);
+		rdm_image_free(md->major_tick_img_dsc);
+		rdm_image_free(md->mid_tick_img_dsc);
+		md->minor_tick_img_dsc = NULL;
+		md->major_tick_img_dsc = NULL;
+		md->mid_tick_img_dsc = NULL;
 		/* Tick-snapshot image data is heap-allocated by LVGL inside
 		 * lv_snapshot_take — must be released with lv_snapshot_free
 		 * (frees both data buffer + descriptor). The meter object
@@ -2432,12 +2527,15 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tick_label_font") == 0)    { out->str = md->tick_label_font;   return true; }
 	if (strcmp(name, "needle_image_name") == 0)  { out->str = md->needle_image_name; return true; }
 	if (strcmp(name, "bg_image_name") == 0)      { out->str = md->bg_image_name;     return true; }
+	if (strcmp(name, "minor_tick_image_name") == 0) { out->str = md->minor_tick_image_name; return true; }
+	if (strcmp(name, "major_tick_image_name") == 0) { out->str = md->major_tick_image_name; return true; }
+	if (strcmp(name, "mid_tick_image_name") == 0)   { out->str = md->mid_tick_image_name;   return true; }
 	if (strcmp(name, "min") == 0)                { out->i = md->min;                 return true; }
 	if (strcmp(name, "max") == 0)                { out->i = md->max;                 return true; }
 	if (strcmp(name, "start_angle_user") == 0)   { out->i = md->start_angle;         return true; }
 	if (strcmp(name, "sweep_degrees") == 0) {
 		int sweep = ((int)md->end_angle - (int)md->start_angle + 360) % 360;
-		if (sweep == 0 && md->start_angle != md->end_angle) sweep = 360;
+		if (sweep == 0) sweep = 360;   /* start==end → full revolution, not a 0° dial */
 		out->i = sweep;
 		return true;
 	}
@@ -2543,6 +2641,18 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "bg_image_name") == 0 && in->str) {
 		safe_strncpy(md->bg_image_name, in->str, sizeof(md->bg_image_name));
+		return true;
+	}
+	if (strcmp(name, "minor_tick_image_name") == 0 && in->str) {
+		safe_strncpy(md->minor_tick_image_name, in->str, sizeof(md->minor_tick_image_name));
+		return true;
+	}
+	if (strcmp(name, "major_tick_image_name") == 0 && in->str) {
+		safe_strncpy(md->major_tick_image_name, in->str, sizeof(md->major_tick_image_name));
+		return true;
+	}
+	if (strcmp(name, "mid_tick_image_name") == 0 && in->str) {
+		safe_strncpy(md->mid_tick_image_name, in->str, sizeof(md->mid_tick_image_name));
 		return true;
 	}
 	if (strcmp(name, "min") == 0) { md->min = (int32_t)in->i; return true; }

@@ -51,7 +51,7 @@
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
-          "default": 80,
+          "default": 40,
           "category": "data",
           "min": 0,
           "max": 300,
@@ -684,7 +684,7 @@
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
-          "default": 80,
+          "default": 40,
           "category": "data",
           "min": 0,
           "max": 300,
@@ -1608,6 +1608,36 @@
           "help": "Colour of the smallest marks."
         },
         {
+          "name": "major_tick_image_name",
+          "label": "Major Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each major (numbered) tick instead of a drawn line. Design it pointing up (tip toward the rim); it's rotated to each tick."
+        },
+        {
+          "name": "mid_tick_image_name",
+          "label": "Medium Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each medium tick instead of a drawn line. Design it pointing up (tip toward the rim)."
+        },
+        {
+          "name": "minor_tick_image_name",
+          "label": "Minor Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim)."
+        },
+        {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",
@@ -1740,7 +1770,7 @@
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
-          "default": 80,
+          "default": 40,
           "category": "data",
           "min": 0,
           "max": 300,
@@ -2626,7 +2656,7 @@
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
-          "default": 80,
+          "default": 40,
           "category": "data",
           "min": 0,
           "max": 300,
@@ -2755,6 +2785,107 @@
           "night_overridable": true,
           "group": "Fill",
           "help": "Use a picture for the filled part instead of a plain colour. It's uncovered bit by bit as the reading rises."
+        },
+        {
+          "name": "arc_image_opa",
+          "label": "Track Image Opacity",
+          "type": "slider",
+          "default": 255,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill",
+          "help": "How solid the track image is (255 = fully visible, 0 = invisible)."
+        },
+        {
+          "name": "arc_image_recolor",
+          "label": "Track Image Tint",
+          "type": "color",
+          "default": "#000000",
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Colour blended into the track image (turn up the tint strength to use it)."
+        },
+        {
+          "name": "arc_image_recolor_opa",
+          "label": "Track Tint Strength",
+          "type": "slider",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill",
+          "help": "How strongly the tint colour is mixed into the track image (0 = off)."
+        },
+        {
+          "name": "arc_image_blend",
+          "label": "Track Image Blend",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Normal" },
+            { "value": 1, "label": "Additive" },
+            { "value": 2, "label": "Subtractive" },
+            { "value": 3, "label": "Multiply" }
+          ],
+          "group": "Fill",
+          "help": "How the track image is layered over what's behind it (Additive glows, Multiply darkens)."
+        },
+        {
+          "name": "arc_image_full_opa",
+          "label": "Fill Image Opacity",
+          "type": "slider",
+          "default": 255,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill",
+          "help": "How solid the fill image is (255 = fully visible, 0 = invisible)."
+        },
+        {
+          "name": "arc_image_full_recolor",
+          "label": "Fill Image Tint",
+          "type": "color",
+          "default": "#000000",
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Colour blended into the fill image (turn up the tint strength to use it)."
+        },
+        {
+          "name": "arc_image_full_recolor_opa",
+          "label": "Fill Tint Strength",
+          "type": "slider",
+          "default": 0,
+          "category": "appearance",
+          "min": 0,
+          "max": 255,
+          "group": "Fill",
+          "help": "How strongly the tint colour is mixed into the fill image (0 = off)."
+        },
+        {
+          "name": "arc_image_full_blend",
+          "label": "Fill Image Blend",
+          "type": "select",
+          "default": 0,
+          "category": "appearance",
+          "options": [
+            { "value": 0, "label": "Normal" },
+            { "value": 1, "label": "Additive" },
+            { "value": 2, "label": "Subtractive" },
+            { "value": 3, "label": "Multiply" }
+          ],
+          "group": "Fill",
+          "help": "How the fill image is layered over what's behind it (Additive glows, Multiply darkens)."
+        },
+        {
+          "name": "arc_image_radial",
+          "label": "Radial Fill Reveal",
+          "type": "checkbox",
+          "default": false,
+          "category": "appearance",
+          "group": "Fill",
+          "help": "Uncover the fill image AROUND the ring (for round gauges) instead of sliding it in left-to-right. Use with a full ring fill image."
         },
         {
           "name": "redline_color",
@@ -4086,7 +4217,7 @@
           "name": "smoothing_ms",
           "label": "Smoothing (ms)",
           "type": "slider",
-          "default": 90,
+          "default": 40,
           "category": "data",
           "min": 0,
           "max": 500,

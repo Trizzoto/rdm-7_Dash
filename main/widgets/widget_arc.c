@@ -202,6 +202,86 @@ static void _update_image_clip(widget_t *w, float value) {
     lv_obj_set_width(d->img_clip_obj, clip_w);
 }
 
+/* Invalidate only the wedge of the fill image between two sweep angles (degrees,
+ * lo<=hi) so a value change redraws a thin slice, not the whole ring image. */
+static void _arc_invalidate_wedge(lv_obj_t *img, int lo, int hi) {
+    if (!img || !lv_obj_is_valid(img)) return;
+    lv_coord_t cx = (img->coords.x1 + img->coords.x2) / 2;
+    lv_coord_t cy = (img->coords.y1 + img->coords.y2) / 2;
+    lv_coord_t rr = (lv_obj_get_width(img) / 2) + 2;
+    lv_coord_t x1 = cx, y1 = cy, x2 = cx, y2 = cy;   /* wedge apex = centre */
+    int span = hi - lo;
+    int steps = span + 1;
+    if (steps > 90) steps = 90;
+    if (steps < 1)  steps = 1;
+    for (int i = 0; i <= steps; i++) {
+        float a = ((float)lo + (float)span * (float)i / (float)steps) * 0.017453293f;
+        lv_coord_t px = cx + (lv_coord_t)(rr * cosf(a));
+        lv_coord_t py = cy + (lv_coord_t)(rr * sinf(a));
+        if (px < x1) { x1 = px; }
+        if (px > x2) { x2 = px; }
+        if (py < y1) { y1 = py; }
+        if (py > y2) { y2 = py; }
+    }
+    lv_area_t area = { x1 - 2, y1 - 2, x2 + 2, y2 + 2 };
+    lv_obj_invalidate_area(img, &area);
+}
+
+/* Radial reveal: store the fill end angle + redraw only the changed wedge. */
+static void _update_image_radial(widget_t *w, float value) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    if (!d || !d->img_full_obj) return;
+    float tv = _arc_fill_value(d, value);
+    float range = d->signal_max - d->signal_min;
+    if (range <= 0.0f) range = 100.0f;
+    float pct = (tv - d->signal_min) / range;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+    bool was_hidden = lv_obj_has_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);
+    if (pct <= 0.003f) {                       /* empty → hide the fill image */
+        if (!was_hidden) lv_obj_add_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    int sweep = ((int)d->end_angle - (int)d->start_angle + 3600) % 360;
+    if (sweep == 0) sweep = 360;
+    int new_raw  = (int)d->start_angle + (int)(pct * (float)sweep);
+    int prev_raw = d->reveal_raw;
+    d->reveal_raw   = (int16_t)new_raw;
+    d->reveal_angle = (int16_t)(new_raw % 360);
+    if (was_hidden) {                          /* re-appearing: redraw the whole sweep */
+        lv_obj_clear_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);
+        _arc_invalidate_wedge(d->img_full_obj, (int)d->start_angle, new_raw);
+        return;
+    }
+    int lo = prev_raw < new_raw ? prev_raw : new_raw;
+    int hi = prev_raw < new_raw ? new_raw : prev_raw;
+    _arc_invalidate_wedge(d->img_full_obj, lo, hi);
+}
+
+/* Draw hook on the fill image: mask it to the swept sector [start..reveal] so it
+ * uncovers AROUND the ring; the track image shows through where it's masked. */
+static void _arc_radial_reveal_cb(lv_event_t *e) {
+    arc_data_t *d = (arc_data_t *)lv_event_get_user_data(e);
+    if (!d) return;
+    lv_obj_t *img = lv_event_get_target(e);
+    if (!img || !lv_obj_is_valid(img)) return;
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_DRAW_MAIN_BEGIN) {
+        int start = (((int)d->start_angle % 360) + 360) % 360;
+        int end   = (((int)d->reveal_angle % 360) + 360) % 360;
+        if (((end - start + 360) % 360) < 1) { d->reveal_mask_id = -1; return; }
+        lv_coord_t cx = (img->coords.x1 + img->coords.x2) / 2;
+        lv_coord_t cy = (img->coords.y1 + img->coords.y2) / 2;
+        lv_draw_mask_angle_init(&d->reveal_mask, cx, cy, (lv_coord_t)start, (lv_coord_t)end);
+        d->reveal_mask_id = lv_draw_mask_add(&d->reveal_mask, NULL);
+    } else if (code == LV_EVENT_DRAW_MAIN_END) {
+        if (d->reveal_mask_id >= 0) {
+            lv_draw_mask_remove_id(d->reveal_mask_id);
+            d->reveal_mask_id = -1;
+        }
+    }
+}
+
 /* ── Helpers: standard-arc value update ────────────────────────────────── */
 
 static void _update_arc_value(arc_data_t *d, float value) {
@@ -376,7 +456,9 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
         /* Stale: collapse fill to 0 and clear limiter state. */
         d->_cached_value = d->signal_min;
         d->in_limiter   = false;
-        if (_is_image_mode(d) && d->img_clip_obj) {
+        if (_is_image_mode(d) && d->arc_image_radial && d->img_full_obj) {
+            lv_obj_add_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);
+        } else if (_is_image_mode(d) && d->img_clip_obj) {
             lv_obj_set_width(d->img_clip_obj, 0);
         } else {
             _update_arc_value(d, d->signal_min);
@@ -391,7 +473,8 @@ static void _arc_recompute_value(widget_t *w, float value, bool is_stale) {
     d->_cached_value = value;
 
     if (_is_image_mode(d)) {
-        _update_image_clip(w, value);
+        if (d->arc_image_radial) _update_image_radial(w, value);
+        else                     _update_image_clip(w, value);
     } else {
         _update_arc_value(d, value);
     }
@@ -468,6 +551,23 @@ static void _arc_on_channel_changed(channel_t *c, void *user_data) {
     if (w->root && lv_obj_is_valid(w->root)) lv_obj_invalidate(w->root);
 }
 
+/* Apply per-image styling (opacity / recolor tint / blend mode) to an arc image
+ * object. is_full picks the fill field set, else the track set. */
+static void _arc_apply_image_style(const arc_data_t *d, lv_obj_t *img, bool is_full) {
+    if (!img) return;
+    uint8_t opa    = is_full ? d->arc_image_full_opa         : d->arc_image_opa;
+    lv_color_t rc  = is_full ? d->arc_image_full_recolor     : d->arc_image_recolor;
+    uint8_t rc_opa = is_full ? d->arc_image_full_recolor_opa : d->arc_image_recolor_opa;
+    uint8_t blend  = is_full ? d->arc_image_full_blend       : d->arc_image_blend;
+    lv_obj_set_style_img_opa(img, opa, LV_PART_MAIN);
+    lv_obj_set_style_img_recolor_opa(img, rc_opa, LV_PART_MAIN);
+    if (rc_opa > 0) lv_obj_set_style_img_recolor(img, rc, LV_PART_MAIN);
+    static const lv_blend_mode_t BM[4] = {
+        LV_BLEND_MODE_NORMAL, LV_BLEND_MODE_ADDITIVE,
+        LV_BLEND_MODE_SUBTRACTIVE, LV_BLEND_MODE_MULTIPLY };
+    lv_obj_set_style_blend_mode(img, BM[blend & 3], LV_PART_MAIN);
+}
+
 /* ── Create: image mode ────────────────────────────────────────────────── */
 
 static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
@@ -489,13 +589,27 @@ static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
         d->img_bg_obj = lv_img_create(cont);
         lv_img_set_src(d->img_bg_obj, d->arc_img_dsc);
         lv_obj_set_align(d->img_bg_obj, LV_ALIGN_CENTER);
+        _arc_apply_image_style(d, d->img_bg_obj, false);
     } else {
         ESP_LOGW(TAG, "Failed to load track image '%s'", d->arc_image);
     }
 
     /* Load fill image */
     d->arc_img_full_dsc = rdm_image_load(d->arc_image_full);
-    if (d->arc_img_full_dsc) {
+    if (d->arc_img_full_dsc && d->arc_image_radial) {
+        /* RADIAL reveal: fill image sits centred, uncovered by an angle mask that
+         * sweeps [start..reveal] around the ring (the track shows behind it). */
+        d->img_full_obj = lv_img_create(cont);
+        lv_img_set_src(d->img_full_obj, d->arc_img_full_dsc);
+        lv_obj_set_align(d->img_full_obj, LV_ALIGN_CENTER);
+        _arc_apply_image_style(d, d->img_full_obj, true);
+        d->reveal_angle = d->start_angle;
+        d->reveal_raw = d->start_angle;
+        d->reveal_mask_id = -1;
+        lv_obj_add_flag(d->img_full_obj, LV_OBJ_FLAG_HIDDEN);   /* empty until first tick */
+        lv_obj_add_event_cb(d->img_full_obj, _arc_radial_reveal_cb, LV_EVENT_DRAW_MAIN_BEGIN, d);
+        lv_obj_add_event_cb(d->img_full_obj, _arc_radial_reveal_cb, LV_EVENT_DRAW_MAIN_END, d);
+    } else if (d->arc_img_full_dsc) {
         /* Create clip container -- starts at width 0 (empty). Reverse anchors
          * the clip (and the inner image) to the RIGHT edge so the fill grows
          * leftward — the image equivalent of LV_ARC_MODE_REVERSE: the reveal
@@ -516,6 +630,7 @@ static void _arc_create_image_mode(widget_t *w, lv_obj_t *parent) {
         d->img_full_obj = lv_img_create(d->img_clip_obj);
         lv_img_set_src(d->img_full_obj, d->arc_img_full_dsc);
         lv_obj_set_align(d->img_full_obj, clip_align);
+        _arc_apply_image_style(d, d->img_full_obj, true);
     } else {
         ESP_LOGW(TAG, "Failed to load fill image '%s'", d->arc_image_full);
     }
@@ -542,6 +657,7 @@ static void _arc_create_static_image(widget_t *w, lv_obj_t *parent) {
         d->img_bg_obj = lv_img_create(cont);
         lv_img_set_src(d->img_bg_obj, d->arc_img_dsc);
         lv_obj_set_align(d->img_bg_obj, LV_ALIGN_CENTER);
+        _arc_apply_image_style(d, d->img_bg_obj, false);
     } else {
         lv_obj_t *lbl = lv_label_create(cont);
         lv_label_set_text(lbl, d->arc_image);
@@ -550,6 +666,50 @@ static void _arc_create_static_image(widget_t *w, lv_obj_t *parent) {
     }
 
     w->root = cont;
+}
+
+static void _arc_create_standard(widget_t *w, lv_obj_t *parent);  /* fwd decl */
+
+/* ── Create: image TRACK + drawn fill ──────────────────────────────────────
+ * arc_image is the background ("empty/track" look) and the live value arc is
+ * DRAWN on top — so a track image no longer hides the fill. The drawn bg track
+ * is hidden (the image supplies it); only the drawn indicator (fill) shows.
+ * Used when arc_image is set, arc_image_full is NOT, and a signal drives it. */
+static void _arc_create_image_track_fill(widget_t *w, lv_obj_t *parent) {
+    arc_data_t *d = (arc_data_t *)w->type_data;
+    _arc_create_standard(w, parent);              /* cont + clip + arc_obj (drawn fill) */
+    lv_obj_t *cont = w->root;
+    if (!cont) return;
+    d->arc_img_dsc = rdm_image_load(d->arc_image);
+    if (d->arc_img_dsc) {
+        d->img_bg_obj = lv_img_create(cont);
+        lv_img_set_src(d->img_bg_obj, d->arc_img_dsc);
+        lv_obj_set_align(d->img_bg_obj, LV_ALIGN_CENTER);
+        lv_obj_move_background(d->img_bg_obj);     /* behind the drawn fill */
+        _arc_apply_image_style(d, d->img_bg_obj, false);
+    } else {
+        ESP_LOGW(TAG, "Failed to load track image '%s'", d->arc_image);
+    }
+    /* the image IS the track → hide the drawn bg track, keep only the fill */
+    if (d->arc_obj)
+        lv_obj_set_style_arc_opa(d->arc_obj, LV_OPA_TRANSP, LV_PART_MAIN);
+}
+
+/* LVGL renders a true 360° arc only from 0°..360°; off-origin the widest it can
+ * draw is 359° (bg_end one degree behind bg_start, which the draw path wraps to
+ * start+359). A gauge configured as start==end means a full revolution (a 0°
+ * sweep is meaningless), so expand it to the largest ring LVGL will draw rather
+ * than collapsing to nothing. */
+static void _arc_full_circle_angles(int16_t start, int16_t end,
+                                    int16_t *ls, int16_t *le) {
+    if (start == end) {
+        int16_t s = (int16_t)(((start % 360) + 360) % 360);
+        *ls = s;
+        *le = (s == 0) ? 360 : (int16_t)(s - 1);
+    } else {
+        *ls = start;
+        *le = end;
+    }
 }
 
 /* ── Helper: configure one LVGL arc with given angles/widths/colors ─── */
@@ -562,8 +722,10 @@ static void _configure_arc(lv_obj_t *obj, int16_t start, int16_t end,
                             bool rounded) {
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     lv_arc_set_mode(obj, LV_ARC_MODE_NORMAL);
-    lv_arc_set_bg_angles(obj, start, end);
-    lv_arc_set_angles(obj, start, end);
+    int16_t ls, le;
+    _arc_full_circle_angles(start, end, &ls, &le);
+    lv_arc_set_bg_angles(obj, ls, le);
+    lv_arc_set_angles(obj, ls, le);
     lv_arc_set_range(obj, 0, 100);
     lv_arc_set_value(obj, 100);
     lv_obj_set_style_arc_color(obj, bg_c, LV_PART_MAIN);
@@ -602,7 +764,7 @@ static int16_t _value_to_angle(const arc_data_t *d, float value) {
     /* Sweep is from start_angle to end_angle going clockwise (LVGL
      * convention). Wrap if end < start. */
     int32_t sweep = (360 + d->end_angle - d->start_angle) % 360;
-    if (sweep == 0 && d->start_angle != d->end_angle) sweep = 360;
+    if (sweep == 0) sweep = 360;   /* start==end → full revolution */
     return (int16_t)(d->start_angle + (int32_t)(pct * (float)sweep));
 }
 
@@ -861,7 +1023,7 @@ static void _arc_flatten_overlay(arc_data_t *d, lv_obj_t *cont, lv_obj_t *m,
 
 	/* Sector bbox: sample the sweep at both radii. */
 	int32_t range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
-	if (range == 0 && d->start_angle != d->end_angle) range = 360;
+	if (range == 0) range = 360;   /* start==end → full revolution */
 	lv_area_t bbox = { LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN };
 	for (int32_t adeg = 0; adeg <= range; adeg += 3) {
 		int32_t ang = (int32_t)d->start_angle + LV_MIN(adeg, range);
@@ -999,7 +1161,7 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     lv_meter_scale_t *scale = lv_meter_add_scale(m);
     /* Angle span: identical computation to _value_to_angle's sweep. */
     int32_t angle_range = (360 + (d->end_angle % 360) - (d->start_angle % 360)) % 360;
-    if (angle_range == 0 && d->start_angle != d->end_angle) angle_range = 360;
+    if (angle_range == 0) angle_range = 360;   /* start==end → full revolution */
 
     /* Tick-scale geometry + counts. By default the scale spans the full signal
      * range over the full sweep. When a tick window is set (and the gauge is
@@ -1425,7 +1587,12 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     if (_is_image_mode(d)) {
         _arc_create_image_mode(w, parent);
     } else if (_is_static_image_mode(d)) {
-        _arc_create_static_image(w, parent);
+        /* arc_image only: with a signal, draw the live fill ON the track image;
+         * without one, it's a decorative static image. */
+        if (d->signal_index >= 0)
+            _arc_create_image_track_fill(w, parent);
+        else
+            _arc_create_static_image(w, parent);
     } else {
         _arc_create_standard(w, parent);
     }
@@ -1567,6 +1734,20 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddStringToObject(cfg, "arc_image", d->arc_image);
     if (d->arc_image_full[0] != '\0')
         cJSON_AddStringToObject(cfg, "arc_image_full", d->arc_image_full);
+    /* Per-image styling (defaults-only) */
+    if (d->arc_image_opa != 255)         cJSON_AddNumberToObject(cfg, "arc_image_opa", d->arc_image_opa);
+    if (d->arc_image_recolor_opa != 0) {
+        cJSON_AddNumberToObject(cfg, "arc_image_recolor", (int)d->arc_image_recolor.full);
+        cJSON_AddNumberToObject(cfg, "arc_image_recolor_opa", d->arc_image_recolor_opa);
+    }
+    if (d->arc_image_blend != 0)         cJSON_AddNumberToObject(cfg, "arc_image_blend", d->arc_image_blend);
+    if (d->arc_image_full_opa != 255)    cJSON_AddNumberToObject(cfg, "arc_image_full_opa", d->arc_image_full_opa);
+    if (d->arc_image_full_recolor_opa != 0) {
+        cJSON_AddNumberToObject(cfg, "arc_image_full_recolor", (int)d->arc_image_full_recolor.full);
+        cJSON_AddNumberToObject(cfg, "arc_image_full_recolor_opa", d->arc_image_full_recolor_opa);
+    }
+    if (d->arc_image_full_blend != 0)    cJSON_AddNumberToObject(cfg, "arc_image_full_blend", d->arc_image_full_blend);
+    if (d->arc_image_radial)             cJSON_AddBoolToObject(cfg, "arc_image_radial", true);
 
     /* Redline zone */
     if (d->redline_enabled)
@@ -1804,6 +1985,26 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full");
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(d->arc_image_full, item->valuestring, sizeof(d->arc_image_full));
+
+    /* Per-image styling */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_opa");
+    if (cJSON_IsNumber(item)) d->arc_image_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_recolor");
+    if (cJSON_IsNumber(item)) d->arc_image_recolor.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_recolor_opa");
+    if (cJSON_IsNumber(item)) d->arc_image_recolor_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_blend");
+    if (cJSON_IsNumber(item)) d->arc_image_blend = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full_opa");
+    if (cJSON_IsNumber(item)) d->arc_image_full_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full_recolor");
+    if (cJSON_IsNumber(item)) d->arc_image_full_recolor.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full_recolor_opa");
+    if (cJSON_IsNumber(item)) d->arc_image_full_recolor_opa = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_full_blend");
+    if (cJSON_IsNumber(item)) d->arc_image_full_blend = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "arc_image_radial");
+    if (cJSON_IsBool(item)) d->arc_image_radial = cJSON_IsTrue(item);
 
     /* Redline */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "redline_enabled");
@@ -2212,6 +2413,15 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "signal_name") == 0)    { out->str = d->signal_name;    return true; }
 	if (strcmp(name, "arc_image") == 0)      { out->str = d->arc_image;      return true; }
 	if (strcmp(name, "arc_image_full") == 0) { out->str = d->arc_image_full; return true; }
+	if (strcmp(name, "arc_image_opa") == 0)              { out->i = d->arc_image_opa;              return true; }
+	if (strcmp(name, "arc_image_recolor") == 0)          { out->color = lv_color_to32(d->arc_image_recolor) & 0xFFFFFF; return true; }
+	if (strcmp(name, "arc_image_recolor_opa") == 0)      { out->i = d->arc_image_recolor_opa;      return true; }
+	if (strcmp(name, "arc_image_blend") == 0)            { out->i = d->arc_image_blend;            return true; }
+	if (strcmp(name, "arc_image_full_opa") == 0)         { out->i = d->arc_image_full_opa;         return true; }
+	if (strcmp(name, "arc_image_full_recolor") == 0)     { out->color = lv_color_to32(d->arc_image_full_recolor) & 0xFFFFFF; return true; }
+	if (strcmp(name, "arc_image_full_recolor_opa") == 0) { out->i = d->arc_image_full_recolor_opa; return true; }
+	if (strcmp(name, "arc_image_full_blend") == 0)       { out->i = d->arc_image_full_blend;       return true; }
+	if (strcmp(name, "arc_image_radial") == 0)           { out->b = d->arc_image_radial;           return true; }
 	if (strcmp(name, "tick_label_font") == 0) { out->str = d->tick_label_font; return true; }
 	if (strcmp(name, "show_tick_labels") == 0) { out->b = d->show_tick_labels; return true; }
 	if (strcmp(name, "ticks_on_top") == 0)   { out->b = d->ticks_on_top;     return true; }
@@ -2303,13 +2513,24 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		safe_strncpy(d->arc_image_full, in->str, sizeof(d->arc_image_full));
 		return true;
 	}
+	if (strcmp(name, "arc_image_opa") == 0)         { d->arc_image_opa = (uint8_t)in->i;         _arc_apply_image_style(d, d->img_bg_obj, false); return true; }
+	if (strcmp(name, "arc_image_recolor") == 0)     { d->arc_image_recolor = lv_color_hex(in->color); _arc_apply_image_style(d, d->img_bg_obj, false); return true; }
+	if (strcmp(name, "arc_image_recolor_opa") == 0) { d->arc_image_recolor_opa = (uint8_t)in->i; _arc_apply_image_style(d, d->img_bg_obj, false); return true; }
+	if (strcmp(name, "arc_image_blend") == 0)       { d->arc_image_blend = (uint8_t)in->i;       _arc_apply_image_style(d, d->img_bg_obj, false); return true; }
+	if (strcmp(name, "arc_image_full_opa") == 0)         { d->arc_image_full_opa = (uint8_t)in->i;         _arc_apply_image_style(d, d->img_full_obj, true); return true; }
+	if (strcmp(name, "arc_image_full_recolor") == 0)     { d->arc_image_full_recolor = lv_color_hex(in->color); _arc_apply_image_style(d, d->img_full_obj, true); return true; }
+	if (strcmp(name, "arc_image_full_recolor_opa") == 0) { d->arc_image_full_recolor_opa = (uint8_t)in->i; _arc_apply_image_style(d, d->img_full_obj, true); return true; }
+	if (strcmp(name, "arc_image_full_blend") == 0)       { d->arc_image_full_blend = (uint8_t)in->i;       _arc_apply_image_style(d, d->img_full_obj, true); return true; }
+	if (strcmp(name, "arc_image_radial") == 0)           { d->arc_image_radial = in->b; return true; }  /* mode change — needs rebuild */
 	if (strcmp(name, "start_angle") == 0 || strcmp(name, "end_angle") == 0) {
 		int v = in->i; v %= 360; if (v < 0) v += 360;
 		if (strcmp(name, "start_angle") == 0) d->start_angle = (int16_t)v;
 		else                                  d->end_angle   = (int16_t)v;
 		if (a && lv_obj_is_valid(a)) {
-			lv_arc_set_bg_angles(a, d->start_angle, d->end_angle);
-			lv_arc_set_angles(a, d->start_angle, d->end_angle);
+			int16_t ls, le;
+			_arc_full_circle_angles(d->start_angle, d->end_angle, &ls, &le);
+			lv_arc_set_bg_angles(a, ls, le);
+			lv_arc_set_angles(a, ls, le);
 		}
 		_arc_apply_sector_crop(w);
 		return true;
@@ -2588,6 +2809,12 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->lead_edge_enabled = true;
     d->lead_edge_color   = lv_color_hex(0xE6FAFF);
     d->lead_edge_width   = 6;
+    /* image styling defaults: fully opaque, no recolor, normal blend */
+    d->arc_image_opa          = 255; d->arc_image_recolor      = lv_color_black();
+    d->arc_image_recolor_opa  = 0;   d->arc_image_blend        = 0;
+    d->arc_image_full_opa     = 255; d->arc_image_full_recolor = lv_color_black();
+    d->arc_image_full_recolor_opa = 0; d->arc_image_full_blend = 0;
+    d->arc_image_radial = false; d->reveal_mask_id = -1; d->reveal_angle = 0; d->reveal_raw = 0;
     d->arc_obj       = NULL;
     d->signal_index  = -1;
     d->signal_min    = ARC_DEFAULT_SIG_MIN;

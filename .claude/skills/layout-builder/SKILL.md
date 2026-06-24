@@ -67,6 +67,7 @@ apply the layout.
 - **Draw order matters** — later widgets paint on top.
 - **Prefer adapting real widgets** (examples / `/api/layout/current`) over authoring fields from scratch.
 - **Verify visually** — always pull a screenshot after applying; don't claim it looks right without one.
+- **Sweep-test value-driven gauges** (arc/bar/meter fill, fill-images). One screenshot lies — a gauge can look fine mid-range but read "full" at 0 or empty at max. Inject the bound signal across its range (e.g. `0, ¼, ½, ¾, max`), screenshot each, and check it reads correctly at **every** value. The empty (min) state is the usual offender: make the unfilled track *very* dim so 0 reads empty, not full. (`tools/_audi/sweep.sh SIGNAL "v1 v2 …"` stitches a contact sheet.)
 - If a device isn't reachable, still build + validate the JSON and hand it over (the user can apply it from the editor's Import, or save it for later).
 
 ## Keeping the catalog current

@@ -88,6 +88,23 @@ typedef struct {
     lv_obj_t     *img_bg_obj;         /* runtime: background image object */
     lv_obj_t     *img_full_obj;       /* runtime: full image object */
     lv_obj_t     *img_clip_obj;       /* runtime: clipping container */
+    /* Per-image styling (track + fill): opacity, recolor tint, blend/overlay mode.
+     * blend: 0 normal, 1 additive, 2 subtractive, 3 multiply (maps to LV_BLEND_MODE_*) */
+    uint8_t       arc_image_opa;           /* default 255 */
+    lv_color_t    arc_image_recolor;       /* tint colour */
+    uint8_t       arc_image_recolor_opa;   /* default 0 = off */
+    uint8_t       arc_image_blend;         /* default 0 */
+    uint8_t       arc_image_full_opa;          /* default 255 */
+    lv_color_t    arc_image_full_recolor;
+    uint8_t       arc_image_full_recolor_opa;  /* default 0 = off */
+    uint8_t       arc_image_full_blend;        /* default 0 */
+    /* Radial fill reveal: uncover the fill image AROUND the ring (angle mask)
+     * instead of the default horizontal left-to-right clip. For circular gauges. */
+    bool          arc_image_radial;            /* default false */
+    lv_draw_mask_angle_param_t reveal_mask;    /* runtime: radial reveal mask */
+    int16_t       reveal_mask_id;              /* runtime */
+    int16_t       reveal_angle;                /* runtime: current fill end angle (mod 360) */
+    int16_t       reveal_raw;                  /* runtime: prev fill angle, sweep order, for delta invalidation */
 
     /* ── Redline zone — visual emphasis for the "danger" range.
      *   - A separate static arc is drawn from `redline_threshold` to

@@ -7138,7 +7138,7 @@
                             { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data", group: "Value", help: "The highest RPM the bar shows. It fills from 0 up to here." },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data", group: "Value", help: "The RPM where the red warning zone starts - the bar changes colour past this point." },
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data", group: "Value", help: "The RPM where your rev limiter kicks in - the bar reacts here." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the bar below the redline.", nightOverridable: true },
                             { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance", group: "Fill", help: "Which way the bar fills (left, right, up or down).",
                               options: [
@@ -7241,7 +7241,7 @@
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the bar (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data", group: "Value", help: "Show the number on the bar." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Flip it so a high reading empties the bar instead of filling it." },
                             { name: "center_fill", label: "Center Fill (±)", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Fill out from the middle of the bar in both directions." },
                             { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance", group: "Fill", help: "Which way the bar fills (left, right, up or down).",
@@ -7380,6 +7380,9 @@
                             { name: "major_tick_color", label: "Major Tick Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Ticks", help: "Colour of the biggest marks.", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "mid_tick_color", label: "Medium Tick Color", type: "color", def: 0xBDBDBD, cat: "appearance", group: "Ticks", help: "Colour of the medium marks.", enabledBy: "show_ticks" },
                             { name: "minor_tick_color", label: "Minor Tick Color", type: "color", def: 0x9E9E9E, cat: "appearance", group: "Ticks", help: "Colour of the smallest marks.", enabledBy: "show_ticks", nightOverridable: true },
+                            { name: "major_tick_image_name", label: "Major Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each major (numbered) tick instead of a drawn line. Design it pointing up (tip toward the rim); it's rotated to each tick.", enabledBy: "show_ticks" },
+                            { name: "mid_tick_image_name", label: "Medium Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each medium tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
+                            { name: "minor_tick_image_name", label: "Minor Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers", help: "Show numbers next to the biggest marks." },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Text style and size of those numbers.", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", help: "Colour of those numbers.", enabledBy: "show_tick_labels", nightOverridable: true },
@@ -7397,7 +7400,7 @@
                             { name: "redline_arc_width", label: "Arc Width", type: "stepper", def: 6, cat: "data", group: "Redline", help: "How thick that band is.", min: 1, max: 30, enabledBy: "redline_enabled" },
                             { name: "redline_arc_r_mod", label: "Arc Inset", type: "stepper", def: 0, cat: "data", group: "Redline", help: "Move the warning band in or out from the dial.", min: -50, max: 50, enabledBy: "redline_enabled" },
                             { name: "redline_recolor_ticks", label: "Recolor Ticks", type: "checkbox", def: true, cat: "data", group: "Redline", help: "Turn the marks inside the warning zone that colour too.", enabledBy: "redline_enabled" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", group: "Frame", help: "Background colour of the gauge face.", nightOverridable: true },
                             { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", def: 255, cat: "appearance", group: "Frame", help: "How solid the gauge face is (0 = see-through, 255 = solid).", min: 0, max: 255 },
                             { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", group: "Frame", help: "Use a picture as the gauge face.", nightOverridable: true },
@@ -7571,7 +7574,7 @@
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the gauge (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value", help: "Run the gauge backwards, so the full end becomes the empty end." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 80, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value.", min: 0, max: 300, step: 10 },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "How thick the coloured (filled) part of the gauge is.", min: 1, max: 50 },
                             { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "Moves the ring in or out from the centre. Use it to stack one gauge inside another.", min: 0, max: 120 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the filled part.", nightOverridable: true },
@@ -7584,6 +7587,27 @@
                             { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", help: "How wide the bright tip is.", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use a picture for the empty background instead of a plain colour.", nightOverridable: true },
                             { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use a picture for the filled part instead of a plain colour. It's uncovered bit by bit as the reading rises.", nightOverridable: true },
+                            { name: "arc_image_opa", label: "Track Image Opacity", type: "slider", def: 255, cat: "appearance", group: "Fill", help: "How solid the track image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
+                            { name: "arc_image_recolor", label: "Track Image Tint", type: "color", def: 0x000000, cat: "appearance", group: "Fill", help: "Colour blended into the track image (turn up the tint strength to use it)." },
+                            { name: "arc_image_recolor_opa", label: "Track Tint Strength", type: "slider", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the track image (0 = off).", min: 0, max: 255 },
+                            { name: "arc_image_blend", label: "Track Image Blend", type: "select", def: 0, cat: "appearance", group: "Fill", help: "How the track image is layered over what's behind it (Additive glows, Multiply darkens).",
+                              options: [
+                                  { v: 0, l: "Normal" },
+                                  { v: 1, l: "Additive" },
+                                  { v: 2, l: "Subtractive" },
+                                  { v: 3, l: "Multiply" }
+                              ] },
+                            { name: "arc_image_full_opa", label: "Fill Image Opacity", type: "slider", def: 255, cat: "appearance", group: "Fill", help: "How solid the fill image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
+                            { name: "arc_image_full_recolor", label: "Fill Image Tint", type: "color", def: 0x000000, cat: "appearance", group: "Fill", help: "Colour blended into the fill image (turn up the tint strength to use it)." },
+                            { name: "arc_image_full_recolor_opa", label: "Fill Tint Strength", type: "slider", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the fill image (0 = off).", min: 0, max: 255 },
+                            { name: "arc_image_full_blend", label: "Fill Image Blend", type: "select", def: 0, cat: "appearance", group: "Fill", help: "How the fill image is layered over what's behind it (Additive glows, Multiply darkens).",
+                              options: [
+                                  { v: 0, l: "Normal" },
+                                  { v: 1, l: "Additive" },
+                                  { v: 2, l: "Subtractive" },
+                                  { v: 3, l: "Multiply" }
+                              ] },
+                            { name: "arc_image_radial", label: "Radial Fill Reveal", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Uncover the fill image AROUND the ring (for round gauges) instead of sliding it in left-to-right. Use with a full ring fill image." },
                             { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF0000, cat: "appearance", group: "Redline", help: "Colour of the warning zone (like a rev counter's red zone). Where it starts is set by this reading's high-warning level." },
                             { name: "redline_arc_width", label: "Redline Thickness", type: "stepper", def: 0, cat: "appearance", group: "Redline", help: "How thick the warning-zone band is.", min: 0, max: 50 },
                             { name: "redline_recolor_fill", label: "Redline Recolors Fill", type: "checkbox", def: true, cat: "appearance", group: "Redline", help: "When the reading reaches the warning zone, turn the whole fill that colour - not just the band." },
@@ -7761,7 +7785,7 @@
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
                             { name: "tick_label_divisor", label: "Number Divisor", type: "stepper", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 90, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500 }
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500 }
                         ]
                     }
                 };

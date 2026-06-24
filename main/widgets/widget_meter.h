@@ -148,6 +148,17 @@ typedef struct {
 	/* Background image (rendered behind meter content) */
 	char           bg_image_name[32];    /* RDMIMG name, empty = solid color bg */
 	lv_img_dsc_t  *bg_img_dsc;           /* runtime: loaded background image */
+	/* Per-tick images — stamp a rotated image at each tick instead of a drawn
+	 * line, one design per tier. Empty = use the drawn line for that tier. The
+	 * image is designed pointing OUTWARD (tip toward the rim); it's rotated to
+	 * each tick's angle and centred on the tick. Flattened into the static-tick
+	 * snapshot, so runtime cost is zero. */
+	char           minor_tick_image_name[32];
+	char           major_tick_image_name[32];
+	char           mid_tick_image_name[32];
+	lv_img_dsc_t  *minor_tick_img_dsc;   /* runtime */
+	lv_img_dsc_t  *major_tick_img_dsc;   /* runtime */
+	lv_img_dsc_t  *mid_tick_img_dsc;     /* runtime */
 	/* Border */
 	lv_color_t border_color;         /* default: 0x000000 */
 	uint8_t    border_width;         /* default: 0 (no border) */
