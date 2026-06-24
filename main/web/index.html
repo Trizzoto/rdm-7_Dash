@@ -19448,6 +19448,7 @@
             ['km/h', 'mph',  0.62137119,  0],
             ['m/s',  'km/h', 3.6,         0],
             ['m/s',  'mph',  2.23693629,  0],
+            ['λ',    'AFR',  14.7,        0],
         ];
         function _unitConvert(v, from, to) {
             if (v == null || isNaN(v) || !from || !to || from === to) return v;
@@ -20461,8 +20462,12 @@
                         <div class="ch2-num"><span class="ch2-num-label"><span class="swatch" style="background:rgba(155,196,230,0.6);"></span>Low warn</span>${numField('low_warn', c.low_warn, '—')}</div>
                         <div class="ch2-num"><span class="ch2-num-label"><span class="swatch" style="background:rgba(230,184,0,0.6);"></span>High warn</span>${numField('high_warn', c.high_warn, '—')}</div>
                     </div>
+                    ${(c.source_units && c.source_units.length > 1) ? `
                     <div class="ch2-num-row">
-                        <div class="ch2-num"><span class="ch2-num-label">Units</span>${_chUnitFieldHTML(c)}</div>
+                        <div class="ch2-num"><span class="ch2-num-label" title="The unit your ECU is actually sending. Change this if you switched the ECU's units (e.g. MaxxECU set to °F or psi) so the value is read correctly.">Received as</span>${_chSourceFieldHTML(c)}</div>
+                    </div>` : ''}
+                    <div class="ch2-num-row">
+                        <div class="ch2-num"><span class="ch2-num-label" title="What to convert the value to for display.">Display as</span>${_chUnitFieldHTML(c)}</div>
                         <div class="ch2-num"><span class="ch2-num-label">Decimals</span>
                             <input type="number" min="0" max="3" value="${c.decimals||0}" onchange="_chEdit('${c.id}','decimals', Number(this.value)); _flushChannelEdits(); _renderChannelDetail();"></div>
                     </div>
@@ -20652,6 +20657,26 @@
             _chEdit(id, 'units_display', value);
             /* Flush now and re-render so the value, range and threshold
              * fields all flip to the new unit immediately. */
+            await _flushChannelEdits();
+            _renderChannelDetail();
+            _refreshChannelsList();
+        }
+
+        /* "Received as" — the NATIVE/source unit the ECU actually transmits.
+         * source_units (from /api/channels) is the convertible family; only
+         * shown when there's a real choice. Changing it re-expresses the stored
+         * range + thresholds into the new unit (firmware side). */
+        function _chSourceFieldHTML(c) {
+            const opts = c.source_units || [];
+            if (opts.length < 2) return '';
+            const cur = c.units_native || opts[0];
+            return `<select onchange="_chSourceSelect('${c.id}', this.value)">
+                        ${opts.map(u => `<option value="${u}" ${cur === u ? 'selected' : ''}>${u}${u === opts[0] ? ' (default)' : ''}</option>`).join('')}
+                    </select>`;
+        }
+        async function _chSourceSelect(id, value) {
+            if (!value) return;
+            _chEdit(id, 'units_native', value);
             await _flushChannelEdits();
             _renderChannelDetail();
             _refreshChannelsList();

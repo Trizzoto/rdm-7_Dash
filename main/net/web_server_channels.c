@@ -114,6 +114,26 @@ static cJSON *channel_to_full_json(const channel_t *c) {
 	cJSON_AddStringToObject(j, "units_display", c->units_display);
 	cJSON_AddNumberToObject(j, "decimals", c->decimals);
 
+	/* Source-unit options ("what the ECU is sending") — the full convertible
+	 * family computed from the canonical BASE native so e.g. °C/°F/K all appear
+	 * regardless of the channel's current native. The web "Received as" dropdown
+	 * renders this; absent (or 1-entry) means the unit has no alternatives. */
+	{
+		const canonical_channel_def_t *cdef = canonical_channel_find(c->id);
+		const char *base = (cdef && cdef->units_native[0]) ? cdef->units_native
+		                                                   : c->units_native;
+		const char *targets[8];
+		size_t nt = base[0] ? unit_convert_targets(base, targets, 8) : 0;
+		if (nt > 0) {
+			cJSON *su = cJSON_AddArrayToObject(j, "source_units");
+			if (su) {
+				cJSON_AddItemToArray(su, cJSON_CreateString(base));
+				for (size_t k = 0; k < nt; ++k)
+					cJSON_AddItemToArray(su, cJSON_CreateString(targets[k]));
+			}
+		}
+	}
+
 	cJSON_AddNumberToObject(j, "min", c->min);
 	cJSON_AddNumberToObject(j, "max", c->max);
 
@@ -411,6 +431,9 @@ static bool apply_one_field(channel_t *c, const char *key, cJSON *val) {
 		if (cJSON_IsNull(val)) return channel_manager_set_signal(c, "");
 		if (cJSON_IsString(val)) return channel_manager_set_signal(c, val->valuestring);
 		return false;
+	}
+	if (!strcmp(key, "units_native") && cJSON_IsString(val)) {
+		return channel_manager_set_units_native(c, val->valuestring);
 	}
 	if (!strcmp(key, "units_display") && cJSON_IsString(val)) {
 		return channel_manager_set_units_display(c, val->valuestring);

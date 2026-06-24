@@ -36,6 +36,10 @@ static const unit_conv_t CONVS[] = {
 	{"km/h", "mph",  0.62137119f,   0.0f},
 	{"m/s",  "km/h", 3.6f,          0.0f},
 	{"m/s",  "mph",  2.23693629f,   0.0f},
+
+	/* Air-fuel ratio (gasoline stoich: λ 1.0 = 14.7 AFR). Lets a wideband
+	 * reported as lambda show as AFR, or an AFR sensor read back as lambda. */
+	{"λ",    "AFR",  14.7f,         0.0f},
 };
 
 #define N_CONVS (sizeof(CONVS) / sizeof(CONVS[0]))

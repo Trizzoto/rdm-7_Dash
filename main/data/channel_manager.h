@@ -210,6 +210,11 @@ bool channel_manager_delete(const char *id);
 bool channel_manager_set_label(channel_t *c, const char *label);
 bool channel_manager_set_signal(channel_t *c, const char *signal_name);
 bool channel_manager_set_units_display(channel_t *c, const char *units);
+/* Set the channel's NATIVE (source/received) unit — what the ECU is actually
+ * transmitting. Re-expresses range/threshold/sanity values from the old native
+ * unit into the new one so they keep their physical meaning. units_display
+ * (the convert-to unit) is independent and unchanged. */
+bool channel_manager_set_units_native(channel_t *c, const char *units);
 bool channel_manager_set_decimals(channel_t *c, uint8_t decimals);
 bool channel_manager_set_range(channel_t *c, float min, float max);
 bool channel_manager_set_sanity(channel_t *c, float smin, float smax);

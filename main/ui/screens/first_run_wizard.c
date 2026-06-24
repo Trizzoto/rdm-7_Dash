@@ -2292,7 +2292,7 @@ static void _kp_open_cb(lv_event_t *e) {
     show_numeric_input_dialog(title, initial, _kp_confirmed, NULL, (void *)(intptr_t)f);
 }
 
-typedef enum { DD_DECIMALS = 1, DD_BIT_START, DD_BIT_LEN, DD_SIGNED, DD_ENDIAN, DD_UNITS } dd_field_t;
+typedef enum { DD_DECIMALS = 1, DD_BIT_START, DD_BIT_LEN, DD_SIGNED, DD_ENDIAN, DD_UNITS, DD_SOURCE_UNITS } dd_field_t;
 
 /* Deferred full pane rebuild — used by edits whose event target would be
  * deleted by an inline re-render (dropdowns mid VALUE_CHANGED). The pane
@@ -2330,6 +2330,36 @@ static const char *_units_dd_index_to_unit(const channel_t *c, uint16_t idx) {
     return ((size_t)(idx - 1) < n) ? targets[idx - 1] : c->units_native;
 }
 
+/* Source-unit (units_native = "what the ECU sends") dropdown: the canonical
+ * BASE native first, then the full convertible family, so e.g. °C/°F/K all
+ * appear regardless of the channel's current native. @sel_out = index of the
+ * channel's current native. */
+static const char *_source_dd_base(const channel_t *c) {
+    const canonical_channel_def_t *def = canonical_channel_find(c->id);
+    return (def && def->units_native[0]) ? def->units_native : c->units_native;
+}
+static uint16_t _source_dd_options(const channel_t *c, char *buf, size_t cap,
+                                   uint16_t *sel_out) {
+    const char *base = _source_dd_base(c);
+    const char *targets[8];
+    size_t n = unit_convert_targets(base, targets, 8);
+    size_t pos = (size_t)snprintf(buf, cap, "%s", base);
+    uint16_t sel = 0;
+    for (size_t i = 0; i < n && pos < cap; i++) {
+        if (strcmp(c->units_native, targets[i]) == 0) sel = (uint16_t)(i + 1);
+        pos += (size_t)snprintf(buf + pos, cap - pos, "\n%s", targets[i]);
+    }
+    if (sel_out) *sel_out = sel;
+    return (uint16_t)(n + 1);
+}
+static const char *_source_dd_index_to_unit(const channel_t *c, uint16_t idx) {
+    const char *base = _source_dd_base(c);
+    if (idx == 0) return base;
+    const char *targets[8];
+    size_t n = unit_convert_targets(base, targets, 8);
+    return ((size_t)(idx - 1) < n) ? targets[idx - 1] : base;
+}
+
 static void _dropdown_changed_cb(lv_event_t *e) {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
     lv_obj_t *dd = lv_event_get_target(e);
@@ -2343,6 +2373,15 @@ static void _dropdown_changed_cb(lv_event_t *e) {
         /* Recalculate the whole pane (hero, min/max, thresholds) in the new
          * unit IMMEDIATELY — but deferred one tick: rebuilding mid
          * VALUE_CHANGED would delete the dropdown that is still settling. */
+        rdm_async_call(_detail_rerender_async, NULL);
+        return;
+    }
+    if (f == DD_SOURCE_UNITS) {
+        /* Change the native (received) unit — re-expresses range + thresholds.
+         * Safe in VALUE_CHANGED (no synchronous layout write; mark_dirty defers
+         * the channels.json save). Defer the pane rebuild for the same reason
+         * as DD_UNITS. */
+        channel_manager_set_units_native(c, _source_dd_index_to_unit(c, idx));
         rdm_async_call(_detail_rerender_async, NULL);
         return;
     }
@@ -2567,6 +2606,20 @@ static void _render_detail_pane(void) {
                        (uint16_t)(c->decimals <= 3 ? c->decimals : 3), DD_DECIMALS);
     y += 38;
 
+    /* Source-unit picker — the NATIVE unit the ECU actually transmits. Change
+     * it if the ECU is set to a different unit than the channel default (e.g.
+     * MaxxECU switched to °F or psi); re-expresses range + thresholds so they
+     * stay correct. Only shown when the unit has alternatives. */
+    {
+        char src_opts[96];
+        uint16_t src_sel = 0;
+        if (_source_dd_options(c, src_opts, sizeof(src_opts), &src_sel) > 1) {
+            _make_dropdown_row(s_detail_pane, y, "Received", src_opts,
+                               src_sel, DD_SOURCE_UNITS);
+            y += 38;
+        }
+    }
+
     /* Display-unit picker — only when the conversion table can actually
      * convert this channel's native unit somewhere (kPa→bar/psi/…, °C→°F/K,
      * km/h→mph). Picking a unit rebuilds the pane immediately so the hero,
@@ -2575,7 +2628,7 @@ static void _render_detail_pane(void) {
         char units_opts[96];
         uint16_t units_sel = 0;
         if (_units_dd_options(c, units_opts, sizeof(units_opts), &units_sel) > 1) {
-            _make_dropdown_row(s_detail_pane, y, "Units", units_opts,
+            _make_dropdown_row(s_detail_pane, y, "Display", units_opts,
                                units_sel, DD_UNITS);
             y += 38;
         }

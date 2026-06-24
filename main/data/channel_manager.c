@@ -467,6 +467,32 @@ bool channel_manager_set_units_display(channel_t *c, const char *units) {
 	return true;
 }
 
+bool channel_manager_set_units_native(channel_t *c, const char *units) {
+	if (!c || !units || !units[0]) return false;
+	if (strcmp(c->units_native, units) == 0) return true;   /* no-op */
+	char old[8];
+	safe_strcpy(old, c->units_native, sizeof(old));
+	/* Re-express value-space fields (range, thresholds, sanity) from the old
+	 * native unit into the new one so they keep their physical meaning — the
+	 * stored numbers always live in units_native. Unset sentinels stay put. */
+	if (unit_convert_supported(old, units)) {
+		c->min = unit_convert(c->min, old, units);
+		c->max = unit_convert(c->max, old, units);
+		if (c->low_warn  != CHANNEL_THRESHOLD_UNSET_LOW)
+			c->low_warn  = unit_convert(c->low_warn,  old, units);
+		if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH)
+			c->high_warn = unit_convert(c->high_warn, old, units);
+		if (c->sanity_min != CHANNEL_SANITY_UNSET_LOW)
+			c->sanity_min = unit_convert(c->sanity_min, old, units);
+		if (c->sanity_max != CHANNEL_SANITY_UNSET_HIGH)
+			c->sanity_max = unit_convert(c->sanity_max, old, units);
+	}
+	safe_strcpy(c->units_native, units, sizeof(c->units_native));
+	chm_notify_listeners(c);
+	channel_manager_mark_dirty();
+	return true;
+}
+
 bool channel_manager_set_decimals(channel_t *c, uint8_t decimals) {
 	if (!c) return false;
 	c->decimals = decimals;
@@ -1052,6 +1078,9 @@ static cJSON *channel_to_json(const channel_t *c) {
 	if (c->signal_name[0] != '\0')
 		cJSON_AddStringToObject(j, "signal", c->signal_name);
 
+	if (!def || strcmp(c->units_native, def->units_native) != 0)
+		cJSON_AddStringToObject(j, "units_native", c->units_native);
+
 	if (!def || strcmp(c->units_display, def->units_display_def) != 0)
 		cJSON_AddStringToObject(j, "units_display", c->units_display);
 
@@ -1131,6 +1160,11 @@ static bool channel_from_json(channel_t *c, cJSON *j) {
 
 	it = cJSON_GetObjectItemCaseSensitive(j, "signal");
 	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->signal_name, it->valuestring, sizeof(c->signal_name));
+
+	/* units_native loads as-is — stored range/thresholds are already in this
+	 * unit (set_units_native converted them at edit time, not load time). */
+	it = cJSON_GetObjectItemCaseSensitive(j, "units_native");
+	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->units_native, it->valuestring, sizeof(c->units_native));
 
 	it = cJSON_GetObjectItemCaseSensitive(j, "units_display");
 	if (cJSON_IsString(it) && it->valuestring) safe_strcpy(c->units_display, it->valuestring, sizeof(c->units_display));
