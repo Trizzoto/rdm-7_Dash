@@ -3060,6 +3060,48 @@
           "help": "Colour of the smallest marks."
         },
         {
+          "name": "major_tick_image_name",
+          "label": "Major Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each major tick instead of a drawn line. Design it pointing up (tip toward the rim); it's rotated to each tick."
+        },
+        {
+          "name": "mid_tick_image_name",
+          "label": "Medium Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each medium tick instead of a drawn line. Design it pointing up (tip toward the rim)."
+        },
+        {
+          "name": "minor_tick_image_name",
+          "label": "Minor Tick Image",
+          "type": "image_picker",
+          "default": "",
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim)."
+        },
+        {
+          "name": "tick_image_scale",
+          "label": "Tick Image Scale %",
+          "type": "number",
+          "default": 100,
+          "min": 10,
+          "max": 400,
+          "category": "appearance",
+          "enabled_by": "show_ticks",
+          "group": "Ticks",
+          "help": "Scale the tick images up or down (100 = original size). Applies to all three tick images."
+        },
+        {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",
@@ -3121,50 +3163,6 @@
           "category": "appearance",
           "group": "Numbers",
           "help": "Draw the marks and numbers on top of the fill instead of behind it."
-        },
-        {
-          "name": "show_value_line",
-          "label": "Show Value Line",
-          "type": "checkbox",
-          "default": false,
-          "category": "appearance",
-          "group": "Needle",
-          "help": "Show a thin pointer line at the current reading."
-        },
-        {
-          "name": "value_line_width",
-          "label": "Value Line Width",
-          "type": "stepper",
-          "default": 4,
-          "category": "appearance",
-          "min": 1,
-          "max": 20,
-          "enabled_by": "show_value_line",
-          "group": "Needle",
-          "help": "How thick the pointer line is."
-        },
-        {
-          "name": "value_line_color",
-          "label": "Value Line Color",
-          "type": "color",
-          "default": "#FFFFFF",
-          "category": "appearance",
-          "night_overridable": true,
-          "enabled_by": "show_value_line",
-          "group": "Needle",
-          "help": "Colour of the pointer line."
-        },
-        {
-          "name": "value_line_r_mod",
-          "label": "Value Line Length Trim",
-          "type": "stepper",
-          "default": -10,
-          "category": "appearance",
-          "min": -50,
-          "max": 50,
-          "enabled_by": "show_value_line",
-          "group": "Needle",
-          "help": "Shorten the pointer line from the outer edge inward."
         },
         {
           "name": "arc_alerts_enabled",

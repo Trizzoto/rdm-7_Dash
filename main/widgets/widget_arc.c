@@ -803,6 +803,38 @@ static float _arc_value_for_tick(const arc_data_t *d, float linear_v, int32_t pc
            (d->signal_max - d->anchor_value) * (float)(pct - ap) / (float)hp;
 }
 
+/* Stamp a tick image rotated to a tick's angle (+ scaled by `zoom`, 256=1.0x).
+ * `cx,cy` = overlay-meter centre (for the outward direction), `mx,my` = tick
+ * centre (where the image lands). Image authored pointing UP (tip toward rim). */
+static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
+                                  lv_coord_t cx, lv_coord_t cy,
+                                  lv_coord_t mx, lv_coord_t my, uint16_t zoom) {
+	if (!ctx || !img) return;
+	lv_coord_t iw = img->header.w, ih = img->header.h;
+	if (iw <= 0 || ih <= 0) return;
+	float deg = atan2f((float)(my - cy), (float)(mx - cx)) * 57.2957795f; /* outward */
+	int a = (int)lroundf(deg + 90.0f) * 10;                 /* up→outward, 0.1° units */
+	a %= 3600; if (a < 0) a += 3600;
+	lv_draw_img_dsc_t idsc;
+	lv_draw_img_dsc_init(&idsc);
+	idsc.angle   = (int16_t)a;
+	idsc.zoom    = zoom ? zoom : 256;
+	idsc.pivot.x = iw / 2;
+	idsc.pivot.y = ih / 2;
+	lv_area_t coords = { (lv_coord_t)(mx - iw / 2), (lv_coord_t)(my - ih / 2),
+	                     (lv_coord_t)(mx - iw / 2 + iw - 1),
+	                     (lv_coord_t)(my - ih / 2 + ih - 1) };
+	lv_draw_img(ctx, &idsc, &coords, img);
+}
+
+/* Pick the per-tier tick image for the tick `dsc` is about to draw (or NULL). */
+static lv_img_dsc_t *_arc_tick_image_for(arc_data_t *d, const lv_obj_draw_part_dsc_t *dsc) {
+	if (d->tick_mid_scale && dsc->sub_part_ptr == d->tick_mid_scale)
+		return d->mid_tick_img_dsc;
+	uint8_t nth = d->tick_major_nth < 1 ? 1 : d->tick_major_nth;
+	return ((dsc->id % nth) == 0) ? d->major_tick_img_dsc : d->minor_tick_img_dsc;
+}
+
 /* DRAW_PART_BEGIN hook on the overlay lv_meter — relabels the major-tick
  * numeric labels using tick_label_divisor / value_decimals and the same
  * anchor / reverse warp the fill uses, so the printed numbers line up with the
@@ -838,6 +870,24 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
             if (dsc->text) dsc->text[0] = '\0';
             return;
         }
+    }
+
+    /* Per-tick image: stamp a rotated+scaled image for this tier instead of the
+     * drawn tick mark. Hide the drawn line via WIDTH (lv_meter shares one
+     * line_dsc and resets only width per tick — an opa change would persist and
+     * blank every later mark). Major ticks still fall through to the label
+     * relabel below; baked into the static-tick snapshot = free at runtime. */
+    lv_img_dsc_t *tickimg = _arc_tick_image_for(d, dsc);
+    if (tickimg && dsc->p1 && dsc->p2 && dsc->draw_ctx) {
+        if (dsc->line_dsc) dsc->line_dsc->width = 0;
+        lv_obj_t *mt = lv_event_get_target(e);
+        lv_coord_t cx = (mt->coords.x1 + mt->coords.x2) / 2;
+        lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
+        lv_coord_t mx = (dsc->p1->x + dsc->p2->x) / 2;
+        lv_coord_t my = (dsc->p1->y + dsc->p2->y) / 2;
+        uint16_t sc = d->tick_image_scale ? d->tick_image_scale : 100;
+        uint16_t zoom = (uint16_t)(((uint32_t)sc * 256) / 100);
+        _arc_stamp_tick_image(dsc->draw_ctx, tickimg, cx, cy, mx, my, zoom);
     }
 
     /* Label-only hook below: skip minor ticks (no label_dsc/text — only major
@@ -1262,10 +1312,14 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         /* Suppress numeric tick labels entirely. */
         lv_obj_set_style_text_opa(m, LV_OPA_TRANSP, LV_PART_TICKS);
     }
-    /* DRAW_PART_BEGIN hook — relabels major ticks AND/OR clips ticks to the
-     * [tick_min, tick_max] window. Registered when labels are on OR a tick
-     * window is set. Pass arc_data_t* so the hook reads its config directly. */
-    if (want_labels || d->tick_max > d->tick_min) {
+    /* DRAW_PART_BEGIN hook — relabels major ticks, clips ticks to the
+     * [tick_min, tick_max] window, AND/OR stamps per-tick images. Registered
+     * when labels are on, a tick window is set, OR any tick image is present.
+     * tick_major_nth lets the hook tell major from minor on the primary scale. */
+    d->tick_major_nth = mte;
+    bool _have_tick_img = d->major_tick_img_dsc || d->mid_tick_img_dsc ||
+                          d->minor_tick_img_dsc;
+    if (want_labels || d->tick_max > d->tick_min || _have_tick_img) {
         lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
     }
 
@@ -1289,6 +1343,7 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
         lv_meter_set_scale_major_ticks(m, mid_scale, 0, 0, 0,
                                        d->mid_tick_color, 0);
     }
+    d->tick_mid_scale = mid_scale;   /* so the draw hook can pick the medium image */
 
     /* Bake the tick ring into a sector image BEFORE the value-line needle
      * is added (the needle must stay live, not be frozen into the bake).
@@ -1583,6 +1638,17 @@ static void _arc_create(widget_t *w, lv_obj_t *parent) {
     d->_cached_value   = d->signal_min;
     d->_last_fill_valid  = false;  /* paint memo must not gate the first paint */
     d->_last_label_valid = false;  /* of a freshly (re)built arc_obj/value_label */
+    d->tick_mid_scale  = NULL;
+    d->tick_major_nth  = 1;
+
+    /* Per-tick images (shared by the overlay tick draw) — load BEFORE any
+     * overlay build so the static-tick snapshot bakes the stamped ticks. */
+    if (d->major_tick_image_name[0] && !d->major_tick_img_dsc)
+        d->major_tick_img_dsc = rdm_image_load(d->major_tick_image_name);
+    if (d->mid_tick_image_name[0] && !d->mid_tick_img_dsc)
+        d->mid_tick_img_dsc = rdm_image_load(d->mid_tick_image_name);
+    if (d->minor_tick_image_name[0] && !d->minor_tick_img_dsc)
+        d->minor_tick_img_dsc = rdm_image_load(d->minor_tick_image_name);
 
     if (_is_image_mode(d)) {
         _arc_create_image_mode(w, parent);
@@ -1835,6 +1901,14 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "mid_tick_width", d->mid_tick_width);
     if (d->mid_tick_color.full != lv_color_hex(ARC_DEFAULT_MID_TICK_COLOR).full)
         cJSON_AddNumberToObject(cfg, "mid_tick_color", (int)d->mid_tick_color.full);
+    if (d->major_tick_image_name[0])
+        cJSON_AddStringToObject(cfg, "major_tick_image_name", d->major_tick_image_name);
+    if (d->mid_tick_image_name[0])
+        cJSON_AddStringToObject(cfg, "mid_tick_image_name", d->mid_tick_image_name);
+    if (d->minor_tick_image_name[0])
+        cJSON_AddStringToObject(cfg, "minor_tick_image_name", d->minor_tick_image_name);
+    if (d->tick_image_scale != 100)
+        cJSON_AddNumberToObject(cfg, "tick_image_scale", d->tick_image_scale);
 
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
@@ -2099,6 +2173,18 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->mid_tick_color.full = (uint16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_color");
     if (cJSON_IsNumber(item)) d->major_tick_color.full = (uint16_t)item->valueint;
+    /* Per-tick images + scale */
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "major_tick_image_name");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->major_tick_image_name, item->valuestring, sizeof(d->major_tick_image_name));
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "mid_tick_image_name");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->mid_tick_image_name, item->valuestring, sizeof(d->mid_tick_image_name));
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_name");
+    if (cJSON_IsString(item) && item->valuestring)
+        safe_strncpy(d->minor_tick_image_name, item->valuestring, sizeof(d->minor_tick_image_name));
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_image_scale");
+    if (cJSON_IsNumber(item)) d->tick_image_scale = (uint16_t)item->valueint;
 
     /* Numeric tick labels */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
@@ -2261,6 +2347,12 @@ static void _arc_destroy(widget_t *w) {
         _arc_free_tick_snapshot(d);
         rdm_image_free(d->arc_img_dsc);
         rdm_image_free(d->arc_img_full_dsc);
+        rdm_image_free(d->major_tick_img_dsc);
+        rdm_image_free(d->mid_tick_img_dsc);
+        rdm_image_free(d->minor_tick_img_dsc);
+        d->major_tick_img_dsc = NULL;
+        d->mid_tick_img_dsc = NULL;
+        d->minor_tick_img_dsc = NULL;
         free(d);
     }
     free(w);
@@ -2483,6 +2575,10 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "mid_tick_length") == 0) { out->i = d->mid_tick_length; return true; }
 	if (strcmp(name, "mid_tick_width") == 0)  { out->i = d->mid_tick_width;  return true; }
 	if (strcmp(name, "mid_tick_color") == 0)  { out->color = lv_color_to32(d->mid_tick_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "major_tick_image_name") == 0) { out->str = d->major_tick_image_name; return true; }
+	if (strcmp(name, "mid_tick_image_name") == 0)   { out->str = d->mid_tick_image_name;   return true; }
+	if (strcmp(name, "minor_tick_image_name") == 0) { out->str = d->minor_tick_image_name; return true; }
+	if (strcmp(name, "tick_image_scale") == 0)      { out->i = d->tick_image_scale;        return true; }
 	if (strcmp(name, "smoothing_ms") == 0)    { out->i = d->smooth.smoothing_ms; return true; }
 	return false;
 }
@@ -2743,6 +2839,34 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 		_arc_rebuild_overlay(w, night_mode_is_active());
 		return true;
 	}
+	/* Per-tick images + scale — reload the image then rebuild the overlay so the
+	 * static-tick snapshot re-bakes with the new stamps. */
+	if (strcmp(name, "major_tick_image_name") == 0 && in->str) {
+		safe_strncpy(d->major_tick_image_name, in->str, sizeof(d->major_tick_image_name));
+		rdm_image_free(d->major_tick_img_dsc); d->major_tick_img_dsc = NULL;
+		if (d->major_tick_image_name[0]) d->major_tick_img_dsc = rdm_image_load(d->major_tick_image_name);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "mid_tick_image_name") == 0 && in->str) {
+		safe_strncpy(d->mid_tick_image_name, in->str, sizeof(d->mid_tick_image_name));
+		rdm_image_free(d->mid_tick_img_dsc); d->mid_tick_img_dsc = NULL;
+		if (d->mid_tick_image_name[0]) d->mid_tick_img_dsc = rdm_image_load(d->mid_tick_image_name);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "minor_tick_image_name") == 0 && in->str) {
+		safe_strncpy(d->minor_tick_image_name, in->str, sizeof(d->minor_tick_image_name));
+		rdm_image_free(d->minor_tick_img_dsc); d->minor_tick_img_dsc = NULL;
+		if (d->minor_tick_image_name[0]) d->minor_tick_img_dsc = rdm_image_load(d->minor_tick_image_name);
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
+	if (strcmp(name, "tick_image_scale") == 0) {
+		d->tick_image_scale = (uint16_t)in->i;
+		_arc_rebuild_overlay(w, night_mode_is_active());
+		return true;
+	}
 	/* Color alerts. Colours re-run the full fill precedence so the edit lands
 	 * immediately (even on an unbound arc with no signal ticks) and the paint
 	 * memo stays coherent — _arc_apply_fill_color updates _last_fill itself.
@@ -2870,6 +2994,15 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->mid_tick_length    = ARC_DEFAULT_MID_TICK_LENGTH;
     d->mid_tick_width     = ARC_DEFAULT_MID_TICK_WIDTH;
     d->mid_tick_color     = lv_color_hex(ARC_DEFAULT_MID_TICK_COLOR);
+    d->major_tick_image_name[0] = '\0';
+    d->mid_tick_image_name[0]   = '\0';
+    d->minor_tick_image_name[0] = '\0';
+    d->tick_image_scale   = 100;
+    d->major_tick_img_dsc = NULL;
+    d->mid_tick_img_dsc   = NULL;
+    d->minor_tick_img_dsc = NULL;
+    d->tick_mid_scale     = NULL;
+    d->tick_major_nth     = 1;
 
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;

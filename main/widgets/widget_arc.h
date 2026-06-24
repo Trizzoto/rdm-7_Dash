@@ -190,6 +190,20 @@ typedef struct {
     uint8_t    mid_tick_length;         /* default: 13 */
     uint8_t    mid_tick_width;          /* default: 2  */
     lv_color_t mid_tick_color;          /* default: 0xBDBDBD */
+    /* ── Per-tick IMAGES — stamp a rotated (+scaled) image at each tick instead
+     * of the drawn line, one design per tier. Empty = drawn line for that tier.
+     * Authored pointing OUTWARD (tip toward the rim); rotated to each tick's
+     * angle, centred on it. Stamped in _arc_tick_draw_cb → baked into the
+     * static-tick overlay snapshot, so runtime cost is zero. */
+    char       major_tick_image_name[32];
+    char       mid_tick_image_name[32];
+    char       minor_tick_image_name[32];
+    uint16_t   tick_image_scale;        /* percent, default 100 (1.0x) */
+    lv_img_dsc_t      *major_tick_img_dsc;   /* runtime */
+    lv_img_dsc_t      *mid_tick_img_dsc;     /* runtime */
+    lv_img_dsc_t      *minor_tick_img_dsc;   /* runtime */
+    lv_meter_scale_t  *tick_mid_scale;       /* runtime: overlay medium scale (or NULL) */
+    uint8_t            tick_major_nth;       /* runtime: every-Nth-is-major on the overlay */
 
     /* ── Numeric tick labels (meter-parity). Drawn by the OVERLAY lv_meter at
      * its major ticks. lv_meter bakes the label colour/font into LV_PART_TICKS
