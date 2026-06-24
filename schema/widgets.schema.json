@@ -1650,6 +1650,27 @@
           "help": "Scale the tick images up or down (100 = original size). Applies to all three tick images."
         },
         {
+          "name": "tick_outline_strength",
+          "label": "Tick Outline",
+          "type": "number", "default": 0, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed."
+        },
+        {
+          "name": "tick_outline_color",
+          "label": "Tick Outline Color",
+          "type": "color", "default": "#000000",
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Colour of the tick outline/glow (usually black for a crisp edge)."
+        },
+        {
+          "name": "tick_outline_fade",
+          "label": "Tick Outline Fade",
+          "type": "number", "default": 0, "min": 0, "max": 20,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Soften the outline into a glow (0 = hard edge, higher = wider soft glow)."
+        },
+        {
           "name": "show_tick_labels",
           "label": "Show Tick Labels",
           "type": "checkbox",
@@ -3205,6 +3226,27 @@
           "type": "number", "default": 0, "min": -60, "max": 60,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Move the minor tick image inward (negative) or outward (positive), in pixels."
+        },
+        {
+          "name": "tick_outline_strength",
+          "label": "Tick Outline",
+          "type": "number", "default": 0, "min": 0, "max": 255,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed."
+        },
+        {
+          "name": "tick_outline_color",
+          "label": "Tick Outline Color",
+          "type": "color", "default": "#000000",
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Colour of the tick outline/glow (usually black for a crisp edge)."
+        },
+        {
+          "name": "tick_outline_fade",
+          "label": "Tick Outline Fade",
+          "type": "number", "default": 0, "min": 0, "max": 20,
+          "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
+          "help": "Soften the outline into a glow (0 = hard edge, higher = wider soft glow)."
         },
         {
           "name": "show_tick_labels",

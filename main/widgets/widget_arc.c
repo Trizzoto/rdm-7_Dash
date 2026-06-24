@@ -866,6 +866,42 @@ static void _arc_stamp_tick_image(lv_draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t 
 	lv_draw_img(ctx, &idsc, &coords, img);
 }
 
+/* Draw an outline/glow BEHIND a drawn tick. lv_meter reports p1..p2 as the full
+ * rim→centre radial and masks the visible tick to `tlen` px from the rim — so we
+ * clip the outline to that same span (else it draws a ray to the centre). A
+ * tight border at `strength` + `fade` softer wider rings = a glow. Baked into
+ * the static-tick snapshot, so free at runtime. */
+static void _arc_draw_tick_outline(lv_draw_ctx_t *ctx, const lv_point_t *p1,
+                                   const lv_point_t *p2, lv_coord_t cx, lv_coord_t cy,
+                                   lv_coord_t tlen, lv_coord_t base_w,
+                                   lv_color_t color, uint8_t strength, uint8_t fade) {
+	if (!ctx || strength == 0 || !p1 || !p2) return;
+	float d1 = (float)((p1->x-cx)*(p1->x-cx) + (p1->y-cy)*(p1->y-cy));
+	float d2 = (float)((p2->x-cx)*(p2->x-cx) + (p2->y-cy)*(p2->y-cy));
+	lv_point_t outer = d1 >= d2 ? *p1 : *p2;            /* rim end */
+	float dx = (float)(cx - outer.x), dy = (float)(cy - outer.y);
+	float dist = sqrtf(dx*dx + dy*dy);
+	lv_point_t inner = outer;
+	if (dist > 1.0f) {
+		inner.x = (lv_coord_t)(outer.x + dx/dist * tlen);
+		inner.y = (lv_coord_t)(outer.y + dy/dist * tlen);
+	}
+	lv_draw_line_dsc_t ld;
+	lv_draw_line_dsc_init(&ld);
+	ld.color = color;
+	ld.round_start = 1;
+	ld.round_end = 1;
+	int f = fade > 20 ? 20 : fade;
+	for (int j = f; j >= 1; j--) {                       /* wide+faint → narrow glow */
+		ld.width = (lv_coord_t)(base_w + 2 + 2 * j);
+		ld.opa   = (lv_opa_t)(((uint16_t)strength * (f - j + 1)) / (f + 1) / 2);
+		lv_draw_line(ctx, &ld, &outer, &inner);
+	}
+	ld.width = (lv_coord_t)(base_w + 2);                 /* tight hard outline */
+	ld.opa   = strength;
+	lv_draw_line(ctx, &ld, &outer, &inner);
+}
+
 /* DRAW_PART_BEGIN hook on the overlay lv_meter — relabels the major-tick
  * numeric labels using tick_label_divisor / value_decimals and the same
  * anchor / reverse warp the fill uses, so the printed numbers line up with the
@@ -917,6 +953,21 @@ static void _arc_tick_draw_cb(lv_event_t *e) {
         lv_coord_t mx = (dsc->p1->x + dsc->p2->x) / 2;
         lv_coord_t my = (dsc->p1->y + dsc->p2->y) / 2;
         _arc_stamp_tick_image(dsc->draw_ctx, cx, cy, mx, my, &ts);
+    } else if (!ts.img && d->tick_outline_strength > 0 && dsc->line_dsc &&
+               dsc->p1 && dsc->p2 && dsc->draw_ctx) {
+        /* No image for this tier → DRAWN tick: lay an outline/glow behind it so
+         * it pops without a baked image. The line itself draws after this hook. */
+        lv_obj_t *mt = lv_event_get_target(e);
+        lv_coord_t cx = (mt->coords.x1 + mt->coords.x2) / 2;
+        lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
+        uint8_t nth = d->tick_major_nth < 1 ? 1 : d->tick_major_nth;
+        lv_coord_t tlen;
+        if (d->tick_mid_scale && dsc->sub_part_ptr == d->tick_mid_scale) tlen = d->mid_tick_length;
+        else if ((dsc->id % nth) == 0) tlen = d->major_tick_length;
+        else tlen = d->minor_tick_length;
+        _arc_draw_tick_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
+                               dsc->line_dsc->width, d->tick_outline_color,
+                               d->tick_outline_strength, d->tick_outline_fade);
     }
 
     /* Label-only hook below: skip minor ticks (no label_dsc/text — only major
@@ -1348,7 +1399,8 @@ static void _arc_build_overlay(arc_data_t *d, lv_obj_t *cont,
     d->tick_major_nth = mte;
     bool _have_tick_img = d->major_tick_img_dsc || d->mid_tick_img_dsc ||
                           d->minor_tick_img_dsc;
-    if (want_labels || d->tick_max > d->tick_min || _have_tick_img) {
+    if (want_labels || d->tick_max > d->tick_min || _have_tick_img ||
+        d->tick_outline_strength > 0) {
         lv_obj_add_event_cb(m, _arc_tick_draw_cb, LV_EVENT_DRAW_PART_BEGIN, d);
     }
 
@@ -1949,6 +2001,11 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     if (d->major_tick_image_offset) cJSON_AddNumberToObject(cfg, "major_tick_image_offset", d->major_tick_image_offset);
     if (d->mid_tick_image_offset)   cJSON_AddNumberToObject(cfg, "mid_tick_image_offset",   d->mid_tick_image_offset);
     if (d->minor_tick_image_offset) cJSON_AddNumberToObject(cfg, "minor_tick_image_offset", d->minor_tick_image_offset);
+    if (d->tick_outline_strength) {
+        cJSON_AddNumberToObject(cfg, "tick_outline_color", (int)d->tick_outline_color.full);
+        cJSON_AddNumberToObject(cfg, "tick_outline_strength", d->tick_outline_strength);
+        if (d->tick_outline_fade) cJSON_AddNumberToObject(cfg, "tick_outline_fade", d->tick_outline_fade);
+    }
 
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
@@ -2258,6 +2315,12 @@ static void _arc_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsNumber(item)) d->mid_tick_image_offset = (int16_t)item->valueint;
     item = cJSON_GetObjectItemCaseSensitive(cfg, "minor_tick_image_offset");
     if (cJSON_IsNumber(item)) d->minor_tick_image_offset = (int16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_color");
+    if (cJSON_IsNumber(item)) d->tick_outline_color.full = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_strength");
+    if (cJSON_IsNumber(item)) d->tick_outline_strength = (uint8_t)item->valueint;
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_fade");
+    if (cJSON_IsNumber(item)) d->tick_outline_fade = (uint8_t)item->valueint;
 
     /* Numeric tick labels */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "show_tick_labels");
@@ -2666,6 +2729,9 @@ static bool _arc_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_image_offset") == 0) { out->i = d->major_tick_image_offset; return true; }
 	if (strcmp(name, "mid_tick_image_offset") == 0)   { out->i = d->mid_tick_image_offset;   return true; }
 	if (strcmp(name, "minor_tick_image_offset") == 0) { out->i = d->minor_tick_image_offset; return true; }
+	if (strcmp(name, "tick_outline_color") == 0)    { out->color = lv_color_to32(d->tick_outline_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "tick_outline_strength") == 0) { out->i = d->tick_outline_strength; return true; }
+	if (strcmp(name, "tick_outline_fade") == 0)     { out->i = d->tick_outline_fade;     return true; }
 	if (strcmp(name, "smoothing_ms") == 0)    { out->i = d->smooth.smoothing_ms; return true; }
 	return false;
 }
@@ -2964,6 +3030,9 @@ static bool _arc_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_image_offset") == 0)      { d->major_tick_image_offset = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
 	if (strcmp(name, "mid_tick_image_offset") == 0)        { d->mid_tick_image_offset   = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
 	if (strcmp(name, "minor_tick_image_offset") == 0)      { d->minor_tick_image_offset = (int16_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "tick_outline_color") == 0)    { d->tick_outline_color = lv_color_hex(in->color); _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "tick_outline_strength") == 0) { d->tick_outline_strength = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
+	if (strcmp(name, "tick_outline_fade") == 0)     { d->tick_outline_fade = (uint8_t)in->i; _arc_rebuild_overlay(w, night_mode_is_active()); return true; }
 	/* Color alerts. Colours re-run the full fill precedence so the edit lands
 	 * immediately (even on an unbound arc with no signal ticks) and the paint
 	 * memo stays coherent — _arc_apply_fill_color updates _last_fill itself.
@@ -3099,6 +3168,9 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->major_tick_image_recolor = d->mid_tick_image_recolor = d->minor_tick_image_recolor = lv_color_black();
     d->major_tick_image_recolor_opa = d->mid_tick_image_recolor_opa = d->minor_tick_image_recolor_opa = 0;
     d->major_tick_image_offset = d->mid_tick_image_offset = d->minor_tick_image_offset = 0;
+    d->tick_outline_color = lv_color_black();
+    d->tick_outline_strength = 0;
+    d->tick_outline_fade = 0;
     d->major_tick_img_dsc = NULL;
     d->mid_tick_img_dsc   = NULL;
     d->minor_tick_img_dsc = NULL;

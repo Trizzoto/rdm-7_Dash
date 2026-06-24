@@ -61,6 +61,15 @@ apply the layout.
 
 ## Rules & gotchas
 
+- **PROCEDURAL, not images — this is the house style.** Build gauges from drawn
+  widgets (meter/arc needles + ticks, bars, text, shapes), NOT baked raster
+  images. NO full-screen background image, NO meter/arc dial-face image, NO
+  image-fill gauge, NO image needle/ticks. Images are only for tiny icons
+  (logo, telltale glyphs ≤~40 px). For premium ticks use `show_ticks` + per-tier
+  length/width/colour + the drawn **tick outline/glow** (`tick_outline_strength`
+  / `_color` / `_fade`); for a premium needle use a `meter` tip style + ball; for
+  a glowing fill use `arc` gradient (`arc_color`→`grad_end_color`) + a
+  `lead_edge`. All free, all dynamic. See `reference/05` "Design philosophy".
 - **Device format, not editor format.** `signal_name` (not `signal`); RGB565 int colours; center-origin coords. Author exactly what `/api/layout/current` returns.
 - **Defaults-only config** and the **32 KB** cap — the validator enforces size.
 - **Meter ticks are count-based** (`reference/05`). Arc/pathbar are step-based.

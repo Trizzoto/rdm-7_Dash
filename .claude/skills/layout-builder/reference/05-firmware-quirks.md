@@ -39,39 +39,47 @@ as the catalog shows) — no conversion needed. Only `meter` deviates.
 - `arc` has an internal `auto_ticks` flag the editor manages — don't set it; just
   provide `minor_tick_step`/`major_tick_step`.
 
-## Performance & assets — prefer widgets, avoid big images
+## Design philosophy: PROCEDURAL, not images — big images aren't for pro layouts
 
-Learned the hard way (16 MB flash, ~8.8 MB LittleFS, ~8 MB PSRAM):
+Professional layouts are built from **drawn widgets** — needles, ticks, arcs,
+bars, text, shapes — **not baked raster images**. Images don't scale: they eat
+flash + LittleFS, hit a *contiguous*-PSRAM decode wall (largest free block is
+often <0.5 MB once a layout loads → the image silently fails to paint and the
+widget shows its *name* as fallback), can't recolour/restyle live, and look
+dated. Build the gauges; reach for an image only for tiny icons.
 
-- **NEVER use a full-screen (800×480) background image.** At RGB565+alpha that's
-  ~1.15 MB on flash AND it must decode into a *contiguous* PSRAM block to render —
-  the board's largest free block is often <0.5 MB once a layout is loaded, so a big
-  image silently fails to paint (the widget shows its *name* as fallback text) and
-  it balloons load time. For a dark backdrop use a full-screen **`shape_panel`**
-  (a drawn rect, zero image cost) + `line`/`text`/`arc` widgets.
+**Hard rules (default to ALL of these):**
+- **NO full-screen (800×480) background image** (~1.15 MB). Use a full-screen
+  **`shape_panel`** (a drawn rect, ~zero cost) + `line`/`text`/`arc`/`meter`.
+- **NO meter/arc "dial face" background image, NO image-fill gauge, NO image
+  needle, NO image ticks** in a normal layout. These were stepping stones — the
+  drawn equivalents below now look as good and stay dynamic (recolour, night
+  mode, live values).
+- **Images ONLY for small icons** (≤~40 px): a logo, telltale glyphs (turn
+  signals, high-beam, oil, battery, temp). Decoration, never a gauge surface.
+- **All-widget dashes apply with a plain `save`+`set`** (no reboot, no PSRAM
+  wall). Bind every readout to a real channel via a `panel` (`show_unit` pulls
+  the channel's unit + decimals).
 
-- **All-widget dashes are the default.** Text/panel/arc/bar/line/shape_panel/meter
-  cost ~nothing in flash, never hit the PSRAM decode wall, and apply with a plain
-  `save`+`set` (no reboot). Bind every readout to a real channel (`signal_name`)
-  via a `panel` — its `show_unit` pulls the channel's unit + decimals.
-
-- **When you want image quality, keep images gauge-sized (≤~400 px), never
-  full-screen**, and use these patterns:
-  - **Image-fill gauge** = `arc` with `arc_image` (empty/track) + `arc_image_full`
-    (full); the widget reveals the full image via a **horizontal left-to-right
-    clip** (`reverse:true` = right-to-left). Great for **linear/bar** gauges
-    (fuel, boost, a horizontal rev strip). NOT radial — a *circular* arc won't
-    fill around the ring this way.
-  - **Static image dial** = `arc`/`meter` with only `arc_image` / `bg_image_name`.
-  - **Image needle** = `meter` with `needle_image_name` + `needle_pivot_x/y` (a
-    baked tapered/glossy needle; a flat drawn line reads amateur).
-  - Each baked image needs ~`w*h*3` bytes of *contiguous* PSRAM to decode; after a
-    layout swap PSRAM is fragmented, so big images often only decode on a clean
-    boot. Two ~350 px images ≈ 0.7 MB is fine; one 800×480 ≈ 1.15 MB won't.
-
-- **Glow/bloom can only be baked** (widgets draw flat fills). So a circular glowing
-  tach is a trade-off: baked glow = static (or linear-fill); widget `arc` = dynamic
-  radial fill but flat. Pick per design.
+**Build premium gauges procedurally:**
+- **Round gauge** = `meter` (needle) or `arc` (sweep fill). Both draw ticks +
+  numbers themselves.
+- **NEEDLE** = `meter` drawn needle with a **tip style** (Dagger / Spade /
+  Diamond — see the meter's needle fields in `02-widget-catalog.md`) + a centre
+  ball. Tapered tip + ball reads far better than a flat line, and it recolours
+  live. (Never a baked image needle.)
+- **TICKS** = `show_ticks` + per-tier length / width / colour
+  (`{major,mid,minor}_tick_length` / `_width` / `_color`). For the raised /
+  embossed **"pop"** that used to need a baked image, use the drawn **tick
+  outline/glow** (arc + meter): `tick_outline_strength` (0-255) +
+  `tick_outline_color` (usually black) + `tick_outline_fade` (0 = hard edge,
+  higher = soft glow). It bakes into the static-tick snapshot → **free at
+  runtime**.
+- **FILL / glow** = `arc` value fill with `arc_color` → `grad_end_color`
+  gradient + `lead_edge_enabled` glowing tip (or a `bar`). A drawn gradient fill
+  with a bright lead-edge reads premium without a baked tube.
+- A true soft *bloom* is the only thing widgets can't draw — and a pro layout
+  doesn't need one. The lead-edge + tick outline give all the "pop" required.
 
 ## Golden rule: copy a working widget
 

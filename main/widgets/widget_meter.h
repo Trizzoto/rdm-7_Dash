@@ -157,6 +157,11 @@ typedef struct {
 	char           major_tick_image_name[32];
 	char           mid_tick_image_name[32];
 	uint16_t       tick_image_scale;     /* percent, default 100 (1.0x) */
+	/* DRAWN-tick outline/glow (procedural "pop") — behind the tick line; a tight
+	 * border that softens into a glow as `fade` grows. strength 0 = off. */
+	lv_color_t     tick_outline_color;   /* default black */
+	uint8_t        tick_outline_strength;/* 0..255, 0 = off */
+	uint8_t        tick_outline_fade;    /* 0..20 glow spread px */
 	lv_img_dsc_t  *minor_tick_img_dsc;   /* runtime */
 	lv_img_dsc_t  *major_tick_img_dsc;   /* runtime */
 	lv_img_dsc_t  *mid_tick_img_dsc;     /* runtime */

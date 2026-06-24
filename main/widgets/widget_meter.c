@@ -803,6 +803,40 @@ static void _meter_stamp_tick_image(lv_draw_ctx_t *ctx, lv_img_dsc_t *img,
 	lv_draw_img(ctx, &idsc, &coords, img);
 }
 
+/* Outline/glow behind a drawn tick line (p1..p2): a tight border at `strength`,
+ * plus `fade` softer wider rings for a glow. Baked into the static-tick snapshot
+ * so it's free at runtime. */
+static void _meter_draw_tick_outline(lv_draw_ctx_t *ctx, const lv_point_t *p1,
+                                     const lv_point_t *p2, lv_coord_t cx, lv_coord_t cy,
+                                     lv_coord_t tlen, lv_coord_t base_w,
+                                     lv_color_t color, uint8_t strength, uint8_t fade) {
+	if (!ctx || strength == 0 || !p1 || !p2) return;
+	float d1 = (float)((p1->x-cx)*(p1->x-cx) + (p1->y-cy)*(p1->y-cy));
+	float d2 = (float)((p2->x-cx)*(p2->x-cx) + (p2->y-cy)*(p2->y-cy));
+	lv_point_t outer = d1 >= d2 ? *p1 : *p2;            /* rim end */
+	float dx = (float)(cx - outer.x), dy = (float)(cy - outer.y);
+	float dist = sqrtf(dx*dx + dy*dy);
+	lv_point_t inner = outer;
+	if (dist > 1.0f) {
+		inner.x = (lv_coord_t)(outer.x + dx/dist * tlen);
+		inner.y = (lv_coord_t)(outer.y + dy/dist * tlen);
+	}
+	lv_draw_line_dsc_t ld;
+	lv_draw_line_dsc_init(&ld);
+	ld.color = color;
+	ld.round_start = 1;
+	ld.round_end = 1;
+	int f = fade > 20 ? 20 : fade;
+	for (int j = f; j >= 1; j--) {
+		ld.width = (lv_coord_t)(base_w + 2 + 2 * j);
+		ld.opa   = (lv_opa_t)(((uint16_t)strength * (f - j + 1)) / (f + 1) / 2);
+		lv_draw_line(ctx, &ld, &outer, &inner);
+	}
+	ld.width = (lv_coord_t)(base_w + 2);
+	ld.opa   = strength;
+	lv_draw_line(ctx, &ld, &outer, &inner);
+}
+
 /* Custom needle tip renderer. Hooks LV_EVENT_DRAW_PART_BEGIN / _END on the
  * meter; LVGL fires DRAW_PART_NEEDLE_LINE for each line-needle indicator with
  * the pivot (p1), tip (p2), and line_dsc already populated.
@@ -950,6 +984,19 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 			uint16_t zoom = (uint16_t)(((uint32_t)sc * 256) / 100);
 			_meter_stamp_tick_image(dsc->draw_ctx, tickimg, cx, cy, mx, my,
 			                        zoom, tick_red, md->redline_color);
+		} else if (!tickimg && md->tick_outline_strength > 0 && dsc->line_dsc &&
+		           dsc->p1 && dsc->p2 && dsc->draw_ctx) {
+			/* DRAWN tick → lay an outline/glow behind it so it pops without a
+			 * baked image. The line itself draws after this hook. */
+			lv_obj_t *mt = lv_event_get_target(e);
+			lv_coord_t cx = (mt->coords.x1 + mt->coords.x2) / 2;
+			lv_coord_t cy = (mt->coords.y1 + mt->coords.y2) / 2;
+			uint8_t mte = md->major_tick_every < 1 ? 1 : md->major_tick_every;
+			lv_coord_t tlen = is_mid ? md->mid_tick_length
+			                : ((dsc->id % mte) == 0 ? md->major_tick_length : md->minor_tick_length);
+			_meter_draw_tick_outline(dsc->draw_ctx, dsc->p1, dsc->p2, cx, cy, tlen,
+			                         dsc->line_dsc->width, md->tick_outline_color,
+			                         md->tick_outline_strength, md->tick_outline_fade);
 		}
 		return;
 	}
@@ -1931,6 +1978,11 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddStringToObject(cfg, "mid_tick_image_name", md->mid_tick_image_name);
 	if (md->tick_image_scale != 100)
 		cJSON_AddNumberToObject(cfg, "tick_image_scale", md->tick_image_scale);
+	if (md->tick_outline_strength) {
+		cJSON_AddNumberToObject(cfg, "tick_outline_color", (int)md->tick_outline_color.full);
+		cJSON_AddNumberToObject(cfg, "tick_outline_strength", md->tick_outline_strength);
+		if (md->tick_outline_fade) cJSON_AddNumberToObject(cfg, "tick_outline_fade", md->tick_outline_fade);
+	}
 	if (md->border_width != 0)
 		cJSON_AddNumberToObject(cfg, "border_width", md->border_width);
 	if (md->border_color.full != lv_color_black().full)
@@ -2146,6 +2198,12 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		safe_strncpy(md->mid_tick_image_name, ap->valuestring, sizeof(md->mid_tick_image_name));
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_image_scale");
 	if (cJSON_IsNumber(ap)) md->tick_image_scale = (uint16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_color");
+	if (cJSON_IsNumber(ap)) md->tick_outline_color.full = (uint16_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_strength");
+	if (cJSON_IsNumber(ap)) md->tick_outline_strength = (uint8_t)ap->valueint;
+	ap = cJSON_GetObjectItemCaseSensitive(cfg, "tick_outline_fade");
+	if (cJSON_IsNumber(ap)) md->tick_outline_fade = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_width");
 	if (cJSON_IsNumber(ap)) md->border_width = (uint8_t)ap->valueint;
 	ap = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
@@ -2538,6 +2596,9 @@ static bool _meter_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "major_tick_image_name") == 0) { out->str = md->major_tick_image_name; return true; }
 	if (strcmp(name, "mid_tick_image_name") == 0)   { out->str = md->mid_tick_image_name;   return true; }
 	if (strcmp(name, "tick_image_scale") == 0)      { out->i = md->tick_image_scale;        return true; }
+	if (strcmp(name, "tick_outline_color") == 0)    { out->color = lv_color_to32(md->tick_outline_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "tick_outline_strength") == 0) { out->i = md->tick_outline_strength;   return true; }
+	if (strcmp(name, "tick_outline_fade") == 0)     { out->i = md->tick_outline_fade;       return true; }
 	if (strcmp(name, "min") == 0)                { out->i = md->min;                 return true; }
 	if (strcmp(name, "max") == 0)                { out->i = md->max;                 return true; }
 	if (strcmp(name, "start_angle_user") == 0)   { out->i = md->start_angle;         return true; }
@@ -2664,6 +2725,9 @@ static bool _meter_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "tick_image_scale") == 0) { md->tick_image_scale = (uint16_t)in->i; return true; }
+	if (strcmp(name, "tick_outline_color") == 0)    { md->tick_outline_color = lv_color_hex(in->color); return true; }
+	if (strcmp(name, "tick_outline_strength") == 0) { md->tick_outline_strength = (uint8_t)in->i; return true; }
+	if (strcmp(name, "tick_outline_fade") == 0)     { md->tick_outline_fade = (uint8_t)in->i; return true; }
 	if (strcmp(name, "min") == 0) { md->min = (int32_t)in->i; return true; }
 	if (strcmp(name, "max") == 0) { md->max = (int32_t)in->i; return true; }
 	if (strcmp(name, "start_angle_user") == 0) {
@@ -2935,6 +2999,9 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	 * remains as a per-meter opt-out for debugging. */
 	md->static_ticks = true;
 	md->tick_image_scale = 100;   /* per-tick image scale %, 100 = native */
+	md->tick_outline_color = lv_color_black();
+	md->tick_outline_strength = 0;
+	md->tick_outline_fade = 0;
 	/* Border defaults */
 	md->border_color = lv_color_black();
 	md->border_width = 0;

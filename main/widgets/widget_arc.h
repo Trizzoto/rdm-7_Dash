@@ -206,6 +206,12 @@ typedef struct {
     lv_color_t major_tick_image_recolor, mid_tick_image_recolor, minor_tick_image_recolor;
     uint8_t    major_tick_image_recolor_opa, mid_tick_image_recolor_opa, minor_tick_image_recolor_opa;
     int16_t    major_tick_image_offset, mid_tick_image_offset, minor_tick_image_offset;
+    /* DRAWN-tick outline/glow (procedural "pop" — no baked image needed). Drawn
+     * BEHIND the tick line: a tight border that softens into a glow as `fade`
+     * grows. strength 0 = off. Applies to tiers with no tick image. */
+    lv_color_t tick_outline_color;      /* default black */
+    uint8_t    tick_outline_strength;   /* 0..255, 0 = off */
+    uint8_t    tick_outline_fade;       /* 0..20 glow spread px (0 = hard outline) */
     lv_img_dsc_t      *major_tick_img_dsc;   /* runtime */
     lv_img_dsc_t      *mid_tick_img_dsc;     /* runtime */
     lv_img_dsc_t      *minor_tick_img_dsc;   /* runtime */
