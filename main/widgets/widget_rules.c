@@ -125,13 +125,13 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
      * widget has more than ~20 unique appearance fields to override. */
 #define MERGED_OV_MAX 32
     rule_override_t merged[MERGED_OV_MAX];
-    uint16_t count = 0;
+    uint8_t count = 0;
 
     for (uint8_t i = 0; i < w->rule_count; i++) {
         if (!w->rules[i].is_active) continue;
         for (uint8_t j = 0; j < w->rules[i].override_count; j++) {
             bool replaced = false;
-            for (uint16_t k = 0; k < count; k++) {
+            for (uint8_t k = 0; k < count; k++) {
                 if (strcmp(merged[k].field_name,
                           w->rules[i].overrides[j].field_name) == 0) {
                     merged[k] = w->rules[i].overrides[j];
@@ -145,7 +145,7 @@ static void _rule_signal_cb(float value, bool is_stale, void *user_data)
         }
     }
 
-    w->apply_overrides(w, merged, (uint8_t)(count > 255 ? 255 : count));
+    w->apply_overrides(w, merged, count);
 }
 
 /* ── Public API ───────────────────────────────────────────────────────── */
@@ -195,6 +195,18 @@ void widget_rules_subscribe(widget_t *w)
             }
         }
     }
+
+    /* Evaluate once now so a rule bound to an already-fresh, constant signal
+     * applies on (re)create instead of waiting for the next value change.
+     * signal_subscribe() does NOT invoke the callback, and dispatch only
+     * notifies on a stale->fresh transition or a value change — so on the
+     * hot-reload path (the signal registry MERGES and is not reset) a widget
+     * recreated while its rule signal sits at a constant value would otherwise
+     * never get its first apply. _rule_signal_cb ignores its value/is_stale
+     * args (reads each rule's own current_value) and the last_rule_mask
+     * 0xFFFFFFFF sentinel guarantees this first apply runs; it self-guards on
+     * w->root and w->apply_overrides. */
+    _rule_signal_cb(0.0f, false, w);
 }
 
 void widget_rules_from_json(widget_t *w, const cJSON *config)
@@ -315,6 +327,11 @@ void widget_rules_to_json(const widget_t *w, cJSON *config)
 
     for (uint8_t i = 0; i < w->rule_count; i++) {
         const widget_rule_t *r = &w->rules[i];
+        /* Skip inert/empty rules — an empty signal_name can never resolve via
+         * signal_find_by_name, so the rule is dead. Emitting it would persist
+         * cruft (e.g. a half-authored rule the editor seeds with signal_name
+         * "") and consume the 32 KB layout budget on every save. */
+        if (r->signal_name[0] == '\0') continue;
         cJSON *rule_obj = cJSON_CreateObject();
         if (!rule_obj) continue;
 

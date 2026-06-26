@@ -32,8 +32,10 @@ typedef struct {
     shape_panel_type_t shape_type;   /* default: SHAPE_TYPE_RECTANGLE */
     uint8_t            taper;        /* 0-50; trapezoid inset %; default 20 */
     bool               taper_bottom; /* false=narrow top, true=narrow bottom */
-    lv_color_t bg_color;             /* default: 0x1A1A1A */
-    uint8_t    bg_opa;               /* default: 255 */
+    lv_color_t bg_color;             /* CURRENT (polygon draw cb reads this); rule/night overlay target */
+    uint8_t    bg_opa;               /* CURRENT (polygon draw cb reads this); rule overlay target */
+    lv_color_t base_bg_color;        /* immutable configured value (to_json reads this); default: 0x1A1A1A */
+    uint8_t    base_bg_opa;          /* immutable configured value (to_json reads this); default: 255 */
     lv_color_t border_color;         /* default: 0x2E2F2E */
     uint8_t    border_width;         /* default: 0 */
     uint8_t    border_radius;        /* default: 10 */

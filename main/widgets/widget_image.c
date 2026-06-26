@@ -351,6 +351,9 @@ static void _image_create(widget_t *w, lv_obj_t *parent) {
 	if (id->image_name[0] != '\0') {
 		id->img_dsc = rdm_image_load(id->image_name);
 		if (id->img_dsc) {
+			/* Track the name backing the loaded descriptor for the
+			 * decode-cost guard in apply_overrides. */
+			safe_strncpy(id->cur_image_name, id->image_name, sizeof(id->cur_image_name));
 			id->native_w = id->img_dsc->header.w;
 			id->native_h = id->img_dsc->header.h;
 			id->img_obj = lv_img_create(cont);
@@ -497,6 +500,14 @@ static void _image_from_json(widget_t *w, cJSON *in) {
 		NIGHT_PARSE_COLOR(night, id->night, recolor);
 		NIGHT_PARSE_IMAGE(night, id->night, image_name);
 	}
+
+	/* Seed the CURRENT (shown) style state from the configured base so the
+	 * first apply_overrides has the correct base to overlay onto / revert to.
+	 * cur_image_name is set when the descriptor is actually loaded (in create
+	 * and in apply_overrides). */
+	id->cur_opacity     = id->opacity;
+	id->cur_recolor     = id->recolor;
+	id->cur_recolor_opa = id->recolor_opa;
 }
 
 /* ── Rule-driven overrides ─────────────────────────────────────────────────
@@ -517,60 +528,93 @@ static void _image_apply_overrides(widget_t *w, const rule_override_t *ov, uint8
 	image_data_t *id = (image_data_t *)w->type_data;
 	if (!id) return;
 
+	/* Start from the configured BASE every call, then overlay the active
+	 * overrides onto LOCALS. The base struct fields (image_name/opacity/
+	 * recolor/recolor_opa) are never mutated, so to_json keeps emitting the
+	 * configured values and a deactivation (count==0) fully reverts. */
+	char       t_name[32];
+	uint8_t    t_opacity     = id->opacity;
+	lv_color_t t_recolor     = id->recolor;
+	uint8_t    t_recolor_opa = id->recolor_opa;
+	safe_strncpy(t_name, id->image_name, sizeof(t_name));
+
 	for (uint8_t i = 0; i < count; i++) {
 		const rule_override_t *o = &ov[i];
 		if (strcmp(o->field_name, "image_name") == 0 && o->value_type == RULE_VAL_STRING) {
-			/* Swap the image source. If the override matches the
-			 * currently-loaded name (rule re-fired with the same value),
-			 * skip the work — saves a LittleFS hit + decode. */
-			if (strncmp(id->image_name, o->value.str, sizeof(id->image_name)) == 0) continue;
-			safe_strncpy(id->image_name, o->value.str, sizeof(id->image_name));
-			rdm_image_free(id->img_dsc);
-			id->img_dsc = NULL;
-			if (id->image_name[0] != '\0') {
-				id->img_dsc = rdm_image_load(id->image_name);
-			}
-			if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
-				/* Setting NULL when the new image fails to load clears
-				 * the previous tile rather than leaving stale pixels. */
-				lv_img_set_src(id->img_obj, id->img_dsc);
-				if (id->img_dsc) {
-					id->native_w = id->img_dsc->header.w;
-					id->native_h = id->img_dsc->header.h;
-					if (id->auto_size) {
-						uint16_t zoom = _fit_zoom(w->w, w->h, id->native_w, id->native_h);
-						if (zoom != 256) lv_img_set_zoom(id->img_obj, zoom);
-					}
-				}
-			}
+			safe_strncpy(t_name, o->value.str, sizeof(t_name));
 		} else if (strcmp(o->field_name, "opacity") == 0 && o->value_type == RULE_VAL_NUMBER) {
 			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
-			id->opacity = (uint8_t)v;
-			if (id->img_obj && lv_obj_is_valid(id->img_obj))
-				lv_obj_set_style_img_opa(id->img_obj, id->opacity,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-			if (id->night_img_obj && lv_obj_is_valid(id->night_img_obj))
-				lv_obj_set_style_img_opa(id->night_img_obj, id->opacity,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
+			t_opacity = (uint8_t)v;
 		} else if (strcmp(o->field_name, "recolor") == 0 && o->value_type == RULE_VAL_COLOR) {
-			id->recolor.full = (uint16_t)o->value.color;
-			if (id->img_obj && lv_obj_is_valid(id->img_obj) && id->recolor_opa > 0) {
-				lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-				lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-			}
+			t_recolor.full = (uint16_t)o->value.color;
 		} else if (strcmp(o->field_name, "recolor_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
 			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
-			id->recolor_opa = (uint8_t)v;
-			if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
-				lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
-				lv_obj_set_style_img_recolor_opa(id->img_obj, id->recolor_opa,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
+			t_recolor_opa = (uint8_t)v;
+		}
+	}
+
+	/* ── Apply once. ─────────────────────────────────────────────────────── */
+
+	/* Image source: only free+reload the descriptor when the resolved target
+	 * name differs from the one currently loaded (decode-cost guard). This is
+	 * the single apply point, so a base-restore (count==0) correctly reloads
+	 * the original image when an override had swapped it. */
+	if (strncmp(t_name, id->cur_image_name, sizeof(id->cur_image_name)) != 0) {
+		rdm_image_free(id->img_dsc);
+		id->img_dsc = NULL;
+		if (t_name[0] != '\0')
+			id->img_dsc = rdm_image_load(t_name);
+		safe_strncpy(id->cur_image_name, t_name, sizeof(id->cur_image_name));
+		if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
+			/* Setting NULL when the new image fails to load clears the
+			 * previous tile rather than leaving stale pixels. */
+			lv_img_set_src(id->img_obj, id->img_dsc);
+			if (id->img_dsc) {
+				id->native_w = id->img_dsc->header.w;
+				id->native_h = id->img_dsc->header.h;
+				if (id->auto_size) {
+					uint16_t zoom = _fit_zoom(w->w, w->h, id->native_w, id->native_h);
+					if (zoom != 256) lv_img_set_zoom(id->img_obj, zoom);
+				}
 			}
 		}
 	}
+
+	/* Opacity: applies to whichever object(s) exist. */
+	if (id->img_obj && lv_obj_is_valid(id->img_obj))
+		lv_obj_set_style_img_opa(id->img_obj, t_opacity,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	if (id->night_img_obj && lv_obj_is_valid(id->night_img_obj))
+		lv_obj_set_style_img_opa(id->night_img_obj, t_opacity,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+
+	/* Recolor: always write both color + opa so a revert to recolor_opa==0
+	 * actually disables a previously-applied tint. When night mode is active and
+	 * a night recolor is set (day-only recolor case), the night tint takes
+	 * precedence over the base so we don't fight _image_apply_night_mode. If a
+	 * separate night IMAGE exists it carries its own baked colors on the night
+	 * sibling, so we only ever recolor the day object here. */
+	if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
+		lv_color_t rc  = t_recolor;
+		uint8_t    rco = t_recolor_opa;
+#if !NIGHT_MODE_DISABLED
+		bool night_active = night_mode_is_active();
+		bool has_night_img = id->night_img_obj && lv_obj_is_valid(id->night_img_obj);
+		if (night_active && id->night.has_recolor && !has_night_img) {
+			rc  = id->night.recolor;
+			rco = LV_OPA_COVER;
+		}
+#endif
+		lv_obj_set_style_img_recolor(id->img_obj, rc,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_img_recolor_opa(id->img_obj, rco,
+			LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+
+	/* Remember the shown style state (mirrors base when count==0). */
+	id->cur_opacity     = t_opacity;
+	id->cur_recolor     = t_recolor;
+	id->cur_recolor_opa = t_recolor_opa;
 }
 
 static void _image_destroy(widget_t *w) {
@@ -617,12 +661,15 @@ static void _image_apply_night_mode(widget_t *w, bool active) {
 	 * need to handle the day object's recolor for the case where ONLY a
 	 * recolor override exists (no separate night image). */
 	if (day_valid && !night_valid) {
-		lv_color_t rc = NIGHT_PICK_COLOR(active, id->night, recolor, id->recolor);
-		if (id->recolor_opa > 0 || (active && id->night.has_recolor)) {
+		/* Day fallback is the CURRENT (override-effective) state, not the raw
+		 * base, so an active rule recolor survives a night→day toggle. The base
+		 * fields stay untouched (to_json safe). */
+		lv_color_t rc = NIGHT_PICK_COLOR(active, id->night, recolor, id->cur_recolor);
+		if (id->cur_recolor_opa > 0 || (active && id->night.has_recolor)) {
 			lv_obj_set_style_img_recolor(id->img_obj, rc,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 			lv_obj_set_style_img_recolor_opa(id->img_obj,
-				(active && id->night.has_recolor) ? LV_OPA_COVER : id->recolor_opa,
+				(active && id->night.has_recolor) ? LV_OPA_COVER : id->cur_recolor_opa,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
 		}
 	}
@@ -674,6 +721,7 @@ static bool _image_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "opacity") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		id->opacity = (uint8_t)v;
+		id->cur_opacity = id->opacity;   /* keep effective in sync (no rule active) */
 		if (id->img_obj && lv_obj_is_valid(id->img_obj))
 			lv_obj_set_style_img_opa(id->img_obj, id->opacity,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -685,6 +733,7 @@ static bool _image_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "recolor_opa") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		id->recolor_opa = (uint8_t)v;
+		id->cur_recolor_opa = id->recolor_opa;   /* keep effective in sync */
 		if (id->img_obj && lv_obj_is_valid(id->img_obj)) {
 			lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -695,6 +744,7 @@ static bool _image_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "recolor") == 0) {
 		id->recolor = lv_color_hex(in->color);
+		id->cur_recolor = id->recolor;   /* keep effective in sync */
 		if (id->img_obj && lv_obj_is_valid(id->img_obj) && id->recolor_opa > 0) {
 			lv_obj_set_style_img_recolor(id->img_obj, id->recolor,
 				LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -720,6 +770,12 @@ widget_t *widget_image_create_instance(uint8_t slot) {
 	id->image_scale = 256;  /* 256 = 100% in LVGL zoom */
 	id->recolor = lv_color_black();
 	id->recolor_opa = 0;
+	/* Seed CURRENT (shown) state from the configured base so a rule that fires
+	 * before any config still reverts to a sane base on deactivation. */
+	id->cur_image_name[0] = '\0';   /* nothing loaded yet */
+	id->cur_opacity = id->opacity;
+	id->cur_recolor = id->recolor;
+	id->cur_recolor_opa = id->recolor_opa;
 
 	w->type = WIDGET_IMAGE;
 	w->slot = 0;

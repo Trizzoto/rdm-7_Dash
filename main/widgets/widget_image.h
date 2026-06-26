@@ -25,10 +25,19 @@ typedef struct {
 
 /* ── Per-instance state for image widget ──────────────────────────────── */
 typedef struct {
-	char          image_name[32];
-	uint8_t       opacity;        /* default: 255 */
-	lv_color_t    recolor;        /* default: 0x000000 (no effect at opa 0) */
-	uint8_t       recolor_opa;    /* default: 0 (disabled), 255 = full overlay */
+	char          image_name[32]; /* CONFIGURED base name (what to_json emits) */
+	uint8_t       opacity;        /* default: 255 (configured base) */
+	lv_color_t    recolor;        /* default: 0x000000 (no effect at opa 0) (configured base) */
+	uint8_t       recolor_opa;    /* default: 0 (disabled), 255 = full overlay (configured base) */
+	/* Rule-override CURRENT (shown) state. Distinct from the configured base
+	 * above so apply_overrides can fully revert on deactivation (count==0) and
+	 * to_json always serialises the base, never an active override value.
+	 * cur_image_name tracks the name backing the currently-loaded img_dsc so the
+	 * decode-cost guard only reloads when the resolved source actually changes. */
+	char          cur_image_name[32];
+	uint8_t       cur_opacity;
+	lv_color_t    cur_recolor;
+	uint8_t       cur_recolor_opa;
 	uint16_t      image_scale;    /* LVGL zoom: 256 = 100%; ignored when auto_size */
 	bool          auto_size;      /* scale image to fill container (fit-contain); on
 	                               * first pick in editor the container is also resized

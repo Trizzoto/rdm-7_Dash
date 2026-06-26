@@ -108,7 +108,7 @@ const MOCK = {
     mac: 'AA:BB:CC:DD:EE:FF', uptime_s: 1234, free_heap: 145000, free_psram: 6200000, chip: 'ESP32-S3'
   }),
   'GET  /api/storage/info':     () => ({ total: 8800000, used: 420000, free: 8380000 }),
-  'GET  /api/image/list':       () => ({ images: [{ name: 'warning.rdmimg', size: 4200, w: 64, h: 64 }] }),
+  'GET  /api/image/list':       () => ([{ name: 'warning.rdmimg', size: 4200, width: 64, height: 64 }]),  /* firmware returns a BARE array of {name,width,height,size} */
   'GET  /api/image/data':       () => '',
   'POST /api/image/delete':     () => ({ ok: true }),
   'POST /api/image/upload':     () => ({ ok: true }),

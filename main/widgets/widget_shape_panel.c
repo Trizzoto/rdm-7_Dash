@@ -291,11 +291,11 @@ static void _shape_panel_to_json(widget_t *w, cJSON *out) {
     if (sd->taper_bottom)
         cJSON_AddStringToObject(cfg, "taper_side", "bottom");
 
-    col = _color_to_u32(sd->bg_color);
+    col = _color_to_u32(sd->base_bg_color);
     if (col != DEF_BG_COLOR)
         cJSON_AddNumberToObject(cfg, "bg_color", col);
-    if (sd->bg_opa != DEF_BG_OPA)
-        cJSON_AddNumberToObject(cfg, "bg_opa", sd->bg_opa);
+    if (sd->base_bg_opa != DEF_BG_OPA)
+        cJSON_AddNumberToObject(cfg, "bg_opa", sd->base_bg_opa);
 
     col = _color_to_u32(sd->border_color);
     if (col != DEF_BORDER_COLOR)
@@ -357,6 +357,12 @@ static void _shape_panel_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_opa");
     if (cJSON_IsNumber(item)) sd->bg_opa = (uint8_t)item->valueint;
 
+    /* Snapshot the configured bg as the immutable base so rule/night overrides
+     * (which mutate the CURRENT bg_color/bg_opa for the polygon draw cb) can
+     * always be reverted and to_json always serializes the configured value. */
+    sd->base_bg_color = sd->bg_color;
+    sd->base_bg_opa   = sd->bg_opa;
+
     item = cJSON_GetObjectItemCaseSensitive(cfg, "border_color");
     if (cJSON_IsNumber(item)) sd->border_color = _u32_to_color((uint32_t)item->valueint);
 
@@ -412,8 +418,8 @@ static void _shape_panel_apply_overrides(widget_t *w, const rule_override_t *ov,
     shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
     if (!sd) return;
 
-    lv_color_t bg = sd->bg_color;
-    uint8_t bg_opa = sd->bg_opa;
+    lv_color_t bg = sd->base_bg_color;
+    uint8_t bg_opa = sd->base_bg_opa;
     lv_color_t bdr = sd->border_color;
     uint8_t bdr_w = sd->border_width;
     uint8_t radius = sd->border_radius;
@@ -457,7 +463,7 @@ static void _shape_panel_apply_night_mode(widget_t *w, bool active) {
     shape_panel_data_t *sd = (shape_panel_data_t *)w->type_data;
     if (!sd) return;
 
-    lv_color_t bg  = NIGHT_PICK_COLOR(active, sd->night, bg_color,     sd->bg_color);
+    lv_color_t bg  = NIGHT_PICK_COLOR(active, sd->night, bg_color,     sd->base_bg_color);
     lv_color_t bdr = NIGHT_PICK_COLOR(active, sd->night, border_color, sd->border_color);
     lv_color_t shd = NIGHT_PICK_COLOR(active, sd->night, shadow_color, sd->shadow_color);
 
@@ -490,8 +496,8 @@ static bool _shape_panel_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "shape_type") == 0)    { out->i = sd->shape_type;       return true; }
 	if (strcmp(name, "taper") == 0)         { out->i = sd->taper;            return true; }
 	if (strcmp(name, "taper_side") == 0)    { out->i = sd->taper_bottom ? 1 : 0; return true; }
-	if (strcmp(name, "bg_color") == 0)      { out->color = lv_color_to32(sd->bg_color)      & 0xFFFFFF; return true; }
-	if (strcmp(name, "bg_opa") == 0)        { out->i = sd->bg_opa;           return true; }
+	if (strcmp(name, "bg_color") == 0)      { out->color = lv_color_to32(sd->base_bg_color) & 0xFFFFFF; return true; }
+	if (strcmp(name, "bg_opa") == 0)        { out->i = sd->base_bg_opa;      return true; }
 	if (strcmp(name, "border_color") == 0)  { out->color = lv_color_to32(sd->border_color)  & 0xFFFFFF; return true; }
 	if (strcmp(name, "border_width") == 0)  { out->i = sd->border_width;     return true; }
 	if (strcmp(name, "border_radius") == 0) { out->i = sd->border_radius;    return true; }
@@ -531,6 +537,7 @@ static bool _shape_panel_inspector_set(widget_t *w, const char *name,
 	}
 	if (strcmp(name, "bg_color") == 0) {
 		sd->bg_color = lv_color_hex(in->color);
+		sd->base_bg_color = sd->bg_color;  /* config edit updates the immutable base */
 		if (obj && lv_obj_is_valid(obj)) {
 			if (!is_poly) lv_obj_set_style_bg_color(obj, sd->bg_color, LV_PART_MAIN);
 			lv_obj_invalidate(obj);
@@ -540,6 +547,7 @@ static bool _shape_panel_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "bg_opa") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		sd->bg_opa = (uint8_t)v;
+		sd->base_bg_opa = sd->bg_opa;  /* config edit updates the immutable base */
 		if (obj && lv_obj_is_valid(obj)) {
 			if (!is_poly) lv_obj_set_style_bg_opa(obj, sd->bg_opa, LV_PART_MAIN);
 			lv_obj_invalidate(obj);
@@ -628,6 +636,8 @@ widget_t *widget_shape_panel_create_instance(uint8_t slot) {
     sd->taper_bottom  = false;
     sd->bg_color      = lv_color_hex(DEF_BG_COLOR);
     sd->bg_opa        = DEF_BG_OPA;
+    sd->base_bg_color = sd->bg_color;
+    sd->base_bg_opa   = sd->bg_opa;
     sd->border_color  = lv_color_hex(DEF_BORDER_COLOR);
     sd->border_width  = DEF_BORDER_WIDTH;
     sd->border_radius = DEF_BORDER_RADIUS;

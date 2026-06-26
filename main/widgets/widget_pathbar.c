@@ -10,6 +10,7 @@
  * vertical -> radius -> horizontal).
  */
 #include "widget_pathbar.h"
+#include "widget_rules.h"
 #include "signal.h"
 #include "screen_config.h"
 #include "cJSON.h"
@@ -1046,6 +1047,12 @@ static void _pathbar_destroy(widget_t *w) {
     if (w->root && lv_obj_is_valid(w->root))
         lv_obj_del(w->root);
     w->root = NULL;
+    /* Unsubscribe rule signal callbacks + free w->rules. pathbar has no
+     * apply_overrides (rules are a no-op for it — the editor excludes it from
+     * the Rules UI), but a legacy/hand-authored layout can still carry a
+     * "rules" array that widget_rules_from_json allocated + subscribed; without
+     * this the subscription dangles into freed memory and w->rules leaks. */
+    widget_rules_free(w);
     if (w->type_data) free(w->type_data);
     free(w);
 }

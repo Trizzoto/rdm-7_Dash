@@ -214,21 +214,23 @@ static void _line_to_json(widget_t *w, cJSON *out) {
     cJSON *cfg = cJSON_AddObjectToObject(out, "config");
     if (!cfg) return;
 
-    uint32_t col = _color_to_u32(ld->line_color);
+    /* Serialize the BASE (configured) values — never the live override that a
+     * rule or night mode may have overlaid into the effective fields. */
+    uint32_t col = _color_to_u32(ld->base_line_color);
     if (col != DEF_LINE_COLOR)
         cJSON_AddNumberToObject(cfg, "line_color", col);
-    if (ld->line_opa != DEF_LINE_OPA)
-        cJSON_AddNumberToObject(cfg, "line_opa", ld->line_opa);
-    if (ld->line_width != DEF_LINE_WIDTH)
-        cJSON_AddNumberToObject(cfg, "line_width", ld->line_width);
+    if (ld->base_line_opa != DEF_LINE_OPA)
+        cJSON_AddNumberToObject(cfg, "line_opa", ld->base_line_opa);
+    if (ld->base_line_width != DEF_LINE_WIDTH)
+        cJSON_AddNumberToObject(cfg, "line_width", ld->base_line_width);
     if (ld->rounded != DEF_ROUNDED)
         cJSON_AddBoolToObject(cfg, "rounded", ld->rounded);
     if (ld->orientation != DEF_ORIENT)
         cJSON_AddStringToObject(cfg, "orientation", _orient_to_str(ld->orientation));
     if (ld->dash_gap != DEF_DASH_GAP)
         cJSON_AddNumberToObject(cfg, "dash_gap", ld->dash_gap);
-    if (ld->curvature != DEF_CURVATURE)
-        cJSON_AddNumberToObject(cfg, "curvature", ld->curvature);
+    if (ld->base_curvature != DEF_CURVATURE)
+        cJSON_AddNumberToObject(cfg, "curvature", ld->base_curvature);
 
     {
         cJSON *n = cJSON_CreateObject();
@@ -275,6 +277,13 @@ static void _line_from_json(widget_t *w, cJSON *in) {
     if (cJSON_IsObject(night)) {
         NIGHT_PARSE_COLOR(night, ld->night, line_color);
     }
+
+    /* Snapshot the configured values as the immutable base. Rule overrides and
+     * night mode overlay onto the effective fields and reset back to these. */
+    ld->base_line_color = ld->line_color;
+    ld->base_line_opa   = ld->line_opa;
+    ld->base_line_width = ld->line_width;
+    ld->base_curvature  = ld->curvature;
 }
 
 /* ── vtable: destroy ────────────────────────────────────────────────────── */
@@ -297,30 +306,35 @@ static void _line_apply_overrides(widget_t *w, const rule_override_t *ov, uint8_
     line_data_t *ld = (line_data_t *)w->type_data;
     if (!ld) return;
 
-    bool changed = false;
+    /* Start from the configured base every call, then overlay only the active
+     * overrides. With count==0 this fully restores the configured appearance.
+     * Night-mode colour (a separate overlay) is re-derived from base here too
+     * so the two overlays compose without corrupting either source. */
+    ld->line_color = NIGHT_PICK_COLOR(night_mode_is_active(), ld->night,
+                                      line_color, ld->base_line_color);
+    ld->line_opa   = ld->base_line_opa;
+    ld->line_width = ld->base_line_width;
+    ld->curvature  = ld->base_curvature;
+
     for (uint8_t i = 0; i < count; i++) {
         const rule_override_t *o = &ov[i];
         if (strcmp(o->field_name, "line_color") == 0 && o->value_type == RULE_VAL_COLOR) {
             ld->line_color.full = (uint16_t)o->value.color;
-            changed = true;
         } else if (strcmp(o->field_name, "line_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
             ld->line_opa = (lv_opa_t)o->value.num;
-            changed = true;
         } else if (strcmp(o->field_name, "line_width") == 0 && o->value_type == RULE_VAL_NUMBER) {
             int v = (int)o->value.num;
             if (v < 1)  v = 1;
             if (v > 30) v = 30;
             ld->line_width = (uint8_t)v;
-            changed = true;
         } else if (strcmp(o->field_name, "curvature") == 0 && o->value_type == RULE_VAL_NUMBER) {
             int v = (int)o->value.num;
             if (v < -200) v = -200;
             if (v > 200)  v = 200;
             ld->curvature = (int16_t)v;
-            changed = true;
         }
     }
-    if (changed) lv_obj_invalidate(w->root);
+    lv_obj_invalidate(w->root);
 }
 
 /* ── Night mode ─────────────────────────────────────────────────────────── */
@@ -330,7 +344,11 @@ static void _line_apply_night_mode(widget_t *w, bool active) {
     line_data_t *ld = (line_data_t *)w->type_data;
     if (!ld) return;
 
-    ld->line_color = NIGHT_PICK_COLOR(active, ld->night, line_color, ld->line_color);
+    /* Day/off fallback is the configured BASE colour, not the live effective
+     * one — otherwise repeated toggles would ratchet the override into base.
+     * A rule colour override (if active) is re-applied by the rules engine on
+     * its next apply; night mode only governs the day/night base colour. */
+    ld->line_color = NIGHT_PICK_COLOR(active, ld->night, line_color, ld->base_line_color);
     lv_obj_invalidate(w->root);
 }
 
@@ -364,14 +382,20 @@ static bool _line_inspector_set(widget_t *w, const char *name,
 	if (!w || w->type != WIDGET_LINE || !w->type_data || !name || !in) return false;
 	line_data_t *ld = (line_data_t *)w->type_data;
 
+	/* The inspector edits the CONFIGURED value — update both the effective
+	 * field (for immediate redraw) and the base snapshot (so to_json persists
+	 * the edit and apply_overrides resets back to it). */
 	if (strcmp(name, "line_color") == 0) {
 		ld->line_color = lv_color_hex(in->color);
+		ld->base_line_color = ld->line_color;
 	} else if (strcmp(name, "line_width") == 0) {
 		int v = in->i; if (v < 1) v = 1; if (v > 30) v = 30;
 		ld->line_width = (uint8_t)v;
+		ld->base_line_width = ld->line_width;
 	} else if (strcmp(name, "line_opa") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 255) v = 255;
 		ld->line_opa = (lv_opa_t)v;
+		ld->base_line_opa = ld->line_opa;
 	} else if (strcmp(name, "rounded") == 0) {
 		ld->rounded = in->b;
 	} else if (strcmp(name, "orientation") == 0) {
@@ -383,6 +407,7 @@ static bool _line_inspector_set(widget_t *w, const char *name,
 	} else if (strcmp(name, "curvature") == 0) {
 		int v = in->i; if (v < -200) v = -200; if (v > 200) v = 200;
 		ld->curvature = (int16_t)v;
+		ld->base_curvature = ld->curvature;
 	} else {
 		return false;
 	}
@@ -411,6 +436,13 @@ widget_t *widget_line_create_instance(uint8_t slot) {
     ld->orientation  = DEF_ORIENT;
     ld->dash_gap     = DEF_DASH_GAP;
     ld->curvature    = DEF_CURVATURE;
+
+    /* Base snapshot mirrors the defaults so a rule that fires before any
+     * config still has a sane base to overlay onto / restore to. */
+    ld->base_line_color = ld->line_color;
+    ld->base_line_opa   = ld->line_opa;
+    ld->base_line_width = ld->line_width;
+    ld->base_curvature  = ld->curvature;
 
     w->type      = WIDGET_LINE;
     w->slot      = slot;

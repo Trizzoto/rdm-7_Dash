@@ -10635,6 +10635,11 @@
                                     if (fDef.type === 'color') vtype = 'color';
                                     else if (fDef.type === 'checkbox') vtype = 'bool';
                                     else if (fDef.type === 'text' || fDef.type === 'image_picker' || fDef.type === 'font') vtype = 'string';
+                                    /* select options can be numeric (Number()'d on change) or
+                                     * string-valued; tag by the actual stored value so a
+                                     * string-option select isn't emitted as type:'number'
+                                     * (which firmware would silently drop to 0). */
+                                    else if (fDef.type === 'select') vtype = (typeof ov[fieldName] === 'string') ? 'string' : 'number';
                                 }
                                 arr.push({ field: fieldName, type: vtype, value: ov[fieldName] });
                             });
@@ -11756,17 +11761,17 @@
             }
 
             /* ── Rules Accordion (conditional overrides — only for types that support apply_overrides) ── */
-            /* image dropped from NO_RULES_TYPES once the firmware grew an
-             * apply_overrides callback (signal-driven image swap + recolor /
-             * opacity rules). meter and indicator remain excluded — their
-             * type_data lacks an apply_overrides hook. */
-            const NO_RULES_TYPES = new Set(['meter', 'indicator']);
+            /* Exclude only widget types whose firmware has NO apply_overrides
+             * vtable (rules would silently do nothing). As of the rules audit
+             * that is just 'pathbar'. meter and indicator DO implement
+             * apply_overrides (widget_meter.c / widget_indicator.c) and are
+             * intentionally NOT excluded — earlier code wrongly listed them. */
+            const NO_RULES_TYPES = new Set(['pathbar']);
             const rules = w.config.rules || [];
-            /* Rules UI hidden everywhere per product decision. The firmware
-             * rules engine still honours any rules already saved in a layout;
-             * this only removes the editor's add/edit surface. Flip
-             * RULES_UI_ENABLED back to true to restore the accordion. */
-            const RULES_UI_ENABLED = false;
+            /* Rules authoring UI. Set to false to hide the add/edit surface
+             * (the firmware rules engine still honours any rules already saved
+             * in a layout — hiding the UI does not strip saved rules). */
+            const RULES_UI_ENABLED = true;
             if (RULES_UI_ENABLED && !NO_RULES_TYPES.has(w.type)) {
             html += `<details class="inspector-accordion" data-rules-group="1"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
             html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
@@ -11801,7 +11806,21 @@
                 html += `</div>`;
                 /* THEN: full appearance fields */
                 html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin:8px 0 4px;">THEN change:</div>`;
+                /* Some appearance fields can't be honoured by the firmware's
+                 * apply_overrides for a given type, so don't offer them as rule
+                 * targets (a control that silently does nothing is worse than
+                 * no control). meter needle line-colour is baked into the
+                 * lv_meter at create (LVGL v8 has no post-create line-needle
+                 * recolor — see widget_meter.c (void)nc); bar fill / leading-
+                 * edge colour are recomputed every signal tick by _bar_on_signal
+                 * so an override would be overwritten next frame. */
+                const RULE_TARGET_EXCLUDE = {
+                    meter: new Set(['needle_color']),
+                    bar:   new Set(['bar_in_range_color', 'fill_edge_color']),
+                };
+                const _ruleExcluded = RULE_TARGET_EXCLUDE[w.type];
                 appearFields.forEach(f => {
+                    if (_ruleExcluded && _ruleExcluded.has(f.name)) return;
                     if (_enabledByHidden(f.enabledBy, k => overrides[k] !== undefined ? overrides[k] : (w.config[k] !== undefined ? w.config[k] : _fieldDefault(w.type, k)))) return;
                     const isOverridden = overrides.hasOwnProperty(f.name);
                     const val = isOverridden ? overrides[f.name] : (w.config[f.name] !== undefined ? w.config[f.name] : f.def);

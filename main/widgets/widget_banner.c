@@ -348,22 +348,32 @@ static void _banner_apply_overrides(widget_t *w, const rule_override_t *ov, uint
 	banner_data_t *bd = (banner_data_t *)w->type_data;
 	if (!bd) return;
 
+	/* Seed effective values from the configured BASE (bd-> fields stay
+	 * immutable — to_json and night mode read them). Overlay only the
+	 * currently-active overrides onto the locals, then apply the locals
+	 * unconditionally every call. When count==0 this restores base. */
+	lv_color_t bg_col  = bd->bg_color;
+	uint8_t    bg_opa  = bd->bg_opa;
+	lv_color_t txt_col = bd->text_color;
+
 	for (uint8_t i = 0; i < count; i++) {
 		const rule_override_t *o = &ov[i];
 		if (strcmp(o->field_name, "bg_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			bd->bg_color.full = (uint16_t)o->value.color;
-			lv_obj_set_style_bg_color(bd->bar, bd->bg_color, LV_PART_MAIN | LV_STATE_DEFAULT);
+			bg_col.full = (uint16_t)o->value.color;
 		} else if (strcmp(o->field_name, "bg_opa") == 0 && o->value_type == RULE_VAL_NUMBER) {
 			int v = (int)o->value.num; if (v < 0) v = 0; if (v > 255) v = 255;
-			bd->bg_opa = (uint8_t)v;
-			lv_obj_set_style_bg_opa(bd->bar, bd->bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+			bg_opa = (uint8_t)v;
 		} else if (strcmp(o->field_name, "text_color") == 0 && o->value_type == RULE_VAL_COLOR) {
-			bd->text_color.full = (uint16_t)o->value.color;
-			if (bd->label && lv_obj_is_valid(bd->label))
-				lv_obj_set_style_text_color(bd->label, bd->text_color,
-					LV_PART_MAIN | LV_STATE_DEFAULT);
+			txt_col.full = (uint16_t)o->value.color;
 		}
 	}
+
+	if (bd->bar && lv_obj_is_valid(bd->bar)) {
+		lv_obj_set_style_bg_color(bd->bar, bg_col, LV_PART_MAIN | LV_STATE_DEFAULT);
+		lv_obj_set_style_bg_opa(bd->bar, bg_opa, LV_PART_MAIN | LV_STATE_DEFAULT);
+	}
+	if (bd->label && lv_obj_is_valid(bd->label))
+		lv_obj_set_style_text_color(bd->label, txt_col, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
 
 /* ── Night mode ─────────────────────────────────────────────────────────── */

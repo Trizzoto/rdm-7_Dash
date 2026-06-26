@@ -57,11 +57,54 @@
 static int g_subscribe_calls   = 0;
 static int g_unsubscribe_calls = 0;
 
-int16_t signal_find_by_name(const char *name) { (void)name; return -1; }
+/* Settable fake signal table. Defaults EMPTY so signal_find_by_name returns
+ * -1 — preserving the original negative-path tests. Positive-path tests call
+ * fake_signal_add() to register a signal with a controllable current_value /
+ * is_stale, then exercise the real subscribe + eval path. */
+#define FAKE_SIG_MAX 8
+static struct { char name[32]; float value; bool stale; } g_fake_meta[FAKE_SIG_MAX];
+static signal_t g_fake_objs[FAKE_SIG_MAX];
+static int g_fake_count = 0;
 
-signal_t *signal_get_by_index(uint16_t index) { (void)index; return NULL; }
+static void fake_signals_reset(void) {
+    g_fake_count = 0;
+    g_subscribe_calls = 0;
+    g_unsubscribe_calls = 0;
+    memset(g_fake_meta, 0, sizeof(g_fake_meta));
+    memset(g_fake_objs, 0, sizeof(g_fake_objs));
+}
 
-uint16_t signal_get_count(void) { return 0; }
+static int16_t fake_signal_add(const char *name, float value, bool stale) {
+    int i = g_fake_count++;
+    safe_strncpy(g_fake_meta[i].name, name, sizeof(g_fake_meta[i].name));
+    g_fake_meta[i].value = value;
+    g_fake_meta[i].stale = stale;
+    return (int16_t)i;
+}
+
+/* Mutate a registered fake signal's live value/staleness between cb calls. */
+static void fake_signal_set(int16_t idx, float value, bool stale) {
+    if (idx < 0 || idx >= g_fake_count) return;
+    g_fake_meta[idx].value = value;
+    g_fake_meta[idx].stale = stale;
+}
+
+int16_t signal_find_by_name(const char *name) {
+    if (!name) return -1;
+    for (int i = 0; i < g_fake_count; i++)
+        if (strcmp(g_fake_meta[i].name, name) == 0) return (int16_t)i;
+    return -1;
+}
+
+signal_t *signal_get_by_index(uint16_t index) {
+    if ((int)index >= g_fake_count) return NULL;
+    /* Reflect the current meta into the signal_t shell the eval cb reads. */
+    g_fake_objs[index].current_value = g_fake_meta[index].value;
+    g_fake_objs[index].is_stale      = g_fake_meta[index].stale;
+    return &g_fake_objs[index];
+}
+
+uint16_t signal_get_count(void) { return (uint16_t)g_fake_count; }
 
 bool signal_subscribe(int16_t signal_index, signal_update_cb_t cb,
                       void *user_data) {
@@ -536,8 +579,7 @@ static void test_subscribe_and_free_invokes_signal_stubs(void) {
      * skipped — signal_subscribe MUST NOT be called.
      * However, widget_rules_free must still tolerate the path with
      * negative signal_index and never call signal_unsubscribe. */
-    g_subscribe_calls = 0;
-    g_unsubscribe_calls = 0;
+    fake_signals_reset();   /* empty table → signal_find_by_name returns -1 */
 
     cJSON *rule = make_rule_obj("RPM", ">", 7000.0, "fg", "color",
                                 cJSON_CreateNumber(0xFF0000));
@@ -576,6 +618,213 @@ static void test_to_json_with_null_rules_no_emit(void) {
     TEST_ASSERT_NULL(cJSON_GetObjectItemCaseSensitive(out, "rules"));
 
     cJSON_Delete(out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Positive-path engine tests — subscribe resolution, operator evaluation,
+ *  the last_rule_mask early-out, merged-override precedence, and the
+ *  deactivation (count==0) contract that every widget's apply_overrides
+ *  relies on to restore base state. These exercise the REAL subscribe + eval
+ *  path against the settable fake signal table above.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static int             g_apply_calls = 0;
+static uint8_t         g_apply_last_count = 0xFF;
+static rule_override_t g_apply_last[32];
+
+static void capture_apply(widget_t *w, const rule_override_t *ov, uint8_t count) {
+    (void)w;
+    g_apply_calls++;
+    g_apply_last_count = count;
+    for (uint8_t i = 0; i < count && i < 32; i++) g_apply_last[i] = ov[i];
+}
+
+static void apply_capture_reset(void) {
+    g_apply_calls = 0;
+    g_apply_last_count = 0xFF;
+    memset(g_apply_last, 0, sizeof(g_apply_last));
+}
+
+/* Non-null sentinel for w.root — the eval cb guards on (!w->root) but never
+ * dereferences it (only a real widget's apply_overrides would). */
+#define DUMMY_ROOT ((lv_obj_t *)0x1)
+
+/* A live widget: rules parsed from JSON, a non-null root, and the capturing
+ * apply_overrides so tests can observe exactly what the engine delivers. */
+static widget_t make_live_widget(cJSON *cfg) {
+    widget_t w = make_widget();
+    widget_rules_from_json(&w, cfg);
+    w.root = DUMMY_ROOT;
+    w.apply_overrides = capture_apply;
+    return w;
+}
+
+/* Build a {"rules":[{signal,op,threshold,overrides:[{field,type,value}]}]} cfg. */
+static cJSON *cfg_one_rule(const char *sig, const char *op, double thr,
+                           const char *field, const char *type, cJSON *val) {
+    return config_with_rule(make_rule_obj(sig, op, thr, field, type, val));
+}
+
+/* ── subscribe: resolves name→index and dedups shared signals ───────────── */
+static void test_subscribe_resolves_and_dedups(void) {
+    fake_signals_reset();
+    int16_t rpm = fake_signal_add("RPM", 0.0f, false);
+
+    /* Two rules on the SAME signal → one subscription. */
+    cJSON *cfg = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(cfg, "rules");
+    cJSON_AddItemToArray(arr, make_rule_obj("RPM", ">", 7000.0, "fg", "color",
+                                            cJSON_CreateNumber(0x111111)));
+    cJSON_AddItemToArray(arr, make_rule_obj("RPM", ">", 5000.0, "bg", "color",
+                                            cJSON_CreateNumber(0x222222)));
+    widget_t w = make_live_widget(cfg);
+    apply_capture_reset();
+
+    widget_rules_subscribe(&w);
+
+    TEST_ASSERT_EQUAL_INT(rpm, w.rules[0].signal_index);
+    TEST_ASSERT_EQUAL_INT(rpm, w.rules[1].signal_index);
+    TEST_ASSERT_EQUAL_INT(1, g_subscribe_calls);  /* deduped */
+
+    cJSON_Delete(cfg);
+    free_widget(&w);
+}
+
+/* ── initial eval on subscribe: a rule already-true at (re)create applies
+ *    immediately rather than waiting for the next value change (the fix). ── */
+static void test_initial_eval_applies_on_subscribe(void) {
+    fake_signals_reset();
+    fake_signal_add("RPM", 8000.0f, false);   /* already over threshold */
+
+    cJSON *cfg = cfg_one_rule("RPM", ">", 7000.0, "fg", "color",
+                              cJSON_CreateNumber(0x00FF00));
+    widget_t w = make_live_widget(cfg);
+    apply_capture_reset();
+
+    widget_rules_subscribe(&w);   /* must trigger one initial apply */
+
+    TEST_ASSERT_EQUAL_INT(1, g_apply_calls);
+    TEST_ASSERT_EQUAL_INT(1, g_apply_last_count);
+    TEST_ASSERT_EQUAL_STRING("fg", g_apply_last[0].field_name);
+
+    cJSON_Delete(cfg);
+    free_widget(&w);
+}
+
+/* ── deactivation delivers count==0 — the contract widget apply_overrides
+ *    relies on to RESTORE base state (the headline base-restore bug class). ─ */
+static void test_deactivation_delivers_count_zero(void) {
+    fake_signals_reset();
+    int16_t rpm = fake_signal_add("RPM", 8000.0f, false);   /* active */
+
+    cJSON *cfg = cfg_one_rule("RPM", ">", 7000.0, "fg", "color",
+                              cJSON_CreateNumber(0xFF0000));
+    widget_t w = make_live_widget(cfg);
+    widget_rules_subscribe(&w);                 /* initial apply, count==1 */
+    TEST_ASSERT_TRUE(w.rules[0].is_active);
+
+    fake_signal_set(rpm, 1000.0f, false);       /* drop below threshold */
+    apply_capture_reset();
+    _rule_signal_cb(0.0f, false, &w);           /* engine re-evaluates */
+
+    TEST_ASSERT_FALSE(w.rules[0].is_active);
+    TEST_ASSERT_EQUAL_INT(1, g_apply_calls);    /* mask changed → one apply */
+    TEST_ASSERT_EQUAL_INT(0, g_apply_last_count); /* with the EMPTY set */
+
+    cJSON_Delete(cfg);
+    free_widget(&w);
+}
+
+/* ── last_rule_mask early-out: steady-state re-eval doesn't re-apply ─────── */
+static void test_mask_early_out_skips_redundant_apply(void) {
+    fake_signals_reset();
+    fake_signal_add("RPM", 8000.0f, false);
+
+    cJSON *cfg = cfg_one_rule("RPM", ">", 7000.0, "fg", "color",
+                              cJSON_CreateNumber(0xFF0000));
+    widget_t w = make_live_widget(cfg);
+    widget_rules_subscribe(&w);                 /* initial apply */
+    apply_capture_reset();
+
+    _rule_signal_cb(0.0f, false, &w);           /* same state */
+    _rule_signal_cb(0.0f, false, &w);           /* same state */
+    TEST_ASSERT_EQUAL_INT(0, g_apply_calls);    /* no redundant apply */
+
+    cJSON_Delete(cfg);
+    free_widget(&w);
+}
+
+/* ── merged overrides: later active rule wins for a shared field ─────────── */
+static void test_merged_override_last_writer_wins(void) {
+    fake_signals_reset();
+    fake_signal_add("RPM", 8000.0f, false);     /* satisfies both rules */
+
+    cJSON *cfg = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(cfg, "rules");
+    cJSON_AddItemToArray(arr, make_rule_obj("RPM", ">", 7000.0, "fg", "color",
+                                            cJSON_CreateNumber(0xAAAAAA)));
+    cJSON_AddItemToArray(arr, make_rule_obj("RPM", ">", 5000.0, "fg", "color",
+                                            cJSON_CreateNumber(0xBBBBBB)));
+    widget_t w = make_live_widget(cfg);
+    apply_capture_reset();
+
+    widget_rules_subscribe(&w);                 /* both active → initial apply */
+
+    TEST_ASSERT_EQUAL_INT(1, g_apply_last_count);   /* deduped to one field */
+    TEST_ASSERT_EQUAL_STRING("fg", g_apply_last[0].field_name);
+    TEST_ASSERT_EQUAL_HEX(0xBBBBBB, g_apply_last[0].value.color); /* rule[1] wins */
+
+    cJSON_Delete(cfg);
+    free_widget(&w);
+}
+
+/* ── operator evaluation against a live signal value ────────────────────── */
+static void test_eval_operators_match_value(void) {
+    fake_signals_reset();
+    int16_t s = fake_signal_add("S", 0.0f, false);
+
+    /* GT */
+    {
+        cJSON *cfg = cfg_one_rule("S", ">", 50.0, "fg", "number", cJSON_CreateNumber(1));
+        widget_t w = make_live_widget(cfg);
+        widget_rules_subscribe(&w);
+        fake_signal_set(s, 60.0f, false); _rule_signal_cb(0,false,&w);
+        TEST_ASSERT_TRUE(w.rules[0].is_active);
+        fake_signal_set(s, 40.0f, false); _rule_signal_cb(0,false,&w);
+        TEST_ASSERT_FALSE(w.rules[0].is_active);
+        cJSON_Delete(cfg); free_widget(&w);
+    }
+    /* RANGE */
+    {
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddStringToObject(r, "signal_name", "S");
+        cJSON_AddStringToObject(r, "op", "range");
+        cJSON_AddNumberToObject(r, "range_min", 10.0);
+        cJSON_AddNumberToObject(r, "range_max", 20.0);
+        cJSON *ovs = cJSON_AddArrayToObject(r, "overrides");
+        cJSON *ov = cJSON_CreateObject();
+        cJSON_AddStringToObject(ov, "field", "fg");
+        cJSON_AddStringToObject(ov, "type", "number");
+        cJSON_AddItemToObject(ov, "value", cJSON_CreateNumber(1));
+        cJSON_AddItemToArray(ovs, ov);
+        cJSON *cfg = config_with_rule(r);
+        widget_t w = make_live_widget(cfg);
+        widget_rules_subscribe(&w);
+        fake_signal_set(s, 15.0f, false); _rule_signal_cb(0,false,&w);
+        TEST_ASSERT_TRUE(w.rules[0].is_active);
+        fake_signal_set(s, 25.0f, false); _rule_signal_cb(0,false,&w);
+        TEST_ASSERT_FALSE(w.rules[0].is_active);
+        cJSON_Delete(cfg); free_widget(&w);
+    }
+    /* Stale signal never matches even if the value would */
+    {
+        cJSON *cfg = cfg_one_rule("S", ">", 50.0, "fg", "number", cJSON_CreateNumber(1));
+        widget_t w = make_live_widget(cfg);
+        widget_rules_subscribe(&w);
+        fake_signal_set(s, 9999.0f, true /* stale */); _rule_signal_cb(0,false,&w);
+        TEST_ASSERT_FALSE(w.rules[0].is_active);
+        cJSON_Delete(cfg); free_widget(&w);
+    }
 }
 
 /* ── Runner ───────────────────────────────────────────────────────────── */
@@ -618,6 +867,15 @@ int main(void) {
 
     /* subscribe / free smoke test (touches signal-layer stubs) */
     RUN_TEST(test_subscribe_and_free_invokes_signal_stubs);
+
+    /* Positive-path engine: subscribe resolution, initial eval, deactivation
+     * contract, mask early-out, merged precedence, operator evaluation. */
+    RUN_TEST(test_subscribe_resolves_and_dedups);
+    RUN_TEST(test_initial_eval_applies_on_subscribe);
+    RUN_TEST(test_deactivation_delivers_count_zero);
+    RUN_TEST(test_mask_early_out_skips_redundant_apply);
+    RUN_TEST(test_merged_override_last_writer_wins);
+    RUN_TEST(test_eval_operators_match_value);
 
     return UNITY_END();
 }
