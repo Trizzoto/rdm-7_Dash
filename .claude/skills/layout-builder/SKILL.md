@@ -25,39 +25,57 @@ apply the layout.
 - `reference/04-channels-and-signals.md` — what `signal_name` can bind to.
 - `reference/05-firmware-quirks.md` — **read before using a `meter`** (its ticks are count-based, not step). And the golden rule: copy real widgets.
 
-## Workflow
+## Workflow — build it LIVE on the dash, one piece at a time
+
+Do **not** generate the whole layout in a script and load it in one shot. Grow it
+incrementally on the real screen, hand-editing the JSON and screenshotting after
+each step, so you catch overlap / position / colour problems per-widget instead
+of debugging a 10-widget blob. The dash is your canvas; `/api/screenshot` is your
+eyes.
 
 1. **Understand the target.**
    - *Image:* identify each element → pick a widget type. Round dial w/ needle → `meter`; coloured arc/ring → `arc`; horizontal RPM strip across the top → `rpm_bar`; a curved/J-shaped tach → `pathbar` (shape J-Hook); level bar → `bar`; big number + label → `panel`; plain number/letter → `text`; warning tiles → `warning`; turn arrows → `indicator`; row of shift LEDs → `shift_light`; static graphic → `image`/`shape_panel`/`line`. Note positions, colours, what each reads.
    - *Description:* map the named gauges the same way.
 
-2. **Get device context** (if a dash is reachable — default host `192.168.4.61`, AP `192.168.4.1`):
-   - `python scripts/apply_layout.py --channels` → the bindable `signal_name`s.
-   - `GET /api/layout/current` → the layout running now (great to adapt / copy widget blocks from, and to match existing conventions).
+2. **Get device context** (default host `192.168.4.61`, AP `192.168.4.1`):
+   - `GET /api/channels` → the bindable `signal_name`s (units, decimals, warns).
+   - `GET /api/layout/current` → the layout running now — the best source of real,
+     current device-format widget blocks to copy and tweak.
 
-3. **Build the layout JSON.** Start from `examples/minimal_demo.json` or by copying widget blocks out of `examples/ford_cluster.json` / the device's current layout — that's faster and more correct than authoring from memory (the device accepts a superset of the catalog; see 05). Then:
-   - Position with center-origin `x,y` (widget centre; `0,0` = middle). Draw order = array order (background first, text/needles last).
-   - Bind data with `config.signal_name`. Colours are RGB565 ints (`scripts/rgb565.py "#RRGGBB"`).
-   - **`config` is defaults-only** — include a field only when it differs from the catalog default. Keep the whole file under 32 KB.
-   - For a `meter`, set ticks with `minor_tick_count` + `major_tick_every` (see 05), not the step fields.
+3. **Start a skeleton by hand** (`Write` the JSON file). Just the background
+   `shape_panel` + the single hero gauge — nothing else yet. Author in **device
+   format** by copying a real widget block from `/api/layout/current` or
+   `examples/` and editing it; don't hand-author fields from memory.
 
-4. **Validate** before applying:
-   ```
-   python scripts/validate_layout.py my_layout.json
-   ```
-   Fix every ERROR; review WARNs (unknown fields are usually typos or wrong-widget fields). Optionally pass `--channels-file` (a saved `/api/channels`) to check bindings.
+4. **The live loop — repeat per widget:**
+   - **Preview** (live, not saved): `POST /api/layout/preview` with the whole
+     current layout. **Inject** realistic values so gauges read true:
+     `POST /api/signal/inject {"signal":"RPM","value":4000}`.
+   - **Screenshot + read it:** `GET /api/screenshot` → look at it.
+   - **Adjust** position/size/colour by hand-`Edit`ing the JSON, re-preview, re-shot
+     until that piece is right.
+   - **Add the next widget** and loop. Order: background → hero gauge → secondary
+     gauges → readouts → decoration (draw order = array order, later paints on top).
+   - Edit the JSON with `Write`/`Edit`. Use the helper scripts ONLY for one-off
+     math — `scripts/rgb565.py "#RRGGBB"` for a colour — **never to generate the
+     file**. Position with center-origin `x,y`; `config` is **defaults-only**; for a
+     `meter`, ticks are `minor_tick_count` + `major_tick_every` (see 05).
 
-5. **Preview live + screenshot, then iterate** (preview does NOT persist — ideal for the build loop):
+5. **Validate** before saving:
    ```
-   python scripts/apply_layout.py my_layout.json --shot /tmp/look.png
+   python scripts/validate_layout.py my_layout.json --channels-file channels.json
    ```
-   Read the screenshot. Adjust positions/sizes/colours and re-preview until it matches. Inject test values if needed (`POST /api/signal/inject {"signal":"RPM","value":4000}`) so gauges show realistic readings in the shot.
+   Fix every ERROR; review WARNs (usually typos or wrong-widget fields).
 
-6. **Save when it's right** (persist + show it):
-   ```
-   python scripts/apply_layout.py my_layout.json --save --activate --shot /tmp/final.png
-   ```
-   Confirm the final screenshot. Saving the active layout's name hot-reloads it.
+6. **Sweep-test** the value-driven gauges (see the rule below) — inject the bound
+   signal across its whole range and screenshot each; the min/empty state is the
+   usual liar.
+
+7. **Save when it's right:** `POST /api/layout/save` (needs `name`) then
+   `POST /api/layout/set {"name":"…"}` to activate. Confirm with a final
+   screenshot. (`scripts/apply_layout.py my_layout.json --save --activate --shot
+   out.png` wraps validate→save→activate→shot if you want one call for the final
+   persist — but the *building* above stays hand-edited + incremental.)
 
 ## Rules & gotchas
 
