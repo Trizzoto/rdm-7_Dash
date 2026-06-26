@@ -488,6 +488,11 @@ static void rdm_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 }
 
 bool rdm_lvgl_lock(int timeout_ms) {
+  /* Early-boot callers (e.g. channel_manager_init seeding defaults) can reach
+   * this before the mutex is created in app_main. At that point app_main is the
+   * only task touching shared state, so there is nothing to guard — treat the
+   * lock as acquired rather than asserting in xQueueTakeMutexRecursive. */
+  if (lvgl_mux == NULL) return true;
   // Convert timeout in milliseconds to FreeRTOS ticks
   // If timeout_ms is set to -1, the program will block until the condition is
   // met
@@ -496,7 +501,10 @@ bool rdm_lvgl_lock(int timeout_ms) {
   return xSemaphoreTakeRecursive(lvgl_mux, timeout_ticks) == pdTRUE;
 }
 
-void rdm_lvgl_unlock(void) { xSemaphoreGiveRecursive(lvgl_mux); }
+void rdm_lvgl_unlock(void) {
+  if (lvgl_mux == NULL) return;
+  xSemaphoreGiveRecursive(lvgl_mux);
+}
 
 TaskHandle_t lvglTaskHandle = NULL;
 
