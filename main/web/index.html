@@ -7211,13 +7211,13 @@
                             { name: "border_width", label: "Border Width", type: "stepper", def: 3, cat: "appearance", group: "Frame", help: "Thickness of the outline (0 = none).", min: 0, max: 20 },
                             { name: "border_radius", label: "Border Radius", type: "stepper", def: 7, cat: "appearance", group: "Frame", help: "How rounded the corners are.", min: 0, max: 100 },
                             { name: "warning_low_enabled", label: "Low Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Warn when the reading drops too low." },
-                            { name: "warning_low_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading falls to or below this.", min: -99999, max: 99999, enabledBy: "warning_low_enabled" },
+                            { name: "warning_low_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading falls to or below this.", min: -99999, max: 99999, enabledBy: "warning_low_enabled" },
                             { name: "warning_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too low.", enabledBy: "warning_low_enabled" },
                             { name: "warning_low_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                             { name: "warning_low_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                             { name: "warning_low_apply_panel", label: "Border", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Turn the panel's edge/background the alert colour when it's too low.", enabledBy: "warning_low_enabled", inline: "warning_low_apply" },
                             { name: "warning_high_enabled", label: "High Alert", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Warn when the reading climbs too high." },
-                            { name: "warning_high_threshold", label: "Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading rises to or above this.", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
+                            { name: "warning_high_threshold", label: "Threshold", type: "number", def: 0, cat: "alerts", group: "Alerts", help: "Warn once the reading rises to or above this.", min: -99999, max: 99999, enabledBy: "warning_high_enabled" },
                             { name: "warning_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "The alert colour used when it's too high.", enabledBy: "warning_high_enabled" },
                             { name: "warning_high_apply_label", label: "Title", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the title the alert colour when it's too high.", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
                             { name: "warning_high_apply_value", label: "Value", type: "checkbox", def: true, cat: "alerts", group: "Alerts", help: "Turn the number the alert colour when it's too high.", enabledBy: "warning_high_enabled", inline: "warning_high_apply" },
@@ -7277,9 +7277,9 @@
                             { name: "tick_length", label: "Tick Length", type: "stepper", def: 6, cat: "appearance", group: "Ticks", help: "How long the marks are.", min: 1, max: 40, enabledBy: "show_ticks" },
                             { name: "tick_color", label: "Tick Color", type: "color", def: 0xE8E8E8, cat: "appearance", group: "Ticks", help: "Colour of the marks.", enabledBy: "show_ticks", nightOverridable: true },
                             { name: "bar_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Change the bar colour when the reading goes too low or too high (set the points below)." },
-                            { name: "bar_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "At or below this reading, the bar turns the Low colour.", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
+                            { name: "bar_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "Alerts", help: "At or below this reading, the bar turns the Low colour.", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
                             { name: "bar_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "Bar colour when the reading is low.", enabledBy: "bar_alerts_enabled", nightOverridable: true },
-                            { name: "bar_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "Alerts", help: "At or above this reading, the bar turns the High colour.", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
+                            { name: "bar_high", label: "High Threshold", type: "number", def: 100, cat: "alerts", group: "Alerts", help: "At or above this reading, the bar turns the High colour.", min: -99999, max: 99999, enabledBy: "bar_alerts_enabled" },
                             { name: "bar_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "Bar colour when the reading is high.", enabledBy: "bar_alerts_enabled", nightOverridable: true }
                         ]
                     },
@@ -7322,7 +7322,7 @@
                             { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "appearance", group: "Text", help: "Show the text on the tile." },
                             { name: "label_color", label: "Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Text", help: "Text colour.", enabledBy: "show_label", nightOverridable: true },
                             { name: "label_font", label: "Label Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size.", enabledBy: "show_label" },
-                            { name: "label_y_offset", label: "Label Y Offset", type: "slider", def: 0, cat: "appearance", group: "Text", help: "Nudge the text up or down.", min: -100, max: 100, enabledBy: "show_label" },
+                            { name: "label_y_offset", label: "Label Y Offset", type: "stepper", def: 0, cat: "appearance", group: "Text", help: "Nudge the text up or down.", min: -100, max: 100, enabledBy: "show_label" },
                             { name: "label_text_align", label: "Text Align", type: "select", def: 1, cat: "appearance", group: "Text", help: "Line the text up left, centre or right.", enabledBy: "show_label",
                               options: [
                                   { v: 0, l: "Left" },
@@ -7352,7 +7352,7 @@
                              * _meterSyncDerived translates this into the LVGL
                              * start_angle/end_angle pair the firmware reads. */
                             { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", group: "Value", help: "Where the dial starts, as a clock position in degrees (0 = 3 o'clock, going clockwise).", min: 0, max: 359, step: 5 },
-                            { name: "sweep_degrees", label: "Sweep", type: "slider", def: 270, cat: "data", group: "Value", help: "How far around the dial goes. 270 is a normal gauge; 360 is a full circle.", min: 30, max: 360, step: 5 },
+                            { name: "sweep_degrees", label: "Sweep", type: "stepper", def: 270, cat: "data", group: "Value", help: "How far around the dial goes. 270 is a normal gauge; 360 is a full circle.", min: 30, max: 360, step: 5 },
                             { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value", help: "Run the dial backwards, so the high reading sits at the start." },
                             /* Anchor-based non-linear scale. "Pin THIS data value
                              * to THIS position on the sweep" - splits the range into
@@ -7383,17 +7383,17 @@
                             { name: "major_tick_image_name", label: "Major Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each major (numbered) tick instead of a drawn line. Design it pointing up (tip toward the rim); it's rotated to each tick.", enabledBy: "show_ticks" },
                             { name: "mid_tick_image_name", label: "Medium Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each medium tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
                             { name: "minor_tick_image_name", label: "Minor Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
-                            { name: "tick_image_scale", label: "Tick Image Scale %", type: "number", def: 100, cat: "appearance", group: "Ticks", help: "Scale the tick images up or down (100 = original size). Applies to all three tick images.", min: 10, max: 400, enabledBy: "show_ticks" },
-                            { name: "tick_outline_strength", label: "Tick Outline", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed.", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "tick_image_scale", label: "Tick Image Scale %", type: "stepper", def: 100, cat: "appearance", group: "Ticks", help: "Scale the tick images up or down (100 = original size). Applies to all three tick images.", min: 10, max: 400, enabledBy: "show_ticks" },
+                            { name: "tick_outline_strength", label: "Tick Outline", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed.", min: 0, max: 255, enabledBy: "show_ticks" },
                             { name: "tick_outline_color", label: "Tick Outline Color", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", help: "Colour of the tick outline/glow (usually black for a crisp edge).", enabledBy: "show_ticks" },
-                            { name: "tick_outline_fade", label: "Tick Outline Fade", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Soften the outline into a glow (0 = hard edge, higher = wider soft glow).", min: 0, max: 20, enabledBy: "show_ticks" },
+                            { name: "tick_outline_fade", label: "Tick Outline Fade", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Soften the outline into a glow (0 = hard edge, higher = wider soft glow).", min: 0, max: 20, enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers", help: "Show numbers next to the biggest marks." },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Text style and size of those numbers.", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", help: "Colour of those numbers.", enabledBy: "show_tick_labels", nightOverridable: true },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", help: "How far the numbers sit from the marks.", min: -150, max: 150, enabledBy: "show_tick_labels" },
                             /* Divides each tick label by this factor — e.g. 1000 turns a
                              * 0..7000 tach into 0..7 (print the unit elsewhere, "RPM x1000"). */
-                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", help: "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters.", min: 1, max: 100000, enabledBy: "show_tick_labels" },
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "number", def: 1, cat: "appearance", group: "Numbers", help: "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters.", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             /* Redline zone: visual cues drawn between threshold and
                              * max. Show Arc + Recolor Ticks default ON so enabling
                              * the master toggle gives an immediate visible result. */
@@ -7551,7 +7551,7 @@
                                   { v: 2, l: "Right" }
                               ] },
                             { name: "bg_color", label: "Background", type: "color", def: 0xFF0000, cat: "appearance", group: "Fill", help: "Background colour.", nightOverridable: true },
-                            { name: "bg_opa", label: "Opacity", type: "slider", def: 128, cat: "appearance", group: "Fill", help: "How solid the background is (0-255).", min: 0, max: 255 },
+                            { name: "bg_opa", label: "Opacity", type: "stepper", def: 128, cat: "appearance", group: "Fill", help: "How solid the background is (0-255).", min: 0, max: 255 },
                             { name: "text_color", label: "Text Color", type: "color", def: 0x000000, cat: "appearance", group: "Text", help: "Colour of the message.", nightOverridable: true },
                             { name: "font", label: "Font", type: "font", def: "", cat: "appearance", group: "Text", help: "Text style and size." },
                             { name: "border_width", label: "Border Width", type: "stepper", def: 0, cat: "appearance", group: "Frame", help: "Thickness of the outline (0 = none).", min: 0, max: 20 },
@@ -7563,7 +7563,7 @@
                         displayName: "Arc Shape", defW: 200, defH: 200,
                         fields: [
                             { name: "start_angle_user", label: "Start Angle (°)", type: "stepper", def: 225, cat: "data", group: "Value", help: "Where the gauge starts, as a clock position in degrees (0 = 3 o'clock, going clockwise). This is the empty end.", min: 0, max: 359, step: 5 },
-                            { name: "sweep_degrees", label: "Sweep (°)", type: "slider", def: 270, cat: "data", group: "Value", help: "How far around the circle the gauge goes. 270 covers most of a circle like a normal gauge; 360 is a full circle.", min: 30, max: 360, step: 5 },
+                            { name: "sweep_degrees", label: "Sweep (°)", type: "stepper", def: 270, cat: "data", group: "Value", help: "How far around the circle the gauge goes. 270 covers most of a circle like a normal gauge; 360 is a full circle.", min: 30, max: 360, step: 5 },
                             { name: "signal_min", label: "Signal Min", type: "number", def: 0, cat: "data", group: "Value", help: "The reading that shows the gauge empty (the start)." },
                             { name: "signal_max", label: "Signal Max", type: "number", def: 100, cat: "data", group: "Value", help: "The reading that shows the gauge full (the end)." },
                             { name: "tick_min", label: "Tick Start Value", type: "number", def: 0, cat: "data", group: "Value", help: "The first number the marks count from. Usually the same as the empty value." },
@@ -7591,9 +7591,9 @@
                             { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", help: "How wide the bright tip is.", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
                             { name: "arc_image", label: "Track Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use a picture for the empty background instead of a plain colour.", nightOverridable: true },
                             { name: "arc_image_full", label: "Fill Image", type: "image_picker", def: "", cat: "appearance", group: "Fill", help: "Use a picture for the filled part instead of a plain colour. It's uncovered bit by bit as the reading rises.", nightOverridable: true },
-                            { name: "arc_image_opa", label: "Track Image Opacity", type: "slider", def: 255, cat: "appearance", group: "Fill", help: "How solid the track image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
+                            { name: "arc_image_opa", label: "Track Image Opacity", type: "stepper", def: 255, cat: "appearance", group: "Fill", help: "How solid the track image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
                             { name: "arc_image_recolor", label: "Track Image Tint", type: "color", def: 0x000000, cat: "appearance", group: "Fill", help: "Colour blended into the track image (turn up the tint strength to use it)." },
-                            { name: "arc_image_recolor_opa", label: "Track Tint Strength", type: "slider", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the track image (0 = off).", min: 0, max: 255 },
+                            { name: "arc_image_recolor_opa", label: "Track Tint Strength", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the track image (0 = off).", min: 0, max: 255 },
                             { name: "arc_image_blend", label: "Track Image Blend", type: "select", def: 0, cat: "appearance", group: "Fill", help: "How the track image is layered over what's behind it (Additive glows, Multiply darkens).",
                               options: [
                                   { v: 0, l: "Normal" },
@@ -7601,9 +7601,9 @@
                                   { v: 2, l: "Subtractive" },
                                   { v: 3, l: "Multiply" }
                               ] },
-                            { name: "arc_image_full_opa", label: "Fill Image Opacity", type: "slider", def: 255, cat: "appearance", group: "Fill", help: "How solid the fill image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
+                            { name: "arc_image_full_opa", label: "Fill Image Opacity", type: "stepper", def: 255, cat: "appearance", group: "Fill", help: "How solid the fill image is (255 = fully visible, 0 = invisible).", min: 0, max: 255 },
                             { name: "arc_image_full_recolor", label: "Fill Image Tint", type: "color", def: 0x000000, cat: "appearance", group: "Fill", help: "Colour blended into the fill image (turn up the tint strength to use it)." },
-                            { name: "arc_image_full_recolor_opa", label: "Fill Tint Strength", type: "slider", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the fill image (0 = off).", min: 0, max: 255 },
+                            { name: "arc_image_full_recolor_opa", label: "Fill Tint Strength", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "How strongly the tint colour is mixed into the fill image (0 = off).", min: 0, max: 255 },
                             { name: "arc_image_full_blend", label: "Fill Image Blend", type: "select", def: 0, cat: "appearance", group: "Fill", help: "How the fill image is layered over what's behind it (Additive glows, Multiply darkens).",
                               options: [
                                   { v: 0, l: "Normal" },
@@ -7631,34 +7631,34 @@
                             { name: "major_tick_image_name", label: "Major Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each major tick instead of a drawn line. Design it pointing up (tip toward the rim); it's rotated to each tick.", enabledBy: "show_ticks" },
                             { name: "mid_tick_image_name", label: "Medium Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each medium tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
                             { name: "minor_tick_image_name", label: "Minor Tick Image", type: "image_picker", def: "", cat: "appearance", group: "Ticks", help: "Use a picture for each minor tick instead of a drawn line. Design it pointing up (tip toward the rim).", enabledBy: "show_ticks" },
-                            { name: "major_tick_image_scale", label: "Major Tick Scale %", type: "number", def: 100, cat: "appearance", group: "Ticks", help: "Scale the major tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
-                            { name: "mid_tick_image_scale", label: "Medium Tick Scale %", type: "number", def: 100, cat: "appearance", group: "Ticks", help: "Scale the medium tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
-                            { name: "minor_tick_image_scale", label: "Minor Tick Scale %", type: "number", def: 100, cat: "appearance", group: "Ticks", help: "Scale the minor tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
-                            { name: "major_tick_image_opa", label: "Major Tick Opacity", type: "number", def: 255, cat: "appearance", group: "Ticks", help: "Fade the major tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
-                            { name: "mid_tick_image_opa", label: "Medium Tick Opacity", type: "number", def: 255, cat: "appearance", group: "Ticks", help: "Fade the medium tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
-                            { name: "minor_tick_image_opa", label: "Minor Tick Opacity", type: "number", def: 255, cat: "appearance", group: "Ticks", help: "Fade the minor tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "major_tick_image_scale", label: "Major Tick Scale %", type: "stepper", def: 100, cat: "appearance", group: "Ticks", help: "Scale the major tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
+                            { name: "mid_tick_image_scale", label: "Medium Tick Scale %", type: "stepper", def: 100, cat: "appearance", group: "Ticks", help: "Scale the medium tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
+                            { name: "minor_tick_image_scale", label: "Minor Tick Scale %", type: "stepper", def: 100, cat: "appearance", group: "Ticks", help: "Scale the minor tick image (100 = original size).", min: 10, max: 400, enabledBy: "show_ticks" },
+                            { name: "major_tick_image_opa", label: "Major Tick Opacity", type: "stepper", def: 255, cat: "appearance", group: "Ticks", help: "Fade the major tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "mid_tick_image_opa", label: "Medium Tick Opacity", type: "stepper", def: 255, cat: "appearance", group: "Ticks", help: "Fade the medium tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "minor_tick_image_opa", label: "Minor Tick Opacity", type: "stepper", def: 255, cat: "appearance", group: "Ticks", help: "Fade the minor tick image (255 = solid, 0 = invisible).", min: 0, max: 255, enabledBy: "show_ticks" },
                             { name: "major_tick_image_recolor", label: "Major Tick Tint", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", help: "Tint colour for the major tick image (set Tint Strength above 0 to apply).", enabledBy: "show_ticks" },
-                            { name: "major_tick_image_recolor_opa", label: "Major Tick Tint Strength", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the major tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "major_tick_image_recolor_opa", label: "Major Tick Tint Strength", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the major tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
                             { name: "mid_tick_image_recolor", label: "Medium Tick Tint", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", help: "Tint colour for the medium tick image (set Tint Strength above 0 to apply).", enabledBy: "show_ticks" },
-                            { name: "mid_tick_image_recolor_opa", label: "Medium Tick Tint Strength", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the medium tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "mid_tick_image_recolor_opa", label: "Medium Tick Tint Strength", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the medium tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
                             { name: "minor_tick_image_recolor", label: "Minor Tick Tint", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", help: "Tint colour for the minor tick image (set Tint Strength above 0 to apply).", enabledBy: "show_ticks" },
-                            { name: "minor_tick_image_recolor_opa", label: "Minor Tick Tint Strength", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the minor tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
-                            { name: "major_tick_image_offset", label: "Major Tick Position", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Move the major tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
-                            { name: "mid_tick_image_offset", label: "Medium Tick Position", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Move the medium tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
-                            { name: "minor_tick_image_offset", label: "Minor Tick Position", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Move the minor tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
-                            { name: "tick_outline_strength", label: "Tick Outline", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed.", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "minor_tick_image_recolor_opa", label: "Minor Tick Tint Strength", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "How strongly to tint the minor tick image (0 = none, 255 = full tint colour).", min: 0, max: 255, enabledBy: "show_ticks" },
+                            { name: "major_tick_image_offset", label: "Major Tick Position", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Move the major tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
+                            { name: "mid_tick_image_offset", label: "Medium Tick Position", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Move the medium tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
+                            { name: "minor_tick_image_offset", label: "Minor Tick Position", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Move the minor tick image inward (negative) or outward (positive), in pixels.", min: -60, max: 60, enabledBy: "show_ticks" },
+                            { name: "tick_outline_strength", label: "Tick Outline", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed.", min: 0, max: 255, enabledBy: "show_ticks" },
                             { name: "tick_outline_color", label: "Tick Outline Color", type: "color", def: 0x000000, cat: "appearance", group: "Ticks", help: "Colour of the tick outline/glow (usually black for a crisp edge).", enabledBy: "show_ticks" },
-                            { name: "tick_outline_fade", label: "Tick Outline Fade", type: "number", def: 0, cat: "appearance", group: "Ticks", help: "Soften the outline into a glow (0 = hard edge, higher = wider soft glow).", min: 0, max: 20, enabledBy: "show_ticks" },
+                            { name: "tick_outline_fade", label: "Tick Outline Fade", type: "stepper", def: 0, cat: "appearance", group: "Ticks", help: "Soften the outline into a glow (0 = hard edge, higher = wider soft glow).", min: 0, max: 20, enabledBy: "show_ticks" },
                             { name: "show_tick_labels", label: "Show Tick Labels", type: "checkbox", def: true, cat: "appearance", group: "Numbers", help: "Show numbers next to the biggest marks." },
                             { name: "tick_label_font", label: "Tick Label Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Text style and size of those numbers.", enabledBy: "show_tick_labels" },
                             { name: "tick_label_color", label: "Tick Label Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", help: "Colour of those numbers.", enabledBy: "show_tick_labels", nightOverridable: true },
                             { name: "label_gap", label: "Label Gap", type: "stepper", def: 10, cat: "appearance", group: "Numbers", help: "How far the numbers sit from the marks.", min: -150, max: 150, enabledBy: "show_tick_labels" },
-                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "stepper", def: 1, cat: "appearance", group: "Numbers", help: "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters.", min: 1, max: 100000, enabledBy: "show_tick_labels" },
+                            { name: "tick_label_divisor", label: "Tick Label Divisor", type: "number", def: 1, cat: "appearance", group: "Numbers", help: "Shrink the numbers by dividing them. Set 1000 and a 7000 mark just shows '7' - common on rev counters.", min: 1, max: 100000, enabledBy: "show_tick_labels" },
                             { name: "ticks_on_top", label: "Ticks On Top", type: "checkbox", def: false, cat: "appearance", group: "Numbers", help: "Draw the marks and numbers on top of the fill instead of behind it." },
                             { name: "arc_alerts_enabled", label: "Color Alerts", type: "checkbox", def: false, cat: "alerts", group: "Alerts", help: "Change the fill colour when the reading goes too low or too high (set the points below)." },
-                            { name: "arc_low", label: "Low Threshold", type: "stepper", def: 0, cat: "alerts", group: "Alerts", help: "At or below this reading, the fill turns the Low colour.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_low", label: "Low Threshold", type: "number", def: 0, cat: "alerts", group: "Alerts", help: "At or below this reading, the fill turns the Low colour.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
                             { name: "arc_low_color", label: "Low Color", type: "color", def: 0x0000FF, cat: "alerts", group: "Alerts", help: "Fill colour when the reading is low.", enabledBy: "arc_alerts_enabled", nightOverridable: true },
-                            { name: "arc_high", label: "High Threshold", type: "stepper", def: 100, cat: "alerts", group: "Alerts", help: "At or above this reading, the fill turns the High colour.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
+                            { name: "arc_high", label: "High Threshold", type: "number", def: 100, cat: "alerts", group: "Alerts", help: "At or above this reading, the fill turns the High colour.", min: -99999, max: 99999, enabledBy: "arc_alerts_enabled" },
                             { name: "arc_high_color", label: "High Color", type: "color", def: 0xFF0000, cat: "alerts", group: "Alerts", help: "Fill colour when the reading is high.", enabledBy: "arc_alerts_enabled", nightOverridable: true }
                         ]
                     },
@@ -7732,7 +7732,7 @@
                             { name: "signal_name", label: "Signal", type: "text", def: "", cat: "data", group: "Value", help: "What drives the lights - usually RPM." },
                             { name: "range_min", label: "Range Min", type: "number", def: 4000, cat: "data", group: "Value", help: "The reading where the first light comes on." },
                             { name: "range_max", label: "Range Max", type: "number", def: 7000, cat: "data", group: "Value", help: "The reading where every light is on." },
-                            { name: "led_count", label: "LED Count", type: "number", def: 8, cat: "data", group: "Value", help: "How many lights in the row.", min: 4, max: 45, step: 1 },
+                            { name: "led_count", label: "LED Count", type: "stepper", def: 8, cat: "data", group: "Value", help: "How many lights in the row.", min: 4, max: 45, step: 1 },
                             { name: "flash_threshold", label: "Flash RPM", type: "number", def: 7200, cat: "data", group: "Behaviour", help: "The reading where the whole row flashes - your shift point." },
                             { name: "flash_speed", label: "Flash Speed (ms)", type: "stepper", def: 200, cat: "data", group: "Behaviour", help: "How fast it flashes (smaller = faster), in milliseconds.", min: 50, max: 1000, step: 10 },
                             { name: "fill_mode", label: "Fill Direction", type: "select", def: 0, cat: "data", group: "Behaviour", help: "How the lights fill up as the reading rises.",
@@ -7760,7 +7760,7 @@
                             { name: "redline", label: "Redline", type: "number", def: 10000, cat: "data", group: "Value", help: "The reading where the warning zone starts along the bar." },
                             { name: "lit_color", label: "Fill Color", type: "color", def: 0x2EE4C8, cat: "appearance", group: "Fill", help: "Colour of the filled part." },
                             { name: "dim_color", label: "Track Color", type: "color", def: 0x2E323A, cat: "appearance", group: "Fill", help: "Colour of the empty part." },
-                            { name: "dim_opa", label: "Track Opacity", type: "slider", def: 90, cat: "appearance", group: "Fill", help: "How see-through the empty part is (0-255).", min: 0, max: 255 },
+                            { name: "dim_opa", label: "Track Opacity", type: "stepper", def: 90, cat: "appearance", group: "Fill", help: "How see-through the empty part is (0-255).", min: 0, max: 255 },
                             { name: "band_width", label: "Band Width", type: "stepper", def: 22, cat: "appearance", group: "Fill", help: "How thick the bar is.", min: 2, max: 80 },
                             { name: "rounded", label: "Rounded Caps", type: "checkbox", def: true, cat: "appearance", group: "Fill", help: "Round the bar's ends." },
                             { name: "fade_fill", label: "Fade Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Fade the colour from dim to bright along the filled part, for a glowing look." },
@@ -7805,8 +7805,8 @@
                             { name: "label_gap", label: "Number Gap", type: "stepper", def: 14, cat: "appearance", group: "Numbers", help: "How far the numbers sit from the bar.", min: -200, max: 200, enabledBy: "show_labels" },
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
-                            { name: "tick_label_divisor", label: "Number Divisor", type: "stepper", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500 }
+                            { name: "tick_label_divisor", label: "Number Divisor", type: "number", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500, step: 10 }
                         ]
                     }
                 };
@@ -10829,14 +10829,16 @@
             });
         }
 
-        /* Field visibility gate (enabledBy). Three forms:
+        /* Field visibility gate (enabledBy). A single condition has three forms:
          *   "field"     -> show only while field is truthy
          *   "!field"    -> show only while field is falsy
          *   "field=a,b" -> show only while field's value is one of a/b
          *                  (used to gate by a SELECT value, e.g. pathbar shape)
+         * Conditions can be AND-combined with '&' — show only while ALL hold,
+         * e.g. "show_ticks&major_tick_image_name" (ticks on AND a tick image set)
+         * or "show_needle&!needle_image_name" (drawn needle, no needle image).
          * getVal(key) returns the field's current value. Returns true = HIDE. */
-        function _enabledByHidden(spec, getVal) {
-            if (!spec) return false;
+        function _condHidden(spec, getVal) {
             const eq = spec.indexOf('=');
             if (eq >= 0) {
                 const cur = getVal(spec.slice(0, eq));
@@ -10846,13 +10848,20 @@
             const pv = getVal(negate ? spec.slice(1) : spec);
             return negate ? !!pv : !pv;
         }
-        /* The parent field name an enabledBy spec depends on (strips ! and =val),
-         * so a change to that field knows it must re-render the dependents. */
-        function _enabledByKey(spec) {
-            if (!spec) return null;
-            const s = spec[0] === '!' ? spec.slice(1) : spec;
-            const eq = s.indexOf('=');
-            return eq >= 0 ? s.slice(0, eq) : s;
+        function _enabledByHidden(spec, getVal) {
+            if (!spec) return false;
+            return spec.split('&').some(cond => _condHidden(cond, getVal));
+        }
+        /* The parent field name(s) an enabledBy spec depends on (strips ! and =val
+         * from each &-joined condition), so a change to any of them knows it must
+         * re-render the dependents. */
+        function _enabledByKeys(spec) {
+            if (!spec) return [];
+            return spec.split('&').map(cond => {
+                const s = cond[0] === '!' ? cond.slice(1) : cond;
+                const eq = s.indexOf('=');
+                return eq >= 0 ? s.slice(0, eq) : s;
+            });
         }
 
         /* Fields whose firmware inspector_set fully captures the edit on its
@@ -10877,7 +10886,7 @@
              * gates like the pathbar shape). */
             {
                 const def = WIDGET_DEFS[w.type];
-                if (def && def.fields.some(f => _enabledByKey(f.enabledBy) === field)) return false;
+                if (def && def.fields.some(f => _enabledByKeys(f.enabledBy).includes(field))) return false;
             }
             /* Channel-backed thresholds are mirrored to the channel, not config. */
             const tspec = (typeof _widgetThresholdSpec === 'function') ? _widgetThresholdSpec(w) : null;
@@ -13044,7 +13053,7 @@
             /* If this field gates sub-fields (a toggle, or a select-value gate
              * like the pathbar shape), re-render so they show/hide immediately. */
             if (fieldDef) {
-                const hasChildren = def.fields.some(f => _enabledByKey(f.enabledBy) === field);
+                const hasChildren = def.fields.some(f => _enabledByKeys(f.enabledBy).includes(field));
                 if (hasChildren) updateInspector();
             }
 

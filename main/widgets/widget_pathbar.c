@@ -41,6 +41,7 @@ static const char *TAG = "widget_pathbar";
 #define DEF_W            560
 #define DEF_H            320
 #define PATHBAR_ANIM_MS  16
+#define PATHBAR_SNAP_FRAC 0.15f /* jump > this fraction of full fill snaps (see widget_smooth.c) */
 /* Tick-scale defaults (RGB565 raw, matching how the layout stores colours). */
 #define DEF_TICK_COLOR        0x9CF3   /* mid grey */
 #define DEF_MAJ_TICK_COLOR    0xFFFF   /* white    */
@@ -312,11 +313,8 @@ static void _pathbar_invalidate_range(widget_t *w, float fa, float fb) {
     lv_obj_invalidate_area(w->root, &area);
 }
 
-/* Point + unit normal at arc length s along the path. Returns false if the
- * path is empty. The normal is the left-hand perpendicular of the local
- * tangent — used to lay ticks across the band and push labels off it. */
-static bool _pathbar_sample(pathbar_data_t *pd, float s,
-                            float *x, float *y, float *nx, float *ny) {
+/* Position (no normal) at arc length s along the path. */
+static bool _pathbar_point_at(pathbar_data_t *pd, float s, float *x, float *y) {
     if (pd->n_pts < 2) return false;
     if (s < 0.0f) s = 0.0f;
     if (s > pd->total_len) s = pd->total_len;
@@ -324,16 +322,39 @@ static bool _pathbar_sample(pathbar_data_t *pd, float s,
         if (pd->cum[i] >= s) {
             float seg = pd->cum[i] - pd->cum[i - 1];
             float f = seg > 0.0f ? (s - pd->cum[i - 1]) / seg : 0.0f;
-            float p0x = pd->pts[i - 1].x, p0y = pd->pts[i - 1].y;
-            float p1x = pd->pts[i].x,     p1y = pd->pts[i].y;
-            *x = p0x + (p1x - p0x) * f;   *y = p0y + (p1y - p0y) * f;
-            float tx = p1x - p0x, ty = p1y - p0y;
-            float L = sqrtf(tx * tx + ty * ty); if (L <= 0.0f) L = 1.0f;
-            *nx = -ty / L; *ny = tx / L;
+            *x = pd->pts[i - 1].x + (pd->pts[i].x - pd->pts[i - 1].x) * f;
+            *y = pd->pts[i - 1].y + (pd->pts[i].y - pd->pts[i - 1].y) * f;
             return true;
         }
     }
-    return false;
+    *x = pd->pts[pd->n_pts - 1].x;   /* s == total_len within float slop */
+    *y = pd->pts[pd->n_pts - 1].y;
+    return true;
+}
+
+/* Point + unit normal at arc length s along the path. Returns false if the
+ * path is empty. The normal is the left-hand perpendicular of the local
+ * tangent — used to lay ticks across the band and push labels off it.
+ *
+ * The tangent is a CENTERED finite difference over a multi-chord window, NOT
+ * the single chord s falls in: shape tessellation snaps each ~6px arc point to
+ * the integer pixel grid (PB_EMIT), which corrupts any one short chord's
+ * direction by up to ±10°. Sampling the path a few chords either side of s
+ * averages that rounding noise out, so ticks on a tight curve stay radial
+ * instead of skewing randomly. */
+static bool _pathbar_sample(pathbar_data_t *pd, float s,
+                            float *x, float *y, float *nx, float *ny) {
+    if (!_pathbar_point_at(pd, s, x, y)) return false;
+    float d = pd->total_len * 0.02f;       /* half-window, ~4 chords for a tach arc */
+    if (d < 12.0f) d = 12.0f;
+    if (d > pd->total_len * 0.45f) d = pd->total_len * 0.45f;
+    float ax, ay, bx, by;
+    _pathbar_point_at(pd, s - d, &ax, &ay);
+    _pathbar_point_at(pd, s + d, &bx, &by);
+    float tx = bx - ax, ty = by - ay;
+    float L = sqrtf(tx * tx + ty * ty); if (L <= 0.0f) L = 1.0f;
+    *nx = -ty / L; *ny = tx / L;
+    return true;
 }
 
 /* ── Draw the optional tick + number scale along the path ────────────────────
@@ -739,6 +760,11 @@ static void _pathbar_on_signal(float value, bool is_stale, void *user_data) {
 
     if (pd->smoothing_ms == 0 || is_stale) {
         pd->cur_frac = f;
+        _pathbar_invalidate_range(w, old, f);
+    } else if (fabsf(f - pd->cur_frac) > PATHBAR_SNAP_FRAC) {
+        /* Big jump: snap instantly instead of easing (speed over smoothness). */
+        pd->cur_frac = f;
+        if (pd->anim_timer) lv_timer_pause(pd->anim_timer);
         _pathbar_invalidate_range(w, old, f);
     } else {
         _pathbar_ensure_anim(w);

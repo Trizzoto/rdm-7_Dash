@@ -116,9 +116,13 @@
           "enum": ["data", "appearance", "alerts", "thresholds"]
         },
         "group": { "type": "string" },
+        "help": {
+          "type": "string",
+          "description": "Inspector tooltip text shown on the per-field ⓘ icon; emitted by codegen_widget_defs into WIDGET_DEFS."
+        },
         "enabled_by": {
           "type": "string",
-          "description": "Name of another field; this field is disabled unless that field is true. Prefix with '!' for negation (e.g. '!latch')."
+          "description": "Gate this field's visibility on another field. Forms: 'field' (show when truthy), '!field' (show when falsy), 'field=a,b' (show when value is one of a/b — gate by a select). Combine conditions with '&' for AND, e.g. 'show_ticks&major_tick_image_name' or 'show_needle&!needle_image_name'. The web editor hides the field when the condition is unmet."
         },
         "inline": { "type": "string" },
         "night_overridable": { "type": "boolean" },

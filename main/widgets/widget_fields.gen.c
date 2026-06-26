@@ -442,7 +442,7 @@ static const widget_field_t panel_fields[] = {
     },
     {
         .name = "warning_low_threshold", .label = "Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -502,7 +502,7 @@ static const widget_field_t panel_fields[] = {
     },
     {
         .name = "warning_high_threshold", .label = "Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -898,7 +898,7 @@ static const widget_field_t bar_fields[] = {
     },
     {
         .name = "bar_low", .label = "Low Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -918,7 +918,7 @@ static const widget_field_t bar_fields[] = {
     },
     {
         .name = "bar_high", .label = "High Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1170,7 +1170,7 @@ static const widget_field_t warning_fields[] = {
     },
     {
         .name = "label_y_offset", .label = "Label Y Offset",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -100, .max_int = 100, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1305,7 +1305,7 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "sweep_degrees", .label = "Sweep",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_DATA,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_DATA,
         .min_int = 30, .max_int = 360, .step_int = 5,
         .default_int = 270, .default_float = 270.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1515,7 +1515,7 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "tick_image_scale", .label = "Tick Image Scale %",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 10, .max_int = 400, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1525,7 +1525,7 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "tick_outline_strength", .label = "Tick Outline",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1545,7 +1545,7 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "tick_outline_fade", .label = "Tick Outline Fade",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 20, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -1595,7 +1595,7 @@ static const widget_field_t meter_fields[] = {
     },
     {
         .name = "tick_label_divisor", .label = "Tick Label Divisor",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
         .min_int = 1, .max_int = 100000, .step_int = 0,
         .default_int = 1, .default_float = 1.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2209,7 +2209,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "sweep_degrees", .label = "Sweep (\302\260)",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_DATA,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_DATA,
         .min_int = 30, .max_int = 360, .step_int = 5,
         .default_int = 270, .default_float = 270.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2429,7 +2429,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_image_opa", .label = "Track Image Opacity",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 255, .default_float = 255.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2449,7 +2449,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_image_recolor_opa", .label = "Track Tint Strength",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2469,7 +2469,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_image_full_opa", .label = "Fill Image Opacity",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 255, .default_float = 255.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2489,7 +2489,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_image_full_recolor_opa", .label = "Fill Tint Strength",
-        .type = WF_TYPE_SLIDER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2709,7 +2709,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "major_tick_image_scale", .label = "Major Tick Scale %",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 10, .max_int = 400, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2719,7 +2719,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "mid_tick_image_scale", .label = "Medium Tick Scale %",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 10, .max_int = 400, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2729,7 +2729,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "minor_tick_image_scale", .label = "Minor Tick Scale %",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 10, .max_int = 400, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2739,7 +2739,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "major_tick_image_opa", .label = "Major Tick Opacity",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 255, .default_float = 255.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2749,7 +2749,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "mid_tick_image_opa", .label = "Medium Tick Opacity",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 255, .default_float = 255.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2759,7 +2759,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "minor_tick_image_opa", .label = "Minor Tick Opacity",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 255, .default_float = 255.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2779,7 +2779,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "major_tick_image_recolor_opa", .label = "Major Tick Tint Strength",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2799,7 +2799,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "mid_tick_image_recolor_opa", .label = "Medium Tick Tint Strength",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2819,7 +2819,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "minor_tick_image_recolor_opa", .label = "Minor Tick Tint Strength",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2829,7 +2829,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "major_tick_image_offset", .label = "Major Tick Position",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -60, .max_int = 60, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2839,7 +2839,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "mid_tick_image_offset", .label = "Medium Tick Position",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -60, .max_int = 60, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2849,7 +2849,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "minor_tick_image_offset", .label = "Minor Tick Position",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = -60, .max_int = 60, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2859,7 +2859,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "tick_outline_strength", .label = "Tick Outline",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 255, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2879,7 +2879,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "tick_outline_fade", .label = "Tick Outline Fade",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
         .min_int = 0, .max_int = 20, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2929,7 +2929,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "tick_label_divisor", .label = "Tick Label Divisor",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_APPEARANCE,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_APPEARANCE,
         .min_int = 1, .max_int = 100000, .step_int = 0,
         .default_int = 1, .default_float = 1.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2959,7 +2959,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_low", .label = "Low Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 0, .default_float = 0.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -2979,7 +2979,7 @@ static const widget_field_t arc_fields[] = {
     },
     {
         .name = "arc_high", .label = "High Threshold",
-        .type = WF_TYPE_STEPPER, .category = WF_CAT_ALERTS,
+        .type = WF_TYPE_NUMBER, .category = WF_CAT_ALERTS,
         .min_int = -99999, .max_int = 99999, .step_int = 0,
         .default_int = 100, .default_float = 100.000000f, .default_color = 0x000000,
         .default_str = NULL,
@@ -3425,7 +3425,7 @@ static const widget_field_t shift_light_fields[] = {
     },
     {
         .name = "led_count", .label = "LED Count",
-        .type = WF_TYPE_NUMBER, .category = WF_CAT_DATA,
+        .type = WF_TYPE_STEPPER, .category = WF_CAT_DATA,
         .min_int = 4, .max_int = 45, .step_int = 1,
         .default_int = 8, .default_float = 8.000000f, .default_color = 0x000000,
         .default_str = NULL,

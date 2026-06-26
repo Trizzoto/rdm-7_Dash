@@ -2010,8 +2010,9 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
     /* Numeric tick labels — default ON, so emit the bool only when FALSE. */
     if (!d->show_tick_labels)
         cJSON_AddBoolToObject(cfg, "show_tick_labels", false);
-    if (d->ticks_on_top)
-        cJSON_AddBoolToObject(cfg, "ticks_on_top", true);
+    /* ticks_on_top defaults to TRUE — emit only when the user forced it OFF. */
+    if (!d->ticks_on_top)
+        cJSON_AddBoolToObject(cfg, "ticks_on_top", false);
     if (d->tick_max > d->tick_min) {
         cJSON_AddNumberToObject(cfg, "tick_min", (double)d->tick_min);
         cJSON_AddNumberToObject(cfg, "tick_max", (double)d->tick_max);
@@ -3179,7 +3180,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
 
     /* Numeric tick label defaults — labels ON (only drawn when ticks are on). */
     d->show_tick_labels   = ARC_DEFAULT_SHOW_TICK_LABELS;
-    d->ticks_on_top       = false;
+    d->ticks_on_top       = true;   /* fill behind ticks/labels — see header note */
     d->tick_min           = 0;   /* tick window off (tick_max <= tick_min) */
     d->tick_max           = 0;
     d->label_gap          = ARC_DEFAULT_LABEL_GAP;

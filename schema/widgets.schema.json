@@ -469,7 +469,7 @@
         {
           "name": "warning_low_threshold",
           "label": "Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 0,
           "category": "alerts",
           "group": "Alerts",
@@ -533,7 +533,7 @@
         {
           "name": "warning_high_threshold",
           "label": "Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 0,
           "category": "alerts",
           "group": "Alerts",
@@ -950,7 +950,7 @@
         {
           "name": "bar_low",
           "label": "Low Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 0,
           "category": "alerts",
           "group": "Alerts",
@@ -973,7 +973,7 @@
         {
           "name": "bar_high",
           "label": "High Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 100,
           "category": "alerts",
           "group": "Alerts",
@@ -1254,7 +1254,7 @@
         {
           "name": "label_y_offset",
           "label": "Label Y Offset",
-          "type": "slider",
+          "type": "stepper",
           "default": 0,
           "category": "appearance",
           "min": -100,
@@ -1414,7 +1414,7 @@
         {
           "name": "sweep_degrees",
           "label": "Sweep",
-          "type": "slider",
+          "type": "stepper",
           "default": 270,
           "category": "data",
           "min": 30,
@@ -1640,7 +1640,7 @@
         {
           "name": "tick_image_scale",
           "label": "Tick Image Scale %",
-          "type": "number",
+          "type": "stepper",
           "default": 100,
           "min": 10,
           "max": 400,
@@ -1652,7 +1652,7 @@
         {
           "name": "tick_outline_strength",
           "label": "Tick Outline",
-          "type": "number", "default": 0, "min": 0, "max": 255,
+          "type": "stepper", "default": 0, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed."
         },
@@ -1666,7 +1666,7 @@
         {
           "name": "tick_outline_fade",
           "label": "Tick Outline Fade",
-          "type": "number", "default": 0, "min": 0, "max": 20,
+          "type": "stepper", "default": 0, "min": 0, "max": 20,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Soften the outline into a glow (0 = hard edge, higher = wider soft glow)."
         },
@@ -1715,7 +1715,7 @@
         {
           "name": "tick_label_divisor",
           "label": "Tick Label Divisor",
-          "type": "stepper",
+          "type": "number",
           "default": 1,
           "category": "appearance",
           "min": 1,
@@ -2507,7 +2507,7 @@
         {
           "name": "bg_opa",
           "label": "Opacity",
-          "type": "slider",
+          "type": "stepper",
           "default": 128,
           "category": "appearance",
           "min": 0,
@@ -2599,7 +2599,7 @@
         {
           "name": "sweep_degrees",
           "label": "Sweep (°)",
-          "type": "slider",
+          "type": "stepper",
           "default": 270,
           "category": "data",
           "min": 30,
@@ -2822,7 +2822,7 @@
         {
           "name": "arc_image_opa",
           "label": "Track Image Opacity",
-          "type": "slider",
+          "type": "stepper",
           "default": 255,
           "category": "appearance",
           "min": 0,
@@ -2842,7 +2842,7 @@
         {
           "name": "arc_image_recolor_opa",
           "label": "Track Tint Strength",
-          "type": "slider",
+          "type": "stepper",
           "default": 0,
           "category": "appearance",
           "min": 0,
@@ -2868,7 +2868,7 @@
         {
           "name": "arc_image_full_opa",
           "label": "Fill Image Opacity",
-          "type": "slider",
+          "type": "stepper",
           "default": 255,
           "category": "appearance",
           "min": 0,
@@ -2888,7 +2888,7 @@
         {
           "name": "arc_image_full_recolor_opa",
           "label": "Fill Tint Strength",
-          "type": "slider",
+          "type": "stepper",
           "default": 0,
           "category": "appearance",
           "min": 0,
@@ -3125,42 +3125,42 @@
         {
           "name": "major_tick_image_scale",
           "label": "Major Tick Scale %",
-          "type": "number", "default": 100, "min": 10, "max": 400,
+          "type": "stepper", "default": 100, "min": 10, "max": 400,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Scale the major tick image (100 = original size)."
         },
         {
           "name": "mid_tick_image_scale",
           "label": "Medium Tick Scale %",
-          "type": "number", "default": 100, "min": 10, "max": 400,
+          "type": "stepper", "default": 100, "min": 10, "max": 400,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Scale the medium tick image (100 = original size)."
         },
         {
           "name": "minor_tick_image_scale",
           "label": "Minor Tick Scale %",
-          "type": "number", "default": 100, "min": 10, "max": 400,
+          "type": "stepper", "default": 100, "min": 10, "max": 400,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Scale the minor tick image (100 = original size)."
         },
         {
           "name": "major_tick_image_opa",
           "label": "Major Tick Opacity",
-          "type": "number", "default": 255, "min": 0, "max": 255,
+          "type": "stepper", "default": 255, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Fade the major tick image (255 = solid, 0 = invisible)."
         },
         {
           "name": "mid_tick_image_opa",
           "label": "Medium Tick Opacity",
-          "type": "number", "default": 255, "min": 0, "max": 255,
+          "type": "stepper", "default": 255, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Fade the medium tick image (255 = solid, 0 = invisible)."
         },
         {
           "name": "minor_tick_image_opa",
           "label": "Minor Tick Opacity",
-          "type": "number", "default": 255, "min": 0, "max": 255,
+          "type": "stepper", "default": 255, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Fade the minor tick image (255 = solid, 0 = invisible)."
         },
@@ -3174,7 +3174,7 @@
         {
           "name": "major_tick_image_recolor_opa",
           "label": "Major Tick Tint Strength",
-          "type": "number", "default": 0, "min": 0, "max": 255,
+          "type": "stepper", "default": 0, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "How strongly to tint the major tick image (0 = none, 255 = full tint colour)."
         },
@@ -3188,7 +3188,7 @@
         {
           "name": "mid_tick_image_recolor_opa",
           "label": "Medium Tick Tint Strength",
-          "type": "number", "default": 0, "min": 0, "max": 255,
+          "type": "stepper", "default": 0, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "How strongly to tint the medium tick image (0 = none, 255 = full tint colour)."
         },
@@ -3202,35 +3202,35 @@
         {
           "name": "minor_tick_image_recolor_opa",
           "label": "Minor Tick Tint Strength",
-          "type": "number", "default": 0, "min": 0, "max": 255,
+          "type": "stepper", "default": 0, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "How strongly to tint the minor tick image (0 = none, 255 = full tint colour)."
         },
         {
           "name": "major_tick_image_offset",
           "label": "Major Tick Position",
-          "type": "number", "default": 0, "min": -60, "max": 60,
+          "type": "stepper", "default": 0, "min": -60, "max": 60,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Move the major tick image inward (negative) or outward (positive), in pixels."
         },
         {
           "name": "mid_tick_image_offset",
           "label": "Medium Tick Position",
-          "type": "number", "default": 0, "min": -60, "max": 60,
+          "type": "stepper", "default": 0, "min": -60, "max": 60,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Move the medium tick image inward (negative) or outward (positive), in pixels."
         },
         {
           "name": "minor_tick_image_offset",
           "label": "Minor Tick Position",
-          "type": "number", "default": 0, "min": -60, "max": 60,
+          "type": "stepper", "default": 0, "min": -60, "max": 60,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Move the minor tick image inward (negative) or outward (positive), in pixels."
         },
         {
           "name": "tick_outline_strength",
           "label": "Tick Outline",
-          "type": "number", "default": 0, "min": 0, "max": 255,
+          "type": "stepper", "default": 0, "min": 0, "max": 255,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Draw an outline/glow behind the drawn ticks so they pop (0 = off, 255 = solid). No image needed."
         },
@@ -3244,7 +3244,7 @@
         {
           "name": "tick_outline_fade",
           "label": "Tick Outline Fade",
-          "type": "number", "default": 0, "min": 0, "max": 20,
+          "type": "stepper", "default": 0, "min": 0, "max": 20,
           "category": "appearance", "enabled_by": "show_ticks", "group": "Ticks",
           "help": "Soften the outline into a glow (0 = hard edge, higher = wider soft glow)."
         },
@@ -3293,7 +3293,7 @@
         {
           "name": "tick_label_divisor",
           "label": "Tick Label Divisor",
-          "type": "stepper",
+          "type": "number",
           "default": 1,
           "category": "appearance",
           "min": 1,
@@ -3323,7 +3323,7 @@
         {
           "name": "arc_low",
           "label": "Low Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 0,
           "category": "alerts",
           "group": "Alerts",
@@ -3346,7 +3346,7 @@
         {
           "name": "arc_high",
           "label": "High Threshold",
-          "type": "stepper",
+          "type": "number",
           "default": 100,
           "category": "alerts",
           "group": "Alerts",
@@ -3832,7 +3832,7 @@
         {
           "name": "led_count",
           "label": "LED Count",
-          "type": "number",
+          "type": "stepper",
           "default": 8,
           "category": "data",
           "min": 4,
@@ -4052,7 +4052,7 @@
         {
           "name": "dim_opa",
           "label": "Track Opacity",
-          "type": "slider",
+          "type": "stepper",
           "default": 90,
           "category": "appearance",
           "min": 0,
@@ -4348,7 +4348,7 @@
         {
           "name": "tick_label_divisor",
           "label": "Number Divisor",
-          "type": "stepper",
+          "type": "number",
           "default": 1,
           "category": "data",
           "min": 1,
@@ -4366,6 +4366,7 @@
           "category": "data",
           "min": 0,
           "max": 500,
+          "step": 10,
           "group": "Behaviour",
           "help": "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value."
         }

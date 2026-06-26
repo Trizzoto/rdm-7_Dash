@@ -4,6 +4,12 @@
 
 #define SMOOTH_PERIOD_MS 16   /* easing tick ~= display refresh */
 
+/* A jump larger than this fraction of the range is a real, fast movement (a rev,
+ * a hard brake) — not the few-LSB jitter the filter exists to hide. Snap to it
+ * instantly so the gauge never lags a genuine event behind the smoothing: speed
+ * over smoothness for big moves, smoothing only for the small stuff. */
+#define SMOOTH_SNAP_FRAC 0.15f
+
 static void _smooth_cb(lv_timer_t *t) {
 	widget_smooth_t *s = (widget_smooth_t *)t->user_data;
 	if (!s || !s->active || !s->apply || !s->w || !s->w->root ||
@@ -42,6 +48,14 @@ void widget_smooth_set(widget_smooth_t *s, float value, bool is_stale) {
 		s->current = value;
 		s->target  = value;
 		s->inited  = true;
+		s->active  = false;
+		if (s->timer) lv_timer_pause(s->timer);
+		s->apply(s->w, value);
+	} else if (s->range > 0.0f &&
+	           fabsf(value - s->current) > s->range * SMOOTH_SNAP_FRAC) {
+		/* Big jump: snap instead of easing so a real fast move tracks now. */
+		s->current = value;
+		s->target  = value;
 		s->active  = false;
 		if (s->timer) lv_timer_pause(s->timer);
 		s->apply(s->w, value);
