@@ -25,6 +25,7 @@
 #include "obd2_picker.h"
 
 #include "obd2.h"
+#include "can_manager.h"
 #include "ecu_presets.h"
 #include "layout_manager.h"
 #include "theme.h"
@@ -595,7 +596,22 @@ static void _scan_complete(const obd2_scan_result_t *r, void *user)
     if (!s_overlay) return;  /* modal closed mid-scan */
 
     if (!r->completed || r->count == 0) {
-        _set_status("No response from vehicle. Is ignition on?");
+        /* The scan already auto-tried 500k+250k and both addressing modes, so a
+         * failure here is genuine. Distinguish "no CAN traffic at all"
+         * (wiring/bitrate) from "CAN alive but the ECU never answered OBD"
+         * (gateway / addressing / 29-bit IDs) so the message is actionable. */
+        uint32_t bus_err = 0;
+        can_get_diagnostics(NULL, NULL, NULL, NULL, NULL, &bus_err, NULL);
+        bool can_alive = (can_get_last_rx_id() != 0);
+        if (can_alive) {
+            _set_status("CAN is alive but no OBD reply (tried 500k & 250k). "
+                        "Car may gate OBD or use 29-bit IDs.");
+        } else if (bus_err > 1000) {
+            _set_status("No CAN frames - wrong bitrate/wiring? "
+                        "Check OBD-II pins 6 & 14.");
+        } else {
+            _set_status("No CAN signal. Check wiring (OBD-II 6/14) + ignition.");
+        }
         return;
     }
 

@@ -4132,8 +4132,9 @@
             <div class="header-toggles">
                 <button class="header-pill active" id="pillBezel" onclick="toggleHeaderPill(this, 'bezel')">Bezel</button>
                 <button class="header-pill active" id="pillWidgets" onclick="toggleHeaderPill(this, 'widgets')">Widgets</button>
-                <button class="header-pill active" id="pillRender" onclick="toggleHeaderPill(this, 'render')" title="Render gauges/text in the canvas when offline (no device). The device LVGL render stays the source of truth.">Render</button>
-                <button class="header-pill" id="pillDash" onclick="toggleHeaderPill(this, 'dash')" title="Simulate the real dash: RGB565 colour banding + firmware-feasible glow (no Gaussian blur / radial halos).">DASH 565</button>
+                <!-- "Render" + "DASH 565" preview toggles moved to Setup ▸ Developer Options
+                     (openDevOptions). toggleHeaderPill still handles 'render'/'dash' for the
+                     modal switches; renderPreview() null-guards the now-absent pills. -->
             </div>
             <!-- Hidden elements for JS compatibility. The firmware-hosted editor
                  only runs on the 7" dash, so screenSizeSelect is hidden; the JS
@@ -4325,6 +4326,15 @@
                 <div class="card-title"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>File Manager</div>
                 <div class="card-body">Browse layouts, images and fonts on the device and SD card.</div>
                 <div class="card-stat">/lfs · /sdcard</div>
+            </div>
+        </div>
+
+        <div class="setup-section-title" style="margin-top:30px;">Developer Options</div>
+        <div class="setup-grid">
+            <div class="setup-card" onclick="openDevOptions && openDevOptions()">
+                <div class="card-title"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Developer Options</div>
+                <div class="card-body">Bench OBD2 simulator and offline-preview rendering toggles &mdash; for testing on the desk without a car.</div>
+                <div class="card-stat">Bench &amp; preview</div>
             </div>
         </div>
     </div>
@@ -5170,6 +5180,42 @@
                     <input id="dimEnabled" type="checkbox" style="width:14px; height:14px;"> Enabled
                 </label>
                 <button class="btn" style="margin-top:6px; padding:8px;" onclick="saveDimmerSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Developer Options modal (Setup ▸ Developer Options). Bench/debug toggles. -->
+    <div id="devOptionsModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(10,10,10,0.85); backdrop-filter:blur(8px); align-items:center; justify-content:center;" onclick="closeDevOptions()">
+        <div style="background:var(--panel-elevated); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; width:440px; max-width:92vw; box-shadow:var(--shadow-md);" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-weight:600; font-size:14px;">Developer Options</span>
+                <button class="close-btn" onclick="closeDevOptions()" style="font-size:18px;">&times;</button>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:14px;">Bench / debugging aids. None of these change your layout or the device's behaviour in the car.</div>
+
+            <div style="border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                    <span style="font-size:13px; font-weight:600;">OBD2 Bench Simulator</span>
+                    <input id="devObd2Sim" type="checkbox" style="width:16px; height:16px;" onchange="devToggleObd2Sim(this.checked)">
+                </label>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Fakes a virtual ECU so OBD2 gauges (e.g. fuel level) move on the bench with no car connected. Synthesizes Mode&nbsp;01 responses for every polled PID. Not saved; off after a reboot.</div>
+                <div id="devObd2SimStatus" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                    <span style="font-size:13px; font-weight:600;">Offline canvas render</span>
+                    <input id="devRender" type="checkbox" style="width:16px; height:16px;" onchange="devToggleRender(this.checked)">
+                </label>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Draw gauges/text in the editor canvas when no live device frame is present. The device's LVGL render is always the source of truth. Editor-only.</div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:8px; padding:12px;">
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                    <span style="font-size:13px; font-weight:600;">Dash RGB565 preview</span>
+                    <input id="devDash" type="checkbox" style="width:16px; height:16px;" onchange="devToggleDash(this.checked)">
+                </label>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Simulate the real dash in the offline preview: RGB565 colour banding + firmware-feasible glow (no Gaussian blur / radial halos). Editor preview only.</div>
             </div>
         </div>
     </div>
@@ -7676,7 +7722,8 @@
                                   { v: 0, l: "Big Endian" },
                                   { v: 1, l: "Little Endian" }
                               ] },
-                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 0, cat: "data", group: "CAN TX", help: "Advanced: how often to resend the message, per second (0 = only when it changes).", min: 0, max: 50 },
+                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 10, cat: "data", group: "CAN TX", help: "Advanced: how often the message is resent while ON, per second, as a keepalive (0 = send once on change).", min: 0, max: 50 },
+                            { name: "remember_state", label: "Remember State", type: "checkbox", def: false, cat: "data", group: "CAN TX", help: "Remember on/off across a reboot so a CAN-controlled output comes back the way you left it." },
                             { name: "image_name", label: "Image", type: "image_picker", def: "", cat: "data", group: "Image", help: "Icon shown on the switch.", nightOverridable: true },
                             { name: "active_color", label: "Active Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour when ON.", nightOverridable: true },
                             { name: "active_opa", label: "Active Opacity", type: "stepper", def: 255, cat: "appearance", group: "Fill", help: "How solid it is when ON (0-255).", min: 0, max: 255 },
@@ -7699,7 +7746,8 @@
                         fields: [
                             { name: "label", label: "Label", type: "textarea", def: "BTN", cat: "data", group: "Value", help: "Text shown on the button." },
                             { name: "show_label", label: "Show Label", type: "checkbox", def: true, cat: "data", group: "Value", help: "Show the text." },
-                            { name: "latch", label: "Latch (Toggle)", type: "checkbox", def: false, cat: "data", group: "Behaviour", help: "Stay on after a press (toggle) instead of only while held." },
+                            { name: "latch", label: "Latch (Toggle)", type: "checkbox", def: false, cat: "data", group: "Behaviour", help: "Stay on after a press (toggle) instead of only while held. Momentary always sends OFF when you let go." },
+                            { name: "remember_state", label: "Remember State", type: "checkbox", def: false, cat: "data", group: "Behaviour", help: "Latch only: remember on/off across a reboot so the output comes back the way you left it.", enabledBy: "latch" },
                             { name: "tx_can_id", label: "CAN ID", type: "can_id", def: 0, cat: "data", group: "CAN TX", help: "Advanced: the CAN message ID this button sends. Leave alone unless wiring it to the car's CAN bus." },
                             { name: "tx_bit_start", label: "Bit Start", type: "select", def: 0, cat: "data", group: "CAN TX", help: "Advanced: which bit in the CAN message to set.", options: Array.from({length:64},(_,i)=>({v:i,l:String(i)})) },
                             { name: "tx_bit_length", label: "Bit Length", type: "select", def: 1, cat: "data", group: "CAN TX", help: "Advanced: how many bits to send.", options: Array.from({length:32},(_,i)=>({v:i+1,l:String(i+1)})) },
@@ -7708,8 +7756,7 @@
                                   { v: 0, l: "Big Endian" },
                                   { v: 1, l: "Little Endian" }
                               ] },
-                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 0, cat: "data", group: "CAN TX", help: "Advanced: how often to resend while held, per second (0 = send once).", min: 0, max: 50 },
-                            { name: "tx_send_release", label: "Send on Release", type: "checkbox", def: false, cat: "data", group: "CAN TX", help: "Advanced: also send a message when you let go.", enabledBy: "!latch" },
+                            { name: "tx_rate_hz", label: "TX Rate (Hz)", type: "stepper", def: 10, cat: "data", group: "CAN TX", help: "Advanced: how often the message is resent while held, per second, as a keepalive (0 = send once). A momentary always sends OFF on release regardless.", min: 0, max: 50 },
                             { name: "bg_color", label: "Background", type: "color", def: 0x333333, cat: "appearance", group: "Fill", help: "Colour of the button.", nightOverridable: true },
                             { name: "text_color", label: "Text Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Fill", help: "Text colour.", nightOverridable: true },
                             { name: "pressed_color", label: "Pressed Color", type: "color", def: 0x555555, cat: "appearance", group: "Fill", help: "Colour while you're pressing it.", nightOverridable: true },
@@ -7803,6 +7850,18 @@
                             { name: "label_font", label: "Number Font", type: "font", def: "", cat: "appearance", group: "Numbers", help: "Text style and size of those numbers.", enabledBy: "show_labels" },
                             { name: "label_color", label: "Number Color", type: "color", def: 0xFFFFFF, cat: "appearance", group: "Numbers", help: "Colour of those numbers.", enabledBy: "show_labels" },
                             { name: "label_gap", label: "Number Gap", type: "stepper", def: 14, cat: "appearance", group: "Numbers", help: "How far the numbers sit from the bar.", min: -200, max: 200, enabledBy: "show_labels" },
+                            /* Auto faces the path's inside (good for a smooth curve). On a
+                             * sharp/multi-corner path Auto can flip side at the bends — pick
+                             * Side A or B to lock every number to one consistent side. */
+                            { name: "label_side", label: "Number Side", type: "select", def: 0, cat: "appearance", group: "Numbers", help: "Which side of the bar the numbers sit on. Auto picks per number (can flip on sharp paths); Side A/B locks them all to one side.", enabledBy: "show_labels",
+                              options: [
+                                  { v: 0, l: "Auto" },
+                                  { v: 1, l: "Side A" },
+                                  { v: 2, l: "Side B" }
+                              ] },
+                            /* Shifts every number ALONG the path (by arc-length px), so you
+                             * can nudge them off the tick toward the start/end of the bar. */
+                            { name: "label_along_offset", label: "Number Slide", type: "stepper", def: 0, cat: "appearance", group: "Numbers", help: "Slide the numbers along the bar (negative = toward the start, positive = toward the end).", min: -400, max: 400, enabledBy: "show_labels" },
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
                             { name: "tick_label_divisor", label: "Number Divisor", type: "number", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
@@ -17943,6 +18002,56 @@
 
         function closeDimmerSettings() {
             document.getElementById('dimmerModal').style.display = 'none';
+        }
+
+        /* ── Developer Options (Setup ▸ Developer Options) ─────────────────
+         * Houses bench/debug toggles that used to be header pills. The two
+         * preview toggles mirror toggleHeaderPill('render'/'dash'); the OBD2
+         * sim toggle drives the firmware virtual-ECU via /api/obd2/sim. */
+        async function openDevOptions() {
+            document.getElementById('devOptionsModal').style.display = 'flex';
+            /* Reflect the two preview toggles from their live JS state. */
+            document.getElementById('devRender').checked = _previewEnabled;
+            document.getElementById('devDash').checked   = _pvDeviceMode;
+            /* Query the device for the current OBD2 sim state. */
+            const st = document.getElementById('devObd2SimStatus');
+            const cb = document.getElementById('devObd2Sim');
+            st.textContent = 'Checking device…'; st.style.color = 'var(--text-muted)';
+            try {
+                const r = await fetch('/api/obd2/sim');
+                if (r.ok) { const d = await r.json(); cb.checked = !!d.sim; _devObd2SimRender(d); }
+                else { st.textContent = 'Device not reachable.'; }
+            } catch (e) { st.textContent = 'Device not reachable.'; }
+        }
+        function closeDevOptions() {
+            document.getElementById('devOptionsModal').style.display = 'none';
+        }
+        function _devObd2SimRender(d) {
+            const st = document.getElementById('devObd2SimStatus');
+            if (!d || !d.sim) { st.textContent = 'Off.'; st.style.color = 'var(--text-muted)'; return; }
+            let msg = 'On — polling ' + (d.pids_polled || 0) + ' PID(s).';
+            if (d.signal_sim_active) msg += ' ⚠ Turn OFF the signal simulator — it drops injected OBD2 frames.';
+            st.textContent = msg;
+            st.style.color = d.signal_sim_active ? '#f59e0b' : '#22c55e';
+        }
+        async function devToggleObd2Sim(on) {
+            const st = document.getElementById('devObd2SimStatus');
+            st.textContent = on ? 'Enabling…' : 'Disabling…'; st.style.color = 'var(--text-muted)';
+            try {
+                const r = await fetch('/api/obd2/sim?on=' + (on ? '1' : '0'), { method: 'POST' });
+                if (r.ok) { _devObd2SimRender(await r.json()); }
+                else { st.textContent = 'Failed (HTTP ' + r.status + ').'; st.style.color = '#ef4444'; }
+            } catch (e) { st.textContent = 'Device not reachable.'; st.style.color = '#ef4444'; }
+        }
+        function devToggleRender(on) {
+            _previewEnabled = on;
+            localStorage.setItem('rdm7_preview_render', on ? '1' : '0');
+            renderPreview();
+        }
+        function devToggleDash(on) {
+            _pvDeviceMode = on;
+            localStorage.setItem('rdm7_preview_565', on ? '1' : '0');
+            renderPreview();
         }
 
         async function saveDimmerSettings() {

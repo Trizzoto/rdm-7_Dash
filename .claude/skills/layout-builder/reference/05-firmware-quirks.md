@@ -38,6 +38,22 @@ as the catalog shows) — no conversion needed. Only `meter` deviates.
 - A meter is kept square by the firmware; set `w == h`.
 - `arc` has an internal `auto_ticks` flag the editor manages — don't set it; just
   provide `minor_tick_step`/`major_tick_step`.
+- **`bar` draws a label above itself and defaults it to the literal `"BAR1"` /
+  `"BAR2"` when `config.label` is empty** (widget_bar.c). If you don't want a
+  visible label, set `label` to a single space `" "` (a non-empty string), not
+  `""` — an empty string falls back to `BAR1`.
+- **Custom "legit" ticks via per-tick IMAGES (arc + meter).** Drawn rectangle
+  ticks look basic; for tapered/glowing/neon ticks (e.g. a McLaren rev ring) set
+  `major_tick_image_name` / `mid_tick_image_name` / `minor_tick_image_name` to a
+  small uploaded image and size it with `*_tick_image_scale` (percent; 100 =
+  native px, `idsc.zoom = scale*256/100`). The firmware stamps + **rotates** the
+  image to each tick's radial angle and bakes it into the static-tick snapshot →
+  **free at runtime**. This is the one image exception that doesn't violate the
+  procedural rule (tiny, baked, dynamic-safe). Pipeline: make a small PNG (author
+  it vertical, outer end = top; include a soft glow halo for neon) →
+  `python tools/png_to_rdmimg.py in.png out.rdmimg` → upload with
+  `POST /api/image/upload?name=<name>` (raw .rdmimg as body) → set the field.
+  Also per-tier: `*_tick_image_offset` / `_opa` / `_recolor` / `_recolor_opa`.
 
 ## Design philosophy: PROCEDURAL, not images — big images aren't for pro layouts
 

@@ -23,10 +23,11 @@ typedef struct {
     uint8_t    tx_bit_start;       /* bit position (0-63, default: 0) */
     uint8_t    tx_bit_length;      /* bit width (1-32, default: 1) */
     uint8_t    tx_endian;          /* 0 = big, 1 = little (default: 1) */
-    uint8_t    tx_rate_hz;         /* periodic TX rate (0 = on-change only, 1-50 Hz) */
-    bool       tx_send_release;    /* send frame on release (default: false) */
+    uint8_t    tx_rate_hz;         /* keepalive TX rate while active (0 = send once, 1-50 Hz) */
     bool       latch;              /* true = toggle on/off, false = momentary (default: false) */
+    bool       remember_state;     /* latch only: persist on/off across reboot (NVS, default: false) */
     bool       latch_state;        /* runtime: current latched state */
+    bool       tx_active;          /* runtime: currently asserting ON (held or latched-on) */
     /* Appearance */
     lv_color_t bg_color;           /* default: 0x333333 */
     lv_color_t text_color;         /* default: 0xFFFFFF */

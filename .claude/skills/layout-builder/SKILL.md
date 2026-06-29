@@ -33,6 +33,14 @@ each step, so you catch overlap / position / colour problems per-widget instead
 of debugging a 10-widget blob. The dash is your canvas; `/api/screenshot` is your
 eyes.
 
+> **⚠️ The live layout on the dash is the source of truth — never clobber the
+> user's edits.** The user may open the editor and modify the layout *between*
+> your turns. If you re-apply a stale local JSON copy, you **delete their work**.
+> So: **before every edit/resume, re-pull `GET /api/layout/current`** and make your
+> change on top of *that* (don't trust a file you wrote earlier in the session).
+> Make **targeted** edits to the current state, not whole-layout overwrites. When
+> in doubt about whether they've touched it, pull current and diff before applying.
+
 1. **Understand the target.**
    - *Image:* identify each element → pick a widget type. Round dial w/ needle → `meter`; coloured arc/ring → `arc`; horizontal RPM strip across the top → `rpm_bar`; a curved/J-shaped tach → `pathbar` (shape J-Hook); level bar → `bar`; big number + label → `panel`; plain number/letter → `text`; warning tiles → `warning`; turn arrows → `indicator`; row of shift LEDs → `shift_light`; static graphic → `image`/`shape_panel`/`line`. Note positions, colours, what each reads.
    - *Description:* map the named gauges the same way.

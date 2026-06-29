@@ -59,6 +59,8 @@ typedef struct {
     uint8_t     tick_width, major_tick_width;
     lv_color_t  tick_color, major_tick_color, label_color;
     int16_t     label_gap;            /* px from band edge out to the number  */
+    int8_t      label_side;           /* number side: 0=auto(centroid) 1=side A 2=side B */
+    int16_t     label_along_offset;   /* px shift of numbers ALONG the path (arc-length) */
     bool        redline_recolor_ticks;
     char        label_font[40];
 

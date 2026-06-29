@@ -283,6 +283,35 @@ void obd2_set_enabled(const uint32_t *pids, uint8_t count);
  *  [0x7E8..0x7EF]. LVGL task only. */
 void obd2_rx_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
+/* ── Bench simulator (virtual ECU) ──────────────────────────────────────
+ *
+ * Bench/diagnostic aid: with no real ECU on the bus, OBD2 is unverifiable
+ * because it's request/response and nothing answers. When the sim is
+ * enabled, every outgoing Mode 01 request is intercepted and a synthetic
+ * response is injected via can_inject_rx_frame() — so it flows through the
+ * exact real decode path (obd2_rx_handler → signal_set_external_value →
+ * widget). Values are time-varying triangle sweeps so bound gauges visibly
+ * move; the supported-PID bitmask is answered too, so the discovery scan
+ * finds the simulated PIDs.
+ *
+ * Scope: Mode 01 single-value (and small packed) PIDs only — covers fuel
+ * level (0x2F) and every common gauge. Mode 03/07/09/0A/21/22 are NOT
+ * simulated (those requests fall through to the real bus and time out).
+ *
+ * Runtime-toggled, NOT persisted, default OFF — production is unaffected.
+ * The conflict guard still applies, so PIDs a native CAN preset owns
+ * (can_id != 0) are not polled/answered — which is exactly the gap-filler
+ * behaviour (e.g. fuel polls via OBD2, RPM stays on CAN).
+ *
+ * NOTE: injected RX frames are dropped while the signal simulator
+ * (signal_sim) is active — turn that off for the OBD2 sim to take effect.
+ *
+ * When enabled with an empty poll list, the default-enabled Mode 01 PID
+ * set is started transiently (not saved to the layout) so something
+ * animates immediately. LVGL lock must be held by the caller. */
+void obd2_sim_set_enabled(bool enabled);
+bool obd2_sim_enabled(void);
+
 /* ── Discovery scan ─────────────────────────────────────────────────────── */
 
 /* 7 bitmask blocks * 32 PIDs/block = 224 possible standard PIDs; 128 is a

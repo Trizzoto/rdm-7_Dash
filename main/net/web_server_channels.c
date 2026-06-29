@@ -1153,6 +1153,11 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 			return ESP_FAIL;
 		}
 	} else if (is_obd2) {
+		/* Build the new polled-PID list, start polling it best-effort (so the
+		 * bind works THIS session even if persistence fails), then surface a
+		 * save failure to the client. Previously a failed save silently left
+		 * the channel bound-but-never-polling and still returned HTTP 200. */
+		esp_err_t save_err = ESP_OK;
 		char layout[64];
 		if (layout_manager_get_active(layout, sizeof(layout)) == ESP_OK) {
 			uint32_t pids[OBD2_MAX_ENABLED];
@@ -1163,15 +1168,28 @@ static esp_err_t channels_bind_source_handler(httpd_req_t *req) {
 			for (uint8_t i = 0; i < count; ++i) {
 				if (pids[i] == enc) { dup = true; break; }
 			}
-			if (!dup && count < OBD2_MAX_ENABLED) {
-				pids[count++] = enc;
-				if (ecu_preset_save_obd2_pids(layout, pids, count) == ESP_OK) {
-					obd2_start(pids, count);
+			if (!dup) {
+				if (count >= OBD2_MAX_ENABLED) {
+					save_err = ESP_ERR_NO_MEM;          /* list full (max 48) */
+				} else {
+					pids[count++] = enc;
+					save_err = ecu_preset_save_obd2_pids(layout, pids, count);
 				}
 			}
+			if (count > 0) obd2_start(pids, count);     /* poll regardless of save */
+		} else {
+			save_err = ESP_FAIL;                        /* no active layout */
 		}
 		channel_manager_set_signal(c, signal_name);
 		channel_manager_resolve_signals();
+		if (save_err != ESP_OK) {
+			rdm_lvgl_unlock();
+			httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+				save_err == ESP_ERR_NO_MEM
+					? "OBD2 PID limit reached (max 48)"
+					: "Bound for this session but failed to save — won't survive a reboot");
+			return ESP_FAIL;
+		}
 	} else {
 		channel_manager_set_signal(c, signal_name);
 		channel_manager_resolve_signals();

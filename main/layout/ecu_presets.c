@@ -987,14 +987,25 @@ esp_err_t ecu_preset_apply_to_layout(const char *layout_name,
             if (s) cJSON_AddItemToArray(sigs, s);
         }
 
-        /* Switching FROM OBD2 to a native preset: drop any supplemental
-         * polled PIDs whose signal name is now provided by the native preset.
-         * The UI picker prevents conflicts going forward, but legacy state
-         * from an earlier OBD2 session would still be in the layout.
-         * Simplest rule: just clear it. User can re-add supplemental
-         * gap-fillers via the OBD2 Signals modal later. */
-        cJSON_DeleteItemFromObject(root, "obd2_pids");    /* legacy name */
-        cJSON_DeleteItemFromObject(root, "polled_pids");
+        /* Preserve supplemental OBD2 gap-fillers (e.g. fuel level, ambient
+         * temp) across a native-preset apply — they fill data the CAN preset
+         * doesn't broadcast, and wiping them silently broke fuel-over-OBD2
+         * every time the user re-applied their car's preset. The runtime
+         * conflict guard in obd2_start() already skips any preserved PID whose
+         * signal the new preset now owns (can_id != 0), so keeping the list is
+         * safe. Only clear polled_pids when the PREVIOUS preset was OBD2-primary
+         * — its full 30-PID starter set is stale under a native preset. The old
+         * ecu/ecu_version fields are still in `root` here (overwritten below). */
+        cJSON *prev_ecu = cJSON_GetObjectItemCaseSensitive(root, "ecu");
+        cJSON *prev_ver = cJSON_GetObjectItemCaseSensitive(root, "ecu_version");
+        bool prev_was_obd2 =
+            cJSON_IsString(prev_ecu) && cJSON_IsString(prev_ver) &&
+            strcmp(prev_ecu->valuestring, OBD2_MAKE) == 0 &&
+            strcmp(prev_ver->valuestring, OBD2_VERSION) == 0;
+        cJSON_DeleteItemFromObject(root, "obd2_pids");    /* legacy name — always cleared */
+        if (prev_was_obd2) {
+            cJSON_DeleteItemFromObject(root, "polled_pids");
+        }
     }
 
     /* Update ecu make/version fields. */

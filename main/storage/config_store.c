@@ -940,6 +940,52 @@ bool config_store_load_ecu_picker_auto(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  WIDGET LATCH STATE (button / toggle "remember state")
+ * ═══════════════════════════════════════════════════════════════════════ */
+#define NS_WDGLATCH "wdglatch"
+
+/* Build the NVS key for a given output. can_id is masked to the 11-bit TX
+ * range (can_transmit_frame only emits standard frames) and the bit to 0-63,
+ * so the key is at most "7ff_63" (6 chars) — well under the 15-char limit. */
+static void _widget_latch_key(uint32_t can_id, uint8_t bit, char *out, size_t cap)
+{
+    snprintf(out, cap, "%03lx_%u",
+             (unsigned long)(can_id & 0x7FFu), (unsigned)(bit & 0x3Fu));
+}
+
+esp_err_t config_store_save_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, bool on)
+{
+    if (tx_can_id == 0) return ESP_ERR_INVALID_ARG;
+    char key[16];
+    _widget_latch_key(tx_can_id, tx_bit, key, sizeof key);
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NS_WDGLATCH, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, key, on ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_load_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, bool *on)
+{
+    if (!on) return ESP_ERR_INVALID_ARG;
+    *on = false;
+    if (tx_can_id == 0) return ESP_ERR_NOT_FOUND;
+    char key[16];
+    _widget_latch_key(tx_can_id, tx_bit, key, sizeof key);
+
+    nvs_handle_t handle;
+    if (nvs_open(NS_WDGLATCH, NVS_READONLY, &handle) != ESP_OK) return ESP_ERR_NOT_FOUND;
+    uint8_t u8;
+    esp_err_t err = nvs_get_u8(handle, key, &u8);
+    if (err == ESP_OK) *on = (u8 != 0);
+    nvs_close(handle);
+    return err;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  FACTORY RESET
  * ═══════════════════════════════════════════════════════════════════════ */
 

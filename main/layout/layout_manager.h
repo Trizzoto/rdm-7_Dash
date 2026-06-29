@@ -46,8 +46,20 @@ extern "C" {
  * v15: pathbar `smooth` flag. A custom-path pathbar may set `smooth:true`, in
  *      which case its `path` points are treated as a few anchors and a
  *      Catmull-Rom curve is tessellated through them. Additive/optional —
- *      older layouts (no flag) render the path verbatim as before. */
-#define LAYOUT_SCHEMA_VERSION 15
+ *      older layouts (no flag) render the path verbatim as before.
+ *
+ * v16: button/toggle CAN-TX rework. Button drops `tx_send_release` (a momentary
+ *      now always sends OFF on release); button + toggle gain `remember_state`
+ *      (persist latched on/off across reboot via NVS). Additive/optional —
+ *      older layouts load fine; a stray `tx_send_release` is simply ignored.
+ *
+ * v17: pathbar number-placement controls. Adds `label_side` (0=auto/centroid,
+ *      1/2=lock all numbers to one fixed side so sharp multi-corner paths don't
+ *      flip) and `label_along_offset` (shift numbers along the path by arc-length
+ *      px). Also clamps the label offset >= 0 so a negative `label_gap` can no
+ *      longer drag numbers across the band. Additive/optional — older layouts
+ *      (defaults 0) render exactly as before. */
+#define LAYOUT_SCHEMA_VERSION 17
 
 /* VFS base path for LittleFS.  All layout files are under LFS_LAYOUT_DIR. */
 #define LFS_BASE_PATH "/lfs"

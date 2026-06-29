@@ -97,6 +97,10 @@ static bool              s_running    = false;
  * polling session immediately fires its first request. */
 static uint64_t s_last_tx_ms_global = 0;
 
+/* Bench virtual-ECU simulator. When true, _obd2_tx synthesizes Mode 01
+ * responses instead of hitting the bus. See obd2_sim_set_enabled(). */
+static bool s_sim_enabled = false;
+
 /* ── Custom PID storage ────────────────────────────────────────────────
  *
  * User-defined PIDs from the layout's custom_pids JSON array. Each entry
@@ -235,6 +239,32 @@ static obd2_scan_result_t s_scan_result        = {0};
 static obd2_scan_cb_t     s_scan_cb            = NULL;
 static void              *s_scan_user          = NULL;
 
+/* ── Scan auto-search (ELM327 ATSP0-style, scoped to CAN) ──────────────
+ * Before declaring "not connected", probe Mode 01 PID 0x00 across the two
+ * standard ISO 15765-4 CAN bitrates (500k/250k) and both addressing modes
+ * (functional 0x7DF, physical 0x7E0). On the first combo that answers, lock
+ * it: persist the winning bitrate (so raw-CAN reception benefits too) and
+ * keep the winning request id for subsequent polling. */
+static bool     s_scan_probing       = false;
+static uint8_t  s_scan_probe_step    = 0;
+static uint8_t  s_scan_orig_bitrate  = 2;   /* restore on total failure */
+static uint8_t  s_scan_other_bitrate = 1;   /* the alternate rate to try */
+static bool     s_scan_on_other      = false;
+
+/* Default OBD request CAN id used when a PID def carries no per-PID override.
+ * 0x7DF functional broadcast by default; the auto-search may switch this to
+ * 0x7E0 (physical, engine ECU) for both scan and polling if that's what the
+ * car answers. */
+static uint32_t s_obd_req_id = OBD2_REQUEST_ID_BROADCAST;
+
+static const struct { bool other_rate; uint32_t req_id; } SCAN_PROBE[] = {
+    { false, OBD2_REQUEST_ID_BROADCAST },  /* current rate, functional 0x7DF */
+    { false, 0x7E0u },                     /* current rate, physical  0x7E0  */
+    { true,  OBD2_REQUEST_ID_BROADCAST },  /* other rate,   functional 0x7DF */
+    { true,  0x7E0u },                     /* other rate,   physical  0x7E0  */
+};
+#define SCAN_PROBE_COUNT (sizeof(SCAN_PROBE) / sizeof(SCAN_PROBE[0]))
+
 /* ── Per-service last-response timestamps ───────────────────────────────
  *
  * Indexed by request service (0x01, 0x02, 0x03, 0x07, 0x09, 0x0A, 0x21,
@@ -258,9 +288,12 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
 static void _register_pid_signal(const obd2_pid_def_t *def);
 static void _scan_send(uint8_t pid);
 static void _scan_finalize(bool completed);
+static void _scan_begin_probe_step(void);
 static void _send_flow_control(uint32_t target_id);
 static void _process_full_message(uint8_t *msg, uint16_t len);
 static uint32_t _request_id_for_response(uint32_t resp_id);
+static esp_err_t _obd2_tx(uint32_t id, const uint8_t *data, uint8_t dlc);
+static bool _sim_consume_tx(uint32_t tx_id, const uint8_t *d, uint8_t dlc);
 
 /* ── Period helpers ───────────────────────────────────────────────────── */
 
@@ -515,7 +548,7 @@ void obd2_test_pid(uint8_t service, uint8_t pid, uint32_t request_id,
      * deterministic single-PID response for the test. */
     uint32_t tx_id = request_id ? request_id : OBD2_REQUEST_ID_BROADCAST;
     uint8_t data[8] = { 0x02, service, pid, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(tx_id, data, 8);
+    esp_err_t err = _obd2_tx(tx_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Test TX failed: %s", esp_err_to_name(err));
         s_test.active = false;
@@ -593,7 +626,7 @@ static void _dtc_start(uint8_t mode, obd2_dtc_cb_t cb, void *user) {
      * frame: [length=1][service]. ECUs may respond multi-frame if they
      * have many codes — handled by the shared ISO-TP RX reassembly. */
     uint8_t data[8] = { 0x01, mode, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
         /* DEBUG level — TX failures here are normal when the bus is
          * inactive (bench, ignition off, no CAN dongle plugged in).
@@ -628,7 +661,7 @@ void obd2_clear_dtcs(obd2_clear_cb_t cb, void *user) {
      * success or 0x7F 04 NN as negative. Many cars require engine off
      * (NRC 0x22 conditionsNotCorrect if running). */
     uint8_t data[8] = { 0x01, 0x04, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "Clear DTC TX failed: %s", esp_err_to_name(err));
         s_clear_req.active = false;
@@ -655,7 +688,7 @@ void obd2_read_vin(obd2_vin_cb_t cb, void *user) {
     /* Mode 09 PID 0x02 = VIN. Single-frame request, multi-frame response
      * (17 chars + 3 byte preamble = 20 bytes typical). */
     uint8_t data[8] = { 0x02, 0x09, 0x02, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "VIN TX failed: %s", esp_err_to_name(err));
         s_vin_req.active = false;
@@ -686,7 +719,7 @@ void obd2_read_freeze_pid(uint8_t data_pid, uint8_t frame_no,
      * data shape as the Mode 01 response for that PID, just frozen. */
     uint8_t data[8] = { 0x03, 0x02, data_pid, frame_no,
                         0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "Freeze TX failed: %s", esp_err_to_name(err));
         s_freeze_req.active = false;
@@ -712,7 +745,7 @@ void obd2_read_ecu_name(obd2_ecuname_cb_t cb, void *user) {
 
     /* Mode 09 PID 0x0A. Same framing as VIN. */
     uint8_t data[8] = { 0x02, 0x09, 0x0A, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(OBD2_REQUEST_ID_BROADCAST, data, 8);
+    esp_err_t err = _obd2_tx(OBD2_REQUEST_ID_BROADCAST, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "ECU-name TX failed: %s", esp_err_to_name(err));
         s_ecuname_req.active = false;
@@ -1021,7 +1054,43 @@ static void _poll_timer_cb(lv_timer_t *t)
     /* Discovery scan owns the bus until its window closes. */
     if (s_scan_state == SCAN_WINDOW_OPEN) {
         if ((now - s_scan_window_start) >= OBD2_SCAN_WINDOW_MS) {
-            if (s_scan_advance) {
+            if (s_scan_probing) {
+                if (s_scan_got_any) {
+                    /* This combo answered — lock it in. */
+                    s_scan_probing = false;
+                    if (s_scan_on_other) {
+                        /* The alternate bitrate is the car's real rate — persist
+                         * it so it survives reboot and raw-CAN reception benefits
+                         * too. */
+                        can_persist_bitrate(s_scan_other_bitrate);
+                        ESP_LOGI(TAG, "Scan: locked bitrate index %u (persisted)",
+                                 s_scan_other_bitrate);
+                    }
+                    if (s_obd_req_id != OBD2_REQUEST_ID_BROADCAST) {
+                        ESP_LOGI(TAG, "Scan: using physical addressing 0x%03lX",
+                                 (unsigned long)s_obd_req_id);
+                    }
+                    /* Continue enumeration — the RX of PID 0x00 may already have
+                     * queued the next supported-PID block. */
+                    if (s_scan_advance) {
+                        s_scan_advance = false;
+                        _scan_send(s_scan_next_query);
+                    } else {
+                        _scan_finalize(true);
+                    }
+                } else if (++s_scan_probe_step < SCAN_PROBE_COUNT) {
+                    _scan_begin_probe_step();
+                } else {
+                    /* No combo answered — restore the original bitrate. */
+                    if (s_scan_on_other) {
+                        can_change_bitrate(s_scan_orig_bitrate);
+                        s_scan_on_other = false;
+                    }
+                    s_obd_req_id   = OBD2_REQUEST_ID_BROADCAST;
+                    s_scan_probing = false;
+                    _scan_finalize(false);
+                }
+            } else if (s_scan_advance) {
                 s_scan_advance = false;
                 _scan_send(s_scan_next_query);
             } else {
@@ -1055,7 +1124,7 @@ static void _send_pid_request(uint8_t service, uint16_t pid)
     if (service == 0) service = 0x01;
     const obd2_pid_def_t *def = obd2_pid_find_svc(service, pid);
     uint32_t tx_id = (def && def->request_id) ? def->request_id
-                                              : OBD2_REQUEST_ID_BROADCAST;
+                                              : s_obd_req_id;
     uint8_t data[8] = { 0, 0, 0, 0x55, 0x55, 0x55, 0x55, 0x55 };
     if (service == 0x22) {
         data[0] = 0x03;
@@ -1067,7 +1136,7 @@ static void _send_pid_request(uint8_t service, uint16_t pid)
         data[1] = service;
         data[2] = (uint8_t)(pid & 0xFF);
     }
-    esp_err_t err = can_transmit_frame(tx_id, data, 8);
+    esp_err_t err = _obd2_tx(tx_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "TX failed for service 0x%02X PID 0x%04X: %s",
                  service, pid, esp_err_to_name(err));
@@ -1092,7 +1161,7 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
      * be defensive). */
     const obd2_pid_def_t *def0 = obd2_pid_find_svc(service, pids[0]);
     uint32_t tx_id = (def0 && def0->request_id) ? def0->request_id
-                                                : OBD2_REQUEST_ID_BROADCAST;
+                                                : s_obd_req_id;
 
     uint8_t data[8] = {0};
     data[0] = (uint8_t)(n + 1);
@@ -1100,7 +1169,7 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
     memcpy(&data[2], pids, n);
     for (uint8_t i = (uint8_t)(2 + n); i < 8; i++) data[i] = 0x55;
 
-    esp_err_t err = can_transmit_frame(tx_id, data, 8);
+    esp_err_t err = _obd2_tx(tx_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "Multi-PID TX failed (%u PIDs, svc 0x%02X): %s",
                  n, service, esp_err_to_name(err));
@@ -1115,7 +1184,7 @@ static void _send_multi_pid_request(uint8_t service, const uint8_t *pids, uint8_
 static void _send_flow_control(uint32_t target_id)
 {
     uint8_t data[8] = { 0x30, 0x00, 0x00, 0x55, 0x55, 0x55, 0x55, 0x55 };
-    esp_err_t err = can_transmit_frame(target_id, data, 8);
+    esp_err_t err = _obd2_tx(target_id, data, 8);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "ISO-TP FC TX failed: %s", esp_err_to_name(err));
     }
@@ -1127,6 +1196,150 @@ static uint32_t _request_id_for_response(uint32_t resp_id)
         return 0x7E0u + (resp_id - OBD2_RESPONSE_ID_FIRST);
     }
     return OBD2_REQUEST_ID_BROADCAST;
+}
+
+/* ── Bench simulator (virtual ECU) ─────────────────────────────────────
+ *
+ * _obd2_tx is the single TX choke point for every OBD2 request (polling,
+ * scan, test, DTC, VIN, FC). When the sim is active it intercepts Mode 01
+ * requests and injects synthetic responses via can_inject_rx_frame() — the
+ * response then flows through the normal RX path on the LVGL task, so there
+ * is no reentrancy (we only enqueue here, the queue drains later). Requests
+ * the sim doesn't handle (FC, Mode 03/09, etc.) fall through to the real
+ * bus, so a real dongle still works if attached. */
+
+/* Synthetic raw value: a per-PID phase-staggered triangle sweep so bound
+ * gauges visibly move. 1-byte → 0..255 (fuel 0x2F decodes to a clean
+ * 0..100% sweep); wider → 0..0x3FFF to keep decoded values moderate. */
+static uint32_t _sim_raw_for(uint8_t span, uint8_t pid, uint64_t now_ms)
+{
+    const uint32_t PERIOD = 20000;  /* 20 s full sweep */
+    uint32_t t    = (uint32_t)((now_ms + (uint32_t)pid * 137u) % PERIOD);
+    float    half = (float)PERIOD / 2.0f;
+    float    tri  = (t < (uint32_t)half) ? ((float)t / half)
+                                         : (2.0f - (float)t / half);  /* 0..1..0 */
+    uint32_t maxraw = (span >= 2) ? 0x3FFFu : 0xFFu;
+    return (uint32_t)(tri * (float)maxraw);
+}
+
+/* Answer a Mode 01 supported-PID bitmask query (0x00/0x20/.../0xC0) so the
+ * discovery scan finds every PID this sim can serve, and chains to the next
+ * block. */
+static void _sim_inject_supported_bitmask(uint8_t base)
+{
+    uint8_t bm[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 32; i++) {
+        if (obd2_pid_find_svc(0x01, (uint8_t)(base + 1 + i))) {
+            bm[i / 8] |= (uint8_t)(1u << (7 - (i % 8)));
+        }
+    }
+    /* Continuation bit (LSB of byte 3): does the next block have anything? */
+    uint8_t nb = (uint8_t)(base + 0x20);
+    if (nb <= 0xC0) {
+        for (int i = 0; i < 32; i++) {
+            if (obd2_pid_find_svc(0x01, (uint8_t)(nb + 1 + i))) { bm[3] |= 0x01; break; }
+        }
+    }
+    uint8_t f[8] = { 0x06, 0x41, base, bm[0], bm[1], bm[2], bm[3], 0x55 };
+    can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
+}
+
+/* Build + inject a single-frame Mode 01 response for one PID. */
+static void _sim_inject_mode01_pid(uint8_t pid, uint64_t now_ms)
+{
+    if (pid == 0x00 || pid == 0x20 || pid == 0x40 || pid == 0x60 ||
+        pid == 0x80 || pid == 0xA0 || pid == 0xC0) {
+        _sim_inject_supported_bitmask(pid);
+        return;
+    }
+    const obd2_pid_def_t *def = obd2_pid_find_svc(0x01, pid);
+    if (!def) return;   /* unknown PID — stay silent, like a real ECU NRC */
+
+    uint8_t span;
+    if (def->sub_fields && def->sub_field_count > 0) {
+        uint16_t s = 0;
+        for (uint8_t i = 0; i < def->sub_field_count; i++) {
+            uint16_t e = (uint16_t)def->sub_fields[i].byte_offset +
+                         (uint16_t)def->sub_fields[i].bytes;
+            if (e > s) s = e;
+        }
+        if (s == 0 || s > 5) return;   /* needs ISO-TP — not simulated */
+        span = (uint8_t)s;
+    } else {
+        if (def->bytes < 1 || def->bytes > 5) return;
+        span = def->bytes;
+    }
+
+    uint32_t raw = _sim_raw_for(span, pid, now_ms);
+    uint8_t f[8] = { 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 };
+    f[0] = (uint8_t)(2 + span);   /* SF length: 0x41 + pid + span data bytes */
+    f[1] = 0x41;
+    f[2] = pid;
+    for (uint8_t i = 0; i < span; i++) {
+        f[3 + i] = (uint8_t)((raw >> (8 * (span - 1 - i))) & 0xFF);
+    }
+    can_inject_rx_frame(OBD2_RESPONSE_ID_FIRST, false, f, 8);
+}
+
+/* Parse an outgoing request frame; if it's a Mode 01 single-frame request,
+ * synthesize the matching response(s) and report handled=true so the real
+ * TX is skipped. Multi-PID requests get one single-frame response per PID
+ * (functionally identical to a batched ISO-TP response for the decoder). */
+static bool _sim_consume_tx(uint32_t tx_id, const uint8_t *d, uint8_t dlc)
+{
+    (void)tx_id;
+    if (!d || dlc < 2) return false;
+    if ((d[0] >> 4) != 0) return false;          /* single-frame requests only */
+    uint8_t len = d[0] & 0x0F;
+    if (len < 2 || (uint8_t)(len + 1) > dlc) return false;
+    if (d[1] != 0x01) return false;              /* Mode 01 only */
+
+    uint64_t now = (uint64_t)(esp_timer_get_time() / 1000ULL);
+    uint8_t  npid = (uint8_t)(len - 1);          /* bytes after the service byte */
+    for (uint8_t i = 0; i < npid; i++) {
+        _sim_inject_mode01_pid(d[2 + i], now);
+    }
+    return true;
+}
+
+/* Single TX choke point. In sim mode, Mode 01 requests are answered
+ * synthetically (no bus traffic); everything else falls through. */
+static esp_err_t _obd2_tx(uint32_t id, const uint8_t *data, uint8_t dlc)
+{
+    if (s_sim_enabled && _sim_consume_tx(id, data, dlc)) {
+        return ESP_OK;
+    }
+    return can_transmit_frame(id, data, dlc);
+}
+
+void obd2_sim_set_enabled(bool enabled)
+{
+    s_sim_enabled = enabled;
+    ESP_LOGW(TAG, "OBD2 bench SIM %s (Mode 01 virtual ECU)",
+             enabled ? "ENABLED" : "disabled");
+    if (!enabled) return;
+
+    /* Nothing enqueued to poll → seed the default Mode 01 PID set transiently
+     * (NOT persisted to the layout) so a gauge animates immediately. */
+    if (s_poll_count == 0) {
+        uint32_t pids[OBD2_MAX_ENABLED];
+        uint8_t  n = 0;
+        for (int i = 0; i < OBD2_PIDS_COUNT && n < OBD2_MAX_ENABLED; i++) {
+            if (OBD2_PIDS[i].default_enabled &&
+                obd2_def_service(&OBD2_PIDS[i]) == 0x01) {
+                pids[n++] = obd2_encode_pid(0x01, OBD2_PIDS[i].pid);
+            }
+        }
+        if (n > 0) {
+            ESP_LOGI(TAG, "SIM: seeding %u default Mode 01 PIDs (transient)", n);
+            obd2_start(pids, n);
+        }
+    }
+}
+
+bool obd2_sim_enabled(void)
+{
+    return s_sim_enabled;
 }
 
 /* ── RX handler ────────────────────────────────────────────────────────── */
@@ -1682,10 +1895,41 @@ void obd2_discovery_start(obd2_scan_cb_t cb, void *user)
     s_scan_next_query = 0x00;
     s_scan_got_any   = false;
 
+    /* Auto-search setup: try the current rate first, then the OTHER standard
+     * ISO 15765-4 CAN rate (250k<->500k), each on functional then physical
+     * addressing — so a car on 250k or one that only answers 0x7E0 still gets
+     * found instead of a flat "not connected". */
+    s_scan_orig_bitrate  = can_get_bitrate_index();
+    s_scan_other_bitrate = (s_scan_orig_bitrate == 1 /*250k*/) ? 2 /*500k*/
+                                                               : 1 /*250k*/;
+    s_scan_on_other      = false;
+    s_scan_probing       = true;
+    s_scan_probe_step    = 0;
+    s_obd_req_id         = OBD2_REQUEST_ID_BROADCAST;
+
     /* Make sure the poll timer exists so the scan state machine ticks. */
     if (!s_poll_timer) {
         s_poll_timer = lv_timer_create(_poll_timer_cb, OBD2_TICK_MS, NULL);
     }
+    _scan_begin_probe_step();
+}
+
+/* Apply the current probe combo (bitrate + addressing) and fire a PID 0x00
+ * query. Switching bitrate bounces the TWAI driver (~250 ms) — acceptable for
+ * a one-shot, user-initiated scan; the "Scanning…" status is already shown. */
+static void _scan_begin_probe_step(void)
+{
+    const bool     need_other = SCAN_PROBE[s_scan_probe_step].other_rate;
+    const uint32_t req_id     = SCAN_PROBE[s_scan_probe_step].req_id;
+
+    if (need_other != s_scan_on_other) {
+        uint8_t target = need_other ? s_scan_other_bitrate : s_scan_orig_bitrate;
+        ESP_LOGI(TAG, "Scan: probing CAN bitrate index %u", target);
+        can_change_bitrate(target);   /* transient — persisted only on success */
+        s_scan_on_other = need_other;
+    }
+    s_obd_req_id   = req_id;
+    s_scan_got_any = false;           /* per-combo detection */
     _scan_send(0x00);
 }
 

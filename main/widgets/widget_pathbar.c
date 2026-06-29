@@ -414,9 +414,26 @@ static void _pathbar_draw_scale(lv_draw_ctx_t *ctx, pathbar_data_t *pd) {
         }
 
         if (isMaj && pd->show_labels) {
-            float sgn = ((cgx - px) * nx + (cgy - py) * ny) >= 0.0f ? 1.0f : -1.0f;
+            /* The number's anchor can be nudged ALONG the path (arc-length) so it
+             * sits where the user wants instead of dead-on the tick. */
+            float lpx = px, lpy = py, lnx = nx, lny = ny;
+            if (pd->label_along_offset != 0) {
+                float ls = fr * pd->total_len + (float)pd->label_along_offset;
+                if (ls < 0.0f) ls = 0.0f;
+                if (ls > pd->total_len) ls = pd->total_len;
+                _pathbar_sample(pd, ls, &lpx, &lpy, &lnx, &lny);
+            }
+            /* Side: auto faces the centroid (smooth-arc default); label_side locks
+             * every number to ONE fixed side so sharp multi-corner paths don't flip. */
+            float sgn;
+            if (pd->label_side == 1)      sgn =  1.0f;
+            else if (pd->label_side == 2) sgn = -1.0f;
+            else sgn = ((cgx - lpx) * lnx + (cgy - lpy) * lny) >= 0.0f ? 1.0f : -1.0f;
+            /* Clamp off >= 0 so a negative label_gap can pull numbers toward the
+             * band but never drag them across to the wrong side (the -40 bug). */
             float off = pd->band_width / 2.0f + (float)pd->label_gap;
-            float lx = px + nx * sgn * off, ly = py + ny * sgn * off;
+            if (off < 0.0f) off = 0.0f;
+            float lx = lpx + lnx * sgn * off, ly = lpy + lny * sgn * off;
             char buf[16];
             float dv = v / (float)div;
             if (fabsf(dv - lroundf(dv)) < 0.05f) snprintf(buf, sizeof buf, "%d", (int)lroundf(dv));
@@ -869,6 +886,8 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         if (_color_to_u32(pd->label_color) != DEF_LABEL_COLOR)
             cJSON_AddNumberToObject(cfg, "label_color", _color_to_u32(pd->label_color));
         if (pd->label_gap != 14) cJSON_AddNumberToObject(cfg, "label_gap", pd->label_gap);
+        if (pd->label_side != 0) cJSON_AddNumberToObject(cfg, "label_side", pd->label_side);
+        if (pd->label_along_offset != 0) cJSON_AddNumberToObject(cfg, "label_along_offset", pd->label_along_offset);
         if (!pd->redline_recolor_ticks) cJSON_AddBoolToObject(cfg, "redline_recolor_ticks", false);
         if (pd->label_font[0]) cJSON_AddStringToObject(cfg, "label_font", pd->label_font);
     }
@@ -974,6 +993,10 @@ static void _pathbar_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "label_font");
     if (cJSON_IsString(item) && item->valuestring)
         safe_strncpy(pd->label_font, item->valuestring, sizeof(pd->label_font));
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_side");
+    if (cJSON_IsNumber(item)) pd->label_side = (int8_t)LV_CLAMP(0, item->valueint, 2);
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "label_along_offset");
+    if (cJSON_IsNumber(item)) pd->label_along_offset = (int16_t)LV_CLAMP(-400, item->valueint, 400);
 
     /* path: flat [x0,y0,x1,y1,...] of absolute screen-px points */
     cJSON *path = cJSON_GetObjectItemCaseSensitive(cfg, "path");
@@ -1097,6 +1120,8 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->major_tick_color    = _u32_to_color(DEF_MAJ_TICK_COLOR);
     pd->label_color         = _u32_to_color(DEF_LABEL_COLOR);
     pd->label_gap           = 14;
+    pd->label_side          = 0;   /* auto: face the path centroid (legacy behaviour) */
+    pd->label_along_offset  = 0;
     pd->redline_recolor_ticks = true;
     pd->label_font[0]       = '\0';
 

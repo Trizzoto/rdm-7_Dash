@@ -11,6 +11,7 @@
 #include "ui/menu/edit_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
+#include "storage/config_store.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -33,8 +34,14 @@ static const char *TAG = "widget_button";
 #define DEF_TX_BIT_LENGTH  1
 #define DEF_TX_ENDIAN      1
 #define DEF_TX_RATE_HZ     10
-#define DEF_TX_SEND_REL    true
 #define DEF_LATCH          false
+#define DEF_REMEMBER       false
+
+/* Number of OFF frames sent back-to-back when a momentary releases or a latch
+ * clears. A single dropped frame on a busy bus could otherwise strand a
+ * driven output ON; a short burst makes the OFF self-healing without adding a
+ * permanent heartbeat. */
+#define TX_OFF_BURST       3
 #define DEF_BG_COLOR       0x333333
 #define DEF_TEXT_COLOR    0xFFFFFF
 #define DEF_PRESSED_COLOR 0x555555
@@ -52,6 +59,8 @@ static lv_text_align_t _to_lv_align(uint8_t a) {
 static void _btn_start_tx_timer(widget_t *w);
 static void _btn_stop_tx_timer(button_data_t *d);
 static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state);
+static void _btn_activate(widget_t *w);
+static void _btn_deactivate(widget_t *w);
 static void _button_apply_night_mode(widget_t *w, bool active);
 static void _button_night_cb(bool active, void *user_data);
 
@@ -67,6 +76,60 @@ static void _btn_send(button_data_t *d, bool on) {
         ESP_LOGE(TAG, "TX failed (id=0x%03X): %s",
                  (unsigned)d->tx_can_id, esp_err_to_name(err));
     }
+}
+
+/* Drive the output OFF with a short burst so a single dropped frame can't
+ * leave a momentary/latch stranded ON. Safe to call when already off. */
+static void _btn_send_off_burst(button_data_t *d) {
+    for (int i = 0; i < TX_OFF_BURST; i++) _btn_send(d, false);
+}
+
+/* Persist (or forget) the latch state for this output when remember_state is
+ * on. Keyed by the output it drives, so it survives reboots and layout edits. */
+static void _btn_persist_latch(button_data_t *d) {
+    if (!d->remember_state || d->tx_can_id == 0) return;
+    config_store_save_widget_latch(d->tx_can_id, d->tx_bit_start, d->latch_state);
+}
+
+/* ── Activate / deactivate (shared by momentary + latch) ─────────────────────
+ *
+ * activate:   assert ON now and (re)start the keepalive timer so the frame
+ *             keeps going out at tx_rate_hz while the output is held. Acts like
+ *             a CAN keypad — the receiver sees a steady stream, not one frame.
+ * deactivate: stop the keepalive and drive OFF (burst). Only emits OFF if we
+ *             were actually asserting, so taps in Edit Mode (which never
+ *             activate) put nothing on the bus. */
+static void _btn_activate(widget_t *w) {
+    button_data_t *d = (button_data_t *)w->type_data;
+    if (!d || d->tx_active) return;
+    d->tx_active = true;
+    _btn_send(d, true);
+    _btn_start_tx_timer(w);
+}
+
+static void _btn_deactivate(widget_t *w) {
+    button_data_t *d = (button_data_t *)w->type_data;
+    if (!d) return;
+    _btn_stop_tx_timer(d);
+    if (d->tx_active) {
+        d->tx_active = false;
+        _btn_send_off_burst(d);
+    }
+}
+
+/* Called from create() for latch buttons: restore the persisted on/off state
+ * (when remember_state is set) and, if ON, re-assert the output + keepalive so
+ * a CAN-controlled load comes back to its last commanded state after a reboot. */
+static void _btn_restore_latch(widget_t *w) {
+    button_data_t *d = (button_data_t *)w->type_data;
+    if (!d || !d->latch) return;
+    if (d->remember_state && d->tx_can_id != 0) {
+        bool on = false;
+        if (config_store_load_widget_latch(d->tx_can_id, d->tx_bit_start, &on) == ESP_OK)
+            d->latch_state = on;
+    }
+    _btn_set_pressed_visual(d, d->latch_state);
+    if (d->latch_state) _btn_activate(w);
 }
 
 /* Toggle pressed/normal visual state for image-mode and btn-mode buttons.
@@ -97,7 +160,7 @@ static void _btn_set_pressed_visual(button_data_t *d, bool pressed_state) {
 
 static void _btn_pressed_cb(lv_event_t *e) {
     /* Suspend CAN TX while Edit Mode is armed — the user is positioning /
-     * inspecting widgets, not driving the rig. Long-press routes elsewhere. */
+     * inspecting widgets, not driving the rig. */
     if (edit_mode_is_armed()) return;
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
@@ -105,31 +168,29 @@ static void _btn_pressed_cb(lv_event_t *e) {
 
     if (d->latch) {
         d->latch_state = !d->latch_state;
-        _btn_send(d, d->latch_state);
         _btn_set_pressed_visual(d, d->latch_state);
-        if (d->latch_state)
-            _btn_start_tx_timer(w);
-        else
-            _btn_stop_tx_timer(d);
+        if (d->latch_state) _btn_activate(w);
+        else                _btn_deactivate(w);
+        _btn_persist_latch(d);
     } else {
-        _btn_send(d, true);
         _btn_set_pressed_visual(d, true);
-        _btn_start_tx_timer(w);
+        _btn_activate(w);
     }
 }
 
-static void _btn_released_cb(lv_event_t *e) {
-    if (edit_mode_is_armed()) return;
+/* Fires on RELEASED (lifted on the button) AND PRESS_LOST (finger slid off the
+ * button, or Edit Mode armed mid-press). A momentary MUST drive OFF on both —
+ * missing the PRESS_LOST path is exactly what left the bit stuck ON before.
+ * Deliberately NOT gated on edit_mode: if we asserted ON before edit mode was
+ * armed, we still have to turn it off. _btn_deactivate is a no-op (no bus
+ * traffic) when we never asserted, so Edit-Mode taps stay silent. */
+static void _btn_release_or_lost(lv_event_t *e) {
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     button_data_t *d = (button_data_t *)w->type_data;
-
-    if (!d->latch) {
-        _btn_stop_tx_timer(d);
-        _btn_set_pressed_visual(d, false);
-        if (d->tx_send_release)
-            _btn_send(d, false);
-    }
+    if (d->latch) return;            /* latch holds until the next press */
+    _btn_set_pressed_visual(d, false);
+    _btn_deactivate(w);
 }
 
 /* ── Periodic TX timer ────────────────────────────────────────────────────── */
@@ -198,9 +259,12 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
             }
         }
 
-        /* Container is the single event target — images are visual only */
-        lv_obj_add_event_cb(cont, _btn_pressed_cb,  LV_EVENT_PRESSED,  w);
-        lv_obj_add_event_cb(cont, _btn_released_cb, LV_EVENT_RELEASED, w);
+        /* Container is the single event target — images are visual only.
+         * Bind PRESS_LOST as well as RELEASED so a finger sliding off still
+         * turns a momentary OFF. */
+        lv_obj_add_event_cb(cont, _btn_pressed_cb,      LV_EVENT_PRESSED,    w);
+        lv_obj_add_event_cb(cont, _btn_release_or_lost, LV_EVENT_RELEASED,   w);
+        lv_obj_add_event_cb(cont, _btn_release_or_lost, LV_EVENT_PRESS_LOST, w);
 
         /* Label (optional, floats on top of images) */
         if (d->show_label && d->label[0] != '\0') {
@@ -225,9 +289,9 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
         d->btn_obj = NULL;
         w->root = cont;
 
-        /* Apply latch state immediately in case we're reloading a latched button */
-        if (d->latch && d->latch_state)
-            _btn_set_pressed_visual(d, true);
+        /* Restore latch state (incl. persisted, if remember_state) and re-assert
+         * the output when reloading a latched-on button. */
+        _btn_restore_latch(w);
 
         /* Subscribe to night-mode changes if any night override is set */
         if (d->night.has_bg_color || d->night.has_text_color ||
@@ -271,14 +335,19 @@ static void _button_create(widget_t *w, lv_obj_t *parent) {
         d->label_obj = NULL;
     }
 
-    /* Event callbacks */
-    lv_obj_add_event_cb(btn, _btn_pressed_cb,  LV_EVENT_PRESSED,  w);
-    lv_obj_add_event_cb(btn, _btn_released_cb, LV_EVENT_RELEASED, w);
+    /* Event callbacks. PRESS_LOST mirrors RELEASED so a finger sliding off the
+     * button still drives a momentary OFF (was the stuck-on bug). */
+    lv_obj_add_event_cb(btn, _btn_pressed_cb,      LV_EVENT_PRESSED,    w);
+    lv_obj_add_event_cb(btn, _btn_release_or_lost, LV_EVENT_RELEASED,   w);
+    lv_obj_add_event_cb(btn, _btn_release_or_lost, LV_EVENT_PRESS_LOST, w);
 
     d->btn_obj   = btn;
     d->img_obj   = NULL;
     d->img_dsc   = NULL;
     w->root      = btn;
+
+    /* Restore latch state (incl. persisted) and re-assert if latched-on. */
+    _btn_restore_latch(w);
 
     /* Subscribe to night-mode changes if any night override is set */
     if (d->night.has_bg_color || d->night.has_text_color ||
@@ -333,11 +402,11 @@ static void _button_to_json(widget_t *w, cJSON *out) {
     if (d->tx_rate_hz != DEF_TX_RATE_HZ)
         cJSON_AddNumberToObject(cfg, "tx_rate_hz", d->tx_rate_hz);
 
-    if (d->tx_send_release != DEF_TX_SEND_REL)
-        cJSON_AddBoolToObject(cfg, "tx_send_release", d->tx_send_release);
-
     if (d->latch != DEF_LATCH)
         cJSON_AddBoolToObject(cfg, "latch", d->latch);
+
+    if (d->remember_state != DEF_REMEMBER)
+        cJSON_AddBoolToObject(cfg, "remember_state", d->remember_state);
 
     /* Appearance -- defaults-only */
     if (d->bg_color.full != lv_color_hex(DEF_BG_COLOR).full)
@@ -411,11 +480,11 @@ static void _button_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_rate_hz");
     if (cJSON_IsNumber(item)) { d->tx_rate_hz = (uint8_t)item->valueint; if (d->tx_rate_hz > 50) d->tx_rate_hz = 50; }
 
-    item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_send_release");
-    if (cJSON_IsBool(item)) d->tx_send_release = cJSON_IsTrue(item);
-
     item = cJSON_GetObjectItemCaseSensitive(cfg, "latch");
     if (cJSON_IsBool(item)) d->latch = cJSON_IsTrue(item);
+
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "remember_state");
+    if (cJSON_IsBool(item)) d->remember_state = cJSON_IsTrue(item);
 
     /* Appearance */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "bg_color");
@@ -474,6 +543,12 @@ static void _button_destroy(widget_t *w) {
     if (w->type_data) {
         button_data_t *d = (button_data_t *)w->type_data;
         _btn_stop_tx_timer(d);
+        /* Don't strand a driven output ON when the widget goes away (layout
+         * reload, delete). Exception: a persisted latch stays asserted so a
+         * hot-reload doesn't blink the load off — the recreated widget restores
+         * it from NVS. */
+        if (d->tx_active && !(d->latch && d->remember_state))
+            _btn_send_off_burst(d);
         rdm_image_free((lv_img_dsc_t *)d->img_dsc);
         rdm_image_free((lv_img_dsc_t *)d->pressed_img_dsc);
     }
@@ -582,8 +657,8 @@ static bool _button_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "font") == 0)            { out->str = d->font;        return true; }
 	if (strcmp(name, "image_name") == 0)      { out->str = d->image_name;  return true; }
 	if (strcmp(name, "show_label") == 0)      { out->b = d->show_label;    return true; }
-	if (strcmp(name, "latch") == 0)           { out->b = d->latch;         return true; }
-	if (strcmp(name, "tx_send_release") == 0) { out->b = d->tx_send_release; return true; }
+	if (strcmp(name, "latch") == 0)           { out->b = d->latch;          return true; }
+	if (strcmp(name, "remember_state") == 0)  { out->b = d->remember_state;  return true; }
 	if (strcmp(name, "tx_can_id") == 0)       { out->i = (int32_t)d->tx_can_id;  return true; }
 	if (strcmp(name, "tx_bit_start") == 0)    { out->i = d->tx_bit_start;  return true; }
 	if (strcmp(name, "tx_bit_length") == 0)   { out->i = d->tx_bit_length; return true; }
@@ -631,8 +706,14 @@ static bool _button_inspector_set(widget_t *w, const char *name,
 		}
 		return true;
 	}
-	if (strcmp(name, "latch") == 0)           { d->latch           = in->b; return true; }
-	if (strcmp(name, "tx_send_release") == 0) { d->tx_send_release = in->b; return true; }
+	if (strcmp(name, "latch") == 0)           { d->latch          = in->b; return true; }
+	if (strcmp(name, "remember_state") == 0) {
+		d->remember_state = in->b;
+		/* Capture the current latch state right away so enabling "remember"
+		 * on an already-on button records it. */
+		if (d->remember_state && d->latch) _btn_persist_latch(d);
+		return true;
+	}
 	if (strcmp(name, "tx_can_id") == 0)       { d->tx_can_id       = (uint32_t)in->i; return true; }
 	if (strcmp(name, "tx_bit_start") == 0)    { d->tx_bit_start    = (uint8_t)in->i;  return true; }
 	if (strcmp(name, "tx_bit_length") == 0)   { d->tx_bit_length   = (uint8_t)in->i;  return true; }
@@ -713,9 +794,10 @@ widget_t *widget_button_create_instance(uint8_t slot) {
     d->tx_bit_length    = DEF_TX_BIT_LENGTH;
     d->tx_endian        = DEF_TX_ENDIAN;
     d->tx_rate_hz       = DEF_TX_RATE_HZ;
-    d->tx_send_release  = DEF_TX_SEND_REL;
     d->latch            = DEF_LATCH;
+    d->remember_state   = DEF_REMEMBER;
     d->latch_state      = false;
+    d->tx_active        = false;
     d->bg_color        = lv_color_hex(DEF_BG_COLOR);
     d->text_color      = lv_color_hex(DEF_TEXT_COLOR);
     d->pressed_color   = lv_color_hex(DEF_PRESSED_COLOR);

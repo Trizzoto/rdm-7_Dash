@@ -3457,12 +3457,21 @@
           "name": "tx_rate_hz",
           "label": "TX Rate (Hz)",
           "type": "stepper",
-          "default": 0,
+          "default": 10,
           "category": "data",
           "min": 0,
           "max": 50,
           "group": "CAN TX",
-          "help": "Advanced: how often to resend the message, per second (0 = only when it changes)."
+          "help": "Advanced: how often the message is resent while ON, per second, as a keepalive (0 = send once on change)."
+        },
+        {
+          "name": "remember_state",
+          "label": "Remember State",
+          "type": "checkbox",
+          "default": false,
+          "category": "data",
+          "group": "CAN TX",
+          "help": "Remember on/off across a reboot so a CAN-controlled output comes back the way you left it."
         },
         {
           "name": "image_name",
@@ -3619,7 +3628,17 @@
           "default": false,
           "category": "data",
           "group": "Behaviour",
-          "help": "Stay on after a press (toggle) instead of only while held."
+          "help": "Stay on after a press (toggle) instead of only while held. Momentary always sends OFF when you let go."
+        },
+        {
+          "name": "remember_state",
+          "label": "Remember State",
+          "type": "checkbox",
+          "default": false,
+          "category": "data",
+          "enabled_by": "latch",
+          "group": "Behaviour",
+          "help": "Latch only: remember on/off across a reboot so the output comes back the way you left it."
         },
         {
           "name": "tx_can_id",
@@ -3667,22 +3686,12 @@
           "name": "tx_rate_hz",
           "label": "TX Rate (Hz)",
           "type": "stepper",
-          "default": 0,
+          "default": 10,
           "category": "data",
           "min": 0,
           "max": 50,
           "group": "CAN TX",
-          "help": "Advanced: how often to resend while held, per second (0 = send once)."
-        },
-        {
-          "name": "tx_send_release",
-          "label": "Send on Release",
-          "type": "checkbox",
-          "default": false,
-          "category": "data",
-          "enabled_by": "!latch",
-          "group": "CAN TX",
-          "help": "Advanced: also send a message when you let go."
+          "help": "Advanced: how often the message is resent while held, per second, as a keepalive (0 = send once). A momentary always sends OFF on release regardless."
         },
         {
           "name": "bg_color",
@@ -4344,6 +4353,35 @@
           "enabled_by": "show_labels",
           "group": "Numbers",
           "help": "How far the numbers sit from the bar."
+        },
+        {
+          "name": "label_side",
+          "label": "Number Side",
+          "type": "select",
+          "default": 0,
+          "options": [
+            { "value": 0, "label": "Auto" },
+            { "value": 1, "label": "Side A" },
+            { "value": 2, "label": "Side B" }
+          ],
+          "category": "appearance",
+          "enabled_by": "show_labels",
+          "_doc": "Auto faces the path's inside (good for a smooth curve). On a\nsharp/multi-corner path Auto can flip side at the bends — pick\nSide A or B to lock every number to one consistent side.",
+          "group": "Numbers",
+          "help": "Which side of the bar the numbers sit on. Auto picks per number (can flip on sharp paths); Side A/B locks them all to one side."
+        },
+        {
+          "name": "label_along_offset",
+          "label": "Number Slide",
+          "type": "stepper",
+          "default": 0,
+          "category": "appearance",
+          "min": -400,
+          "max": 400,
+          "enabled_by": "show_labels",
+          "_doc": "Shifts every number ALONG the path (by arc-length px), so you\ncan nudge them off the tick toward the start/end of the bar.",
+          "group": "Numbers",
+          "help": "Slide the numbers along the bar (negative = toward the start, positive = toward the end)."
         },
         {
           "name": "tick_label_divisor",

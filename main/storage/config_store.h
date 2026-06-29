@@ -237,6 +237,22 @@ esp_err_t config_store_save_ecu_picker_auto(bool auto_mode);
  */
 bool config_store_load_ecu_picker_auto(void);
 
+/* ── Latching button/toggle CAN-output state persistence ──────────────────
+ * When a button/toggle widget has "remember state" enabled, its latched
+ * on/off state is persisted so a CAN-controlled output (e.g. a PDM channel
+ * driving accessory lights) returns to its last commanded state after a
+ * reboot. Keyed by the output it drives (tx_can_id + tx_bit_start) so the
+ * identity is stable across layout edits — two widgets driving the same
+ * output share one stored state. Namespace "wdglatch", one u8 per key.
+ *
+ * can_id is the standard 11-bit TX id (0 = no output → INVALID_ARG/NOT_FOUND).
+ */
+esp_err_t config_store_save_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, bool on);
+
+/* Loads the persisted latch state into @p on. Returns ESP_ERR_NOT_FOUND (and
+ * sets *on=false) if this output was never saved — caller treats that as OFF. */
+esp_err_t config_store_load_widget_latch(uint32_t tx_can_id, uint8_t tx_bit, bool *on);
+
 /* ── Factory reset (erases all NVS + LittleFS user content) ────────────── */
 void config_store_factory_reset(void);
 

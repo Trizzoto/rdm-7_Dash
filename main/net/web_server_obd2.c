@@ -26,6 +26,7 @@
 #include "can/obd2_dtc_db.h"
 #include "storage/sd_manager.h"
 #include "widgets/signal.h"
+#include "widgets/signal_sim.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lvgl.h"
@@ -754,6 +755,139 @@ static const httpd_uri_t pids_uri = {
     .uri = "/api/obd2/pids", .method = HTTP_GET,
     .handler = _pids_handler, .user_ctx = NULL};
 
+/* POST /api/obd2/sim?on=0|1 — toggle the bench virtual-ECU simulator.
+ *
+ * Bench aid: with no real ECU on the bus, OBD2 can't be verified because
+ * nothing answers a request. When enabled, the firmware synthesizes Mode 01
+ * responses for every polled PID (see obd2_sim_set_enabled) so bound gauges
+ * (fuel level etc.) visibly move and /api/obd2/pids + /protocols light up —
+ * proving the whole channel→signal→widget pipeline with no car attached.
+ *
+ * Not persisted; default OFF on boot. Returns:
+ *   { ok, sim, pids_polled, signal_sim_active }
+ * `signal_sim_active:true` warns the user that the signal simulator is on,
+ * which DROPS injected OBD2 responses — they must turn it off first. */
+static esp_err_t _sim_handler(httpd_req_t *req) {
+    /* GET → report current state (no change); POST ?on=0|1 → set it. The
+     * web Developer Options modal GETs on open to reflect the live state. */
+    bool is_get = (req->method == HTTP_GET);
+    int on = -1;
+    if (!is_get) {
+        char q[48];
+        if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+            char v[8];
+            if (httpd_query_key_value(q, "on", v, sizeof(v)) == ESP_OK) {
+                on = atoi(v);
+            }
+        }
+        if (on < 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Use ?on=0 or ?on=1");
+            return ESP_FAIL;
+        }
+    }
+
+    if (!rdm_lvgl_lock(1200)) {
+        return web_server_send_busy(req);
+    }
+    if (!is_get) obd2_sim_set_enabled(on != 0);
+    bool sim_on = obd2_sim_enabled();
+    uint32_t enabled[OBD2_MAX_ENABLED];
+    uint8_t  npids = obd2_get_enabled(enabled, OBD2_MAX_ENABLED);
+    bool sigsim = signal_sim_is_active();
+    rdm_lvgl_unlock();
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (root, "ok", true);
+    cJSON_AddBoolToObject  (root, "sim", sim_on);
+    cJSON_AddNumberToObject(root, "pids_polled", npids);
+    cJSON_AddBoolToObject  (root, "signal_sim_active", sigsim);
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "alloc"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return r;
+}
+
+static const httpd_uri_t sim_uri = {
+    .uri = "/api/obd2/sim", .method = HTTP_POST,
+    .handler = _sim_handler, .user_ctx = NULL};
+
+static const httpd_uri_t sim_get_uri = {
+    .uri = "/api/obd2/sim", .method = HTTP_GET,
+    .handler = _sim_handler, .user_ctx = NULL};
+
+/* POST /api/obd2/scan — run the OBD2 discovery scan (with auto-search across
+ * 500k/250k bitrates + 0x7DF/0x7E0 addressing) and return what the vehicle
+ * supports. Same async-bridge pattern as VIN/ECU-name. Returns
+ *   { ok, completed, count, pids:[...] }   (PIDs are Mode 01 PID bytes)
+ * or { ok:false, error } on timeout. Generous wait: the auto-search may
+ * bounce the CAN bitrate (~250 ms each) before giving up. */
+typedef struct {
+    SemaphoreHandle_t done;
+    volatile int      refs;
+    bool              completed;
+    uint8_t           count;
+    uint8_t           pids[OBD2_SCAN_MAX_PIDS];
+} scan_ctx_t;
+
+static void _scan_done_cb(const obd2_scan_result_t *r, void *user) {
+    scan_ctx_t *ctx = (scan_ctx_t *)user;
+    if (r) {
+        ctx->completed = r->completed;
+        ctx->count     = r->count;
+        uint8_t n = (r->count < OBD2_SCAN_MAX_PIDS) ? r->count : OBD2_SCAN_MAX_PIDS;
+        memcpy(ctx->pids, r->pids, n);
+    }
+    xSemaphoreGive(ctx->done);
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
+}
+
+static void _scan_kick(void *arg) {
+    obd2_discovery_start(_scan_done_cb, arg);
+}
+
+static esp_err_t _scan_handler(httpd_req_t *req) {
+    scan_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    ctx->done = xSemaphoreCreateBinary();
+    if (!ctx->done) { free(ctx); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "sem alloc"); return ESP_FAIL; }
+
+    ctx->refs = 2;
+    rdm_async_call(_scan_kick, ctx);
+    BaseType_t got = xSemaphoreTake(ctx->done, pdMS_TO_TICKS(8000));
+
+    cJSON *resp = cJSON_CreateObject();
+    if (got != pdTRUE) {
+        cJSON_AddBoolToObject(resp, "ok", false);
+        cJSON_AddStringToObject(resp, "error", "Scan timeout");
+    } else {
+        cJSON_AddBoolToObject  (resp, "ok", true);
+        cJSON_AddBoolToObject  (resp, "completed", ctx->completed);
+        cJSON_AddNumberToObject(resp, "count", ctx->count);
+        cJSON *arr = cJSON_AddArrayToObject(resp, "pids");
+        for (uint8_t i = 0; i < ctx->count && i < OBD2_SCAN_MAX_PIDS; i++) {
+            cJSON_AddItemToArray(arr, cJSON_CreateNumber(ctx->pids[i]));
+        }
+    }
+    _obd2_ctx_release(&ctx->refs, ctx->done, ctx);
+
+    char *json = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t r = httpd_resp_sendstr(req, json);
+    free(json);
+    return r;
+}
+
+static const httpd_uri_t scan_uri = {
+    .uri = "/api/obd2/scan", .method = HTTP_POST,
+    .handler = _scan_handler, .user_ctx = NULL};
+
 void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &dtcs_uri);
     REGISTER_URI(server, &clear_uri);
@@ -762,4 +896,7 @@ void web_server_obd2_register(httpd_handle_t server) {
     REGISTER_URI(server, &snapshot_uri);
     REGISTER_URI(server, &protocols_uri);
     REGISTER_URI(server, &pids_uri);
+    REGISTER_URI(server, &sim_uri);
+    REGISTER_URI(server, &sim_get_uri);
+    REGISTER_URI(server, &scan_uri);
 }

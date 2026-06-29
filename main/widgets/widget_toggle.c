@@ -10,6 +10,7 @@
 #include "ui/menu/edit_mode.h"
 #include "can/can_decode.h"
 #include "can/can_manager.h"
+#include "storage/config_store.h"
 #include "signal.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -39,8 +40,13 @@ static const char *TAG = "widget_toggle";
 #define DEF_TX_BIT_LENGTH   1
 #define DEF_TX_ENDIAN       1
 #define DEF_TX_RATE_HZ      10
+#define DEF_REMEMBER        false
 #define DEF_LABEL_ALIGN     1   /* center */
 #define DEF_SHOW_LABEL      true
+
+/* OFF frames sent back-to-back on release / switch-off so a single dropped
+ * frame can't strand a driven output ON. Mirrors widget_button. */
+#define TX_OFF_BURST        3
 
 static lv_text_align_t _to_lv_align(uint8_t a) {
     if (a == 0) return LV_TEXT_ALIGN_LEFT;
@@ -58,7 +64,9 @@ static void _toggle_destroy(widget_t *w);
 static void _toggle_apply_night_mode(widget_t *w, bool active);
 static void _toggle_night_cb(bool active, void *user_data);
 static void _toggle_momentary_pressed_cb(lv_event_t *e);
-static void _toggle_momentary_released_cb(lv_event_t *e);
+static void _toggle_momentary_release_or_lost(lv_event_t *e);
+static void _toggle_activate(widget_t *w);
+static void _toggle_deactivate(widget_t *w);
 
 /* ── Helper: apply image styling based on current state ─────────────────── */
 static void _toggle_apply_image_state(toggle_data_t *d) {
@@ -100,17 +108,37 @@ static void _toggle_on_signal(float value, bool is_stale, void *user_data) {
     _toggle_apply_image_state(d);
 }
 
+/* ── CAN TX helpers ────────────────────────────────────────────────────── */
+
+static void _toggle_send(toggle_data_t *d, bool on) {
+    if (d->tx_can_id == 0) return;
+    uint8_t frame[8] = {0};
+    uint32_t val = on ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
+    can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
+    can_transmit_frame(d->tx_can_id, frame, 8);
+}
+
+/* Drive OFF with a short burst so a single dropped frame can't strand the
+ * output ON. Safe to call when already off. */
+static void _toggle_send_off_burst(toggle_data_t *d) {
+    for (int i = 0; i < TX_OFF_BURST; i++) _toggle_send(d, false);
+}
+
+/* Persist the latched state (non-momentary, remember_state on), keyed by the
+ * output it drives so it survives reboots and layout edits. */
+static void _toggle_persist(toggle_data_t *d) {
+    if (!d->remember_state || d->momentary || d->tx_can_id == 0) return;
+    config_store_save_widget_latch(d->tx_can_id, d->tx_bit_start, d->current_state);
+}
+
 /* ── Periodic TX timer ─────────────────────────────────────────────────── */
 
 static void _toggle_tx_timer_cb(lv_timer_t *t) {
     widget_t *w = (widget_t *)t->user_data;
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
-    if (!d->current_state || d->tx_can_id == 0) return;
-    uint8_t frame[8] = {0};
-    uint32_t val = (d->tx_bit_length >= 32) ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u);
-    can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
-    can_transmit_frame(d->tx_can_id, frame, 8);
+    if (!d->tx_active) return;
+    _toggle_send(d, true);
 }
 
 static void _toggle_start_tx_timer(widget_t *w) {
@@ -125,6 +153,46 @@ static void _toggle_stop_tx_timer(toggle_data_t *d) {
         lv_timer_del(d->tx_timer);
         d->tx_timer = NULL;
     }
+}
+
+/* ── Activate / deactivate (shared by switch + momentary) ────────────────────
+ * activate:   assert ON + keepalive at tx_rate_hz (steady stream, keypad-style).
+ * deactivate: stop keepalive and drive OFF (burst); only emits if we were
+ *             asserting, so Edit-Mode interactions stay silent on the bus. */
+static void _toggle_activate(widget_t *w) {
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d || d->tx_active) return;
+    d->tx_active = true;
+    _toggle_send(d, true);
+    _toggle_start_tx_timer(w);
+}
+
+static void _toggle_deactivate(widget_t *w) {
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d) return;
+    _toggle_stop_tx_timer(d);
+    if (d->tx_active) {
+        d->tx_active = false;
+        _toggle_send_off_burst(d);
+    }
+}
+
+/* Restore persisted state on create (non-momentary, remember_state) and
+ * re-assert the output if it was left ON. */
+static void _toggle_restore_state(widget_t *w) {
+    toggle_data_t *d = (toggle_data_t *)w->type_data;
+    if (!d || d->momentary) return;
+    if (d->remember_state && d->tx_can_id != 0) {
+        bool on = false;
+        if (config_store_load_widget_latch(d->tx_can_id, d->tx_bit_start, &on) == ESP_OK)
+            d->current_state = on;
+    }
+    if (d->sw_obj && lv_obj_is_valid(d->sw_obj)) {
+        if (d->current_state) lv_obj_add_state(d->sw_obj, LV_STATE_CHECKED);
+        else                  lv_obj_clear_state(d->sw_obj, LV_STATE_CHECKED);
+    }
+    _toggle_apply_image_state(d);
+    if (d->current_state) _toggle_activate(w);
 }
 
 /* ── Toggle clicked event callback ──────────────────────────────────────── */
@@ -147,20 +215,11 @@ static void _toggle_clicked_cb(lv_event_t *e) {
         d->current_state = checked;
     }
 
-    /* Transmit CAN frame if TX is configured.
-     * ON = all bits set, OFF = 0. */
-    if (d->tx_can_id > 0) {
-        uint8_t frame[8] = {0};
-        uint32_t val = checked ? (d->tx_bit_length >= 32 ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u)) : 0u;
-        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
-        can_transmit_frame(d->tx_can_id, frame, 8);
-    }
-
-    /* Start/stop periodic TX timer based on toggle state */
-    if (checked)
-        _toggle_start_tx_timer(w);
-    else
-        _toggle_stop_tx_timer(d);
+    /* Assert/clear the output: activate keeps a keepalive stream going at
+     * tx_rate_hz; deactivate drives OFF with a burst. Persist if remembered. */
+    if (checked) _toggle_activate(w);
+    else         _toggle_deactivate(w);
+    _toggle_persist(d);
 
     /* Update image styling if in image mode */
     _toggle_apply_image_state(d);
@@ -180,32 +239,24 @@ static void _toggle_momentary_pressed_cb(lv_event_t *e) {
     if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
         lv_obj_add_state(d->sw_obj, LV_STATE_CHECKED);
 
-    if (d->tx_can_id > 0) {
-        uint8_t frame[8] = {0};
-        uint32_t val = (d->tx_bit_length >= 32) ? 0xFFFFFFFFu : ((1u << d->tx_bit_length) - 1u);
-        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, val, d->tx_endian);
-        can_transmit_frame(d->tx_can_id, frame, 8);
-    }
-    _toggle_start_tx_timer(w);
+    _toggle_activate(w);
     _toggle_apply_image_state(d);
 }
 
-static void _toggle_momentary_released_cb(lv_event_t *e) {
-    if (edit_mode_is_armed()) return;
+/* Fires on RELEASED AND PRESS_LOST (finger slid off / Edit Mode armed
+ * mid-press). A momentary MUST always drive OFF here — not gated on edit_mode
+ * so an output asserted before edit mode was armed still gets turned off.
+ * _toggle_deactivate is silent on the bus when we never asserted. */
+static void _toggle_momentary_release_or_lost(lv_event_t *e) {
     widget_t *w = (widget_t *)lv_event_get_user_data(e);
     if (!w || !w->type_data) return;
     toggle_data_t *d = (toggle_data_t *)w->type_data;
 
-    _toggle_stop_tx_timer(d);
     d->current_state = false;
     if (d->sw_obj && lv_obj_is_valid(d->sw_obj))
         lv_obj_clear_state(d->sw_obj, LV_STATE_CHECKED);
 
-    if (d->tx_can_id > 0) {
-        uint8_t frame[8] = {0};
-        can_pack_bits(frame, d->tx_bit_start, d->tx_bit_length, 0u, d->tx_endian);
-        can_transmit_frame(d->tx_can_id, frame, 8);
-    }
+    _toggle_deactivate(w);
     _toggle_apply_image_state(d);
 }
 
@@ -241,8 +292,9 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
             /* Make the image clickable to toggle state */
             lv_obj_add_flag(img, LV_OBJ_FLAG_CLICKABLE);
             if (d->momentary) {
-                lv_obj_add_event_cb(img, _toggle_momentary_pressed_cb,  LV_EVENT_PRESSED,  w);
-                lv_obj_add_event_cb(img, _toggle_momentary_released_cb, LV_EVENT_RELEASED, w);
+                lv_obj_add_event_cb(img, _toggle_momentary_pressed_cb,        LV_EVENT_PRESSED,    w);
+                lv_obj_add_event_cb(img, _toggle_momentary_release_or_lost,   LV_EVENT_RELEASED,   w);
+                lv_obj_add_event_cb(img, _toggle_momentary_release_or_lost,   LV_EVENT_PRESS_LOST, w);
             } else {
                 lv_obj_add_event_cb(img, _toggle_clicked_cb, LV_EVENT_CLICKED, w);
             }
@@ -327,14 +379,19 @@ static void _toggle_create(widget_t *w, lv_obj_t *parent) {
 
         /* Event callback for user toggle interaction */
         if (d->momentary) {
-            lv_obj_add_event_cb(sw, _toggle_momentary_pressed_cb,  LV_EVENT_PRESSED,  w);
-            lv_obj_add_event_cb(sw, _toggle_momentary_released_cb, LV_EVENT_RELEASED, w);
+            lv_obj_add_event_cb(sw, _toggle_momentary_pressed_cb,      LV_EVENT_PRESSED,    w);
+            lv_obj_add_event_cb(sw, _toggle_momentary_release_or_lost, LV_EVENT_RELEASED,   w);
+            lv_obj_add_event_cb(sw, _toggle_momentary_release_or_lost, LV_EVENT_PRESS_LOST, w);
         } else {
             lv_obj_add_event_cb(sw, _toggle_clicked_cb, LV_EVENT_VALUE_CHANGED, w);
         }
     }
 
     w->root = cont;
+
+    /* Restore persisted state (remember_state) and re-assert a latched-on
+     * output. Done before signal subscribe so a live signal still wins. */
+    _toggle_restore_state(w);
 
     /* Subscribe to signal after root is set */
     if (d->signal_index >= 0) {
@@ -400,6 +457,9 @@ static void _toggle_to_json(widget_t *w, cJSON *out) {
 
     if (d->tx_rate_hz != DEF_TX_RATE_HZ)
         cJSON_AddNumberToObject(cfg, "tx_rate_hz", d->tx_rate_hz);
+
+    if (d->remember_state != DEF_REMEMBER)
+        cJSON_AddBoolToObject(cfg, "remember_state", d->remember_state);
 
     /* Appearance: only write if different from defaults */
     if (d->active_color.full != lv_color_hex(DEF_ACTIVE_COLOR).full)
@@ -491,6 +551,9 @@ static void _toggle_from_json(widget_t *w, cJSON *in) {
     item = cJSON_GetObjectItemCaseSensitive(cfg, "tx_rate_hz");
     if (cJSON_IsNumber(item)) { d->tx_rate_hz = (uint8_t)item->valueint; if (d->tx_rate_hz > 50) d->tx_rate_hz = 50; }
 
+    item = cJSON_GetObjectItemCaseSensitive(cfg, "remember_state");
+    if (cJSON_IsBool(item)) d->remember_state = cJSON_IsTrue(item);
+
     /* Appearance */
     item = cJSON_GetObjectItemCaseSensitive(cfg, "active_color");
     if (cJSON_IsNumber(item)) d->active_color.full = (uint16_t)item->valueint;
@@ -546,6 +609,11 @@ static void _toggle_destroy(widget_t *w) {
     toggle_data_t *d = (toggle_data_t *)w->type_data;
     if (d) {
         _toggle_stop_tx_timer(d);
+        /* Don't strand a driven output ON when the widget goes away. Exception:
+         * a persisted switch stays asserted across a hot-reload (recreate
+         * restores it from NVS). */
+        if (d->tx_active && !(d->remember_state && !d->momentary))
+            _toggle_send_off_burst(d);
         if (d->signal_index >= 0)
             signal_unsubscribe(d->signal_index, _toggle_on_signal, w);
     }
@@ -672,6 +740,7 @@ static bool _toggle_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "tx_bit_length") == 0)       { out->i = d->tx_bit_length;  return true; }
 	if (strcmp(name, "tx_endian") == 0)           { out->i = d->tx_endian;      return true; }
 	if (strcmp(name, "tx_rate_hz") == 0)          { out->i = d->tx_rate_hz;     return true; }
+	if (strcmp(name, "remember_state") == 0)      { out->b = d->remember_state; return true; }
 	if (strcmp(name, "active_opa") == 0)          { out->i = d->active_opa;     return true; }
 	if (strcmp(name, "inactive_opa") == 0)        { out->i = d->inactive_opa;   return true; }
 	if (strcmp(name, "label_align") == 0)         { out->i = d->label_align;    return true; }
@@ -738,6 +807,13 @@ static bool _toggle_inspector_set(widget_t *w, const char *name,
 	if (strcmp(name, "tx_rate_hz") == 0) {
 		int v = in->i; if (v < 0) v = 0; if (v > 50) v = 50;
 		d->tx_rate_hz = (uint8_t)v;
+		return true;
+	}
+	if (strcmp(name, "remember_state") == 0) {
+		d->remember_state = in->b;
+		/* Capture current state right away so enabling "remember" on an
+		 * already-on switch records it. */
+		if (d->remember_state && !d->momentary) _toggle_persist(d);
 		return true;
 	}
 	if (strcmp(name, "active_color") == 0) {
@@ -820,6 +896,8 @@ widget_t *widget_toggle_create_instance(uint8_t slot) {
     d->tx_bit_length       = DEF_TX_BIT_LENGTH;
     d->tx_endian           = DEF_TX_ENDIAN;
     d->tx_rate_hz          = DEF_TX_RATE_HZ;
+    d->remember_state      = DEF_REMEMBER;
+    d->tx_active           = false;
     d->active_color        = lv_color_hex(DEF_ACTIVE_COLOR);
     d->inactive_color      = lv_color_hex(DEF_INACTIVE_COLOR);
     d->label_color         = lv_color_hex(DEF_LABEL_COLOR);

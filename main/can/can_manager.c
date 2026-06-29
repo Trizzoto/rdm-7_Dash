@@ -32,6 +32,11 @@ static twai_general_config_t g_config =
 	TWAI_GENERAL_CONFIG_DEFAULT(20, 19, TWAI_MODE_NORMAL);
 static twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
+/* Current live bitrate index (0=125k,1=250k,2=500k,3=1M). Tracks what's
+ * actually installed so callers (e.g. the OBD2 auto-search scan) can read it
+ * and restore it. */
+static uint8_t g_bitrate_index = 2;
+
 /* True iff the wizard's ECU auto-detect probe (or other diagnostic) has
  * forced the filter to ACCEPT_ALL via can_set_promiscuous_mode. While
  * true, reconfigure_can_filter() becomes a no-op so signal binds in
@@ -634,6 +639,7 @@ void can_init(void) {
 	/* Load saved bitrate from NVS (default index 2 = 500 kbps) */
 	uint8_t saved_bitrate = 2;
 	config_store_load_bitrate(&saved_bitrate);
+	g_bitrate_index = saved_bitrate;
 
 	g_t_config = _bitrate_to_timing(saved_bitrate);
 	static const char *bitrate_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
@@ -696,6 +702,7 @@ void can_change_bitrate(uint8_t bitrate_index) {
 
 	/* Apply new timing config */
 	g_t_config = _bitrate_to_timing(bitrate_index);
+	g_bitrate_index = bitrate_index;
 	static const char *bitrate_labels[] = {"125 kbps", "250 kbps", "500 kbps", "1 Mbps"};
 	ESP_LOGI(TAG, "CAN bitrate: %s", bitrate_labels[bitrate_index > 3 ? 2 : bitrate_index]);
 
@@ -725,6 +732,15 @@ void can_change_bitrate(uint8_t bitrate_index) {
 	/* Clear suspended flag: scan may have left it true if can_resume() failed */
 	s_suspended = false;
 	ESP_LOGI(TAG, "Bitrate change completed");
+}
+
+uint8_t can_get_bitrate_index(void) {
+	return g_bitrate_index;
+}
+
+void can_persist_bitrate(uint8_t bitrate_index) {
+	config_store_save_bitrate(bitrate_index);
+	g_bitrate_index = bitrate_index;
 }
 
 esp_err_t can_transmit_frame(uint32_t can_id, const uint8_t *data, uint8_t dlc) {

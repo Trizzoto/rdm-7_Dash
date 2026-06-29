@@ -56,6 +56,14 @@ void        can_task_set_priority(UBaseType_t priority);
  */
 void can_change_bitrate(uint8_t bitrate_index);
 
+/* Current live bitrate index (0=125k, 1=250k, 2=500k, 3=1M). */
+uint8_t can_get_bitrate_index(void);
+
+/* Persist a bitrate index to NVS (and update the live index) so it survives
+ * reboot. Use after can_change_bitrate() confirms a rate actually works —
+ * e.g. the OBD2 auto-search scan locking onto the car's real bus rate. */
+void can_persist_bitrate(uint8_t bitrate_index);
+
 /**
  * @brief Drain any pending CAN frames from the internal FreeRTOS queue and
  *        dispatch them to the widget layer via signal_dispatch_frame().
