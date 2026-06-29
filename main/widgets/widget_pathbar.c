@@ -349,6 +349,24 @@ static bool _pathbar_sample(pathbar_data_t *pd, float s,
     float d = pd->total_len * 0.02f;       /* half-window, ~4 chords for a tach arc */
     if (d < 12.0f) d = 12.0f;
     if (d > pd->total_len * 0.45f) d = pd->total_len * 0.45f;
+    /* On a SHARP custom polyline (shape 0, not smoothed) a window that straddles
+     * a vertex averages the two segments' directions, so ticks/numbers/fill-edges
+     * skew toward the corner's mitre bisector even on a straight run (the user's
+     * "redline angled on a straight part" + "5 in a weird spot"). Clamp the window
+     * to the segment s sits on → the tangent is the LOCAL segment direction.
+     * Smoothed/parametric paths have no sharp corners and keep the wide window so
+     * pixel-snap noise on the tessellated curve still averages out. */
+    if (pd->shape == 0 && !pd->smooth && pd->cum && pd->n_pts >= 2) {
+        for (uint16_t i = 1; i < pd->n_pts; i++) {
+            if (pd->cum[i] >= s || i == pd->n_pts - 1) {
+                float dl = s - pd->cum[i - 1], dr = pd->cum[i] - s;
+                float dm = dl < dr ? dl : dr;
+                if (dm < d) d = dm;
+                break;
+            }
+        }
+        if (d < 1.0f) d = 1.0f;   /* keep a non-zero chord for the tangent */
+    }
     float ax, ay, bx, by;
     _pathbar_point_at(pd, s - d, &ax, &ay);
     _pathbar_point_at(pd, s + d, &bx, &by);
