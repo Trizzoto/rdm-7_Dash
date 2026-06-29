@@ -466,28 +466,33 @@ static void _pathbar_draw_scale(lv_draw_ctx_t *ctx, pathbar_data_t *pd) {
     }
 }
 
-/* ── Band renderer (vertex-offset quad strip) ────────────────────────────────
- * The band is stroked as a strip of convex trapezoids filled with
- * lv_draw_polygon, NOT as overlapping round-capped lines. This is the proper
- * stroke-to-fill: the band outline is the path offset by ±half-width with
- * mitered joints, so flat ends and clean corners come for free — no round-cap
- * overshoot (the old "rounded base/tip" bugs are structurally impossible) and
- * no per-segment fuzz. Two details make it clean and cheap:
- *   - each quad pokes PB_SEAM_OVERLAP px into the next so the later (opaque)
- *     quad buries the previous quad's anti-aliased edge → no black seam lines,
- *   - the lit fill is walked in PB_GRAD_STEP arc-length steps for a smooth
- *     gradient even across one long path segment, last step clipped at the front.
- * Far less overdraw than the line-stroke approach → measurably faster too. */
-#define PB_SEAM_OVERLAP 2.0f    /* px each quad pokes into the next to bury AA seams */
-#define PB_GRAD_STEP    4.0f    /* px per gradient sub-quad along the lit fill — fine
-                                 * enough that the fade reads smooth on a curve (9px
-                                 * stepped visibly). Each sub-quad is now a single
-                                 * convex polygon so the extra count is cheap.        */
+/* ── Band renderer (routed by path shape) ────────────────────────────────────
+ * Two fill methods, chosen by `sharp` below, because a hand-drawn angular
+ * polyline and a smooth/parametric curve want opposite things:
+ *
+ *  SHARP custom polyline (shape 0, not smoothed -- the VK stairstep tach): one
+ *    PERPENDICULAR-ended rectangle per straight segment + a triangle-fan miter
+ *    join at each interior vertex. Every colour edge (fill front, redline break,
+ *    gradient step) is square to the LOCAL segment instead of skewed toward a
+ *    corner's miter bisector, and a solid run is a SINGLE quad so a long diagonal
+ *    gets one clean AA pass (no ~N stacked 4 px slivers = no fuzz). Few long
+ *    segments, so the per-segment seams are negligible.
+ *
+ *  SMOOTH / parametric (J-hook, L-bend, straight, Catmull-Rom): the continuous
+ *    mitered quad-strip, each quad poking PB_SEAM_OVERLAP px into the next so the
+ *    later opaque quad buries the previous AA edge. On a ~50-segment tessellated
+ *    curve that is what keeps the arc smooth -- perpendicular per-segment rects
+ *    would show every facet/seam ("very liney"), and the miter interpolation is
+ *    already ~perpendicular at those tiny angles so the cross-cut never skews. */
+#define PB_SEAM_OVERLAP 2.0f    /* px each smooth-strip quad pokes into the next    */
+#define PB_GRAD_STEP    4.0f    /* px per gradient sub-quad (fade zone/smooth strip)*/
 #define PB_MITER_MAX    1.5f    /* cap miter at 1.5*half-width (clean to ~96°, then  */
                                 /* a slight bevel) — bounds the off-centreline reach */
                                 /* so _pathbar_invalidate_range can cover it.        */
 
-/* Interpolate the band cross-edge (the two offset points) at arc-length s. */
+/* Interpolate the band cross-edge (the two mitered offset points) at arc-length
+ * s. Used by the SMOOTH/parametric strip; the SHARP renderer uses perpendicular
+ * offsets instead (see _pb_seg_quad / _pb_join_fan). */
 static void _spk_edge_at(const lv_point_t *L, const lv_point_t *R, const float *cum,
                          int n, float s, lv_point_t *oL, lv_point_t *oR) {
     if (s <= cum[0])     { *oL = L[0];   *oR = R[0];   return; }
@@ -565,15 +570,64 @@ static void _pb_fill_quad(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
     if (_pb_tri_ok(a, c, d)) { lv_point_t t[3] = { a, c, d }; lv_draw_polygon(ctx, rd, t, 3); }
 }
 
-/* Render the band as a vertex-offset quad strip filled with lv_draw_polygon
- * (one convex trapezoid per step), instead of overlapping round-capped lines:
- *   - flat base/tip + clean joins BY CONSTRUCTION (offset points are mitered and
- *     shared between adjacent quads — no round-cap overshoot, no fray),
- *   - each quad pokes PB_SEAM_OVERLAP px into the next so the later (opaque) quad
- *     buries the previous one's anti-aliased edge — kills the black seam lines,
- *   - lit fill is walked in PB_GRAD_STEP arc-length steps for a smooth gradient
- *     even across one long path segment, last step clipped at the fill front.
- * Far less overdraw than the line-stroke path → also faster. */
+/* One perpendicular-ended band rectangle for a straight run (pax,pay)->(pbx,pby)
+ * on a segment whose unit perpendicular is (nx,ny): square ends + clean long
+ * edges as a single convex quad (falls back to two triangles if it pinches). */
+static void _pb_seg_quad(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
+                         float pax, float pay, float pbx, float pby,
+                         float nx, float ny, float hw) {
+    lv_point_t q0 = { (lv_coord_t)lroundf(pax + nx*hw), (lv_coord_t)lroundf(pay + ny*hw) };
+    lv_point_t q1 = { (lv_coord_t)lroundf(pax - nx*hw), (lv_coord_t)lroundf(pay - ny*hw) };
+    lv_point_t q2 = { (lv_coord_t)lroundf(pbx - nx*hw), (lv_coord_t)lroundf(pby - ny*hw) };
+    lv_point_t q3 = { (lv_coord_t)lroundf(pbx + nx*hw), (lv_coord_t)lroundf(pby + ny*hw) };
+    _pb_fill_quad(ctx, rd, q0, q1, q2, q3);
+}
+
+/* Miter join fan at interior vertex v: bridges the perpendicular-ended segment
+ * rects on either side out to the mitered apexes L[v]/R[v], reconstructing the
+ * clean corner. A triangle fan from the centreline point can't self-intersect,
+ * so lv_draw_polygon stays safe; _pb_tri_ok drops the degenerate slivers a
+ * near-straight (tessellated-curve) vertex produces. */
+static void _pb_join_fan(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *rd,
+                         pathbar_data_t *pd, const lv_point_t *L,
+                         const lv_point_t *R, int v, float hw) {
+    float idx = pd->pts[v].x - pd->pts[v-1].x, idy = pd->pts[v].y - pd->pts[v-1].y;
+    float il = sqrtf(idx*idx + idy*idy); if (il <= 0.0f) il = 1.0f;
+    float inx = -idy/il, iny = idx/il;
+    float odx = pd->pts[v+1].x - pd->pts[v].x, ody = pd->pts[v+1].y - pd->pts[v].y;
+    float ol = sqrtf(odx*odx + ody*ody); if (ol <= 0.0f) ol = 1.0f;
+    float onx = -ody/ol, ony = odx/ol;
+    float px = pd->pts[v].x, py = pd->pts[v].y;
+    lv_point_t P = { (lv_coord_t)lroundf(px), (lv_coord_t)lroundf(py) };
+    lv_point_t b[6] = {
+        { (lv_coord_t)lroundf(px + inx*hw), (lv_coord_t)lroundf(py + iny*hw) },
+        L[v],
+        { (lv_coord_t)lroundf(px + onx*hw), (lv_coord_t)lroundf(py + ony*hw) },
+        { (lv_coord_t)lroundf(px - onx*hw), (lv_coord_t)lroundf(py - ony*hw) },
+        R[v],
+        { (lv_coord_t)lroundf(px - inx*hw), (lv_coord_t)lroundf(py - iny*hw) },
+    };
+    for (int k = 0; k < 6; k++) {
+        lv_point_t e0 = b[k], e1 = b[(k + 1) % 6];
+        if (_pb_tri_ok(P, e0, e1)) {
+            lv_point_t tri[3] = { P, e0, e1 };
+            lv_draw_polygon(ctx, rd, tri, 3);
+        }
+    }
+}
+
+/* Lit-fill colour at path fraction pc: redline takes over past rl, else an
+ * optional dim->bright fade across the first PATHBAR_FADE_FULL of the path. */
+static lv_color_t _pb_lit_color(pathbar_data_t *pd, float pc, float rl,
+                                lv_color_t bright, lv_color_t dim) {
+    if (pc > rl) return pd->redline_color;
+    if (pd->fade_fill) {
+        float t = pc / PATHBAR_FADE_FULL; if (t > 1.0f) t = 1.0f;
+        return lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
+    }
+    return bright;
+}
+
 static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
                                lv_opa_t master, lv_color_t dim_solid) {
     const int n = pd->n_pts;
@@ -627,19 +681,27 @@ static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
     lv_draw_rect_dsc_t rd;
     lv_draw_rect_dsc_init(&rd);
     rd.bg_opa = master;
-    /* The seam-overlap trick assumes opaque-over-opaque (the later quad fully
-     * buries the prior quad's AA edge). When the whole widget is translucent —
-     * e.g. the boot fade-reveal animates the root's opa — overlapping would
-     * alpha-blend the overlap region twice into a bright stripe, so drop it while
-     * not fully opaque (the shared mitered edges still abut cleanly). */
+    /* Sharp hand-drawn polylines get the perpendicular-rect renderer; smooth and
+     * parametric shapes keep the continuous mitered strip (see the header). */
+    bool sharp = (pd->shape == 0 && !pd->smooth);
     float ov = (master < LV_OPA_COVER) ? 0.0f : PB_SEAM_OVERLAP;
 
-    /* Dim full-path track: one trapezoid per segment, each poking into the next. */
+    /* Dim full-path track. */
     rd.bg_color = dim_solid;
-    for (int i = 1; i < n; i++) {
-        lv_point_t el = L[i], er = R[i];
-        if (i < n - 1) _spk_edge_at(L, R, pd->cum, n, pd->cum[i] + ov, &el, &er);
-        _pb_fill_quad(ctx, &rd, L[i-1], R[i-1], er, el);
+    if (sharp) {
+        for (int i = 0; i + 1 < n; i++) {
+            float dx = pd->pts[i+1].x - pd->pts[i].x, dy = pd->pts[i+1].y - pd->pts[i].y;
+            float l = sqrtf(dx*dx + dy*dy); if (l <= 0.0f) l = 1.0f;
+            _pb_seg_quad(ctx, &rd, pd->pts[i].x, pd->pts[i].y,
+                         pd->pts[i+1].x, pd->pts[i+1].y, -dy/l, dx/l, hw);
+        }
+        for (int v = 1; v + 1 < n; v++) _pb_join_fan(ctx, &rd, pd, L, R, v, hw);
+    } else {
+        for (int i = 1; i < n; i++) {
+            lv_point_t el = L[i], er = R[i];
+            if (i < n - 1) _spk_edge_at(L, R, pd->cum, n, pd->cum[i] + ov, &el, &er);
+            _pb_fill_quad(ctx, &rd, L[i-1], R[i-1], er, el);
+        }
     }
     if (pd->rounded) {     /* round the track's two ends (base, far end) */
         _spk_round_cap(ctx, &rd, pd->pts[0].x, pd->pts[0].y,
@@ -650,7 +712,8 @@ static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
                        (float)(pd->pts[n-1].y - pd->pts[n-2].y), hw);
     }
 
-    /* Lit fill walked in small steps for a smooth gradient; last step clipped. */
+    /* Lit fill: per-segment perpendicular rects + corner joins, subdivided only
+     * at the redline break and (when fading) in steps inside the fade zone. */
     float f = pd->cur_frac;
     if (f <= 0.0f || total <= 0.0f) return;
     float fill = f * total;
@@ -659,33 +722,56 @@ static void _pathbar_draw_band(lv_draw_ctx_t *ctx, pathbar_data_t *pd,
     float rl = (pd->redline < pd->val_max && pd->val_max > pd->val_min)
              ? (pd->redline - pd->val_min) / (pd->val_max - pd->val_min) : 1.0f;
     float rlpx = rl * total;                          /* exact redline arc-length */
+    float fadeEnd = PATHBAR_FADE_FULL * total;
 
-    float s0 = 0.0f;
-    lv_point_t e0l = L[0], e0r = R[0];
-    while (s0 < fill - 0.01f) {
-        float s1 = s0 + PB_GRAD_STEP;
-        bool last = false;
-        if (s1 >= fill) { s1 = fill; last = true; }
-        /* Land a quad boundary exactly on the redline so the lit/redline colour
-         * break is at rl, not snapped to the nearest gradient step. */
-        if (s0 < rlpx - 0.01f && s1 > rlpx) { s1 = rlpx; last = false; }
-        lv_point_t e1l, e1r;                          /* true edge at s1 (the front if last) */
-        _spk_edge_at(L, R, pd->cum, n, s1, &e1l, &e1r);
-        lv_point_t qel = e1l, qer = e1r;              /* end edge actually drawn (overlapped) */
-        if (!last) _spk_edge_at(L, R, pd->cum, n, s1 + ov, &qel, &qer);
-
-        float pc = ((s0 + s1) * 0.5f) / total;
-        lv_color_t col;
-        if (pc > rl) col = pd->redline_color;
-        else if (pd->fade_fill) {
-            float t = pc / PATHBAR_FADE_FULL; if (t > 1.0f) t = 1.0f;
-            col = lv_color_mix(bright, dim, (uint8_t)(t * 255.0f));
-        } else col = bright;
-        rd.bg_color = col;
-        _pb_fill_quad(ctx, &rd, e0l, e0r, qer, qel);
-
-        e0l = e1l; e0r = e1r;                         /* next quad starts at the true edge */
-        s0  = s1;
+    if (sharp) {
+        for (int i = 0; i + 1 < n; i++) {
+            float c0 = pd->cum[i], c1 = pd->cum[i+1];
+            if (c0 >= fill) break;
+            float hi = c1 < fill ? c1 : fill;             /* lit end on this segment */
+            float seglen = c1 - c0; if (seglen <= 0.0f) seglen = 1.0f;
+            float dx = pd->pts[i+1].x - pd->pts[i].x, dy = pd->pts[i+1].y - pd->pts[i].y;
+            float l = sqrtf(dx*dx + dy*dy); if (l <= 0.0f) l = 1.0f;
+            float nx = -dy/l, ny = dx/l;
+            float a = c0;
+            while (a < hi - 0.01f) {
+                float b = hi;
+                if (a < rlpx - 0.01f && b > rlpx) b = rlpx;          /* land on the redline */
+                if (pd->fade_fill && a < fadeEnd && b - a > PB_GRAD_STEP)
+                    b = a + PB_GRAD_STEP;                            /* gradient step in fade */
+                float pc = ((a + b) * 0.5f) / total;
+                rd.bg_color = _pb_lit_color(pd, pc, rl, bright, dim);
+                float fa = (a - c0) / seglen, fb = (b - c0) / seglen;
+                _pb_seg_quad(ctx, &rd,
+                             pd->pts[i].x + dx*fa, pd->pts[i].y + dy*fa,
+                             pd->pts[i].x + dx*fb, pd->pts[i].y + dy*fb, nx, ny, hw);
+                a = b;
+            }
+            if (hi >= c1 - 0.01f && i + 2 < n) {    /* front cleared the vertex: light its join */
+                rd.bg_color = _pb_lit_color(pd, c1 / total, rl, bright, dim);
+                _pb_join_fan(ctx, &rd, pd, L, R, i+1, hw);
+            }
+        }
+    } else {
+        /* Smooth/parametric: continuous mitered strip in PB_GRAD_STEP steps, each
+         * quad poking ov past the next so the opaque later quad buries the seam. */
+        float s0 = 0.0f;
+        lv_point_t e0l = L[0], e0r = R[0];
+        while (s0 < fill - 0.01f) {
+            float s1 = s0 + PB_GRAD_STEP;
+            bool last = false;
+            if (s1 >= fill) { s1 = fill; last = true; }
+            if (s0 < rlpx - 0.01f && s1 > rlpx) { s1 = rlpx; last = false; }
+            lv_point_t e1l, e1r;
+            _spk_edge_at(L, R, pd->cum, n, s1, &e1l, &e1r);
+            lv_point_t qel = e1l, qer = e1r;
+            if (!last) _spk_edge_at(L, R, pd->cum, n, s1 + ov, &qel, &qer);
+            float pc = ((s0 + s1) * 0.5f) / total;
+            rd.bg_color = _pb_lit_color(pd, pc, rl, bright, dim);
+            _pb_fill_quad(ctx, &rd, e0l, e0r, qer, qel);
+            e0l = e1l; e0r = e1r;
+            s0  = s1;
+        }
     }
 
     if (pd->rounded) {
@@ -723,8 +809,9 @@ static void _pathbar_draw_cb(lv_event_t *e) {
     if (master <= LV_OPA_MIN) return;
 
     /* Dim track colour: dim_color pre-blended over black at dim_opa, drawn opaque
-     * (dim_opa is the authoring knob for how dark the track reads). The band
-     * renderer fills opaque quads, so there's no cap/overlap compounding. */
+     * (dim_opa is the authoring knob for how dark the track reads). Opaque fills,
+     * so the only overlap is the tiny corner-join wedge — invisible at full opa,
+     * a faint corner brighten only under a partial master opa (brief boot fade). */
     lv_color_t dim_solid = lv_color_mix(pd->dim_color, lv_color_black(), pd->dim_opa);
     float f = pd->cur_frac;
     _pathbar_draw_band(ctx, pd, master, dim_solid);
