@@ -1,5 +1,5 @@
 {
-  "schema_version": 16,
+  "schema_version": 17,
   "name": "vk_calais",
   "screen_w": 800,
   "screen_h": 480,
@@ -134,7 +134,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "CALAIS",
-        "font": "DSEG14:32",
+        "font": "DSEG14I:32",
         "text_color": 7984
       }
     },
@@ -148,9 +148,9 @@
       "config": {
         "slot": 0,
         "decimals": 0,
-        "static_text": "KPH",
-        "font": "DSEG14:15",
-        "text_color": 3016
+        "static_text": "KM/H",
+        "font": "DSEG14I:15",
+        "text_color": 5612
       }
     },
     {
@@ -164,7 +164,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "888",
-        "font": "DSEG7:80",
+        "font": "DSEG7I:80",
         "text_color": 161
       }
     },
@@ -179,7 +179,7 @@
         "slot": 0,
         "decimals": 0,
         "signal_name": "VEHICLE_SPEED",
-        "font": "DSEG7:80",
+        "font": "DSEG7I:80",
         "text_color": 7984
       }
     },
@@ -194,7 +194,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "ELECTRONIC",
-        "font": "DSEG14:16",
+        "font": "DSEG14I:16",
         "text_color": 3016
       }
     },
@@ -209,8 +209,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "RPM",
-        "font": "DSEG14:15",
-        "text_color": 3016
+        "font": "DSEG14I:15",
+        "text_color": 5612
       }
     },
     {
@@ -224,7 +224,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "8888",
-        "font": "DSEG7:64",
+        "font": "DSEG7I:64",
         "text_color": 161
       }
     },
@@ -239,7 +239,7 @@
         "slot": 0,
         "decimals": 0,
         "signal_name": "RPM",
-        "font": "DSEG7:64",
+        "font": "DSEG7I:64",
         "text_color": 7984
       }
     },
@@ -254,7 +254,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "ENGINE",
-        "font": "DSEG14:16",
+        "font": "DSEG14I:16",
         "text_color": 3016
       }
     },
@@ -273,10 +273,10 @@
         "rounded": false,
         "lead_edge_width": 9,
         "lead_edge_color": 53243,
-        "dim_color": 2532,
+        "dim_color": 2693,
         "lit_color": 7984,
         "redline_color": 63778,
-        "dim_opa": 80,
+        "dim_opa": 120,
         "show_ticks": true,
         "minor_tick_step": 500,
         "major_tick_step": 1000,
@@ -290,8 +290,8 @@
         "major_tick_color": 0,
         "label_color": 3016,
         "label_gap": -40,
-        "redline_recolor_ticks": false,
-        "label_font": "DSEG14:14",
+        "redline_recolor_ticks": true,
+        "label_font": "DSEG14I:14",
         "path": [
           260,
           248,
@@ -315,8 +315,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "TEMP",
-        "font": "DSEG14:14",
-        "text_color": 3016
+        "font": "DSEG14I:14",
+        "text_color": 5612
       }
     },
     {
@@ -359,8 +359,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "PRESS",
-        "font": "DSEG14:14",
-        "text_color": 3016
+        "font": "DSEG14I:14",
+        "text_color": 5612
       }
     },
     {
@@ -403,8 +403,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "FUEL",
-        "font": "DSEG14:14",
-        "text_color": 3016
+        "font": "DSEG14I:14",
+        "text_color": 5612
       }
     },
     {
@@ -446,8 +446,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "VOLTS",
-        "font": "DSEG14:14",
-        "text_color": 3016
+        "font": "DSEG14I:14",
+        "text_color": 5612
       }
     },
     {
@@ -461,7 +461,7 @@
         "slot": 0,
         "decimals": 1,
         "signal_name": "BATTERY_VOLTAGE",
-        "font": "DSEG7:26",
+        "font": "DSEG7I:26",
         "text_color": 7984
       }
     },
@@ -476,8 +476,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "ODO",
-        "font": "DSEG14:13",
-        "text_color": 3016
+        "font": "DSEG14I:13",
+        "text_color": 5612
       }
     },
     {
@@ -491,7 +491,7 @@
         "slot": 0,
         "decimals": 0,
         "signal_name": "ODOMETER",
-        "font": "DSEG7:24",
+        "font": "DSEG7I:24",
         "text_color": 7984
       }
     },
@@ -506,8 +506,8 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "TRIP",
-        "font": "DSEG14:13",
-        "text_color": 3016
+        "font": "DSEG14I:13",
+        "text_color": 5612
       }
     },
     {
@@ -521,7 +521,7 @@
         "slot": 0,
         "decimals": 0,
         "static_text": "0.0",
-        "font": "DSEG7:24",
+        "font": "DSEG7I:24",
         "text_color": 7984
       }
     },
@@ -828,8 +828,8 @@
       "h": 26,
       "config": {
         "static_text": "0",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
@@ -841,8 +841,8 @@
       "h": 26,
       "config": {
         "static_text": "1",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
@@ -854,73 +854,151 @@
       "h": 26,
       "config": {
         "static_text": "2",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
       "type": "text",
       "id": "tnum_3000",
-      "x": 46,
-      "y": -20,
+      "x": 42,
+      "y": -12,
       "w": 44,
       "h": 26,
       "config": {
         "static_text": "3",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
       "type": "text",
       "id": "tnum_4000",
-      "x": 66,
-      "y": -72,
+      "x": 60,
+      "y": -58,
       "w": 44,
       "h": 26,
       "config": {
         "static_text": "4",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
       "type": "text",
       "id": "tnum_5000",
-      "x": 86,
-      "y": -124,
+      "x": 80,
+      "y": -104,
       "w": 44,
       "h": 26,
       "config": {
         "static_text": "5",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 3016
       }
     },
     {
       "type": "text",
       "id": "tnum_6000",
-      "x": 104,
-      "y": -104,
+      "x": 108,
+      "y": -118,
       "w": 44,
       "h": 26,
       "config": {
         "static_text": "6",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 63778
       }
     },
     {
       "type": "text",
       "id": "tnum_7000",
-      "x": 146,
-      "y": -104,
+      "x": 150,
+      "y": -118,
       "w": 44,
       "h": 26,
       "config": {
         "static_text": "7",
-        "font": "DSEG14:13",
-        "text_color": 9741
+        "font": "DSEG7I:15",
+        "text_color": 63778
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_temp_bar_lo",
+      "x": -353,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "C",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_temp_bar_hi",
+      "x": -147,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "H",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_fuel_bar_lo",
+      "x": 147,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "E",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_fuel_bar_hi",
+      "x": 353,
+      "y": 138,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "F",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_press_bar_lo",
+      "x": -353,
+      "y": 202,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "L",
+        "font": "DSEG14I:11",
+        "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "emark_press_bar_hi",
+      "x": -147,
+      "y": 202,
+      "w": 22,
+      "h": 18,
+      "config": {
+        "static_text": "H",
+        "font": "DSEG14I:11",
+        "text_color": 3016
       }
     }
   ]
