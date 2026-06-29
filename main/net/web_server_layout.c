@@ -562,9 +562,17 @@ static const httpd_uri_t layout_preview_uri = {.uri = "/api/layout/preview",
  *   ?details=1:     {"active":"foo", "layouts":[{"name":"name1","size":N},...]}
  *                   (file-manager shape — sized for Storage Manager) */
 static esp_err_t layout_list_handler(httpd_req_t *req) {
-	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	/* Heap, not stack: at LAYOUT_MAX_COUNT=48 the name table is 1.5 KB, too
+	 * much to sit comfortably on the 5 KB httpd task stack. */
+	char (*names)[LAYOUT_MAX_NAME] =
+		malloc((size_t)LAYOUT_MAX_COUNT * LAYOUT_MAX_NAME);
+	if (!names) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
 	int count = layout_manager_list(names, LAYOUT_MAX_COUNT);
 	if (count < 0) {
+		free(names);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to list layouts");
 		return ESP_FAIL;
@@ -608,6 +616,7 @@ static esp_err_t layout_list_handler(httpd_req_t *req) {
 			cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
 		}
 	}
+	free(names);   /* names copied into the cJSON array above; done with it */
 
 	char *json_str = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);
@@ -1484,9 +1493,15 @@ static const httpd_uri_t layout_rename_uri = {.uri = "/api/layout/rename",
 
 /* GET /api/splash/list â€” list splash layouts + active splash name */
 static esp_err_t splash_list_handler(httpd_req_t *req) {
-	char names[LAYOUT_MAX_COUNT][LAYOUT_MAX_NAME];
+	char (*names)[LAYOUT_MAX_NAME] =
+		malloc((size_t)LAYOUT_MAX_COUNT * LAYOUT_MAX_NAME);   /* off the httpd stack */
+	if (!names) {
+		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+		return ESP_FAIL;
+	}
 	int count = layout_manager_list_splash(names, LAYOUT_MAX_COUNT);
 	if (count < 0) {
+		free(names);
 		httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
 							"Failed to list splashes");
 		return ESP_FAIL;
@@ -1517,6 +1532,7 @@ static esp_err_t splash_list_handler(httpd_req_t *req) {
 	cJSON *arr = cJSON_AddArrayToObject(root, "splashes");
 	for (int i = 0; i < count; i++)
 		cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+	free(names);
 
 	char *json_str = cJSON_PrintUnformatted(root);
 	cJSON_Delete(root);

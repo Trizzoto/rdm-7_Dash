@@ -26,8 +26,13 @@ extern "C" {
 /* Maximum length of a layout name (without .json extension). */
 #define LAYOUT_MAX_NAME 32
 
-/* Maximum number of layouts the list function will return. */
-#define LAYOUT_MAX_COUNT 16
+/* Maximum number of layouts the list function will return. Was 16, which
+ * silently truncated the dropdown once a device accumulated more layouts than
+ * that (newer ones past the cap vanished from the web editor + on-device menu
+ * even though they were saved and could be the active layout). The web list
+ * handlers heap-allocate their name table so this larger count doesn't strain
+ * the 5 KB httpd task stack (LAYOUT_MAX_COUNT * LAYOUT_MAX_NAME bytes). */
+#define LAYOUT_MAX_COUNT 48
 
 /* Maximum JSON file size we'll read or accept (in bytes). */
 #define LAYOUT_MAX_FILE_BYTES 32768
