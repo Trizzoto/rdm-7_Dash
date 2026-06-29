@@ -262,9 +262,9 @@
       "type": "pathbar",
       "id": "tach",
       "x": 6,
-      "y": -65,
-      "w": 330,
-      "h": 185,
+      "y": -55,
+      "w": 340,
+      "h": 215,
       "config": {
         "signal_name": "RPM",
         "max": 7000,
@@ -280,7 +280,7 @@
         "show_ticks": true,
         "minor_tick_step": 500,
         "major_tick_step": 1000,
-        "show_labels": false,
+        "show_labels": true,
         "tick_label_divisor": 1000,
         "tick_len": 34,
         "major_tick_len": 34,
@@ -289,9 +289,9 @@
         "tick_color": 0,
         "major_tick_color": 0,
         "label_color": 3016,
-        "label_gap": -40,
+        "label_gap": 16,
         "redline_recolor_ticks": true,
-        "label_font": "DSEG14I:14",
+        "label_font": "DSEG7I:15",
         "path": [
           260,
           248,
@@ -301,7 +301,9 @@
           101,
           552,
           101
-        ]
+        ],
+        "label_side": 1,
+        "label_along_offset": 0
       }
     },
     {
@@ -821,110 +823,6 @@
     },
     {
       "type": "text",
-      "id": "tnum_0",
-      "x": -140,
-      "y": 44,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "0",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_1000",
-      "x": -84,
-      "y": 44,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "1",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_2000",
-      "x": -27,
-      "y": 44,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "2",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_3000",
-      "x": 42,
-      "y": -12,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "3",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_4000",
-      "x": 60,
-      "y": -58,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "4",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_5000",
-      "x": 80,
-      "y": -104,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "5",
-        "font": "DSEG7I:15",
-        "text_color": 3016
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_6000",
-      "x": 108,
-      "y": -118,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "6",
-        "font": "DSEG7I:15",
-        "text_color": 63778
-      }
-    },
-    {
-      "type": "text",
-      "id": "tnum_7000",
-      "x": 150,
-      "y": -118,
-      "w": 44,
-      "h": 26,
-      "config": {
-        "static_text": "7",
-        "font": "DSEG7I:15",
-        "text_color": 63778
-      }
-    },
-    {
-      "type": "text",
       "id": "emark_temp_bar_lo",
       "x": -353,
       "y": 138,
@@ -999,6 +897,114 @@
         "static_text": "H",
         "font": "DSEG14I:11",
         "text_color": 3016
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_oil",
+      "x": -287,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "static_text": "OIL",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "OIL_PRESSURE",
+            "op": "<",
+            "threshold": 80,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_batt",
+      "x": -205,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "static_text": "BATT",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "BATTERY_VOLTAGE",
+            "op": "<",
+            "threshold": 12.2,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_temp",
+      "x": 205,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "static_text": "TEMP",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "COOLANT_TEMP",
+            "op": ">",
+            "threshold": 110,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 63778
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "tt_fuel",
+      "x": 290,
+      "y": -196,
+      "w": 74,
+      "h": 22,
+      "config": {
+        "static_text": "FUEL",
+        "font": "DSEG14I:13",
+        "text_color": 3016,
+        "rules": [
+          {
+            "signal_name": "FUEL_LEVEL",
+            "op": "<",
+            "threshold": 15,
+            "overrides": [
+              {
+                "field": "text_color",
+                "type": "color",
+                "value": 64896
+              }
+            ]
+          }
+        ]
       }
     }
   ]
