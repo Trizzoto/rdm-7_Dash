@@ -1027,6 +1027,32 @@ static esp_err_t _instantiate_widgets(cJSON *root, lv_obj_t *parent,
 		return ESP_FAIL;
 	}
 
+	/* ── Pre-register placeholder signals for every widget-referenced name ──
+	 * Post ADR-0005/0006 layouts bind widgets to signals by name and keep
+	 * decode in channels, not signals[]. On a device with no channels set up
+	 * yet (fresh out of the box / on the bench) those names are unregistered,
+	 * so widgets fail to subscribe in create() and stay blank — and the
+	 * simulator has nothing to drive. Register a decode-less placeholder for
+	 * any referenced name not already in the registry so widgets subscribe
+	 * now. When the user later configures a channel, register_decoded_signals()
+	 * UPSERTs the real CAN decode into the same slot (subscribers preserved),
+	 * so this is transparent on a configured device. */
+	{
+		const cJSON *pw = NULL;
+		cJSON_ArrayForEach(pw, widgets_arr) {
+			const cJSON *cfg = cJSON_GetObjectItemCaseSensitive(pw, "config");
+			if (!cfg) continue;
+			const cJSON *sn = cJSON_GetObjectItemCaseSensitive(cfg, "signal_name");
+			if (!cJSON_IsString(sn) || !sn->valuestring || sn->valuestring[0] == '\0')
+				continue;
+			if (signal_find_by_name(sn->valuestring) < 0) {
+				signal_register_with_source(sn->valuestring, 0, 0, 0,
+				                            1.0f, 0.0f, false, 1, "",
+				                            SIGNAL_SOURCE_INTERNAL);
+			}
+		}
+	}
+
 	const cJSON *wj = NULL;
 	uint16_t loaded_idx = 0;
 	cJSON_ArrayForEach(wj, widgets_arr) {

@@ -1525,7 +1525,7 @@ static void _rpm_bar_to_json(widget_t *w, cJSON *out) {
 	cJSON_AddNumberToObject(cfg, "limiter_value", rd->limiter_value);
 	cJSON_AddNumberToObject(cfg, "limiter_color", (int)rd->limiter_color.full);
 	cJSON_AddNumberToObject(cfg, "flash_speed", rd->flash_speed_ms);
-	if (rd->smooth.smoothing_ms != 0)   /* default 0 (off) — defaults-only emit */
+	if (rd->smooth.smoothing_ms != 20)   /* default 20 ms — defaults-only emit */
 		cJSON_AddNumberToObject(cfg, "smoothing_ms", rd->smooth.smoothing_ms);
 	if (rd->fill_dir != 0)              /* default 0 (L→R) — defaults-only emit */
 		cJSON_AddNumberToObject(cfg, "fill_dir", rd->fill_dir);
@@ -2042,6 +2042,7 @@ widget_t *widget_rpm_bar_create_instance(void) {
 	}
 
 	rd->signal_index = -1;
+	rd->smooth.smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
 
 	/* Sensible defaults */
 	rd->gauge_max = 8000;

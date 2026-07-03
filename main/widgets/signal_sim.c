@@ -9,6 +9,9 @@
 #include "widget_arc.h"
 #include "widget_shift_light.h"
 #include "widget_pathbar.h"
+#include "widget_text.h"
+#include "widget_panel.h"
+#include "data/canonical_channels.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -35,6 +38,11 @@ typedef struct {
 static bool         s_sim_active   = false;
 static lv_timer_t  *s_sim_timer    = NULL;
 static sim_bounds_t s_bounds[SIM_MAX_SIGNALS];
+/* Which signals the active layout actually displays — only these get driven.
+ * Lets the sim animate placeholder (can_id==0) signals on a fresh/bench device
+ * while NOT touching internal signals (gear calc, fuel sender, DTC count, …)
+ * that no widget shows. Rebuilt by _rebuild_signal_state on every (re)start. */
+static bool         s_driven[SIM_MAX_SIGNALS];
 static float        s_phase[SIM_MAX_SIGNALS];
 /* Emit threshold state: last value actually injected per signal + a validity
  * flag. We only inject when the triangle-wave value has moved by at least
@@ -54,12 +62,14 @@ static void _rebuild_signal_state(uint16_t count)
     for (uint16_t i = 0; i < count && i < SIM_MAX_SIGNALS; i++) {
         s_bounds[i].min = 0.0f;
         s_bounds[i].max = 100.0f;
+        s_driven[i] = false;
     }
 
     widget_t *widgets[WIDGET_REGISTRY_MAX];
     uint8_t wcount = 0;
     widget_registry_snapshot(widgets, WIDGET_REGISTRY_MAX, &wcount);
 
+    /* Pass 1 — gauges with an explicit min/max define the sweep precisely. */
     for (uint8_t wi = 0; wi < wcount; wi++) {
         widget_t *w = widgets[wi];
         if (!w || !w->type_data) continue;
@@ -135,6 +145,35 @@ static void _rebuild_signal_state(uint16_t count)
 
         s_bounds[idx].min = mn;
         s_bounds[idx].max = mx;
+        s_driven[idx]     = true;
+    }
+
+    /* Pass 2 — number-only readouts (text / panel) have no range of their own.
+     * Drive them too so digit-only layouts animate on the bench, using the
+     * canonical display range for the signal (fallback 0-100). A gauge from
+     * pass 1 already covering the same signal keeps its precise bounds. */
+    for (uint8_t wi = 0; wi < wcount; wi++) {
+        widget_t *w = widgets[wi];
+        if (!w || !w->type_data) continue;
+
+        const char *sig_name = NULL;
+        switch (w->type) {
+        case WIDGET_TEXT:  sig_name = ((text_data_t *)w->type_data)->signal_name;  break;
+        case WIDGET_PANEL: sig_name = ((panel_data_t *)w->type_data)->signal_name; break;
+        default: continue;
+        }
+        if (!sig_name || sig_name[0] == '\0') continue;
+
+        int16_t idx = signal_find_by_name(sig_name);
+        if (idx < 0 || idx >= SIM_MAX_SIGNALS) continue;
+        if (s_driven[idx]) continue;   /* a gauge already owns the bounds */
+
+        const canonical_channel_def_t *cc = canonical_channel_find_ci(sig_name);
+        if (cc && cc->max_default > cc->min_default) {
+            s_bounds[idx].min = cc->min_default;
+            s_bounds[idx].max = cc->max_default;
+        }
+        s_driven[idx] = true;
     }
 }
 
@@ -192,7 +231,11 @@ static void _sim_timer_cb(lv_timer_t *timer)
     for (uint16_t j = 0; j < batch; j++) {
         uint16_t i = (s_sim_cursor + j) % count;
         signal_t *sig = signal_get_by_index(i);
-        if (!sig || sig->can_id == 0) continue;
+        /* Drive only what the active layout displays — regardless of whether
+         * the signal has a CAN decode yet. This makes a fresh/bench device
+         * (placeholder signals, can_id==0) animate, while leaving undisplayed
+         * internal signals (gear calc, fuel sender, DTC count) untouched. */
+        if (!sig || i >= SIM_MAX_SIGNALS || !s_driven[i]) continue;
 
         s_phase[i] += delta;
         if (s_phase[i] >= 1.0f) s_phase[i] -= 1.0f;

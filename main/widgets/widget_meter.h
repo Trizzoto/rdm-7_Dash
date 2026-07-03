@@ -31,6 +31,9 @@ typedef struct {
 	 * channel via _meter_apply_channel. */
 	float   min;
 	float   max;
+	bool    range_from_layout;      /* layout carried an explicit min/max → keep the
+	                                 * user's gauge scale; don't let the bound channel
+	                                 * override it in _meter_apply_channel */
 	int32_t value_scale;            /* 10^value_decimals; 1 = no decimals */
 	uint8_t value_decimals;         /* 0..3 — drives tick-label precision */
 	int16_t start_angle;

@@ -7184,7 +7184,7 @@
                             { name: "rpm_max", label: "RPM Max", type: "number", def: 7000, cat: "data", group: "Value", help: "The highest RPM the bar shows. It fills from 0 up to here." },
                             { name: "redline", label: "Redline RPM", type: "number", def: 6000, cat: "data", group: "Value", help: "The RPM where the red warning zone starts - the bar changes colour past this point." },
                             { name: "limiter_value", label: "Limiter RPM", type: "number", def: 7000, cat: "data", group: "Value", help: "The RPM where your rev limiter kicks in - the bar reacts here." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "bar_color", label: "Bar Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the bar below the redline.", nightOverridable: true },
                             { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance", group: "Fill", help: "Which way the bar fills (left, right, up or down).",
                               options: [
@@ -7287,7 +7287,7 @@
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the bar (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "show_bar_value", label: "Show Value", type: "checkbox", def: false, cat: "data", group: "Value", help: "Show the number on the bar." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "invert_bar_value", label: "Invert Fill", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Flip it so a high reading empties the bar instead of filling it." },
                             { name: "center_fill", label: "Center Fill (±)", type: "checkbox", def: false, cat: "appearance", group: "Fill", help: "Fill out from the middle of the bar in both directions." },
                             { name: "fill_dir", label: "Fill Direction", type: "select", def: 0, cat: "appearance", group: "Fill", help: "Which way the bar fills (left, right, up or down).",
@@ -7450,7 +7450,7 @@
                             { name: "redline_arc_width", label: "Arc Width", type: "stepper", def: 6, cat: "data", group: "Redline", help: "How thick that band is.", min: 1, max: 30, enabledBy: "redline_enabled" },
                             { name: "redline_arc_r_mod", label: "Arc Inset", type: "stepper", def: 0, cat: "data", group: "Redline", help: "Move the warning band in or out from the dial.", min: -50, max: 50, enabledBy: "redline_enabled" },
                             { name: "redline_recolor_ticks", label: "Recolor Ticks", type: "checkbox", def: true, cat: "data", group: "Redline", help: "Turn the marks inside the warning zone that colour too.", enabledBy: "redline_enabled" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 300, step: 10 },
                             { name: "meter_bg_color", label: "Background Color", type: "color", def: 0x3D3D3D, cat: "appearance", group: "Frame", help: "Background colour of the gauge face.", nightOverridable: true },
                             { name: "meter_bg_opa", label: "Background Opacity", type: "stepper", def: 255, cat: "appearance", group: "Frame", help: "How solid the gauge face is (0 = see-through, 255 = solid).", min: 0, max: 255 },
                             { name: "bg_image_name", label: "Background Image", type: "image_picker", def: "", cat: "appearance", group: "Frame", help: "Use a picture as the gauge face.", nightOverridable: true },
@@ -7624,7 +7624,7 @@
                             { name: "anchor_value", label: "Anchor Value", type: "number", def: 50, cat: "data", group: "Value", help: "The reading you want pinned in place - e.g. 90 for your normal coolant temp.", enabledBy: "anchor_enabled" },
                             { name: "anchor_position", label: "Anchor Position (%)", type: "slider", def: 50, cat: "data", group: "Value", help: "Where that reading sits along the gauge (50 = middle, 0 = start, 100 = end).", min: 0, max: 100, enabledBy: "anchor_enabled" },
                             { name: "reverse", label: "Reverse Direction", type: "checkbox", def: false, cat: "data", group: "Value", help: "Run the gauge backwards, so the full end becomes the empty end." },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value.", min: 0, max: 300, step: 10 },
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw, instant value.", min: 0, max: 300, step: 10 },
                             { name: "arc_width", label: "Arc Width", type: "stepper", def: 10, cat: "appearance", group: "Fill", help: "How thick the coloured (filled) part of the gauge is.", min: 1, max: 50 },
                             { name: "arc_offset", label: "Arc Offset", type: "stepper", def: 0, cat: "appearance", group: "Fill", help: "Moves the ring in or out from the centre. Use it to stack one gauge inside another.", min: 0, max: 120 },
                             { name: "arc_color", label: "Arc Color", type: "color", def: 0x00FF00, cat: "appearance", group: "Fill", help: "Colour of the filled part.", nightOverridable: true },
@@ -7865,7 +7865,7 @@
                             /* Divides each number by this factor — e.g. 1000 turns a
                              * 0..8000 tach into 0..8 (print the unit elsewhere). */
                             { name: "tick_label_divisor", label: "Number Divisor", type: "number", def: 1, cat: "data", group: "Numbers", help: "Shrink the numbers by dividing them (1000 shows 7000 as '7').", min: 1, max: 100000, enabledBy: "show_labels" },
-                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 40, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500, step: 10 }
+                            { name: "smoothing_ms", label: "Smoothing (ms)", type: "slider", def: 20, cat: "data", group: "Behaviour", help: "Smooths out jumpy readings. Higher is smoother but slower to react; 0 shows the raw value.", min: 0, max: 500, step: 10 }
                         ]
                     }
                 };
@@ -11835,7 +11835,19 @@
             html += `<details class="inspector-accordion" data-rules-group="1"><summary>Rules${rules.length ? ` <span class="badge">${rules.length}</span>` : ''}</summary><div class="accordion-body">`;
             html += `<div style="font-size:11px; color:#999; margin-bottom:6px;">If a condition is met, override appearance settings.</div>`;
             rules.forEach((rule, ri) => {
-                const sigNames = (currentLayout.signals || []).map(s => s.name);
+                /* Rule condition can test ANY available channel, not just the
+                 * few this layout's widgets bind: list every active channel (by
+                 * its signal name) unioned with the layout's own signals. */
+                const sigOpts = [];
+                const _sigSeen = new Set();
+                (_chCache || []).forEach(c => {
+                    if (c.signal && !_sigSeen.has(c.signal)) { _sigSeen.add(c.signal); sigOpts.push({ name: c.signal, label: c.label || c.signal }); }
+                });
+                (currentLayout.signals || []).forEach(s => {
+                    if (s.name && !_sigSeen.has(s.name)) { _sigSeen.add(s.name); sigOpts.push({ name: s.name, label: s.name }); }
+                });
+                if (rule.signal_name && !_sigSeen.has(rule.signal_name)) { sigOpts.push({ name: rule.signal_name, label: rule.signal_name }); }
+                sigOpts.sort((a, b) => a.label.localeCompare(b.label));
                 const opOptions = ['>','<','>=','<=','==','!=','range'];
                 const overrides = rule.overrides || {};
                 const overrideCount = Object.keys(overrides).length;
@@ -11848,7 +11860,7 @@
                 html += `<div style="font-size:11px; font-weight:600; color:#e67e22; margin-bottom:4px;">IF</div>`;
                 html += `<div class="field"><label>Signal</label><select onchange="updateRule(${ri},'signal_name',this.value)" ${disabledAttr}>
                     <option value="">--</option>`;
-                sigNames.forEach(sn => { html += `<option value="${sn}" ${rule.signal_name===sn?'selected':''}>${sn}</option>`; });
+                sigOpts.forEach(o => { html += `<option value="${o.name}" ${rule.signal_name===o.name?'selected':''}>${o.label}</option>`; });
                 html += `</select></div>`;
                 html += `<div style="display:grid; grid-template-columns:auto 1fr; gap:4px;">`;
                 html += `<div class="field"><label>Op</label><select onchange="updateRule(${ri},'op',this.value)" style="width:60px;" ${disabledAttr}>`;

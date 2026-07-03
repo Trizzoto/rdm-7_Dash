@@ -22,6 +22,7 @@
 #include "ui/ui.h"
 #include "widget_types.h"
 #include "data/channel_manager.h"
+#include "data/unit_convert.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -203,8 +204,12 @@ static void _meter_apply_channel(widget_t *w) {
 	} else {
 		md->signal_index = new_idx;
 	}
-	md->min = c->min;
-	md->max = c->max;
+	/* Adopt the channel's range ONLY when the layout didn't set an explicit
+	 * meter min/max — otherwise the user's gauge scale is theirs to keep. */
+	if (!md->range_from_layout) {
+		md->min = unit_convert(c->min, c->units_native, c->units_display);
+		md->max = unit_convert(c->max, c->units_native, c->units_display);
+	}
 	/* Decimals drive the integer LVGL scale factor: a 0.0..2.0 boost channel
 	 * with decimals=1 maps to an internal 0..20 meter scale, giving 21 needle
 	 * steps instead of 3. Tick labels divide back by value_scale. */
@@ -215,7 +220,7 @@ static void _meter_apply_channel(widget_t *w) {
 	 * maps to "danger zone above the high threshold"). */
 	if (c->high_warn != CHANNEL_THRESHOLD_UNSET_HIGH) {
 		md->redline_enabled = true;
-		md->redline_threshold = c->high_warn;
+		md->redline_threshold = unit_convert(c->high_warn, c->units_native, c->units_display);
 	} else {
 		md->redline_enabled = false;
 	}
@@ -395,6 +400,11 @@ static void _meter_on_signal(float value, bool is_stale, void *user_data) {
 		fv = md->min;
 	} else {
 		fv = value;
+		/* Convert the native CAN value into the channel's display unit so the
+		 * needle shares one unit with the scale (the meter min/max are display
+		 * units, e.g. boost in psi). Identity no-op when native==display. */
+		channel_t *cc = (channel_t *)md->channel;
+		if (cc) fv = unit_convert(fv, cc->units_native, cc->units_display);
 		if (fv < md->min) fv = md->min;
 		if (fv > md->max) fv = md->max;
 	}
@@ -944,9 +954,12 @@ static void _meter_needle_draw_cb(lv_event_t *e) {
 		uint16_t div = md->tick_label_divisor > 0 ? md->tick_label_divisor : 1;
 		if (dsc->label_dsc != NULL && dsc->text != NULL) {
 			if (md->value_scale > 1) {
-				/* Fractional scale → print the real value with its decimals. */
-				lv_snprintf(dsc->text, 16, "%.*f", md->value_decimals,
-				            shown_display / (float)div);
+				/* shown_display is ALREADY in the channel's display unit: the
+				 * scale min/max were converted in _meter_apply_channel and the
+				 * live value in _meter_on_signal, so just format. newlib snprintf,
+				 * NOT lv_snprintf (LV_SPRINTF_USE_FLOAT=0 -> emits a literal "f"). */
+				snprintf(dsc->text, 16, "%.*f", md->value_decimals,
+				         shown_display / (float)div);
 			} else if (needs_relabel || div > 1) {
 				int32_t iv = (int32_t)lroundf(shown_display);
 				int32_t display_v = (div > 1) ? (iv / (int32_t)div) : iv;
@@ -1997,7 +2010,7 @@ static void _meter_to_json(widget_t *w, cJSON *out) {
 		cJSON_AddNumberToObject(cfg, "scale_padding", md->scale_padding);
 	if (md->label_gap != 10)
 		cJSON_AddNumberToObject(cfg, "label_gap", md->label_gap);
-	if (md->smoothing_ms != 0)
+	if (md->smoothing_ms != 20)
 		cJSON_AddNumberToObject(cfg, "smoothing_ms", md->smoothing_ms);
 	if (md->tick_label_font[0] != '\0')
 		cJSON_AddStringToObject(cfg, "tick_label_font", md->tick_label_font);
@@ -2080,10 +2093,11 @@ static void _meter_from_json(widget_t *w, cJSON *in) {
 		if (idx < 13)
 			md->value_idx = idx;
 	}
-	if (cJSON_IsNumber(min_item))
-		md->min = (float)min_item->valuedouble;
-	if (cJSON_IsNumber(max_item))
-		md->max = (float)max_item->valuedouble;
+	if (cJSON_IsNumber(min_item)) md->min = (float)min_item->valuedouble;
+	if (cJSON_IsNumber(max_item)) md->max = (float)max_item->valuedouble;
+	/* A non-default range is the user's own gauge scale — keep it over the bound
+	 * channel's. A fresh 0..100 meter still adopts the channel range on bind. */
+	if (md->min != 0.0f || md->max != 100.0f) md->range_from_layout = true;
 	if (cJSON_IsNumber(sa_item))
 		md->start_angle = (int16_t)sa_item->valueint;
 	if (cJSON_IsNumber(ea_item))
@@ -2945,6 +2959,7 @@ widget_t *widget_meter_create_instance(uint8_t value_idx) {
 	md->scale = NULL;
 	md->needle = NULL;
 	md->signal_index = -1;
+	md->smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
 
 	/* Tick defaults */
 	md->minor_tick_count = 21;

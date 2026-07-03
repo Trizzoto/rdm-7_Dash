@@ -147,8 +147,8 @@ const canonical_channel_def_t CANONICAL_CHANNELS[] = {
 {
 	.id="lambda_bank1", .label="Lambda Bank 1",
 	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
-	.units_native="λ", .units_display_def="λ", .decimals=3,
-	.min_default=600, .max_default=1300,   /* λ × 1000 stored as int */
+	.units_native="λ", .units_display_def="λ", .decimals=2,
+	.min_default=0.7, .max_default=1.3,    /* real λ; 1.0 = stoich */
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0x80FF80,
 	.notes="Lambda × 1000 internal. λ 1.0 = stoich."
@@ -156,8 +156,8 @@ const canonical_channel_def_t CANONICAL_CHANNELS[] = {
 {
 	.id="lambda_bank2", .label="Lambda Bank 2",
 	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
-	.units_native="λ", .units_display_def="λ", .decimals=3,
-	.min_default=600, .max_default=1300,
+	.units_native="λ", .units_display_def="λ", .decimals=2,
+	.min_default=0.7, .max_default=1.3,
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0x80FF80, .notes=NULL
 },
@@ -195,8 +195,8 @@ const canonical_channel_def_t CANONICAL_CHANNELS[] = {
 {
 	.id="target_lambda", .label="Target Lambda",
 	.group=CHGRP_ENGINE_CORE, .tier=2, .card=CHCARD_SCALAR,
-	.units_native="λ", .units_display_def="λ", .decimals=3,
-	.min_default=600, .max_default=1300,   /* λ × 1000 stored as int */
+	.units_native="λ", .units_display_def="λ", .decimals=2,
+	.min_default=0.7, .max_default=1.3,    /* real λ; 1.0 = stoich */
 	.low_warn=UL, .high_warn=UH,
 	.color_normal=0xA0FFA0,
 	.notes="Lambda × 1000 internal. Closed-loop target the ECU is aiming for."

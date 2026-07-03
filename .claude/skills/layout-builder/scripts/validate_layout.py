@@ -13,8 +13,18 @@ bindings against the live device.
 import json, io, os, sys, re, argparse
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+# Standalone handoff (no RDM-7_Dash repo checkout): fall back to a bundled
+# snapshot shipped alongside this script — see _bundled/README.txt.
+BUNDLED = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "_bundled"))
 SCHEMA = os.path.join(ROOT, "schema", "widgets.schema.json")
+if not os.path.exists(SCHEMA):
+    SCHEMA = os.path.join(BUNDLED, "schema", "widgets.schema.json")
 WIDGETS_DIR = os.path.join(ROOT, "main", "widgets")
+if not os.path.isdir(WIDGETS_DIR):
+    WIDGETS_DIR = os.path.join(BUNDLED, "widgets")
+LAYOUT_MANAGER_H = os.path.join(ROOT, "main", "layout", "layout_manager.h")
+if not os.path.exists(LAYOUT_MANAGER_H):
+    LAYOUT_MANAGER_H = os.path.join(BUNDLED, "layout_manager.h")
 MAX_BYTES = 32768
 
 # Binding / positioning fields handled by the common loader (valid on any widget,
@@ -50,7 +60,7 @@ def load_schema():
     ver = "?"
     try:
         import re
-        h = io.open(os.path.join(ROOT, "main", "layout", "layout_manager.h"), encoding="utf-8").read()
+        h = io.open(LAYOUT_MANAGER_H, encoding="utf-8").read()
         m = re.search(r"#define\s+LAYOUT_SCHEMA_VERSION\s+(\d+)", h)
         ver = int(m.group(1)) if m else "?"
     except Exception:

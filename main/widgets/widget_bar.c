@@ -1140,7 +1140,7 @@ static void _bar_to_json(widget_t *w, cJSON *out) {
 			cJSON_AddStringToObject(cfg, "label", bd->label);
 		cJSON_AddNumberToObject(cfg, "bar_min", bd->bar_min);
 		cJSON_AddNumberToObject(cfg, "bar_max", bd->bar_max);
-		if (bd->smooth.smoothing_ms != 0)
+		if (bd->smooth.smoothing_ms != 20)
 			cJSON_AddNumberToObject(cfg, "smoothing_ms", bd->smooth.smoothing_ms);
 		if (bd->anchor_enabled)
 			cJSON_AddBoolToObject(cfg, "anchor_enabled", true);
@@ -2048,6 +2048,7 @@ widget_t *widget_bar_create_instance(uint8_t slot) {
 	bd->tick_width  = 2;
 	bd->tick_color  = THEME_COLOR_TEXT_PRIMARY;   /* 0xE8E8E8 */
 	bd->tick_side   = 2;                            /* Both */
+	bd->smooth.smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
 
 	w->type = WIDGET_BAR;
 	w->slot = slot & 1;

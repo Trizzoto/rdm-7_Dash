@@ -1873,7 +1873,7 @@ static void _arc_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "signal_min", (double)d->signal_min);
     if (d->signal_max != ARC_DEFAULT_SIG_MAX)
         cJSON_AddNumberToObject(cfg, "signal_max", (double)d->signal_max);
-    if (d->smooth.smoothing_ms != 0)
+    if (d->smooth.smoothing_ms != 20)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", d->smooth.smoothing_ms);
 
     /* Image mode */
@@ -3110,6 +3110,7 @@ widget_t *widget_arc_create_instance(uint8_t slot) {
     d->signal_index  = -1;
     d->signal_min    = ARC_DEFAULT_SIG_MIN;
     d->signal_max    = ARC_DEFAULT_SIG_MAX;
+    d->smooth.smoothing_ms = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
 
     /* Redline defaults — disabled by default; threshold/color match
      * widget_rpm_bar so users muscle-memory carries over. */

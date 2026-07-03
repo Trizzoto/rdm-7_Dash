@@ -969,7 +969,7 @@ static void _pathbar_to_json(widget_t *w, cJSON *out) {
         cJSON_AddNumberToObject(cfg, "redline_color", _color_to_u32(pd->redline_color));
     if (pd->dim_opa != DEF_DIM_OPA)
         cJSON_AddNumberToObject(cfg, "dim_opa", pd->dim_opa);
-    if (pd->smoothing_ms != 0)
+    if (pd->smoothing_ms != 20)
         cJSON_AddNumberToObject(cfg, "smoothing_ms", pd->smoothing_ms);
     if (pd->smooth) cJSON_AddBoolToObject(cfg, "smooth", true);
 
@@ -1211,7 +1211,7 @@ widget_t *widget_pathbar_create_instance(uint8_t slot) {
     pd->lead_edge_color   = lv_color_hex(DEF_LEAD_COLOR);   /* 888->565 (NOT _u32_to_color, which expects raw 565) */
     pd->lead_edge_width   = DEF_LEAD_WIDTH;
     pd->dim_opa       = DEF_DIM_OPA;
-    pd->smoothing_ms  = 0;
+    pd->smoothing_ms  = 20;   /* default: gentle 20 ms glide (snappy, no lag) */
     pd->show_ticks          = false;
     pd->show_labels         = false;
     pd->minor_tick_step     = 0.0f;
