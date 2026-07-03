@@ -230,7 +230,12 @@ static esp_err_t _widgets_handler(httpd_req_t *req) {
 					if (v.str) cJSON_AddStringToObject(fields, f->name, v.str);
 					break;
 				default:  /* NUMBER/STEPPER/SLIDER/SELECT/CAN_ID */
-					cJSON_AddNumberToObject(fields, f->name, v.i);
+					/* Fractional-default fields travel in .f — reading .i
+					 * would reinterpret the float bits (and vice versa). */
+					if (widget_field_is_fractional(f))
+						cJSON_AddNumberToObject(fields, f->name, v.f);
+					else
+						cJSON_AddNumberToObject(fields, f->name, v.i);
 					break;
 				}
 			}

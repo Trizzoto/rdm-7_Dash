@@ -4152,7 +4152,7 @@
           "name": "shape",
           "label": "Shape",
           "type": "select",
-          "default": 1,
+          "default": 0,
           "category": "appearance",
           "options": [
             { "value": 0, "label": "Custom" },
@@ -4161,7 +4161,7 @@
             { "value": 3, "label": "45° Bend" },
             { "value": 4, "label": "J-Hook" }
           ],
-          "help": "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path.",
+          "help": "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path. Default matches the firmware factory default (0 = Custom): defaults-only saves omit this field, so a mismatched editor default silently relabels saved custom bars.",
           "group": "Shape"
         },
         {

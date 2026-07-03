@@ -7816,7 +7816,7 @@
                             { name: "lead_edge_width", label: "Leading Edge Width", type: "stepper", def: 6, cat: "appearance", group: "Fill", help: "How wide the bright tip is.", min: 0, max: 40, enabledBy: "lead_edge_enabled" },
                             { name: "redline_color", label: "Redline Color", type: "color", def: 0xFF5C32, cat: "appearance", group: "Redline", help: "Colour of the warning zone." },
                             { name: "redline_recolor_ticks", label: "Recolor Ticks Past Redline", type: "checkbox", def: true, cat: "appearance", group: "Redline", help: "Turn the marks inside the warning zone that colour too.", enabledBy: "show_ticks" },
-                            { name: "shape", label: "Shape", type: "select", def: 1, cat: "appearance", group: "Shape", help: "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path.",
+                            { name: "shape", label: "Shape", type: "select", def: 0, cat: "appearance", group: "Shape", help: "Pick a ready-made shape (straight, L-bend, 45°, or the curved J-hook tacho) sized to fit the box, or Custom to draw your own path. Default matches the firmware factory default (0 = Custom): defaults-only saves omit this field, so a mismatched editor default silently relabels saved custom bars.",
                               options: [
                                   { v: 0, l: "Custom" },
                                   { v: 1, l: "L-Bend" },
@@ -16781,6 +16781,13 @@
             _autoSaveTimer = setTimeout(() => {
                 _autoSaveTimer = null;
                 if (!currentLayout || !Array.isArray(currentLayout.widgets)) return;
+                /* NEVER auto-save an empty canvas over the active layout. The
+                 * editor's widgets[] is [] for the sub-second window between
+                 * page load and the active-layout fetch completing; an edit or
+                 * reload landing in that window would otherwise debounce-save
+                 * {widgets:[]} and silently wipe the layout on disk. A genuine
+                 * "clear the layout" is a deliberate act — use explicit Save. */
+                if (currentLayout.widgets.length === 0) return;
                 if (typeof saveActiveLayout === 'function') saveActiveLayout({ silent: true });
             }, AUTOSAVE_DEBOUNCE_MS);
         }

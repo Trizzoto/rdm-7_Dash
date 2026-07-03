@@ -734,7 +734,7 @@ static bool _toggle_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "font") == 0)                { out->str = d->font;         return true; }
 	if (strcmp(name, "image_name") == 0)          { out->str = d->image_name;   return true; }
 	if (strcmp(name, "show_label") == 0)          { out->b = d->show_label;     return true; }
-	if (strcmp(name, "signal_on_threshold") == 0) { out->i = (int32_t)d->signal_on_threshold; return true; }
+	if (strcmp(name, "signal_on_threshold") == 0) { out->f = d->signal_on_threshold; return true; }  /* fractional: .f per contract */
 	if (strcmp(name, "tx_can_id") == 0)           { out->i = (int32_t)d->tx_can_id;    return true; }
 	if (strcmp(name, "tx_bit_start") == 0)        { out->i = d->tx_bit_start;   return true; }
 	if (strcmp(name, "tx_bit_length") == 0)       { out->i = d->tx_bit_length;  return true; }
@@ -797,7 +797,7 @@ static bool _toggle_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "signal_on_threshold") == 0) {
-		d->signal_on_threshold = (float)in->i;
+		d->signal_on_threshold = in->f;   /* fractional: .f per contract */
 		return true;
 	}
 	if (strcmp(name, "tx_can_id") == 0)     { d->tx_can_id     = (uint32_t)in->i; return true; }

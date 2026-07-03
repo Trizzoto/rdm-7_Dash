@@ -328,9 +328,23 @@ static void _apply_field_color(const char *name, lv_color_t c) {
     }
 }
 
+/* Fractional fields (schema default_float set) travel in the union's .f —
+ * both sides key off the SAME gen-table flag, so int/float bits never alias. */
+static bool _field_is_fractional(const char *name) {
+    if (!s_widget) return false;
+    const widget_fields_def_t *def = widget_fields_for_type(s_widget->type);
+    if (!def) return false;
+    for (uint16_t i = 0; i < def->field_count; i++)
+        if (strcmp(def->fields[i].name, name) == 0)
+            return widget_field_is_fractional(&def->fields[i]);
+    return false;
+}
+
 static void _apply_field_int(const char *name, int v) {
     if (!s_widget || !s_widget->inspector_set) return;
-    widget_field_value_t val = { .i = v };
+    widget_field_value_t val;
+    if (_field_is_fractional(name)) val.f = (float)v;
+    else                            val.i = v;
     s_widget->inspector_set(s_widget, name, &val);
 
     /* Update the row's value readout. */
@@ -985,17 +999,23 @@ static void _text_row_clicked_cb(lv_event_t *e) {
                               _text_confirm_cb, _text_cancel_cb, NULL);
 }
 
-/* Map a numeric ASCII string to int when the numeric dialog confirms. */
+/* Map a numeric ASCII string to a value when the numeric dialog confirms.
+ * Fractional fields parse with atof so on-device entry of e.g. 0.75 works
+ * (atoi silently truncated those to 0 before). */
 static void _numeric_confirm_cb(const char *text, void *user_data) {
     (void)user_data;
     if (s_active_text_field[0] == '\0' || !s_widget || !s_widget->inspector_set) return;
+    bool frac = _field_is_fractional(s_active_text_field);
     int v_int = text ? atoi(text) : 0;
-    widget_field_value_t v = { .i = v_int };
+    widget_field_value_t v;
+    if (frac) v.f = text ? (float)atof(text) : 0.0f;
+    else      v.i = v_int;
     s_widget->inspector_set(s_widget, s_active_text_field, &v);
 
     inspector_row_t *r = _find_row(s_active_text_field);
     if (r && r->value_lbl && lv_obj_is_valid(r->value_lbl)) {
-        lv_label_set_text_fmt(r->value_lbl, "%d", v_int);
+        if (frac) lv_label_set_text_fmt(r->value_lbl, "%.2f", (double)v.f);
+        else      lv_label_set_text_fmt(r->value_lbl, "%d", v_int);
     }
     s_active_text_field[0] = '\0';
 }

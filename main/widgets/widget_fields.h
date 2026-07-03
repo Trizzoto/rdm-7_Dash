@@ -97,6 +97,14 @@ const widget_fields_def_t *widget_fields_for_type(widget_type_t t);
 const widget_field_t *widget_fields_find(const widget_fields_def_t *def,
                                           const char *name);
 
+/* True when the field's schema default is fractional (e.g. 0.5) — such
+ * fields travel in widget_field_value_t.f; integer-default fields use .i.
+ * The codegen mirrors every numeric default into default_float, so the
+ * discriminator is int-vs-float default inequality, NOT default_float != 0. */
+static inline bool widget_field_is_fractional(const widget_field_t *f) {
+    return f && ((float)f->default_int != f->default_float);
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -552,8 +552,10 @@ static bool _shl_inspector_get(const widget_t *w, const char *name,
 	if (strcmp(name, "led_width") == 0)       { out->i = d->led_width;              return true; }
 	if (strcmp(name, "led_height") == 0)      { out->i = d->led_height;             return true; }
 	if (strcmp(name, "fill_mode") == 0)       { out->i = d->fill_mode;              return true; }
-	if (strcmp(name, "threshold_mid") == 0)   { out->i = (int32_t)d->threshold_mid;  return true; }
-	if (strcmp(name, "threshold_high") == 0)  { out->i = (int32_t)d->threshold_high; return true; }
+	/* Fractional fields (schema default_float set) travel in .f — the .i
+	 * cast truncated 0.5/0.8 to 0 (widget_field_value_t contract). */
+	if (strcmp(name, "threshold_mid") == 0)   { out->f = d->threshold_mid;  return true; }
+	if (strcmp(name, "threshold_high") == 0)  { out->f = d->threshold_high; return true; }
 	if (strcmp(name, "color_low") == 0)       { out->color = lv_color_to32(d->color_low)  & 0xFFFFFF; return true; }
 	if (strcmp(name, "color_mid") == 0)       { out->color = lv_color_to32(d->color_mid)  & 0xFFFFFF; return true; }
 	if (strcmp(name, "color_high") == 0)      { out->color = lv_color_to32(d->color_high) & 0xFFFFFF; return true; }
@@ -628,14 +630,14 @@ static bool _shl_inspector_set(widget_t *w, const char *name,
 		return true;
 	}
 	if (strcmp(name, "threshold_mid") == 0) {
-		d->threshold_mid = (float)in->i;
+		d->threshold_mid = in->f;   /* fractional: .f per contract */
 		if (d->threshold_mid < 0)  d->threshold_mid = 0;
 		if (d->threshold_mid > 1)  d->threshold_mid = 1;
 		_shl_repaint(w);
 		return true;
 	}
 	if (strcmp(name, "threshold_high") == 0) {
-		d->threshold_high = (float)in->i;
+		d->threshold_high = in->f;   /* fractional: .f per contract */
 		if (d->threshold_high < 0) d->threshold_high = 0;
 		if (d->threshold_high > 1) d->threshold_high = 1;
 		_shl_repaint(w);
