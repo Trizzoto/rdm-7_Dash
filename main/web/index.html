@@ -140,15 +140,25 @@
             align-items: center;
         }
 
-        /* Workspace Layout */
+        /* Workspace Layout
+         * Column 1 is split into two stacked rows: Widgets (top) and Layers
+         * (bottom). Everything else (resize handles, canvas, Properties
+         * sidebar) spans both rows so the widgets/layers split doesn't
+         * affect their height. */
         .workspace {
             display: grid;
             grid-template-columns: var(--left-sidebar-w, 240px) 4px 1fr 4px var(--right-sidebar-w, 320px);
-            grid-template-rows: 1fr;
+            grid-template-rows: 1fr 1fr;
             flex: 1;
             min-height: 0;
             overflow: hidden;
         }
+        .sidebar-left   { grid-column: 1; grid-row: 1; }
+        .sidebar-layers { grid-column: 1; grid-row: 2; }
+        #leftResize     { grid-column: 2; grid-row: 1 / 3; }
+        .main-stage     { grid-column: 3; grid-row: 1 / 3; }
+        #rightResize    { grid-column: 4; grid-row: 1 / 3; }
+        .sidebar-right  { grid-column: 5; grid-row: 1 / 3; }
         /* When left sidebar is collapsed, squeeze it to a thin toggle strip.
          * NB: use visibility/width to hide leftResize, NOT display:none - that
          * would remove it from grid flow and shift every other child one
@@ -157,6 +167,7 @@
             grid-template-columns: 28px 0 1fr 4px var(--right-sidebar-w, 320px);
         }
         .workspace.left-collapsed .sidebar-left > *:not(.sidebar-collapse-toggle) { display: none; }
+        .workspace.left-collapsed .sidebar-layers > * { display: none; }
         .workspace.left-collapsed #leftResize { visibility: hidden; }
 
         /* Live signals panel */
@@ -229,7 +240,7 @@
          * is selected). Nudge arrows, W/H steppers, copy/paste/lock/delete,
          * optional test-value slider. Glassmorphic, animates in. */
         #widgetSelToolbar { display: none; }
-        @media (max-width: 900px), (max-height: 500px), (hover: none) and (pointer: coarse) {
+        @media (max-width: 1024px), (max-height: 500px), (hover: none) and (pointer: coarse) {
             #widgetSelToolbar {
                 display: none;
                 position: fixed;
@@ -253,6 +264,9 @@
                 to   { transform: translateY(0);   opacity: 1; }
             }
             .wst-row { display: flex; align-items: center; gap: 3px; }
+            /* Row 1 (nudge + step + copy/paste/lock/delete) wraps + centers so
+             * the last buttons never clip off the right edge on ~375px phones. */
+            .wst-row-1 { flex-wrap: wrap; justify-content: center; row-gap: 4px; }
             .wst-row-2 { justify-content: space-around; padding: 0 2px 2px; }
             .wst-btn, .wst-step, .wst-size-btn {
                 display: inline-flex; align-items: center; justify-content: center;
@@ -294,7 +308,9 @@
             .wst-step.active-10 {
                 color: #fbbf24; background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.3);
             }
-            .wst-spacer { flex: 1; }
+            /* Spacer removed on touch: row-1 now wraps + centers, so a
+             * flex-grow spacer would just fight the centering. */
+            .wst-spacer { display: none; }
             .wst-size {
                 display: inline-flex; align-items: center; gap: 4px;
                 background: rgba(255,255,255,0.03);
@@ -335,14 +351,35 @@
                 color: var(--text-muted, #9ca3af);
             }
             .wst-test-val.active { color: hsl(210,80%,60%); }
-            /* When the selection toolbar is visible, lift the zoom bar above it */
+            /* When the selection toolbar is visible, lift the zoom bar above
+             * it. Offsets account for row-1 wrapping to two lines on ~375px
+             * phones (taller toolbar). */
             body.wst-active #mobileZoomBar {
-                bottom: calc(170px + env(safe-area-inset-bottom, 0px)) !important;
+                bottom: calc(210px + env(safe-area-inset-bottom, 0px)) !important;
             }
             body.wst-active.wst-has-test #mobileZoomBar {
-                bottom: calc(220px + env(safe-area-inset-bottom, 0px)) !important;
+                bottom: calc(262px + env(safe-area-inset-bottom, 0px)) !important;
             }
             #wstLockBtn.locked { color: #fbbf24; background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.3); }
+            /* First-run coach bubble above the selection toolbar. */
+            .wst-coach {
+                position: absolute;
+                bottom: calc(100% + 8px);
+                left: 8px; right: 8px;
+                background: var(--accent, hsl(210,80%,55%));
+                color: #fff;
+                font-size: 12px; font-weight: 500;
+                padding: 9px 12px;
+                border-radius: 10px;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.45);
+                display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                animation: wst-in 0.2s ease-out;
+            }
+            .wst-coach-x {
+                font-weight: 700; white-space: nowrap;
+                border: 1px solid rgba(255,255,255,0.6);
+                border-radius: 6px; padding: 3px 8px;
+            }
         }
         /* Landscape / short viewport: consolidate toolbar to a single horizontal row */
         @media (max-height: 500px) {
@@ -417,24 +454,15 @@
         }
         #mobilePaletteSheet .palette-item { min-height: 48px; }
 
-        /* ── Mobile/tablet responsive layout ────────────────────────
-         * Tablet: left sidebar collapses by default.
-         * Phone: both sidebars overlay the canvas instead of taking
-         * horizontal space; hamburger menu gets bigger tap targets. */
-        @media (max-width: 1024px) {
-            .workspace {
-                grid-template-columns: 28px 0 1fr 4px var(--right-sidebar-w, 280px);
-            }
-            .workspace .sidebar-left > *:not(.sidebar-collapse-toggle) { display: none; }
-            /* visibility: hidden (not display:none) so the grid child count
-             * stays stable and the main canvas keeps its column. */
-            .workspace #leftResize { visibility: hidden; }
-            .workspace:not(.left-collapsed) {
-                grid-template-columns: var(--left-sidebar-w, 240px) 4px 1fr 4px var(--right-sidebar-w, 280px);
-            }
-            .workspace:not(.left-collapsed) .sidebar-left > * { display: block; }
-            .workspace:not(.left-collapsed) #leftResize { visibility: visible; }
-        }
+        /* ── Responsive layout: ONE desktop↔mobile switch ───────────
+         * There is no tablet tier. Above the breakpoint (1024px) the full
+         * two-sidebar desktop editor holds; at/below 1024px — or on ANY
+         * touch device regardless of width — the mobile layout (bottom nav +
+         * bottom sheets) takes over (see the @media at the "mobile takeover"
+         * block below). The left-sidebar collapse (#leftCollapseBtn /
+         * toggleLeftSidebar) survives only as a manual desktop convenience,
+         * no longer auto-applied. Header-overflow shedding is handled by the
+         * width-only tiers below, independent of the layout switch. */
 
         /* ── Progressive header tiers (no dead zones) ───────────────
          * Desktop tier full-inline needs ~1329px (title + 21 controls +
@@ -447,7 +475,7 @@
          * Tier A  (>= 1400px)  full desktop — no rules below fire
          * Tier B  (<= 1399px)  burger shows; drop rarely-used buttons
          * Tier C  (<= 1199px)  additionally drop Dashboard + ECU selects
-         * Tier D  (<= 900 OR touch)  drawer layout — existing rule
+         * Tier D  (<= 1024 OR touch)  mobile layout — the takeover block
          */
         @media (max-width: 1399px) {
             .mobile-burger { display: inline-flex; }
@@ -471,15 +499,13 @@
         }
 
         /* ── Studio-style mobile pattern ────────────────────────────
-         * Phone (<=600px) or landscape-short (<=500px tall):
+         * Mobile (<=1024px OR any touch device):
          *   - single-column grid, canvas full-width
-         *   - .sidebar-right becomes a bottom-sheet with drag handle
-         *   - bottom #mobileActionBar + floating #mobileZoomBar
-         * Tablet (601-900px):
-         *   - .sidebar-right slides in from the right as a drawer
-         *   - same bottom action bar
-         * Desktop (>1199px):
-         *   - mobile elements hidden, traditional side-by-side layout */
+         *   - Properties + Layers become bottom-sheets with drag handles
+         *   - bottom #mobileActionBar + floating #mobileZoomBar + Save FAB
+         * Desktop (>1024px, non-touch):
+         *   - mobile elements hidden, traditional side-by-side layout
+         * There is no tablet tier — one clean switch. */
 
         /* The dashboard layout-menu burger (#layoutMenuWrap) used to live
          * next to the layout selector and rendered a ☰ glyph identical to
@@ -563,6 +589,10 @@
         #mobileActionBar button[aria-disabled="true"] { opacity: 0.35; pointer-events: none; }
         #mobileActionBar button[aria-pressed="true"],
         #mobileActionBar button.sim-on { color: hsl(140,60%,70%); }
+        /* Save button lights up accent while there are unsaved edits so the
+         * primary "commit to device" action is obvious and thumb-reachable. */
+        #mobileSaveBtn.has-unsaved { color: var(--accent); }
+        #mobileSaveBtn.has-unsaved svg { stroke: var(--accent); }
 
         #mobileZoomBar {
             display: none;
@@ -581,9 +611,12 @@
             padding: 4px 8px;
             gap: 4px;
             opacity: 1;
-            transition: opacity 0.35s ease, transform 0.35s ease;
+            /* `bottom` is transitioned so the bar SLIDES up smoothly when the
+             * selection toolbar appears below it, instead of jumping. */
+            transition: opacity 0.35s ease, transform 0.35s ease,
+                        bottom 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
-        #mobileZoomBar.zoom-bar-faded { opacity: 0.25; transform: translateX(-50%) translateY(4px); }
+        #mobileZoomBar.zoom-bar-faded { opacity: 0.45; transform: translateX(-50%) translateY(4px); }
         #mobileZoomBar.zoom-bar-faded:hover { opacity: 1; transform: translateX(-50%) translateY(0); }
         #mobileZoomBar button {
             width: 36px; height: 36px;
@@ -603,46 +636,45 @@
         }
         #mobileSheetBackdrop.active { display: block; }
 
-        /* Tablet drawer: sidebar slides in from the right.
-         * Also fires on any touch device (hover:none + pointer:coarse) so that
-         * tablets in landscape (>900px wide) and phones in landscape still get
-         * the mobile UI instead of falling back to the desktop layout. */
-        @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+        /* ── Mobile takeover: single desktop↔mobile breakpoint ──────
+         * Fires at <=1024px OR on ANY touch device (hover:none +
+         * pointer:coarse) — so wide touchscreens / 2-in-1s get the mobile UI
+         * too, and there is no tablet middle zone. Flattens the grid to one
+         * column, hides the left sidebar + resize handles, shows the bottom
+         * nav / zoom bar / burger, and compacts the header. The off-canvas
+         * presentation of Properties/Layers is the bottom-sheet defined in
+         * the block below (it applies across this whole range). */
+        @media (max-width: 1024px), (hover: none) and (pointer: coarse) {
             .mobile-burger { display: inline-flex; }
             #mobileActionBar { display: flex; }
             #mobileZoomBar { display: flex; }
 
-            /* Flatten the workspace grid to a single column. `!important` is
-             * required to override the 1024px rule's more-specific
-             * `.workspace:not(.left-collapsed)` selector, which otherwise
-             * wins and leaves 5-column layout on phones. */
-            .workspace,
-            .workspace:not(.left-collapsed) {
-                grid-template-columns: 1fr !important;
-                grid-template-rows: 1fr !important;
+            /* Flatten the workspace grid to a single column. No tablet rule
+             * remains to fight, so plain (non-!important) rules suffice. */
+            .workspace {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr;
             }
-            .workspace .sidebar-left { display: none !important; }
-            .workspace .sidebar-resize { display: none !important; }
+            .workspace .sidebar-left { display: none; }
+            .workspace .sidebar-resize { display: none; }
             /* Main stage needs to fill the viewport; without this the
              * residual column tracks starve the canvas to ~200px. */
             main.main-stage {
-                grid-column: 1 / -1 !important;
-                width: 100% !important;
-                max-width: 100% !important;
+                grid-column: 1 / -1;
+                grid-row: 1;
+                width: 100%;
+                max-width: 100%;
+                padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
             }
-
-            .sidebar-right {
-                position: fixed;
-                top: 0; right: 0; bottom: 0;
-                width: 320px; max-width: 85vw;
-                transform: translateX(100%);
-                transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
-                box-shadow: -4px 0 24px rgba(0,0,0,0.45);
-                z-index: 9999;
+            /* When a bottom-sheet (Properties/Layers) is open, reserve its
+             * peek height so the canvas viewport shrinks to the strip above
+             * it; zoomToFit() (fired on open) then keeps the whole cluster —
+             * and the widget being edited — visible above the sheet.
+             * !important is required to beat the inline `padding:0` on the
+             * <main> element. */
+            body.sheet-open main.main-stage {
+                padding-bottom: calc(45vh + 12px) !important;
             }
-            .sidebar-right.mobile-open { transform: translateX(0); }
-
-            main.main-stage { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 
             /* Tighten header; drop desktop-only controls */
             header { padding: 4px 8px; height: 44px; }
@@ -684,23 +716,35 @@
             .layout-menu-item { padding: 14px 18px; font-size: 14px; }
         }
 
-        /* Phone + landscape-short: bottom-sheet instead of side drawer */
-        @media (max-width: 600px), (max-height: 500px) {
-            .sidebar-right {
+        /* Mobile off-canvas sheets: Properties + Layers slide up from the
+         * bottom across the WHOLE mobile range (no side-drawer variant).
+         * Self-contained (position/z-index/shadow live here now that the
+         * side-drawer block is gone). Defaults to a ~45vh "peek" so the
+         * canvas above stays visible while editing; drag the handle up to
+         * expand to sheet-full, or down to dismiss (see _setupSheetDrag). */
+        @media (max-width: 1024px), (max-height: 500px), (hover: none) and (pointer: coarse) {
+            .sidebar-right,
+            .sidebar-layers {
+                position: fixed;
+                z-index: 9999;
                 top: auto; right: 0; left: 0; bottom: 0;
                 width: 100%; max-width: 100%;
-                height: 60vh; max-height: 85vh;
+                height: 45vh; max-height: 85vh;
                 transform: translateY(100%);
                 transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
                             height 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
                 border-top: 1px solid var(--border);
                 border-top-left-radius: 14px;
                 border-top-right-radius: 14px;
+                box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
             }
-            .sidebar-right.mobile-open { transform: translateY(0); }
-            .sidebar-right.sheet-full { height: 85vh; }
+            .sidebar-right.mobile-open,
+            .sidebar-layers.mobile-open { transform: translateY(0); }
+            .sidebar-right.sheet-full,
+            .sidebar-layers.sheet-full { height: 85vh; }
             /* Drag handle pseudo-element */
-            .sidebar-right::before {
+            .sidebar-right::before,
+            .sidebar-layers::before {
                 content: "";
                 display: block;
                 width: 44px; height: 4px;
@@ -716,6 +760,10 @@
          * page zoom first. Widgets handle their own drag via pointer events. */
         #workspaceViewport { touch-action: none; }
         .canvas-container { touch-action: none; }
+        /* Widget boxes + resize handles claim the touch so a one-finger drag
+         * moves/resizes the widget (via Pointer Events) instead of scrolling. */
+        .widget-box { touch-action: none; }
+        .resize-handle { touch-action: none; }
 
         /* Sidebars */
         .sidebar {
@@ -733,6 +781,10 @@
         .sidebar-right {
             border-right: none;
             border-left: 1px solid var(--border);
+        }
+
+        .sidebar-layers {
+            border-top: 1px solid var(--border);
         }
 
         /* Sidebar Resize Handles */
@@ -954,34 +1006,6 @@
             opacity: 0.75;
         }
 
-        /* Right sidebar tabs */
-        .right-sidebar-tabs {
-            display: flex;
-            border-bottom: 1px solid var(--border);
-            background: #2d2d2d;
-            flex-shrink: 0;
-        }
-        .right-sidebar-tab {
-            flex: 1;
-            padding: 8px 4px;
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            text-align: center;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--text-muted);
-            cursor: pointer;
-            min-height: 36px;
-            transition: color 0.12s, border-color 0.12s;
-        }
-        .right-sidebar-tab:hover { color: var(--text); }
-        .right-sidebar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-        .right-tab-content { display: none; flex: 1; flex-direction: column; overflow-y: auto; min-height: 0; }
-        .right-tab-content.active { display: flex; }
-
         /* Widget Box in Editor */
         .widget-box {
             position: absolute;
@@ -1201,6 +1225,25 @@
             cursor: nwse-resize;
         }
 
+        /* ── Touch resize handles ───────────────────────────────────
+         * On touch devices a 7px handle is un-grabbable and adjacent
+         * corner/edge handles collide within one fingertip. So on touch:
+         * show ONLY the four corner handles, keep the small visual dot,
+         * but expand each tap target to ~46px with a transparent ::before
+         * hit-slop. (Precise resize is still available via the W/H steppers
+         * in the selection toolbar.) */
+        @media (hover: none) and (pointer: coarse) {
+            .resize-handle.n,
+            .resize-handle.e,
+            .resize-handle.s,
+            .resize-handle.w { display: none; }
+            .resize-handle { width: 9px; height: 9px; }
+            .resize-handle::before {
+                content: '';
+                position: absolute;
+                top: -19px; right: -19px; bottom: -19px; left: -19px;
+            }
+        }
 
         .align-bar {
             display: flex;
@@ -1283,6 +1326,27 @@
             border-color: var(--accent);
             box-shadow: 0 0 0 1px hsla(0, 0%, 80%, 0.2);
             outline: none;
+        }
+
+        /* ── Touch inputs ───────────────────────────────────────────
+         * Bump inspector fields to 40px tall / 16px font whenever the
+         * mobile sheet layout is active OR on any touch device. The 16px
+         * is load-bearing: iOS Safari auto-zooms the page when a focused
+         * input is <16px, leaving it zoomed and misaligned. Also grows the
+         * color swatch to a real fingertip target. */
+        @media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+            .field input,
+            .field select {
+                min-height: 40px;
+                font-size: 16px;
+                padding: 9px 12px;
+            }
+            .field input[type="color"],
+            input[type="color"] {
+                min-height: 40px;
+                width: 44px;
+                height: 40px;
+            }
         }
 
         /* Buttons */
@@ -4199,7 +4263,7 @@
             <!-- Auto-save is always on; every edit persists 1s after you stop. No toggle. -->
 
             <button class="header-pill" id="pillSimulate" onclick="toggleSimulation()" title="Sweep all signals min-max for visual testing (SIM ON = demo data, not CAN)">SIM</button>
-            <button class="header-pill active" id="pillLive" onclick="toggleLivePreview()" title="LIVE ON: the canvas continuously mirrors the device screen (default). Turn off to refresh only on Sync / Save. For a high-frame-rate view, open /mirror.">LIVE</button>
+            <button class="header-pill active" id="pillLive" onclick="toggleLivePreview()" title="LIVE ON: the canvas continuously mirrors the device screen (default). Turn off to refresh only on Sync / Save.">LIVE</button>
             <button class="header-pill" id="pillLiveControl" onclick="toggleLiveControl()" title="Mirror the device screen live, click/drag to inject touch events (for demos & tutorials)">CONTROL</button>
             <div class="header-divider"></div>
             <button class="btn" id="applyBtn" onclick="saveActiveLayout()">Save/Apply</button>
@@ -4402,24 +4466,22 @@
         <!-- Right Resize Handle -->
         <div class="sidebar-resize" id="rightResize" data-side="right"></div>
 
-        <!-- Right Sidebar: Properties + Layers -->
+        <!-- Right Sidebar: Properties -->
         <aside class="sidebar sidebar-right">
-            <div class="right-sidebar-tabs">
-                <button class="right-sidebar-tab active" onclick="switchRightTab('properties')">Properties</button>
-                <button class="right-sidebar-tab" onclick="switchRightTab('layers')">Layers</button>
-            </div>
-            <div class="right-tab-content active" id="rightTabProperties">
+            <div class="sidebar-header">Properties</div>
             <div id="inspectorContent" class="inspector-group" style="flex:1; overflow-y:auto; min-height:0;">
                 <div class="inspector-empty">
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
                     <p>Click a widget on the canvas<br>or select from Layers panel</p>
                 </div>
             </div>
-            </div>
-            <div class="right-tab-content" id="rightTabLayers" style="overflow:hidden;">
-                <div id="layoutSettingsBox" style="display:none;"></div>
-                <div id="layerTree" style="flex:1; overflow-y:auto; min-height:0;"></div>
-            </div>
+        </aside>
+
+        <!-- Layers Sidebar: stacked below Widgets on desktop; own sheet on mobile -->
+        <aside class="sidebar sidebar-layers">
+            <div class="sidebar-header">Layers</div>
+            <div id="layoutSettingsBox" style="display:none;"></div>
+            <div id="layerTree" style="flex:1; overflow-y:auto; min-height:0;"></div>
         </aside>
     </div>
 
@@ -5198,7 +5260,7 @@
                     <span style="font-size:13px; font-weight:600;">OBD2 Bench Simulator</span>
                     <input id="devObd2Sim" type="checkbox" style="width:16px; height:16px;" onchange="devToggleObd2Sim(this.checked)">
                 </label>
-                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Fakes a virtual ECU so OBD2 gauges (e.g. fuel level) move on the bench with no car connected. Synthesizes Mode&nbsp;01 responses for every polled PID. Not saved; off after a reboot.</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">Fakes a virtual ECU so OBD2 gauges (e.g. fuel level) move on the bench with no car connected. Synthesizes Mode&nbsp;01 polling, freeze frame, DTC read/clear, and VIN/ECU-name responses. Not saved; off after a reboot.</div>
                 <div id="devObd2SimStatus" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
             </div>
 
@@ -5318,6 +5380,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
             <span>Layers</span>
         </button>
+        <button data-action="save" id="mobileSaveBtn" aria-label="Save layout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>Save</span>
+        </button>
         <button data-action="more" aria-label="More">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
             <span>More</span>
@@ -5428,29 +5494,6 @@
                 c.classList.toggle('active', c.id === 'tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
         }
 
-        function switchRightTab(tabName) {
-            const right = document.querySelector('.sidebar-right');
-            if (!right) return;
-            right.querySelectorAll('.right-sidebar-tab').forEach(t =>
-                t.classList.toggle('active', t.textContent.toLowerCase() === tabName));
-            right.querySelectorAll('.right-tab-content').forEach(c =>
-                c.classList.toggle('active', c.id === 'rightTab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)));
-        }
-
-        /* Called from widget-selection code paths (startDrag, context menu,
-         * layer tree). Ensures the Properties tab is active on desktop when
-         * a widget is selected, so the user isn't stuck looking at the
-         * Widgets palette while they're trying to edit props. No-op on
-         * mobile (where the right sidebar is the bottom-nav "Properties"
-         * drawer and has its own flow). */
-        function _autoShowPropertiesTab() {
-            if (window.innerWidth < 900) return;  /* mobile layout — skip */
-            const propsTab = document.querySelector('.sidebar-right .right-sidebar-tab.active');
-            if (propsTab && propsTab.textContent.trim().toLowerCase() === 'properties') return;
-            switchRightTab('properties');
-        }
-
-
         function toggleLayoutMenu() {
             const menu = document.getElementById('layoutMenu');
             menu.classList.toggle('open');
@@ -5477,8 +5520,6 @@
             }
         }
 
-
-        /* switchRightTab removed — signals tab moved to left sidebar */
 
         async function fetchPresets() {
             try {
@@ -6431,8 +6472,9 @@
 
         function _commitHistory() {
             _historyCommitScheduled = false;
-            /* Gesture in flight → defer to its mouseup (see window.onmouseup),
-             * which calls pushHistory() once isDragging/isResizing clear. */
+            /* Gesture in flight → defer to its pointerup (see
+             * _endPointerInteraction), which calls pushHistory() once
+             * isDragging/isResizing clear. */
             if (isDragging || isResizing) return;
             const snap = JSON.stringify(currentLayout);
             // Skip if nothing actually changed since the last snapshot
@@ -7944,8 +7986,9 @@
             });
         }
 
-        interactionLayer.onmousedown = (e) => {
+        interactionLayer.onpointerdown = (e) => {
             if (e.button !== 0 || e.target !== interactionLayer) return;
+            if (e.pointerType === 'touch' && !e.isPrimary) return;
 
             /* If no modifier, deselect immediately; Ctrl/Shift preserve selection */
             if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -8442,13 +8485,19 @@
                     handles.forEach(h => {
                         const hDiv = document.createElement('div');
                         hDiv.className = `resize-handle ${h}`;
-                        hDiv.onmousedown = (e) => startResize(e, index, h);
+                        hDiv.onpointerdown = (e) => {
+                            if (e.button !== 0) return;
+                            if (e.pointerType === 'touch' && !e.isPrimary) return;
+                            startResize(e, index, h);
+                        };
                         box.appendChild(hDiv);
                     });
                 }
 
-                box.onmousedown = (e) => {
+                box.onpointerdown = (e) => {
                     if (e.button !== 0) return;
+                    /* Ignore the 2nd+ finger — that belongs to pinch/pan. */
+                    if (e.pointerType === 'touch' && !e.isPrimary) return;
                     startDrag(e, index);
                 };
 
@@ -8461,7 +8510,6 @@
                     }
                     renderEditor();
                     updateInspector();
-                    _autoShowPropertiesTab();
                     showContextMenu(e.clientX, e.clientY);
                 };
 
@@ -9703,12 +9751,6 @@
                     renderEditor();
                     updateInspector();
                     renderSignals();
-                    /* Intentionally no _autoShowPropertiesTab() here: when
-                     * the user picks a widget from the Layers panel they
-                     * almost always want to stay on Layers to tweak z-order
-                     * or visibility, not get yanked to Properties. The
-                     * canvas-click path still auto-switches because that
-                     * gesture really does signal "I want to edit this". */
                 };
                 layerTree.appendChild(item);
             }
@@ -10006,8 +10048,10 @@
             }
         }, { passive: false });
 
-        workspaceViewport.onmousedown = (e) => {
-            if (e.button === 0 && e.target === workspaceViewport) {
+        workspaceViewport.onpointerdown = (e) => {
+            /* Single-finger touch on the empty viewport margin should not
+             * deselect (users rest a thumb there); only mouse/pen do. */
+            if (e.button === 0 && e.target === workspaceViewport && e.pointerType !== 'touch') {
                 selectedIndex = -1;
                 selectedIndices = new Set();
                 renderEditor();
@@ -10040,6 +10084,15 @@
                     lastTapTime = now;
                     /* Fall through: no preventDefault — widgets receive tap/drag */
                 } else if (e.touches.length === 2) {
+                    /* A 2nd finger means pinch/pan — abandon any single-finger
+                     * widget drag/resize/marquee so the two gestures don't
+                     * fight. Release the captured pointer and drop the flags;
+                     * the in-progress move was already history-pushed on its
+                     * first step, so nothing is lost. */
+                    isDragging = false; isResizing = false;
+                    if (_marquee) { _marquee.el.remove(); _marquee = null; }
+                    guideX.style.display = 'none'; guideY.style.display = 'none';
+                    _releasePointer();
                     const dx = e.touches[0].clientX - e.touches[1].clientX;
                     const dy = e.touches[0].clientY - e.touches[1].clientY;
                     lastPinchDist   = Math.sqrt(dx * dx + dy * dy);
@@ -10181,10 +10234,29 @@
         })();
 
         let _dragMoved = false;
+        /* Active touch/pen pointer id captured to the (stable) interaction
+         * layer during a drag/resize, so the gesture survives the per-move
+         * renderEditor() that recreates the widget boxes. Mouse doesn't need
+         * capture — its window-level move/up handlers already catch every
+         * event — so we skip capture for mouse to keep the desktop path
+         * behaviourally identical. */
+        let _activePointerId = null;
+        function _capturePointer(e) {
+            if (e && e.pointerId != null && e.pointerType !== 'mouse' && interactionLayer.setPointerCapture) {
+                try { interactionLayer.setPointerCapture(e.pointerId); _activePointerId = e.pointerId; } catch (_) {}
+            }
+        }
+        function _releasePointer() {
+            if (_activePointerId != null && interactionLayer.releasePointerCapture) {
+                try { interactionLayer.releasePointerCapture(_activePointerId); } catch (_) {}
+            }
+            _activePointerId = null;
+        }
 
         function startDrag(e, index) {
             e.stopPropagation();
             _dragMoved = false;
+            _capturePointer(e);
 
             if (e.altKey && !currentLayout.widgets[index].locked) {
                 pushHistory();
@@ -10240,7 +10312,6 @@
             renderEditor();
             updateInspector();
             renderSignals();
-            _autoShowPropertiesTab();
         }
         const DRAG_THRESHOLD_PX = 4;
         let _dragStartMouse = null;
@@ -10248,6 +10319,7 @@
         function startResize(e, index, handle) {
             e.stopPropagation();
             _dragMoved = false;
+            _capturePointer(e);
             selectedIndex = index; selectedIndices = new Set([index]);
             isResizing = true;
             resizeHandle = handle;
@@ -10257,7 +10329,7 @@
             updateInspector();
         }
 
-        window.onmousemove = (e) => {
+        window.onpointermove = (e) => {
             /* Marquee rectangle update */
             if (_marquee) {
                 const rect = interactionLayer.getBoundingClientRect();
@@ -10416,7 +10488,8 @@
             }
         };
 
-        window.onmouseup = (e) => {
+        const _endPointerInteraction = (e) => {
+            _releasePointer();
             /* ── Finish marquee selection ────────────────────────── */
             if (_marquee) {
                 const rect = interactionLayer.getBoundingClientRect();
@@ -10478,6 +10551,11 @@
                 }
             }
         };
+        window.onpointerup = _endPointerInteraction;
+        /* pointercancel fires if the OS steals the touch (e.g. a system
+         * gesture, or setupTouchGestures cancelling a 1-finger drag when a
+         * 2nd finger lands). Finalize the same way so state never sticks. */
+        window.onpointercancel = _endPointerInteraction;
 
         window.onkeydown = (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -12322,7 +12400,7 @@
          * autofocus on search inputs (which would trigger the on-screen
          * keyboard and fight with our modal). */
         function _isMobileLayout() {
-            return window.matchMedia('(max-width: 900px), (hover: none) and (pointer: coarse)').matches;
+            return window.matchMedia('(max-width: 1024px), (hover: none) and (pointer: coarse)').matches;
         }
 
         function openDataSourcePicker() {
@@ -13700,7 +13778,6 @@
             selectedIndex = currentLayout.widgets.length - 1;
             renderEditor();
             updateInspector();
-            switchRightTab('properties');
             if (document.getElementById('livePreviewToggle').checked) triggerPreview();
         }
 
@@ -15123,8 +15200,8 @@
          * the tab is hidden or CONTROL mode owns the preview. captureScreenshot()
          * (half-res, q100) also still backs the Sync button + post-save refresh.
          *
-         * The high-frame-rate WASM view remains at /mirror; this is the
-         * in-editor preview so you see live data while you arrange widgets. */
+         * This is the in-editor preview so you see live data while you
+         * arrange widgets. */
         const _CONTROL_POLL_INTERVAL_MS = 1000;
         let _livePreviewOn = (localStorage.getItem('rdm7_live_preview') !== '0');
         let _livePreviewToken = 0;
@@ -21774,41 +21851,67 @@
 
         /* ── Studio-style mobile UX: bottom nav + slide-up sheet ────── */
 
-        /* Open the right sidebar as a sheet (phone) or drawer (tablet),
-         * switched to the given tab name. Reuses the existing
-         * switchRightTab infrastructure so the same panels show on
-         * desktop AND mobile without duplicate DOM. */
-        function openSidebarTab(tab) {
-            if (typeof switchRightTab === 'function') switchRightTab(tab);
-            const sidebar = document.querySelector('.sidebar-right');
+        /* Open the Properties (.sidebar-right) or Layers (.sidebar-layers)
+         * panel as its own bottom-sheet. Each panel is its own element now
+         * (no shared tab-content DOM), so opening one just means closing the
+         * other. Reserving the sheet's peek height + re-fitting the canvas
+         * keeps the widget being edited visible above the sheet. */
+        function openSidebarSheet(which) {
+            const sidebar = document.querySelector(which === 'layers' ? '.sidebar-layers' : '.sidebar-right');
+            const other = document.querySelector(which === 'layers' ? '.sidebar-right' : '.sidebar-layers');
             const backdrop = document.getElementById('mobileSheetBackdrop');
+            if (other) other.classList.remove('mobile-open', 'sheet-full');
             if (!sidebar) return;
             sidebar.classList.add('mobile-open');
             sidebar.classList.remove('sheet-full');
             if (backdrop) backdrop.classList.add('active');
+            if (_isMobileLayout()) {
+                document.body.classList.add('sheet-open');
+                /* rAF so the reserved padding is applied before zoomToFit
+                 * measures the (now shorter) canvas viewport. */
+                requestAnimationFrame(() => { if (typeof zoomToFit === 'function') zoomToFit(); });
+            }
         }
 
         function closeMobileSheet() {
-            const sidebar = document.querySelector('.sidebar-right');
             const backdrop = document.getElementById('mobileSheetBackdrop');
-            if (sidebar) sidebar.classList.remove('mobile-open', 'sheet-full');
+            document.querySelectorAll('.sidebar-right, .sidebar-layers').forEach(s =>
+                s.classList.remove('mobile-open', 'sheet-full'));
             if (backdrop) backdrop.classList.remove('active');
             /* Also dismiss the widget-palette sheet if it's open — it shares
              * this backdrop, so a backdrop tap should close it too. */
             const pal = document.getElementById('mobilePaletteSheet');
             if (pal) { pal.classList.remove('active'); pal.setAttribute('aria-hidden', 'true'); }
             closeLayoutMenu();  /* kill any open hamburger menu */
+            /* Release the reserved sheet space and re-fit the canvas back to
+             * the full viewport (only if a Properties/Layers sheet reserved it). */
+            if (document.body.classList.contains('sheet-open')) {
+                document.body.classList.remove('sheet-open');
+                if (_isMobileLayout()) {
+                    requestAnimationFrame(() => { if (typeof zoomToFit === 'function') zoomToFit(); });
+                }
+            }
         }
 
         /* Bottom-nav icon dispatcher */
         function mobileAction(action) {
             switch (action) {
                 case 'widgets':    openMobilePalette(); break;
-                case 'properties': openSidebarTab('properties'); break;
-                case 'layers':     openSidebarTab('layers'); break;
+                case 'properties': openSidebarSheet('properties'); break;
+                case 'layers':     openSidebarSheet('layers'); break;
                 case 'sim':        if (typeof toggleSimulation === 'function') toggleSimulation(); break;
+                case 'save':       if (typeof saveActiveLayout === 'function') saveActiveLayout(); break;
                 case 'more':       openMobileMenu(); break;
             }
+        }
+
+        /* Reflect unsaved-edits state on the bottom-nav Save button (accent
+         * tint) so the primary commit action reads at a glance. */
+        function _updateMobileSaveBtn() {
+            const btn = document.getElementById('mobileSaveBtn');
+            if (!btn) return;
+            const dirty = (typeof hasUnsavedEdits === 'function') ? hasUnsavedEdits() : false;
+            btn.classList.toggle('has-unsaved', !!dirty);
         }
 
         /* Mobile widget palette bottom-sheet. Populates from the shared
@@ -21951,7 +22054,7 @@
                  * Custom PIDs) stay reachable from inside the OBD2 Setup modal. */
                 /* Live & View — replicates the header pills that disappear at
                  * narrow widths so phone/tablet users still reach simulation,
-                 * the live /mirror view, and remote control. */
+                 * the live preview, and remote control. */
                 { heading: 'Live & View', items: [
                     { type: 'toggle', label: 'SIM',     icon: 'activity', getState: () => {
                             const p = document.getElementById('pillSimulate');
@@ -22118,9 +22221,12 @@
         });
 
         /* Drag-to-expand/dismiss the bottom sheet (phone-only visually;
-         * on tablets the drawer is side-sliding and the handle is hidden). */
-        function _setupSheetDrag() {
-            const sheet = document.querySelector('.sidebar-right');
+         * on tablets the drawer is side-sliding and the handle is hidden).
+         * Wired independently for the Properties and Layers sheets — each
+         * closure owns its own `sheet`/`dragging` state, so only the sheet
+         * whose handle was grabbed responds to the shared document move/up. */
+        function _setupSheetDrag(selector) {
+            const sheet = document.querySelector(selector);
             if (!sheet) return;
             let startY = 0, startH = 0, dragging = false, baseTransform = '';
             const onDown = (e) => {
@@ -22165,7 +22271,10 @@
             document.addEventListener('touchmove', onMove, { passive: true });
             document.addEventListener('touchend', onUp);
         }
-        document.addEventListener('DOMContentLoaded', _setupSheetDrag);
+        document.addEventListener('DOMContentLoaded', () => {
+            _setupSheetDrag('.sidebar-right');
+            _setupSheetDrag('.sidebar-layers');
+        });
 
         /* Zoom bar auto-hide:
          * - Default: faded (0.25 opacity, slightly offset).
@@ -22176,15 +22285,22 @@
             if (!bar) return;
             const IDLE_MS = 1500;
             let idleTimer = null;
+            /* Keep the zoom bar readable (never fade) while a widget is
+             * selected or a sheet is open — on the tiny canvas zoom is a
+             * primary control exactly then. */
+            const shouldStayAwake = () =>
+                document.body.classList.contains('wst-active') ||
+                document.body.classList.contains('sheet-open');
             const wake = () => {
                 bar.classList.remove('zoom-bar-faded');
                 if (idleTimer) clearTimeout(idleTimer);
-                idleTimer = setTimeout(() => bar.classList.add('zoom-bar-faded'), IDLE_MS);
+                idleTimer = setTimeout(() => { if (!shouldStayAwake()) bar.classList.add('zoom-bar-faded'); }, IDLE_MS);
             };
             const sleep = () => {
                 if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-                bar.classList.add('zoom-bar-faded');
+                if (!shouldStayAwake()) bar.classList.add('zoom-bar-faded');
             };
+            window._zoomBarWake = wake;
             bar.addEventListener('pointerdown', wake);
             bar.addEventListener('mouseenter', wake);
             bar.addEventListener('mouseleave', sleep);
@@ -22458,18 +22574,44 @@
                     pasteBtn.setAttribute('aria-disabled', canPaste ? 'false' : 'true');
                 }
                 _wstSyncTestRow(w);
+                /* On a new selection, wake the zoom bar (it then stays up via
+                 * shouldStayAwake while wst-active). Only on transition so the
+                 * 250ms poll doesn't reset the fade timer every tick. */
+                if (_wstLastIdx !== selectedIndex && window._zoomBarWake) window._zoomBarWake();
+                if (_wstLastIdx !== selectedIndex) _wstMaybeCoach();
                 _wstLastIdx = selectedIndex;
             } else {
                 tb.classList.remove('visible');
                 tb.setAttribute('aria-hidden', 'true');
                 document.body.classList.remove('wst-active');
                 document.body.classList.remove('wst-has-test');
+                /* On deselect, wake once so the fade timer restarts and the
+                 * bar fades back out after the idle delay. */
+                if (_wstLastIdx !== -1 && window._zoomBarWake) window._zoomBarWake();
                 _wstLastIdx = -1;
             }
         }
 
         /* Backwards-compat shim: some code paths still call updateMobileSelToolbar() */
         function updateMobileSelToolbar() { _wstUpdate(); }
+
+        /* One-time coach bubble the first time the selection toolbar appears,
+         * teaching the touch move/nudge/resize model. Dismissed on tap or
+         * after a few seconds; never shown again (localStorage flag). */
+        function _wstMaybeCoach() {
+            try { if (localStorage.getItem('rdm7_wst_coach_seen')) return; } catch (_) {}
+            if (!_isMobileLayout()) return;
+            const tb = document.getElementById('widgetSelToolbar');
+            if (!tb || document.getElementById('wstCoach')) return;
+            const tip = document.createElement('div');
+            tip.id = 'wstCoach';
+            tip.className = 'wst-coach';
+            tip.innerHTML = '<span>Drag to move · arrows to nudge · W/H to resize</span><span class="wst-coach-x">Got it</span>';
+            const dismiss = () => { try { localStorage.setItem('rdm7_wst_coach_seen', '1'); } catch (_) {} tip.remove(); };
+            tip.addEventListener('click', dismiss);
+            tb.appendChild(tip);
+            setTimeout(dismiss, 6000);
+        }
 
         (function setupWidgetSelToolbar() {
             const tb = document.getElementById('widgetSelToolbar');
@@ -22604,6 +22746,7 @@
         /* Poll — selection state is mutated directly without events */
         setInterval(() => {
             _updateMobilePropsButton();
+            _updateMobileSaveBtn();
             _wstUpdate();
         }, 250);
 
