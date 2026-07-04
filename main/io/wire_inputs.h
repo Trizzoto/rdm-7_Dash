@@ -6,8 +6,10 @@ extern "C" {
 
 /**
  * Indicator wire inputs share GPIO 43/44 with UART1 (desktop serial). They
- * cannot both be active at the same time, so the assignment is gated by the
- * NVS "wire_input_mode" flag set from Device Settings:
+ * cannot both be active at the same time. Which one owns the pins is selected
+ * by a PHYSICAL hardware switch (UART1 = USB programming, UART2 = indicator
+ * inputs); the on-device software toggle was removed 2026-07-05. The firmware
+ * pin assignment is still gated by the NVS "wire_input_mode" flag:
  *
  *   wire_input_mode = false (default): UART1 owns GPIO 43/44, wire inputs
  *                                      resolve to -1 (disabled at init).

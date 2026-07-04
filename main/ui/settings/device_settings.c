@@ -83,7 +83,6 @@ static lv_obj_t *s_rotation_btn_label = NULL;
 static lv_obj_t *s_night_btn_label = NULL;
 
 /* Developer options */
-static lv_obj_t *s_wire_input_btn_label = NULL;
 
 static void _rotation_btn_cb(lv_event_t *e) {
     (void)e;
@@ -1648,7 +1647,7 @@ static void _ota_check_task(void *param) {
     vTaskDelete(NULL);
 }
 
-/* Orphaned by the same card-grid redesign as _wire_input_mode_btn_cb: the
+/* Orphaned by the card-grid redesign (like the removed wire-input toggle): the
  * manual "Check Updates" button used to live in the now-deleted
  * _build_section_network, and nothing in the card grid replaced it. Lower
  * severity than the wire-input gap, though — OTA checking is still
@@ -2421,79 +2420,11 @@ static void _factory_reset_btn_cb(lv_event_t *e) {
     lv_obj_add_event_cb(mbox, _factory_reset_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
-/* ── Wire Input Mode ───────────────────────────────────────────────────── */
-
-static void _wire_input_reboot_confirm_cb(lv_event_t *e) {
-    lv_obj_t *mbox = lv_event_get_current_target(e);
-    const char *btn_txt = lv_msgbox_get_active_btn_text(mbox);
-    if (!btn_txt) return;
-    if (strcmp(btn_txt, "Reboot") == 0)
-        esp_restart();
-    lv_msgbox_close(mbox);
-}
-
-/* Orphaned by the card-grid UI redesign: the two row-based sections that
- * used to expose this toggle (_build_section_testing / _build_section_
- * developer) were dead code (superseded by the Setup-mode card grid) and
- * have been removed, but nothing in the card grid replaced them — there is
- * currently NO way to toggle wire-input mode from the on-device UI, the
- * web editor, or serial (confirmed: grepped all three for "wire_input",
- * zero hits outside this file/config_store.c/wire_inputs.c). The toggle
- * logic itself still works; it just needs a "Wire Inputs" card wired to
- * it (mirroring the existing Dimmer/Testing popup pattern) to be reachable
- * again. Kept compiled — see WIDGET_SETTINGS_AUDIT-style attribute below —
- * rather than deleted, since deleting it would erase a working
- * reference implementation for whoever restores the card. */
-__attribute__((unused))
-static void _wire_input_mode_btn_cb(lv_event_t *e) {
-    (void)e;
-    bool enabled = false;
-    config_store_load_wire_input_mode(&enabled);
-    enabled = !enabled;
-    config_store_save_wire_input_mode(enabled);
-
-    if (s_wire_input_btn_label && lv_obj_is_valid(s_wire_input_btn_label)) {
-        lv_label_set_text(s_wire_input_btn_label,
-            enabled ? "Wire Inputs: ON" : "Wire Inputs: OFF");
-        lv_obj_set_style_text_color(s_wire_input_btn_label,
-            enabled ? THEME_COLOR_STATUS_CONNECTED : THEME_COLOR_TEXT_MUTED, 0);
-    }
-
-    static const char *btns[] = {"Reboot", "Later", ""};
-    lv_obj_t *mbox = lv_msgbox_create(
-        NULL,
-        "Reboot Required",
-        enabled
-            ? "Wire input mode ON.\nGPIO 43/44 will be used for turn\nsignals after reboot (UART1 disabled)."
-            : "Wire input mode OFF.\nUART1 serial will be re-enabled\nafter reboot.",
-        btns, true);
-
-    lv_obj_set_style_bg_color(mbox, THEME_COLOR_SURFACE, LV_PART_MAIN);
-    lv_obj_set_style_border_color(mbox, THEME_COLOR_BORDER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(mbox, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(mbox, THEME_RADIUS_NORMAL, LV_PART_MAIN);
-    lv_obj_set_style_text_color(mbox, THEME_COLOR_TEXT_PRIMARY, LV_PART_MAIN);
-    lv_obj_set_style_text_font(mbox, THEME_FONT_SMALL, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(mbox, 8, LV_PART_MAIN);
-    lv_obj_set_style_shadow_ofs_y(mbox, 2, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(mbox, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(mbox, 80, LV_PART_MAIN);
-    lv_obj_set_width(mbox, 380);
-    lv_obj_center(mbox);
-
-    lv_obj_t *btn_area = lv_msgbox_get_btns(mbox);
-    lv_obj_set_style_bg_color(btn_area, THEME_COLOR_SECTION_BG,
-                              LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(btn_area, THEME_COLOR_TEXT_PRIMARY,
-                                LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(btn_area, 1,
-                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(btn_area, THEME_COLOR_BORDER,
-                                  LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(btn_area, THEME_RADIUS_NORMAL,
-                            LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(mbox, _wire_input_reboot_confirm_cb, LV_EVENT_VALUE_CHANGED, NULL);
-}
+/* Wire Input Mode software toggle removed 2026-07-05: the UART1(programming) /
+ * UART2(indicators) routing on GPIO 43/44 is now a PHYSICAL hardware switch, so
+ * the on-device software toggle is obsolete. The wire-input runtime itself
+ * (io/wire_inputs.c reading the pins, main.c wiring, the config_store flag) is
+ * left intact. */
 
 void init_display_brightness(void) {
     // Always boot at 100% brightness
@@ -3040,7 +2971,6 @@ static void _testing_popup_close(lv_event_t *e) {
     if (s_testing_overlay && lv_obj_is_valid(s_testing_overlay)) lv_obj_del(s_testing_overlay);
     s_testing_overlay       = NULL;
     s_sim_btn_label         = NULL;
-    s_wire_input_btn_label  = NULL;
 }
 
 static void _testing_popup_open(lv_event_t *e) {
@@ -3755,7 +3685,6 @@ static void _settings_screen_delete_cb(lv_event_t *e) {
     s_sim_card_stat      = NULL;
     s_rotation_btn_label = NULL;
     s_night_btn_label    = NULL;
-    s_wire_input_btn_label = NULL;
     s_veh_odo_value_lbl  = NULL;
     s_can_health_dot     = NULL;
     s_can_health_label   = NULL;
